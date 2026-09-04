@@ -416,6 +416,37 @@ public static class ApiServiceCollectionExtensions
             return JobTemplateStore.LoadFromFile(templatesPath);
         });
 
+        // ── DispatchLifecycleService ─────────────────────────────────────────────────────────
+        // Singleton that performs the atomic PVC-select + K8s Job create + Dispatched-write lifecycle.
+        // Used by the new POST /api/work-items/dispatch endpoint (synchronous dispatch path).
+        // NOTE: DispatchLifecycleService._pvcSelectLock is an in-process SemaphoreSlim(1,1).
+        // All concurrent dispatch calls in a single API replica serialize through this lock.
+        // Multi-replica deployments are NOT safe without a distributed lock (issue #2322 defers the fix).
+        services.AddSingleton(sp =>
+            DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>()));
+        services.AddSingleton(sp =>
+        {
+            var jobClient = sp.GetService<IKubernetesJobClient>();
+            // TODO [WARNING]: jobClient! suppresses the null check. If K8s is not configured,
+            // IKubernetesJobClient resolves to null (see line ~371 — it returns null when IKubernetes
+            // is not registered). Using GetService + ! means DispatchLifecycleService is constructed
+            // with a null _kubeClient, which silently defers the NullReferenceException until a live
+            // dispatch reaches the K8s Job creation step. Use GetRequiredService to fail fast at
+            // startup, or guard the DispatchLifecycleService constructor and return a no-op (like
+            // the NoOpJobCleanupStrategy pattern used elsewhere). See review finding ApiServiceCollectionExtensions.cs:431.
+            return new CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService(
+                jobClient!,
+                sp.GetRequiredService<WorkItemTransitionService>(),
+                sp.GetRequiredService<DispatchServiceOptions>());
+        });
+
+        // ── DispatchTemplateResolver ──────────────────────────────────────────────────────────
+        // Fallback template resolution used by the new dispatch endpoint.
+        services.AddSingleton(sp =>
+            new CodingAgentWebUI.Api.Dispatch.DispatchTemplateResolver(
+                sp.GetService<IAgentProfileStore>(),
+                sp.GetRequiredService<JobTemplateStore>()));
+
         // ── DatabaseMaintenanceService ────────────────────────────────────────────────────────
         // The only retention sweep in the system — orphaning it causes Postgres to grow
         // without bound while retention settings still render in the UI.

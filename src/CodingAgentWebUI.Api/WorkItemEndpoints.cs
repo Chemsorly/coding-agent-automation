@@ -4,6 +4,7 @@ using System.Text.Json;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
+using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Telemetry;
@@ -78,6 +79,11 @@ public static class WorkItemEndpoints
         group.MapPost("/{id:guid}/label-swap", PostLabelSwap).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapPost("/{id:guid}/last-progress", PostLastProgress).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapPost("/{id:guid}/priority", PostPriorityWeight).RequireAuthorization(ApiAuthPolicies.Operator);
+
+        // ── Synchronous dispatch endpoint (issue #2322) ────────────────────────
+        // Replaces the two-hop Pending→DispatchLoop→K8s path with a single synchronous call
+        // that creates the K8s Job and writes Dispatched atomically.
+        group.MapPost("/dispatch", DispatchWorkItem).RequireAuthorization(ApiAuthPolicies.Operator);
 
         // ── Metrics feed for the Scheduler's WorkItemCountsPoller ─────────────
         group.MapGet("/counts-by-status", GetCountsByStatus).RequireAuthorization(ApiAuthPolicies.Operator);
@@ -568,6 +574,275 @@ public static class WorkItemEndpoints
             // are left at their default null values and re-fetched at assignment time by AssignmentEnricher.
             PayloadSchemaVersion = 1,
         };
+    }
+
+    // ── POST /dispatch — synchronous dispatch (issue #2322) ───────────────
+
+    /// <summary>
+    /// POST /api/work-items/dispatch
+    /// Synchronously creates a K8s Job and writes the WorkItem as <see cref="WorkItemStatus.Dispatched"/>
+    /// in one atomic operation. Replaces the two-hop Pending→DispatchLoop→K8s path.
+    ///
+    /// Flow:
+    /// 1. Resolve job template (via profile if needed) — 409 if not found.
+    /// 2. Check PVC availability (kiro agents) — 503 if no PVC available.
+    /// 3. Check concurrency limit — 409 if at limit.
+    /// 4. Create WorkItem as Pending, load projection, call DispatchLifecycleService.ExecuteDispatchLifecycleAsync.
+    /// 5. Register in-memory PipelineRun for SignalR hub routing.
+    /// 6. Return 200 + { workItemId } on success.
+    ///
+    /// Returns 503 if no PVC available or K8s Job creation fails.
+    /// Returns 409 if concurrency limit reached, issue ineligible, or no template found.
+    /// </summary>
+    internal static async Task<IResult> DispatchWorkItem(
+        [FromBody] JobDistributionRequest request,
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        IOrchestratorRunService runService,
+        CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService lifecycleService,
+        CodingAgentWebUI.Api.Dispatch.DispatchTemplateResolver templateResolver,
+        JobTemplateStore templateStore,
+        DispatchServiceOptions dispatchOptions,
+        CancellationToken ct = default)
+    {
+        // ── 1. Resolve template ───────────────────────────────────────────
+        var agentSelector = request.AgentSelector ?? "";
+        var template = templateStore.Resolve(agentSelector);
+        string effectiveSelector = agentSelector;
+
+        if (template is null)
+        {
+            var (fallback, resolvedSelector) = await templateResolver.ResolveTemplateViaProfileAsync(
+                agentSelector, "DispatchWorkItem", ct);
+            if (fallback is null)
+            {
+                Log.Warning("DispatchWorkItem: no job template for selector '{Selector}'", agentSelector);
+                return TypedResults.Conflict($"No job template found for selector: {agentSelector}");
+            }
+            template = fallback;
+            effectiveSelector = resolvedSelector ?? agentSelector;
+        }
+
+        var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
+
+        // ── 2. Concurrency check (best-effort pre-flight) ─────────────────
+        // NOTE: This check is advisory. The real concurrency enforcement is the DB unique
+        // index on (IssueIdentifier, Status ∈ {Pending, Dispatched, Running}).
+        // A TOCTOU race is possible if concurrent requests pass this check before either inserts,
+        // but the unique-violation catch below handles that.
+        // TODO [WARNING]: The unique index is on (IssueIdentifier, IssueProviderConfigId), NOT on
+        // effectiveSelector — it prevents two live items for the same issue, but does NOT prevent
+        // N concurrent dispatches for distinct issues sharing a selector from each exceeding
+        // MaxConcurrent. MaxConcurrent enforcement is therefore advisory (best-effort) for
+        // concurrent requests from distinct issues. See review finding WorkItemEndpoints.cs:684.
+        if (template.MaxConcurrent > 0)
+        {
+            await using var checkDb = await dbFactory.CreateDbContextAsync(ct);
+            var activeCounts = await checkDb.WorkItems
+                .Where(w => (w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
+                         && w.AgentSelector == effectiveSelector)
+                .CountAsync(ct);
+            if (activeCounts >= template.MaxConcurrent)
+            {
+                Log.Information("DispatchWorkItem: concurrency limit reached for selector '{Selector}' ({Active}/{Max})",
+                    effectiveSelector, activeCounts, template.MaxConcurrent);
+                return TypedResults.Conflict(
+                    $"Concurrency limit reached for selector '{effectiveSelector}' ({activeCounts}/{template.MaxConcurrent}).");
+            }
+        }
+
+        // ── 3. For kiro agents: fast-path PVC check OUTSIDE lock ──────────
+        // This avoids contending on the lock for requests that will definitely fail.
+        // The definitive PVC selection happens inside SelectPvcFromDbAsync (under lock, re-queried
+        // + ClaimedPvcName written inside the lock).
+        // TODO [WARNING]: The fast-path check and the lock-protected re-query use separate DB contexts
+        // with no shared transaction. A PVC that appears free in the fast-path can be claimed between
+        // the fast-path and the lock-protected re-query by another request. In that case the fast-path
+        // passes but SelectPvcFromDbAsync returns null, triggering SafeFailWorkItemAsync to clean up.
+        // SafeFailWorkItemAsync swallows exceptions — a transient DB failure there can leave the row
+        // in Pending. This is a residual AC1 probabilistic risk. See review finding WorkItemEndpoints.cs:707.
+        if (isKiroAgent)
+        {
+            await using var preCheckDb = await dbFactory.CreateDbContextAsync(ct);
+            var earlyPvcResult = await CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService.QueryAvailablePvcsAsync(
+                preCheckDb, dispatchOptions.KiroPvcPool, ct);
+            if (earlyPvcResult.AvailablePvcs.Count == 0)
+            {
+                Log.Information("DispatchWorkItem: no PVC available for kiro agent (selector={Selector}, fast-path check)", effectiveSelector);
+                return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+            }
+        }
+
+        // ── 4. Insert WorkItem as Pending (transient) ─────────────────────
+        // The lifecycle will atomically transition it to Dispatched or Failed.
+        // AC1 guarantee: this row will NEVER remain in Pending as a final state.
+        // If the lifecycle exits without dispatching, the finally block below calls
+        // FailWorkItemAsync to ensure the row is moved to Failed before returning 503.
+        var workItemId = !string.IsNullOrEmpty(request.RunId) && Guid.TryParse(request.RunId, out var parsedRunId)
+            ? parsedRunId
+            : Guid.NewGuid();
+
+        var minimalPayload = BuildMinimalPayload(request);
+        var payloadJson = JsonSerializer.Serialize(minimalPayload, PipelineJsonOptions.Default);
+
+        // TODO [WARNING]: request.IssueIdentifier.Value is used without a null/empty guard here.
+        // If a caller posts a body where IssueIdentifier is default (e.g. `{}`), the struct's .Value
+        // may be null, causing either an NRE or an empty-string unique-index collision. The caller
+        // is always DispatchOrchestrationService (operator-tier), which validates before calling,
+        // but a direct HTTP call with a malformed payload would not be caught. Add an explicit
+        // 400 BadRequest guard here to close the gap. See review finding WorkItemEndpoints.cs:658.
+        var entity = new WorkItemEntity
+        {
+            Id = workItemId,
+            TaskType = request.TaskType,
+            IssueIdentifier = request.IssueIdentifier.Value,
+            IssueProviderConfigId = request.IssueProviderConfigId,
+            Status = WorkItemStatus.Pending, // Transient — lifecycle moves it to Dispatched or Failed
+            Payload = payloadJson,
+            AgentSelector = effectiveSelector,
+            TimeoutSeconds = request.TimeoutSeconds,
+            ProjectId = request.ProjectId,
+            CreatedAt = DateTimeOffset.UtcNow,
+            PriorityWeight = InitiatedByConstants.IsManual(request.InitiatedBy) ? 100 : 0,
+            TraceParent = request.TraceContext?.GetValueOrDefault("traceparent")
+                ?? PipelineTelemetry.FormatTraceParent(Activity.Current)
+        };
+
+        try
+        {
+            await using var insertDb = await dbFactory.CreateDbContextAsync(ct);
+            insertDb.WorkItems.Add(entity);
+            await insertDb.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (IsUniqueViolation(ex))
+        {
+            return TypedResults.Conflict("A live work item already exists for this issue.");
+        }
+        // For kiro agents: PVC selection is done INSIDE _pvcSelectLock with a fresh DB query
+        // (SelectPvcFromDbAsync), so two concurrent requests cannot both claim the same PVC.
+        // The per-request availablePvcs list passed to ExecuteDispatchLifecycleAsync is a
+        // single-element list produced after the lock-protected DB re-query.
+
+        var projection = new CodingAgentWebUI.Api.Dispatch.PendingWorkItemProjection
+        {
+            Id = workItemId,
+            AgentSelector = effectiveSelector,
+            CreatedAt = entity.CreatedAt,
+            TimeoutSeconds = entity.TimeoutSeconds,
+            ProjectId = entity.ProjectId,
+            IssueIdentifier = entity.IssueIdentifier,
+            IssueProviderConfigId = entity.IssueProviderConfigId,
+            TaskType = entity.TaskType,
+            PriorityWeight = entity.PriorityWeight
+        };
+
+        var concurrencyBySelector = new Dictionary<string, int> { [effectiveSelector] = 0 };
+
+        // Load project secrets if applicable
+        Dictionary<string, string>? projectSecrets = null;
+        if (request.ProjectId.HasValue)
+        {
+            await using var secretsDb = await dbFactory.CreateDbContextAsync(ct);
+            projectSecrets = await CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService.LoadProjectSecretsAsync(
+                secretsDb, request.ProjectId.Value.ToString(), ct);
+        }
+
+        // For kiro agents, select PVC under lock with DB re-query to prevent double-assignment.
+        // For non-kiro agents, availablePvcs is empty (no PVC needed).
+        List<string> availablePvcs;
+        if (isKiroAgent)
+        {
+            var claimedPvc = await lifecycleService.SelectPvcFromDbAsync(
+                dbFactory, dispatchOptions.KiroPvcPool, workItemId, "dispatch ", ct);
+            if (claimedPvc is null)
+            {
+                // No PVC available after lock-protected re-query — fail the row and return 503.
+                // AC1: the Pending row must not be left behind.
+                await SafeFailWorkItemAsync(lifecycleService, workItemId, "No PVC available after lock-protected re-query", ct);
+                Log.Information("DispatchWorkItem: no PVC available under lock for WorkItem {WorkItemId}", workItemId);
+                return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+            }
+            availablePvcs = [claimedPvc];
+        }
+        else
+        {
+            availablePvcs = [];
+        }
+
+        bool dispatched = false;
+
+        // Open a dedicated DB context for the lifecycle — it must stay open for the duration
+        // of ExecuteDispatchLifecycleAsync (pre-write, K8s call, race-detect, Dispatched save).
+        await using var lifecycleDb = await dbFactory.CreateDbContextAsync(ct);
+
+        await lifecycleService.ExecuteDispatchLifecycleAsync(
+            new CodingAgentWebUI.Api.Dispatch.DispatchLifecycleContext(
+                lifecycleDb,
+                projection,
+                template,
+                isKiroAgent,
+                availablePvcs,
+                concurrencyBySelector,
+                "dispatch "),
+            // prepareVariant: the Scheduler (DispatchOrchestrationService) has already performed
+            // eligibility checks (issue open, no blocking labels) before calling DispatchAsync.
+            // No duplicate check needed here — just supply project secrets and proceed.
+            workItem => Task.FromResult<(bool, Dictionary<string, string>?)>((true, projectSecrets)),
+            async _ => { dispatched = true; },
+            ct,
+            onFailure: async (_, errorMessage) =>
+            {
+                Log.Warning("DispatchWorkItem: dispatch lifecycle failed for WorkItem {WorkItemId}: {Error}",
+                    workItemId, errorMessage);
+            });
+
+        if (!dispatched)
+        {
+            // AC1 guarantee: the lifecycle exited without dispatching (e.g. DbUpdateConcurrencyException
+            // on the pre-write, SelectPvcAsync returned null from the per-request list, or
+            // FinalizeDispatchAsync concurrency conflict after K8s Job creation).
+            // The K8s-failure path already calls FailWorkItemAsync inside CreateK8sJobAsync.
+            // The other early-exit paths (concurrency conflict, PVC not found inside lifecycle) do not —
+            // so we call it here as a safety net to ensure no Pending row is left behind.
+            // TODO [WARNING]: If ExecuteDispatchLifecycleAsync created the K8s Job successfully but
+            // then hit a DbUpdateConcurrencyException in FinalizeDispatchAsync, the K8s Job is running
+            // but dispatched=false here. SafeFailWorkItemAsync transitions the WorkItem to Failed and
+            // returns 503, leaving an orphaned running pod. ReconciliationLoop will eventually
+            // reconcile it, but there is a window where the pod runs with a Failed WorkItem.
+            // See review finding WorkItemEndpoints.cs:788.
+            await SafeFailWorkItemAsync(lifecycleService, workItemId,
+                "Dispatch lifecycle did not complete (concurrent conflict or PVC unavailable)", ct);
+            Log.Warning("DispatchWorkItem: lifecycle did not dispatch WorkItem {WorkItemId}", workItemId);
+            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        // ── 6. Register in-memory PipelineRun for SignalR hub routing ─────
+        var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request);
+        if (run is not null)
+            runService.AddRun(run);
+
+        return TypedResults.Ok(new { workItemId });
+
+        // Safety-net: ensures the Pending row is moved to Failed if the lifecycle exits early.
+        // Uses CancellationToken.None so a client disconnect doesn't leave an orphaned Pending row.
+        // Swallows all exceptions — FailWorkItemAsync is best-effort at this point.
+        // TODO [WARNING]: originalCt is never referenced in the method body — it is always replaced
+        // with CancellationToken.None. The parameter is intentionally ignored (so a client disconnect
+        // cannot orphan the Pending row), but it is misleading to callers. Either remove the parameter
+        // and update callers to drop the argument, or document explicitly why it is silently ignored.
+        // See review finding WorkItemEndpoints.cs:806.
+        static async Task SafeFailWorkItemAsync(
+            CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService svc,
+            Guid id, string reason, CancellationToken originalCt)
+        {
+            try
+            {
+                await svc.FailWorkItemAsync(id, reason, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "DispatchWorkItem: failed to transition orphaned Pending row {WorkItemId} to Failed — row may remain Pending", id);
+            }
+        }
     }
 
     // ── GET /pending ──────────────────────────────────────────────────────

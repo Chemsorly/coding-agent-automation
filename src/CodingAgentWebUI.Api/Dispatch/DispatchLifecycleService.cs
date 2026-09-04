@@ -189,6 +189,7 @@ internal sealed class DispatchLifecycleService : IDisposable
     /// <summary>
     /// Selects a PVC from the available pool under <see cref="_pvcSelectLock"/> for a kiro agent.
     /// Returns the claimed PVC name, or null if the pool is empty (caller should return early).
+    /// Used by the consolidation dispatch path (which manages its own per-cycle shared list).
     /// </summary>
     private async Task<string?> SelectPvcAsync(
         List<string> availablePvcs, Guid workItemId, string logPrefix, CancellationToken ct)
@@ -204,6 +205,87 @@ internal sealed class DispatchLifecycleService : IDisposable
                 return null;
             }
             availablePvcs.Remove(claimedPvc);
+            return claimedPvc;
+        }
+        finally
+        {
+            _pvcSelectLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Selects a PVC from the configured pool by re-querying the DB INSIDE <see cref="_pvcSelectLock"/>
+    /// and atomically writes <c>ClaimedPvcName</c> on the already-inserted WorkItem row before
+    /// releasing the lock.
+    ///
+    /// <para>
+    /// This is the correct method to use for concurrent HTTP requests (e.g. <c>POST /api/work-items/dispatch</c>).
+    /// The WorkItem row identified by <paramref name="workItemId"/> must already exist in the DB
+    /// (inserted as Pending) before calling this method.
+    /// </para>
+    ///
+    /// <para>
+    /// Unlike <see cref="SelectPvcAsync(List{string},Guid,string,CancellationToken)"/>, which pops from a
+    /// caller-supplied in-memory snapshot, this method holds the lock across the full
+    /// query → select → claim-write sequence. Two concurrent callers are fully serialized:
+    /// the second caller's <c>QueryAvailablePvcsAsync</c> re-query (which includes
+    /// <c>ClaimedPvcName IS NOT NULL AND Status ∈ Pending|Dispatched|Running</c>) will see
+    /// the first caller's claim because the first caller wrote it to the DB while still
+    /// holding the lock.
+    /// </para>
+    /// </summary>
+    /// <param name="dbFactory">Factory used to open a fresh DB context inside the lock.</param>
+    /// <param name="pvcPool">Configured PVC pool (e.g. <c>DispatchServiceOptions.KiroPvcPool</c>).</param>
+    /// <param name="workItemId">
+    /// ID of the already-inserted WorkItem row. The selected PVC name will be written to
+    /// <c>ClaimedPvcName</c> on this row inside the lock before the lock is released.
+    /// </param>
+    /// <param name="logPrefix">Log prefix for context.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The claimed PVC name, or <c>null</c> if no PVC is available.</returns>
+    internal async Task<string?> SelectPvcFromDbAsync(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        IReadOnlyList<string> pvcPool,
+        Guid workItemId,
+        string logPrefix,
+        CancellationToken ct)
+    {
+        await _pvcSelectLock.WaitAsync(ct);
+        try
+        {
+            // Re-query inside the lock so concurrent callers see each other's written claims.
+            await using var db = await dbFactory.CreateDbContextAsync(ct);
+            var result = await QueryAvailablePvcsAsync(db, pvcPool, ct);
+
+            var claimedPvc = result.AvailablePvcs.FirstOrDefault();
+            if (claimedPvc is null)
+            {
+                Log.Information(
+                    "DispatchLifecycleService: {LogPrefix}no PVC available for WorkItem {WorkItemId} (re-queried under lock)",
+                    logPrefix, workItemId);
+                return null;
+            }
+
+            // Write ClaimedPvcName to the WorkItem row INSIDE the lock before releasing it.
+            // This is the critical step that closes the TOCTOU race: a second concurrent caller
+            // that enters the lock after us will re-query and see our claim already written to
+            // the DB, so it will not select the same PVC.
+            var workItem = await db.WorkItems.FindAsync([workItemId], ct);
+            if (workItem is null)
+            {
+                // Row was deleted between insert and lock acquisition — no PVC to claim.
+                Log.Warning(
+                    "DispatchLifecycleService: {LogPrefix}WorkItem {WorkItemId} not found in DB inside PVC lock — skipping claim",
+                    logPrefix, workItemId);
+                return null;
+            }
+
+            workItem.ClaimedPvcName = claimedPvc;
+            await db.SaveChangesAsync(ct);
+
+            Log.Debug(
+                "DispatchLifecycleService: {LogPrefix}claimed PVC {Pvc} for WorkItem {WorkItemId} (written to DB inside lock)",
+                logPrefix, claimedPvc, workItemId);
             return claimedPvc;
         }
         finally

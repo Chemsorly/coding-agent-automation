@@ -49,21 +49,22 @@ public sealed class KubernetesWorkDistributorTests
     public async Task DistributeAsync_OnSuccess_ReturnsSuccessResult()
     {
         var workItemId = Guid.NewGuid();
-        _client.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(workItemId);
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchWorkItemResponse(workItemId));
 
         var result = await _sut.DistributeAsync(MakeRequest(), CancellationToken.None);
 
         result.Success.Should().BeTrue();
         result.WorkItemId.Should().Be(workItemId.ToString());
-        result.Queued.Should().BeTrue();
+        // Queued: false — item is immediately Dispatched (synchronous path, issue #2322)
+        result.Queued.Should().BeFalse();
         result.ErrorMessage.Should().BeNull();
     }
 
     [Fact]
     public async Task DistributeAsync_WhenClientThrows_ReturnsFailureResult()
     {
-        _client.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("API unavailable"));
 
         var result = await _sut.DistributeAsync(MakeRequest(), CancellationToken.None);

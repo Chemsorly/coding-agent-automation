@@ -222,4 +222,28 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         public string IssueIdentifier { get; init; } = "";
         public string IssueProviderConfigId { get; init; } = "";
     }
+
+    /// <inheritdoc />
+    public async Task<DispatchWorkItemResponse> DispatchAsync(JobDistributionRequest request, CancellationToken ct = default)
+    {
+        var response = await _http.PostAsJsonAsync(
+            "/api/work-items/dispatch",
+            request,
+            PipelineJsonOptions.Default,
+            ct);
+
+        // 409 = concurrency limit reached or issue ineligible
+        // 503 = no PVC available or K8s failure
+        // Both propagate as HttpRequestException so the caller can map them to DistributionResult(false)
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content.ReadFromJsonAsync<DispatchWorkItemResponse>(
+            PipelineJsonOptions.Default, ct);
+        // TODO [WARNING]: result! suppresses the nullable warning. If the API returns HTTP 200
+        // with a null body, ReadFromJsonAsync returns null and result! throws NullReferenceException
+        // at the call site. Replace with:
+        //   return result ?? throw new InvalidOperationException("Dispatch endpoint returned 200 with a null body.");
+        // See review finding PipelineApiWorkItemClient.cs:242.
+        return result!;
+    }
 }

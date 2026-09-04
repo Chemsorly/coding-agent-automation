@@ -101,6 +101,10 @@ internal sealed class DbWorkItemClientAdapter : IPipelineApiWorkItemClient
     [ExcludeFromCodeCoverage(Justification = "Intentional NotSupportedException stub")]
     public Task SetPriorityAsync(Guid workItemId, int priorityWeight, CancellationToken ct = default)
         => throw new NotSupportedException($"{nameof(DbWorkItemClientAdapter)} only supports {nameof(GetK8sJobNameAsync)}.");
+
+    [ExcludeFromCodeCoverage(Justification = "Intentional NotSupportedException stub — never called by KubernetesJobCleanup")]
+    public Task<DispatchWorkItemResponse> DispatchAsync(JobDistributionRequest request, CancellationToken ct = default)
+        => throw new NotSupportedException($"{nameof(DbWorkItemClientAdapter)} only supports {nameof(GetK8sJobNameAsync)}.");
 }
 
 /// <summary>

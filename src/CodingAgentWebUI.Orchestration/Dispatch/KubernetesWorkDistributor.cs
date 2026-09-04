@@ -39,15 +39,17 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
 
         try
         {
-            var workItemId = await _apiClient.CreateAsync(request, ct);
+            var response = await _apiClient.DispatchAsync(request, ct);
             _logger.LogInformation(
-                "WorkItem {WorkItemId} created via Pipeline API for issue {IssueIdentifier}",
-                workItemId, request.IssueIdentifier);
-            return new DistributionResult(true, workItemId.ToString(), null, Queued: true);
+                "WorkItem {WorkItemId} dispatched synchronously via Pipeline API for issue {IssueIdentifier}",
+                response.WorkItemId, request.IssueIdentifier);
+            // Queued: false — the item is already Dispatched (K8s Job created). The caller should
+            // immediately confirm the label swap (agent:in-progress) rather than deferring it.
+            return new DistributionResult(true, response.WorkItemId.ToString(), null, Queued: false);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to create WorkItem via Pipeline API for issue {IssueIdentifier}",
+            _logger.LogError(ex, "Failed to dispatch WorkItem via Pipeline API for issue {IssueIdentifier}",
                 request.IssueIdentifier);
             return new DistributionResult(false, null, ex.Message);
         }

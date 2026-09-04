@@ -1558,24 +1558,6 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
     }
 
     [Fact]
-    public async Task DistributeAndFinalizeAsync_WhenDistributeSucceedsAndQueued_DoesNotConfirmLabel()
-    {
-        _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DistributionResult(true, "work-1", null, Queued: true));
-
-        var outcome = await _service.DistributeAndFinalizeAsync(TestRequest, CancellationToken.None);
-
-        outcome.Success.Should().BeTrue();
-        outcome.Queued.Should().BeTrue();
-        outcome.ErrorMessage.Should().BeNull();
-
-        // No label swap should have occurred (drain service handles it later)
-        _mockLabelService.Verify(
-            s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
-
-    [Fact]
     public async Task DistributeAndFinalizeAsync_PassesCancellationTokenToDistributor()
     {
         using var cts = new CancellationTokenSource();
@@ -1587,5 +1569,137 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
         _mockWorkDistributor.Verify(
             w => w.DistributeAsync(TestRequest, cts.Token),
             Times.Once);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AC3: 503/409 from dispatch endpoint → Success=false + RevertFailedDistributionAsync
+// Issue #2322: KubernetesWorkDistributor.DistributeAsync now calls DispatchAsync;
+// 503/409 responses translate to HttpRequestException → DistributionResult(false).
+// DispatchOrchestrationService.DistributeAndFinalizeAsync must revert the label to agent:next.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// <summary>
+/// Verifies AC3: when the new dispatch endpoint returns 503 or 409,
+/// <see cref="DispatchOrchestrationService.DistributeAndFinalizeAsync"/> returns
+/// <see cref="DispatchOutcome"/> with <c>Success=false</c> and
+/// <see cref="DispatchOrchestrationService.RevertFailedDistributionAsync"/> swaps the label
+/// back to <c>agent:next</c>.
+/// </summary>
+public class DispatchOrchestrationService_AC3_SynchronousDispatch503409Tests
+{
+    private readonly Mock<IWorkDistributor> _mockWorkDistributor = new();
+    private readonly Mock<ILabelService> _mockLabelService = new();
+    private readonly DispatchOrchestrationService _service;
+
+    private static readonly JobDistributionRequest TestRequest = new()
+    {
+        IssueIdentifier = "owner/repo#100",
+        IssueProviderConfigId = "ipc-1",
+        RepoProviderConfigId = "rpc-1",
+        InitiatedBy = "scheduler",
+        TaskType = WorkItemTaskType.Implementation,
+        AgentSelector = "kiro,dotnet",
+        TimeoutSeconds = 3600
+    };
+
+    public DispatchOrchestrationService_AC3_SynchronousDispatch503409Tests()
+    {
+        var mockAgentProfileStore = new Mock<IAgentProfileStore>();
+        var mockProviderConfigStore = new Mock<IConfigurationStore>();
+        var mockPipelineConfigStore = new Mock<IPipelineConfigStore>();
+        var mockLogger = new Mock<ILogger>();
+
+        _mockLabelService.Setup(s => s.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var resolution = new DispatchResolutionService(
+            new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(),
+            mockProviderConfigStore.Object, mockLogger.Object);
+        var infra = new DispatchInfrastructure(
+            Mock.Of<ITokenVendingService>(),
+            Mock.Of<IProviderFactory>(),
+            _mockLabelService.Object,
+            resolution);
+
+        _service = new DispatchOrchestrationService(
+            new DispatchOrchestrationServiceDependencies(
+                infra, _mockWorkDistributor.Object,
+                mockAgentProfileStore.Object,
+                mockProviderConfigStore.Object,
+                mockPipelineConfigStore.Object),
+            mockLogger.Object);
+    }
+
+    [Fact]
+    public async Task WhenDispatchEndpointReturns503_DistributeAndFinalizeReturnsFailure_AndRevertsLabel()
+    {
+        // IWorkDistributor maps the 503 HttpRequestException from DispatchAsync to a failed result
+        _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(false, null, "503 Service Unavailable: no PVC available"));
+
+        var outcome = await _service.DistributeAndFinalizeAsync(TestRequest, CancellationToken.None);
+
+        // DispatchOutcome must reflect failure
+        outcome.Success.Should().BeFalse();
+        outcome.ErrorMessage.Should().Contain("503");
+
+        // Label must be reverted to agent:next
+        _mockLabelService.Verify(
+            s => s.SwapLabelAsync(
+                It.Is<ProviderConfigId>(p => p.Value == "ipc-1"),
+                It.Is<IssueIdentifier>(i => i.Value == "owner/repo#100"),
+                AgentLabels.Next,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task WhenDispatchEndpointReturns409_DistributeAndFinalizeReturnsFailure_AndRevertsLabel()
+    {
+        _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(false, null, "409 Conflict: concurrency limit reached"));
+
+        var outcome = await _service.DistributeAndFinalizeAsync(TestRequest, CancellationToken.None);
+
+        outcome.Success.Should().BeFalse();
+        outcome.ErrorMessage.Should().Contain("409");
+
+        _mockLabelService.Verify(
+            s => s.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(),
+                It.IsAny<IssueIdentifier>(),
+                AgentLabels.Next,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task WhenDispatchSucceeds_ConfirmsLabel_NotReverts()
+    {
+        // Queued: false — synchronous dispatch returns immediately as Dispatched
+        _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(true, Guid.NewGuid().ToString(), null, Queued: false));
+
+        var outcome = await _service.DistributeAndFinalizeAsync(TestRequest, CancellationToken.None);
+
+        outcome.Success.Should().BeTrue();
+
+        // Label must be confirmed as agent:in-progress (NOT reverted to agent:next)
+        _mockLabelService.Verify(
+            s => s.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(),
+                It.IsAny<IssueIdentifier>(),
+                AgentLabels.InProgress,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+        _mockLabelService.Verify(
+            s => s.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(),
+                It.IsAny<IssueIdentifier>(),
+                AgentLabels.Next,
+                It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 }

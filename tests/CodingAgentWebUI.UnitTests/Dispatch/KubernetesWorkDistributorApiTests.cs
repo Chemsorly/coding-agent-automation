@@ -1,10 +1,7 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Api.Client;
-using CodingAgentWebUI.Infrastructure.Persistence;
-using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Models;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
 
@@ -12,8 +9,8 @@ namespace CodingAgentWebUI.UnitTests.Dispatch;
 
 /// <summary>
 /// Verifies that <see cref="KubernetesWorkDistributor.DistributeAsync"/> calls
-/// <see cref="IPipelineApiWorkItemClient.CreateAsync"/> instead of inserting directly into the DB.
-/// TDD gate: these tests MUST be written and failing before implementing Task 8.
+/// <see cref="IPipelineApiWorkItemClient.DispatchAsync"/> (synchronous dispatch path, issue #2322).
+/// The two-hop Pending→DispatchLoop→K8s path has been replaced with a single synchronous call.
 /// </summary>
 public class KubernetesWorkDistributorApiTests
 {
@@ -28,22 +25,22 @@ public class KubernetesWorkDistributorApiTests
             Mock.Of<ILogger<KubernetesWorkDistributor>>());
     }
 
-    // ── DistributeAsync calls CreateAsync ─────────────────────────────────
+    // ── DistributeAsync calls DispatchAsync (synchronous dispatch path) ───
 
     [Fact]
-    public async Task DistributeAsync_CallsApiClientCreateAsync_WithSameRequest()
+    public async Task DistributeAsync_CallsApiClientDispatchAsync_WithSameRequest()
     {
         var workItemId = Guid.NewGuid();
         var request = CreateMinimalRequest();
 
         _mockClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(workItemId);
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchWorkItemResponse(workItemId));
 
         await _sut.DistributeAsync(request, CancellationToken.None);
 
         _mockClient.Verify(
-            c => c.CreateAsync(
+            c => c.DispatchAsync(
                 It.Is<JobDistributionRequest>(r =>
                     r.IssueIdentifier == request.IssueIdentifier &&
                     r.IssueProviderConfigId == request.IssueProviderConfigId),
@@ -58,13 +55,15 @@ public class KubernetesWorkDistributorApiTests
         var request = CreateMinimalRequest();
 
         _mockClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(workItemId);
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchWorkItemResponse(workItemId));
 
         var result = await _sut.DistributeAsync(request, CancellationToken.None);
 
         result.Success.Should().BeTrue();
         result.WorkItemId.Should().Be(workItemId.ToString());
+        // Queued: false — item is immediately Dispatched, no longer queued as Pending
+        result.Queued.Should().BeFalse();
     }
 
     [Fact]
@@ -73,7 +72,7 @@ public class KubernetesWorkDistributorApiTests
         var request = CreateMinimalRequest();
 
         _mockClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("Pipeline API unreachable"));
 
         var result = await _sut.DistributeAsync(request, CancellationToken.None);
@@ -83,19 +82,49 @@ public class KubernetesWorkDistributorApiTests
     }
 
     [Fact]
-    public async Task DistributeAsync_DoesNotInsertIntoLocalDb()
+    public async Task DistributeAsync_WhenApi503_ReturnFailureResult()
+    {
+        var request = CreateMinimalRequest();
+
+        _mockClient
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Service Unavailable", null, System.Net.HttpStatusCode.ServiceUnavailable));
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task DistributeAsync_WhenApi409_ReturnFailureResult()
+    {
+        var request = CreateMinimalRequest();
+
+        _mockClient
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Conflict", null, System.Net.HttpStatusCode.Conflict));
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task DistributeAsync_DoesNotCallCreateAsync()
     {
         var workItemId = Guid.NewGuid();
         var request = CreateMinimalRequest();
 
         _mockClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(workItemId);
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchWorkItemResponse(workItemId));
 
         await _sut.DistributeAsync(request, CancellationToken.None);
 
-        // Verify CreateAsync was called (API-backed), and NOT the DB directly
-        _mockClient.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        // Verify the old CreateAsync (Pending path) is NOT called
+        _mockClient.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -117,12 +146,4 @@ public class KubernetesWorkDistributorApiTests
         AgentSelector = "default",
         TimeoutSeconds = 3600
     };
-}
-
-/// <summary>Minimal IDbContextFactory for tests — uses InMemory EF.</summary>
-file sealed class SimpleDbContextFactory : IDbContextFactory<PipelineDbContext>
-{
-    private readonly DbContextOptions<PipelineDbContext> _options;
-    public SimpleDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
-    public PipelineDbContext CreateDbContext() => new(_options);
 }

@@ -453,6 +453,9 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             return new DispatchOutcome(false, false, result.ErrorMessage);
         }
 
+        // KubernetesWorkDistributor now returns Queued:false always (synchronous dispatch path).
+        // ConsolidationDispatchService returns Queued:true when no agent is available.
+        // Label swap to agent:in-progress is only done on non-queued (immediately dispatched) outcomes.
         if (!result.Queued)
             await ConfirmDistributionLabelAsync(request, ct);
 

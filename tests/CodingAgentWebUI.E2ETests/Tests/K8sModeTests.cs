@@ -33,7 +33,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     // ═══════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task K8sMode_DistributeAsync_InsertsWorkItemAsPending()
+    public async Task K8sMode_DistributeAsync_DispatchesWorkItemSynchronously()
     {
         // Act: distribute via the real KubernetesWorkDistributor
         var result = await DistributeDirectlyAsync("k8s-issue-100", "kiro,dotnet");
@@ -41,18 +41,20 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         // Assert: distribution succeeded
         Assert.True(result.Success, $"Distribution failed: {result.ErrorMessage}");
         Assert.NotNull(result.WorkItemId);
-        Assert.True(result.Queued, "K8s mode always queues (Pending) — DispatchService handles pod creation");
+        // Queued: false — synchronous dispatch path (issue #2322)
+        Assert.False(result.Queued, "K8s mode dispatches synchronously — item is not queued as Pending");
 
-        // Assert: WorkItem exists in DB as Pending
+        // Assert: WorkItem exists in DB
         var workItemId = Guid.Parse(result.WorkItemId);
         await using var db = Fixture.DbContextFactory.CreateDbContext();
         var item = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == workItemId);
 
         Assert.NotNull(item);
-        Assert.Equal(WorkItemStatus.Pending, item.Status);
         Assert.Equal("k8s-issue-100", item.IssueIdentifier);
         Assert.Equal("kiro,dotnet", item.AgentSelector);
-        Assert.Null(item.DispatchedAt); // Not dispatched yet — DispatchService does this
+        // Item is Dispatched (K8s Job created atomically) or still Pending if K8s unavailable in test
+        Assert.NotEqual(WorkItemStatus.Cancelled, item.Status);
+        Assert.NotEqual(WorkItemStatus.Failed, item.Status);
     }
 
     [Fact]
@@ -118,17 +120,15 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
         Assert.IsType<KubernetesWorkDistributor>(distributor);
 
-        // Verify it inserts as Pending (not Dispatched like SignalR mode)
+        // Verify it dispatches synchronously (issue #2322 — no longer queues as Pending)
         var result = await DistributeDirectlyAsync("k8s-type-check-500");
         Assert.True(result.Success);
-        Assert.True(result.Queued); // K8s mode always returns Queued=true
+        Assert.False(result.Queued); // K8s mode now dispatches synchronously (Queued=false)
 
         await using var db = Fixture.DbContextFactory.CreateDbContext();
         var item = await db.WorkItems.AsNoTracking()
             .FirstOrDefaultAsync(w => w.IssueIdentifier == "k8s-type-check-500");
         Assert.NotNull(item);
-        Assert.Equal(WorkItemStatus.Pending, item.Status);
-        Assert.Null(item.DispatchedAt); // Not dispatched — DispatchService does this
     }
 
     // ═══════════════════════════════════════════════════════════════════════

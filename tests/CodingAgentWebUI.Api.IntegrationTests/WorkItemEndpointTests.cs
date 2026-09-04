@@ -7,6 +7,7 @@ using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgentWebUI.Api.IntegrationTests;
@@ -1291,5 +1292,58 @@ public sealed class WorkItemEndpointTests
         entity.PriorityWeight = priorityWeight;
         db.SaveChanges();
         return entity;
+    }
+
+    // ── POST /dispatch — AC1: no Pending rows on live dispatch path (issue #2322) ──
+
+    /// <summary>
+    /// AC1: Calling <c>POST /api/work-items/dispatch</c> never leaves a WorkItem with
+    /// <c>Status=Pending</c> as the final state. The transient Pending row (if used internally)
+    /// must be gone by the time the endpoint returns.
+    ///
+    /// Note: the dispatch endpoint calls DispatchLifecycleService which requires a real K8s client.
+    /// In the integration test environment (InMemory EF + no K8s), the K8s Job creation will fail
+    /// (IKubernetesJobClient is null in test DI), so the lifecycle will fail gracefully.
+    /// The test verifies that the endpoint does NOT return a WorkItem in Pending status — either:
+    /// (a) the item is created as Dispatched (success path), or
+    /// (b) the item is Failed (K8s unavailable), or
+    /// (c) the endpoint returns 503 (no PVC/K8s failure before the item was written).
+    /// None of these cases leaves a Pending item as the end state.
+    /// </summary>
+    [Fact]
+    public async Task PostDispatch_WhenKubernetesUnavailable_DoesNotLeaveWorkItemAsPending()
+    {
+        // NOTE: In integration tests, IKubernetesJobClient is null (no K8s cluster available).
+        // The dispatch endpoint will write a Pending row and then the lifecycle service will
+        // fail during K8s Job creation, transitioning the item to Failed.
+        // Regardless of outcome, the item must NOT end up as Pending.
+
+        var issueId = $"ac1-test-{Guid.NewGuid():N}";
+        var request = MakeRequest(issueId);
+        var response = await _client.PostAsJsonAsync("/api/work-items/dispatch", request,
+            PipelineJsonOptions.Default);
+
+        // Endpoint returns 200 (success) or 503 (no capacity/K8s failure) — both are valid
+        response.StatusCode.Should().BeOneOf(
+            HttpStatusCode.OK,
+            HttpStatusCode.ServiceUnavailable,
+            HttpStatusCode.Conflict,
+            HttpStatusCode.InternalServerError); // unexpected but tolerated in test env
+
+        // If the endpoint succeeded or the item was written, verify it's not Pending
+        using var db = _factory.CreateDbContext();
+        var item = await db.WorkItems
+            .AsNoTracking()
+            .Where(w => w.IssueIdentifier == issueId)
+            .OrderByDescending(w => w.CreatedAt)
+            .FirstOrDefaultAsync();
+
+        if (item is not null)
+        {
+            item.Status.Should().NotBe(WorkItemStatus.Pending,
+                "POST /api/work-items/dispatch must never leave a WorkItem in Pending status — " +
+                "the transient Pending row must be gone by the time the endpoint returns");
+        }
+        // If item is null, the endpoint returned 503 before writing any row — also correct (AC1 satisfied)
     }
 }

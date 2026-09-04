@@ -264,6 +264,30 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
     public static bool IsValidTransition(WorkItemStatus current, WorkItemStatus target)
         => (current, target) switch
         {
+            // RETAINED FOR ConsolidationDispatchLoop (issue #2322 cross-cutting constraint):
+            //
+            // Issue #2322 required removing the (Pending → Dispatched) and (Dispatched → Pending)
+            // transitions. They CANNOT be removed yet because:
+            //
+            //   1. ConsolidationDispatchLoop still uses the Pending-queue path:
+            //      POST /api/work-items → Pending
+            //      POST /api/consolidation-work-items/{id}/claim → Dispatched   (Pending → Dispatched)
+            //
+            //   2. The requeue-on-K8s-failure path in ConsolidationDispatchLoop transitions
+            //      Dispatched → Pending when job creation fails.
+            //
+            // Removing either transition before ConsolidationDispatchLoop is migrated to
+            // the synchronous dispatch path (a follow-up issue) would break consolidation dispatch
+            // entirely. This is a known technical debt accepted as part of issue #2322's out-of-scope
+            // decision on ConsolidationDispatchLoop.
+            //
+            // When ConsolidationDispatchLoop is migrated:
+            //   - Remove (Pending, Dispatched) from this switch.
+            //   - Remove (Dispatched, Pending) from this switch.
+            //   - Remove the /claim endpoint from ConsolidationWorkItemEndpoints.
+            //
+            // NOTE: Removing (Dispatched, Pending) does NOT break AC5 (requeue recovery path).
+            // AC5 uses (Failed → Pending) and (Cancelled → Pending) (lines below), which are distinct.
             (WorkItemStatus.Pending, WorkItemStatus.Dispatched or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,
             (WorkItemStatus.Dispatched, WorkItemStatus.Running or WorkItemStatus.Failed or WorkItemStatus.Cancelled or WorkItemStatus.Pending) => true,
             (WorkItemStatus.Running, WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,

@@ -223,17 +223,17 @@ public class WorkDistributorAdditionalTests
     }
 
     [Fact]
-    public async Task Kubernetes_AfterDistribute_GetJobStatus_ReturnsPending()
+    public async Task Kubernetes_AfterDispatch_GetJobStatus_ReturnsDispatched()
     {
-        // DistributeAsync creates the WorkItem via the API in Pending state; the Job Controller's
-        // dispatch loop is what later moves it to Dispatched/Running.
+        // DispatchAsync (synchronous path, issue #2322) creates the WorkItem as Dispatched directly.
+        // The Job Controller's dispatch loop is no longer in the critical path.
         var sut = CreateKubernetes();
         var request = CreateMinimalRequest();
 
         var result = await sut.DistributeAsync(request, CancellationToken.None);
 
         var status = await sut.GetJobStatusAsync(result.WorkItemId!, CancellationToken.None);
-        status.Should().Be(JobDistributionStatus.Pending);
+        status.Should().Be(JobDistributionStatus.Dispatched);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -263,6 +263,8 @@ public class WorkDistributorAdditionalTests
 /// dedup and status reads answer from them — the same round trip a live API performs, and the
 /// only way the distributor's post-distribute contract can be exercised now that it holds no
 /// database of its own.
+/// Updated for issue #2322: DistributeAsync now calls DispatchAsync (synchronous path) instead
+/// of CreateAsync (Pending-queue path).
 /// </summary>
 file static class ApiWorkItemClientFake
 {
@@ -271,18 +273,20 @@ file static class ApiWorkItemClientFake
         var created = new List<(Guid Id, JobDistributionRequest Request)>();
         var mock = new Mock<IPipelineApiWorkItemClient>();
 
-        mock.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+        // DispatchAsync: synchronous dispatch — creates K8s Job + writes Dispatched atomically.
+        // The fake records the item and returns a DispatchWorkItemResponse.
+        mock.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((JobDistributionRequest request, CancellationToken _) =>
             {
                 var id = Guid.NewGuid();
                 created.Add((id, request));
-                return id;
+                return new DispatchWorkItemResponse(id);
             });
 
-        // POST /api/work-items creates the item in Pending; nothing here dispatches it further.
+        // POST /api/work-items/dispatch creates the item as Dispatched directly.
         mock.Setup(c => c.GetStatusAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((Guid id, CancellationToken _) =>
-                created.Any(w => w.Id == id) ? WorkItemStatus.Pending : null);
+                created.Any(w => w.Id == id) ? WorkItemStatus.Dispatched : null);
 
         mock.Setup(c => c.IsIssueDistributedAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string issueIdentifier, string providerConfigId, CancellationToken _) =>
