@@ -207,9 +207,6 @@
     }
 
     // Re-filter already-loaded data when the time window changes — no API re-fetch needed.
-    // TODO: async void is unsafe — an exception other than ObjectDisposedException (e.g. HttpRequestException
-    // from LoadAsync) will escape the catch and crash the process on the thread pool. Consider converting to
-    // async Task and wiring the subscription via a wrapper lambda, or broadening the catch to Exception.
     private async void HandleRecentWindowChanged()
     {
         try
@@ -257,11 +254,6 @@
             _windowTotal = windowItems.Count;
 
             // Use windowItems for all stats; fall back to showing "—" when windowItems is empty.
-            // TODO: When _total > 0 but _windowTotal == 0 (all fetched runs fall outside the window),
-            // this returns early with all stat fields at zero and _loading = false. The template renders
-            // the stat strip (because _total > 0) showing "0%" values rather than an empty-state message,
-            // which looks broken. Consider adding a dedicated "no runs in this window" empty state or
-            // showing "—" for all stats when _windowTotal == 0 while keeping the stat strip visible.
             if (_windowTotal == 0) { _loading = false; return; }
 
             _completed = windowItems.Count(r => r.FinalStep == PipelineStep.Completed);

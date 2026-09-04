@@ -312,10 +312,6 @@
     }
 
     // Returns the age of the oldest in-flight item, or "—" when the list is empty.
-    // TODO: When all active items have DispatchedAt == null (e.g. freshly created, not yet dispatched),
-    // this returns "—" even though _active.Count > 0, making the primary count and the sub-line
-    // inconsistent. Consider falling back to another timestamp (e.g. CreatedAt) or showing
-    // "pending dispatch" so the secondary data is always meaningful when items exist.
     private string OldestActiveAge()
     {
         if (_active.Count == 0) return "—";

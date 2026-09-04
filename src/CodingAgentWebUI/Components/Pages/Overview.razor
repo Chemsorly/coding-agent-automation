@@ -223,10 +223,6 @@
             _tokensRecent = windowItems.Sum(r => r.TotalTokens);
 
             _attnNeedsRefinement = items.Count(r => r.AnalysisRecommendation == AnalysisGateResult.NotReady);
-            // TODO: _attnFailed and _attnPlans use the unfiltered `items` list (all fetched runs), not
-            // `windowItems`. This means the Attention strip shows failed/plan runs regardless of the
-            // selected time window, which is inconsistent with the "recent" metrics above. Consider
-            // switching these to use windowItems if the intent is for Attention to also honour the window.
             _attnFailed = items.Count(r => r.FinalStep == PipelineStep.Failed);
             _attnPlans = items.Count(r => r.RunType == PipelineRunType.DecompositionAnalysis && r.FinalStep == PipelineStep.Completed);
         }
@@ -268,12 +264,6 @@
 
     // Re-render (no re-fetch) when the time window changes — stats are re-filtered from cached data
     // on the next RefreshDataAsync tick, or immediately on manual change via OnWindowChanged.
-    // TODO: async void is unsafe — an exception other than ObjectDisposedException (e.g. HttpRequestException
-    // from RefreshDataAsync) will escape the catch and crash the process on the thread pool. Consider
-    // converting to async Task and wiring the subscription via a wrapper lambda, or broadening the catch
-    // to Exception. Also: rapid successive window changes can race two concurrent RefreshDataAsync calls;
-    // the later-finishing response overwrites the newer result. A CancellationToken per-window-change
-    // would prevent this.
     private async void HandleRecentWindowChanged()
     {
         try
