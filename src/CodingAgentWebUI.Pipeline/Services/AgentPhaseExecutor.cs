@@ -216,12 +216,10 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
             _ => ActivityTags.Unknown
         };
 
-        _analysisGateOutcomes.Add(1, new TagList
-        {
-            new(ActivityTags.Outcome, outcomeTag),
+        _analysisGateOutcomes.Add(1,
+            new KeyValuePair<string, object?>(ActivityTags.Outcome, outcomeTag),
             PipelineTelemetry.RunTypeTag(run.RunType),
             PipelineTelemetry.ProjectIdTag(run.ProjectId),
-            PipelineTelemetry.ProjectNameTag(run.ProjectName)
-        });
+            PipelineTelemetry.ProjectNameTag(run.ProjectName));
     }
 }

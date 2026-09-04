@@ -5,7 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
-    <RunSettingsFilePath>$(MSBuildProjectDirectory)\coverlet.runsettings</RunSettingsFilePath>
+    <!-- Set RunSettingsFilePath to enable coverage. Override with -p:SkipCoverage=true to skip. -->
+    <RunSettingsFilePath Condition="'$(SkipCoverage)' != 'true'">$(MSBuildProjectDirectory)\coverlet.runsettings</RunSettingsFilePath>
   </PropertyGroup>
 
   <ItemGroup>

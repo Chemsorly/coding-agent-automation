@@ -29,12 +29,12 @@ public class PullRequestFinalizationMetricsTests : IDisposable
     // assertion code expects, avoiding a mass-rewrite of every test body.
     private IReadOnlyList<(string Name, double Value, KeyValuePair<string, object?>[] Tags)> _histograms =>
         _histogramCollector.GetMeasurementSnapshot()
-            .Select(m => (m.InstrumentName, m.Value, m.Tags.ToArray()))
+            .Select(m => (_histogramCollector.Instrument!.Name, m.Value, m.Tags.ToArray()))
             .ToList();
 
     private IReadOnlyList<(string Name, long Value, KeyValuePair<string, object?>[] Tags)> _counters =>
         _counterCollector.GetMeasurementSnapshot()
-            .Select(m => (m.InstrumentName, m.Value, m.Tags.ToArray()))
+            .Select(m => (_counterCollector.Instrument!.Name, m.Value, m.Tags.ToArray()))
             .ToList();
 
     public PullRequestFinalizationMetricsTests()

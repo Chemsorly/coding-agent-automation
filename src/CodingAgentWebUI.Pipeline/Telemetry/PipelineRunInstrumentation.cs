@@ -98,7 +98,7 @@ public sealed partial class PipelineRunInstrumentation : IDisposable
             jobsCompleted = meter.CreateCounter<long>("pipeline.jobs.completed");
             jobsFailed = meter.CreateCounter<long>("pipeline.jobs.failed");
             jobDuration = meter.CreateHistogram<double>("pipeline.jobs.duration", "s", "Duration of pipeline jobs in seconds",
-                new InstrumentAdvice<double> { HistogramBucketBoundaries = [30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600] });
+                advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600] });
             decompositionDuration = meter.CreateHistogram<double>("pipeline.decomposition.duration", "s", "Duration of decomposition phases in seconds");
         }
         else

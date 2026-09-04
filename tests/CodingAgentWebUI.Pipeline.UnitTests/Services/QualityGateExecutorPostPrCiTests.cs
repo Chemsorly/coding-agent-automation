@@ -850,8 +850,8 @@ public class QualityGateExecutorPostPrCiTelemetryTests : IDisposable
 
     // Compatibility shim — existing test bodies use _instrumentNames.Should().Contain(name)
     private IEnumerable<string> _instrumentNames =>
-        _histogramCollector.GetMeasurementSnapshot().Select(m => m.InstrumentName)
-            .Concat(_counterCollector.GetMeasurementSnapshot().Select(m => m.InstrumentName));
+        _histogramCollector.GetMeasurementSnapshot().Select(_ => _histogramCollector.Instrument!.Name)
+            .Concat(_counterCollector.GetMeasurementSnapshot().Select(_ => _counterCollector.Instrument!.Name));
 
     private readonly Mock<IQualityGateValidator> _mockValidator = new();
     private readonly Mock<IAgentProvider> _mockAgent = new();

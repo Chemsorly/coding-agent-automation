@@ -84,7 +84,7 @@ public sealed class ReconciliationLoop
             var meter = workDistMeterFactory.Create(new MeterOptions(WorkDistributionTelemetry.MeterName));
             _timeoutExecutionAge = meter.CreateHistogram<double>("workdistribution.timeout_execution_age_seconds", "s",
                 "Execution age at timeout enforcement — canary for anchor correctness",
-                new InstrumentAdvice<double> { HistogramBucketBoundaries = [30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600] });
+                advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600] });
             _timeoutCanaryViolations = meter.CreateCounter<long>("workdistribution.timeout_canary_violations", "{violation}",
                 "Timeout enforcement blocked by canary invariant — indicates timestamp bug");
             _agentTimeouts = meter.CreateCounter<long>("workdistribution.agent_timeouts", "{job}",

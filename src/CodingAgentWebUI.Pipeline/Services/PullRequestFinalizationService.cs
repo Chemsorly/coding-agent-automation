@@ -31,7 +31,7 @@ public sealed class PullRequestFinalizationService
             var meter = meterFactory.Create(new MeterOptions(PipelineTelemetry.SourceName));
             _brainSyncSkipped = meter.CreateCounter<long>("brain.sync.skipped", "{sync}", "Runs where post-run brain sync was skipped (tagged by reason)");
             _stepDuration = meter.CreateHistogram<double>("pipeline.step.duration", "s", "Duration of individual pipeline steps",
-                new InstrumentAdvice<double>
+                advice: new InstrumentAdvice<double>
                 {
                     HistogramBucketBoundaries = [5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600]
                 });

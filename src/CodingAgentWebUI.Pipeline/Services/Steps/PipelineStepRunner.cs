@@ -25,7 +25,7 @@ public static class PipelineStepRunner
 
         Histogram<double> stepDuration = meter is not null
             ? meter.CreateHistogram<double>("pipeline.step.duration", "s", "Duration of individual pipeline steps",
-                new InstrumentAdvice<double> { HistogramBucketBoundaries = [5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600] })
+                advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600] })
             : PipelineTelemetry.StepDuration;
 
         Counter<long> stepCount = meter is not null

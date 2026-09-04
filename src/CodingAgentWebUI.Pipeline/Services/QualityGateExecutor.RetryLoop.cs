@@ -591,7 +591,7 @@ public partial class QualityGateExecutor
         if (report.ExternalCi is not null)
             EmitGateEvaluation(PipelineTelemetry.QualityGateNames.ExternalCi, report.ExternalCi.Passed);
 
-        static void EmitGateEvaluation(string gateName, bool passed)
+        void EmitGateEvaluation(string gateName, bool passed)
         {
             _qualityGateEvaluations.Add(1,
                 new("gate_name", gateName), new("result", passed ? "pass" : "fail"));
