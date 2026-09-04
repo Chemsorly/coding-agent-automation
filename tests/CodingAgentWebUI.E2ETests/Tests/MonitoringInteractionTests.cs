@@ -106,7 +106,9 @@ public sealed class MonitoringInteractionTests : E2ETestBase
         var navigationTask = Page.WaitForURLAsync($"**/runs/{runId}", new() { Timeout = 30_000 });
         await runRow.First.ClickAsync();
         await navigationTask;
-        await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
+        // Wait specifically for the run detail h1 containing "#71" — a generic h1 wait can resolve
+        // immediately on the still-present Overview h1 before Blazor finishes re-rendering RunPage.
+        await Page.WaitForSelectorAsync("h1:has-text(\"#71\")", new() { Timeout = 15_000 });
         var pageText = await Page.TextContentAsync("body");
         Assert.Contains("#71", pageText);
     }
