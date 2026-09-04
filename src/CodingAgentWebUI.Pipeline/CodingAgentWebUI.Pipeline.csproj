@@ -19,6 +19,7 @@
     <InternalsVisibleTo Include="CodingAgentWebUI.Agent.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Pipeline.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Infrastructure.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.Infrastructure.IntegrationTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.E2ETests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.IntegrationTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.UnitTests" />

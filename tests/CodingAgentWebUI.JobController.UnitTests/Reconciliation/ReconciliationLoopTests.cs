@@ -62,6 +62,11 @@ public sealed class ReconciliationLoopTests
             ItemId,
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Succeeded"),
             It.IsAny<CancellationToken>()), Times.Once);
+
+        // Succeeded job reconciliation must not proactively delete the job —
+        // K8s TTL or CleanupOrphans handles that separately.
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ─── K8s Failed event ────────────────────────────────────────────────────
@@ -82,6 +87,11 @@ public sealed class ReconciliationLoopTests
             ItemId,
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "AgentError"),
             It.IsAny<CancellationToken>()), Times.Once);
+
+        // Failed job reconciliation must not proactively delete the job —
+        // only timeout enforcement deletes jobs.
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ─── Timeout enforcement ──────────────────────────────────────────────────
@@ -117,14 +127,14 @@ public sealed class ReconciliationLoopTests
             It.IsAny<CancellationToken>()), Times.Once);
 
         _k8sClient.Verify(c => c.DeleteJobAsync(jobName, _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
-        // TODO: Add Verify that GetActiveAsync was called exactly once with the canary threshold (60)
-        // to guard against a regression where EnforceTimeoutsAsync passes a wrong argument and the
-        // mock returns empty — in that case the PostStatusAsync Times.Once assertion would fail, but
-        // the root cause (wrong query argument) would be obscured. A dedicated Verify closes the gap.
-        // Note: the mock setup above already uses It.Is<int>(n => n == 60) so a wrong argument would
-        // cause the mock to return empty and PostStatusAsync would not be called, making the
-        // Times.Once assertion fail — but adding an explicit Verify makes the intent unambiguous.
-        // (TestQualityReviewer review [WARNING] @ ReconciliationLoopTests.cs:89)
+
+        // Verify GetActiveAsync was called with the canary threshold (60s) — closes the gap where
+        // a wrong argument causes the mock to return empty and PostStatusAsync never fires, making
+        // this test a false green that masks the root cause.
+        _workItemClient.Verify(c => c.GetActiveAsync(
+            It.Is<int>(n => n == 60),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -184,10 +194,14 @@ public sealed class ReconciliationLoopTests
             It.IsAny<Guid>(),
             It.IsAny<WorkItemStatusUpdate>(),
             It.IsAny<CancellationToken>()), Times.Never);
-        // TODO: Add a Verify that GetActiveAsync was called with the canary threshold (60) to
-        // confirm the query threshold hasn't regressed. Currently uses It.IsAny<int>() because
-        // the mock must return the item regardless; a separate Verify call would close the gap.
-        // See review finding [WARNING] — TestQualityReviewer @ ReconciliationLoopTests.cs:152.
+
+        // Verify GetActiveAsync was called with the canary threshold — confirms the query was issued
+        // rather than being silently skipped (a wrong threshold would still return empty and
+        // PostStatusAsync Times.Never would pass, masking the regression).
+        _workItemClient.Verify(c => c.GetActiveAsync(
+            It.Is<int>(n => n > 0),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -197,10 +211,7 @@ public sealed class ReconciliationLoopTests
         // TimeoutSeconds = 0 means field was not stored (pre-dates this feature).
         // Fall back to PipelineConstants.DefaultAgentTimeout (30 min = 1800s).
         // Item has been running for 1801s — must be timed out via fallback.
-        // TODO: Replace magic number 1800 with (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds
-        // so a change to DefaultAgentTimeout causes this test to fail rather than silently pass.
-        // See review finding [WARNING] — TestQualityReviewer @ ReconciliationLoopTests.cs:187.
-        const int globalDefaultSeconds = 1800;
+        var globalDefaultSeconds = (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds;
         var legacyItem = new ActiveWorkItemDto
         {
             Id = ItemId,
@@ -442,6 +453,10 @@ public sealed class ReconciliationLoopTests
             ItemId,
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Succeeded"),
             It.IsAny<CancellationToken>()), Times.Once);
+
+        // No job deletion — reconciliation of a succeeded job must not proactively delete it.
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
