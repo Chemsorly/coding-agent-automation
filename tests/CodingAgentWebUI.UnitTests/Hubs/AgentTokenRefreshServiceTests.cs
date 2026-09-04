@@ -98,12 +98,14 @@ public sealed class AgentTokenRefreshServiceTests
         _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(config);
 
+        var before = DateTimeOffset.UtcNow;
         var service = CreateService();
 
         var result = await service.RefreshTokenAsync("job-1", ProviderKind.Repository, CancellationToken.None);
 
         result.Token.Should().Be("glpat-secret-token");
-        // TODO: Assert result.ExpiresAt is approximately 1 hour in the future — the 1-hour expiry is a behavioral contract agents rely on for scheduling refresh
+        result.ExpiresAt.Should().BeCloseTo(before.AddHours(1), TimeSpan.FromMinutes(1),
+            "GitLab PAT ExpiresAt should be ~1 hour from now as a refresh schedule hint");
         _mockTokenVending.Verify(t => t.GenerateAgentTokenAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Never);
     }
 
@@ -114,12 +116,14 @@ public sealed class AgentTokenRefreshServiceTests
     [Fact]
     public async Task RefreshToken_PipelineRun_PreVendedToken_ReturnsExistingToken()
     {
+        var storedExpiry = new DateTimeOffset(2026, 9, 5, 10, 0, 0, TimeSpan.Zero);
         var config = new ProviderConfig
         {
             Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
             Settings = new Dictionary<string, string>
             {
-                [ProviderSettingKeys.Token] = "pre-vended-token-123"
+                [ProviderSettingKeys.Token] = "pre-vended-token-123",
+                [ProviderSettingKeys.TokenExpiresAt] = storedExpiry.ToString("O")
             }
         };
 
@@ -141,7 +145,8 @@ public sealed class AgentTokenRefreshServiceTests
         var result = await service.RefreshTokenAsync("job-1", ProviderKind.Repository, CancellationToken.None);
 
         result.Token.Should().Be("pre-vended-token-123");
-        // TODO: Assert result.ExpiresAt is approximately 1 hour in the future — the 1-hour expiry is a behavioral contract agents rely on for scheduling refresh
+        result.ExpiresAt.Should().Be(storedExpiry,
+            "ExpiresAt must be the real stored TokenExpiresAt value, not a fabricated UtcNow+1h");
         _mockTokenVending.Verify(t => t.GenerateAgentTokenAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Never);
     }
 

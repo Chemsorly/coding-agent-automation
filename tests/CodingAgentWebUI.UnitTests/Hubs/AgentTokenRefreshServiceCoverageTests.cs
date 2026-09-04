@@ -87,17 +87,51 @@ public sealed class AgentTokenRefreshServiceCoverageTests
             "GitLab PAT refresh must set ExpiresAt to ~1 hour from now so agents schedule the next refresh correctly");
     }
 
-    // ── Pre-vended token ExpiresAt is ~1 hour in the future ──────────────
+    // ── Pre-vended token ExpiresAt comes from stored TokenExpiresAt ──────
 
     [Fact]
-    public async Task RefreshToken_PreVendedToken_ExpiresAtIsApproximatelyOneHourFromNow()
+    public async Task RefreshToken_PreVendedToken_WithStoredExpiresAt_ReturnsStoredExpiry()
     {
+        // TokenExpiresAt is written at dispatch time by TokenVendingService.PrepareAgentConfigsAsync.
+        // VendTokenAsync must return this real stored expiry — NOT fabricate UtcNow+1h.
+        var storedExpiry = new DateTimeOffset(2026, 9, 5, 3, 0, 0, TimeSpan.Zero);
         var config = new ProviderConfig
         {
             Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
             Settings = new Dictionary<string, string>
             {
-                [ProviderSettingKeys.Token] = "pre-vended-12345"
+                [ProviderSettingKeys.Token] = "pre-vended-12345",
+                [ProviderSettingKeys.TokenExpiresAt] = storedExpiry.ToString("O")
+            }
+        };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(MakeRun());
+        _facade.Setup(f => f.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var service = CreateService();
+
+        var result = await service.RefreshTokenAsync("job-1", ProviderKind.Repository, CancellationToken.None);
+
+        result.Token.Should().Be("pre-vended-12345");
+        result.ExpiresAt.Should().Be(storedExpiry,
+            "pre-vended token ExpiresAt must come from the stored TokenExpiresAt setting, not be fabricated");
+    }
+
+    // ── Pre-vended token without TokenExpiresAt → conservative 5-min fallback ──
+
+    [Fact]
+    public async Task RefreshToken_PreVendedToken_WithoutStoredExpiresAt_UsesConservativeFallback()
+    {
+        // Legacy or manually-constructed configs may lack TokenExpiresAt.
+        // The service must not fabricate UtcNow+1h; use a short fallback so agents retry sooner.
+        var config = new ProviderConfig
+        {
+            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.Token] = "legacy-token"
+                // TokenExpiresAt deliberately absent
             }
         };
 
@@ -110,9 +144,15 @@ public sealed class AgentTokenRefreshServiceCoverageTests
 
         var result = await service.RefreshTokenAsync("job-1", ProviderKind.Repository, CancellationToken.None);
 
-        result.Token.Should().Be("pre-vended-12345");
-        result.ExpiresAt.Should().BeCloseTo(before.AddHours(1), TimeSpan.FromMinutes(1),
-            "pre-vended token refresh must set ExpiresAt to ~1 hour from now");
+        result.Token.Should().Be("legacy-token");
+        result.ExpiresAt.Should().BeCloseTo(before.AddMinutes(5), TimeSpan.FromSeconds(10),
+            "conservative 5-minute fallback must be used when TokenExpiresAt is missing");
+        // TODO: The BeBefore(+10min) assertion below is redundant — anything within the 10-second
+        // window of BeCloseTo(+5min) is trivially before +10min, so this assertion provides no
+        // additional regression protection and could mask a refactor that widens the fallback to
+        // e.g. AddMinutes(9). Tighten this to BeBefore(before.AddMinutes(6)) for a meaningful bound.
+        result.ExpiresAt.Should().BeBefore(before.AddMinutes(10),
+            "must not fabricate an hour of freshness for a token whose real expiry is unknown");
     }
 
     // ── K8s fallback: brain kind, brainId is null → HubException ──────────

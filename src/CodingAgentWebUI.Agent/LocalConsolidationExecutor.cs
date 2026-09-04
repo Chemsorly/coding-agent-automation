@@ -30,7 +30,8 @@ namespace CodingAgentWebUI.Agent;
 /// </remarks>
 public sealed class LocalConsolidationExecutor : IConsolidationExecutor
 {
-    private readonly ConsolidationProviderResolver _resolver;
+    private readonly IKiroCliOrchestrator _orchestrator;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly Serilog.ILogger _logger;
 
     public LocalConsolidationExecutor(
@@ -42,7 +43,8 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
         ArgumentNullException.ThrowIfNull(httpClientFactory);
         ArgumentNullException.ThrowIfNull(logger);
 
-        _resolver = new ConsolidationProviderResolver(orchestrator, httpClientFactory, logger);
+        _orchestrator = orchestrator;
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
 
@@ -71,6 +73,17 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
         _logger.Information("Starting consolidation job {JobId} of type {Type}",
             job.JobId, job.Type);
 
+        // Build a per-job resolver with a fresh OrchestratorProxy so that consolidation
+        // runs (e.g. brain consolidation) can refresh their repository tokens via SignalR
+        // rather than using the static dispatch-time token that expires after ~1 hour.
+        // TODO: Verify that the caller always passes a distinct HubConnection per consolidation
+        // job. If two jobs share the same HubConnection instance, concurrent OrchestratorProxy
+        // invocations on that connection may be unsafe (SignalR hub invocations are not
+        // guaranteed thread-safe for simultaneous calls from different proxies). If connection
+        // sharing is possible, introduce a per-job connection or a synchronization guard.
+        var proxy = new OrchestratorProxy(connection, job.JobId);
+        var resolver = new ConsolidationProviderResolver(_orchestrator, _httpClientFactory, _logger, proxy);
+
         ConsolidationJobResult result;
         try
         {
@@ -78,9 +91,9 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
                 job.PipelineConfiguration.AgentTimeout, ct,
                 async linkedCt => job.Type switch
                 {
-                    ConsolidationRunType.BrainConsolidation => await ExecuteBrainConsolidationAsync(job, linkedCt),
-                    ConsolidationRunType.RefactoringDetection => await ExecuteRefactoringDetectionAsync(job, linkedCt),
-                    ConsolidationRunType.HarnessSuggestions => await ExecuteHarnessSuggestionsAsync(job, linkedCt),
+                    ConsolidationRunType.BrainConsolidation => await ExecuteBrainConsolidationAsync(job, resolver, linkedCt),
+                    ConsolidationRunType.RefactoringDetection => await ExecuteRefactoringDetectionAsync(job, resolver, linkedCt),
+                    ConsolidationRunType.HarnessSuggestions => await ExecuteHarnessSuggestionsAsync(job, resolver, linkedCt),
                     _ => new ConsolidationJobResult
                     {
                         JobId = job.JobId,
@@ -139,9 +152,9 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
     }
 
     private async Task<ConsolidationJobResult> ExecuteBrainConsolidationAsync(
-        ConsolidationJobMessage job, CancellationToken ct)
+        ConsolidationJobMessage job, ConsolidationProviderResolver resolver, CancellationToken ct)
     {
-        var resolution = await _resolver.ResolveBrainConsolidationProvidersAsync(job, ct);
+        var resolution = await resolver.ResolveBrainConsolidationProvidersAsync(job, ct);
         if (!resolution.IsSuccess)
             return resolution.Failure!;
 
@@ -153,9 +166,9 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
     }
 
     private async Task<ConsolidationJobResult> ExecuteRefactoringDetectionAsync(
-        ConsolidationJobMessage job, CancellationToken ct)
+        ConsolidationJobMessage job, ConsolidationProviderResolver resolver, CancellationToken ct)
     {
-        var resolution = await _resolver.ResolveRefactoringProvidersAsync(job, ct);
+        var resolution = await resolver.ResolveRefactoringProvidersAsync(job, ct);
         if (!resolution.IsSuccess)
             return resolution.Failure!;
 
@@ -168,9 +181,9 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
     }
 
     private async Task<ConsolidationJobResult> ExecuteHarnessSuggestionsAsync(
-        ConsolidationJobMessage job, CancellationToken ct)
+        ConsolidationJobMessage job, ConsolidationProviderResolver resolver, CancellationToken ct)
     {
-        var resolution = await _resolver.ResolveHarnessProvidersAsync(job, ct);
+        var resolution = await resolver.ResolveHarnessProvidersAsync(job, ct);
         if (!resolution.IsSuccess)
             return resolution.Failure!;
 

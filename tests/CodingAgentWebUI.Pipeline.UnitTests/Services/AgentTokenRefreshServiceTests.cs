@@ -73,15 +73,48 @@ public sealed class AgentTokenRefreshServiceTests
     [Fact]
     public async Task RefreshTokenAsync_WithTokenField_ReturnsToken()
     {
+        var storedExpiry = new DateTimeOffset(2026, 9, 5, 0, 0, 0, TimeSpan.Zero);
         var run = MakeRun("github-repo");
         _facade.Setup(f => f.GetRun("run-1")).Returns(run);
-        var config = MakeConfig("github-repo", new() { [ProviderSettingKeys.Token] = "existing-token" });
+        var config = MakeConfig("github-repo", new()
+        {
+            [ProviderSettingKeys.Token] = "existing-token",
+            [ProviderSettingKeys.TokenExpiresAt] = storedExpiry.ToString("O")
+        });
         _facade.Setup(f => f.GetProviderConfigByIdAsync("github-repo", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(config);
 
         var result = await _sut.RefreshTokenAsync("run-1", ProviderKind.Repository, CancellationToken.None);
 
         result.Token.Should().Be("existing-token");
+        result.ExpiresAt.Should().Be(storedExpiry,
+            "ExpiresAt must be the real stored TokenExpiresAt value, not fabricated");
+    }
+
+    // ── Generic 'token' field without TokenExpiresAt → conservative fallback ──
+
+    [Fact]
+    public async Task RefreshTokenAsync_WithTokenField_NoStoredExpiresAt_UsesConservativeFallback()
+    {
+        var run = MakeRun("github-repo");
+        _facade.Setup(f => f.GetRun("run-1")).Returns(run);
+        var config = MakeConfig("github-repo", new() { [ProviderSettingKeys.Token] = "existing-token" });
+        _facade.Setup(f => f.GetProviderConfigByIdAsync("github-repo", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var before = DateTimeOffset.UtcNow;
+
+        var result = await _sut.RefreshTokenAsync("run-1", ProviderKind.Repository, CancellationToken.None);
+
+        result.Token.Should().Be("existing-token");
+        result.ExpiresAt.Should().BeCloseTo(before.AddMinutes(5), TimeSpan.FromSeconds(10),
+            "conservative 5-minute fallback must be used when TokenExpiresAt is missing");
+        // TODO: The BeBefore(+10min) assertion below is redundant — anything within the 10-second
+        // window of BeCloseTo(+5min) is trivially before +10min, so this assertion provides no
+        // additional regression protection and could mask a refactor that widens the fallback to
+        // e.g. AddMinutes(9). Tighten this to BeBefore(before.AddMinutes(6)) for a meaningful bound.
+        result.ExpiresAt.Should().BeBefore(before.AddMinutes(10),
+            "must not fabricate an hour of freshness for a token of unknown age");
     }
 
     // ── GitHub App JWT path ───────────────────────────────────────────────
@@ -95,7 +128,7 @@ public sealed class AgentTokenRefreshServiceTests
         _facade.Setup(f => f.GetProviderConfigByIdAsync("github-app", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(config);
         var expiry = DateTimeOffset.UtcNow.AddMinutes(10);
-        _tokenVending.Setup(t => t.GenerateAgentTokenAsync(config, It.IsAny<CancellationToken>()))
+        _tokenVending.Setup(t => t.GenerateAgentTokenAsync(config, It.IsAny<CancellationToken>(), false))
             .ReturnsAsync(("jwt-token", expiry));
 
         var result = await _sut.RefreshTokenAsync("run-1", ProviderKind.Repository, CancellationToken.None);

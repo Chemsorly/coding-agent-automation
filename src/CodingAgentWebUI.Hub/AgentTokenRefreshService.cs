@@ -124,14 +124,30 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
             return new TokenRefreshResponse { Token = accessToken, ExpiresAt = DateTimeOffset.UtcNow.AddHours(1) };
         }
 
-        // Fallback: check if a pre-vended token already exists in settings
+        // Pre-vended token: GitHub App configs have their privateKeyBase64 stripped at dispatch time
+        // and replaced with a short-lived token + tokenExpiresAt by TokenVendingService.PrepareAgentConfigsAsync.
+        // Return the real stored expiry so agents can detect when the token actually expires.
+        // Re-minting is NOT possible here — the GitHub App credentials are gone by this point.
         if (targetConfig.Settings.TryGetValue(ProviderSettingKeys.Token, out var existingToken)
             && !string.IsNullOrWhiteSpace(existingToken))
         {
-            _logger.Information("Returning existing token for job {JobId} (kind: {ProviderKind})",
-                jobId, providerKind);
+            if (targetConfig.Settings.TryGetValue(ProviderSettingKeys.TokenExpiresAt, out var expiresAtStr)
+                && DateTimeOffset.TryParse(expiresAtStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsedExpiry))
+            {
+                _logger.Information("Returning pre-vended token for job {JobId} (kind: {ProviderKind}), expires at {ExpiresAt}",
+                    jobId, providerKind, parsedExpiry);
 
-            return new TokenRefreshResponse { Token = existingToken, ExpiresAt = DateTimeOffset.UtcNow.AddHours(1) };
+                return new TokenRefreshResponse { Token = existingToken, ExpiresAt = parsedExpiry };
+            }
+
+            // TokenExpiresAt missing: legacy config or manually-constructed payload.
+            // Use a conservative short expiry so the agent retries sooner rather than
+            // assuming an hour of freshness on an unknown-age token.
+            _logger.Warning("Pre-vended token for job {JobId} (kind: {ProviderKind}) has no {TokenExpiresAtKey} in settings; " +
+                "cannot determine real expiry — using conservative 5-minute fallback",
+                jobId, providerKind, ProviderSettingKeys.TokenExpiresAt);
+
+            return new TokenRefreshResponse { Token = existingToken, ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5) };
         }
 
         _logger.Warning("Provider config for job {JobId} (kind: {ProviderKind}) has no supported authentication method", jobId, providerKind);
