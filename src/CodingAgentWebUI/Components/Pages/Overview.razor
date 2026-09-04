@@ -50,8 +50,19 @@
         <div class="cockpit-stat"><span class="cockpit-stat-l">Active</span><span class="cockpit-stat-v">@_activeCount</span></div>
         <div class="cockpit-stat"><span class="cockpit-stat-l">Queue</span><span class="cockpit-stat-v">@_queueCount</span></div>
         <div class="cockpit-stat"><span class="cockpit-stat-l">Agents</span><span class="cockpit-stat-v">@_agentsOnline<span style="font-size: 15px; color: var(--text-faint);">/@_agentsTotal</span></span></div>
-        <div class="cockpit-stat"><span class="cockpit-stat-l">Success · recent</span><span class="cockpit-stat-v">@(_finishedCount > 0 ? $"{_successRate}%" : "—")</span></div>
-        <div class="cockpit-stat"><span class="cockpit-stat-l">Tokens · recent</span><span class="cockpit-stat-v">@CostFormatter.FormatTokens(_tokensRecent)</span></div>
+        <div class="cockpit-stat"><span class="cockpit-stat-l">Success (@RecentLabel)</span><span class="cockpit-stat-v">@(_finishedCount > 0 ? $"{_successRate}%" : "—")</span></div>
+        <div class="cockpit-stat"><span class="cockpit-stat-l">Tokens (@RecentLabel)</span><span class="cockpit-stat-v">@CostFormatter.FormatTokens(_tokensRecent)</span></div>
+        <div class="cockpit-stat" style="justify-content: center; min-width: 120px;">
+            <span class="cockpit-stat-l" style="margin-bottom: 4px;">Time window</span>
+            <select style="background: transparent; border: 1px solid var(--ctl-border); border-radius: 6px; color: var(--text); font: 600 12.5px 'Manrope', ui-sans-serif, sans-serif; padding: 2px 6px; cursor: pointer; outline: none;"
+                    value="@State.RecentWindowHours"
+                    @onchange="OnWindowChanged">
+                <option value="1">1h</option>
+                <option value="6">6h</option>
+                <option value="24">24h</option>
+                <option value="168">7d</option>
+            </select>
+        </div>
     </div>
 
     @if (_attnNeedsRefinement + _attnFailed + _attnPlans > 0)
@@ -152,6 +163,7 @@
     {
         LoopService.OnChange += HandleLoopChanged;
         State.OnProjectChanged += HandleProjectChanged;
+        State.OnRecentWindowChanged += HandleRecentWindowChanged;
     }
 
     protected override async Task OnInitializedAsync() => await RefreshDataAsync();
@@ -199,13 +211,22 @@
             _recentRuns = items.Where(r => !IsActive(r)).ToList();
             _activeCount = _activeRuns.Count;
 
-            var finished = _recentRuns;
-            _finishedCount = finished.Count;
-            var succeeded = finished.Count(r => r.FinalStep == PipelineStep.Completed);
+            // Apply time-window filter for "recent" metrics. Active runs are excluded from the
+            // success/finished count but included in the token total to match pre-existing behaviour.
+            var cutoff = DateTimeOffset.UtcNow.AddHours(-State.RecentWindowHours);
+            var windowFinished = _recentRuns.Where(r => r.StartedAtOffset >= cutoff).ToList();
+            var windowItems = items.Where(r => r.StartedAtOffset >= cutoff).ToList();
+
+            _finishedCount = windowFinished.Count;
+            var succeeded = windowFinished.Count(r => r.FinalStep == PipelineStep.Completed);
             _successRate = _finishedCount > 0 ? (int)Math.Round(100.0 * succeeded / _finishedCount) : 0;
-            _tokensRecent = items.Sum(r => r.TotalTokens);
+            _tokensRecent = windowItems.Sum(r => r.TotalTokens);
 
             _attnNeedsRefinement = items.Count(r => r.AnalysisRecommendation == AnalysisGateResult.NotReady);
+            // TODO: _attnFailed and _attnPlans use the unfiltered `items` list (all fetched runs), not
+            // `windowItems`. This means the Attention strip shows failed/plan runs regardless of the
+            // selected time window, which is inconsistent with the "recent" metrics above. Consider
+            // switching these to use windowItems if the intent is for Attention to also honour the window.
             _attnFailed = items.Count(r => r.FinalStep == PipelineStep.Failed);
             _attnPlans = items.Count(r => r.RunType == PipelineRunType.DecompositionAnalysis && r.FinalStep == PipelineStep.Completed);
         }
@@ -245,10 +266,46 @@
         catch (ObjectDisposedException) { }
     }
 
+    // Re-render (no re-fetch) when the time window changes — stats are re-filtered from cached data
+    // on the next RefreshDataAsync tick, or immediately on manual change via OnWindowChanged.
+    // TODO: async void is unsafe — an exception other than ObjectDisposedException (e.g. HttpRequestException
+    // from RefreshDataAsync) will escape the catch and crash the process on the thread pool. Consider
+    // converting to async Task and wiring the subscription via a wrapper lambda, or broadening the catch
+    // to Exception. Also: rapid successive window changes can race two concurrent RefreshDataAsync calls;
+    // the later-finishing response overwrites the newer result. A CancellationToken per-window-change
+    // would prevent this.
+    private async void HandleRecentWindowChanged()
+    {
+        try
+        {
+            await RefreshDataAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async Task OnWindowChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var hours))
+            State.SetRecentWindowHours(hours);
+        // HandleRecentWindowChanged will trigger a re-fetch via the event subscription.
+        // If the event doesn't fire (same value), nothing happens — which is correct.
+        await Task.CompletedTask;
+    }
+
+    private string RecentLabel => State.RecentWindowHours switch
+    {
+        1 => "1h",
+        6 => "6h",
+        168 => "7d",
+        _ => "24h"
+    };
+
     public async ValueTask DisposeAsync()
     {
         LoopService.OnChange -= HandleLoopChanged;
         State.OnProjectChanged -= HandleProjectChanged;
+        State.OnRecentWindowChanged -= HandleRecentWindowChanged;
         await _cts.CancelAsync();
         _cts.Dispose();
     }

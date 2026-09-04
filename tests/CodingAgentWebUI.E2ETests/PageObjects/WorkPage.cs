@@ -49,4 +49,14 @@ public sealed class WorkPage
     /// <summary>Clicks the Cancel button on the in-flight row for the given issue.</summary>
     public async Task CancelInFlightAsync(string issueIdentifier)
         => await InFlightRow(issueIdentifier).GetByRole(AriaRole.Button).ClickAsync();
+
+    private ILocator BacklogCard => _page.Locator(".cockpit-card:has(h2:has-text('Provider backlog'))");
+
+    /// <summary>Row for the given issue within the "Provider backlog" card.</summary>
+    public ILocator ProviderBacklogRow(string issueIdentifier) =>
+        BacklogCard.Locator("tbody tr").Filter(new() { HasTextString = $"#{issueIdentifier}" });
+
+    /// <summary>Label chips within the provider backlog row for the given issue.</summary>
+    public ILocator BacklogLabelChips(string issueIdentifier) =>
+        ProviderBacklogRow(issueIdentifier).Locator(".sidebar-label");
 }

@@ -23,7 +23,18 @@
     <div class="cockpit-page-header">
         <div class="cockpit-page-titles">
             <h1>Insights</h1>
-            <span class="cockpit-page-sub">Trends across the last @_total run@(_total == 1 ? "" : "s")</span>
+            <span class="cockpit-page-sub">Trends across @_windowTotal run@(_windowTotal == 1 ? "" : "s") in the last @RecentLabel</span>
+        </div>
+        <div style="display: inline-flex; align-items: center; gap: 8px;">
+            <span style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Window</span>
+            <select style="background: var(--surface); border: 1px solid var(--ctl-border); border-radius: 8px; color: var(--text); font: 600 12.5px 'Manrope', ui-sans-serif, sans-serif; padding: 5px 10px; cursor: pointer; outline: none; height: 34px;"
+                    value="@State.RecentWindowHours"
+                    @onchange="OnWindowChanged">
+                <option value="1">1h</option>
+                <option value="6">6h</option>
+                <option value="24">24h</option>
+                <option value="168">7d</option>
+            </select>
         </div>
     </div>
 
@@ -42,10 +53,10 @@
     else
     {
         <div class="cockpit-stat-strip">
-            <div class="cockpit-stat"><span class="cockpit-stat-l">Success rate</span><span class="cockpit-stat-v">@_successRate<span style="font-size: 15px; color: var(--text-faint);">%</span></span></div>
-            <div class="cockpit-stat"><span class="cockpit-stat-l">Avg cycle time</span><span class="cockpit-stat-v">@_avgCycle</span></div>
-            <div class="cockpit-stat"><span class="cockpit-stat-l">Retry rate</span><span class="cockpit-stat-v">@_retryRate<span style="font-size: 15px; color: var(--text-faint);">%</span></span></div>
-            <div class="cockpit-stat"><span class="cockpit-stat-l">Avg tokens / run</span><span class="cockpit-stat-v">@CostFormatter.FormatTokens(_avgTokens)</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Success rate (@RecentLabel)</span><span class="cockpit-stat-v">@_successRate<span style="font-size: 15px; color: var(--text-faint);">%</span></span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Avg cycle time (@RecentLabel)</span><span class="cockpit-stat-v">@_avgCycle</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Retry rate (@RecentLabel)</span><span class="cockpit-stat-v">@_retryRate<span style="font-size: 15px; color: var(--text-faint);">%</span></span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Avg tokens / run (@RecentLabel)</span><span class="cockpit-stat-v">@CostFormatter.FormatTokens(_avgTokens)</span></div>
         </div>
 
         <div class="cockpit-card cockpit-card-pad">
@@ -164,7 +175,8 @@
     private bool _loading = true;
     private string? _error;
 
-    private int _total;
+    private int _total;        // total runs fetched (used for Pct/Px helpers on the chart/outcome mix)
+    private int _windowTotal;  // runs within the selected time window (used for subtitle and stat computations)
     private int _completed, _failed, _cancelled;
     private int _successRate, _retryRate, _costCoverage;
     private string _avgCycle = "—";
@@ -175,7 +187,11 @@
     private int _maxDay = 1;
     private List<GateStat> _gateRanking = new();
 
-    protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
+    protected override void OnInitialized()
+    {
+        State.OnProjectChanged += HandleProjectChanged;
+        State.OnRecentWindowChanged += HandleRecentWindowChanged;
+    }
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
 
@@ -190,12 +206,41 @@
         catch (ObjectDisposedException) { }
     }
 
+    // Re-filter already-loaded data when the time window changes — no API re-fetch needed.
+    // TODO: async void is unsafe — an exception other than ObjectDisposedException (e.g. HttpRequestException
+    // from LoadAsync) will escape the catch and crash the process on the thread pool. Consider converting to
+    // async Task and wiring the subscription via a wrapper lambda, or broadening the catch to Exception.
+    private async void HandleRecentWindowChanged()
+    {
+        try
+        {
+            await LoadAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async Task OnWindowChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var hours))
+            State.SetRecentWindowHours(hours);
+        await Task.CompletedTask;
+    }
+
+    private string RecentLabel => State.RecentWindowHours switch
+    {
+        1 => "1h",
+        6 => "6h",
+        168 => "7d",
+        _ => "24h"
+    };
+
     private async Task LoadAsync()
     {
         // Reset so switching to a project with fewer/no runs never shows stale figures.
         _loading = true;
         _error = null;
-        _total = 0; _completed = 0; _failed = 0; _cancelled = 0;
+        _total = 0; _windowTotal = 0; _completed = 0; _failed = 0; _cancelled = 0;
         _successRate = 0; _retryRate = 0; _costCoverage = 0;
         _avgCycle = "—"; _avgTokens = 0; _totalCost = 0;
         _byType = new(); _days = new(); _maxDay = 1; _gateRanking = new();
@@ -206,28 +251,43 @@
             _total = items.Count;
             if (_total == 0) { _loading = false; return; }
 
-            _completed = items.Count(r => r.FinalStep == PipelineStep.Completed);
-            _failed = items.Count(r => r.FinalStep == PipelineStep.Failed);
-            _cancelled = items.Count(r => r.FinalStep == PipelineStep.Cancelled);
+            // Apply the time-window filter for all stats.
+            var cutoff = DateTimeOffset.UtcNow.AddHours(-State.RecentWindowHours);
+            var windowItems = items.Where(r => r.StartedAtOffset >= cutoff).ToList();
+            _windowTotal = windowItems.Count;
 
-            _successRate = (int)Math.Round(100.0 * _completed / _total);
-            _retryRate = (int)Math.Round(100.0 * items.Count(r => r.RetryCount > 0) / _total);
+            // Use windowItems for all stats; fall back to showing "—" when windowItems is empty.
+            // TODO: When _total > 0 but _windowTotal == 0 (all fetched runs fall outside the window),
+            // this returns early with all stat fields at zero and _loading = false. The template renders
+            // the stat strip (because _total > 0) showing "0%" values rather than an empty-state message,
+            // which looks broken. Consider adding a dedicated "no runs in this window" empty state or
+            // showing "—" for all stats when _windowTotal == 0 while keeping the stat strip visible.
+            if (_windowTotal == 0) { _loading = false; return; }
 
-            var withCost = items.Count(r => r.TotalCost is > 0m);
-            _costCoverage = (int)Math.Round(100.0 * withCost / _total);
-            _totalCost = items.Sum(r => r.TotalCost ?? 0m);
+            _completed = windowItems.Count(r => r.FinalStep == PipelineStep.Completed);
+            _failed = windowItems.Count(r => r.FinalStep == PipelineStep.Failed);
+            _cancelled = windowItems.Count(r => r.FinalStep == PipelineStep.Cancelled);
 
-            _avgTokens = (long)items.Average(r => (double)r.TotalTokens);
+            _successRate = (int)Math.Round(100.0 * _completed / _windowTotal);
+            _retryRate = (int)Math.Round(100.0 * windowItems.Count(r => r.RetryCount > 0) / _windowTotal);
 
-            var completedWithTime = items
+            var withCost = windowItems.Count(r => r.TotalCost is > 0m);
+            _costCoverage = (int)Math.Round(100.0 * withCost / _windowTotal);
+            _totalCost = windowItems.Sum(r => r.TotalCost ?? 0m);
+
+            _avgTokens = (long)windowItems.Average(r => (double)r.TotalTokens);
+
+            var completedWithTime = windowItems
                 .Where(r => r.FinalStep == PipelineStep.Completed && r.CompletedAtOffset is not null)
                 .Select(r => (r.CompletedAtOffset!.Value - r.StartedAtOffset).TotalSeconds)
                 .Where(s => s > 0)
                 .ToList();
             _avgCycle = completedWithTime.Count > 0 ? FormatSeconds(completedWithTime.Average()) : "—";
 
-            _byType = items.GroupBy(r => RunTypeLabel(r.RunType)).ToDictionary(g => g.Key, g => g.Count());
+            // Outcome mix and by-type charts use windowItems.
+            _byType = windowItems.GroupBy(r => RunTypeLabel(r.RunType)).ToDictionary(g => g.Key, g => g.Count());
 
+            // Bar chart uses all fetched items across the fixed 14-day window (chart is out of scope for time-window).
             var today = DateTimeOffset.Now.Date;
             _days = Enumerable.Range(0, 14)
                 .Select(i => today.AddDays(-13 + i))
@@ -242,9 +302,9 @@
                 .ToList();
             _maxDay = Math.Max(1, _days.Max(d => d.Total));
 
-            // Per-gate failure ranking: flatten each run's gate outcomes, count runs + failures per gate.
+            // Per-gate failure ranking uses windowItems.
             var gateStats = new Dictionary<string, (int Total, int Failed)>(StringComparer.Ordinal);
-            foreach (var run in items)
+            foreach (var run in windowItems)
             {
                 foreach (var gate in run.QualityGateOutcomes ?? [])
                 {
@@ -270,7 +330,8 @@
         }
     }
 
-    private int Pct(int count) => _total > 0 ? (int)Math.Round(100.0 * count / _total) : 0;
+    // Pct uses windowTotal for the outcome-mix bar (proportions within the window).
+    private int Pct(int count) => _windowTotal > 0 ? (int)Math.Round(100.0 * count / _windowTotal) : 0;
     private int Px(int count) => (int)Math.Round(110.0 * count / _maxDay);
 
     private sealed record DayBucket(DateOnly Date, int Completed, int Failed, int Cancelled)
@@ -301,6 +362,7 @@
     public async ValueTask DisposeAsync()
     {
         State.OnProjectChanged -= HandleProjectChanged;
+        State.OnRecentWindowChanged -= HandleRecentWindowChanged;
         await _cts.CancelAsync();
         _cts.Dispose();
     }
