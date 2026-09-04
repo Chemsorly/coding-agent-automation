@@ -525,10 +525,10 @@ public partial class LayerBoundaryTests
             "AgentRegistryCleanupService",
             "RunServiceCleanupService",
 
-            // Spec 047: moved to CodingAgentWebUI.Scheduler — no longer registered in the WebUI or API.
-            // WorkItemMetricsBackgroundService is replaced by WorkItemCountsPoller in the Scheduler,
-            // which polls GET /api/work-items/counts-by-status instead of accessing EF directly.
-            "WorkItemMetricsBackgroundService",
+            // Spec 048 Phase 2: WorkItemMetricsBackgroundService was deleted (dead code since
+            // Spec 047, replaced by WorkItemCountsPoller in the Scheduler which polls
+            // GET /api/work-items/counts-by-status). No allowlist entry is needed — the scanner
+            // cannot discover a type that no longer exists in src/.
 
             // Spec 047: LoopStatusPollingService is registered in the WebUI via AddHostedService
             // with a cast: AddHostedService(sp => (LoopStatusPollingService)sp.GetRequiredService<ILoopStatusService>()).

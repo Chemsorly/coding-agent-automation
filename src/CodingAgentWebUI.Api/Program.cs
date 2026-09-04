@@ -92,8 +92,8 @@ builder.Services.AddOpenTelemetry()
          .AddHttpClientInstrumentation()
          // WorkDistributionTelemetry.MeterName is exported here because the API owns some
          // work-distribution instruments: WorkItemEndpoints records terminal statuses and
-         // dispatch latency via LogTerminalStatus/RecordDispatchLatency, and
-         // WorkItemMetricsBackgroundService feeds the workitems-by-status gauges.
+         // dispatch latency via LogTerminalStatus/RecordDispatchLatency. (The workitems-by-status
+         // gauges are fed by WorkItemCountsPoller in the Scheduler — a separate process — not here.)
          // NOTE: The epoch/credential-pool gauges (DispatcherLastPollEpoch, CredentialPoolAvailable,
          // CredentialPoolClaimed) are written ONLY by the Job Controller's DispatchService — the
          // API's DispatchStateBuilder does NOT call RecordLastPollEpoch or UpdateCredentialPoolMetrics.
