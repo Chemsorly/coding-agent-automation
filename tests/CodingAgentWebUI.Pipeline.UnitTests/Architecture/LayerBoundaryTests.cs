@@ -24,6 +24,11 @@ public partial class LayerBoundaryTests
     private static readonly System.Reflection.Assembly ContractsAssembly =
         typeof(CodingAgentWebUI.Pipeline.Models.PipelineRunSummary).Assembly;
 
+    // Spec 048 Phase 1 (cont.): Infrastructure.Common holds shared LeaderElection + Telemetry +
+    // SecretMasker + Serilog-OTLP + GitHub JWT/issue-ref utils. References Contracts, never Pipeline.
+    private static readonly System.Reflection.Assembly InfrastructureCommonAssembly =
+        typeof(CodingAgentWebUI.Pipeline.Telemetry.PipelineTelemetry).Assembly;
+
     // T9 split: Infrastructure is now two assemblies.
     // Providers: no EF Core, no Npgsql — safe for untrusted agent pods.
     // Persistence: EF Core + Npgsql — API and orchestrator only.
@@ -79,6 +84,50 @@ public partial class LayerBoundaryTests
         var pipelineRefs = PipelineAssembly.GetReferencedAssemblies()
             .Select(a => a.Name).ToList();
         Assert.Contains("CodingAgentWebUI.Contracts", pipelineRefs);
+    }
+
+    // Infrastructure.Common is below Pipeline in the graph — Pipeline references it, never the reverse.
+    [Fact]
+    public void InfrastructureCommon_ShouldNot_ReferencePipelineAssembly()
+    {
+        var refs = InfrastructureCommonAssembly.GetReferencedAssemblies().Select(a => a.Name).ToList();
+        Assert.DoesNotContain("CodingAgentWebUI.Pipeline", refs);
+    }
+
+    // Spec 048 COMMIT 3 goal: JobController's shipped image must not contain the Pipeline execution
+    // engine. Walk the transitive assembly-reference closure of the built JobController.dll and assert
+    // CodingAgentWebUI.Pipeline never appears anywhere in it.
+    [Fact]
+    public void JobController_Closure_IsPipelineFree()
+    {
+        var start = Path.Combine(RepoRoot, "src", "CodingAgentWebUI.JobController",
+            "bin", "Debug", "net10.0", "CodingAgentWebUI.JobController.dll");
+        Assert.True(File.Exists(start), $"JobController.dll not found at {start} — build first.");
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var queue = new Queue<string>();
+        queue.Enqueue(start);
+        var offenders = new List<string>();
+        while (queue.Count > 0)
+        {
+            var path = queue.Dequeue();
+            System.Reflection.Assembly asm;
+            try { asm = System.Reflection.Assembly.LoadFrom(path); }
+            catch { continue; }
+            foreach (var r in asm.GetReferencedAssemblies())
+            {
+                if (r.Name is null || !r.Name.StartsWith("CodingAgentWebUI", StringComparison.Ordinal)) continue;
+                if (r.Name == "CodingAgentWebUI.Pipeline")
+                    offenders.Add($"{asm.GetName().Name} -> {r.Name}");
+                if (seen.Add(r.Name))
+                {
+                    var dep = Path.Combine(Path.GetDirectoryName(path)!, r.Name + ".dll");
+                    if (File.Exists(dep)) queue.Enqueue(dep);
+                }
+            }
+        }
+        Assert.True(offenders.Count == 0,
+            $"JobController closure references Pipeline (should be Pipeline-free): {string.Join(", ", offenders)}");
     }
 
     [Fact]

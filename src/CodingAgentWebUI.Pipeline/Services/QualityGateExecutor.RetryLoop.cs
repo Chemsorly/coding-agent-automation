@@ -260,7 +260,7 @@ public partial class QualityGateExecutor
         finally
         {
             waitSw.Stop();
-            var stepTags = PipelineTelemetry.BuildStepTags("WaitForPostPrCi", run);
+            var stepTags = PipelineTelemetry.BuildStepTags("WaitForPostPrCi", run.RunType, run.ProjectId, run.ProjectName);
             // TODO: This finally block fires on genuine OperationCanceledException (ct.IsCancellationRequested).
             // The inner catch (OperationCanceledException) { throw; } re-throws and the outer finally still
             // executes, recording a partial elapsed time as a complete WaitForPostPrCi observation and

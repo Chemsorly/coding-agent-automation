@@ -1,15 +1,16 @@
-using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace CodingAgentWebUI.Infrastructure;
+namespace CodingAgentWebUI.Pipeline;
 
 /// <summary>
 /// Extension methods for registering shared pipeline services in the DI container.
 /// Used by both WebUI and Agent entry points to avoid duplicating identical registrations.
+/// (Spec 048: relocated from Infrastructure.Providers into Pipeline — it registers Pipeline
+/// services, so it belongs here; the host composition roots add the one Infrastructure impl.)
 /// </summary>
-public static class ServiceCollectionExtensions
+public static class PipelineServicesRegistration
 {
     /// <summary>
     /// Registers shared pipeline services that are identically configured in both
@@ -31,8 +32,6 @@ public static class ServiceCollectionExtensions
         // IQualityGateValidator is consumed by IQualityGateExecutor (singleton).
         // Register as singleton to avoid captive dependency.
         services.AddSingleton<IQualityGateValidator>(sp => new QualityGateValidator(logger));
-
-        services.AddSingleton<IBrainUpdateService>(sp => new BrainUpdateService(logger));
 
         services.AddSingleton<IAgentPhaseExecutor>(sp => new AgentPhaseExecutor(logger));
 

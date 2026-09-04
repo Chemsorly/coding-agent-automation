@@ -227,7 +227,7 @@ public class StepMetricsTests : IDisposable
     {
         var run = CreateRun(PipelineRunType.Review, "p1", "Proj");
 
-        var tags = PipelineTelemetry.BuildStepTags("MyStep", run);
+        var tags = PipelineTelemetry.BuildStepTags("MyStep", run.RunType, run.ProjectId, run.ProjectName);
 
         var tagList = new List<KeyValuePair<string, object?>>();
         foreach (var tag in tags)

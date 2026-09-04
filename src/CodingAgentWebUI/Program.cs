@@ -2,6 +2,7 @@ using CodingAgentWebUI;
 using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Infrastructure;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Models;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
@@ -103,6 +104,10 @@ var pipelineConfig = new PipelineConfiguration();
 
 builder.Services.AddInfrastructureServices();
 builder.Services.AddPipelineServices(Serilog.Log.Logger);
+// BrainUpdateService is an Infrastructure impl (Infrastructure.Git) — registered by the host
+// composition root so the Pipeline-side AddPipelineServices helper stays Pipeline-only.
+builder.Services.AddSingleton<CodingAgentWebUI.Pipeline.Interfaces.IBrainUpdateService>(
+    sp => new CodingAgentWebUI.Infrastructure.Git.BrainUpdateService(Serilog.Log.Logger));
 builder.Services.AddPipelineCoreServices();
 builder.Services.AddOrchestrationServices(pipelineConfig);
 builder.Services.AddConsolidationServices(pipelineConfig);

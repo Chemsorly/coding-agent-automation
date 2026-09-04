@@ -74,6 +74,10 @@ try
 
     // ── Shared pipeline services (IQualityGateValidator, IBrainUpdateService, IAgentPhaseExecutor, IQualityGateExecutor) ──
     builder.Services.AddPipelineServices(Log.Logger);
+    // BrainUpdateService is an Infrastructure impl (Infrastructure.Git) — registered by the host
+    // composition root so the Pipeline-side AddPipelineServices helper stays Pipeline-only.
+    builder.Services.AddSingleton<CodingAgentWebUI.Pipeline.Interfaces.IBrainUpdateService>(
+        sp => new CodingAgentWebUI.Infrastructure.Git.BrainUpdateService(Log.Logger));
 
     // ── Agent runtime options (replaces scattered Environment.GetEnvironmentVariable calls) ──
     builder.Services.AddOptions<AgentRuntimeOptions>();
