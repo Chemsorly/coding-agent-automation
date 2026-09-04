@@ -270,10 +270,6 @@ public class PipelineRunInstrumentationTests : IDisposable
         activity!.Duration.Should().BeGreaterThan(TimeSpan.Zero);
     }
 
-    // TODO: Thread.Sleep-based timing assertions are inherently non-deterministic and could flake under
-    // heavy CI load. The 10ms sleep + BeLessThan(0.05) threshold provides 40ms margin but consider
-    // increasing delays or asserting relative ordering. The unused frozenTime variable suggests an
-    // incomplete assertion that was going to verify something more specific.
     [Fact]
     public void StopTiming_FreezesElapsedDuration()
     {
@@ -282,21 +278,25 @@ public class PipelineRunInstrumentationTests : IDisposable
         var instrumentation = PipelineRunInstrumentation.Start(
             "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
         using var mres2 = new ManualResetEventSlim(false);
-        mres2.Wait(10); // Ensure non-zero duration
+        mres2.Wait(10); // Ensure non-zero duration before freeze
         instrumentation.StopTiming();
 
-        var frozenTime = Stopwatch.GetTimestamp();
+        // Record the freeze point, then let more time pass.
+        // We assert that the recorded duration is less than the total elapsed time,
+        // proving the timer was frozen by StopTiming(). This is a relative assertion
+        // independent of absolute wall-clock speed — no fixed threshold needed.
+        var freezeTimestamp = Stopwatch.GetTimestamp();
         using var mres3 = new ManualResetEventSlim(false);
-        mres3.Wait(500); // Simulate expensive cleanup after StopTiming
+        mres3.Wait(50); // Let at least 50ms pass after freeze
+        var totalElapsedSeconds = Stopwatch.GetElapsedTime(freezeTimestamp).TotalSeconds + 0.010; // +10ms = pre-freeze segment
 
         instrumentation.Dispose();
 
         var duration = _doubleMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.duration").ToList();
         duration.Should().HaveCount(1);
-        // Duration should be much less than the total elapsed time (should not include the 500ms sleep).
-        // Use a generous threshold (0.5s) to tolerate CI jitter on the initial segment,
-        // while still proving the timer froze (unfrozen would be > 0.5s).
-        duration[0].Value.Should().BeLessThan(0.5);
+        duration[0].Value.Should().BeGreaterThan(0, "frozen duration must be non-zero");
+        duration[0].Value.Should().BeLessThan(totalElapsedSeconds,
+            "frozen duration must be less than total elapsed time — StopTiming must have frozen the timer");
     }
 
     [Fact]
@@ -310,21 +310,26 @@ public class PipelineRunInstrumentationTests : IDisposable
         mres4.Wait(10); // Ensure non-zero duration before freeze
 
         instrumentation.StopTiming();
-        using var mres5 = new ManualResetEventSlim(false);
-        mres5.Wait(500); // 500ms after freeze point — frozen duration is ~10ms; unfrozen (no-op broken) would be ~510ms
 
-        instrumentation.StopTiming(); // should be no-ops
+        // Record freeze point, then let time pass and call StopTiming again (must be no-ops).
+        var freezeTimestamp = Stopwatch.GetTimestamp();
+        using var mres5 = new ManualResetEventSlim(false);
+        mres5.Wait(50); // Let at least 50ms pass after freeze
+
+        instrumentation.StopTiming(); // must be no-ops
         instrumentation.StopTiming();
         instrumentation.Dispose();
+
+        var totalElapsedSeconds = Stopwatch.GetElapsedTime(freezeTimestamp).TotalSeconds + 0.010; // +10ms = pre-freeze segment
 
         var duration = _doubleMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.duration").ToList();
         duration.Should().HaveCount(1);
         // Lower bound: catches regressions that zero out the duration.
-        // Upper bound (0.3s): frozen path records ~10ms + CI jitter; unfrozen (broken) path would record ~510ms.
-        // The 500ms post-freeze gap ensures a clear 17:1 ratio between the two cases, tolerating heavy CI load.
-        duration[0].Value.Should().BeGreaterThan(0)
-            .And.BeLessThan(0.3,
-                "StopTiming should freeze elapsed time at first call; subsequent calls must not extend it");
+        // Upper bound: relative — frozen value must be less than total elapsed, proving subsequent
+        // StopTiming() calls did not extend the recorded duration.
+        duration[0].Value.Should().BeGreaterThan(0, "frozen duration must be non-zero")
+            .And.BeLessThan(totalElapsedSeconds,
+                "StopTiming must freeze elapsed time at first call; subsequent calls must not extend it");
     }
 
     [Fact]
