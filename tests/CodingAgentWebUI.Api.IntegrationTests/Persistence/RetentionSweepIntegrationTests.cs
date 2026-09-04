@@ -10,7 +10,7 @@ using Microsoft.Extensions.Configuration;
 using Moq;
 using Xunit;
 
-namespace CodingAgentWebUI.IntegrationTests.Persistence;
+namespace CodingAgentWebUI.Api.IntegrationTests.Persistence;
 
 /// <summary>
 /// Integration tests for <see cref="DatabaseMaintenanceService"/> per-project retention sweeps.

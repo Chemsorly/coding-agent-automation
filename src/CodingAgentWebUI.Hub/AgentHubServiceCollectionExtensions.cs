@@ -1,5 +1,4 @@
 using CodingAgentWebUI.Infrastructure;
-using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
@@ -8,7 +7,6 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Serilog;
@@ -27,8 +25,7 @@ public static class AgentHubServiceCollectionExtensions
             sp.GetRequiredService<IProviderConfigStore>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<ILogger<AgentHubFacadeDependencies>>(),
-            sp.GetService<WorkItemTransitionService>(),
-            sp.GetService<IDbContextFactory<PipelineDbContext>>(),
+            sp.GetService<IWorkItemTransitionStore>(),
             sp.GetService<IProjectStore>(),
             sp.GetService<IWorkItemFallbackTransitionService>(),
             sp.GetRequiredService<TimeProvider>()));

@@ -1,7 +1,6 @@
 using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
-using CodingAgentWebUI.Infrastructure.Persistence.Stores;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -64,8 +63,12 @@ public static partial class WorkDistributionRegistration
         //   WorkItemMetricsBackgroundService → CodingAgentWebUI.Api
         //   DatabaseMaintenanceService → CodingAgentWebUI.Api
 
-        // ── Polly resilience pipelines (no DB dependency) ────────────────────
-        services.RegisterResiliencePipelines();
+        // ── Polly DB resilience pipelines — NOT registered in the Web host (Spec 048 Phase 2) ──
+        // The "db-request"/"db-background" pipelines guard direct EF Core operations
+        // (WorkItemTransitionService et al.), which run only in the API host. The Web host is
+        // Persistence-free — all its data access is API-backed HTTP with its own
+        // AddStandardResilienceHandler pipeline — so it has no consumer for these and no longer
+        // references Infrastructure.Persistence where RegisterResiliencePipelines() is defined.
 
         // ── K8s infrastructure + consolidation registrations ─────────────────────────────────────
         RegisterConsolidationServices(services, configuration);

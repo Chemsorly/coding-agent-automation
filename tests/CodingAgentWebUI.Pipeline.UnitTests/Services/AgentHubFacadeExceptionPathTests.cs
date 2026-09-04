@@ -60,6 +60,18 @@ public sealed class AgentHubFacadeExceptionPathTests : IDisposable
         var runService = new OrchestratorRunService(mockLogger.Object);
         var dispatcher = new JobDeduplicationGuardService(registry, mockLogger.Object);
 
+        // Spec 048 Phase 2: the facade's direct WorkItem DB access is now behind
+        // IWorkItemTransitionStore. Build the EF store from whichever dependency the test supplied,
+        // filling the other with a throwing default so the exception-catch paths are still exercised.
+        IWorkItemTransitionStore? store = null;
+        if (dbFactory is not null || transitionService is not null)
+        {
+            var effectiveFactory = dbFactory ?? new ThrowingDbContextFactory();
+            var effectiveTransition = transitionService
+                ?? new WorkItemTransitionService(effectiveFactory, NullLogger<WorkItemTransitionService>.Instance);
+            store = new EfWorkItemTransitionStore(effectiveFactory, effectiveTransition);
+        }
+
         return new AgentHubFacade(new AgentHubFacadeDependencies(
             registry,
             runService,
@@ -68,8 +80,7 @@ public sealed class AgentHubFacadeExceptionPathTests : IDisposable
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
             NullLogger<AgentHubFacadeDependencies>.Instance,
-            WorkItemTransition: transitionService,
-            DbFactory: dbFactory));
+            TransitionStore: store));
     }
 
     private async Task InsertWorkItemWithEmptyIssueIdentifier(Guid id)

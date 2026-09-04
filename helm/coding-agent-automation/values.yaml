@@ -269,9 +269,12 @@ api:
   # Spec 046: api.replicas > 1 requires signalr.redis.connectionString to be set.
   # AgentRegistryService and OrchestratorRunService switch to Redis-backed distributed mode
   # automatically when Redis is configured. Without Redis the API falls back to in-memory
-  # implementations and hub messages cannot be routed cross-replica — reduce to 1 in that case.
-  # A startup warning is logged if replicas > 1 and Redis is absent.
-  replicas: 2
+  # implementations and hub messages cannot be routed cross-replica.
+  # Spec 048 Phase 2: defaults to 1 so the out-of-the-box configuration is valid and safe
+  # (single-replica, in-memory). For HA, set replicas > 1 AND signalr.redis.connectionString —
+  # the chart now fails at render time (see _deprecations.tpl) on replicas > 1 without Redis,
+  # instead of silently shipping a split-brain multi-replica API.
+  replicas: 1
   # Additional annotations on the Deployment metadata (e.g., reloader.stakater.com/auto: "true")
   annotations: {}
   service:

@@ -57,7 +57,7 @@ public sealed class AgentHubFacadeCompletedAtGuardTests : IDisposable
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
             NullLogger<AgentHubFacadeDependencies>.Instance,
-            WorkItemTransition: transitionService,
+            TransitionStore: new EfWorkItemTransitionStore(_dbFactory, transitionService),
             WorkItemFallbackTransition: fallbackService));
     }
 

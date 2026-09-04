@@ -17,4 +17,8 @@
 {{- if hasKey (.Values.orchestrator | default dict) "persistence" }}
   {{- fail "orchestrator.persistence is removed. Configuration now lives in PostgreSQL. Remove orchestrator.persistence from your values." }}
 {{- end }}
+{{- $redis := (.Values.signalr | default dict).redis | default dict }}
+{{- if and (gt (int (.Values.api.replicas | default 1)) 1) (empty $redis.connectionString) }}
+  {{- fail "api.replicas is greater than 1 but signalr.redis.connectionString is empty. Without a Redis backplane the API's AgentRegistryService and OrchestratorRunService keep agent/run state in-memory per pod, so SignalR hub messages cannot be routed across replicas (split-brain state, dropped agent events). Spec 048 Phase 2 makes the API a hard dependency of the Web UI, so a multi-replica API MUST share state via Redis. Set signalr.redis.connectionString to a Redis connection string, or set api.replicas: 1 for a single-replica (in-memory) deployment." }}
+{{- end }}
 {{- end -}}

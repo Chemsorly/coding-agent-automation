@@ -9,6 +9,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
 using Serilog;
+using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 

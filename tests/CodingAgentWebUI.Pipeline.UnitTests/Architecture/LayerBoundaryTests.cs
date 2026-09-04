@@ -53,6 +53,9 @@ public partial class LayerBoundaryTests
     private static readonly System.Reflection.Assembly OrchestrationAssembly =
         typeof(CodingAgentWebUI.Orchestration.RunLifecycleManager).Assembly;
 
+    private static readonly System.Reflection.Assembly HubAssembly =
+        typeof(CodingAgentWebUI.Hub.AgentHubFacade).Assembly;
+
     // Repo root: walk up from the test binary directory until we find CodingAgentAutomation.sln
     private static readonly string RepoRoot = FindRepoRoot(AppContext.BaseDirectory);
 
@@ -92,6 +95,76 @@ public partial class LayerBoundaryTests
     {
         var refs = InfrastructureCommonAssembly.GetReferencedAssemblies().Select(a => a.Name).ToList();
         Assert.DoesNotContain("CodingAgentWebUI.Pipeline", refs);
+    }
+
+    // ── Spec 048 Phase 2: Database isolation boundary ───────────────────
+    // Only the API host may reference Infrastructure.Persistence. Hub and Orchestration reach the
+    // database exclusively through Contracts interfaces (IWorkItemTransitionStore,
+    // IWorkItemFallbackTransitionService, the config/history/store adapters). Checked at the
+    // ASSEMBLY-reference level, not by namespace: the moved interfaces keep their
+    // CodingAgentWebUI.Infrastructure.Persistence.Services namespace (namespace-preserving move) but
+    // now live in the Contracts assembly, so a namespace-based HaveDependencyOn would false-positive.
+    [Fact]
+    public void Hub_ShouldNot_ReferenceInfrastructurePersistenceAssembly()
+    {
+        var refs = HubAssembly.GetReferencedAssemblies().Select(a => a.Name).ToList();
+        Assert.DoesNotContain("CodingAgentWebUI.Infrastructure.Persistence", refs);
+    }
+
+    [Fact]
+    public void Orchestration_ShouldNot_ReferenceInfrastructurePersistenceAssembly()
+    {
+        var refs = OrchestrationAssembly.GetReferencedAssemblies().Select(a => a.Name).ToList();
+        Assert.DoesNotContain("CodingAgentWebUI.Infrastructure.Persistence", refs);
+    }
+
+    // Positive control — the API IS the sole database owner, so it MUST reference Persistence.
+    // Without this, the two negative tests above could pass vacuously (a "clean" boundary that is
+    // clean only because nothing references Persistence anywhere).
+    [Fact]
+    public void Api_DoesReference_InfrastructurePersistenceAssembly()
+    {
+        var refs = ApiAssembly.GetReferencedAssemblies().Select(a => a.Name).ToList();
+        Assert.Contains("CodingAgentWebUI.Infrastructure.Persistence", refs);
+    }
+
+    // Assembly-level counterpart to the source-scan Monolith_ShouldNot_OwnDatabase below: walk the
+    // Web host's transitive assembly closure and assert Infrastructure.Persistence never appears.
+    // This locks in the Phase-2 outcome — the transitive EF pull (Web → Hub/Orchestration →
+    // Persistence) is removed and must stay removed, even if a future source-level EF reference is
+    // added indirectly. Mirrors JobController_Closure_IsPipelineFree.
+    [Fact]
+    public void WebHost_Closure_IsPersistenceFree()
+    {
+        var start = Path.Combine(RepoRoot, "src", "CodingAgentWebUI",
+            "bin", "Debug", "net10.0", "CodingAgentWebUI.dll");
+        Assert.True(File.Exists(start), $"CodingAgentWebUI.dll not found at {start} — build first.");
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var queue = new Queue<string>();
+        queue.Enqueue(start);
+        var offenders = new List<string>();
+        while (queue.Count > 0)
+        {
+            var path = queue.Dequeue();
+            System.Reflection.Assembly asm;
+            try { asm = System.Reflection.Assembly.LoadFrom(path); }
+            catch { continue; }
+            foreach (var r in asm.GetReferencedAssemblies())
+            {
+                if (r.Name is null || !r.Name.StartsWith("CodingAgentWebUI", StringComparison.Ordinal)) continue;
+                if (r.Name == "CodingAgentWebUI.Infrastructure.Persistence")
+                    offenders.Add($"{asm.GetName().Name} -> {r.Name}");
+                if (seen.Add(r.Name))
+                {
+                    var dep = Path.Combine(Path.GetDirectoryName(path)!, r.Name + ".dll");
+                    if (File.Exists(dep)) queue.Enqueue(dep);
+                }
+            }
+        }
+        Assert.True(offenders.Count == 0,
+            $"Web host closure references Infrastructure.Persistence (should be Persistence-free — " +
+            $"Spec 048 Phase 2): {string.Join(", ", offenders)}");
     }
 
     // Spec 048 COMMIT 3 goal: JobController's shipped image must not contain the Pipeline execution
@@ -524,9 +597,10 @@ public partial class LayerBoundaryTests
     }
 
     // ── T5: Monolith owns no database ──────────────────────────────────────
-    // Spec 045 end-state: CodingAgentWebUI has no EF Core, no PipelineDbContext, no Npgsql.
-    // Currently still failing (T8 not yet complete). Skipped until T8 lands.
-    // When T8 is done: unskip this test and remove the Skip attribute.
+    // Spec 045 end-state, completed by Spec 048 Phase 2: CodingAgentWebUI has no EF Core, no
+    // PipelineDbContext, no Npgsql in its own source. This source-scan is the fast, precise guard
+    // (it names the offending file); WebHost_Closure_IsPersistenceFree above is the assembly-level
+    // counterpart that also catches a transitive EF pull through a referenced project.
 
     [Fact]
     public void Monolith_ShouldNot_OwnDatabase()
