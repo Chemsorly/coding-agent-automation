@@ -16,6 +16,12 @@ public sealed class CockpitState
     /// <summary>Aggregate count of items needing a human (see the Attention screen).</summary>
     public int AttentionCount { get; private set; }
 
+    /// <summary>
+    /// The selected time window in hours for "recent" metrics on Overview and Insights.
+    /// Default is 24 hours. Scoped per-circuit (per user session).
+    /// </summary>
+    public int RecentWindowHours { get; private set; } = 24;
+
     /// <summary>Raised on any state change (project or attention count) — the shell subscribes to re-render.</summary>
     public event Action? OnChange;
 
@@ -25,6 +31,13 @@ public sealed class CockpitState
     /// does NOT raise it, so a page that both re-queries here and updates the attention count cannot loop.
     /// </summary>
     public event Action? OnProjectChanged;
+
+    /// <summary>
+    /// Raised when the selected recent-window changes. Pages subscribe to re-filter already-loaded data
+    /// without triggering an API re-fetch. Deliberately separate from <see cref="OnProjectChanged"/> so
+    /// changing the window does NOT cause a full data reload.
+    /// </summary>
+    public event Action? OnRecentWindowChanged;
 
     public void SetProject(string? id, string? name)
     {
@@ -41,5 +54,16 @@ public sealed class CockpitState
         if (AttentionCount == count) return;
         AttentionCount = count;
         OnChange?.Invoke();
+    }
+
+    /// <summary>
+    /// Updates the time-window for "recent" metrics and notifies subscribers to re-filter.
+    /// No-op when the value is unchanged to avoid spurious re-renders.
+    /// </summary>
+    public void SetRecentWindowHours(int hours)
+    {
+        if (RecentWindowHours == hours) return;
+        RecentWindowHours = hours;
+        OnRecentWindowChanged?.Invoke();
     }
 }

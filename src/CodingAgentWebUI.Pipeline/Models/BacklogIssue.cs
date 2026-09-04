@@ -9,9 +9,11 @@ namespace CodingAgentWebUI.Pipeline.Models;
 /// <param name="Url">Web URL of the issue on the provider, or null if unknown.</param>
 /// <param name="IsReady">True when no open dependencies block it.</param>
 /// <param name="BlockedBy">Still-open issue numbers that block this one (empty when ready).</param>
+/// <param name="Labels">Issue labels from the provider (e.g. "agent:next", "bug"). Empty when the provider returns none.</param>
 public sealed record BacklogIssue(
     string Identifier,
     string Title,
     string? Url,
     bool IsReady,
-    IReadOnlyList<int> BlockedBy);
+    IReadOnlyList<int> BlockedBy,
+    IReadOnlyList<string> Labels);

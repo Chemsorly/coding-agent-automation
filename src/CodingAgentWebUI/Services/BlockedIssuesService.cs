@@ -104,7 +104,7 @@ public sealed class BlockedIssuesService
                         continue;
                     var result = await _dependencyChecker.CheckAsync(
                         issue.Identifier, issue.Description ?? string.Empty, provider, stateCache, ct);
-                    backlog.Add(new BacklogIssue(issue.Identifier, issue.Title, issue.Url, result.IsReady, result.BlockedBy));
+                    backlog.Add(new BacklogIssue(issue.Identifier, issue.Title, issue.Url, result.IsReady, result.BlockedBy, issue.Labels));
                 }
             }
             catch (OperationCanceledException) { throw; }

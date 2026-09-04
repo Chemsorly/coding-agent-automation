@@ -69,7 +69,8 @@
                         var currentIdx = idx;
                         <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(isBlocked ? "drawer-issue-blocked" : "") @(SelectedItem?.Identifier == issue.Identifier ? "drawer-issue-selected" : "") @GetHighlightClass(currentIdx)"
                              @onclick="() => SelectItem(issue)"
-                             data-testid="issue-row-@issue.Identifier"
+                             data-testid="issue-item"
+                             data-issue-id="@issue.Identifier"
                              style="@(isProcessing ? "opacity: 0.6; pointer-events: none;" : "")">
                             <div class="drawer-issue-header">
                                 <span class="drawer-issue-number">#@issue.Identifier</span>
@@ -84,6 +85,16 @@
                                 else if (readiness is { IsReady: true })
                                 {
                                     <span class="badge-default drawer-badge-ready">Ready</span>
+                                }
+                                @if (!isProcessing && !isBlocked)
+                                {
+                                    <button class="btn-dispatch-inline"
+                                            @onclick:stopPropagation="true"
+                                            @onclick="async () => await DispatchIssueAsync(issue)"
+                                            disabled="@IsDispatching"
+                                            style="margin-left: auto; font-size: 0.75rem; padding: 2px 8px;">
+                                        Dispatch
+                                    </button>
                                 }
                             </div>
                             <div class="drawer-issue-title">@issue.Title</div>
@@ -179,6 +190,16 @@
     private async Task PrevPage() => await OnPrevPage.InvokeAsync();
     private async Task ToggleLabel(string label) => await OnToggleLabel.InvokeAsync(label);
     private async Task ClearLabels() => await OnClearLabels.InvokeAsync();
+
+    /// <summary>
+    /// Inline dispatch: selects the issue and immediately dispatches it. Used by the
+    /// per-row "Dispatch" button so users can dispatch without first clicking to select.
+    /// </summary>
+    private async Task DispatchIssueAsync(IssueSummary issue)
+    {
+        SelectItem(issue);
+        await DispatchSelected();
+    }
 
     /// <summary>
     /// Extracts a plain-text preview from the issue body, stripping markdown headings and trimming.

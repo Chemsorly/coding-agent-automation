@@ -44,8 +44,8 @@
     else
     {
         <div class="cockpit-stat-strip">
-            <div class="cockpit-stat"><span class="cockpit-stat-l">In flight</span><span class="cockpit-stat-v">@_active.Count</span></div>
-            <div class="cockpit-stat"><span class="cockpit-stat-l">Queued</span><span class="cockpit-stat-v">@_pending.Count</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">In flight</span><span class="cockpit-stat-v">@_active.Count</span><span class="cockpit-stat-sub">@OldestActiveAge()</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Queued</span><span class="cockpit-stat-v">@_pending.Count</span><span class="cockpit-stat-sub">@TypeBreakdown()</span></div>
         </div>
 
         <!-- in flight -->
@@ -143,7 +143,7 @@
             {
                 <div class="monitoring-table-wrap">
                     <table class="monitoring-table">
-                        <thead><tr><th>Issue</th><th>Readiness</th><th></th></tr></thead>
+                        <thead><tr><th>Issue</th><th>Labels</th><th>Readiness</th><th></th></tr></thead>
                         <tbody>
                             @foreach (var b in _backlog)
                             {
@@ -151,6 +151,14 @@
                                     <td>
                                         <span class="monitoring-mono" style="font-weight: 600;">#@b.Identifier</span>
                                         <span style="color: var(--text-muted);">@Truncate(b.Title, 60)</span>
+                                    </td>
+                                    <td>
+                                        <div class="drawer-issue-labels">
+                                            @foreach (var label in b.Labels)
+                                            {
+                                                <span class="sidebar-label @GetLabelClass(label)">@label</span>
+                                            }
+                                        </div>
                                     </td>
                                     <td>
                                         @if (b.IsReady)
@@ -301,6 +309,39 @@
         if (d.TotalMinutes < 60) return $"{(int)d.TotalMinutes}m ago";
         if (d.TotalHours < 24) return $"{(int)d.TotalHours}h ago";
         return $"{(int)d.TotalDays}d ago";
+    }
+
+    // Returns the age of the oldest in-flight item, or "—" when the list is empty.
+    private string OldestActiveAge()
+    {
+        if (_active.Count == 0) return "—";
+        var oldest = _active
+            .Where(a => a.DispatchedAt.HasValue)
+            .OrderBy(a => a.DispatchedAt!.Value)
+            .FirstOrDefault();
+        if (oldest is null) return "—";
+        return $"oldest: {Ago(oldest.DispatchedAt!.Value)}";
+    }
+
+    // Returns a per-type breakdown of queued items (e.g. "impl: 2 · review: 1"), or "—" when empty.
+    private string TypeBreakdown()
+    {
+        if (_pending.Count == 0) return "—";
+        var groups = _pending
+            .GroupBy(p => p.TaskType)
+            .OrderBy(g => g.Key.ToString())
+            .Select(g =>
+            {
+                var label = g.Key switch
+                {
+                    WorkItemTaskType.Implementation => "impl",
+                    WorkItemTaskType.Review => "review",
+                    WorkItemTaskType.Decomposition => "decomp",
+                    _ => g.Key.ToString().ToLowerInvariant()
+                };
+                return $"{label}: {g.Count()}";
+            });
+        return string.Join(" · ", groups);
     }
 
     public async ValueTask DisposeAsync()

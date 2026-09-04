@@ -57,7 +57,7 @@ public sealed class DependencyBlockingTests : E2ETestBase
         await codingPage.ClickBrowseIssuesAsync();
 
         // Wait for the readiness check to complete and show the blocked badge
-        var issueRow = Page.Locator("[data-testid='issue-row-60']");
+        var issueRow = Page.Locator("[data-issue-id='60']");
         await issueRow.Locator(".drawer-badge-blocked").WaitForAsync(new() { Timeout = 10_000 });
 
         // Assert: blocked badge mentions #100
@@ -166,7 +166,7 @@ public sealed class DependencyBlockingTests : E2ETestBase
         await codingPage.ClickBrowseIssuesAsync();
 
         // Wait for the readiness check to complete and show the blocked badge
-        var issueRow = Page.Locator("[data-testid='issue-row-62']");
+        var issueRow = Page.Locator("[data-issue-id='62']");
         await issueRow.Locator(".drawer-badge-blocked").WaitForAsync(new() { Timeout = 10_000 });
 
         // Assert: blocked badge mentions #200 but not #100 (which is closed)

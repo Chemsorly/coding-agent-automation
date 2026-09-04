@@ -253,4 +253,62 @@ public class BlockedIssuesServiceTests
         Assert.Single(result, b => b.Identifier == "10");
         Assert.Single(result, b => b.Identifier == "11");
     }
+
+    [Fact]
+    public async Task GetBacklogAsync_ShouldPropagateLabelsFromIssueSummary()
+    {
+        // Verifies that labels from IssueSummary are carried through to BacklogIssue.Labels.
+        var template = new PipelineJobTemplate
+        {
+            Id = "t1", Name = "T", IssueProviderId = "prov1", RepoProviderId = "repo1", Enabled = true
+        };
+
+        var issueWithLabels = new PagedResult<IssueSummary>
+        {
+            Items = new[]
+            {
+                new IssueSummary
+                {
+                    Identifier = "42",
+                    Title = "Labelled issue",
+                    Labels = new[] { "agent:next", "bug" },
+                    Description = "",
+                    Url = "https://x/issues/42"
+                }
+            },
+            Page = 1,
+            PageSize = 20,
+            HasMore = false
+        };
+
+        var config = new Mock<IPipelineApiConfigClient>();
+        config.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { template });
+        config.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new ProviderConfig { Id = "prov1", DisplayName = "P", Kind = ProviderKind.Issue, ProviderType = "GitHub" } });
+
+        var provider = new Mock<IIssueProvider>();
+        provider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issueWithLabels);
+        provider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issueWithLabels);
+
+        var factory = new Mock<IProviderFactory>();
+        factory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(provider.Object);
+
+        // Note: CheckAsync receives an IssueIdentifier value object (with implicit conversion from string).
+        // Mock it using It.Is<IssueIdentifier> to match the production call site.
+        var dep = new Mock<IDependencyChecker>();
+        dep.Setup(d => d.CheckAsync(It.Is<IssueIdentifier>(i => i.Value == "42"), It.IsAny<string?>(),
+                It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+
+        var sut = new BlockedIssuesService(config.Object, factory.Object, dep.Object);
+
+        var result = await sut.GetBacklogAsync(projectId: null, CancellationToken.None);
+
+        Assert.Single(result);
+        Assert.Equal("42", result[0].Identifier);
+        Assert.Equal(new[] { "agent:next", "bug" }, result[0].Labels);
+    }
 }
