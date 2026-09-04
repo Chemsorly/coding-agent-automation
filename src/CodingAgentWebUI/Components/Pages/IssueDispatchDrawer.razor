@@ -69,7 +69,8 @@
                         var currentIdx = idx;
                         <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(isBlocked ? "drawer-issue-blocked" : "") @(SelectedItem?.Identifier == issue.Identifier ? "drawer-issue-selected" : "") @GetHighlightClass(currentIdx)"
                              @onclick="() => SelectItem(issue)"
-                             data-testid="issue-row-@issue.Identifier"
+                             data-testid="issue-item"
+                             data-issue-id="@issue.Identifier"
                              style="@(isProcessing ? "opacity: 0.6; pointer-events: none;" : "")">
                             <div class="drawer-issue-header">
                                 <span class="drawer-issue-number">#@issue.Identifier</span>
@@ -84,6 +85,16 @@
                                 else if (readiness is { IsReady: true })
                                 {
                                     <span class="badge-default drawer-badge-ready">Ready</span>
+                                }
+                                @if (!isProcessing && !isBlocked)
+                                {
+                                    var capturedIssue = issue;
+                                    <button class="btn-dispatch-inline" @onclick:stopPropagation="true"
+                                            @onclick="async () => { SelectItem(capturedIssue); await DispatchSelected(); }"
+                                            disabled="@IsDispatching"
+                                            title="Dispatch #@issue.Identifier">
+                                        Dispatch
+                                    </button>
                                 }
                             </div>
                             <div class="drawer-issue-title">@issue.Title</div>

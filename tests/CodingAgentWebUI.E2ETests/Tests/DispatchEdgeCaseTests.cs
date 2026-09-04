@@ -133,7 +133,7 @@ public sealed class DispatchEdgeCaseTests : E2ETestBase
         await codingPage.ClickBrowseIssuesAsync();
 
         // Assert: the issue row should show "⏳ Queued" badge and be non-interactive
-        var issueRow = Page.Locator("[data-testid='issue-row-51']");
+        var issueRow = Page.Locator("[data-issue-id='51']");
         // TODO: Tighten selector — "text=Queued" matches any element containing "Queued"; use a more specific locator for the badge text.
         var hasDispatchedBadge = await issueRow.Locator("text=Queued").CountAsync();
         Assert.True(hasDispatchedBadge > 0, "Issue already being processed should show Queued badge");
