@@ -37,6 +37,20 @@ public sealed class HousekeepingService : IHousekeepingService
     };
 
     /// <summary>
+    /// Terminal issue labels that must never be re-queued via conflict rework.
+    /// Distinct from <see cref="ActiveLabels"/> to avoid affecting stale-branch cleanup,
+    /// which should still delete branches for terminal-state issues.
+    /// <c>agent:error</c> and <c>agent:needs-refinement</c> are intentionally excluded —
+    /// they are human-placed signals that the issue should be re-queued for rework.
+    /// </summary>
+    private static readonly HashSet<string> TerminalReworkBlockers = new(StringComparer.Ordinal)
+    {
+        AgentLabels.Done,
+        AgentLabels.WontDo,
+        AgentLabels.Cancelled,
+    };
+
+    /// <summary>
     /// Controls how fire-and-forget update tasks are dispatched.
     /// In production: discards the task (true fire-and-forget).
     /// In tests: overridden to await synchronously so assertions are deterministic.
@@ -433,8 +447,13 @@ public sealed class HousekeepingService : IHousekeepingService
     }
 
     /// <summary>
-    /// Fetches the issue and swaps its label to <c>agent:next</c> if it is in a terminal state
-    /// and not already active.
+    /// Fetches the issue linked to a conflicted PR and swaps its label to <c>agent:next</c>
+    /// so it is re-queued for rework — unless the issue already carries an active label
+    /// (see <see cref="ActiveLabels"/>) or a terminal label (see <see cref="TerminalReworkBlockers"/>),
+    /// in which case it returns early without modifying any labels.
+    /// <c>agent:error</c> and <c>agent:needs-refinement</c> are intentional rework targets and
+    /// will proceed to a swap; terminal labels (<c>agent:done</c>, <c>agent:wont-do</c>,
+    /// <c>agent:cancelled</c>) must never be re-queued.
     /// </summary>
     private async Task TrySwapIssueToNextAsync(
         IIssueProvider issueProvider,
@@ -462,6 +481,14 @@ public sealed class HousekeepingService : IHousekeepingService
         {
             _logger.Debug(
                 "HousekeepingService: issue {IssueId} linked to conflicted PR #{PrNumber} already has an active label — skipping rework swap",
+                issueIdString, prNumber);
+            return;
+        }
+
+        if (issue.Labels.Any(l => TerminalReworkBlockers.Contains(l)))
+        {
+            _logger.Debug(
+                "HousekeepingService: issue {IssueId} linked to conflicted PR #{PrNumber} has a terminal label — skipping rework swap",
                 issueIdString, prNumber);
             return;
         }
