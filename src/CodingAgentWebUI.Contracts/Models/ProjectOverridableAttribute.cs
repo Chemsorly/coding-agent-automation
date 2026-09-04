@@ -1,5 +1,3 @@
-using CodingAgentWebUI.Pipeline.Services;
-
 namespace CodingAgentWebUI.Pipeline.Models;
 
 /// <summary>
