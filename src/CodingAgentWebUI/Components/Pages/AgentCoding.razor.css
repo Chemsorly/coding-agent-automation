@@ -112,6 +112,28 @@
     border-radius: 3px;
 }
 
+.btn-dispatch-inline {
+    margin-left: auto;
+    padding: 2px 10px;
+    font-size: 0.75rem;
+    background: var(--accent, #6366f1);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.btn-dispatch-inline:hover:not(:disabled) {
+    opacity: 0.85;
+}
+
+.btn-dispatch-inline:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 /* ═══ Toggle Switch ═══ */
 .toggle-switch {
     position: relative;
