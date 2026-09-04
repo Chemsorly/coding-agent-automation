@@ -14,6 +14,10 @@
     Runs — the list behind the Run Page (see docs/frontend-redesign-handoff.md).
     Data: IPipelineApiRunHistoryClient.GetRunHistoryAsync → PagedResult<PipelineRunSummary>.
     Consolidation runs are PipelineRunType.Consolidation and appear here folded in.
+
+    Client-side sort and filter apply to the currently-loaded page only (25 rows), not the full
+    history. The server-side outcome segmented buttons (All / Completed / Failed / Cancelled)
+    continue to pre-filter across the full history with correct pagination.
 *@
 
 <PageTitle>Runs - Coding Agent</PageTitle>
@@ -37,6 +41,32 @@
             <input type="checkbox" checked="@_feedbackOnly" @onchange="ToggleFeedbackOnly" />
             Feedback only
         </label>
+        @* TODO [WARNING]: Enum.Parse<PipelineRunType>(v) throws ArgumentException if a crafted WebSocket
+             frame sends an unrecognised value (option strings have no compile-time binding to the enum).
+             Replace with Enum.TryParse and fall back to null so the Blazor circuit is not crashed.
+             See review finding: Runs.razor ~44 (SecurityReviewer / DotNetSpecialist). *@
+        <select class="run-type-filter cockpit-select"
+                aria-label="Filter by run type"
+                @onchange="e => _typeFilter = e.Value?.ToString() is { Length: > 0 } v ? Enum.Parse<PipelineRunType>(v) : (PipelineRunType?)null">
+            <option value="">All types</option>
+            <option value="Implementation">Implementation</option>
+            <option value="Review">Review</option>
+            <option value="DecompositionAnalysis">Decomp Analysis</option>
+            <option value="Decomposition">Decomposition</option>
+            <option value="Consolidation">Consolidation</option>
+        </select>
+        @* TODO [WARNING]: Enum.Parse<ResultFilter>(v) throws ArgumentException on unexpected values.
+             Replace with Enum.TryParse and fall back to ResultFilter.All.
+             See review finding: Runs.razor ~55 (DotNetSpecialist / SecurityReviewer). *@
+        <select class="run-result-filter cockpit-select"
+                aria-label="Filter by result"
+                @onchange="e => _resultFilter = e.Value?.ToString() is { Length: > 0 } v ? Enum.Parse<ResultFilter>(v) : ResultFilter.All">
+            <option value="">All results</option>
+            <option value="Completed">Completed</option>
+            <option value="Failed">Failed</option>
+            <option value="Cancelled">Cancelled</option>
+            <option value="Running">Running</option>
+        </select>
     </div>
 
     <AutoRefresh IntervalSeconds="12" OnTick="RefreshQuietAsync" />
@@ -60,17 +90,37 @@
                 <table class="monitoring-table">
                     <thead>
                         <tr>
-                            <th>Result</th>
-                            <th>Type</th>
+                            <th @onclick="() => ToggleSort(SortColumn.Result)"
+                                aria-sort="@(_sortColumn == SortColumn.Result ? (_sortDir == SortDirection.Desc ? "descending" : "ascending") : null)"
+                                class="sortable-th @(_sortColumn == SortColumn.Result ? "is-sorted" : "")"
+                                style="cursor:pointer">
+                                Result @if (_sortColumn == SortColumn.Result) { <Icon Name="@(_sortDir == SortDirection.Desc ? "chevron-down" : "chevron-up")" Size="12" /> }
+                            </th>
+                            <th @onclick="() => ToggleSort(SortColumn.Type)"
+                                aria-sort="@(_sortColumn == SortColumn.Type ? (_sortDir == SortDirection.Desc ? "descending" : "ascending") : null)"
+                                class="sortable-th @(_sortColumn == SortColumn.Type ? "is-sorted" : "")"
+                                style="cursor:pointer">
+                                Type @if (_sortColumn == SortColumn.Type) { <Icon Name="@(_sortDir == SortDirection.Desc ? "chevron-down" : "chevron-up")" Size="12" /> }
+                            </th>
                             <th>Run</th>
-                            <th>Agent</th>
-                            <th>Duration</th>
+                            <th>Links</th>
+                            <th @onclick="() => ToggleSort(SortColumn.Duration)"
+                                aria-sort="@(_sortColumn == SortColumn.Duration ? (_sortDir == SortDirection.Desc ? "descending" : "ascending") : null)"
+                                class="sortable-th @(_sortColumn == SortColumn.Duration ? "is-sorted" : "")"
+                                style="cursor:pointer">
+                                Duration @if (_sortColumn == SortColumn.Duration) { <Icon Name="@(_sortDir == SortDirection.Desc ? "chevron-down" : "chevron-up")" Size="12" /> }
+                            </th>
                             <th>Tokens</th>
-                            <th>When</th>
+                            <th @onclick="() => ToggleSort(SortColumn.When)"
+                                aria-sort="@(_sortColumn == SortColumn.When ? (_sortDir == SortDirection.Desc ? "descending" : "ascending") : null)"
+                                class="sortable-th @(_sortColumn == SortColumn.When ? "is-sorted" : "")"
+                                style="cursor:pointer">
+                                When @if (_sortColumn == SortColumn.When) { <Icon Name="@(_sortDir == SortDirection.Desc ? "chevron-down" : "chevron-up")" Size="12" /> }
+                            </th>
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var run in _result.Items)
+                        @foreach (var run in FilteredAndSortedItems)
                         {
                             <tr class="monitoring-row-clickable" @onclick="() => OpenRun(run.RunId)">
                                 <td>
@@ -114,7 +164,35 @@
                                     <span style="font-weight: 600;">@(run.RunType == PipelineRunType.Review ? "PR " : "")#@run.IssueIdentifier</span>
                                     <span style="color: var(--text-muted);">@Truncate(run.IssueTitle, 60)</span>
                                 </td>
-                                <td class="monitoring-mono">@(run.AgentId ?? "—")</td>
+                                <td class="run-links-cell">
+                                    @* TODO [WARNING]: IssueUrl, ReviewPrUrl, and PullRequestUrl are rendered directly into
+                                         href without scheme validation. Blazor encodes HTML but does NOT block javascript: URIs.
+                                         Validate each URL starts with https:// or http:// before rendering the <a> tag;
+                                         fall back to plain text (same as the null path) if validation fails.
+                                         See review finding: Runs.razor ~160/168/175 (SecurityReviewer). *@
+                                    @if (!string.IsNullOrEmpty(run.IssueUrl))
+                                    {
+                                        <a href="@run.IssueUrl" target="_blank" rel="noopener noreferrer"
+                                           @onclick:stopPropagation="true"
+                                           title="Open issue">@((string)run.IssueIdentifier)</a>
+                                    }
+                                    else
+                                    {
+                                        <span>@((string)run.IssueIdentifier)</span>
+                                    }
+                                    @if (run.RunType == PipelineRunType.Review && !string.IsNullOrEmpty(run.ReviewPrUrl))
+                                    {
+                                        <a href="@run.ReviewPrUrl" target="_blank" rel="noopener noreferrer"
+                                           @onclick:stopPropagation="true"
+                                           title="Open PR" style="margin-left:4px">PR</a>
+                                    }
+                                    else if (!string.IsNullOrEmpty(run.PullRequestUrl))
+                                    {
+                                        <a href="@run.PullRequestUrl" target="_blank" rel="noopener noreferrer"
+                                           @onclick:stopPropagation="true"
+                                           title="Open PR" style="margin-left:4px">PR</a>
+                                    }
+                                </td>
                                 <td>@Dur(run.StartedAtOffset, run.CompletedAtOffset)</td>
                                 <td><span class="token-badge">@CostFormatter.FormatTokens(run.TotalTokens)</span></td>
                                 <td title="@run.StartedAtOffset.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")">@Ago(run.StartedAtOffset)</td>
@@ -149,8 +227,35 @@
     private bool _loading = true;
     private string? _error;
 
-    // Server-side outcome filter (All / Completed / Failed / Cancelled). Applied DB-side by the API,
-    // so pagination is correct across the whole history — not just the loaded page.
+    // ── Sort state ───────────────────────────────────────────────────────
+    // Private enums in this @code block (CodingAgentWebUI namespace, not Pipeline assembly)
+    // are exempt from PipelineEnumJsonRoundtripTests reflection scan.
+    private enum SortColumn { When, Duration, Result, Type }
+    private enum SortDirection { Desc, Asc }
+
+    private SortColumn _sortColumn = SortColumn.When;     // default = When desc (matches DB Id DESC)
+    private SortDirection _sortDir = SortDirection.Desc;
+
+    // ── Filter state ─────────────────────────────────────────────────────
+    // Client-side filters applied to the loaded page only — not across the full history.
+    private PipelineRunType? _typeFilter;
+
+    // ResultFilter uses a dedicated enum because "Running" is a display concept (any non-terminal
+    // step) and is not a PipelineStep value — cannot use PipelineStep? directly.
+    private enum ResultFilter { All, Completed, Failed, Cancelled, Running }
+    private ResultFilter _resultFilter = ResultFilter.All;
+
+    // ── URL → sort params ────────────────────────────────────────────────
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "sort")]
+    public string? SortFromQuery { get; set; }
+
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "dir")]
+    public string? DirFromQuery { get; set; }
+
+    // ── Server-side outcome filter ───────────────────────────────────────
+    // Applied DB-side by the API so pagination is correct across the whole history.
     private enum OutcomeFilter { All, Completed, Failed, Cancelled }
     private OutcomeFilter _outcome = OutcomeFilter.All;
 
@@ -162,6 +267,124 @@
         _ => null
     };
 
+    // ── Lifecycle ────────────────────────────────────────────────────────
+
+    protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    /// <summary>
+    /// Reads [SupplyParameterFromQuery] sort params on every navigation to this page.
+    /// Must be OnParametersSetAsync (not OnInitializedAsync) so that direct-URL navigation
+    /// with ?sort=... params applies even when navigating back to an already-rendered page.
+    /// Guard prevents the infinite loop: ToggleSort → NavigateTo → OnParametersSetAsync → NavigateTo…
+    /// </summary>
+    protected override Task OnParametersSetAsync()
+    {
+        var newCol = SortFromQuery?.ToLowerInvariant() switch
+        {
+            "duration" => SortColumn.Duration,
+            "result"   => SortColumn.Result,
+            "type"     => SortColumn.Type,
+            _          => SortColumn.When   // "when" or unrecognized → default
+        };
+        var newDir = DirFromQuery?.ToLowerInvariant() == "asc"
+            ? SortDirection.Asc
+            : SortDirection.Desc;
+
+        // Guard: only update if something actually changed to avoid re-rendering on every tick/refresh.
+        if (newCol == _sortColumn && newDir == _sortDir)
+            return Task.CompletedTask;
+
+        _sortColumn = newCol;
+        _sortDir = newDir;
+        // TODO [WARNING]: StateHasChanged is not called here after mutating _sortColumn/_sortDir.
+        // Blazor re-renders automatically after OnParametersSetAsync, so this is not a bug today.
+        // If ShouldRender is ever introduced or the component is nested under a re-render-suppressing
+        // parent, the missing explicit call could cause stale UI.
+        // See review finding: Runs.razor ~289 (DotNetSpecialist).
+        return Task.CompletedTask;
+    }
+
+    // ── Filtered + sorted view ───────────────────────────────────────────
+
+    /// <summary>
+    /// Client-side sort and filter applied to the currently-loaded page.
+    /// Sort and filter operate on the 25-row page only, not the full history.
+    /// </summary>
+    private IEnumerable<PipelineRunSummary> FilteredAndSortedItems
+    {
+        get
+        {
+            IEnumerable<PipelineRunSummary> items = _result?.Items ?? [];
+
+            if (_typeFilter != null)
+                items = items.Where(r => r.RunType == _typeFilter);
+
+            if (_resultFilter != ResultFilter.All)
+                items = items.Where(r => MatchesResultFilter(r, _resultFilter));
+
+            return _sortDir == SortDirection.Desc
+                ? items.OrderByDescending(SortKey)
+                : items.OrderBy(SortKey);
+        }
+    }
+
+    private static bool MatchesResultFilter(PipelineRunSummary run, ResultFilter filter) =>
+        filter switch
+        {
+            ResultFilter.Completed => run.FinalStep == PipelineStep.Completed,
+            ResultFilter.Failed    => run.FinalStep == PipelineStep.Failed,
+            ResultFilter.Cancelled => run.FinalStep == PipelineStep.Cancelled,
+            // "Running" = any non-terminal step (matches the Result cell switch above)
+            ResultFilter.Running => run.FinalStep is not (PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled),
+            _                   => true   // ResultFilter.All — should not reach here
+        };
+
+    // TODO [WARNING]: SortKey returns object, so OrderBy/OrderByDescending uses Comparer<object>.Default
+    // (runtime IComparable dispatch). All current arms return IComparable value types so sorting is correct
+    // today. Change the return type to IComparable to make the constraint explicit and catch future arms
+    // that return a non-comparable type at compile time instead of at runtime.
+    // See review finding: Runs.razor ~317 (DotNetSpecialist / Correctness).
+    private object SortKey(PipelineRunSummary run) => _sortColumn switch
+    {
+        SortColumn.Duration => (run.CompletedAtOffset ?? DateTimeOffset.UtcNow) - run.StartedAtOffset,
+        SortColumn.Result   => (int)run.FinalStep,
+        SortColumn.Type     => (int)run.RunType,
+        _                   => run.StartedAtOffset   // SortColumn.When
+    };
+
+    // ── Sort toggle ──────────────────────────────────────────────────────
+
+    private void ToggleSort(SortColumn col)
+    {
+        if (_sortColumn == col)
+            _sortDir = _sortDir == SortDirection.Desc ? SortDirection.Asc : SortDirection.Desc;
+        else
+        {
+            _sortColumn = col;
+            _sortDir = SortDirection.Desc;   // first click on a new column = descending
+        }
+
+        // Persist sort state in URL (replace history entry so Back doesn't cycle through every sort).
+        // Omit params that match defaults to keep URLs clean.
+        var sortParam = _sortColumn == SortColumn.When
+            ? (object?)null
+            : _sortColumn.ToString().ToLowerInvariant();
+        var dirParam = _sortDir == SortDirection.Desc
+            ? (object?)null
+            : "asc";
+
+        var uri = Nav.GetUriWithQueryParameters(new Dictionary<string, object?>
+        {
+            ["sort"] = sortParam,
+            ["dir"]  = dirParam
+        });
+        Nav.NavigateTo(uri, replace: true);
+    }
+
+    // ── Data loading ─────────────────────────────────────────────────────
+
     private async Task SetOutcome(OutcomeFilter outcome)
     {
         if (_outcome == outcome) return;
@@ -169,10 +392,6 @@
         _page = 1;   // a new filter resets to the first page
         await LoadAsync();
     }
-
-    protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
-
-    protected override async Task OnInitializedAsync() => await LoadAsync();
 
     // Re-query when the top-bar project scope changes (reset to the first page for the new scope).
     private async void HandleProjectChanged()
