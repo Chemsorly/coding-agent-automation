@@ -1398,6 +1398,7 @@ public sealed class ReconciliationLoopErrorTests
 // LogTerminalStatus tests still use MeterListener against static meters since that method
 // calls static PipelineTelemetry/WorkDistributionTelemetry instruments directly.
 
+[Collection("Metrics")]
 public sealed class ReconciliationLoopMetricTests : IDisposable
 {
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
