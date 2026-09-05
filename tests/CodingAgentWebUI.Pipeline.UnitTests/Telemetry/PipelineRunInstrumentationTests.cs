@@ -235,23 +235,31 @@ public class PipelineRunInstrumentationTests : IDisposable
     {
         using var durationCollector = DoubleCollector("pipeline.jobs.duration");
 
+        // Track total wall-clock time from construction through disposal
+        var constructionTimestamp = Stopwatch.GetTimestamp();
         var instrumentation = StartRun();
         using var mres2 = new ManualResetEventSlim(false);
         mres2.Wait(10); // Ensure non-zero duration before freeze
         instrumentation.StopTiming();
 
-        var freezeTimestamp = Stopwatch.GetTimestamp();
+        // Wait a known post-freeze gap (50ms). If StopTiming froze the timer, the recorded
+        // duration must be at least this much less than total wall-clock time.
+        const double postFreezeWaitSeconds = 0.050;
         using var mres3 = new ManualResetEventSlim(false);
-        mres3.Wait(50); // Let at least 50ms pass after freeze
-        var totalElapsedSeconds = Stopwatch.GetElapsedTime(freezeTimestamp).TotalSeconds + 0.010; // +10ms = pre-freeze segment
+        mres3.Wait(50);
 
         instrumentation.Dispose();
+
+        var totalWallClockSeconds = Stopwatch.GetElapsedTime(constructionTimestamp).TotalSeconds;
 
         var snapshot = durationCollector.GetMeasurementSnapshot();
         snapshot.Should().ContainSingle();
         snapshot[0].Value.Should().BeGreaterThan(0, "frozen duration must be non-zero");
-        snapshot[0].Value.Should().BeLessThan(totalElapsedSeconds,
-            "frozen duration must be less than total elapsed time — StopTiming must have frozen the timer");
+        // The frozen value must be meaningfully less than total wall-clock time:
+        // total = pre-freeze + post-freeze(≥50ms). If the timer wasn't frozen it would
+        // equal total; if frozen it must be ≤ total - postFreezeWait (with a small tolerance).
+        snapshot[0].Value.Should().BeLessThan(totalWallClockSeconds - postFreezeWaitSeconds * 0.8,
+            "frozen duration must be significantly less than total elapsed time — StopTiming must have frozen the timer");
     }
 
     [Fact]

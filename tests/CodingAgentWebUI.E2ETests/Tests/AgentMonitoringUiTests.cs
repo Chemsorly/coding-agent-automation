@@ -92,12 +92,14 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
         await codingPage.ClickBrowseIssuesAsync();
         await Page.WaitForTimeoutAsync(2000);
 
-        // Look for the issue in the drawer and dispatch it
-        var issueItem = Page.Locator("[data-testid='issue-item']").First;
-        var dispatchBtn = issueItem.Locator("button:has-text('Dispatch')");
+        // Look for the issue in the drawer and dispatch it.
+        // The drawer uses a two-step flow: click a row to select it, then click the dispatch button.
+        var issueRow = Page.Locator("[data-testid='issue-row-UI-200']");
+        await Assertions.Expect(issueRow).ToBeVisibleAsync(new() { Timeout = 10_000 });
+        await issueRow.ClickAsync();
 
-        // Assert the dispatch button is present — fail loudly if seeding or template setup failed.
-        await Assertions.Expect(dispatchBtn).ToBeVisibleAsync(new() { Timeout = 10_000 });
+        var dispatchBtn = Page.Locator("[data-testid='dispatch-issue-btn']");
+        await Assertions.Expect(dispatchBtn).ToBeVisibleAsync(new() { Timeout = 5_000 });
 
         await dispatchBtn.ClickAsync();
         await Page.WaitForTimeoutAsync(2000);
@@ -144,11 +146,13 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
         await codingPage.ClickBrowseIssuesAsync();
         await Page.WaitForTimeoutAsync(2000);
 
-        var issueItem = Page.Locator("[data-testid='issue-item']").First;
-        var dispatchBtn = issueItem.Locator("button:has-text('Dispatch')");
+        var issueRow = Page.Locator("[data-testid='issue-row-UI-300']");
+        await Assertions.Expect(issueRow).ToBeVisibleAsync(new() { Timeout = 10_000 });
+        await issueRow.ClickAsync();
 
+        var dispatchBtn = Page.Locator("[data-testid='dispatch-issue-btn']");
         // Assert the dispatch button is present — fail loudly if seeding or template setup failed.
-        await Assertions.Expect(dispatchBtn).ToBeVisibleAsync(new() { Timeout = 10_000 });
+        await Assertions.Expect(dispatchBtn).ToBeVisibleAsync(new() { Timeout = 5_000 });
 
         await dispatchBtn.ClickAsync();
         await Page.WaitForTimeoutAsync(2000);
@@ -192,19 +196,21 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
         await Page.WaitForTimeoutAsync(2000);
 
         // Dispatch
-        var issueItem = Page.Locator("[data-testid='issue-item']").First;
-        var dispatchBtn = issueItem.Locator("button:has-text('Dispatch')");
+        var issueRow = Page.Locator("[data-testid='issue-row-UI-400']");
+        await Assertions.Expect(issueRow).ToBeVisibleAsync(new() { Timeout = 10_000 });
+        await issueRow.ClickAsync();
 
+        var dispatchBtn = Page.Locator("[data-testid='dispatch-issue-btn']");
         // Assert the dispatch button is present — fail loudly if seeding or template setup failed.
-        await Assertions.Expect(dispatchBtn).ToBeVisibleAsync(new() { Timeout = 10_000 });
+        await Assertions.Expect(dispatchBtn).ToBeVisibleAsync(new() { Timeout = 5_000 });
 
         await dispatchBtn.ClickAsync();
-        await Page.WaitForTimeoutAsync(2000);
 
-        // Assert: success feedback message appears (toast or inline)
-        var bodyText = await Page.TextContentAsync("body");
-        Assert.True(
-            bodyText?.Contains("Dispatched") == true || bodyText?.Contains("✅") == true,
-            "Dispatch success feedback should appear in the UI");
+        // Assert: success feedback toast appears (rendered as div.settings-status.status-success).
+        // Use WaitForSelectorAsync rather than a fixed delay + body text check — the dispatch
+        // involves a SignalR round-trip that may take longer than a fixed timeout on slow CI runners,
+        // and emoji/text extraction is fragile across browsers.
+        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
+        await Assertions.Expect(Page.Locator(".settings-status.status-success")).ToBeVisibleAsync();
     }
 }

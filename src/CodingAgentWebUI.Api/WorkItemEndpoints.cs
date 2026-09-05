@@ -1218,12 +1218,14 @@ public static class WorkItemEndpoints
 
             WorkDistributionTelemetry.LogTerminalStatus(
                 id, request.Status, duration, request.AgentId,
-                // TODO: Enum.TryParse succeeds for numeric string inputs (e.g. "99") even when they don't
-                // correspond to a named FailureReason member, allowing callers to inject undefined enum values
-                // as metric tags. This can cause high-cardinality label explosion in the metrics backend.
-                // Fix: add Enum.IsDefined check after TryParse, or use a switch/dictionary over expected names.
-                // (Issue #2202 review, SecurityReviewer)
-                failureReason: Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason) ? parsedReason : (FailureReason?)null);
+                // TODO: Replace Enum.IsDefined(typeof(FailureReason), parsedReason) with the generic
+                // overload Enum.IsDefined<FailureReason>(parsedReason) (available since .NET 5) to avoid
+                // boxing the enum value on every call. The non-generic overload accepts object and boxes;
+                // the generic form is allocation-free and idiomatic for .NET 10. (DotNetSpecialist)
+                failureReason: Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason)
+                               && Enum.IsDefined(typeof(FailureReason), parsedReason)
+                               ? parsedReason
+                               : (FailureReason?)null);
         }
         catch (Exception ex)
         {
