@@ -151,6 +151,10 @@ public sealed class RunServiceCleanupServiceTests
         var act = () => svc.SweepAsync(cts.Token);
         await act.Should().ThrowAsync<OperationCanceledException>();
 
+        // TODO: This test does not verify whether RemoveStaleAsync was called for id1. The sequence is:
+        // ExistsAsync(id1) → cancel() → RemoveStaleAsync(id1) → ThrowIfCancellationRequested (for id2).
+        // So id1 IS partially processed before the throw. The assertion only covers that id2 is not
+        // reached, leaving the partial-removal-before-cancel path unverified. (Review: TestQualityReviewer, DotNetSpecialist)
         _store.Verify(s => s.ExistsAsync($"run:{id2}"), Times.Never);
     }
 }
