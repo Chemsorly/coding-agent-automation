@@ -323,12 +323,6 @@ public class KiroCliAgentProviderTests
             // Invalid model name must be rejected — no file written.
             // Warning is emitted via Serilog.Log (static), not the injected mock logger.
             File.Exists(settingsPath).Should().BeFalse("invalid model name must not be written to cli.json");
-            // TODO: Strengthen assertion — also verify the temp directory contains no files (no partial
-            // writes). KiroCliSettingsWriter.ApplyAsync calls Directory.CreateDirectory before validation,
-            // so the directory exists after this call even on early exit. The current assertion passes
-            // vacuously if the impl crashes before writing. Consider also asserting
-            // Directory.GetFiles(tempDir).Should().BeEmpty() and/or using a Serilog ListSink to verify
-            // the rejection warning was actually emitted. See review finding [WARNING] TestQualityReviewer.
         }
         finally
         {
@@ -351,12 +345,6 @@ public class KiroCliAgentProviderTests
             // Invalid model name must be rejected — no file written.
             // Warning is emitted via Serilog.Log (static), not the injected mock logger.
             File.Exists(settingsPath).Should().BeFalse("model name with spaces must not be written to cli.json");
-            // TODO: Strengthen assertion — also verify the temp directory contains no files (no partial
-            // writes). KiroCliSettingsWriter.ApplyAsync calls Directory.CreateDirectory before validation,
-            // so the directory exists after this call even on early exit. The current assertion passes
-            // vacuously if the impl crashes before writing. Consider also asserting
-            // Directory.GetFiles(tempDir).Should().BeEmpty() and/or using a Serilog ListSink to verify
-            // the rejection warning was actually emitted. See review finding [WARNING] TestQualityReviewer.
         }
         finally
         {
@@ -475,12 +463,6 @@ public class KiroCliAgentProviderTests
         // Verifies that delegating to KiroCliSettingsWriter produces the same cli.json
         // as calling the writer directly with the same inputs. This is the regression
         // guard required by acceptance criterion 3.
-        // TODO: Expand to a [Theory] covering at least AgentEffortLevel.Auto (null effort → no
-        // chat.modelDefaults node) and one of xhigh/max, to catch divergence where ToCliValue()
-        // returns a string not in ValidEffortValues (causing the writer to silently omit the
-        // effort node while the old provider would have written it). Currently only High is tested,
-        // so a silent omission for other effort levels would not be caught.
-        // See review finding [WARNING] TestQualityReviewer.
         var tempDir = Path.Combine(Path.GetTempPath(), $"kiro-test-{Guid.NewGuid():N}");
         var providerPath = Path.Combine(tempDir, "provider-cli.json");
         var writerPath = Path.Combine(tempDir, "writer-cli.json");
