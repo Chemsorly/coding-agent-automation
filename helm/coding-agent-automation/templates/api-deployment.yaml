@@ -86,7 +86,7 @@ spec:
             - name: ASPNETCORE_URLS
               value: "http://+:{{ .Values.api.service.port }}"
             {{- include "coding-agent-automation.secretEnv" . | nindent 12 }}
-            {{- include "coding-agent-automation.otelEnv" (dict "serviceName" "coding-agent-api" "root" .) | nindent 12 }}
+            {{- include "coding-agent-automation.otelEnv" (dict "serviceName" (.Values.otel.apiServiceName | default "coding-agent-api") "root" .) | nindent 12 }}
             - name: LOG_LEVEL
               value: {{ .Values.api.env.logLevel | default "Information" | quote }}
             - name: DB_LOG_LEVEL

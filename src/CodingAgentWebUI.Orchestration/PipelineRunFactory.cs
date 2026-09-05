@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Orchestration;
 
@@ -13,6 +14,13 @@ public static class PipelineRunFactory
     /// Uses <paramref name="workItemId"/> as the RunId so the WorkItem and run share the same ID.
     /// Called from <c>POST /api/work-items</c> to materialise the in-memory run in the API process
     /// (Option A of Req 1a.1 — the API is the single place where both records are created).
+    /// <para>
+    /// Also starts an <c>ExecutePipeline</c> <see cref="System.Diagnostics.Activity"/> on the run
+    /// (<see cref="PipelineRun.OrchestratorActivity"/>) using <see cref="PipelineTelemetry.ActivitySource"/>.
+    /// This span is stopped by <c>RunLifecycleManager</c> when the run reaches a terminal state,
+    /// providing an end-to-end orchestrator-side trace that Grafana Tempo can surface under
+    /// <c>rootServiceName="coding-agent-orchestrator"</c> (fix for issue #2255).
+    /// </para>
     /// </summary>
     /// <param name="workItemId">The newly-persisted WorkItem GUID, used as the RunId.</param>
     /// <param name="request">The <see cref="JobDistributionRequest"/> payload from the WorkItem.</param>
@@ -28,7 +36,20 @@ public static class PipelineRunFactory
 
         // Stamp the workItemId onto the request as RunId so FromDistributionRequest uses it.
         var requestWithRunId = request with { RunId = workItemId.ToString() };
-        return FromDistributionRequest(requestWithRunId);
+        var run = FromDistributionRequest(requestWithRunId);
+
+        // Start an orchestrator-side ExecutePipeline span (issue #2255).
+        // The span spans the full run lifecycle: dispatch → terminal state.
+        // PipelineTelemetry.ActivitySource.StartActivity returns null when no ActivityListener is
+        // subscribed (e.g. in test environments without a TracerProvider) — all access must be null-guarded.
+        var activity = PipelineTelemetry.ActivitySource.StartActivity("ExecutePipeline");
+        activity?.SetTag("pipeline.run_id", run.RunId);
+        activity?.SetTag("pipeline.issue", run.IssueIdentifier.Value);
+        activity?.SetTag("pipeline.run_type", run.RunType.ToString());
+        PipelineTelemetry.SetProjectTags(activity, run.ProjectId, run.ProjectName);
+        run.OrchestratorActivity = activity;
+
+        return run;
     }
 
     /// <summary>

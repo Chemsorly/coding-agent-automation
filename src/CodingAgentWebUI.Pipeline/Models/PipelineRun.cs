@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Threading;
 using CodingAgentWebUI.Pipeline.Services;
 
@@ -223,6 +224,36 @@ public sealed partial class PipelineRun
 
     /// <summary>Pipeline provider config ID, or null if no pipeline provider configured.</summary>
     public string? PipelineProviderConfigId { get; set; }
+
+    /// <summary>
+    /// Orchestrator-side <see cref="Activity"/> wrapping the full run lifecycle on the API process.
+    /// Started by <c>PipelineRunFactory.CreateFromWorkItem</c> and stopped by
+    /// <c>RunLifecycleManager</c> when the run reaches a terminal state (Completed, Failed, Cancelled).
+    /// <para>
+    /// This is the <c>ExecutePipeline</c> span emitted from the <c>coding-agent-orchestrator</c>
+    /// (API process) that the Grafana "Recent Pipeline Traces" panel queries for.
+    /// Null for runs created before this feature was added, or for Consolidation runs
+    /// (<c>CreateFromWorkItem</c> returns null for those).
+    /// </para>
+    /// <para>
+    /// Not serialized — it is an in-memory token valid only for the lifetime of the API process.
+    /// Rehydrated runs (pod restart) will not have a span; that is intentional.
+    /// </para>
+    /// <para>
+    /// Ownership: <c>OrchestratorRunService.RemoveRun</c> is the single-owner claim —
+    /// <c>TryRemove</c> is atomic, so only one terminal path obtains the <c>PipelineRun</c> and
+    /// disposes this activity. Concurrent terminal calls (e.g. Fail + Complete racing) are safe
+    /// because only the winning <c>TryRemove</c> caller gets the run. This invariant must be
+    /// maintained: never dispose this activity outside of a terminal <c>RunLifecycleManager</c>
+    /// path or <c>OrchestratorRunService.RemoveRun</c>.
+    /// </para>
+    /// </summary>
+    // TODO: System.Diagnostics.Activity is not thread-safe for concurrent tag mutation + Dispose.
+    // The "single-owner via TryRemove" invariant above prevents concurrent Dispose today, but
+    // concurrent tag additions from step handlers racing a terminal cancel are theoretically unsafe.
+    // If step handlers ever set tags on OrchestratorActivity concurrently, guard with a lock or
+    // switch to an interlocked ownership pattern. (Reviewer warning, issue #2255)
+    public Activity? OrchestratorActivity { get; set; }
 
     /// <summary>Whether brain context was successfully loaded during pre-run sync.</summary>
     public bool BrainContextLoaded { get; set; }
