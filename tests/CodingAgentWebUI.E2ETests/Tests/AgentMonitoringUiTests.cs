@@ -92,14 +92,10 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
         await codingPage.ClickBrowseIssuesAsync();
         await Page.WaitForTimeoutAsync(2000);
 
-        // Look for the issue in the drawer and dispatch it
-        var issueItem = Page.Locator("[data-testid='issue-item']").First;
-        var dispatchBtn = issueItem.Locator("button:has-text('Dispatch')");
-
-        // Assert the dispatch button is present — fail loudly if seeding or template setup failed.
-        await Assertions.Expect(dispatchBtn).ToBeVisibleAsync(new() { Timeout = 10_000 });
-
-        await dispatchBtn.ClickAsync();
+        // Select the seeded issue then click the dispatch button in the detail panel.
+        await codingPage.SelectIssueAsync("UI-200");
+        await Page.WaitForTimeoutAsync(500);
+        await codingPage.ClickStartPipelineAsync();
         await Page.WaitForTimeoutAsync(2000);
 
         // Agent receives job
@@ -144,13 +140,10 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
         await codingPage.ClickBrowseIssuesAsync();
         await Page.WaitForTimeoutAsync(2000);
 
-        var issueItem = Page.Locator("[data-testid='issue-item']").First;
-        var dispatchBtn = issueItem.Locator("button:has-text('Dispatch')");
-
-        // Assert the dispatch button is present — fail loudly if seeding or template setup failed.
-        await Assertions.Expect(dispatchBtn).ToBeVisibleAsync(new() { Timeout = 10_000 });
-
-        await dispatchBtn.ClickAsync();
+        // Select the seeded issue then click the dispatch button in the detail panel.
+        await codingPage.SelectIssueAsync("UI-300");
+        await Page.WaitForTimeoutAsync(500);
+        await codingPage.ClickStartPipelineAsync();
         await Page.WaitForTimeoutAsync(2000);
 
         // Agent completes the job
@@ -191,14 +184,10 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
         await codingPage.ClickBrowseIssuesAsync();
         await Page.WaitForTimeoutAsync(2000);
 
-        // Dispatch
-        var issueItem = Page.Locator("[data-testid='issue-item']").First;
-        var dispatchBtn = issueItem.Locator("button:has-text('Dispatch')");
-
-        // Assert the dispatch button is present — fail loudly if seeding or template setup failed.
-        await Assertions.Expect(dispatchBtn).ToBeVisibleAsync(new() { Timeout = 10_000 });
-
-        await dispatchBtn.ClickAsync();
+        // Dispatch: select the seeded issue then click the dispatch button in the detail panel.
+        await codingPage.SelectIssueAsync("UI-400");
+        await Page.WaitForTimeoutAsync(500);
+        await codingPage.ClickStartPipelineAsync();
         await Page.WaitForTimeoutAsync(2000);
 
         // Assert: success feedback message appears (toast or inline)

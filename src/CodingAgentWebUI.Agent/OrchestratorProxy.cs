@@ -108,6 +108,12 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
     /// <summary>
     /// Requests a fresh short-lived token from the orchestrator when the current one expires.
     /// </summary>
+    // TODO: This method discards response.ExpiresAt, returning only the token string. Callers
+    // (e.g. AgentProviderFactory, AgentStepPipelineBuilder) therefore cannot proactively renew
+    // tokens before they expire and can only react to a 403. VendTokenAsync now returns the real
+    // stored expiry, but agents never see it via this method. Add a
+    // RequestTokenRefreshWithExpiryAsync overload returning the full TokenRefreshResponse, and
+    // wire proactive expiry-based renewal into AgentProviderFactory — see issue #2334 stretch goals.
     public async Task<string> RequestTokenRefreshAsync(ProviderKind kind, CancellationToken ct)
     {
         var response = await _signalRPipeline.ExecuteAsync(async token =>

@@ -18,11 +18,13 @@ internal sealed class ConsolidationProviderResolver
     private readonly IKiroCliOrchestrator _orchestrator;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly Serilog.ILogger _logger;
+    private readonly OrchestratorProxy? _orchestratorProxy;
 
     public ConsolidationProviderResolver(
         IKiroCliOrchestrator orchestrator,
         IHttpClientFactory httpClientFactory,
-        Serilog.ILogger logger)
+        Serilog.ILogger logger,
+        OrchestratorProxy? orchestratorProxy = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(httpClientFactory);
@@ -31,6 +33,7 @@ internal sealed class ConsolidationProviderResolver
         _orchestrator = orchestrator;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _orchestratorProxy = orchestratorProxy;
     }
 
     public Task<ProviderResolutionResult<BrainConsolidationProviders>> ResolveBrainConsolidationProvidersAsync(
@@ -170,7 +173,7 @@ internal sealed class ConsolidationProviderResolver
         Func<AgentProviderFactory, List<IAsyncDisposable>, Task<ProviderResolutionResult<T>>> resolver,
         CancellationToken ct) where T : IAsyncDisposable
     {
-        var factory = new AgentProviderFactory(_orchestrator, _httpClientFactory, job.PipelineConfiguration);
+        var factory = new AgentProviderFactory(_orchestrator, _httpClientFactory, job.PipelineConfiguration, _orchestratorProxy);
         var disposables = new List<IAsyncDisposable>();
         try
         {
