@@ -14,7 +14,6 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Steps;
 /// Tests timeout enforcement, retry behavior, cap enforcement, and partial failure handling.
 /// Feature: 027-epic-decomposition-pipeline, Requirements: 4.6, 4.12, 10.3, 10.4
 /// </summary>
-[Collection("CreateSubIssues")]
 public class CreateSubIssuesStepTests : IDisposable
 {
     private readonly Mock<IPipelineCallbacks> _callbacks = new();
@@ -347,20 +346,21 @@ public class CreateSubIssuesStepTests : IDisposable
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CreatedIssueResult { Identifier = "900", Url = "https://github.com/test/900" });
 
-        // Collect all measurements emitted by this test's ExecuteAsync call.
-        // Using a bag instead of a baseline/delta avoids races with parallel tests that fire the same
-        // counter between the baseline capture and the delta read.
-        var measurements = new System.Collections.Concurrent.ConcurrentBag<long>();
+        long createdCount = 0;
+        var counting = false;
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, meterListener) =>
         {
             if (instrument.Meter.Name == PipelineTelemetry.SourceName)
                 meterListener.EnableMeasurementEvents(instrument);
         };
+        // Gate: only accumulate measurements emitted during ExecuteAsync to avoid parallel-test
+        // inflation. The global MeterListener would otherwise count events from other tests running
+        // concurrently in the same process, making the delta non-deterministic.
         listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
         {
-            if (instrument.Name == "pipeline.decomposition.sub_issues.created")
-                measurements.Add(measurement);
+            if (counting && instrument.Name == "pipeline.decomposition.sub_issues.created")
+                Interlocked.Add(ref createdCount, measurement);
         });
         listener.Start();
 
@@ -368,11 +368,10 @@ public class CreateSubIssuesStepTests : IDisposable
         var context = BuildContext(run);
         var step = new CreateSubIssuesStep();
 
+        counting = true;
         await step.ExecuteAsync(context, CancellationToken.None);
+        counting = false;
 
-        listener.Dispose();
-
-        measurements.Should().ContainSingle("exactly one sub_issues.created measurement must be emitted for a single successful creation")
-            .Which.Should().Be(1);
+        Interlocked.Read(ref createdCount).Should().Be(1);
     }
 }
