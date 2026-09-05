@@ -1124,4 +1124,98 @@ public class PullRequestFinalizationServiceTests
 
         await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("permission denied");
     }
+
+    [Fact]
+    public async Task RunFullPrCreationAsync_OceFromRunPostPrSequenceAsync_StillSetsCompletedAt()
+    {
+        // Regression test for: OCE from RunPostPrSequenceAsync (e.g. brain sync / reflection) must
+        // not leave CompletedAt null. The try-finally wrapping RunPostPrSequenceAsync guarantees
+        // run.MarkCompleted() fires on all exit paths including OperationCanceledException.
+        var run = CreateRun();
+        run.BranchName = "agent/test-1";
+        var report = CreateReport();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var agentProvider = new Mock<IAgentProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+        var transitions = new List<PipelineStep>();
+
+        // PR creation succeeds
+        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>());
+        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        repoProvider.Setup(r => r.GetFileChangesAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<FileChangeSummary>());
+        repoProvider.Setup(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("https://github.com/org/repo/pull/55");
+        repoProvider.Setup(r => r.BaseBranch).Returns("main");
+        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<IssueIdentifier>())).Returns("Closes #1");
+
+        var prOrchestrator = new PullRequestOrchestrator(_logger.Object);
+        using var cts = new CancellationTokenSource();
+
+        // The transitionCallback throws OCE when entering GeneratingPrDescription —
+        // simulates what happens when the token is cancelled during the post-PR sequence.
+        // This is equivalent to any step inside RunPostPrSequenceAsync throwing OCE
+        // (brain sync, reflection, feedback). Using the callback avoids dependencies on
+        // workspace file layout or async task scheduling order.
+        // TODO: This simulation triggers the OCE at the very first callback invocation (the boundary of
+        // RunPostPrSequenceAsync), not from a mid-sequence async collaborator (e.g. SyncBrainPostRunAsync
+        // or RunReflectionAsync). A more direct test would configure agentProvider.ExecuteAsync to throw OCE
+        // after PR creation, exercising the exception path from within the sequence itself. The current
+        // approach is sufficient to verify the try-finally fix, but the equivalence claim in the comment
+        // only holds because the try-finally is what catches all paths regardless of where the OCE originates.
+        Task TransitionCallback(PipelineStep step)
+        {
+            if (step == PipelineStep.GeneratingPrDescription)
+            {
+                cts.Cancel();
+                throw new OperationCanceledException(cts.Token);
+            }
+            transitions.Add(step);
+            return Task.CompletedTask;
+        }
+
+        // The OCE must propagate (the caller needs to know) but CompletedAt must be set.
+        await _sut.Invoking(s => s.RunFullPrCreationAsync(
+            new PrCreationRequest
+            {
+                Run = run,
+                Report = report,
+                IsDraft = false,
+                PrOrchestrator = prOrchestrator,
+                RepoProvider = repoProvider.Object,
+                AgentProvider = agentProvider.Object,
+                BrainProvider = null,
+                BrainSync = null,
+                Config = config,
+                Issue = null,
+                IssueComments = null,
+                FeedbackService = feedbackService,
+                HistoryService = null,
+                EmitOutputLine = _ => { },
+                TransitionCallback = TransitionCallback
+            },
+            cts.Token))
+            .Should().ThrowAsync<OperationCanceledException>();
+
+        // Critical invariant: CompletedAt must be set even though RunPostPrSequenceAsync threw OCE.
+        // Without the try-finally fix, run.MarkCompleted() would be skipped here.
+        // TODO: This test silently depends on CreatePullRequestAsync succeeding (all repo mocks return
+        // success above) so that finalStep is correctly set to PipelineStep.Completed before the
+        // try-finally block. If the PR creation mock setup were accidentally removed, the test would
+        // fail or exercise a different code path (prCreationSucceeded=false, early return). Consider
+        // adding an explicit assertion or comment that confirms PR creation succeeded as a precondition.
+        run.CompletedAtOffset.Should().NotBeNull(
+            "run.MarkCompleted() must execute in the finally block even when RunPostPrSequenceAsync throws OCE");
+        run.CurrentStep.Should().Be(PipelineStep.Completed,
+            "terminal step must be set regardless of OCE");
+        run.FinalLabel.Should().Be(AgentLabels.Done,
+            "FinalLabel must be set in the finally block");
+    }
 }
