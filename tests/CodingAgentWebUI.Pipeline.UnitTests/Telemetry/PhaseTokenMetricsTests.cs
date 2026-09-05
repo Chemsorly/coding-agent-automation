@@ -110,7 +110,7 @@ public class PhaseTokenMetricsTests : IDisposable
     {
         var run = CreateRun($"gate-{expectedTagValue}");
 
-        PipelineTelemetry.RecordAnalysisGateOutcome(outcome, run);
+        PipelineTelemetry.RecordAnalysisGateOutcome(outcome, run.RunType, run.ProjectId, run.ProjectName);
 
         _counters.Should().Contain(c => c.Name == "pipeline.analysis.gate_outcome"
             && c.Tags.Contains(new KeyValuePair<string, object?>("outcome", expectedTagValue))

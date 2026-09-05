@@ -1,4 +1,3 @@
-using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
@@ -7,7 +6,6 @@ using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace CodingAgentWebUI.Hub;
@@ -23,9 +21,8 @@ public sealed class AgentHubFacade : IAgentHubFacade
     private readonly IPipelineRunHistoryService _historyService;
     private readonly IProviderConfigStore _configStore;
     private readonly IProviderFactory _providerFactory;
-    private readonly WorkItemTransitionService? _workItemTransition;
+    private readonly IWorkItemTransitionStore? _transitionStore;
     private readonly IWorkItemFallbackTransitionService? _workItemFallbackTransition;
-    private readonly IDbContextFactory<PipelineDbContext>? _dbFactory;
     private readonly IProjectStore? _projectStore;
     private readonly ILogger<AgentHubFacadeDependencies> _logger;
     private readonly TimeProvider _timeProvider;
@@ -47,9 +44,8 @@ public sealed class AgentHubFacade : IAgentHubFacade
         _configStore = deps.ConfigStore;
         _providerFactory = deps.ProviderFactory;
         _logger = deps.Logger;
-        _workItemTransition = deps.WorkItemTransition;
+        _transitionStore = deps.TransitionStore;
         _workItemFallbackTransition = deps.WorkItemFallbackTransition;
-        _dbFactory = deps.DbFactory;
         _projectStore = deps.ProjectStore;
         _timeProvider = deps.TimeProvider ?? TimeProvider.System;
     }
@@ -168,12 +164,12 @@ public sealed class AgentHubFacade : IAgentHubFacade
     /// <inheritdoc />
     public async Task<int> GetWorkItemRetryCountAsync(JobId jobId, CancellationToken ct)
     {
-        if (_workItemTransition is null || !Guid.TryParse(jobId.Value, out var workItemId))
+        if (_transitionStore is null || !Guid.TryParse(jobId.Value, out var workItemId))
             return 0;
 
         try
         {
-            return await _workItemTransition.GetRetryCountAsync(workItemId, ct);
+            return await _transitionStore.GetRetryCountAsync(workItemId, ct);
         }
         catch (Exception ex)
         {
@@ -185,10 +181,10 @@ public sealed class AgentHubFacade : IAgentHubFacade
     /// <inheritdoc />
     public async Task RequeueWorkItemAsync(JobId jobId, CancellationToken ct)
     {
-        if (_workItemTransition is null || !Guid.TryParse(jobId.Value, out var workItemId))
+        if (_transitionStore is null || !Guid.TryParse(jobId.Value, out var workItemId))
             return;
 
-        await _workItemTransition.RequeueAsync(workItemId, ct);
+        await _transitionStore.RequeueAsync(workItemId, ct);
         _logger.LogInformation("WorkItem {WorkItemId} re-queued as Pending (retry after rejection)", workItemId);
     }
 
@@ -196,29 +192,12 @@ public sealed class AgentHubFacade : IAgentHubFacade
     public async Task<(string? RepoProviderConfigId, string? BrainProviderConfigId)?> GetWorkItemProviderConfigIdsAsync(
         JobId jobId, CancellationToken ct)
     {
-        if (_dbFactory is null || !Guid.TryParse(jobId.Value, out var id))
+        if (_transitionStore is null || !Guid.TryParse(jobId.Value, out var id))
             return null;
 
         try
         {
-            await using var db = await _dbFactory.CreateDbContextAsync(ct);
-            var payload = await db.WorkItems
-                .AsNoTracking()
-                .Where(w => w.Id == id)
-                .Select(w => w.Payload)
-                .FirstOrDefaultAsync(ct);
-
-            if (payload is null) return null;
-
-            using var doc = System.Text.Json.JsonDocument.Parse(payload);
-            var root = doc.RootElement;
-
-            var repoConfigId = root.TryGetProperty("repoProviderConfigId", out var repoProp)
-                ? repoProp.GetString() : null;
-            var brainConfigId = root.TryGetProperty("brainProviderConfigId", out var brainProp)
-                ? brainProp.GetString() : null;
-
-            return (repoConfigId, brainConfigId);
+            return await _transitionStore.GetWorkItemProviderConfigIdsAsync(id, ct);
         }
         catch (Exception ex)
         {
@@ -265,34 +244,17 @@ public sealed class AgentHubFacade : IAgentHubFacade
 
     // ── Progress tracking ───────────────────────────────────────────────
 
-    /// <summary>
-    /// Throttle interval for LastProgressAt DB writes. Only writes when the existing
-    /// DB value is null or older than this threshold.
-    /// </summary>
-    private static readonly TimeSpan ProgressWriteThrottle = TimeSpan.FromMinutes(5);
-
     /// <inheritdoc />
     public async Task TouchLastProgressAsync(JobId jobId, DateTimeOffset timestamp, CancellationToken ct)
     {
-        if (_dbFactory is null || !Guid.TryParse(jobId.Value, out var workItemId))
+        if (_transitionStore is null || !Guid.TryParse(jobId.Value, out var workItemId))
             return;
 
+        // The throttle (skip when the DB value is recent enough) lives in the store's
+        // TouchLastProgressAsync — the facade only translates failures into telemetry.
         try
         {
-            await using var db = await _dbFactory.CreateDbContextAsync(ct);
-            var item = await db.WorkItems.FindAsync([workItemId], ct);
-
-            if (item is null)
-                return;
-
-            // Throttle: skip write if DB value is recent enough (uses wall clock, not agent timestamp,
-            // to avoid clock-skew issues where a behind-clock agent could permanently suppress writes)
-            if (item.LastProgressAt.HasValue &&
-                (DateTimeOffset.UtcNow - item.LastProgressAt.Value) < ProgressWriteThrottle)
-                return;
-
-            item.LastProgressAt = timestamp;
-            await db.SaveChangesAsync(ct);
+            await _transitionStore.TouchLastProgressAsync(workItemId, timestamp, ct);
         }
         catch (Exception ex)
         {
@@ -305,22 +267,12 @@ public sealed class AgentHubFacade : IAgentHubFacade
     public async Task<(string IssueIdentifier, string IssueProviderConfigId)?> GetWorkItemIssueMetadataAsync(
         JobId jobId, CancellationToken ct)
     {
-        if (_dbFactory is null || !Guid.TryParse(jobId.Value, out var id))
+        if (_transitionStore is null || !Guid.TryParse(jobId.Value, out var id))
             return null;
 
         try
         {
-            await using var db = await _dbFactory.CreateDbContextAsync(ct);
-            var result = await db.WorkItems
-                .AsNoTracking()
-                .Where(w => w.Id == id)
-                .Select(w => new { w.IssueIdentifier, w.IssueProviderConfigId })
-                .FirstOrDefaultAsync(ct);
-
-            if (result is null || string.IsNullOrEmpty(result.IssueIdentifier))
-                return null;
-
-            return (result.IssueIdentifier, result.IssueProviderConfigId);
+            return await _transitionStore.GetWorkItemIssueMetadataAsync(id, ct);
         }
         catch (Exception ex)
         {

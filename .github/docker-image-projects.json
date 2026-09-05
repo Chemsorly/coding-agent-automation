@@ -1,0 +1,181 @@
+{
+  "_comment": "Source of truth for CI Docker path-filtering (Spec 048 Phase 3). For each image, 'projects' is the FULL transitive src ProjectReference closure of 'entryProject' (including the entry project itself). It is verified against the real .csproj graph by DockerImageProjectMappingTests in CodingAgentWebUI.Pipeline.UnitTests — that test FAILS if this file drifts from the actual references, so regenerate 'projects' (do not hand-tweak) when the graph changes. 'dockerfile' and 'extraPaths' are attribution facts the test cannot derive. Consumed by .github/scripts/detect-affected-images.sh.",
+  "globalTriggers": [
+    "Directory.Build.props",
+    "Directory.Packages.props",
+    "global.json",
+    ".github/workflows/ci.yml",
+    ".github/docker-image-projects.json",
+    ".github/scripts/detect-affected-images.sh"
+  ],
+  "images": [
+    {
+      "tag": "coding-agent-webui",
+      "dockerfile": "dockerfiles/webui.Dockerfile",
+      "entryProject": "CodingAgentWebUI",
+      "projects": [
+        "CodingAgentWebUI",
+        "CodingAgentWebUI.Api.Client",
+        "CodingAgentWebUI.Contracts",
+        "CodingAgentWebUI.Hub",
+        "CodingAgentWebUI.Infrastructure.Common",
+        "CodingAgentWebUI.Infrastructure.Providers",
+        "CodingAgentWebUI.Kubernetes",
+        "CodingAgentWebUI.Orchestration",
+        "CodingAgentWebUI.Pipeline",
+        "CodingAgentWebUI.Pipeline.CodeReview",
+        "KiroCliLib"
+      ]
+    },
+    {
+      "tag": "coding-agent-api",
+      "dockerfile": "dockerfiles/api.Dockerfile",
+      "entryProject": "CodingAgentWebUI.Api",
+      "projects": [
+        "CodingAgentWebUI.Api",
+        "CodingAgentWebUI.Api.Client",
+        "CodingAgentWebUI.Contracts",
+        "CodingAgentWebUI.Hub",
+        "CodingAgentWebUI.Infrastructure.Common",
+        "CodingAgentWebUI.Infrastructure.Persistence",
+        "CodingAgentWebUI.Infrastructure.Providers",
+        "CodingAgentWebUI.Kubernetes",
+        "CodingAgentWebUI.Orchestration",
+        "CodingAgentWebUI.Pipeline",
+        "CodingAgentWebUI.Pipeline.CodeReview",
+        "KiroCliLib"
+      ]
+    },
+    {
+      "tag": "coding-agent-jobcontroller",
+      "dockerfile": "dockerfiles/jobcontroller.Dockerfile",
+      "entryProject": "CodingAgentWebUI.JobController",
+      "projects": [
+        "CodingAgentWebUI.Api.Client",
+        "CodingAgentWebUI.Contracts",
+        "CodingAgentWebUI.Infrastructure.Common",
+        "CodingAgentWebUI.Infrastructure.Providers",
+        "CodingAgentWebUI.JobController",
+        "CodingAgentWebUI.Kubernetes",
+        "CodingAgentWebUI.Pipeline.CodeReview",
+        "KiroCliLib"
+      ]
+    },
+    {
+      "tag": "coding-agent-scheduler",
+      "dockerfile": "dockerfiles/scheduler.Dockerfile",
+      "entryProject": "CodingAgentWebUI.Scheduler",
+      "projects": [
+        "CodingAgentWebUI.Api.Client",
+        "CodingAgentWebUI.Contracts",
+        "CodingAgentWebUI.Infrastructure.Common",
+        "CodingAgentWebUI.Infrastructure.Providers",
+        "CodingAgentWebUI.Kubernetes",
+        "CodingAgentWebUI.Orchestration",
+        "CodingAgentWebUI.Pipeline",
+        "CodingAgentWebUI.Pipeline.CodeReview",
+        "CodingAgentWebUI.Scheduler",
+        "KiroCliLib"
+      ]
+    },
+    {
+      "tag": "coding-agent-kiro-dotnet10",
+      "dockerfile": "dockerfiles/kiro/agent-kiro-dotnet10.Dockerfile",
+      "entryProject": "CodingAgentWebUI.Agent",
+      "projects": [
+        "CodingAgentWebUI.Agent",
+        "CodingAgentWebUI.Agent.KiroCli",
+        "CodingAgentWebUI.Agent.OpenCode",
+        "CodingAgentWebUI.Contracts",
+        "CodingAgentWebUI.Infrastructure.Common",
+        "CodingAgentWebUI.Infrastructure.Providers",
+        "CodingAgentWebUI.Pipeline",
+        "CodingAgentWebUI.Pipeline.CodeReview",
+        "KiroCliLib"
+      ]
+    },
+    {
+      "tag": "coding-agent-kiro-python312",
+      "dockerfile": "dockerfiles/kiro/agent-kiro-python312.Dockerfile",
+      "entryProject": "CodingAgentWebUI.Agent",
+      "projects": [
+        "CodingAgentWebUI.Agent",
+        "CodingAgentWebUI.Agent.KiroCli",
+        "CodingAgentWebUI.Agent.OpenCode",
+        "CodingAgentWebUI.Contracts",
+        "CodingAgentWebUI.Infrastructure.Common",
+        "CodingAgentWebUI.Infrastructure.Providers",
+        "CodingAgentWebUI.Pipeline",
+        "CodingAgentWebUI.Pipeline.CodeReview",
+        "KiroCliLib"
+      ]
+    },
+    {
+      "tag": "coding-agent-kiro-java21",
+      "dockerfile": "dockerfiles/kiro/agent-kiro-java21.Dockerfile",
+      "entryProject": "CodingAgentWebUI.Agent",
+      "projects": [
+        "CodingAgentWebUI.Agent",
+        "CodingAgentWebUI.Agent.KiroCli",
+        "CodingAgentWebUI.Agent.OpenCode",
+        "CodingAgentWebUI.Contracts",
+        "CodingAgentWebUI.Infrastructure.Common",
+        "CodingAgentWebUI.Infrastructure.Providers",
+        "CodingAgentWebUI.Pipeline",
+        "CodingAgentWebUI.Pipeline.CodeReview",
+        "KiroCliLib"
+      ]
+    },
+    {
+      "tag": "coding-agent-opencode-dotnet10",
+      "dockerfile": "dockerfiles/opencode/agent-opencode-dotnet10.Dockerfile",
+      "entryProject": "CodingAgentWebUI.Agent",
+      "extraPaths": ["dockerfiles/opencode/entrypoint.sh"],
+      "projects": [
+        "CodingAgentWebUI.Agent",
+        "CodingAgentWebUI.Agent.KiroCli",
+        "CodingAgentWebUI.Agent.OpenCode",
+        "CodingAgentWebUI.Contracts",
+        "CodingAgentWebUI.Infrastructure.Common",
+        "CodingAgentWebUI.Infrastructure.Providers",
+        "CodingAgentWebUI.Pipeline",
+        "CodingAgentWebUI.Pipeline.CodeReview",
+        "KiroCliLib"
+      ]
+    },
+    {
+      "tag": "coding-agent-opencode-java21",
+      "dockerfile": "dockerfiles/opencode/agent-opencode-java21.Dockerfile",
+      "entryProject": "CodingAgentWebUI.Agent",
+      "extraPaths": ["dockerfiles/opencode/entrypoint.sh"],
+      "projects": [
+        "CodingAgentWebUI.Agent",
+        "CodingAgentWebUI.Agent.KiroCli",
+        "CodingAgentWebUI.Agent.OpenCode",
+        "CodingAgentWebUI.Contracts",
+        "CodingAgentWebUI.Infrastructure.Common",
+        "CodingAgentWebUI.Infrastructure.Providers",
+        "CodingAgentWebUI.Pipeline",
+        "CodingAgentWebUI.Pipeline.CodeReview",
+        "KiroCliLib"
+      ]
+    },
+    {
+      "tag": "coding-agent-opencode-python312",
+      "dockerfile": "dockerfiles/opencode/agent-opencode-python312.Dockerfile",
+      "entryProject": "CodingAgentWebUI.Agent",
+      "extraPaths": ["dockerfiles/opencode/entrypoint.sh"],
+      "projects": [
+        "CodingAgentWebUI.Agent",
+        "CodingAgentWebUI.Agent.KiroCli",
+        "CodingAgentWebUI.Agent.OpenCode",
+        "CodingAgentWebUI.Contracts",
+        "CodingAgentWebUI.Infrastructure.Common",
+        "CodingAgentWebUI.Infrastructure.Providers",
+        "CodingAgentWebUI.Pipeline",
+        "CodingAgentWebUI.Pipeline.CodeReview",
+        "KiroCliLib"
+      ]
+    }
+  ]
+}

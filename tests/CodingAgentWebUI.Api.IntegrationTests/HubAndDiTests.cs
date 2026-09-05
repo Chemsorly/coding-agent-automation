@@ -143,20 +143,23 @@ public sealed class HubAndDiTests
     // ── DI: AgentHubFacade wiring ──────────────────────────────────────────────────
 
     [Fact]
-    public void AddApiOrchestration_ResolvesIAgentHubFacade_WithNonNullDbFactory()
+    public void AddApiOrchestration_ResolvesIAgentHubFacade_WithNonNullTransitionStore()
     {
-        // Mirror of AgentHubFacadeDbFactoryWiringTests — verifies the API's DI wiring
-        // doesn't regress the _dbFactory null bug that broke LastProgressAt persistence.
+        // Verifies the API's DI wiring resolves AgentHubFacade with a non-null WorkItem transition
+        // store. Spec 048 Phase 2 replaced the facade's direct IDbContextFactory + WorkItemTransitionService
+        // with a single IWorkItemTransitionStore (EF-backed, wired only in the API host). Guards against
+        // regressing the _dbFactory-null bug that broke LastProgressAt persistence — if the store is not
+        // wired in the API container, TouchLastProgressAsync / retry / WorkItem metadata reads silently no-op.
         var facade = _factory.Services.GetRequiredService<IAgentHubFacade>();
 
-        var dbFactoryField = typeof(AgentHubFacade).GetField("_dbFactory",
+        var storeField = typeof(AgentHubFacade).GetField("_transitionStore",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        dbFactoryField.Should().NotBeNull("AgentHubFacade must have a _dbFactory field");
+        storeField.Should().NotBeNull("AgentHubFacade must have a _transitionStore field");
 
-        var dbFactoryValue = dbFactoryField!.GetValue(facade);
-        dbFactoryValue.Should().NotBeNull(
-            "AgentHubFacade._dbFactory must not be null in the API container — " +
-            "TouchLastProgressAsync requires it to persist heartbeat progress to the DB");
+        var storeValue = storeField!.GetValue(facade);
+        storeValue.Should().NotBeNull(
+            "AgentHubFacade._transitionStore must not be null in the API container — " +
+            "TouchLastProgressAsync / retry / WorkItem metadata reads require it to reach the DB");
     }
 
     // ── Client: AddPipelineApiClient resolves every typed client ──────────────────

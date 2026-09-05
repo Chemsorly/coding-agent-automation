@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Infrastructure;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -62,6 +63,10 @@ public class DiResolutionSmokeTests
 
         // ── Shared pipeline services ──
         services.AddPipelineServices(Log.Logger);
+        // BrainUpdateService (Infrastructure.Git) is registered by the host composition root, not by
+        // the Pipeline-side AddPipelineServices helper — mirror that here so the graph resolves.
+        services.AddSingleton<CodingAgentWebUI.Pipeline.Interfaces.IBrainUpdateService>(
+            sp => new CodingAgentWebUI.Infrastructure.Git.BrainUpdateService(Log.Logger));
 
         // ── HttpClient infrastructure (needed by AddHttpClient<T>) ──
         services.AddHttpClient();
@@ -295,6 +300,10 @@ public class DiResolutionSmokeTests
 
         // ── Shared pipeline services ──
         services.AddPipelineServices(Log.Logger);
+        // BrainUpdateService (Infrastructure.Git) is registered by the host composition root, not by
+        // the Pipeline-side AddPipelineServices helper — mirror that here so the graph resolves.
+        services.AddSingleton<CodingAgentWebUI.Pipeline.Interfaces.IBrainUpdateService>(
+            sp => new CodingAgentWebUI.Infrastructure.Git.BrainUpdateService(Log.Logger));
 
         // ── HttpClient infrastructure ──
         services.AddHttpClient();

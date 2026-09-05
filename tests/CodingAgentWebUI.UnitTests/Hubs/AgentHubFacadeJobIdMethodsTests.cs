@@ -51,8 +51,7 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
             NullLogger<AgentHubFacadeDependencies>.Instance,
-            WorkItemTransition: _transitionService,
-            DbFactory: _dbFactory));
+            TransitionStore: new EfWorkItemTransitionStore(_dbFactory, _transitionService)));
     }
 
     public void Dispose() { }

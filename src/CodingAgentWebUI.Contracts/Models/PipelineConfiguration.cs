@@ -1,4 +1,3 @@
-using CodingAgentWebUI.Pipeline.Services;
 using MessagePack;
 using static CodingAgentWebUI.Pipeline.Models.PipelineConfigurationDefaults;
 

@@ -9,7 +9,6 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
-using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -82,6 +81,15 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<IWorkItemFallbackTransitionService>(sp => new WorkItemFallbackTransitionService(
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<WorkItemFallbackTransitionService>()));
+
+        // ── IWorkItemTransitionStore (Spec 048 Phase 2 — DB isolation) ──────
+        // EF-backed WorkItem operations (retry-count, re-queue, provider-config / issue-metadata
+        // reads, throttled LastProgressAt write) for the SignalR agent hub facade. Wired only here
+        // in the API host (the sole DB owner) so CodingAgentWebUI.Hub carries no
+        // Infrastructure.Persistence reference; the facade degrades to no-ops where it is absent.
+        services.AddSingleton<IWorkItemTransitionStore>(sp => new EfWorkItemTransitionStore(
+            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<WorkItemTransitionService>()));
 
         // ── PostgresConfigurationStore with cache DISABLED (Req 5.6b) ──────
         // Cache is disabled via a negative TTL sentinel so two processes don't serve stale config.

@@ -45,7 +45,7 @@ Metric `run_type` values are lowercased (`implementation`), while span `pipeline
 
 ## Work Distribution Metrics
 
-The `CodingAgent.WorkDistribution` meter (defined in `WorkDistributionTelemetry.cs` in `CodingAgentWebUI.Pipeline`, namespace `CodingAgentWebUI.Pipeline.Telemetry`) emits metrics for Kubernetes dispatch. The instruments are fed by `DispatchService` and `ReconciliationService` in the **Job Controller** (`service.name=coding-agent-jobcontroller`), and `workitems_by_status` is fed by `WorkItemMetricsBackgroundService` in the **Pipeline API** (`service.name=coding-agent-api`).
+The `CodingAgent.WorkDistribution` meter (defined in `WorkDistributionTelemetry.cs` in `CodingAgentWebUI.Pipeline`, namespace `CodingAgentWebUI.Pipeline.Telemetry`) emits metrics for Kubernetes dispatch. The instruments are fed by `DispatchService` and `ReconciliationService` in the **Job Controller** (`service.name=coding-agent-jobcontroller`), and `workitems_by_status` is fed by `WorkItemCountsPoller` in the **Scheduler** (`service.name=coding-agent-scheduler`), which polls `GET /api/work-items/counts-by-status`.
 
 See [Observability — Work Distribution Metrics](../observability.md#work-distribution-metrics) for the full metric table including all 14 instruments.
 

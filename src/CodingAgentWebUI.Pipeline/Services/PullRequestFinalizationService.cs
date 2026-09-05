@@ -129,7 +129,7 @@ public sealed class PullRequestFinalizationService
         finally
         {
             sw.Stop();
-            var tags = PipelineTelemetry.BuildStepTags("CreatePullRequest", run);
+            var tags = PipelineTelemetry.BuildStepTags("CreatePullRequest", run.RunType, run.ProjectId, run.ProjectName);
             // TODO: This finally block fires on OperationCanceledException as well as on the null-PR
             // bail-out path (prUrl is null). On cancellation the elapsed time is partial and
             // prCreationSucceeded=false, so the metric misrepresents the step as having run to
@@ -324,7 +324,7 @@ public sealed class PullRequestFinalizationService
         finally
         {
             sw.Stop();
-            var tags = PipelineTelemetry.BuildStepTags("GeneratePrDescription", run);
+            var tags = PipelineTelemetry.BuildStepTags("GeneratePrDescription", run.RunType, run.ProjectId, run.ProjectName);
             _stepDuration.Record(sw.Elapsed.TotalSeconds, tags);
             _stepCount.Add(1, tags);
         }
@@ -374,7 +374,7 @@ public sealed class PullRequestFinalizationService
         finally
         {
             sw.Stop();
-            var tags = PipelineTelemetry.BuildStepTags("Reflection", run);
+            var tags = PipelineTelemetry.BuildStepTags("Reflection", run.RunType, run.ProjectId, run.ProjectName);
             _stepDuration.Record(sw.Elapsed.TotalSeconds, tags);
             _stepCount.Add(1, tags);
         }
@@ -407,7 +407,7 @@ public sealed class PullRequestFinalizationService
         finally
         {
             sw.Stop();
-            var tags = PipelineTelemetry.BuildStepTags("BrainSyncPostRun", run);
+            var tags = PipelineTelemetry.BuildStepTags("BrainSyncPostRun", run.RunType, run.ProjectId, run.ProjectName);
             _stepDuration.Record(sw.Elapsed.TotalSeconds, tags);
             _stepCount.Add(1, tags);
         }
@@ -465,7 +465,7 @@ public sealed class PullRequestFinalizationService
         finally
         {
             sw.Stop();
-            var tags = PipelineTelemetry.BuildStepTags("FeedbackCollection", run);
+            var tags = PipelineTelemetry.BuildStepTags("FeedbackCollection", run.RunType, run.ProjectId, run.ProjectName);
             _stepDuration.Record(sw.Elapsed.TotalSeconds, tags);
             _stepCount.Add(1, tags);
         }

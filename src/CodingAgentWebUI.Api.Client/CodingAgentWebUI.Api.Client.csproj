@@ -5,7 +5,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\CodingAgentWebUI.Pipeline\CodingAgentWebUI.Pipeline.csproj" />
+    <ProjectReference Include="..\CodingAgentWebUI.Contracts\CodingAgentWebUI.Contracts.csproj" />
+    <ProjectReference Include="..\CodingAgentWebUI.Infrastructure.Common\CodingAgentWebUI.Infrastructure.Common.csproj" />
   </ItemGroup>
   <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">

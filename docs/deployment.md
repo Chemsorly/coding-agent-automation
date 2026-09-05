@@ -75,7 +75,7 @@ The chart deploys:
 | Path | Description |
 |------|-------------|
 | `orchestrator.image.repository/tag` | Orchestrator container image |
-| `api.replicas` | Number of Pipeline API replicas (default: `2`). Values > 1 require `signalr.redis.connectionString` to be set — without Redis, in-memory state cannot be shared across replicas. |
+| `api.replicas` | Number of Pipeline API replicas (default: `1`). Values > 1 require `signalr.redis.connectionString` to be set — the chart fails at render time otherwise, since without Redis in-memory state cannot be shared across replicas. |
 | `jobTemplates[]` | List of K8s Job templates defining pod specs per label set. Each entry controls which image, resources, securityContext, initContainers, and `maxConcurrent` to use when dispatching work-item pods. |
 | `secrets.agentApiKey` | HMAC master key for agent auth |
 | `secrets.otelHeaders` | OTLP auth headers |

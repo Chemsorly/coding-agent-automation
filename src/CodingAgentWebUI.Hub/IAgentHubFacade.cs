@@ -1,4 +1,3 @@
-using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;

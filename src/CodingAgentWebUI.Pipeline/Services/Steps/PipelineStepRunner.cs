@@ -35,7 +35,7 @@ public static class PipelineStepRunner
         foreach (var step in steps)
         {
             using var stepCtx = LogContext.PushProperty("StepName", step.StepName);
-            var tags = PipelineTelemetry.BuildStepTags(step.StepName, context.Run);
+            var tags = PipelineTelemetry.BuildStepTags(step.StepName, context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName);
             var sw = System.Diagnostics.Stopwatch.StartNew();
             StepResult result;
             try

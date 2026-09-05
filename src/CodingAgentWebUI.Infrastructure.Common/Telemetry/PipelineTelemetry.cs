@@ -182,13 +182,13 @@ public static class PipelineTelemetry
     /// <summary>
     /// Builds a <see cref="TagList"/> for per-step metrics, including step_name and project context.
     /// </summary>
-    public static TagList BuildStepTags(string stepName, PipelineRun run) =>
+    public static TagList BuildStepTags(string stepName, PipelineRunType runType, string? projectId, string? projectName) =>
         new(
         [
             new KeyValuePair<string, object?>("step_name", stepName),
-            RunTypeTag(run.RunType),
-            ProjectIdTag(run.ProjectId),
-            ProjectNameTag(run.ProjectName)
+            RunTypeTag(runType),
+            ProjectIdTag(projectId),
+            ProjectNameTag(projectName)
         ]);
 
     /// <summary>Creates a run_type tag from the given <see cref="PipelineRunType"/>.</summary>
@@ -242,7 +242,7 @@ public static class PipelineTelemetry
     /// <summary>
     /// Records an analysis gate outcome (ready/not_ready/wont_do) as a counter metric.
     /// </summary>
-    public static void RecordAnalysisGateOutcome(AnalysisGateResult outcome, PipelineRun run)
+    public static void RecordAnalysisGateOutcome(AnalysisGateResult outcome, PipelineRunType runType, string? projectId, string? projectName)
     {
         var outcomeTag = outcome switch
         {
@@ -255,9 +255,9 @@ public static class PipelineTelemetry
         AnalysisGateOutcomes.Add(1, new TagList
         {
             new(ActivityTags.Outcome, outcomeTag),
-            RunTypeTag(run.RunType),
-            ProjectIdTag(run.ProjectId),
-            ProjectNameTag(run.ProjectName)
+            RunTypeTag(runType),
+            ProjectIdTag(projectId),
+            ProjectNameTag(projectName)
         });
     }
 

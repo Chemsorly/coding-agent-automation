@@ -288,11 +288,16 @@ Single-replica mode. Scale to multiple replicas with:
 
 **Multi-replica API (api.replicas > 1):** Requires signalr.redis.connectionString to be set.
 With Redis, AgentRegistryService and OrchestratorRunService use distributed Redis-backed
-implementations (Spec 046). Without Redis, the API falls back to in-memory mode and
-api.replicas must be 1.
+implementations (Spec 046). Without Redis the API keeps agent/run state in-memory per pod, so
+Spec 048 Phase 2 makes the chart FAIL at render time when api.replicas > 1 and
+signalr.redis.connectionString is empty (previously this was only a startup warning).
 
 For api.replicas > 1: set signalr.redis.connectionString and ensure all replicas can
 reach the same Redis instance.
+
+⚠️  UPGRADE (Spec 048 Phase 2): api.replicas now DEFAULTS TO 1 (was 2). If you relied on the old
+default of 2 with Redis configured, set api.replicas explicitly to keep a multi-replica API —
+otherwise `helm upgrade` scales the API down to a single pod.
 
 **Expected restarts during schema upgrades (Req 9.5b).**
 When the orchestrator is applying database migrations, the API pod will repeatedly log:
