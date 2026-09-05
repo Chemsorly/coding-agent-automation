@@ -108,37 +108,8 @@ public sealed class ExtractLinkedIssuesStep : IPipelineStep
         }
 
         // --- Phase 3: Write PR conversation context (non-fatal) ---
-        await WritePrConversationContextAsync(context, prNumber, ct);
+        await PrConversationContextWriter.WriteAsync(context, prNumber, ct);
 
         return StepResult.Continue;
-    }
-
-    private static async Task WritePrConversationContextAsync(PipelineStepContext context, int prNumber, CancellationToken ct)
-    {
-        try
-        {
-            // Determine PR author from the run's issue title or a default
-            var prAuthor = context.Run.ReviewPrAuthor ?? "";
-
-            var comments = await context.RepoProvider.ListPullRequestCommentsAsync(prNumber, prAuthor, ct);
-
-            var contextDir = Path.Combine(context.Run.WorkspacePath!, ".agent");
-            Directory.CreateDirectory(contextDir);
-
-            var content = PrConversationContextFormatter.Format(comments);
-            var filePath = Path.Combine(context.Run.WorkspacePath!, AgentWorkspacePaths.PrConversationContextFilePath);
-            await File.WriteAllTextAsync(filePath, content, ct);
-
-            context.Logger.Information(
-                "Wrote PR conversation context ({CommentCount} comments) to {FilePath} for PR #{PrNumber}",
-                comments.Count, AgentWorkspacePaths.PrConversationContextFilePath, prNumber);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            Activity.Current?.RecordError(ex, ct);
-            context.Logger.Warning(ex,
-                "Failed to write PR conversation context for PR #{PrNumber}, review will proceed without it",
-                prNumber);
-        }
     }
 }
