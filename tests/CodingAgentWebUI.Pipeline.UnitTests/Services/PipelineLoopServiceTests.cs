@@ -1072,8 +1072,12 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         svc.ResumeLoop();
         Assert.False(svc.IsCircuitBroken);
 
-        // Wait for successful poll after resume
-        deadline = DateTime.UtcNow.AddSeconds(5);
+        // Wait for successful poll after resume. Use a longer deadline here than the
+        // circuit-breaker-trip wait: after ResumeLoop(), the loop must complete a full
+        // SnapshotCycleConfigAsync (several mock store calls) before reaching ListOpenIssuesAsync
+        // for the 4th time. Under parallel test load this can take significantly longer than
+        // a simple state-flag transition.
+        deadline = DateTime.UtcNow.AddSeconds(15);
         while (callCount < 4 && DateTime.UtcNow < deadline)
             await Task.Delay(50);
 
