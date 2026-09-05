@@ -87,6 +87,29 @@ public class RepositoryGitOperationsCommitBlacklistTests : IDisposable
     }
 
     [Fact]
+    public void CommitAll_ConfigurableBlacklist_UnstagesMatchingFile()
+    {
+        // Arrange: stage a file whose prefix is in the configurable (non-hardcoded) blacklist only.
+        // This exercises the second PipelineFormatting.IsPathBlacklisted call-site inside
+        // UnstageBlacklistedPaths (the configurableBlacklist branch).
+        Directory.CreateDirectory(Path.Combine(_workspacePath, ".secrets"));
+        File.WriteAllText(Path.Combine(_workspacePath, ".secrets", "key.pem"), "secret");
+        File.WriteAllText(Path.Combine(_workspacePath, "src", "service.cs"), "// service");
+
+        // Act: .secrets is NOT in the hardcoded list; it must be caught by the configurable list.
+        var unstaged = RepositoryGitOperations.CommitAll(_workspacePath, "test commit",
+            blacklistedPaths: new[] { ".secrets" }, allowEmpty: false);
+
+        // Assert: .secrets file was unstaged via the configurable blacklist path
+        unstaged.Should().Contain(f => f.StartsWith(".secrets/"));
+
+        using var repo = new Repository(_workspacePath);
+        var tree = repo.Head.Tip.Tree;
+        tree[".secrets"].Should().BeNull("configurable blacklist should have unstaged this directory");
+        tree["src/service.cs"].Should().NotBeNull();
+    }
+
+    [Fact]
     public void CommitAll_AgentInBlacklist_DoesNotDoubleReport()
     {
         // Arrange: .agent is in both the hardcoded list AND the configured blacklist
