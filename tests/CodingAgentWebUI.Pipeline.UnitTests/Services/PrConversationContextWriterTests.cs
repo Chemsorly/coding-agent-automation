@@ -51,8 +51,6 @@ public sealed class PrConversationContextWriterTests : IDisposable
         var content = await File.ReadAllTextAsync(filePath);
         content.Should().Contain("LGTM");
         content.Should().Contain("[HUMAN/AUTHOR] @alice");
-        // TODO: Also assert content.Should().Contain("## Discussion Comments") to guard against the
-        // formatter silently renaming or removing that section header without this test catching it.
     }
 
     // ── Author handling ───────────────────────────────────────────────────────
@@ -102,8 +100,6 @@ public sealed class PrConversationContextWriterTests : IDisposable
         content.Should().Contain("## Review Thread Comments");
         content.Should().Contain("src/Foo.cs");
         content.Should().Contain("This needs a null check.");
-        // TODO: Also assert content.Should().NotContain("## Discussion Comments") to guard against
-        // the formatter accidentally double-routing the comment to both sections.
     }
 
     // ── Directory creation ────────────────────────────────────────────────────
@@ -175,10 +171,6 @@ public sealed class PrConversationContextWriterTests : IDisposable
         var context = BuildContext(prNumber: 77, reviewPrAuthor: null);
 
         // OperationCanceledException must NOT be swallowed by the catch filter
-        // TODO: This test verifies that a mock-thrown OperationCanceledException is not swallowed,
-        // but does not verify real cooperative cancellation (e.g. a cancelled token flowing into
-        // File.WriteAllTextAsync after a successful ListPullRequestCommentsAsync call). Consider
-        // triggering cancellation mid-call via a mock callback to cover that path.
         var act = async () => await PrConversationContextWriter.WriteAsync(context, 77, cts.Token);
         await act.Should().ThrowAsync<OperationCanceledException>();
     }

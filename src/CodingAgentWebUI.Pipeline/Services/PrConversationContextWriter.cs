@@ -19,8 +19,6 @@ public static class PrConversationContextWriter
     /// On any non-cancellation exception the error is recorded and a warning is logged —
     /// the pipeline continues without the file (best-effort policy).
     /// </summary>
-    // TODO: Add ArgumentNullException.ThrowIfNull(context) guard — public static method should guard
-    // against null context instead of letting NullReferenceException propagate from context.Run access.
     public static async Task WriteAsync(PipelineStepContext context, int prNumber, CancellationToken ct)
     {
         try
@@ -34,10 +32,6 @@ public static class PrConversationContextWriter
 
             var content = PrConversationContextFormatter.Format(comments);
             var filePath = Path.Combine(context.Run.WorkspacePath!, AgentWorkspacePaths.PrConversationContextFilePath);
-            // TODO: If ct is cancelled after Directory.CreateDirectory but before WriteAllTextAsync completes,
-            // OperationCanceledException propagates (correctly not swallowed) but leaves the .agent directory
-            // partially created with no file. This matches the original behaviour and is not a regression,
-            // but callers that need cleanup on cancellation should handle this themselves.
             await File.WriteAllTextAsync(filePath, content, ct);
 
             context.Logger.Information(
