@@ -136,8 +136,11 @@ public partial class LayerBoundaryTests
     [Fact]
     public void WebHost_Closure_IsPersistenceFree()
     {
-        var start = Path.Combine(RepoRoot, "src", "CodingAgentWebUI",
-            "bin", "Debug", "net10.0", "CodingAgentWebUI.dll");
+        // Resolve from the test's own output directory — every referenced project DLL is copied here,
+        // so this works under any build configuration. (A hardcoded bin/Debug path fails in CI, which
+        // builds --configuration Release.) The walk only follows CodingAgentWebUI.dll's own transitive
+        // references, so unrelated assemblies also present in this flat dir do not affect the result.
+        var start = Path.Combine(AppContext.BaseDirectory, "CodingAgentWebUI.dll");
         Assert.True(File.Exists(start), $"CodingAgentWebUI.dll not found at {start} — build first.");
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -173,8 +176,10 @@ public partial class LayerBoundaryTests
     [Fact]
     public void JobController_Closure_IsPipelineFree()
     {
-        var start = Path.Combine(RepoRoot, "src", "CodingAgentWebUI.JobController",
-            "bin", "Debug", "net10.0", "CodingAgentWebUI.JobController.dll");
+        // Resolve from the test's own output directory (config-agnostic; CI builds Release, so a
+        // hardcoded bin/Debug path would not exist). The walk follows only JobController.dll's own
+        // transitive references, so other assemblies present in this flat dir do not affect the result.
+        var start = Path.Combine(AppContext.BaseDirectory, "CodingAgentWebUI.JobController.dll");
         Assert.True(File.Exists(start), $"JobController.dll not found at {start} — build first.");
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -605,12 +610,6 @@ public partial class LayerBoundaryTests
     [Fact]
     public void Monolith_ShouldNot_OwnDatabase()
     {
-        // Load the monolith assembly by scanning for it in the test binary directory
-        var monolithPath = Path.Combine(
-            AppContext.BaseDirectory.Replace("Pipeline.UnitTests", "").TrimEnd(Path.DirectorySeparatorChar),
-            "..", "..", "..", "..", "..", "src", "CodingAgentWebUI", "bin", "Debug", "net10.0",
-            "CodingAgentWebUI.dll");
-
         var srcDir = Path.Combine(RepoRoot, "src", "CodingAgentWebUI");
         var violations = new List<string>();
 
