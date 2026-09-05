@@ -1,10 +1,9 @@
-namespace CodingAgentWebUI.Agent;
+namespace CodingAgentWebUI.Pipeline;
 
 /// <summary>
 /// Writes Kiro CLI model and effort settings to <c>~/.kiro/settings/cli.json</c>.
-/// Extracted from <c>KiroCliAgentProvider.ApplyCliSettingsAsync</c> so both work-item
-/// pods (via <c>KiroCliAgentProvider</c>) and chat pods (via <c>AgentConnectionLifecycle</c>)
-/// share the same file-write logic.
+/// Used by both work-item pods (via <c>KiroCliAgentProvider</c>) and chat pods
+/// (via <c>AgentConnectionLifecycle</c>) so all code paths share the same file-write logic.
 /// </summary>
 public static partial class KiroCliSettingsWriter
 {
@@ -94,6 +93,19 @@ public static partial class KiroCliSettingsWriter
     [System.Text.RegularExpressions.GeneratedRegex(@"^[a-zA-Z0-9._-]+$")]
     private static partial System.Text.RegularExpressions.Regex ModelNamePattern();
 
-    private static readonly HashSet<string> ValidEffortValues =
-        new(["high", "medium", "low"], StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// Valid effort level strings accepted by the Kiro CLI.
+    /// Covers all <see cref="CodingAgentWebUI.Pipeline.Models.AgentEffortLevel"/> enum values
+    /// that produce a non-null <c>ToCliValue()</c> result.
+    /// </summary>
+    // TODO: Change to IReadOnlySet<string> (or FrozenSet<string>) to prevent callers from mutating
+    // the shared set at runtime (e.g. ValidEffortValues.Add / Clear). HashSet<string> readonly only
+    // prevents field reassignment, not collection mutation. See review finding [WARNING] DotNetSpecialist.
+    // TODO: Verify that "xhigh" and "max" are accepted by the Kiro CLI binary deployed in chat pods.
+    // The set was expanded from {"low","medium","high"} to include these two values to match
+    // AgentEffortLevel enum members, but ChatJobDispatcher now forwards them to CHAT_EFFORT env-var
+    // without CLI contract evidence. If unsupported, remove them or gate behind a feature flag.
+    // See review finding [WARNING] Correctness.
+    public static readonly HashSet<string> ValidEffortValues =
+        new(["low", "medium", "high", "xhigh", "max"], StringComparer.OrdinalIgnoreCase);
 }
