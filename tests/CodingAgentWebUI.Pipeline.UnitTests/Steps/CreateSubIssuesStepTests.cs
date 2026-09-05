@@ -136,7 +136,7 @@ public class CreateSubIssuesStepTests : IDisposable
 
         var run = CreateRun();
         var context = BuildContext(run);
-        var step = new CreateSubIssuesStep();
+        var step = new CreateSubIssuesStep(retryDelayOverride: TimeSpan.Zero); // no real backoff wait
 
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
@@ -156,7 +156,7 @@ public class CreateSubIssuesStepTests : IDisposable
 
         var run = CreateRun();
         var context = BuildContext(run);
-        var step = new CreateSubIssuesStep();
+        var step = new CreateSubIssuesStep(retryDelayOverride: TimeSpan.Zero); // no real backoff wait
 
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 

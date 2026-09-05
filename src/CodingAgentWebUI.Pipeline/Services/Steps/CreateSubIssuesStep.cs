@@ -32,6 +32,15 @@ public sealed class CreateSubIssuesStep : IPipelineStep
         TimeSpan.FromSeconds(3)
     ];
 
+    private readonly TimeSpan? _retryDelayOverride;
+
+    /// <summary>
+    /// Creates the step. <paramref name="retryDelayOverride"/> is a test seam (null in production):
+    /// when set, every transient-error retry waits this instead of the 0s/1s/3s exponential backoff,
+    /// so tests exercise the retry/exhaustion behaviour without the real multi-second wait.
+    /// </summary>
+    public CreateSubIssuesStep(TimeSpan? retryDelayOverride = null) => _retryDelayOverride = retryDelayOverride;
+
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("CreateSubIssues");
@@ -97,7 +106,7 @@ public sealed class CreateSubIssuesStep : IPipelineStep
                 continue;
             }
 
-            var result = await CreateSingleIssueAsync(proposal, resolver, context, creationCt);
+            var result = await CreateSingleIssueAsync(proposal, resolver, context, _retryDelayOverride, creationCt);
             results.Add(result);
 
             // Register successful creations for dependency resolution
@@ -124,6 +133,7 @@ public sealed class CreateSubIssuesStep : IPipelineStep
         SubIssueProposal proposal,
         DependencyResolver resolver,
         PipelineStepContext context,
+        TimeSpan? retryDelayOverride,
         CancellationToken ct)
     {
         // 6. Sanitize title and body
@@ -157,7 +167,7 @@ public sealed class CreateSubIssuesStep : IPipelineStep
         {
             if (attempt > 0)
             {
-                var delay = RetryDelays[attempt];
+                var delay = retryDelayOverride ?? RetryDelays[attempt];
                 if (delay > TimeSpan.Zero)
                     await Task.Delay(delay, ct);
             }

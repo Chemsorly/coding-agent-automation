@@ -919,11 +919,15 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         await svc.StartLoopAsync();
 
-        // 100ms + 200ms + 300ms(capped) + 300ms(capped) = ~900ms for 4 calls; wait 2s for CI headroom
-        await Task.Delay(2000);
+        // Wait deterministically until enough poll cycles have run rather than sleeping a fixed 2s:
+        // each failing cycle increments callCount and the backoff cap keeps cycles ~300ms apart, so
+        // ~5 calls arrive within ~1s. The deadline is only a safety net.
+        var backoffDeadline = DateTime.UtcNow.AddSeconds(5);
+        while (callCount < 5 && DateTime.UtcNow < backoffDeadline)
+            await Task.Delay(20);
 
         svc.StopLoop();
-        await Task.Delay(200);
+        await Task.Delay(50);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 

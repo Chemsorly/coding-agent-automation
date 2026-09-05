@@ -108,7 +108,8 @@ public class AgentConnectionLifecycleReconnectionTests
                 return fake;
             });
 
-        await lifecycle.HandleTerminalClosedAsync(null, maxAttempts: 3);
+        // delayOverride => zero so the 3 attempts don't wait real reconnection backoff (~15s).
+        await lifecycle.HandleTerminalClosedAsync(null, maxAttempts: 3, delayOverride: _ => TimeSpan.Zero);
 
         createdManagers.Should().HaveCount(3, "one manager created per attempt");
         createdManagers.Should().AllSatisfy(m =>

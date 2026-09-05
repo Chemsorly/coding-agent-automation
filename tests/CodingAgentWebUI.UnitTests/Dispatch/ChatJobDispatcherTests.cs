@@ -38,7 +38,10 @@ public class ChatJobDispatcherTests
     private static DispatchServiceOptions CreateOptions(
         int connectTimeoutSeconds = 5,
         int chatSessionMaxDuration = 7200,
-        int gracePeriod = 120) => new()
+        // Default 1s (not the production 120s): terminate tests whose mock watcher never reaches a
+        // terminal state otherwise wait out the full grace period. Tests that assert grace behaviour
+        // pass an explicit value.
+        int gracePeriod = 1) => new()
     {
         Namespace = TestNamespace,
         KiroPvcPool = ["pvc-0", "pvc-1"],
