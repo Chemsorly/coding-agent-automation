@@ -268,17 +268,18 @@ public class PipelineRunInstrumentationTests : IDisposable
         using var mres4 = new ManualResetEventSlim(false);
         mres4.Wait(10); // Ensure non-zero duration before freeze
 
+        // Capture timestamp before the freeze so the upper bound includes all pre-freeze elapsed time
+        var startTimestamp = Stopwatch.GetTimestamp();
         instrumentation.StopTiming();
 
-        var freezeTimestamp = Stopwatch.GetTimestamp();
         using var mres5 = new ManualResetEventSlim(false);
-        mres5.Wait(50); // Let at least 50ms pass after freeze
+        mres5.Wait(50); // Let at least 50ms pass after freeze — must NOT be counted in frozen duration
 
         instrumentation.StopTiming(); // must be no-ops
         instrumentation.StopTiming();
         instrumentation.Dispose();
 
-        var totalElapsedSeconds = Stopwatch.GetElapsedTime(freezeTimestamp).TotalSeconds + 0.010;
+        var totalElapsedSeconds = Stopwatch.GetElapsedTime(startTimestamp).TotalSeconds;
 
         var snapshot = durationCollector.GetMeasurementSnapshot();
         snapshot.Should().ContainSingle();
