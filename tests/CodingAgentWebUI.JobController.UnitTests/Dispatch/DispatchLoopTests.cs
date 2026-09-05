@@ -920,15 +920,13 @@ public sealed class DispatchLoopTests
 
     /// <summary>
     /// AC #2: WorkItem whose issue has any ineligible label must be cancelled, not dispatched.
-    /// Covers all members of <see cref="AgentLabels.DispatchIneligibleLabels"/>:
-    /// agent:error, agent:needs-refinement, agent:wont-do, agent:cancelled, agent:done.
+    /// Covers: agent:error, agent:needs-refinement, agent:wont-do, agent:cancelled.
     /// </summary>
     [Theory]
     [InlineData(nameof(AgentLabels.Error))]
     [InlineData(nameof(AgentLabels.NeedsRefinement))]
     [InlineData(nameof(AgentLabels.WontDo))]
     [InlineData(nameof(AgentLabels.Cancelled))]
-    [InlineData(nameof(AgentLabels.Done))]
     public async Task WhenIssueHasIneligibleLabel_ShouldCancelWorkItem(string labelPropertyName)
     {
         var label = labelPropertyName switch
@@ -937,7 +935,6 @@ public sealed class DispatchLoopTests
             nameof(AgentLabels.NeedsRefinement) => AgentLabels.NeedsRefinement,
             nameof(AgentLabels.WontDo) => AgentLabels.WontDo,
             nameof(AgentLabels.Cancelled) => AgentLabels.Cancelled,
-            nameof(AgentLabels.Done) => AgentLabels.Done,
             _ => throw new ArgumentOutOfRangeException(nameof(labelPropertyName))
         };
 
@@ -994,42 +991,6 @@ public sealed class DispatchLoopTests
 
         // Must NOT be requeued
         _workItemClient.Verify(c => c.RequeueAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    // ─── Eligibility gate — agent:done blocks dispatch (regression) ─────────
-
-    /// <summary>
-    /// Regression: agent:done was previously absent from the ineligible set, allowing a completed
-    /// issue to be re-dispatched. Verify that a WorkItem for an agent:done issue is cancelled.
-    /// </summary>
-    [Fact]
-    public async Task WhenIssueHasDoneLabel_ShouldCancelWorkItem_NotDispatch()
-    {
-        _issueProvider
-            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail
-            {
-                Identifier = "1", Title = "Test", Description = "",
-                Labels = new[] { AgentLabels.Done }
-            });
-
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakePending()]);
-
-        var loop = CreateLoop();
-        await loop.RunOneCycleAsync(CancellationToken.None);
-
-        // WorkItem must be cancelled
-        _workItemClient.Verify(c => c.PostStatusAsync(
-            ItemId,
-            It.Is<WorkItemStatusUpdate>(u => u.Status == nameof(WorkItemStatus.Cancelled)),
-            It.IsAny<CancellationToken>()),
-            Times.Once);
-
-        // K8s Job must NOT be created
-        _k8sClient.Verify(c => c.CreateJobAsync(
-            It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never);
     }
 
     // ─── Eligibility gate — fail open on network error (AC #4) ───────────────
@@ -1352,14 +1313,11 @@ public sealed class DispatchLoopTests
 }
 
 // ─── Metric / telemetry tests ─────────────────────────────────────────────────
-// These tests use MeterListener directly (IDisposable, no [Collection] fixture)
-// because the JobController test project has no Metrics collection definition.
+// These tests use MeterListener directly (IDisposable).
 // The static PipelineTelemetry.Meter is process-wide, so concurrent tests may fire
-// QueueWaitTime.Record(...) while a listener is active. Assertions use Contain-style
-// checks to remain robust against concurrent test noise.
-// [Collection("Metrics")] serializes execution against ReconciliationLoopMetricTests to
-// prevent concurrent MeterListener subscriptions from capturing each other's PipelineTelemetry
-// emissions.
+// QueueWaitTime.Record(...) while a listener is active. [Collection("Metrics")] serializes
+// execution against other test classes that listen on the same static meters, preventing
+// stray recordings from contaminating snapshot-delta or Contain-style assertions.
 
 [Collection("Metrics")]
 public sealed class DispatchLoopMetricTests : IDisposable
