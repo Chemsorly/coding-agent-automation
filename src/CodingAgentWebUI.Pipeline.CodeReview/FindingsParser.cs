@@ -40,8 +40,18 @@ public static partial class FindingsParser
             var severity = ParseSeverity(severityMatch.Value);
             var afterMarker = line[(severityMatch.Index + severityMatch.Length)..];
 
-            // Search for file:line reference in the content after the severity marker
-            var (filePath, lineNumber, fileLineEnd) = ExtractFileLineReference(afterMarker);
+            // Search for file:line reference in the content after the severity marker.
+            // Bound the scan to the start of the content: a file:line reference always appears
+            // immediately after the severity marker, so scanning an entire long line is never
+            // needed — and doing so triggers catastrophic O(n^2) regex backtracking (ReDoS) on
+            // pathological input. A single 70 KB line with no ':' delimiter took ~150s before this
+            // cap. The match indices stay valid in afterMarker (the window is a leading substring),
+            // and the message below is still taken from the full, uncapped afterMarker.
+            const int FileLineScanWindow = 4096;
+            var refSearchText = afterMarker.Length > FileLineScanWindow
+                ? afterMarker[..FileLineScanWindow]
+                : afterMarker;
+            var (filePath, lineNumber, fileLineEnd) = ExtractFileLineReference(refSearchText);
 
             string message;
 

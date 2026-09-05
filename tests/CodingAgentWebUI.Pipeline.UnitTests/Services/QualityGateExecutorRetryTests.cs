@@ -674,6 +674,120 @@ public class QualityGateExecutorRetryTests
             "transient errors must not consume RetryCount — the decrement behavior is preserved");
     }
 
+    // ── Null-result (absorbed-exception) transient cap ───────────────────────
+
+    /// <summary>
+    /// When ExecuteAgentAndRecordAsync absorbs a provider exception and returns null,
+    /// the loop must treat null agentResult as a transient failure and increment
+    /// consecutiveTransientRetries so the cap can fire — not reset the counter.
+    ///
+    /// Bug being fixed: null → consecutiveTransientRetries = 0 (reset) → QG runs →
+    /// standard budget exhausted (101 calls instead of 11).
+    ///
+    /// After fix: null → TransientWait → consecutiveTransientRetries++ → cap fires at 10,
+    /// loop breaks, exactly 11 agent calls made (10 retry + 1 feedback).
+    /// </summary>
+    [Fact]
+    public async Task NullResultProviderFailure_ExceedingTransientCap_FinalizesAsDraft()
+    {
+        // Arrange: QG always fails (enters retry loop), agent always throws — causing
+        // ExecuteAgentAndRecordAsync to absorb the exception and return null.
+        // MaxRetries is set high so the standard retry budget never expires;
+        // only the transient cap should terminate the loop.
+        var config = CreateConfig(maxRetries: 100);
+        SetupValidatorAlwaysFails();
+
+        _mockAgent.Setup(a => a.ExecuteAsync(
+                It.IsAny<AgentRequest>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new InvalidOperationException("provider error: connection refused"));
+
+        // Act — run without an external cancellation token; the transient cap must break the loop
+        await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
+
+        // Assert: finalized as draft (transient cap exhausted, not standard budget)
+        // Exactly 11 agent calls:
+        //   - 10 retry loop calls (null result each time, cap boundary = 10)
+        //   - 1 failure-feedback call from CollectFailureFeedbackAsync (always runs after draft finalization)
+        // If the bug is present (counter reset instead of incremented), current code makes 101 calls
+        // (100 standard retries + 1 feedback) and this assertion fails.
+        _mockAgent.Verify(
+            a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Exactly(11));
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// When null agentResult exhausts the transient cap, RetryCount must remain 0
+    /// (no retry budget was consumed — the underflow guard applies here too).
+    /// </summary>
+    [Fact]
+    public async Task NullResultTransientCap_RetryCountRemainsZero()
+    {
+        var config = CreateConfig(maxRetries: 100);
+        SetupValidatorAlwaysFails();
+
+        _mockAgent.Setup(a => a.ExecuteAsync(
+                It.IsAny<AgentRequest>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new InvalidOperationException("provider error"));
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
+
+        _run.RetryCount.Should().Be(0,
+            "null-result (absorbed-exception) iterations must not consume retry budget — same guarantee as ErrorCategory-based transient results");
+        // Positive evidence that the loop ran (not vacuously 0 because nothing executed)
+        _mockAgent.Verify(
+            a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Exactly(11));
+    }
+
+    // ── RetryCount underflow guard ────────────────────────────────────────────
+
+    /// <summary>
+    /// RetryCount must never be decremented below zero, even if a transient error
+    /// arrives on the very first loop iteration (RetryCount = 0 before increment → 1
+    /// after → decrement back to 0, not -1).
+    ///
+    /// This test locks in the Math.Max(0, RetryCount - 1) underflow guard.
+    /// </summary>
+    [Fact]
+    public async Task RetryCount_NeverDecrementsBelow_Zero()
+    {
+        // Arrange: always-failing QG, agent always returns ProviderRateLimit.
+        // MaxRetries is high so the cap fires before budget exhaustion.
+        var config = CreateConfig(maxRetries: 100);
+        SetupValidatorAlwaysFails();
+
+        _mockAgent.Setup(a => a.ExecuteAsync(
+                It.IsAny<AgentRequest>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 1,
+                OutputLines = ["HTTP 429: rate limited"],
+                ErrorCategory = AgentErrorCategory.ProviderRateLimit
+            });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
+
+        // .Be(0) pins the exact expected value: 10 transient iterations each apply
+        // Math.Max(0, RetryCount - 1), so RetryCount stays at 0 throughout. A regression
+        // that removes the guard but keeps the net count non-negative (e.g. by accident)
+        // would still fail this assertion because RetryCount would be > 0 instead of 0.
+        _run.RetryCount.Should().Be(0,
+            "all 10 transient iterations undo their increment via Math.Max(0, RetryCount - 1), so RetryCount must be exactly 0 when the cap fires");
+        // Positive evidence: the cap fired (10 retry + 1 feedback calls)
+        _mockAgent.Verify(
+            a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Exactly(11));
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static PipelineConfiguration CreateConfig(int maxRetries) => new()

@@ -413,7 +413,7 @@ public partial class QualityGateExecutor
         const int MaxConsecutiveTransientRetries = 10;
         var consecutiveTransientRetries = 0;
 
-        // TODO: [WARNING] run.RetryErrors accumulates one entry per loop iteration (including transient
+        // NOTE: run.RetryErrors accumulates one entry per loop iteration (including transient
         // provider-error iterations where no fix was attempted). On repeated 429/503 responses, this
         // produces stale entries in the failure-feedback prompt and draft PR summary that were never
         // associated with actual fix attempts. Consider gating the enqueue on a "real work was done"
@@ -443,6 +443,7 @@ public partial class QualityGateExecutor
             run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = fixPrompt });
             callbacks.NotifyChange();
 
+            var shouldBreak = false;
             try
             {
                 var agentResult = await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
@@ -460,94 +461,87 @@ public partial class QualityGateExecutor
                     callbacks, ct,
                     resumeSessionId: run.CodegenSessionId);
 
-                // Check for provider-side transient failures that must not consume retry budget.
-                // agentResult is nullable — ExecuteAgentAndRecordAsync returns null when it absorbs
-                // a non-cancellation exception, so the ?. null-conditional is mandatory here.
-                //
                 // Intentional asymmetry: PipelineTelemetry and RetryErrors (incremented above) are NOT
                 // rolled back — rolling back a monotonic counter is non-idiomatic in OpenTelemetry, and the
                 // RetryErrors entry (from the prior QG failure) is harmless noise. Only RetryCount matters
                 // for loop exit logic, so that is the only value corrected.
-                if (agentResult?.ErrorCategory is AgentErrorCategory.ProviderRateLimit
-                    or AgentErrorCategory.ProviderOverload)
+                switch (ClassifyRetryOutcome(agentResult))
                 {
-                    // TODO: [WARNING] run.RetryCount-- can produce RetryCount == -1 if this branch is
-                    // entered on the very first loop iteration (RetryCount starts at 0 then increments
-                    // to 1 at the loop top, so this decrement brings it back to 0 — in practice no
-                    // underflow occurs). However, if the entry condition ever changes so RetryCount is
-                    // 0 when this branch is entered, the decrement would produce -1 and that value
-                    // would appear in log messages. Consider adding an underflow guard:
-                    //   if (run.RetryCount > 0) run.RetryCount--;
-                    run.RetryCount--; // Undo the increment at the top of the loop
-                    consecutiveTransientRetries++;
+                    case RetryOutcome.TransientWait:
+                        // Undo the increment at the top of the loop. Math.Max guards against underflow
+                        // if the entry condition ever changes so RetryCount is 0 when this branch runs.
+                        run.RetryCount = Math.Max(0, run.RetryCount - 1);
+                        consecutiveTransientRetries++;
 
-                    if (consecutiveTransientRetries >= MaxConsecutiveTransientRetries)
-                    {
-                        // TODO: [WARNING] run.RetryCount is logged here after the decrement above, so
-                        // the displayed value reflects the corrected (pre-increment) count. If RetryCount
-                        // ever reaches this branch as 0 (see underflow note above), the log will show -1
-                        // which is misleading. Capture the corrected value before the log call if legibility
-                        // becomes an issue.
+                        if (consecutiveTransientRetries >= MaxConsecutiveTransientRetries)
+                        {
+                            _logger.Warning(
+                                "Pipeline {RunId} retry {RetryCount}: reached consecutive transient error cap " +
+                                "({Cap} consecutive transient responses), breaking retry loop",
+                                run.RunId, run.RetryCount, MaxConsecutiveTransientRetries);
+                            shouldBreak = true;
+                            break; // exits switch; shouldBreak will exit the while loop below
+                        }
+
                         _logger.Warning(
-                            "Pipeline {RunId} retry {RetryCount}: reached consecutive transient error cap " +
-                            "({Cap} consecutive {Category} responses), breaking retry loop",
-                            run.RunId, run.RetryCount, MaxConsecutiveTransientRetries, agentResult.ErrorCategory);
+                            "Pipeline {RunId} retry {RetryCount}: transient agent result, " +
+                            "not consuming retry budget, waiting before next attempt " +
+                            "({Consecutive}/{Cap} consecutive transient retries)",
+                            run.RunId, run.RetryCount,
+                            consecutiveTransientRetries, MaxConsecutiveTransientRetries);
+                        await Task.Delay(config.TransientRetryDelay, ct);
+                        continue;
+
+                    case RetryOutcome.AbortAuth:
+                        // Permanent auth failures cannot be fixed by retrying — abort immediately.
+                        // RetryCount is intentionally NOT decremented: one real agent call was attempted,
+                        // so a count of 1 accurately reflects what happened.
+                        _logger.Error(
+                            "Pipeline {RunId} retry {RetryCount}: permanent auth failure, aborting retry loop",
+                            run.RunId, run.RetryCount);
+                        shouldBreak = true;
+                        break; // exits switch; shouldBreak will exit the while loop below
+
+                    case RetryOutcome.RestartSession:
+                        // Agent returned successfully but produced nothing — session context window
+                        // overflowed. Clear session affinity so the next retry uses a fresh session.
+                        _logger.Warning(
+                            "Pipeline {RunId} retry {RetryCount}: agent returned empty response (0 tokens), " +
+                            "clearing session affinity for next attempt",
+                            run.RunId, run.RetryCount);
+                        run.CodegenSessionId = null;
+                        continue; // Skip QG validation — workspace unchanged, go straight to next retry
+
+                    default: // RetryOutcome.Retry
+                        // Non-transient iteration: reset consecutive transient counter.
+                        consecutiveTransientRetries = 0;
+                        if (agentResult != null)
+                            await _prOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);
                         break;
-                    }
-
-                    _logger.Warning(
-                        "Pipeline {RunId} retry {RetryCount}: provider transient error ({Category}), " +
-                        "not consuming retry budget, waiting before next attempt " +
-                        "({Consecutive}/{Cap} consecutive transient retries)",
-                        run.RunId, run.RetryCount, agentResult.ErrorCategory,
-                        consecutiveTransientRetries, MaxConsecutiveTransientRetries);
-                    await Task.Delay(config.TransientRetryDelay, ct);
-                    continue;
                 }
-
-                // Non-transient iteration: reset consecutive transient counter.
-                consecutiveTransientRetries = 0;
-
-                // Permanent auth failures cannot be fixed by retrying — abort immediately.
-                // RetryCount is intentionally NOT decremented: one real agent call was attempted,
-                // so a count of 1 accurately reflects what happened (unlike transient errors where
-                // the agent never did any work).
-                if (agentResult?.ErrorCategory == AgentErrorCategory.PermanentAuthFailure)
-                {
-                    _logger.Error(
-                        "Pipeline {RunId} retry {RetryCount}: permanent auth failure, aborting retry loop",
-                        run.RunId, run.RetryCount);
-                    break;
-                }
-
-                // Detect dead/exhausted session: agent returned successfully but produced nothing.
-                // This typically means the session's context window overflowed and the provider
-                // returned an empty response. Clear session affinity so the next retry uses a fresh session.
-                if (agentResult is { ExitCode: 0 } && agentResult.Usage?.TotalTokens == 0 && agentResult.OutputLines.Count == 0)
-                {
-                    _logger.Warning("Pipeline {RunId} retry {RetryCount}: agent returned empty response (0 tokens), " +
-                                    "clearing session affinity for next attempt", run.RunId, run.RetryCount);
-                    run.CodegenSessionId = null;
-                    continue; // Skip QG validation — workspace unchanged, go straight to next retry
-                }
-
-                if (agentResult != null)
-                    await _prOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                // TODO: [WARNING] When ExecuteAgentAndRecordAsync absorbs a non-cancellation exception
-                // and returns null, the transient-category check (agentResult?.ErrorCategory) evaluates
-                // to null, skipping both the transient branch and the consecutive-counter increment.
-                // The null path falls through to the non-transient reset (consecutiveTransientRetries = 0)
-                // only if it reaches the bottom of the try block — but when agentResult is null the try
-                // body does not reach the reset line (the catch fires instead). So for the absorbed-exception
-                // path: transient counter is neither incremented nor reset. If the provider is consistently
-                // returning errors that are absorbed as exceptions (rather than surfaced as
-                // AgentErrorCategory.ProviderRateLimit/ProviderOverload), the transient cap never fires
-                // and the loop drains the standard retry budget instead. This is a behavioural gap: the
-                // cap only protects against errors surfaced via the ErrorCategory enum, not via exceptions.
+                // TODO: [WARNING] This catch depends on the contract that ExecuteAgentAndRecordAsync
+                // absorbs all non-cancellation agent exceptions and returns null (those are then
+                // classified as TransientWait in the switch above, keeping consecutiveTransientRetries
+                // correct). If that contract is ever broken — e.g. ExecuteAgentAndRecordAsync is
+                // refactored so an exception escapes — it will be silently consumed here, the transient
+                // counter will not increment, and the exception-gap this issue was meant to close will
+                // reopen. If that contract changes, route the caught exception through ClassifyRetryOutcome
+                // (e.g. by re-wrapping it as a null agentResult path) or call shouldBreak = true here.
+                //
+                // TODO: [WARNING] shouldBreak may already be true when this catch fires (if the default
+                // branch set it and UpdateFileChangeStatsAsync then threw). The catch does not reset
+                // shouldBreak, so the if (shouldBreak) break below still exits the loop correctly — but
+                // the flow is non-obvious. If this catch block is ever extended, preserve that invariant.
+                //
+                // TODO: [WARNING] When shouldBreak is already true (e.g. transient cap fired in the
+                // TransientWait branch) and UpdateFileChangeStatsAsync subsequently throws, this log
+                // emits "retry fix agent call failed" — a misleading message because no fix was
+                // attempted on that iteration. If log clarity matters, gate the message on !shouldBreak
+                // or use a distinct message when shouldBreak is true.
                 _logger.Warning(ex, "Pipeline {RunId} retry fix agent call failed", run.RunId);
                 run.ChatHistory.Enqueue(new ChatEntry
                 {
@@ -555,6 +549,8 @@ public partial class QualityGateExecutor
                     Content = $"Agent error during retry fix: {ex.Message}"
                 });
             }
+
+            if (shouldBreak) break;
 
             callbacks.TransitionTo(PipelineStep.RunningQualityGates);
             report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, ct);
@@ -566,6 +562,42 @@ public partial class QualityGateExecutor
         }
 
         return report;
+    }
+
+    /// <summary>
+    /// Classifies a single retry-loop agent result into a discrete <see cref="RetryOutcome"/>.
+    /// Pure function — no I/O, no side effects.
+    /// </summary>
+    /// <param name="agentResult">
+    /// The result returned by <see cref="AgentPhaseExecutor.ExecuteAgentAndRecordAsync"/>, or
+    /// <see langword="null"/> when that method absorbed a non-cancellation exception. A null result
+    /// is treated as <see cref="RetryOutcome.TransientWait"/> so the consecutive-transient cap can
+    /// fire for exception-surfaced provider failures, not just <see cref="AgentErrorCategory"/>-based ones.
+    /// </param>
+    internal static RetryOutcome ClassifyRetryOutcome(AgentResult? agentResult)
+    {
+        // null means ExecuteAgentAndRecordAsync absorbed a non-cancellation exception.
+        // Treat as transient so the consecutive counter increments and the cap can fire.
+        // NOTE: All absorbed exceptions are classified as transient — this is slightly broad
+        // (also catches programming errors like NullReferenceException), but the 10-iteration
+        // cap bounds the blast radius and the simplicity outweighs the risk.
+        if (agentResult is null)
+            return RetryOutcome.TransientWait;
+
+        if (agentResult.ErrorCategory is AgentErrorCategory.ProviderRateLimit
+            or AgentErrorCategory.ProviderOverload)
+            return RetryOutcome.TransientWait;
+
+        if (agentResult.ErrorCategory == AgentErrorCategory.PermanentAuthFailure)
+            return RetryOutcome.AbortAuth;
+
+        // Dead/exhausted session: agent returned successfully but produced nothing.
+        if (agentResult is { ExitCode: 0 } &&
+            agentResult.Usage?.TotalTokens == 0 &&
+            agentResult.OutputLines.Count == 0)
+            return RetryOutcome.RestartSession;
+
+        return RetryOutcome.Retry;
     }
 
     /// <summary>
