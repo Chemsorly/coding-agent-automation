@@ -205,12 +205,12 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
         await Assertions.Expect(dispatchBtn).ToBeVisibleAsync(new() { Timeout = 5_000 });
 
         await dispatchBtn.ClickAsync();
-        await Page.WaitForTimeoutAsync(2000);
 
-        // Assert: success feedback message appears (toast or inline)
-        var bodyText = await Page.TextContentAsync("body");
-        Assert.True(
-            bodyText?.Contains("Dispatched") == true || bodyText?.Contains("✅") == true,
-            "Dispatch success feedback should appear in the UI");
+        // Assert: success feedback toast appears (rendered as div.settings-status.status-success).
+        // Use WaitForSelectorAsync rather than a fixed delay + body text check — the dispatch
+        // involves a SignalR round-trip that may take longer than a fixed timeout on slow CI runners,
+        // and emoji/text extraction is fragile across browsers.
+        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
+        await Assertions.Expect(Page.Locator(".settings-status.status-success")).ToBeVisibleAsync();
     }
 }
