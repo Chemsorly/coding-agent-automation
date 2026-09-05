@@ -27,6 +27,18 @@ public static class ResiliencePipelineFactory
     internal static readonly TimeSpan HttpOuterTimeout = TimeSpan.FromMinutes(3);
     internal static readonly TimeSpan GitLabOuterTimeout = TimeSpan.FromMinutes(3);
 
+    /// <summary>
+    /// Test-only override (settable only from the test assembly via InternalsVisibleTo) for the base
+    /// retry backoff delay across every pipeline. Null in production. It lets the test suite exercise
+    /// retry BEHAVIOUR (counts, exception mapping) without waiting real exponential backoff — no test
+    /// asserts wall-clock backoff duration. Intended to be set once at test-assembly load and never
+    /// mutated during a run. An explicit per-call <c>retryDelay</c> argument still takes precedence.
+    /// </summary>
+    internal static TimeSpan? TestRetryDelayOverride { get; set; }
+
+    private static TimeSpan ResolveRetryDelay(TimeSpan? explicitDelay, TimeSpan defaultDelay)
+        => explicitDelay ?? TestRetryDelayOverride ?? defaultDelay;
+
     internal static ResiliencePipeline CreateGitHubApiPipeline(
         ILogger logger,
         TimeSpan? outerTimeout = null,
@@ -35,7 +47,7 @@ public static class ResiliencePipelineFactory
     {
         var outer = outerTimeout ?? DefaultOuterTimeout;
         var perAttempt = perAttemptTimeout ?? DefaultTimeout;
-        var delay = retryDelay ?? TimeSpan.FromSeconds(1);
+        var delay = ResolveRetryDelay(retryDelay, TimeSpan.FromSeconds(1));
 
         return new ResiliencePipelineBuilder()
             // Outer timeout: caps total time including all retries and rate-limit delays.
@@ -79,7 +91,7 @@ public static class ResiliencePipelineFactory
                 MaxRetryAttempts = DefaultMaxRetryAttempts,
                 BackoffType = DelayBackoffType.Exponential,
                 UseJitter = true,
-                Delay = TimeSpan.FromSeconds(5),
+                Delay = ResolveRetryDelay(null, TimeSpan.FromSeconds(5)),
                 ShouldHandle = new PredicateBuilder()
                     .Handle<HttpRequestException>()
                     .Handle<SocketException>()
@@ -122,7 +134,7 @@ public static class ResiliencePipelineFactory
                 MaxRetryAttempts = 2,
                 BackoffType = DelayBackoffType.Exponential,
                 UseJitter = true,
-                Delay = retryDelay ?? TimeSpan.FromSeconds(2),
+                Delay = ResolveRetryDelay(retryDelay, TimeSpan.FromSeconds(2)),
                 ShouldHandle = new PredicateBuilder()
                     .Handle<LibGit2SharpException>(ex => IsTransientGitException(ex))
                     .Handle<TimeoutRejectedException>(),
@@ -156,7 +168,7 @@ public static class ResiliencePipelineFactory
                 MaxRetryAttempts = DefaultMaxRetryAttempts,
                 BackoffType = DelayBackoffType.Exponential,
                 UseJitter = true,
-                Delay = retryDelay ?? TimeSpan.FromSeconds(1),
+                Delay = ResolveRetryDelay(retryDelay, TimeSpan.FromSeconds(1)),
                 ShouldHandle = new PredicateBuilder()
                     .Handle<HttpRequestException>()
                     .Handle<SocketException>()
@@ -194,7 +206,7 @@ public static class ResiliencePipelineFactory
                 MaxRetryAttempts = DefaultMaxRetryAttempts,
                 BackoffType = DelayBackoffType.Exponential,
                 UseJitter = true,
-                Delay = retryDelay ?? TimeSpan.FromMilliseconds(500),
+                Delay = ResolveRetryDelay(retryDelay, TimeSpan.FromMilliseconds(500)),
                 ShouldHandle = new PredicateBuilder()
                     .Handle<HttpRequestException>()
                     .Handle<SocketException>()
@@ -242,7 +254,7 @@ public static class ResiliencePipelineFactory
                 MaxRetryAttempts = DefaultMaxRetryAttempts,
                 BackoffType = DelayBackoffType.Exponential,
                 UseJitter = true,
-                Delay = TimeSpan.FromSeconds(1),
+                Delay = ResolveRetryDelay(null, TimeSpan.FromSeconds(1)),
                 ShouldHandle = new PredicateBuilder()
                     .Handle<HttpRequestException>()
                     .Handle<SocketException>()
@@ -279,7 +291,7 @@ public static class ResiliencePipelineFactory
                 MaxRetryAttempts = writeMaxRetryAttempts,
                 BackoffType = DelayBackoffType.Exponential,
                 UseJitter = true,
-                Delay = TimeSpan.FromSeconds(1),
+                Delay = ResolveRetryDelay(null, TimeSpan.FromSeconds(1)),
                 ShouldHandle = new PredicateBuilder()
                     .Handle<HttpRequestException>()
                     .Handle<SocketException>()
