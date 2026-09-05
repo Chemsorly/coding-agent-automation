@@ -235,23 +235,28 @@ public class PipelineRunInstrumentationTests : IDisposable
     {
         using var durationCollector = DoubleCollector("pipeline.jobs.duration");
 
+        // Measure the true wall-clock from run start through a post-freeze wait. StopTiming freezes the
+        // recorded duration at the pre-freeze point, so the frozen value excludes the post-freeze segment
+        // and must therefore be strictly less than the measured total. This is robust to scheduling
+        // jitter; the previous version assumed the pre-freeze segment was exactly 10ms (+0.010) and
+        // flaked when that wait ran long under CI load, making the frozen value exceed the estimate.
+        var startTimestamp = Stopwatch.GetTimestamp();
         var instrumentation = StartRun();
         using var mres2 = new ManualResetEventSlim(false);
-        mres2.Wait(10); // Ensure non-zero duration before freeze
+        mres2.Wait(10); // Ensure a non-zero duration before freeze
         instrumentation.StopTiming();
 
-        var freezeTimestamp = Stopwatch.GetTimestamp();
         using var mres3 = new ManualResetEventSlim(false);
-        mres3.Wait(50); // Let at least 50ms pass after freeze
-        var totalElapsedSeconds = Stopwatch.GetElapsedTime(freezeTimestamp).TotalSeconds + 0.010; // +10ms = pre-freeze segment
-
+        mres3.Wait(50); // Time after the freeze — must NOT be counted in the frozen duration
         instrumentation.Dispose();
+
+        var totalElapsedSeconds = Stopwatch.GetElapsedTime(startTimestamp).TotalSeconds;
 
         var snapshot = durationCollector.GetMeasurementSnapshot();
         snapshot.Should().ContainSingle();
         snapshot[0].Value.Should().BeGreaterThan(0, "frozen duration must be non-zero");
         snapshot[0].Value.Should().BeLessThan(totalElapsedSeconds,
-            "frozen duration must be less than total elapsed time — StopTiming must have frozen the timer");
+            "frozen duration must exclude the ~50ms after StopTiming — the timer must be frozen");
     }
 
     [Fact]
