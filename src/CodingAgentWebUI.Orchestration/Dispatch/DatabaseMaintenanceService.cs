@@ -67,6 +67,12 @@ public class DatabaseMaintenanceService
         var staleConsolidation = await RunSweepAsync(CleanupStaleConsolidationRunsAsync, "CleanupStaleConsolidationRuns", ct);
         var retentionRuns = await RunSweepAsync(SweepPipelineRunRetentionAsync, "SweepPipelineRunRetention", ct);
         var retentionWi = await RunSweepAsync(SweepWorkItemRetentionAsync, "SweepWorkItemRetention", ct);
+        // TODO: The return value (backfill count) is discarded here. All other sweeps capture their
+        // return values into RetentionSweepResult, and the API endpoint maps every field of that struct
+        // into the RetentionSweepResultDto response. Operators calling POST /api/scheduler/maintenance/retention-sweep
+        // cannot confirm how many orphaned rows were reconciled. Consider adding a ReconciliationRunsBackfilled
+        // field to RetentionSweepResult and capturing the return value, or document the intentional omission.
+        await RunSweepAsync(ReconcileOrphanedPipelineRunsAsync, "ReconcileOrphanedPipelineRuns", ct);
         return new RetentionSweepResult(staleWi, staleRuns, staleConsolidation, retentionRuns, retentionWi);
     }
 
@@ -342,6 +348,54 @@ public class DatabaseMaintenanceService
         catch (Exception ex)
         {
             Log.Warning(ex, "DatabaseMaintenanceService: WorkItems retention sweep failed (non-fatal)");
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Backfills <c>CompletedAt = NOW()</c> for PipelineRun rows that have a terminal
+    /// <c>FinalStep</c> (Completed=16, Failed=17, Cancelled=18) but a null <c>CompletedAt</c>.
+    /// These ghost runs were produced by OCEs propagating out of post-PR steps before the
+    /// <c>run.MarkCompleted()</c> call could execute. Without a CompletedAt value they accumulate
+    /// permanently because all retention sweeps gate on <c>CompletedAt IS NOT NULL</c>.
+    /// This method is idempotent and safe to call on every maintenance cycle.
+    /// Returns the number of rows updated.
+    /// </summary>
+    public virtual async Task<int> ReconcileOrphanedPipelineRunsAsync(CancellationToken ct)
+    {
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+            var orphans = await db.PipelineRuns
+                .Where(r => r.CompletedAt == null &&
+                            (r.FinalStep == PipelineStep.Completed ||
+                             r.FinalStep == PipelineStep.Failed ||
+                             r.FinalStep == PipelineStep.Cancelled))
+                .ToListAsync(ct);
+
+            if (orphans.Count == 0)
+                return 0;
+
+            var now = DateTimeOffset.UtcNow;
+            foreach (var run in orphans)
+                run.CompletedAt = now;
+
+            await db.SaveChangesAsync(ct);
+
+            Log.Warning(
+                "DatabaseMaintenanceService: backfilled CompletedAt on {Count} orphaned PipelineRuns with terminal FinalStep and null CompletedAt",
+                orphans.Count);
+
+            return orphans.Count;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "DatabaseMaintenanceService: ReconcileOrphanedPipelineRuns failed (non-fatal)");
             return 0;
         }
     }

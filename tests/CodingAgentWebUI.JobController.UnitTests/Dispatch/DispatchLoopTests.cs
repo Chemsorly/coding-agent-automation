@@ -1313,17 +1313,13 @@ public sealed class DispatchLoopTests
 }
 
 // ─── Metric / telemetry tests ─────────────────────────────────────────────────
-// These tests use MeterListener directly (IDisposable, no [Collection] fixture)
-// because the JobController test project has no Metrics collection definition.
+// These tests use MeterListener directly (IDisposable).
 // The static PipelineTelemetry.Meter is process-wide, so concurrent tests may fire
-// QueueWaitTime.Record(...) while a listener is active. Assertions use Contain-style
-// checks to remain robust against concurrent test noise.
-// TODO [WARNING]: DispatchLoopMetricTests is not in a [Collection] fixture to serialize execution
-// against other test classes that listen on PipelineTelemetry.Meter. If two instances run
-// concurrently, _recordings may capture measurements from the other test's dispatch. A false
-// negative is possible (but low-probability) if a concurrent test fires a matching recording
-// before this test's listener is started. The Contain-style assertion prevents false positives.
+// QueueWaitTime.Record(...) while a listener is active. [Collection("Metrics")] serializes
+// execution against other test classes that listen on the same static meters, preventing
+// stray recordings from contaminating snapshot-delta or Contain-style assertions.
 
+[Collection("Metrics")]
 public sealed class DispatchLoopMetricTests : IDisposable
 {
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
