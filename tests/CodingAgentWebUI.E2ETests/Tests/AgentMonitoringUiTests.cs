@@ -205,12 +205,11 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
         await Assertions.Expect(dispatchBtn).ToBeVisibleAsync(new() { Timeout = 10_000 });
 
         await dispatchBtn.ClickAsync();
-        await Page.WaitForTimeoutAsync(2000);
 
-        // Assert: success feedback message appears (toast or inline)
-        var bodyText = await Page.TextContentAsync("body");
-        Assert.True(
-            bodyText?.Contains("Dispatched") == true || bodyText?.Contains("✅") == true,
-            "Dispatch success feedback should appear in the UI");
+        // Assert: success feedback message appears (toast or inline).
+        // The page renders either "✅ Dispatched #..." or "⏳ Queued #..." after dispatch succeeds.
+        // Wait up to 10 seconds for the text to appear rather than relying on a fixed delay.
+        var feedbackLocator = Page.Locator("text=✅").Or(Page.Locator("text=Queued")).Or(Page.Locator("text=Dispatched"));
+        await Assertions.Expect(feedbackLocator.First).ToBeVisibleAsync(new() { Timeout = 10_000 });
     }
 }
