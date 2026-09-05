@@ -347,37 +347,31 @@ public class CreateSubIssuesStepTests : IDisposable
             .ReturnsAsync(new CreatedIssueResult { Identifier = "900", Url = "https://github.com/test/900" });
 
         long createdCount = 0;
+        var counting = false;
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, meterListener) =>
         {
             if (instrument.Meter.Name == PipelineTelemetry.SourceName)
                 meterListener.EnableMeasurementEvents(instrument);
         };
+        // Gate: only accumulate measurements emitted during ExecuteAsync to avoid parallel-test
+        // inflation. The global MeterListener would otherwise count events from other tests running
+        // concurrently in the same process, making the delta non-deterministic.
         listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
         {
-            if (instrument.Name == "pipeline.decomposition.sub_issues.created")
+            if (counting && instrument.Name == "pipeline.decomposition.sub_issues.created")
                 Interlocked.Add(ref createdCount, measurement);
         });
         listener.Start();
-
-        // Capture baseline — other tests in the process may have already incremented the counter
-        // TODO [WARNING]: The baseline is captured after listener.Start(), so any parallel test that
-        // fires pipeline.decomposition.sub_issues.created between Start() and the baseline read will
-        // inflate createdCount before the baseline is set, then the delta will be 0 instead of 1 —
-        // a spurious failure. Conversely, a parallel test that fires the event between ExecuteAsync
-        // and the final delta read will inflate the delta to 2. The original measuring-flag approach
-        // was a narrower gate (only measurements fired while the flag was true were counted).
-        // Consider capturing the baseline before listener.Start(), or using a scoped MeterFactory
-        // that isolates measurements to this test instance rather than relying on a global listener.
-        var baseline = Interlocked.Read(ref createdCount);
 
         var run = CreateRun();
         var context = BuildContext(run);
         var step = new CreateSubIssuesStep();
 
+        counting = true;
         await step.ExecuteAsync(context, CancellationToken.None);
+        counting = false;
 
-        var delta = Interlocked.Read(ref createdCount) - baseline;
-        delta.Should().Be(1);
+        Interlocked.Read(ref createdCount).Should().Be(1);
     }
 }

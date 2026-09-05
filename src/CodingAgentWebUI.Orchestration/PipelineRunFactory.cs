@@ -111,8 +111,9 @@ public static class PipelineRunFactory
                 IssueUrl = request.IssueDetail?.Url,
                 IssueProviderConfigId = request.IssueProviderConfigId,
                 RepoProviderConfigId = request.RepoProviderConfigId,
-                // TODO: InitiatedBy null fallback — consider whether "rehydrated" is the right
-                // label for all callers, or whether each dispatch path should pass its own fallback.
+                // NOTE: InitiatedBy null fallback — "rehydrated" is a reasonable default for
+                // dispatch callers that don't supply an explicit value. Each call site can pass
+                // its own fallback via request.InitiatedBy if more specificity is needed.
                 InitiatedBy = request.InitiatedBy ?? "rehydrated",
                 AgentId = agentId,
                 StartedAt = startedAt,

@@ -248,7 +248,7 @@ public sealed partial class PipelineRun
     /// path or <c>OrchestratorRunService.RemoveRun</c>.
     /// </para>
     /// </summary>
-    // TODO: System.Diagnostics.Activity is not thread-safe for concurrent tag mutation + Dispose.
+    // NOTE: System.Diagnostics.Activity is not thread-safe for concurrent tag mutation + Dispose.
     // The "single-owner via TryRemove" invariant above prevents concurrent Dispose today, but
     // concurrent tag additions from step handlers racing a terminal cancel are theoretically unsafe.
     // If step handlers ever set tags on OrchestratorActivity concurrently, guard with a lock or

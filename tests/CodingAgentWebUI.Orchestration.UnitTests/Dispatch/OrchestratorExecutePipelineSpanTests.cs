@@ -62,7 +62,11 @@ public class OrchestratorExecutePipelineSpanTests : IDisposable
             _mockLogger.Object));
     }
 
-    public void Dispose() => _listener.Dispose();
+    public void Dispose()
+    {
+        _listener.Dispose();
+        GC.SuppressFinalize(this);
+    }
 
     // ── CreateFromWorkItem starts ExecutePipeline span ────────────────────────
 
@@ -203,7 +207,7 @@ public class OrchestratorExecutePipelineSpanTests : IDisposable
             TimeoutSeconds = 3600
         };
 
-    private PipelineRun CreateRunWithActivity(string runId)
+    private static PipelineRun CreateRunWithActivity(string runId)
     {
         var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
         {
