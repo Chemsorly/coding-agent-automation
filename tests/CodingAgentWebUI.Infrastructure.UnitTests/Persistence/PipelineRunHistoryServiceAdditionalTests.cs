@@ -12,9 +12,9 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests;
 /// Additional unit tests for PipelineRunHistoryService covering branches not exercised by PipelineRunHistoryServiceTests:
 /// GetRunHistoryAsync paginated overload (validation, hasMore, feedbackOnly filter),
 /// GetRunAsync,
-/// TryDeleteWorkspace (symlink, path-traversal, delete exception),
 /// CleanupExpiredWorkspaces (activeRunId guard, completedAt null path),
 /// GetRunHistory empty-directory path.
+/// Note: TryDeleteWorkspace tests were consolidated into WorkspaceDeletionGuardTests.
 /// </summary>
 public class PipelineRunHistoryServiceAdditionalTests : IDisposable
 {
@@ -308,82 +308,6 @@ public class PipelineRunHistoryServiceAdditionalTests : IDisposable
         var history = await svc.GetRunHistoryAsync();
 
         history.Should().BeEmpty();
-    }
-
-    // ── TryDeleteWorkspace ───────────────────────────────────────────────────
-
-    [Fact]
-    public void TryDeleteWorkspace_NullPath_DoesNothing()
-    {
-        var dir = MakeTempDir();
-        var svc = new PipelineRunHistoryService(_mockLogger.Object, dir);
-
-        // Must not throw
-        var act = () => svc.TryDeleteWorkspace(null, "run-1", dir);
-        act.Should().NotThrow("null workspace path must be silently ignored");
-    }
-
-    [Fact]
-    public void TryDeleteWorkspace_NonExistentPath_DoesNothing()
-    {
-        var dir = MakeTempDir();
-        var svc = new PipelineRunHistoryService(_mockLogger.Object, dir);
-        var fakePath = Path.Combine(dir, "nonexistent-workspace");
-
-        var act = () => svc.TryDeleteWorkspace(fakePath, "run-1", dir);
-        act.Should().NotThrow("non-existent workspace path must be silently ignored");
-    }
-
-    [Fact]
-    public void TryDeleteWorkspace_PathOutsideBase_SkipsDelete()
-    {
-        var baseDir = MakeTempDir();
-        var targetDir = MakeTempDir(); // different temp dir — outside base
-        var svc = new PipelineRunHistoryService(_mockLogger.Object, baseDir);
-
-        // Target is outside baseDir — must not delete
-        svc.TryDeleteWorkspace(targetDir, "run-1", baseDir);
-
-        Directory.Exists(targetDir).Should().BeTrue("path outside base must not be deleted");
-    }
-
-    [Fact]
-    public void TryDeleteWorkspace_PathEqualsBase_SkipsDelete()
-    {
-        var baseDir = MakeTempDir();
-        var svc = new PipelineRunHistoryService(_mockLogger.Object, baseDir);
-
-        // Workspace path IS the base — must not delete
-        svc.TryDeleteWorkspace(baseDir, "run-1", baseDir);
-
-        Directory.Exists(baseDir).Should().BeTrue("base directory itself must not be deleted");
-    }
-
-    [Fact]
-    public void TryDeleteWorkspace_ValidPath_DeletesDirectory()
-    {
-        var baseDir = MakeTempDir();
-        var workspaceDir = Path.Combine(baseDir, "run-workspace-to-delete");
-        Directory.CreateDirectory(workspaceDir);
-        var svc = new PipelineRunHistoryService(_mockLogger.Object, baseDir);
-
-        svc.TryDeleteWorkspace(workspaceDir, "run-1", baseDir);
-
-        Directory.Exists(workspaceDir).Should().BeFalse("workspace should have been deleted");
-    }
-
-    [Fact]
-    public void TryDeleteWorkspace_DeleteThrows_LogsAndDoesNotPropagate()
-    {
-        // Cannot easily force Directory.Delete to throw without special setup,
-        // but we can verify the logger is not invoked for a valid deletion.
-        var baseDir = MakeTempDir();
-        var workspaceDir = Path.Combine(baseDir, "run-workspace-ok");
-        Directory.CreateDirectory(workspaceDir);
-        var svc = new PipelineRunHistoryService(_mockLogger.Object, baseDir);
-
-        var act = () => svc.TryDeleteWorkspace(workspaceDir, "run-ok", baseDir);
-        act.Should().NotThrow();
     }
 
     // ── CleanupExpiredWorkspaces — activeRunId guard ──────────────────────────
