@@ -116,7 +116,7 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     }
 
     /// <summary>
-    /// Atomically replaces an existing run with a new instance (same RunId).
+    /// Replaces an existing run with a new instance for the same RunId.
     /// Used by review dispatch to update a run with review-specific metadata without
     /// creating a gap where IsIssueBeingProcessed returns false.
     /// The output buffer is preserved (not recreated).
@@ -130,23 +130,19 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     {
         ArgumentNullException.ThrowIfNull(run);
 
-        // Swap the run out and capture the previous value so we can dispose its activity.
-        // _activeRuns is a ConcurrentDictionary; the indexer assignment is atomic for the
-        // key update itself, but we need AddOrUpdate to obtain the displaced run.
-        PipelineRun? displaced = null;
-        _activeRuns.AddOrUpdate(
-            run.RunId,
-            _ => run,
-            (_, existing) => { displaced = existing; return run; });
+        // Read the existing entry before overwriting it so we can detect a genuinely displaced run.
+        // Non-terminal callers follow the read-mutate-replace pattern (GetRun → mutate → ReplaceRun)
+        // and pass the same object reference back, so previousRun will be ReferenceEqual to run.
+        // Only a review-dispatch scenario (or a future caller) would supply a different object.
+        _activeRuns.TryGetValue(run.RunId, out var previousRun);
+        _activeRuns[run.RunId] = run;
 
-        // Safety net: dispose any open orchestrator span on the replaced run (issue #2255).
+        // Safety net: dispose any open orchestrator span on the displaced run (issue #2255).
         // Activity.Dispose is idempotent — safe to call even if already stopped.
-        // Guard: non-terminal callers follow the read-mutate-replace pattern
-        // (GetRun → mutate → ReplaceRun), so displaced and run are the SAME object reference.
-        // Disposing in that case would stop the still-active span before terminal transition,
-        // truncating it to near-zero duration. Only dispose when a truly different object is swapped in.
-        if (displaced is not null && !ReferenceEquals(displaced, run))
-            displaced.OrchestratorActivity?.Dispose();
+        // Guard: skip when the same reference is being put back (common non-terminal update path)
+        // to avoid stopping the still-active span and truncating it in Tempo.
+        if (previousRun is not null && !ReferenceEquals(previousRun, run))
+            previousRun.OrchestratorActivity?.Dispose();
 
         _logger.Debug("Active run replaced: {RunId} for issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
     }
