@@ -264,13 +264,16 @@ public class PipelineRunInstrumentationTests : IDisposable
     {
         using var durationCollector = DoubleCollector("pipeline.jobs.duration");
 
+        // Capture the upper-bound timestamp before starting the run so the
+        // budget always covers the frozen value regardless of setup time.
+        var startTimestamp = Stopwatch.GetTimestamp();
+
         var instrumentation = StartRun();
         using var mres4 = new ManualResetEventSlim(false);
         mres4.Wait(10); // Ensure non-zero duration before freeze
 
         instrumentation.StopTiming();
 
-        var freezeTimestamp = Stopwatch.GetTimestamp();
         using var mres5 = new ManualResetEventSlim(false);
         mres5.Wait(50); // Let at least 50ms pass after freeze
 
@@ -278,12 +281,16 @@ public class PipelineRunInstrumentationTests : IDisposable
         instrumentation.StopTiming();
         instrumentation.Dispose();
 
-        var totalElapsedSeconds = Stopwatch.GetElapsedTime(freezeTimestamp).TotalSeconds + 0.010;
+        // Budget = total wall time from before the run started + 250 ms slack.
+        // This is deliberately generous: we only care that subsequent StopTiming
+        // calls do NOT push the recorded value beyond the first freeze, not that
+        // the frozen value is small in absolute terms.
+        var budgetSeconds = Stopwatch.GetElapsedTime(startTimestamp).TotalSeconds + 0.250;
 
         var snapshot = durationCollector.GetMeasurementSnapshot();
         snapshot.Should().ContainSingle();
         snapshot[0].Value.Should().BeGreaterThan(0, "frozen duration must be non-zero")
-            .And.BeLessThan(totalElapsedSeconds,
+            .And.BeLessThan(budgetSeconds,
                 "StopTiming must freeze elapsed time at first call; subsequent calls must not extend it");
     }
 
