@@ -120,9 +120,15 @@ existingSecret: ""
 otel:
   endpoint: ""
   protocol: grpc
-  # OTEL_SERVICE_NAME for the orchestrator only. API, JobController and Scheduler have
-  # their own fixed service names (coding-agent-api, etc.) set in their deployment templates.
+  # OTEL_SERVICE_NAME for the orchestrator (Blazor UI process). API, JobController and Scheduler have
+  # their own service names set in their deployment templates.
   orchestratorServiceName: coding-agent-orchestrator
+  # OTEL_SERVICE_NAME for the API process.
+  # Defaults to "coding-agent-orchestrator" so the API's ExecutePipeline spans appear
+  # under the same service name that the Grafana "Recent Pipeline Traces" panel queries
+  # (rootServiceName="coding-agent-orchestrator"). Override to "coding-agent-api" if you
+  # need to distinguish API spans from orchestrator (Blazor UI) spans in Tempo.
+  apiServiceName: coding-agent-orchestrator
   resourceAttributes: ""
 
 # ── ServiceAccount ───────────────────────────────────────────────────────────
