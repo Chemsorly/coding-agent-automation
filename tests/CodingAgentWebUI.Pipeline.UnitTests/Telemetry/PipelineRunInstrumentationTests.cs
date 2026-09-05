@@ -268,9 +268,14 @@ public class PipelineRunInstrumentationTests : IDisposable
         using var mres4 = new ManualResetEventSlim(false);
         mres4.Wait(10); // Ensure non-zero duration before freeze
 
+        // Capture the timestamp before StopTiming so it represents the upper bound of
+        // what the frozen duration could possibly be. This prevents a race where
+        // StopTiming() takes measurable time on a loaded CI runner, causing the frozen
+        // value (captured inside StopTiming) to be slightly larger than
+        // Stopwatch.GetElapsedTime(freezeTimestamp) + buffer.
+        var freezeTimestamp = Stopwatch.GetTimestamp();
         instrumentation.StopTiming();
 
-        var freezeTimestamp = Stopwatch.GetTimestamp();
         using var mres5 = new ManualResetEventSlim(false);
         mres5.Wait(50); // Let at least 50ms pass after freeze
 
@@ -278,7 +283,7 @@ public class PipelineRunInstrumentationTests : IDisposable
         instrumentation.StopTiming();
         instrumentation.Dispose();
 
-        var totalElapsedSeconds = Stopwatch.GetElapsedTime(freezeTimestamp).TotalSeconds + 0.010;
+        var totalElapsedSeconds = Stopwatch.GetElapsedTime(freezeTimestamp).TotalSeconds;
 
         var snapshot = durationCollector.GetMeasurementSnapshot();
         snapshot.Should().ContainSingle();
