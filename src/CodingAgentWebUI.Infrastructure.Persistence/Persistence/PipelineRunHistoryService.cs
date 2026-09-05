@@ -217,36 +217,7 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
 
     public void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory)
     {
-        if (string.IsNullOrEmpty(workspacePath) || !Directory.Exists(workspacePath))
-            return;
-
-        var dirInfo = new DirectoryInfo(workspacePath);
-        if (dirInfo.LinkTarget != null)
-        {
-            _logger.Warning("Pipeline {RunId} workspace {Path} is a symlink, skipping cleanup",
-                runId, workspacePath);
-            return;
-        }
-
-        var fullPath = Path.GetFullPath(workspacePath);
-        var fullBase = Path.GetFullPath(workspaceBaseDirectory).TrimEnd(Path.DirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
-        if (!fullPath.StartsWith(fullBase, StringComparison.Ordinal) || fullPath.TrimEnd(Path.DirectorySeparatorChar) == fullBase.TrimEnd(Path.DirectorySeparatorChar))
-        {
-            _logger.Warning("Pipeline {RunId} workspace path {Path} is not inside base {Base}, skipping cleanup",
-                runId, workspacePath, workspaceBaseDirectory);
-            return;
-        }
-
-        try
-        {
-            Directory.Delete(workspacePath, recursive: true);
-            _logger.Information("Pipeline {RunId} workspace deleted: {Path}", runId, workspacePath);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Pipeline {RunId} failed to delete workspace: {Path}", runId, workspacePath);
-        }
+        WorkspaceDeletionGuard.TryDelete(workspacePath, runId, workspaceBaseDirectory, _logger);
     }
 
     /// <summary>

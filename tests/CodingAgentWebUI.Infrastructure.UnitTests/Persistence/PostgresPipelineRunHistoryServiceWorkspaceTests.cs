@@ -11,9 +11,9 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 
 /// <summary>
-/// Tests for <see cref="PostgresPipelineRunHistoryService.TryDeleteWorkspace"/> and
-/// <see cref="PostgresPipelineRunHistoryService.CleanupExpiredWorkspaces"/>.
+/// Tests for <see cref="PostgresPipelineRunHistoryService.CleanupExpiredWorkspaces"/>.
 /// Uses temp directories for filesystem assertions and InMemory EF for DB-backed tests.
+/// Note: TryDeleteWorkspace tests were consolidated into WorkspaceDeletionGuardTests.
 /// </summary>
 public sealed class PostgresPipelineRunHistoryServiceWorkspaceTests : IDisposable
 {
@@ -47,95 +47,6 @@ public sealed class PostgresPipelineRunHistoryServiceWorkspaceTests : IDisposabl
             Directory.Delete(_tempBase, recursive: true);
         using var db = new TestPipelineDbContext(_dbOptions);
         db.Database.EnsureDeleted();
-    }
-
-    // ── TryDeleteWorkspace ────────────────────────────────────────────────
-
-    [Fact]
-    public void TryDeleteWorkspace_NullPath_DoesNothing()
-    {
-        // null path → early return without touching the filesystem
-        _sut.TryDeleteWorkspace(null, "run-1", _tempBase);
-
-        // no side effects — no exception, no warning logged for null/empty path case
-        _mockLogger.Verify(l => l.Warning(It.IsAny<string>(), It.IsAny<object[]>()), Times.Never);
-    }
-
-    [Fact]
-    public void TryDeleteWorkspace_EmptyPath_DoesNothing()
-    {
-        _sut.TryDeleteWorkspace("", "run-1", _tempBase);
-
-        _mockLogger.Verify(l => l.Warning(It.IsAny<string>(), It.IsAny<object[]>()), Times.Never);
-    }
-
-    [Fact]
-    public void TryDeleteWorkspace_NonExistentDirectory_DoesNothing()
-    {
-        var path = Path.Combine(_tempBase, "does-not-exist");
-
-        _sut.TryDeleteWorkspace(path, "run-1", _tempBase);
-
-        // directory still doesn't exist (nothing created)
-        Directory.Exists(path).Should().BeFalse();
-    }
-
-    [Fact]
-    public void TryDeleteWorkspace_PathOutsideBase_LogsWarningAndSkips()
-    {
-        // Create a real directory outside the base
-        var outsideDir = Path.Combine(Path.GetTempPath(), $"outside-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(outsideDir);
-
-        try
-        {
-            _sut.TryDeleteWorkspace(outsideDir, "run-1", _tempBase);
-
-            // Directory must NOT be deleted (traversal guard proven by directory still existing)
-            Directory.Exists(outsideDir).Should().BeTrue("path outside base must not be deleted");
-        }
-        finally
-        {
-            if (Directory.Exists(outsideDir))
-                Directory.Delete(outsideDir, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void TryDeleteWorkspace_ValidPath_DeletesDirectory()
-    {
-        var runId = Guid.NewGuid().ToString();
-        var workspaceDir = Path.Combine(_tempBase, runId);
-        Directory.CreateDirectory(workspaceDir);
-        File.WriteAllText(Path.Combine(workspaceDir, "output.log"), "agent output");
-
-        _sut.TryDeleteWorkspace(workspaceDir, runId, _tempBase);
-
-        Directory.Exists(workspaceDir).Should().BeFalse("successful cleanup must remove the workspace directory");
-    }
-
-    [Fact]
-    public void TryDeleteWorkspace_ValidPath_LogsInformationOnSuccess()
-    {
-        var runId = Guid.NewGuid().ToString();
-        var workspaceDir = Path.Combine(_tempBase, runId);
-        Directory.CreateDirectory(workspaceDir);
-
-        _sut.TryDeleteWorkspace(workspaceDir, runId, _tempBase);
-
-        // Behavior assertion: directory is gone. Serilog generic overload makes mock verify fragile.
-        Directory.Exists(workspaceDir).Should().BeFalse("successful cleanup must remove the workspace directory");
-    }
-
-    [Fact]
-    public void TryDeleteWorkspace_PathEqualsBase_LogsWarningAndSkips()
-    {
-        // Attempting to delete the base directory itself must be rejected
-        var runId = Guid.NewGuid().ToString();
-
-        _sut.TryDeleteWorkspace(_tempBase, runId, _tempBase);
-
-        Directory.Exists(_tempBase).Should().BeTrue("deleting the base directory itself must be blocked");
     }
 
     // ── CleanupExpiredWorkspaces ──────────────────────────────────────────
