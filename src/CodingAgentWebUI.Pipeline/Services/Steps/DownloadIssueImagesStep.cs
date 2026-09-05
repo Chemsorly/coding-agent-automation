@@ -12,15 +12,21 @@ public sealed class DownloadIssueImagesStep : IPipelineStep
 
     private readonly Func<CancellationToken, Task<string>> _tokenProvider;
     private readonly ProviderConfig _repoConfig;
+    private readonly HttpMessageHandler? _httpHandler;
 
     public DownloadIssueImagesStep(
         Func<CancellationToken, Task<string>> tokenProvider,
-        ProviderConfig repoConfig)
+        ProviderConfig repoConfig,
+        // Optional handler forwarded to ImageDownloadService. Production leaves this null so the
+        // SSRF-guarded handler is used; tests inject a stub to avoid real network I/O (which is both
+        // slow and flaky). ImageDownloadService already exposes this seam.
+        HttpMessageHandler? httpHandler = null)
     {
         ArgumentNullException.ThrowIfNull(tokenProvider);
         ArgumentNullException.ThrowIfNull(repoConfig);
         _tokenProvider = tokenProvider;
         _repoConfig = repoConfig;
+        _httpHandler = httpHandler;
     }
 
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
@@ -57,7 +63,7 @@ public sealed class DownloadIssueImagesStep : IPipelineStep
             var gitlabApiUrl = _repoConfig.Settings.GetValueOrDefault("ApiUrl");
             var gitlabProjectId = _repoConfig.Settings.GetValueOrDefault("ProjectId");
 
-            using var downloadService = new ImageDownloadService();
+            using var downloadService = new ImageDownloadService(_httpHandler);
             var downloaded = await downloadService.DownloadAllAsync(
                 images,
                 targetDirectory,

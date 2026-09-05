@@ -85,31 +85,28 @@ public class DatabaseStartupServiceTests
     [Fact]
     public async Task WaitForDatabaseConnectionAsync_AllRetriesExhausted_ThrowsInvalidOperationException()
     {
-        // Validates the "all retries exhausted" exception wrapping path.
-        // Uses failCount=MaxRetryAttempts but with a cancellation token to limit real wait time.
-        // The retry logic, exponential backoff, and max attempts are validated by
-        // RetryConstants_MatchSpecification and RetriesOnTransientFailure_ThenSucceeds tests.
+        // Validates the "all retries exhausted" exception wrapping path. Every attempt fails; the
+        // exponential backoff is driven by FakeTimeProvider so no real wall-clock time is spent
+        // (previously this waited ~20s bounded by a cancellation token).
+        var fakeTime = new FakeTimeProvider();
         var probe = new FakeProbe(failCount: DatabaseStartupService.MaxRetryAttempts);
-        var service = CreateService(probe);
+        var service = CreateService(probe, timeProvider: fakeTime);
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        Exception? caught = null;
-        try
+        var task = service.WaitForDatabaseConnectionAsync(CancellationToken.None);
+
+        // Pump fake time past each retry backoff until the retry sequence exhausts. The tiny real
+        // yield lets the awaiting continuation observe each advance; the real deadline is only a
+        // safety net against an unexpected hang (the loop normally finishes in well under a second).
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!task.IsCompleted && DateTime.UtcNow < deadline)
         {
-            await service.WaitForDatabaseConnectionAsync(cts.Token);
-        }
-        catch (InvalidOperationException ex) { caught = ex; }
-        catch (OperationCanceledException)
-        {
-            // If cancellation fires before all retries complete, that's fine —
-            // we just need to verify the retry logic attempted multiple times.
-            Assert.True(probe.AttemptCount >= 3, $"Expected at least 3 attempts before timeout, got {probe.AttemptCount}");
-            return;
+            await Task.Delay(10);
+            fakeTime.Advance(DatabaseStartupService.MaxDelay);
         }
 
-        // If all retries completed within timeout (unlikely but possible on fast machines)
-        Assert.NotNull(caught);
-        Assert.Contains($"after {DatabaseStartupService.MaxRetryAttempts} attempts", caught!.Message);
+        var caught = await Assert.ThrowsAsync<InvalidOperationException>(async () => await task);
+        Assert.Contains($"after {DatabaseStartupService.MaxRetryAttempts} attempts", caught.Message);
+        Assert.Equal(DatabaseStartupService.MaxRetryAttempts, probe.AttemptCount);
     }
 
     [Fact]

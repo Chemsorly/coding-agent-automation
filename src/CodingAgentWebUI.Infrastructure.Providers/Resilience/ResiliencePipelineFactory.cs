@@ -110,7 +110,7 @@ public static class ResiliencePipelineFactory
     public static ResiliencePipeline CreateGitNetworkPipeline(ILogger logger)
         => CreateGitNetworkPipeline(logger, GitNetworkTimeout, GitNetworkOuterTimeout);
 
-    internal static ResiliencePipeline CreateGitNetworkPipeline(ILogger logger, TimeSpan timeout, TimeSpan? outerTimeout = null)
+    internal static ResiliencePipeline CreateGitNetworkPipeline(ILogger logger, TimeSpan timeout, TimeSpan? outerTimeout = null, TimeSpan? retryDelay = null)
     {
         var outer = outerTimeout ?? GitNetworkOuterTimeout;
 
@@ -122,7 +122,7 @@ public static class ResiliencePipelineFactory
                 MaxRetryAttempts = 2,
                 BackoffType = DelayBackoffType.Exponential,
                 UseJitter = true,
-                Delay = TimeSpan.FromSeconds(2),
+                Delay = retryDelay ?? TimeSpan.FromSeconds(2),
                 ShouldHandle = new PredicateBuilder()
                     .Handle<LibGit2SharpException>(ex => IsTransientGitException(ex))
                     .Handle<TimeoutRejectedException>(),
@@ -144,6 +144,9 @@ public static class ResiliencePipelineFactory
     /// Pattern: outer timeout → retry → per-attempt timeout.
     /// </summary>
     public static ResiliencePipeline CreateHttpPipeline(ILogger logger)
+        => CreateHttpPipeline(logger, retryDelay: null);
+
+    internal static ResiliencePipeline CreateHttpPipeline(ILogger logger, TimeSpan? retryDelay)
     {
         return new ResiliencePipelineBuilder()
             // Outer timeout: caps total time including all retries.
@@ -153,7 +156,7 @@ public static class ResiliencePipelineFactory
                 MaxRetryAttempts = DefaultMaxRetryAttempts,
                 BackoffType = DelayBackoffType.Exponential,
                 UseJitter = true,
-                Delay = TimeSpan.FromSeconds(1),
+                Delay = retryDelay ?? TimeSpan.FromSeconds(1),
                 ShouldHandle = new PredicateBuilder()
                     .Handle<HttpRequestException>()
                     .Handle<SocketException>()
@@ -179,7 +182,7 @@ public static class ResiliencePipelineFactory
     public static ResiliencePipeline CreateSignalRPipeline(ILogger logger)
         => CreateSignalRPipeline(logger, SignalRTimeout, SignalROuterTimeout);
 
-    internal static ResiliencePipeline CreateSignalRPipeline(ILogger logger, TimeSpan timeout, TimeSpan? outerTimeout = null)
+    internal static ResiliencePipeline CreateSignalRPipeline(ILogger logger, TimeSpan timeout, TimeSpan? outerTimeout = null, TimeSpan? retryDelay = null)
     {
         var outer = outerTimeout ?? SignalROuterTimeout;
 
@@ -191,7 +194,7 @@ public static class ResiliencePipelineFactory
                 MaxRetryAttempts = DefaultMaxRetryAttempts,
                 BackoffType = DelayBackoffType.Exponential,
                 UseJitter = true,
-                Delay = TimeSpan.FromMilliseconds(500),
+                Delay = retryDelay ?? TimeSpan.FromMilliseconds(500),
                 ShouldHandle = new PredicateBuilder()
                     .Handle<HttpRequestException>()
                     .Handle<SocketException>()

@@ -151,11 +151,12 @@ public class ResiliencePipelineFactoryTests
     [Fact]
     public async Task CreateGitNetworkPipeline_RetriesOnPerAttemptTimeout()
     {
-        // Per-attempt timeout is 200ms, outer timeout very generous (60s) to allow all retries to complete
-        // even with exponential backoff (base 2s) and jitter.
+        // Per-attempt timeout is 200ms; retryDelay shrunk to ~0 so the test exercises the retry
+        // COUNT without waiting real exponential backoff (base 2s → ~6s before this change).
         // MaxRetryAttempts=2 → 3 total attempts when every attempt times out.
         var pipeline = ResiliencePipelineFactory.CreateGitNetworkPipeline(
-            Log.Logger, TimeSpan.FromMilliseconds(200), outerTimeout: TimeSpan.FromSeconds(60));
+            Log.Logger, TimeSpan.FromMilliseconds(200), outerTimeout: TimeSpan.FromSeconds(60),
+            retryDelay: TimeSpan.FromMilliseconds(1));
         var callCount = 0;
 
         var act = () => pipeline.ExecuteAsync(async token =>
@@ -172,11 +173,12 @@ public class ResiliencePipelineFactoryTests
     [Fact]
     public async Task CreateSignalRPipeline_RetriesOnPerAttemptTimeout()
     {
-        // Per-attempt timeout is 200ms, outer timeout very generous (60s) to allow all retries to complete
-        // even with exponential backoff (base 500ms) and jitter.
+        // Per-attempt timeout is 200ms; retryDelay shrunk to ~0 so the test exercises the retry
+        // COUNT without waiting real exponential backoff (base 500ms) and jitter.
         // MaxRetryAttempts=3 → 4 total attempts when every attempt times out.
         var pipeline = ResiliencePipelineFactory.CreateSignalRPipeline(
-            Log.Logger, TimeSpan.FromMilliseconds(200), outerTimeout: TimeSpan.FromSeconds(60));
+            Log.Logger, TimeSpan.FromMilliseconds(200), outerTimeout: TimeSpan.FromSeconds(60),
+            retryDelay: TimeSpan.FromMilliseconds(1));
         var callCount = 0;
 
         var act = () => pipeline.ExecuteAsync(async token =>
@@ -223,7 +225,8 @@ public class ResiliencePipelineFactoryTests
     public async Task HttpPipeline_OnRetry_AddsActivityEventWithExceptionMessage()
     {
         using var activity = new System.Diagnostics.Activity("test").Start();
-        var pipeline = ResiliencePipelineFactory.CreateHttpPipeline(Log.Logger);
+        // retryDelay ~0 so the retries don't wait real backoff (base 1s → ~5s before this change).
+        var pipeline = ResiliencePipelineFactory.CreateHttpPipeline(Log.Logger, TimeSpan.FromMilliseconds(1));
         var callCount = 0;
 
         await Assert.ThrowsAsync<HttpRequestException>(async () =>
@@ -253,7 +256,8 @@ public class ResiliencePipelineFactoryTests
     {
         // Ensure Activity.Current is null
         System.Diagnostics.Activity.Current = null;
-        var pipeline = ResiliencePipelineFactory.CreateHttpPipeline(Log.Logger);
+        // retryDelay ~0 so the retries don't wait real backoff (base 1s → ~5s before this change).
+        var pipeline = ResiliencePipelineFactory.CreateHttpPipeline(Log.Logger, TimeSpan.FromMilliseconds(1));
 
         // Should not throw NullReferenceException
         await Assert.ThrowsAsync<HttpRequestException>(async () =>
@@ -286,11 +290,14 @@ public class ResiliencePipelineFactoryTests
     [Fact]
     public async Task CreateGitHubApiPipeline_PerAttemptTimeoutStillApplies()
     {
-        // Arrange: outer timeout is generous (30s), but per-attempt timeout is short (1s)
+        // Arrange: outer timeout is generous (30s), per-attempt timeout is short (200ms), and
+        // retryDelay is ~0 so the retries between the 4 timing-out attempts don't wait real backoff
+        // (base 1s → ~7s before this change). The test only asserts the per-attempt timeout fires.
         var pipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(
             Log.Logger,
             outerTimeout: TimeSpan.FromSeconds(30),
-            perAttemptTimeout: TimeSpan.FromSeconds(1));
+            perAttemptTimeout: TimeSpan.FromMilliseconds(200),
+            retryDelay: TimeSpan.FromMilliseconds(1));
 
         // Act: each attempt hangs indefinitely — per-attempt timeout should fire
         var act = () => pipeline.ExecuteAsync(async token =>
@@ -311,7 +318,8 @@ public class ResiliencePipelineFactoryTests
         var pipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(
             Log.Logger,
             outerTimeout: TimeSpan.FromSeconds(60),
-            perAttemptTimeout: TimeSpan.FromMilliseconds(200));
+            perAttemptTimeout: TimeSpan.FromMilliseconds(200),
+            retryDelay: TimeSpan.FromMilliseconds(1));
         var callCount = 0;
 
         // Act: first 3 calls hang (triggering per-attempt timeout), 4th succeeds immediately

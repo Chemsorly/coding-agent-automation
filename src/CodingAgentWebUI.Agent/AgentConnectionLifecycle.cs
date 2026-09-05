@@ -295,14 +295,16 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         hubManager.OnClosed += error => HandleTerminalClosedAsync(error);
     }
 
-    internal async Task HandleTerminalClosedAsync(Exception? error, int maxAttempts = 10)
+    // delayOverride is a test seam (null in production) so reconnection tests need not wait the real
+    // exponential backoff; mirrors AgentConnectionManager.HandleTerminalClosedAsync.
+    internal async Task HandleTerminalClosedAsync(Exception? error, int maxAttempts = 10, Func<int, TimeSpan>? delayOverride = null)
     {
         _logger.Warning(error, "SignalR connection entered terminal Closed state, attempting fresh reconnection");
 
         var ct = _hostApplicationLifetime.ApplicationStopping;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            var delay = ReconnectionHelper.CalculateReconnectionDelay(attempt);
+            var delay = delayOverride?.Invoke(attempt) ?? ReconnectionHelper.CalculateReconnectionDelay(attempt);
             _logger.Information("Reconnection attempt {Attempt}/{Max} after {Delay:F1}s",
                 attempt, maxAttempts, delay.TotalSeconds);
 
