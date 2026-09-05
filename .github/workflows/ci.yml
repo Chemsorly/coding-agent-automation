@@ -146,8 +146,41 @@ jobs:
       - name: Helm template
         run: helm template test-release helm/coding-agent-automation/ -f helm/coding-agent-automation/ci-values.yaml > /dev/null
 
+  # Spec 048 Phase 3 — decide which Docker images to (re)build from the changed files.
+  # On main/tags: build ALL. On PRs: only images whose source closure, own Dockerfile, or a shared
+  # asset changed (mapping in .github/docker-image-projects.json, verified against the real .csproj
+  # graph by DockerImageProjectMappingTests). build-and-test runs unfiltered on every event, so
+  # tests always run regardless of which images are selected here.
+  detect-images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      images_json: ${{ steps.detect.outputs.images_json }}
+      push_json: ${{ steps.detect.outputs.push_json }}
+      any: ${{ steps.detect.outputs.any }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Detect affected images
+        id: detect
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            echo "Changed files vs ${BASE_SHA}:"
+            git diff --name-only "$BASE_SHA" HEAD | tee /tmp/changed.txt
+            bash .github/scripts/detect-affected-images.sh < /tmp/changed.txt
+          else
+            echo "Non-PR event (${{ github.event_name }} @ ${{ github.ref }}) — building all images."
+            BUILD_ALL=true bash .github/scripts/detect-affected-images.sh < /dev/null
+          fi
+
   docker-build:
-    needs: [build-and-test]
+    needs: [build-and-test, detect-images]
+    if: needs.detect-images.outputs.any == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
 
@@ -160,27 +193,8 @@ jobs:
         arch:
           - amd64
           - arm64
-        image:
-          - dockerfile: dockerfiles/webui.Dockerfile
-            tag: coding-agent-webui
-          - dockerfile: dockerfiles/kiro/agent-kiro-dotnet10.Dockerfile
-            tag: coding-agent-kiro-dotnet10
-          - dockerfile: dockerfiles/kiro/agent-kiro-python312.Dockerfile
-            tag: coding-agent-kiro-python312
-          - dockerfile: dockerfiles/kiro/agent-kiro-java21.Dockerfile
-            tag: coding-agent-kiro-java21
-          - dockerfile: dockerfiles/opencode/agent-opencode-dotnet10.Dockerfile
-            tag: coding-agent-opencode-dotnet10
-          - dockerfile: dockerfiles/opencode/agent-opencode-java21.Dockerfile
-            tag: coding-agent-opencode-java21
-          - dockerfile: dockerfiles/opencode/agent-opencode-python312.Dockerfile
-            tag: coding-agent-opencode-python312
-          - dockerfile: dockerfiles/api.Dockerfile
-            tag: coding-agent-api
-          - dockerfile: dockerfiles/jobcontroller.Dockerfile
-            tag: coding-agent-jobcontroller
-          - dockerfile: dockerfiles/scheduler.Dockerfile
-            tag: coding-agent-scheduler
+        # Filtered set of { dockerfile, tag } objects produced by detect-images (all 10 on main/tags).
+        image: ${{ fromJSON(needs.detect-images.outputs.images_json) }}
         include:
           - arch: amd64
             runner: ubuntu-latest
@@ -232,21 +246,29 @@ jobs:
   # Gate job for branch protection — matrix jobs report as "docker-build (arch, ...)"
   # but branch protection requires a single named check. This aggregates the result.
   docker-build-gate:
-    needs: [docker-build]
+    needs: [detect-images, docker-build]
     runs-on: ubuntu-latest
     if: always()
     permissions:
       contents: read
     steps:
       - run: |
-          if [[ "${{ needs.docker-build.result }}" != "success" ]]; then
+          # detect-images failing means we don't know what to build — fail loudly rather than
+          # silently skipping docker-build (Spec 048 Phase 3).
+          if [[ "${{ needs.detect-images.result }}" != "success" ]]; then
+            echo "::error::detect-images failed — cannot determine which images to build"
+            exit 1
+          fi
+          # 'skipped' is a valid docker-build outcome when the path filter selected no images
+          # (e.g. a docs-only or tests-only PR). Only a real failure/cancellation should gate.
+          if [[ "${{ needs.docker-build.result }}" == "failure" || "${{ needs.docker-build.result }}" == "cancelled" ]]; then
             echo "::error::docker-build matrix failed or was cancelled"
             exit 1
           fi
 
   docker-push:
-    needs: [docker-build]
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    needs: [docker-build, detect-images]
+    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && needs.detect-images.outputs.any == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -256,17 +278,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - tag: coding-agent-webui
-          - tag: coding-agent-kiro-dotnet10
-          - tag: coding-agent-kiro-python312
-          - tag: coding-agent-kiro-java21
-          - tag: coding-agent-opencode-dotnet10
-          - tag: coding-agent-opencode-java21
-          - tag: coding-agent-opencode-python312
-          - tag: coding-agent-api
-          - tag: coding-agent-jobcontroller
-          - tag: coding-agent-scheduler
+        # Filtered set of { tag } objects produced by detect-images (all 10 on main/tags, since
+        # push only runs on main/tags where the detect job selects every image).
+        include: ${{ fromJSON(needs.detect-images.outputs.push_json) }}
 
     steps:
       - name: Create and push multi-arch manifest for ${{ matrix.tag }}
