@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
@@ -83,6 +84,16 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             _logger.Error(ex, "FailRunAsync: failed to persist run {RunId} to history (run data may be lost)", runId);
         }
 
+        // 4. Stop the orchestrator-side ExecutePipeline span (issue #2255).
+        //    Must happen after history persist so final tags can be added before the span closes.
+        // NOTE: The span is disposed here (step 4), before ClearAgentState/label-swap/K8s cleanup
+        // (steps 5-7). Those operations are therefore not covered by the span's active window and
+        // won't appear as child spans/events. If end-to-end coverage of the full terminal sequence
+        // is needed, move Dispose to after step 7. Consistent with CancelRunAsync; CompleteRunAsync
+        // already disposes near the end. (Reviewer warning, issue #2255)
+        run.OrchestratorActivity?.SetTag("pipeline.final_step", run.CurrentStep.ToString());
+        run.OrchestratorActivity?.SetStatus(ActivityStatusCode.Error, failureReason);
+        run.OrchestratorActivity?.Dispose();
 
         // 5. Clear agent state
         await ClearAgentStateAsync(run.AgentId);
@@ -165,6 +176,16 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
                 await _labelService.TrySwapLabelAsync(run, label, _logger, "RunLifecycleManager", ct);
         }
 
+        // 4. Stop the orchestrator-side ExecutePipeline span (issue #2255).
+        //    Added after history persist so the final step tag reflects the terminal state.
+        //    AgentId may be null for rehydrated runs where the agent didn't reconnect; tag defensively.
+        // NOTE: The span is disposed here (step 4), before any post-completion cleanup steps
+        // (e.g. label swap). Those operations are therefore not covered by the span's active window
+        // and won't appear as child spans/events. If end-to-end coverage of the full terminal
+        // sequence is needed, move Dispose to after all cleanup steps. Consistent with the same
+        // gap documented in FailRunAsync and CancelRunAsync. (Reviewer warning, issue #2255)
+        FinalizeOrchestratorSpan(run, terminalStatus, errorMessage);
+
         _logger.Information(
             "RunLifecycleManager.CompleteRunAsync: run {RunId} terminal (status={Status}, issue={IssueIdentifier}, step={Step}, highWater={HighWater}, agent={AgentId})",
             runId, terminalStatus, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, run.AgentId ?? "none");
@@ -206,6 +227,16 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             _logger.Error(ex, "CancelRunAsync: failed to persist run {RunId} to history (run data may be lost)", runId);
         }
 
+        // 4. Stop the orchestrator-side ExecutePipeline span (issue #2255).
+        //    Use SetTag("pipeline.cancelled", true) instead of SetStatus(Error) for graceful cancellation,
+        //    matching the RecordError extension convention for OperationCanceledException.
+        // NOTE: The span is disposed here (step 4), before ClearAgentState/label-swap/K8s cleanup
+        // (steps 5-7). Those operations are not covered by the span's active window. If end-to-end
+        // coverage of the full terminal sequence is needed, move Dispose to after step 7.
+        // (Reviewer warning, issue #2255)
+        run.OrchestratorActivity?.SetTag("pipeline.final_step", run.CurrentStep.ToString());
+        run.OrchestratorActivity?.SetTag("pipeline.cancelled", true);
+        run.OrchestratorActivity?.Dispose();
 
         // 5. Clear agent state
         await ClearAgentStateAsync(run.AgentId);
@@ -230,9 +261,9 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         PipelineRunType runType, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(runId.Value);
-        // TODO: Replace ArgumentNullException.ThrowIfNull(agentId.Value) with
-        // ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)) — ThrowIfNull on a struct
-        // field reports "Value" as the parameter name in exceptions rather than "agentId".
+        // NOTE: Using ThrowIfNull(agentId.Value) rather than ThrowIfNullOrEmpty(agentId.Value, nameof(agentId))
+        // because ThrowIfNull on a struct field reports "Value" as the parameter name in exceptions
+        // rather than "agentId". Prefer ThrowIfNullOrEmpty with nameof if this is refactored.
         ArgumentNullException.ThrowIfNull(agentId.Value);
 
         // 1. Set AgentId on the in-memory PipelineRun and persist
@@ -327,6 +358,20 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         await _registry.UpdateAgentFieldAsync(new AgentId(agentId), "orphanRestoredAt", null);
 
         _registry.TransitionStatus(new AgentId(agentId), AgentStatus.Idle);
+    }
+
+    /// <summary>
+    /// Sets terminal telemetry tags and disposes the orchestrator-side ExecutePipeline span for a completed run.
+    /// Extracted to keep <see cref="CompleteRunAsync"/> within Sonar's cognitive complexity limit.
+    /// </summary>
+    private static void FinalizeOrchestratorSpan(PipelineRun run, WorkItemStatus terminalStatus, string? errorMessage)
+    {
+        run.OrchestratorActivity?.SetTag("pipeline.final_step", run.CurrentStep.ToString());
+        if (!string.IsNullOrEmpty(run.AgentId))
+            run.OrchestratorActivity?.SetTag("pipeline.agent_id", run.AgentId);
+        if (terminalStatus != WorkItemStatus.Succeeded)
+            run.OrchestratorActivity?.SetStatus(ActivityStatusCode.Error, errorMessage ?? terminalStatus.ToString());
+        run.OrchestratorActivity?.Dispose();
     }
 
 }

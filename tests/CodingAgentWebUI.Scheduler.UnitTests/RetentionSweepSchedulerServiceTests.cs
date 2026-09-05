@@ -73,7 +73,10 @@ public sealed class RetentionSweepSchedulerServiceTests
         _mockClient.Setup(c => c.TriggerRetentionSweepAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("connection refused"));
 
-        await RunServiceForDurationAsync(CreateService(), TimeSpan.FromMilliseconds(500));
+        // Use 2000ms window so PeriodicTimer(1ms) reliably fires at least once even on a
+        // loaded CI host where thread-pool scheduling is delayed (matching the comment in
+        // WhenLeaderAndApiReturns200 which was increased from 50ms to 500ms for the same reason).
+        await RunServiceForDurationAsync(CreateService(), TimeSpan.FromMilliseconds(2000));
 
         _mockLogger.Verify(l => l.Warning(It.IsAny<Exception>(), It.IsAny<string>()),
             Times.AtLeastOnce(), "network error should log Warning");

@@ -90,6 +90,12 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
 
     /// <summary>
     /// Removes a pipeline run from the active runs collection and disposes its output buffer.
+    /// Also disposes any open <see cref="PipelineRun.OrchestratorActivity"/> that was not already
+    /// stopped by a terminal RunLifecycleManager path (FailRunAsync/CompleteRunAsync/CancelRunAsync).
+    /// This safety net prevents orphaned open spans in Tempo when a run is evicted outside the
+    /// normal terminal paths (e.g. pod restart, direct removal, or an exception before terminal
+    /// transition). The span will appear without a terminal status tag, but it will at least be
+    /// exported rather than pinned in memory forever.
     /// </summary>
     public PipelineRun? RemoveRun(RunId runId)
     {
@@ -101,20 +107,43 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
         if (removed is not null)
         {
             _logger.Information("Active run removed: {RunId}", runId);
+            // Safety net: dispose any open orchestrator span not already stopped by a
+            // terminal lifecycle transition (issue #2255). Activity.Dispose is idempotent —
+            // if the span was already stopped by RunLifecycleManager this is a no-op.
+            removed.OrchestratorActivity?.Dispose();
         }
         return removed;
     }
 
     /// <summary>
-    /// Atomically replaces an existing run with a new instance (same RunId).
+    /// Replaces an existing run with a new instance for the same RunId.
     /// Used by review dispatch to update a run with review-specific metadata without
     /// creating a gap where IsIssueBeingProcessed returns false.
     /// The output buffer is preserved (not recreated).
+    /// If a genuinely different <see cref="PipelineRun"/> object is displaced (i.e. not the same
+    /// reference as <paramref name="run"/>), disposes its open <see cref="PipelineRun.OrchestratorActivity"/>
+    /// to prevent orphaned open spans in Tempo (issue #2255). Non-terminal callers that follow the
+    /// read-mutate-replace pattern (GetRun → mutate → ReplaceRun) pass back the same object reference,
+    /// so no dispose occurs in that common path.
     /// </summary>
     public void ReplaceRun(PipelineRun run)
     {
         ArgumentNullException.ThrowIfNull(run);
+
+        // Read the existing entry before overwriting it so we can detect a genuinely displaced run.
+        // Non-terminal callers follow the read-mutate-replace pattern (GetRun → mutate → ReplaceRun)
+        // and pass the same object reference back, so previousRun will be ReferenceEqual to run.
+        // Only a review-dispatch scenario (or a future caller) would supply a different object.
+        _activeRuns.TryGetValue(run.RunId, out var previousRun);
         _activeRuns[run.RunId] = run;
+
+        // Safety net: dispose any open orchestrator span on the displaced run (issue #2255).
+        // Activity.Dispose is idempotent — safe to call even if already stopped.
+        // Guard: skip when the same reference is being put back (common non-terminal update path)
+        // to avoid stopping the still-active span and truncating it in Tempo.
+        if (previousRun is not null && !ReferenceEquals(previousRun, run))
+            previousRun.OrchestratorActivity?.Dispose();
+
         _logger.Debug("Active run replaced: {RunId} for issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
     }
 
