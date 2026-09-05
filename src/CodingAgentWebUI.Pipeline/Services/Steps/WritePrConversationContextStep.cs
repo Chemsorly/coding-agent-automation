@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 
@@ -26,32 +25,7 @@ public sealed class WritePrConversationContextStep : IPipelineStep
 
         var prNumber = context.Run.LinkedPullRequest.Number;
 
-        try
-        {
-            // In rework mode the PR author is typically the bot — pass empty string
-            // so all comments are included without special author attribution.
-            var prAuthor = context.Run.ReviewPrAuthor ?? "";
-
-            var comments = await context.RepoProvider.ListPullRequestCommentsAsync(prNumber, prAuthor, ct);
-
-            var contextDir = Path.Combine(context.Run.WorkspacePath!, ".agent");
-            Directory.CreateDirectory(contextDir);
-
-            var content = PrConversationContextFormatter.Format(comments);
-            var filePath = Path.Combine(context.Run.WorkspacePath!, AgentWorkspacePaths.PrConversationContextFilePath);
-            await File.WriteAllTextAsync(filePath, content, ct);
-
-            context.Logger.Information(
-                "Wrote PR conversation context ({CommentCount} comments) to {FilePath} for PR #{PrNumber}",
-                comments.Count, AgentWorkspacePaths.PrConversationContextFilePath, prNumber);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            Activity.Current?.RecordError(ex, ct);
-            context.Logger.Warning(ex,
-                "Failed to write PR conversation context for PR #{PrNumber}, review will proceed without it",
-                prNumber);
-        }
+        await PrConversationContextWriter.WriteAsync(context, prNumber, ct);
 
         return StepResult.Continue;
     }
