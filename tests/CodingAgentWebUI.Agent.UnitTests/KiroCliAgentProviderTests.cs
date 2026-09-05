@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Moq;
 using KiroCliLib.Core;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Agent.KiroCli;
@@ -308,29 +309,47 @@ public class KiroCliAgentProviderTests
     }
 
     [Fact]
-    public async Task ApplyCliSettingsAsync_WhenModelContainsInvalidChars_RejectsAndLogs()
+    public async Task ApplyCliSettingsAsync_WhenModelContainsInvalidChars_DoesNotWriteFile()
     {
-        var provider = new KiroCliAgentProvider(
-            _mockOrchestrator.Object, _mockLogger.Object, model: "foo\" && rm -rf /",
-            "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
-        await provider.ApplyCliSettingsAsync(CancellationToken.None);
+        var tempDir = Path.Combine(Path.GetTempPath(), $"kiro-test-{Guid.NewGuid():N}");
+        var settingsPath = Path.Combine(tempDir, "cli.json");
+        try
+        {
+            var provider = new KiroCliAgentProvider(
+                _mockOrchestrator.Object, _mockLogger.Object, model: "foo\" && rm -rf /",
+                "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
+            await provider.ApplyCliSettingsAsync(CancellationToken.None, settingsPath);
 
-        _mockLogger.Verify(l => l.Warning(
-            "Invalid model name rejected: {Model}",
-            "foo\" && rm -rf /"), Times.Once);
+            // Invalid model name must be rejected — no file written.
+            // Warning is emitted via Serilog.Log (static), not the injected mock logger.
+            File.Exists(settingsPath).Should().BeFalse("invalid model name must not be written to cli.json");
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+        }
     }
 
     [Fact]
-    public async Task ApplyCliSettingsAsync_WhenModelContainsSpaces_RejectsAndLogs()
+    public async Task ApplyCliSettingsAsync_WhenModelContainsSpaces_DoesNotWriteFile()
     {
-        var provider = new KiroCliAgentProvider(
-            _mockOrchestrator.Object, _mockLogger.Object, model: "model with spaces",
-            "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
-        await provider.ApplyCliSettingsAsync(CancellationToken.None);
+        var tempDir = Path.Combine(Path.GetTempPath(), $"kiro-test-{Guid.NewGuid():N}");
+        var settingsPath = Path.Combine(tempDir, "cli.json");
+        try
+        {
+            var provider = new KiroCliAgentProvider(
+                _mockOrchestrator.Object, _mockLogger.Object, model: "model with spaces",
+                "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
+            await provider.ApplyCliSettingsAsync(CancellationToken.None, settingsPath);
 
-        _mockLogger.Verify(l => l.Warning(
-            "Invalid model name rejected: {Model}",
-            "model with spaces"), Times.Once);
+            // Invalid model name must be rejected — no file written.
+            // Warning is emitted via Serilog.Log (static), not the injected mock logger.
+            File.Exists(settingsPath).Should().BeFalse("model name with spaces must not be written to cli.json");
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+        }
     }
 
     [Fact]
@@ -429,6 +448,47 @@ public class KiroCliAgentProviderTests
             // Existing settings preserved
             json["mcp.loadedBefore"]!.GetValue<bool>().Should().BeTrue();
             json["mcp.initTimeout"]!.GetValue<int>().Should().Be(30);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort cleanup */ }
+        }
+    }
+
+    // --- AC3: Provider output matches KiroCliSettingsWriter output for same inputs ---
+
+    [Fact]
+    public async Task ApplyCliSettingsAsync_ProducesIdenticalOutputToKiroCliSettingsWriter()
+    {
+        // Verifies that delegating to KiroCliSettingsWriter produces the same cli.json
+        // as calling the writer directly with the same inputs. This is the regression
+        // guard required by acceptance criterion 3.
+        var tempDir = Path.Combine(Path.GetTempPath(), $"kiro-test-{Guid.NewGuid():N}");
+        var providerPath = Path.Combine(tempDir, "provider-cli.json");
+        var writerPath = Path.Combine(tempDir, "writer-cli.json");
+        try
+        {
+            const string model = "claude-opus-4.6";
+            const AgentEffortLevel effortLevel = AgentEffortLevel.High;
+
+            // Call via provider
+            var provider = new KiroCliAgentProvider(
+                _mockOrchestrator.Object, _mockLogger.Object, model: model,
+                "/usr/bin/fake-kiro-cli", effortLevel, _mockProcessStarter.Object);
+            await provider.ApplyCliSettingsAsync(CancellationToken.None, providerPath);
+
+            // Call writer directly with equivalent inputs
+            await KiroCliSettingsWriter.ApplyAsync(model, effortLevel.ToCliValue(), CancellationToken.None, writerPath);
+
+            // Both files must exist and have identical contents
+            File.Exists(providerPath).Should().BeTrue("provider must write cli.json");
+            File.Exists(writerPath).Should().BeTrue("writer must write cli.json");
+
+            var providerJson = await File.ReadAllTextAsync(providerPath);
+            var writerJson = await File.ReadAllTextAsync(writerPath);
+
+            providerJson.Should().Be(writerJson,
+                "provider must produce exactly the same cli.json as KiroCliSettingsWriter for identical inputs");
         }
         finally
         {
