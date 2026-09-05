@@ -4,7 +4,7 @@
     <DataCollectors>
       <DataCollector friendlyName="XPlat Code Coverage">
         <Configuration>
-          <Include>[CodingAgentWebUI.Scheduler]*</Include>
+          <Include>[CodingAgentWebUI.Scheduler]*,[CodingAgentWebUI.Contracts]*,[CodingAgentWebUI.Infrastructure.Common]*</Include>
           <Exclude>[CodingAgentWebUI.Scheduler.UnitTests]*</Exclude>
           <IncludeTestAssembly>false</IncludeTestAssembly>
           <SkipAutoProps>true</SkipAutoProps>

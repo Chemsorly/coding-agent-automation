@@ -10,7 +10,7 @@
     <DataCollectors>
       <DataCollector friendlyName="XPlat Code Coverage">
         <Configuration>
-          <Include>[CodingAgentWebUI.Infrastructure.Providers]*,[CodingAgentWebUI.Infrastructure.Persistence]*,[CodingAgentWebUI.Pipeline]*</Include>
+          <Include>[CodingAgentWebUI.Infrastructure.Providers]*,[CodingAgentWebUI.Infrastructure.Persistence]*,[CodingAgentWebUI.Pipeline]*,[CodingAgentWebUI.Contracts]*,[CodingAgentWebUI.Infrastructure.Common]*</Include>
           <IncludeTestAssembly>false</IncludeTestAssembly>
           <SkipAutoProps>true</SkipAutoProps>
         </Configuration>
