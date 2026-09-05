@@ -1,6 +1,5 @@
 using CodingAgentWebUI.Orchestration.Redis;
 using CodingAgentWebUI.Pipeline.LeaderElection;
-using Microsoft.Extensions.Hosting;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Orchestration;
@@ -20,69 +19,32 @@ namespace CodingAgentWebUI.Orchestration;
 /// planned but not yet implemented. See issue for tracking.
 /// </para>
 /// </summary>
-public sealed class RunServiceCleanupService : BackgroundService
+// TODO: Restore `sealed` modifier (was inadvertently removed when inheriting RedisSetCleanupService).
+// This is a concrete leaf class with no reason to be subclassed further. The `sealed` keyword is also
+// required by the ClassNameRegex() scanner in LayerBoundaryTests — without it the DI registration
+// guard cannot detect this class and a future accidental removal of its AddHostedService registration
+// would go undetected (reintroducing the HeartbeatMonitorService class of regression). (Review: DotNetSpecialist, Correctness)
+public class RunServiceCleanupService : RedisSetCleanupService
 {
-    private static readonly TimeSpan SweepInterval = TimeSpan.FromMinutes(5);
-
-    private readonly IRedisStore _store;
-    private readonly ILeaderElectionService? _leaderElection;
-    private readonly ILogger _logger;
-
     public RunServiceCleanupService(
         IRedisStore store,
         ILogger logger,
         ILeaderElectionService? leaderElection = null)
+        : base(store, logger, leaderElection)
     {
-        ArgumentNullException.ThrowIfNull(store);
-        ArgumentNullException.ThrowIfNull(logger);
-        _store = store;
-        _logger = logger;
-        _leaderElection = leaderElection;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override TimeSpan SweepInterval => TimeSpan.FromMinutes(5);
+    protected override string ServiceName => "RunServiceCleanupService";
+    protected override string MembershipSetKey => "runs:active";
+    protected override string HashKeyPrefix => "run:";
+
+    protected override async Task RemoveStaleAsync(string runId, CancellationToken ct)
     {
-        using var timer = new PeriodicTimer(SweepInterval);
-        while (await timer.WaitForNextTickAsync(stoppingToken))
-        {
-            try
-            {
-                await SweepAsync(stoppingToken);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.Warning(ex, "RunServiceCleanupService: sweep error (will retry at next interval)");
-            }
-        }
+        await _store.SetRemoveAsync("runs:active", runId);
     }
 
-    internal async Task SweepAsync(CancellationToken ct)
-    {
-        // null = no election service (local dev / single-replica) → always sweep
-        if (_leaderElection is not null && !_leaderElection.IsLeader)
-        {
-            _logger.Debug("RunServiceCleanupService: skipping sweep — not the leader");
-            return;
-        }
-
-        var members = await _store.SetMembersAsync("runs:active");
-        var removedCount = 0;
-
-        foreach (var runId in members)
-        {
-            ct.ThrowIfCancellationRequested();
-            if (!await _store.ExistsAsync($"run:{runId}"))
-            {
-                await _store.SetRemoveAsync("runs:active", runId);
-                removedCount++;
-            }
-        }
-
-        if (removedCount > 0)
-            _logger.Information("RunServiceCleanupService: removed {Count} stale members from runs:active", removedCount);
-
-        // TODO: orphan-hash repair path — scan for run:{id} hashes not in runs:active and apply
-        // a short TTL (handles Lua crash between SREM and EXPIREAT). Requires IDatabase.SCAN
-        // support on IRedisStore; tracked separately.
-    }
+    // TODO: orphan-hash repair path — scan for run:{id} hashes not in runs:active and apply
+    // a short TTL (handles Lua crash between SREM and EXPIREAT). Requires IDatabase.SCAN
+    // support on IRedisStore; tracked separately.
 }
