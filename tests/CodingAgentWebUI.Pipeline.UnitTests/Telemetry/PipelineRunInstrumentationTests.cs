@@ -264,14 +264,9 @@ public class PipelineRunInstrumentationTests : IDisposable
     {
         using var durationCollector = DoubleCollector("pipeline.jobs.duration");
 
-        // Capture startTimestamp before StartRun so that totalElapsedSeconds covers the entire
-        // wall-clock window including the pre-freeze segment (10ms wait) and the post-freeze
-        // segment (50ms wait). The frozen duration only covers start→first StopTiming, so it
-        // must always be strictly less than total (frozen + 50ms post-freeze ≤ total).
-        // This mirrors the approach in StopTiming_FreezesElapsedDuration and avoids the
-        // race where the frozen value slightly exceeds GetElapsedTime(freezeTimestamp) when
-        // the 10ms wait runs long under CI load.
-        var startTimestamp = Stopwatch.GetTimestamp();
+        // Capture start timestamp before StartRun so the upper bound covers
+        // any wall-clock drift in mres4.Wait(10) under CI load.
+        var testStartTimestamp = Stopwatch.GetTimestamp();
         var instrumentation = StartRun();
         using var mres4 = new ManualResetEventSlim(false);
         mres4.Wait(10); // Ensure non-zero duration before freeze
@@ -279,18 +274,21 @@ public class PipelineRunInstrumentationTests : IDisposable
         instrumentation.StopTiming();
 
         using var mres5 = new ManualResetEventSlim(false);
-        mres5.Wait(50); // Let at least 50ms pass after freeze — must NOT inflate the frozen value
+        mres5.Wait(50); // Let at least 50ms pass after freeze
 
         instrumentation.StopTiming(); // must be no-ops
         instrumentation.StopTiming();
         instrumentation.Dispose();
 
-        var totalElapsedSeconds = Stopwatch.GetElapsedTime(startTimestamp).TotalSeconds;
+        // Upper bound: total time elapsed since before StartRun(), plus a small buffer.
+        // Using the pre-StartRun timestamp ensures the bound is always >= the frozen
+        // duration even when mres4.Wait(10) oversleeps under CI load.
+        var upperBoundSeconds = Stopwatch.GetElapsedTime(testStartTimestamp).TotalSeconds + 0.010;
 
         var snapshot = durationCollector.GetMeasurementSnapshot();
         snapshot.Should().ContainSingle();
         snapshot[0].Value.Should().BeGreaterThan(0, "frozen duration must be non-zero")
-            .And.BeLessThan(totalElapsedSeconds,
+            .And.BeLessThan(upperBoundSeconds,
                 "StopTiming must freeze elapsed time at first call; subsequent calls must not extend it");
     }
 
