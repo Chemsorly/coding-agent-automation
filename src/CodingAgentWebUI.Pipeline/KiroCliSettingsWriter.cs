@@ -98,14 +98,6 @@ public static partial class KiroCliSettingsWriter
     /// Covers all <see cref="CodingAgentWebUI.Pipeline.Models.AgentEffortLevel"/> enum values
     /// that produce a non-null <c>ToCliValue()</c> result.
     /// </summary>
-    // TODO: Change to IReadOnlySet<string> (or FrozenSet<string>) to prevent callers from mutating
-    // the shared set at runtime (e.g. ValidEffortValues.Add / Clear). HashSet<string> readonly only
-    // prevents field reassignment, not collection mutation. See review finding [WARNING] DotNetSpecialist.
-    // TODO: Verify that "xhigh" and "max" are accepted by the Kiro CLI binary deployed in chat pods.
-    // The set was expanded from {"low","medium","high"} to include these two values to match
-    // AgentEffortLevel enum members, but ChatJobDispatcher now forwards them to CHAT_EFFORT env-var
-    // without CLI contract evidence. If unsupported, remove them or gate behind a feature flag.
-    // See review finding [WARNING] Correctness.
-    public static readonly HashSet<string> ValidEffortValues =
-        new(["low", "medium", "high", "xhigh", "max"], StringComparer.OrdinalIgnoreCase);
+    public static readonly IReadOnlySet<string> ValidEffortValues =
+        new HashSet<string>(["low", "medium", "high", "xhigh", "max"], StringComparer.OrdinalIgnoreCase);
 }
