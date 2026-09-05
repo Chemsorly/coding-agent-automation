@@ -9,12 +9,6 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests;
 /// Covers prefix matching, case insensitivity, path normalization,
 /// PR body generation with blacklisted files, and configuration defaults.
 /// </summary>
-// TODO: No test validates that RepositoryGitOperations actually invokes blacklist enforcement
-// during commit preparation, nor that the call-site points to the canonical PipelineFormatting
-// implementation. The production risk noted in the issue ("this guard decides whether a changed
-// file is unstaged before commit") is not covered end-to-end. Add a test that exercises the
-// CommitAll/UnstageBlacklistedPaths path with a blacklisted file staged in the index to confirm
-// enforcement is wired correctly through RepositoryGitOperations.
 public class BlacklistEnforcementTests
 {
     // --- PipelineConfiguration defaults ---
@@ -44,11 +38,6 @@ public class BlacklistEnforcementTests
     }
 
     // --- Blacklist path matching logic (tested via PipelineFormatting.IsPathBlacklisted) ---
-    // TODO: The tests below are structurally redundant with PipelineFormattingTests (lines 134-197),
-    // which already exhaustively cover the same inputs and edge cases. The only rows unique to this
-    // file are the two negative cases (.githubignore, .agent-notes.md). If those edge cases are
-    // worth keeping, consider retaining only those two and removing the duplicates to prevent the
-    // two suites drifting out of sync over time.
 
     [Theory]
     [InlineData(".github/workflows/ci.yml", ".github", true)]
@@ -102,7 +91,7 @@ public class BlacklistEnforcementTests
     [Fact]
     public void IsPathBlacklisted_WithTrailingSlashOnPrefix_StillMatches()
     {
-        PipelineFormatting.IsPathBlacklisted(".github/workflows/ci.yml", [".github/"])
+        PipelineFormatting.IsPathBlacklisted(".github/workflows/ci.yml", new[] { ".github/" })
             .Should().BeTrue();
     }
 
