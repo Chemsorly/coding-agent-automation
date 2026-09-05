@@ -102,7 +102,7 @@ public class BlacklistEnforcementTests
     [Fact]
     public void IsPathBlacklisted_WithTrailingSlashOnPrefix_StillMatches()
     {
-        PipelineFormatting.IsPathBlacklisted(".github/workflows/ci.yml", new[] { ".github/" })
+        PipelineFormatting.IsPathBlacklisted(".github/workflows/ci.yml", [".github/"])
             .Should().BeTrue();
     }
 

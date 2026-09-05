@@ -3,11 +3,6 @@ using System.Diagnostics.CodeAnalysis;
 using Polly;
 using CodingAgentWebUI.Infrastructure.Resilience;
 using CodingAgentWebUI.Pipeline.Models;
-// TODO: IsPathBlacklisted lives in PipelineFormatting (a formatting/rendering utility class) for
-// historical reasons. This creates a cohesion concern: RepositoryGitOperations takes a compile-time
-// dependency on PipelineFormatting just to reach one unrelated utility method. Consider extracting
-// IsPathBlacklisted into a dedicated static class (e.g. GitPathHelper or PathBlacklist) in the
-// Pipeline layer so that git operations and formatting concerns don't share a class boundary.
 using CodingAgentWebUI.Pipeline.Services;
 using Serilog;
 using Signature = LibGit2Sharp.Signature;
