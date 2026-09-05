@@ -496,13 +496,18 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
 
     /// <summary>
     /// Creates GitHub issues for each proposal, capped at <paramref name="maxProposals"/>.
+    /// Proposals are processed sequentially. For each successful creation the proposal title is
+    /// registered with a <see cref="DependencyResolver"/> so that later proposals whose
+    /// <see cref="RefactoringProposal.DependsOn"/> lists reference it receive a resolved
+    /// "Depends on #N" line prepended to their issue body.
     /// Individual issue creation failures are logged but do not stop processing.
     /// </summary>
     /// <remarks>
-    /// TODO: Proposals with DependsOn fields are no longer topologically sorted before creation,
-    /// and "Depends on #N" lines are no longer injected into issue bodies. This means dependencies
-    /// between refactoring issues will not be tracked. Consider restoring TopologicalSortProposals
-    /// and DependencyResolver logic in a follow-up PR to re-enable dependency tracking.
+    /// TODO: If a proposal's issue creation fails (exception swallowed by the catch block), its
+    /// title is never registered with the resolver. Any later proposal that lists the failed title
+    /// in its DependsOn will silently receive no dependency line — the same behaviour as an
+    /// unresolvable title. Document this caveat at the call site or in tests if the contract needs
+    /// to be visible to future maintainers.
     /// </remarks>
     private async Task<IReadOnlyList<CreatedIssueInfo>> CreateIssuesAsync(
         IReadOnlyList<RefactoringProposal> proposals,
@@ -517,17 +522,45 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             ? new[] { AgentLabels.Generated, AgentLabels.Next }
             : new[] { AgentLabels.Generated };
 
+        var resolver = new DependencyResolver();
+
         foreach (var proposal in proposalsToProcess)
         {
             try
             {
+                // Build the full body first, then resolve and prepend any dependency lines.
+                // Register() uses proposal.Title (raw, not sanitized) so that DependsOn references
+                // from other proposals — which also use the raw agent-generated title — can resolve.
                 var body = FormatIssueBody(proposal);
+                var dependencyLines = resolver.Resolve(proposal.DependsOn ?? [], Logger);
+                if (dependencyLines.Count > 0)
+                {
+                    var depSection = string.Join("\n", dependencyLines);
+                    body = $"{depSection}\n\n{body}";
+                }
+
                 var sanitizedTitle = SanitizeTitle(proposal.Title);
                 var result = await issueProvider.CreateIssueAsync(
                     sanitizedTitle,
                     body,
                     labels,
                     ct);
+
+                resolver.Register(proposal.Title, result.Identifier);
+
+                // TODO: resolver.Register uses the raw proposal.Title while CreateIssueAsync is
+                // called with sanitizedTitle — the issue in the tracker is created under the
+                // sanitized title, but the resolver key is the raw title. This is internally
+                // consistent (DependsOn references from sibling proposals also use raw titles), but
+                // means a DependsOn entry that matches the sanitized title instead of the raw title
+                // will silently fail to resolve. No test currently covers this mismatch scenario.
+                // TODO: resolver.Register is placed immediately after the awaited CreateIssueAsync
+                // and before createdIssues.Add/logging. If the try block grows with additional
+                // awaitable calls between Register and the catch, a failure there would leave the
+                // resolver holding a registered title for an issue whose entry was never added to
+                // createdIssues. This is harmless today but is a latent structural fragility — keep
+                // Register as the last substantive statement before createdIssues.Add, or move it
+                // inside a finally-guarded section if the block expands.
 
                 createdIssues.Add(new CreatedIssueInfo
                 {
