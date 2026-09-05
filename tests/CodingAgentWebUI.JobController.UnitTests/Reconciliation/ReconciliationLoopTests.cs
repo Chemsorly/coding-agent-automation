@@ -1695,14 +1695,29 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
     [Fact]
     public void LogTerminalStatus_Failed_EmitsPipelineJobsFailed_WithSnakeCaseTag()
     {
-        // Snapshot before to tolerate stray recordings
-        var failedCountBefore = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
+        // Use a scoped flag-gate so only measurements emitted during the target call are counted,
+        // preventing parallel tests from inflating the delta via the class-level shared listener.
+        long failedCount = 0;
+        var counting = false;
+        using var scopedListener = new MeterListener();
+        scopedListener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
+                l.EnableMeasurementEvents(instrument);
+        };
+        scopedListener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
+        {
+            if (counting && instrument.Name == "pipeline.jobs.failed")
+                Interlocked.Add(ref failedCount, measurement);
+        });
+        scopedListener.Start();
 
+        counting = true;
         WorkDistributionTelemetry.LogTerminalStatus(
             Guid.NewGuid(), WorkItemStatus.Failed, TimeSpan.FromSeconds(60), null, FailureReason.Timeout);
+        counting = false;
 
-        var failedCountAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
-        (failedCountAfter - failedCountBefore).Should().Be(1,
+        Interlocked.Read(ref failedCount).Should().Be(1,
             "pipeline.jobs.failed must be incremented once for a Failed status");
 
         // Assert snake_case failure_reason tag — "Timeout" → "timeout"
