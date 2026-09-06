@@ -53,24 +53,17 @@ public abstract class RedisSetCleanupService : BackgroundService
     /// <summary>
     /// All set keys from which stale members are removed.
     /// At minimum contains <see cref="ScanSetKey"/>, but may include additional sets
-    /// (e.g. an idle-agents secondary set).
+    /// (e.g. an idle-agents secondary set). Subclasses must include <see cref="ScanSetKey"/>
+    /// in this list; omitting it will silently leave stale members in the scanned set.
     /// </summary>
-    // TODO [WARNING]: No validation guard ensures RemovalSetKeys contains ScanSetKey. A subclass
-    // that omits ScanSetKey from RemovalSetKeys would silently fail to remove stale members from
-    // the scanned set while still removing them from secondary sets. No test currently covers this
-    // misconfiguration. Consider adding a Debug.Assert or a constructor-time check:
-    //   Debug.Assert(RemovalSetKeys.Contains(ScanSetKey), "RemovalSetKeys must include ScanSetKey");
-    // and/or add a test with a deliberately misconfigured subclass to document the contract.
     protected abstract IReadOnlyList<string> RemovalSetKeys { get; }
 
     /// <summary>
     /// How often the sweep runs.
+    /// This value is read exactly once when <see cref="ExecuteAsync"/> constructs the
+    /// <see cref="PeriodicTimer"/>. Subclasses should return a compile-time constant or a
+    /// value fixed at construction time; dynamically-changing values will not take effect.
     /// </summary>
-    // TODO [WARNING]: SweepInterval is read exactly once when ExecuteAsync constructs the PeriodicTimer.
-    // A subclass returning a dynamically-computed value (e.g. from IOptions) would only observe its
-    // initial value. Both current subclasses return compile-time constants, so this is not a current
-    // defect, but the "read once at startup" contract should be documented or enforced if the
-    // abstraction is extended.
     protected abstract TimeSpan SweepInterval { get; }
 
     /// <summary>
@@ -95,11 +88,7 @@ public abstract class RedisSetCleanupService : BackgroundService
         }
     }
 
-    // TODO [WARNING]: SweepAsync is `internal` rather than `protected internal`. Tests access it via
-    // InternalsVisibleTo; this works for current test assemblies. However, a future test project
-    // not listed in InternalsVisibleTo will not be able to call SweepAsync on new subclasses.
-    // Consider changing to `protected internal` so subclass test projects can access it without
-    // requiring an InternalsVisibleTo entry for the base assembly.
+    // Tests access SweepAsync via InternalsVisibleTo declared in the project file.
     internal async Task SweepAsync(CancellationToken ct)
     {
         // null = no election service (local dev / single-replica) → always sweep
@@ -114,12 +103,6 @@ public abstract class RedisSetCleanupService : BackgroundService
 
         foreach (var memberId in members)
         {
-            // TODO [WARNING]: ThrowIfCancellationRequested is at the top of the loop body, so once
-            // ExistsAsync returns false the full removal block (all SetRemoveAsync calls for this
-            // member) executes before the next cancellation check fires. With the current subclasses
-            // (max 2 removal keys) this is acceptable, but if RemovalSetKeys grows large, cancellation
-            // latency grows proportionally. Moving the check after the removal block would not help;
-            // a finer-grained check inside the inner foreach would reduce latency if needed.
             ct.ThrowIfCancellationRequested();
             var exists = await _store.ExistsAsync($"{HashKeyPrefix}:{memberId}");
             if (!exists)
