@@ -88,9 +88,11 @@ ENV AGENT_LABELS=kiro,dotnet,dotnet10
 # Copy published Agent app (owned by ubuntu user)
 COPY --from=build --chown=ubuntu:ubuntu /app/publish .
 
-# Volume mount points:
-#   /home/ubuntu/.local/share/kiro-cli - Per-agent Kiro CLI auth (SQLite DB, must NOT be shared)
-#   /home/ubuntu/.aws                  - AWS SSO cache (read-only, shared from host)
+# Build args for version tracking — ARG must appear before COPY --from=build in build stage,
+# but ENV (which persists to runtime) must be set in the runtime stage, after USER switch.
+ARG BUILD_COMMIT_SHA=local
+ENV SERVICE_VERSION=${BUILD_COMMIT_SHA}
+
 VOLUME ["/home/ubuntu/.local/share/kiro-cli", "/home/ubuntu/.aws"]
 
 ENTRYPOINT ["dotnet", "CodingAgentWebUI.Agent.dll"]

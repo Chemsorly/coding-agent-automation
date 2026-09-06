@@ -78,5 +78,8 @@ ENV AGENT_LABELS=kiro,python,python312
 
 COPY --from=build --chown=ubuntu:ubuntu /app/publish .
 
+ARG BUILD_COMMIT_SHA=local
+ENV SERVICE_VERSION=${BUILD_COMMIT_SHA}
+
 VOLUME ["/home/ubuntu/.local/share/kiro-cli", "/home/ubuntu/.aws", "/app/workspaces"]
 ENTRYPOINT ["dotnet", "CodingAgentWebUI.Agent.dll"]
