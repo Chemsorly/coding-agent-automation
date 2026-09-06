@@ -1,5 +1,4 @@
 using AwesomeAssertions;
-using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 
@@ -38,7 +37,11 @@ public class BlacklistEnforcementTests
         run.BlacklistedFilesDetected.Should().BeEmpty();
     }
 
-    // --- Blacklist path matching logic (tested via PathBlacklistHelper.IsPathBlacklisted) ---
+    // --- Blacklist path matching logic (tested via PipelineFormatting.IsPathBlacklisted) ---
+    // TODO: Post-consolidation, the IsPathBlacklisted_* tests below duplicate coverage already
+    // provided by PipelineFormattingTests. Both suites now exercise the same static method with
+    // overlapping inputs, giving no independent safety net. Consider collapsing these cases into
+    // PipelineFormattingTests and keeping only the integration-level ApplyBlacklist_* tests here.
 
     [Theory]
     [InlineData(".github/workflows/ci.yml", ".github", true)]
@@ -53,7 +56,7 @@ public class BlacklistEnforcementTests
     [InlineData(".agent", ".agent", true)]              // Exact match
     public void IsPathBlacklisted_MatchesPrefixCorrectly(string filePath, string prefix, bool expected)
     {
-        var result = PathBlacklistHelper.IsPathBlacklisted(filePath, new[] { prefix });
+        var result = PipelineFormatting.IsPathBlacklisted(filePath, new[] { prefix });
         result.Should().Be(expected);
     }
 
@@ -63,7 +66,7 @@ public class BlacklistEnforcementTests
     [InlineData(".Agent/Steering/Rule.md", ".agent")]
     public void IsPathBlacklisted_IsCaseInsensitive(string filePath, string prefix)
     {
-        PathBlacklistHelper.IsPathBlacklisted(filePath, new[] { prefix }).Should().BeTrue();
+        PipelineFormatting.IsPathBlacklisted(filePath, new[] { prefix }).Should().BeTrue();
     }
 
     [Theory]
@@ -71,28 +74,28 @@ public class BlacklistEnforcementTests
     [InlineData(".agent\\settings\\mcp.json", ".agent")]
     public void IsPathBlacklisted_NormalizesBackslashes(string filePath, string prefix)
     {
-        PathBlacklistHelper.IsPathBlacklisted(filePath, new[] { prefix }).Should().BeTrue();
+        PipelineFormatting.IsPathBlacklisted(filePath, new[] { prefix }).Should().BeTrue();
     }
 
     [Fact]
     public void IsPathBlacklisted_WithMultiplePrefixes_MatchesAny()
     {
         var prefixes = new[] { ".agent", ".github" };
-        PathBlacklistHelper.IsPathBlacklisted(".agent/foo", prefixes).Should().BeTrue();
-        PathBlacklistHelper.IsPathBlacklisted(".github/bar", prefixes).Should().BeTrue();
-        PathBlacklistHelper.IsPathBlacklisted("src/main.cs", prefixes).Should().BeFalse();
+        PipelineFormatting.IsPathBlacklisted(".agent/foo", prefixes).Should().BeTrue();
+        PipelineFormatting.IsPathBlacklisted(".github/bar", prefixes).Should().BeTrue();
+        PipelineFormatting.IsPathBlacklisted("src/main.cs", prefixes).Should().BeFalse();
     }
 
     [Fact]
     public void IsPathBlacklisted_WithEmptyPrefixes_ReturnsFalse()
     {
-        PathBlacklistHelper.IsPathBlacklisted(".agent/foo", Array.Empty<string>()).Should().BeFalse();
+        PipelineFormatting.IsPathBlacklisted(".agent/foo", Array.Empty<string>()).Should().BeFalse();
     }
 
     [Fact]
     public void IsPathBlacklisted_WithTrailingSlashOnPrefix_StillMatches()
     {
-        PathBlacklistHelper.IsPathBlacklisted(".github/workflows/ci.yml", new[] { ".github/" })
+        PipelineFormatting.IsPathBlacklisted(".github/workflows/ci.yml", new[] { ".github/" })
             .Should().BeTrue();
     }
 
