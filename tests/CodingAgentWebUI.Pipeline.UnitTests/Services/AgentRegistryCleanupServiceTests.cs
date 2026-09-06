@@ -68,6 +68,13 @@ public sealed class AgentRegistryCleanupServiceTests
         await MakeService().SweepAsync(CancellationToken.None);
 
         Assert.DoesNotContain("agent-busy", await _store.SetMembersAsync("agents:all"));
+        // TODO [WARNING]: The DoesNotContain assertion below is tautologically true because
+        // "agent-busy" was never added to agents:idle in this test. The FakeRedisStore returns an
+        // empty set for agents:idle regardless of whether SetRemoveAsync("agents:idle", ...) was
+        // called. This assertion cannot distinguish a correct no-op SREM from RemovalSetKeys
+        // silently omitting agents:idle entirely. To add discriminating power, use the Moq-based
+        // suite (AgentRegistryCleanupServiceTests in Orchestration.UnitTests) which can verify
+        // SetRemoveAsync was called with agents:idle via Verify().
         // agents:idle was never touched — SREM on a non-member is a no-op
         Assert.DoesNotContain("agent-busy", await _store.SetMembersAsync("agents:idle"));
     }

@@ -152,5 +152,11 @@ public sealed class RunServiceCleanupServiceTests
         await act.Should().ThrowAsync<OperationCanceledException>();
 
         _store.Verify(s => s.ExistsAsync($"run:{id2}"), Times.Never);
+        // TODO [WARNING]: This test only verifies that id2 was never reached. It does NOT assert
+        // that SetRemoveAsync was called for id1: because ThrowIfCancellationRequested fires at the
+        // top of the next iteration, the removal of id1 (ExistsAsync returned false here) will have
+        // already executed before cancellation takes effect. A test that asserts
+        // SetRemoveAsync("runs:active", id1) was called would provide stronger evidence that the
+        // cancellation boundary is exactly where intended.
     }
 }

@@ -171,5 +171,11 @@ public sealed class AgentRegistryCleanupServiceTests
         // id2 was never reached
         _store.Verify(s => s.ExistsAsync($"agent:{id2}"), Times.Never,
             "cancellation must abort the loop before processing remaining members");
+        // TODO [WARNING]: This test only verifies that id2 was never reached. It does NOT assert
+        // that SetRemoveAsync was called for id1: because ThrowIfCancellationRequested fires at the
+        // top of the next iteration, the removal of id1 (ExistsAsync returned false here) will have
+        // already executed before cancellation takes effect. A test that asserts
+        // SetRemoveAsync(id1) was called (not just that id2 was skipped) would provide stronger
+        // evidence that the cancellation boundary is exactly where intended.
     }
 }
