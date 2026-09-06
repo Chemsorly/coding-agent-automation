@@ -340,6 +340,14 @@ public sealed record JobCompletionPayload
     /// </summary>
     [Key(24)]
     public FailureReason? FailureCategory { get; init; }
+
+    /// <summary>
+    /// Git commit SHA of the agent container that executed this run.
+    /// Sourced from the SERVICE_VERSION env var (injected via BUILD_COMMIT_SHA ARG at image build time).
+    /// Null for local/test runs and for agents on images built before this field was introduced.
+    /// </summary>
+    [Key(25)]
+    public string? HarnessVersion { get; init; }
 }
 
 /// <summary>

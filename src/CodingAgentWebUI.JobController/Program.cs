@@ -48,7 +48,7 @@ if (!string.Equals(Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
 }
 
 // ── Startup identity log ─────────────────────────────────────────────────────
-var version = typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0";
+var version = Environment.GetEnvironmentVariable("SERVICE_VERSION") ?? "local";
 var serviceName = builder.Configuration.GetValue<string>("OTEL_SERVICE_NAME") ?? "coding-agent-jobcontroller";
 Log.Information("Job Controller starting: ServiceName={ServiceName} Version={Version}", serviceName, version);
 
