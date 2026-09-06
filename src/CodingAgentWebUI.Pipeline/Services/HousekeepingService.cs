@@ -336,10 +336,29 @@ public sealed class HousekeepingService : IHousekeepingService
         if (allAgentBranches.Count == 0)
             return;
 
-        // Build a fast lookup of branches that have open PRs — these must never be deleted.
-        var branchesWithOpenPr = new HashSet<string>(
-            agentDonePrs.Select(p => p.BranchName),
-            StringComparer.OrdinalIgnoreCase);
+        // Build a complete set of branches that have open PRs — these must never be deleted.
+        // NOTE: We do NOT rely solely on agentDonePrs here. That list is capped by
+        // ClosedLoopMaxPagesToFetch (default 10 pages). In repos with many open agent PRs, PRs
+        // beyond the cap are absent, and their branches would be incorrectly deleted. Instead,
+        // fetch all open agent PRs independently with an unlimited page scan so that every open
+        // PR's branch is protected regardless of the housekeeping input cap.
+        HashSet<string> branchesWithOpenPr;
+        try
+        {
+            branchesWithOpenPr = await FetchAllOpenAgentPrBranchesAsync(repoProvider, ct);
+        }
+        catch (Exception ex)
+        {
+            // Conservative fallback: if the independent fetch fails, fall back to the
+            // (possibly truncated) agentDonePrs list. This is safer than skipping cleanup
+            // entirely, since the agentDonePrs set covers the most-recently-active PRs.
+            _logger.Warning(ex,
+                "HousekeepingService: failed to fetch complete open-PR list for branch cleanup; falling back to housekeeping input set: {Error}",
+                ex.Message);
+            branchesWithOpenPr = new HashSet<string>(
+                agentDonePrs.Select(p => p.BranchName),
+                StringComparer.OrdinalIgnoreCase);
+        }
 
         foreach (var branchName in allAgentBranches)
         {
@@ -395,6 +414,36 @@ public sealed class HousekeepingService : IHousekeepingService
                     branchName, ex.Message);
             }
         }
+    }
+
+    /// <summary>
+    /// Fetches all open agent-created PR branch names from the repository, paginating until
+    /// exhausted. Used by <see cref="RunBranchCleanupAsync"/> to build a complete branch-protection
+    /// set independently of the (possibly page-capped) <c>agentDonePrs</c> input.
+    /// </summary>
+    private static async Task<HashSet<string>> FetchAllOpenAgentPrBranchesAsync(
+        IRepositoryProvider repoProvider, CancellationToken ct)
+    {
+        var branches = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var page = 1;
+        const int PageSize = 100;
+
+        while (true)
+        {
+            var result = await repoProvider.ListOpenPullRequestsAsync(page, PageSize, null, ct);
+            foreach (var pr in result.Items)
+            {
+                if (pr.BranchName.StartsWith(PipelineConstants.BranchPrefix, StringComparison.Ordinal))
+                    branches.Add(pr.BranchName);
+            }
+
+            if (!result.HasMore)
+                break;
+
+            page++;
+        }
+
+        return branches;
     }
 
     /// <summary>

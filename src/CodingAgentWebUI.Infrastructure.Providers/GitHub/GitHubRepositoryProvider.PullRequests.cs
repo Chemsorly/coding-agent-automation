@@ -399,6 +399,13 @@ public partial class GitHubRepositoryProvider
                 },
                 "ListOpenPullRequests.GetDetail", ct);
 
+            // Guard against the Issues API eventual-consistency window: a PR that merged
+            // between the Issues fetch (Step A) and this detail fetch (Step B) will have
+            // state="closed" here. Filtering it out prevents merged PRs from entering
+            // the housekeeping agentDonePrs list and triggering spurious rework swaps.
+            if (!string.Equals(pr.State, "open", StringComparison.OrdinalIgnoreCase))
+                continue;
+
             items.Add(new PullRequestSummary
             {
                 Number = pr.Number,
@@ -614,6 +621,14 @@ public partial class GitHubRepositoryProvider
         public GitHubPrUserDto? User { get; set; }
         public DateTimeOffset CreatedAt { get; set; }
         public GitHubPrLabelDto[]? Labels { get; set; }
+        /// <summary>
+        /// PR state as returned by GitHub: "open", "closed". Captured to filter out PRs
+        /// that merged or closed between the Issues API fetch (Step A) and the detail fetch (Step B).
+        /// GitHub's Issues API has eventual consistency — a just-merged PR can still appear as open
+        /// in the Issues index for a brief window. Filtering here prevents merged PRs from entering
+        /// the housekeeping <c>agentDonePrs</c> list.
+        /// </summary>
+        public string? State { get; set; }
     }
 
     private sealed class GitHubPrRefDto

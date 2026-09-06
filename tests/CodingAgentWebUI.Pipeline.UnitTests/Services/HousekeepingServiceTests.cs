@@ -903,6 +903,41 @@ public class HousekeepingServiceTests
             "no open PR + terminal issue label → branch must be deleted");
     }
 
+    // ── Branch cleanup: open PR not in agentDonePrs (pagination truncation) ──
+
+    [Fact]
+    public async Task ExecuteAsync_BranchWithOpenPrNotInAgentDonePrs_NotDeleted()
+    {
+        // Regression: agentDonePrs is capped by ClosedLoopMaxPagesToFetch. If the repo has more
+        // open agent PRs than the cap, branches beyond the cap are absent from the input list.
+        // RunBranchCleanupAsync must independently query open PRs for each candidate branch
+        // rather than relying solely on the truncated agentDonePrs set, to avoid deleting live branches.
+        var (svc, provider, issues, _) = Create();
+        var agentBranch = $"{PipelineConstants.BranchPrefix}99-over-cap-feature";
+
+        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
+        // agentDonePrs is EMPTY — the PR for this branch was beyond the pagination cap.
+        // The branch's issue has agent:done — no active-label protection from the label check.
+        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("99"), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(MakeIssue("99", AgentLabels.Done));
+        // Independent open-PR check confirms an open PR exists on this branch.
+        provider.Setup(p => p.ListOpenPullRequestsAsync(
+                    It.IsAny<int>(), It.IsAny<int>(),
+                    It.Is<IReadOnlyList<string>?>(l => l == null),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new PagedResult<PullRequestSummary>
+                {
+                    Items = new[] { MakePr(99, agentBranch) }.AsReadOnly(),
+                    Page = 1, PageSize = 10, HasMore = false
+                });
+
+        await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0);
+
+        provider.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+            "branch has an open PR even though it was absent from the truncated agentDonePrs — must not be deleted");
+    }
+
     [Fact]
     public async Task ExecuteAsync_BranchDeleteThrows_ContinuesProcessingOtherBranches()
     {
