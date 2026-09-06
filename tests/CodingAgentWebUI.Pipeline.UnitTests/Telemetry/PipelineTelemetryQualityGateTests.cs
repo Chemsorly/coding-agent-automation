@@ -104,4 +104,24 @@ public class PipelineTelemetryQualityGateTests : IDisposable
         PipelineTelemetry.QualityGateNames.Security.Should().Be("security");
         PipelineTelemetry.QualityGateNames.ExternalCi.Should().Be("external_ci");
     }
+
+    [Theory]
+    [InlineData("Quality gate retry agent (attempt 1)", "qgc_retry_agent")]
+    [InlineData("Pre-PR cleanup agent", "qgc_retry_agent")]
+    [InlineData("Code generation agent", "codegen")]
+    [InlineData("Code gen (attempt 2)", "codegen")]
+    [InlineData("Analysis agent session", "analysis")]
+    [InlineData("Analysis phase", "analysis")]
+    [InlineData("Code review agent", "code_review")]
+    [InlineData("Follow-up for reviewer #1", "code_review")]
+    [InlineData("Review summary agent", "code_review")]
+    [InlineData("Acceptance criteria validation", "code_review")]
+    [InlineData("Decomposition agent", "decomposition")]
+    [InlineData("Some unrecognized description", "unknown")]
+    [InlineData("", "unknown")]
+    public void NormalizeStallPhase_MapsDescriptionToExpectedPhase(string description, string expectedPhase)
+    {
+        PipelineTelemetry.NormalizeStallPhase(description).Should().Be(expectedPhase,
+            $"description '{description}' should map to phase '{expectedPhase}'");
+    }
 }
