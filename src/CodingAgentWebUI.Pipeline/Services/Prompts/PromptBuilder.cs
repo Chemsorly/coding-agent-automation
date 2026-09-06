@@ -606,12 +606,12 @@ public static partial class PromptBuilder
         sb.AppendLine();
         sb.AppendLine("**Do the following exactly once:**");
         sb.AppendLine("1. Get the list of changed files (one diff command).");
-        sb.AppendLine("2. In changed files only, remove: debug/temporary code (print statements, TODO-REMOVE comments), accidentally committed secrets or credentials, unused imports and dead code that can be cleaned up without touching files outside the diff. If a removal would require touching a file outside the diff, leave a language-appropriate marker comment instead.");
+        sb.AppendLine("2. In changed files only, remove: debug/temporary code (print statements, TODO-REMOVE comments), accidentally committed sensitive data or credentials, unused imports and dead code that can be cleaned up without touching files outside the diff. If a removal would require touching a file outside the diff, leave a language-appropriate marker comment instead.");
         sb.AppendLine("3. Apply the repository's linter and formatter to changed files only — one invocation. If it reports errors, include them in your report but do not attempt to fix them.");
         sb.AppendLine("4. Write a one-paragraph report of what changed (or 'nothing to clean up'). Stop.");
         sb.AppendLine();
         sb.AppendLine("**Do NOT:**");
-        sb.AppendLine("- Make functional changes");
+        sb.AppendLine("- Do NOT make functional changes");
         sb.AppendLine("- Remove intentional TODOs that reference issue numbers");
         sb.AppendLine("- Touch files outside the changed list");
         sb.AppendLine("- Re-run any tool to verify or loop");
