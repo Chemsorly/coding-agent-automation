@@ -95,8 +95,10 @@ public sealed partial class PipelineLoopService
         FailedCount += dispatchResult.FailedCount;
         CurrentIssueIdentifier = null;
 
+        if (_stopRequested || ct.IsCancellationRequested) return false;
         await RunHousekeepingAsync(snapshot, agentDonePrQueues, ct);
 
+        if (_stopRequested || ct.IsCancellationRequested) return false;
         if (snapshot.Config.QueueSweepEnabled)
             await SweepPendingWorkItemsAsync(eligibleByProvider, sweepEnabled: true, ct);
 
