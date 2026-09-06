@@ -100,18 +100,18 @@ public sealed class AgentRegistryCleanupServiceTests
     [Fact]
     public async Task SweepAsync_MixedAgents_OnlyExpiredRemoved()
     {
-        await _store.SetAddAsync("agents:all",  "agent-alive");
+        await _store.SetAddAsync("agents:all", "agent-alive");
         await _store.SetAddAsync("agents:idle", "agent-alive");
         await _store.HashSetAsync("agent:agent-alive",
             [new HashEntry("agentId", "agent-alive")]);
 
-        await _store.SetAddAsync("agents:all",  "agent-expired");
+        await _store.SetAddAsync("agents:all", "agent-expired");
         await _store.SetAddAsync("agents:idle", "agent-expired");
         // no hash for agent-expired
 
         await MakeService().SweepAsync(CancellationToken.None);
 
-        var all  = await _store.SetMembersAsync("agents:all");
+        var all = await _store.SetMembersAsync("agents:all");
         var idle = await _store.SetMembersAsync("agents:idle");
         Assert.Contains("agent-alive", all);
         Assert.Contains("agent-alive", idle);
@@ -131,14 +131,14 @@ public sealed class AgentRegistryCleanupServiceTests
     public async Task SweepAsync_AfterSweep_LiveAgentAddedBetweenSweeps_NotRemovedOnSecondSweep()
     {
         // First sweep removes expired agent. A live agent registered between sweeps must survive.
-        await _store.SetAddAsync("agents:all",  "agent-old-expired");
+        await _store.SetAddAsync("agents:all", "agent-old-expired");
         await _store.SetAddAsync("agents:idle", "agent-old-expired");
 
         var sut = MakeService();
         await sut.SweepAsync(CancellationToken.None);
 
         // New agent registered after first sweep, with a live hash
-        await _store.SetAddAsync("agents:all",  "agent-new-live");
+        await _store.SetAddAsync("agents:all", "agent-new-live");
         await _store.SetAddAsync("agents:idle", "agent-new-live");
         await _store.HashSetAsync("agent:agent-new-live",
             [new HashEntry("agentId", "agent-new-live")]);
@@ -169,7 +169,7 @@ public sealed class AgentRegistryCleanupServiceTests
     [Fact]
     public async Task SweepAsync_WhenLeader_RunsSweep()
     {
-        await _store.SetAddAsync("agents:all",  "agent-stale");
+        await _store.SetAddAsync("agents:all", "agent-stale");
         await _store.SetAddAsync("agents:idle", "agent-stale");
 
         _leaderMock.Setup(l => l.IsLeader).Returns(true);
@@ -181,7 +181,7 @@ public sealed class AgentRegistryCleanupServiceTests
     [Fact]
     public async Task SweepAsync_WhenNotLeader_SkipsSweep_BothSetsUntouched()
     {
-        await _store.SetAddAsync("agents:all",  "agent-stale");
+        await _store.SetAddAsync("agents:all", "agent-stale");
         await _store.SetAddAsync("agents:idle", "agent-stale");
 
         _leaderMock.Setup(l => l.IsLeader).Returns(false);
@@ -196,7 +196,7 @@ public sealed class AgentRegistryCleanupServiceTests
     public async Task SweepAsync_WhenNoLeaderService_AlwaysSweeps()
     {
         // null service = local dev / single-replica → sweep unconditionally
-        await _store.SetAddAsync("agents:all",  "agent-stale");
+        await _store.SetAddAsync("agents:all", "agent-stale");
         await _store.SetAddAsync("agents:idle", "agent-stale");
 
         await MakeService(leaderElection: null).SweepAsync(CancellationToken.None);
@@ -207,7 +207,7 @@ public sealed class AgentRegistryCleanupServiceTests
     [Fact]
     public async Task SweepAsync_LeadershipLostBetweenSweeps_SecondSweepSkipped()
     {
-        await _store.SetAddAsync("agents:all",  "agent-a");
+        await _store.SetAddAsync("agents:all", "agent-a");
         await _store.SetAddAsync("agents:idle", "agent-a");
 
         _leaderMock.SetupSequence(l => l.IsLeader)
@@ -221,9 +221,9 @@ public sealed class AgentRegistryCleanupServiceTests
         Assert.DoesNotContain("agent-a", await _store.SetMembersAsync("agents:all"));
 
         // Stale agents added AFTER first sweep — second sweep must not touch them
-        await _store.SetAddAsync("agents:all",  "agent-b");
+        await _store.SetAddAsync("agents:all", "agent-b");
         await _store.SetAddAsync("agents:idle", "agent-b");
-        await _store.SetAddAsync("agents:all",  "agent-c");
+        await _store.SetAddAsync("agents:all", "agent-c");
 
         // Second sweep (not leader): skips entirely
         await sut.SweepAsync(CancellationToken.None);
