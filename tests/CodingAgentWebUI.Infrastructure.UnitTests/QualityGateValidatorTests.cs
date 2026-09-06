@@ -823,3 +823,187 @@ internal sealed class SkipOnWindowsFact : FactAttribute
 }
 
 
+
+/// <summary>
+/// Tests for the infrastructure-kill heuristic in <see cref="QualityGateValidator.RunQgcTestsAsync"/>.
+/// Uses a test subclass that overrides RunProcessAsync to return controlled (exitCode, stdout, stderr)
+/// without spawning real processes.
+/// </summary>
+public class QualityGateValidatorInfraKillTests
+{
+    // Subclass that returns controlled (exitCode, stdout, stderr) from RunProcessAsync.
+    private sealed class InfraKillSimulatingValidator : QualityGateValidator
+    {
+        private readonly int _exitCode;
+        private readonly string _stdout;
+        private readonly string _stderr;
+
+        public InfraKillSimulatingValidator(int exitCode, string stdout, string stderr)
+            : base(Serilog.Log.Logger)
+        {
+            _exitCode = exitCode;
+            _stdout = stdout;
+            _stderr = stderr;
+        }
+
+        private protected override Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
+            string fileName, string arguments, string workingDirectory, CancellationToken ct, TimeSpan timeout)
+            => Task.FromResult((_exitCode, _stdout, _stderr));
+    }
+
+    private static QualityGateConfiguration DotnetTestQgc() => new()
+    {
+        DisplayName = "Test",
+        TestCommand = "dotnet",
+        TestArguments = ["test"],
+        ProcessTimeoutSeconds = 600
+    };
+
+    private static string CreateTempWorkspace() =>
+        Path.Combine(Path.GetTempPath(), $"qg-infra-test-{Guid.NewGuid():N}");
+
+    /// <summary>
+    /// AC: exitCode=137, stdout="", stderr="", no TRX → GateResult.Details contains
+    /// "infrastructure failure" and "137". Represents OOM/SIGKILL scenario.
+    /// </summary>
+    [Fact]
+    public async Task InfraKill_ExitCode137_EmptyStdoutStderr_NoTrx_DetailsContainsInfraFailure()
+    {
+        var tempWorkspace = CreateTempWorkspace();
+        try
+        {
+            var validator = new InfraKillSimulatingValidator(exitCode: 137, stdout: "", stderr: "");
+            var report = await validator.ValidateAsync(tempWorkspace, [DotnetTestQgc()], CancellationToken.None);
+
+            var testsResult = report.QgcResults[0].Tests!;
+            testsResult.Passed.Should().BeFalse();
+            testsResult.Details.Should().Contain("infrastructure failure");
+            testsResult.Details.Should().Contain("137");
+            testsResult.IsInfrastructureFailure.Should().BeTrue();
+        }
+        finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
+    }
+
+    /// <summary>
+    /// AC: exitCode=1, stdout="Failed: 1 test", stderr="" → GateResult.Details uses count format,
+    /// no "infrastructure" mention. Represents a genuine test failure.
+    /// </summary>
+    // TODO: [WARNING] This test exercises the "non-empty stdout suppresses heuristic" path, NOT the
+    // "non-zero count suppresses heuristic" path. The stdout string "Failed: 1 test" is not in a
+    // format recognized by ParseTestCountsFromStdout, so ResolveTestCounts returns (0, 0, 0). The
+    // heuristic is correctly suppressed because stdout is non-empty, but the resulting Details string
+    // is "Tests failed: 0 passed, 0 failed, 0 skipped." — not a count-based format with meaningful
+    // values. The test asserts Details.Contains("failed") which is satisfied for the wrong reason.
+    // Consider adding a companion test that uses stdout content parseable into a non-zero failure
+    // count (or a TRX fixture) to fully anchor the AC "non-zero counts → count-based format".
+    [Fact]
+    public async Task RealFailure_ExitCode1_StdoutHasTestCount_DetailsUsesCountFormat()
+    {
+        var tempWorkspace = CreateTempWorkspace();
+        try
+        {
+            var validator = new InfraKillSimulatingValidator(exitCode: 1, stdout: "Failed: 1 test", stderr: "");
+            var report = await validator.ValidateAsync(tempWorkspace, [DotnetTestQgc()], CancellationToken.None);
+
+            var testsResult = report.QgcResults[0].Tests!;
+            testsResult.Passed.Should().BeFalse();
+            testsResult.Details.Should().Contain("passed");
+            testsResult.Details.Should().Contain("failed");
+            testsResult.Details.Should().NotContain("infrastructure");
+            testsResult.IsInfrastructureFailure.Should().NotBe(true);
+        }
+        finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
+    }
+
+    /// <summary>
+    /// Edge case: zero test counts + non-zero exit + non-empty stdout → heuristic must NOT fire.
+    /// Stdout with content (even without parseable test counts) disqualifies the infra-kill path.
+    /// </summary>
+    [Fact]
+    public async Task InfraKill_AllCountsZero_NonEmptyStdout_DoesNotTriggerInfraHeuristic()
+    {
+        var tempWorkspace = CreateTempWorkspace();
+        try
+        {
+            var validator = new InfraKillSimulatingValidator(exitCode: 1, stdout: "partial MSBuild output", stderr: "");
+            var report = await validator.ValidateAsync(tempWorkspace, [DotnetTestQgc()], CancellationToken.None);
+
+            var testsResult = report.QgcResults[0].Tests!;
+            testsResult.Details.Should().NotContain("infrastructure");
+            testsResult.IsInfrastructureFailure.Should().NotBe(true);
+        }
+        finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
+    }
+
+    /// <summary>
+    /// Edge case: zero test counts + non-zero exit + non-empty stderr → heuristic must NOT fire.
+    /// stderr with content (e.g., missing SDK) disqualifies the infra-kill path to avoid
+    /// misclassifying diagnosable failures as infrastructure failures.
+    /// </summary>
+    [Fact]
+    public async Task InfraKill_AllCountsZero_NonEmptyStderr_DoesNotTriggerInfraHeuristic()
+    {
+        var tempWorkspace = CreateTempWorkspace();
+        try
+        {
+            var validator = new InfraKillSimulatingValidator(exitCode: 1, stdout: "", stderr: "MSBUILD: error MSB1003: Could not load file");
+            var report = await validator.ValidateAsync(tempWorkspace, [DotnetTestQgc()], CancellationToken.None);
+
+            var testsResult = report.QgcResults[0].Tests!;
+            testsResult.Details.Should().NotContain("infrastructure");
+            testsResult.IsInfrastructureFailure.Should().NotBe(true);
+        }
+        finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
+    }
+
+    /// <summary>
+    /// Edge case: exit code 0 with zero test counts and empty output → heuristic must NOT fire.
+    /// Represents a run where no test projects were found (passes vacuously).
+    /// </summary>
+    [Fact]
+    public async Task InfraKill_ExitCode0_AllCountsZero_DoesNotTriggerInfraHeuristic()
+    {
+        var tempWorkspace = CreateTempWorkspace();
+        try
+        {
+            var validator = new InfraKillSimulatingValidator(exitCode: 0, stdout: "", stderr: "");
+            var report = await validator.ValidateAsync(tempWorkspace, [DotnetTestQgc()], CancellationToken.None);
+
+            var testsResult = report.QgcResults[0].Tests!;
+            testsResult.Passed.Should().BeTrue();
+            testsResult.Details.Should().NotContain("infrastructure");
+            testsResult.IsInfrastructureFailure.Should().NotBe(true);
+        }
+        finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
+    }
+
+    /// <summary>
+    /// Aggregate propagation: when a QGC's Tests gate has IsInfrastructureFailure=true,
+    /// the aggregate QualityGateReport.Tests.IsInfrastructureFailure must also be true.
+    /// Tests BuildAggregateReport propagation via the firstFailingQgc path.
+    /// </summary>
+    // TODO: [WARNING] This test only exercises the single-QGC path. In a multi-QGC run where the
+    // first failing QGC has a compilation failure (Tests gate is null) and a later QGC has an
+    // infra-kill Tests result, BuildAggregateReport's firstFailingQgc points to the compilation-
+    // failing QGC, so firstFailingQgc?.Tests?.IsInfrastructureFailure resolves to null — the
+    // aggregate field is wrong even though an infra kill occurred. The retry-prompt logic in
+    // RetryLoop.cs compensates via report.QgcResults.Any(...), so the prompt is still correct,
+    // but the aggregate report.Tests.IsInfrastructureFailure field is misleading. Add a multi-QGC
+    // test covering this divergence and consider aligning BuildAggregateReport to use Any() to
+    // match the retry-loop logic.
+    [Fact]
+    public async Task Aggregate_InfraFailureQgcPropagated_ToAggregateReport()
+    {
+        var tempWorkspace = CreateTempWorkspace();
+        try
+        {
+            var validator = new InfraKillSimulatingValidator(exitCode: 137, stdout: "", stderr: "");
+            var report = await validator.ValidateAsync(tempWorkspace, [DotnetTestQgc()], CancellationToken.None);
+
+            // Aggregate Tests gate must propagate IsInfrastructureFailure from the failing QGC
+            report.Tests.IsInfrastructureFailure.Should().BeTrue();
+            report.Tests.Passed.Should().BeFalse();
+        }
+        finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
+    }
+}

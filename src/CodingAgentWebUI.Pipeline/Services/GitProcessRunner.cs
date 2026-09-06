@@ -31,6 +31,8 @@ public static class GitProcessRunner
         process.StartInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
         process.StartInfo.Environment["GIT_PAGER"] = "";
 
+        ct.ThrowIfCancellationRequested();
+
         process.Start();
 
         var outputTask = process.StandardOutput.ReadToEndAsync(ct);
