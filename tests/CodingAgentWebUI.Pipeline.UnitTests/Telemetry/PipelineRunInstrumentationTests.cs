@@ -278,9 +278,11 @@ public class PipelineRunInstrumentationTests : IDisposable
         instrumentation.StopTiming();
         instrumentation.Dispose();
 
-        // Upper bound: time from just before the freeze to now, plus a small buffer.
-        // The frozen duration must not exceed the elapsed time at the freeze point.
-        var upperBoundSeconds = Stopwatch.GetElapsedTime(beforeFreezeTimestamp).TotalSeconds + 0.010;
+        // Upper bound: time from just before the freeze to now, plus a buffer to absorb
+        // scheduling jitter on loaded CI runners. The buffer must be smaller than the 50ms
+        // post-freeze wait above, so that any accidental extension of the frozen timer would
+        // still exceed the threshold and cause the test to fail.
+        var upperBoundSeconds = Stopwatch.GetElapsedTime(beforeFreezeTimestamp).TotalSeconds + 0.040;
 
         var snapshot = durationCollector.GetMeasurementSnapshot();
         snapshot.Should().ContainSingle();

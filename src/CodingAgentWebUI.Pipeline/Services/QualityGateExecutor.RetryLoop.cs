@@ -33,18 +33,7 @@ public partial class QualityGateExecutor
             report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: false, linkedCt);
             if (run.CurrentStep == PipelineStep.ConflictRestart)
             {
-                // TODO [WARNING]: run.MarkCompleted() is called before callbacks.TransitionTo(ConflictRestart).
-                // If MarkCompleted() unconditionally overwrites run.CurrentStep with a generic "Completed"
-                // value, it would stomp the ConflictRestart step that AppendExternalCiIfNeededAsync already
-                // set (ExternalCi.cs). The unit tests assert run.CurrentStep == ConflictRestart, but they
-                // do not mock MarkCompleted(), so they are testing the value set by AppendExternalCiIfNeededAsync,
-                // not the value after MarkCompleted(). If MarkCompleted() ever changes its CurrentStep behaviour,
-                // the exit blocks below would silently record the wrong terminal step. Verify that MarkCompleted()
-                // does not overwrite CurrentStep when it is already a terminal step, or reorder to call
-                // callbacks.TransitionTo(ConflictRestart) before MarkCompleted(). (#2359)
-                run.MarkCompleted();
-                callbacks.TransitionTo(PipelineStep.ConflictRestart);
-                await callbacks.AddRunToHistoryAsync(run);
+                await FinalizeConflictRestartAsync(run, callbacks);
                 return;
             }
             if (run.CurrentStep == PipelineStep.Failed) return;
@@ -54,11 +43,7 @@ public partial class QualityGateExecutor
             report = await RunRetryLoopAsync(context, report, "Quality gate retry agent", linkedCt);
             if (run.CurrentStep == PipelineStep.ConflictRestart)
             {
-                // TODO [WARNING]: See the MarkCompleted() ordering TODO on the first ConflictRestart
-                // exit block above — same risk applies here. (#2359)
-                run.MarkCompleted();
-                callbacks.TransitionTo(PipelineStep.ConflictRestart);
-                await callbacks.AddRunToHistoryAsync(run);
+                await FinalizeConflictRestartAsync(run, callbacks);
                 return;
             }
             if (run.CurrentStep == PipelineStep.Failed) return;
@@ -148,11 +133,7 @@ public partial class QualityGateExecutor
         report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, linkedCt, skipCiIfNoChanges: true);
         if (run.CurrentStep == PipelineStep.ConflictRestart)
         {
-            // TODO [WARNING]: See the MarkCompleted() ordering TODO in ProceedToQualityGatesAsync —
-            // same risk applies here. (#2359)
-            run.MarkCompleted();
-            callbacks.TransitionTo(PipelineStep.ConflictRestart);
-            await callbacks.AddRunToHistoryAsync(run);
+            await FinalizeConflictRestartAsync(run, callbacks);
             return;
         }
         if (run.CurrentStep == PipelineStep.Failed) return;
@@ -161,11 +142,7 @@ public partial class QualityGateExecutor
         report = await RunRetryLoopAsync(context, report, "Final QG retry agent", linkedCt);
         if (run.CurrentStep == PipelineStep.ConflictRestart)
         {
-            // TODO [WARNING]: See the MarkCompleted() ordering TODO in ProceedToQualityGatesAsync —
-            // same risk applies here. (#2359)
-            run.MarkCompleted();
-            callbacks.TransitionTo(PipelineStep.ConflictRestart);
-            await callbacks.AddRunToHistoryAsync(run);
+            await FinalizeConflictRestartAsync(run, callbacks);
             return;
         }
         if (run.CurrentStep == PipelineStep.Failed) return;
@@ -597,20 +574,7 @@ public partial class QualityGateExecutor
             report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, ct);
             if (run.CurrentStep == PipelineStep.ConflictRestart)
             {
-                // TODO [WARNING]: run.RetryCount was incremented at the top of this while-iteration
-                // before AppendExternalCiIfNeededAsync was called. When a conflict is detected here,
-                // run.RetryCount is already N+1 (where N was the count before this iteration). This
-                // contradicts the acceptance criterion "ConflictRestart must NOT increment run.RetryCount."
-                // The re-dispatched run starts a fresh PipelineRun with RetryCount=0, so the retry budget
-                // of the NEXT run is not affected. However, the terminal ConflictRestart record (history,
-                // telemetry, WorkItem) reports an inflated RetryCount. Consider rolling back:
-                //   run.RetryCount = Math.Max(0, run.RetryCount - 1);
-                // before MarkCompleted(), mirroring the TransientWait rollback pattern above. (#2359)
-                // Also: see the TODO on the first ConflictRestart exit block above regarding MarkCompleted()
-                // ordering and the risk of it stomping run.CurrentStep. (#2359)
-                run.MarkCompleted();
-                callbacks.TransitionTo(PipelineStep.ConflictRestart);
-                await callbacks.AddRunToHistoryAsync(run);
+                await FinalizeConflictRestartAsync(run, callbacks);
                 return report;
             }
             if (run.CurrentStep == PipelineStep.Failed) return report;
@@ -655,6 +619,18 @@ public partial class QualityGateExecutor
             return RetryOutcome.RestartSession;
 
         return RetryOutcome.Retry;
+    }
+
+    /// <summary>
+    /// Finalizes a ConflictRestart terminal state: marks the run completed, transitions to
+    /// <see cref="PipelineStep.ConflictRestart"/>, and records history.
+    /// Extracted to eliminate the repeated 3-line sequence across all ConflictRestart exit blocks.
+    /// </summary>
+    private static async Task FinalizeConflictRestartAsync(PipelineRun run, IPipelineCallbacks callbacks)
+    {
+        run.MarkCompleted();
+        callbacks.TransitionTo(PipelineStep.ConflictRestart);
+        await callbacks.AddRunToHistoryAsync(run);
     }
 
     /// <summary>

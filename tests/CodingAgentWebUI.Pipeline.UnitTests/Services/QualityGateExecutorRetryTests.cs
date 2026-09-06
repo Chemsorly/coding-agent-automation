@@ -1018,4 +1018,143 @@ public class QualityGateExecutorFailureCategoryTests
             Labels = new[] { "bug" }
         }
     };
+
+    private QualityGateContext BuildContextWithConflictRestartCi(PipelineConfiguration config)
+    {
+        // Wire up a PipelineProvider whose WaitForCompletionAsync immediately returns ConflictRestart,
+        // so any CI-gated path through ProceedToQualityGatesAsync terminates as ConflictRestart.
+        var mockPipelineProvider = new Mock<IPipelineProvider>();
+        mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.ConflictRestart, Jobs = [] });
+        // GetRunStatusAsync returns a non-Pending status so WaitForCiRunsToAppearAsync immediately
+        // detects that CI runs are present and short-circuits to WaitForCompletionAsync.
+        mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [] });
+
+        _mockRepoProvider.Setup(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
+        _mockRepoProvider.Setup(r => r.PushBranchAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("sha-head-abc");
+        _mockCallbacks.Setup(c => c.CreateDraftPrIfNotExists(
+                It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        return new QualityGateContext
+        {
+            Run = _run,
+            Config = config,
+            AgentProvider = _mockAgent.Object,
+            IssueOps = _mockIssueOps.Object,
+            Callbacks = _mockCallbacks.Object,
+            RepoProvider = _mockRepoProvider.Object,
+            PipelineProvider = mockPipelineProvider.Object,
+            QualityGateConfigs = new[]
+            {
+                new QualityGateConfiguration
+                {
+                    DisplayName = "Test QGC",
+                    CompilationCommand = "dotnet",
+                    CompilationArguments = new[] { "build" },
+                    TestCommand = "dotnet",
+                    TestArguments = new[] { "test" }
+                }
+            },
+            Issue = new IssueDetail
+            {
+                Identifier = "99",
+                Title = "Test Issue",
+                Description = "Test issue description",
+                Labels = new[] { "bug" }
+            }
+        };
+    }
+
+    /// <summary>
+    /// ConflictRestart detected during the initial quality gate CI pass (AppendExternalCiIfNeededAsync
+    /// in ProceedToQualityGatesAsync before the retry loop). Pipeline must finalize as ConflictRestart
+    /// and NOT call FinalizePullRequest. Covers RetryLoop.cs lines 34-48.
+    /// </summary>
+    [Fact]
+    public async Task ConflictRestart_AfterInitialQualityGate_TransitionsToConflictRestart_NoFinalizePr()
+    {
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .ReturnsAsync(PassingReport);
+
+        var config = new PipelineConfiguration
+        {
+            AgentTimeout = TimeSpan.FromMinutes(10),
+            MaxRetries = 0,
+            // Short CI timeouts so WaitForCiRunsToAppearAsync exits quickly and WaitForCompletionAsync fires
+            CiNotStartedTimeout = TimeSpan.FromMilliseconds(1),
+            CiNotStartedMaxRetries = 0,
+            ExternalCiPollInterval = TimeSpan.FromMilliseconds(5),
+            ExternalCiTimeout = TimeSpan.FromMinutes(5),
+            StallPollInterval = TimeSpan.FromMilliseconds(50),
+            StallWarningInterval = TimeSpan.FromHours(1)
+        };
+        var context = BuildContextWithConflictRestartCi(config);
+
+        await _executor.ProceedToQualityGatesAsync(context, CancellationToken.None);
+
+        _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.ConflictRestart), Times.AtLeastOnce,
+            "Must transition to ConflictRestart");
+        _mockCallbacks.Verify(c => c.FinalizePullRequest(
+                It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "FinalizePullRequest must not be called on ConflictRestart");
+        _mockCallbacks.Verify(c => c.AddRunToHistoryAsync(_run), Times.Once,
+            "Run must be recorded in history exactly once");
+    }
+
+    /// <summary>
+    /// ConflictRestart detected inside RunRetryLoopAsync (the QG pass after an agent fix inside
+    /// the retry loop). ProceedToQualityGatesAsync must finalize ConflictRestart.
+    /// Covers RetryLoop.cs lines 56-62.
+    /// </summary>
+    [Fact]
+    public async Task ConflictRestart_AfterRetryLoop_TransitionsToConflictRestart()
+    {
+        // First validator call fails (enters retry loop, no CI since tests fail).
+        // Second call passes (inside retry loop after agent fix → CI attempted → ConflictRestart).
+        var callCount = 0;
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .Returns(() =>
+            {
+                callCount++;
+                return Task.FromResult(callCount == 1 ? FailingReport : PassingReport);
+            });
+
+        var config = new PipelineConfiguration
+        {
+            AgentTimeout = TimeSpan.FromMinutes(10),
+            MaxRetries = 1,
+            // Short CI timeouts so WaitForCiRunsToAppearAsync exits quickly and WaitForCompletionAsync fires
+            CiNotStartedTimeout = TimeSpan.FromMilliseconds(1),
+            CiNotStartedMaxRetries = 0,
+            ExternalCiPollInterval = TimeSpan.FromMilliseconds(5),
+            ExternalCiTimeout = TimeSpan.FromMinutes(5),
+            StallPollInterval = TimeSpan.FromMilliseconds(50),
+            StallWarningInterval = TimeSpan.FromHours(1)
+        };
+        var context = BuildContextWithConflictRestartCi(config);
+
+        await _executor.ProceedToQualityGatesAsync(context, CancellationToken.None);
+
+        _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.ConflictRestart), Times.AtLeastOnce,
+            "Must transition to ConflictRestart");
+        _mockCallbacks.Verify(c => c.AddRunToHistoryAsync(_run), Times.AtLeastOnce,
+            "Run must be recorded in history");
+    }
 }
