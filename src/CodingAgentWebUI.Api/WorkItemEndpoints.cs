@@ -895,9 +895,15 @@ public static class WorkItemEndpoints
     /// Returns WorkItems in Dispatched or Running status with DispatchedAt &lt; now - N seconds.
     /// Used by ReconciliationService for timeout enforcement and short-circuit Dispatched sweep.
     /// </summary>
+    // TODO: IOrchestratorRunService? is nullable here for defensive optional-injection, but since it
+    // is registered as a singleton in DI, the null path is never exercised in production. A missing
+    // registration produces a startup exception, not a null injection. Consider making this parameter
+    // non-optional ([FromServices] IOrchestratorRunService runService) to fail loudly on misconfiguration
+    // rather than silently returning un-enriched step data. (DotNetSpecialist review, WorkItemEndpoints.cs:896)
     internal static async Task<IResult> GetActiveWorkItems(
         int olderThanSeconds,
         IDbContextFactory<PipelineDbContext> dbFactory,
+        IOrchestratorRunService? runService = null,
         string? projectId = null,
         CancellationToken ct = default)
     {
@@ -929,6 +935,29 @@ public static class WorkItemEndpoints
                 TimeoutSeconds = w.TimeoutSeconds
             })
             .ToListAsync(ct);
+
+        // Enrich with live pipeline step from in-memory (or Redis-backed) run service.
+        // Mirrors PostgresActiveRunQueryService.EnrichWithLiveState. Items with no live run
+        // entry (dispatched but not yet tracked, or API pod restarted) keep CurrentStep = null.
+        if (runService is not null)
+        {
+            for (var i = 0; i < items.Count; i++)
+            {
+                // TODO: RunId is constructed from Guid.ToString() which uses the default lowercase-hyphenated
+                // "d" format. All callers that seed OrchestratorRunService must use the same format or the
+                // lookup will silently miss the run and CurrentStep will remain null. If a dispatch path
+                // uses a different Guid format string (e.g. "N" — no hyphens), consider enforcing a canonical
+                // format on RunId construction across the codebase. (Correctness review, WorkItemEndpoints.cs:935)
+                // TODO: When runService resolves to DistributedRunService (Redis path), GetRun performs a
+                // sync-over-async Redis call (.GetAwaiter().GetResult()) inside this async handler, blocking
+                // the ThreadPool thread per item. Under high active-item counts or a slow/unavailable Redis
+                // connection, this degrades throughput. Consider making IOrchestratorRunService.GetRun async
+                // (GetRunAsync) to avoid ThreadPool blocking. (DotNetSpecialist review, WorkItemEndpoints.cs:936)
+                var liveRun = runService.GetRun(new RunId(items[i].Id.ToString()));
+                if (liveRun is not null)
+                    items[i] = items[i] with { CurrentStep = liveRun.CurrentStep };
+            }
+        }
 
         return TypedResults.Ok((IReadOnlyList<ActiveWorkItemDto>)items);
     }

@@ -264,7 +264,9 @@ public class PipelineRunInstrumentationTests : IDisposable
     {
         using var durationCollector = DoubleCollector("pipeline.jobs.duration");
 
-        var startTimestamp = Stopwatch.GetTimestamp();
+        // Capture timestamp before StartRun so the upper bound encompasses the full
+        // frozen duration (which is measured from StartRun, not from just before StopTiming).
+        var beforeStartTimestamp = Stopwatch.GetTimestamp();
         var instrumentation = StartRun();
         using var mres4 = new ManualResetEventSlim(false);
         mres4.Wait(10); // Ensure non-zero duration before freeze
@@ -272,20 +274,16 @@ public class PipelineRunInstrumentationTests : IDisposable
         instrumentation.StopTiming();
 
         using var mres5 = new ManualResetEventSlim(false);
-        mres5.Wait(50); // Let at least 50ms pass after freeze
+        mres5.Wait(50); // Let at least 50ms pass after freeze — idempotent calls must not extend duration
 
         instrumentation.StopTiming(); // must be no-ops
         instrumentation.StopTiming();
         instrumentation.Dispose();
 
-        // Upper bound: total elapsed time from before StartRun() to now, plus a small buffer.
-        // The frozen duration (StartRun → first StopTiming) must be a subset of this window,
-        // so it can never exceed it regardless of how long the host takes to schedule.
-        // TODO: The +0.010s buffer makes this assertion permissive on slow hosts — if StopTiming
-        // is broken and returns total elapsed, the assertion could still pass. A tighter fix is to
-        // capture startTimestamp after StartRun() and assert frozen < (elapsed - 50ms wait) to
-        // preserve the original invariant without flakiness. See review warning (issue #2255).
-        var upperBoundSeconds = Stopwatch.GetElapsedTime(startTimestamp).TotalSeconds + 0.010;
+        // Upper bound: total elapsed time from before StartRun to now, plus a small CI jitter buffer.
+        // The frozen duration must not exceed this — it was frozen at the first StopTiming call,
+        // so it cannot include the 50ms post-freeze sleep.
+        var upperBoundSeconds = Stopwatch.GetElapsedTime(beforeStartTimestamp).TotalSeconds + 0.050;
 
         var snapshot = durationCollector.GetMeasurementSnapshot();
         snapshot.Should().ContainSingle();

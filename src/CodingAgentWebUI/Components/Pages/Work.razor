@@ -95,13 +95,25 @@
             {
                 <div class="monitoring-table-wrap">
                     <table class="monitoring-table">
-                        <thead><tr><th>Issue</th><th>Status</th><th>Agent selector</th><th>Dispatched</th><th></th></tr></thead>
+                        <thead><tr><th>Issue</th><th>Status</th><th>Step</th><th>Agent selector</th><th>Dispatched</th><th></th></tr></thead>
                         <tbody>
                             @foreach (var a in _active)
                             {
                                 <tr>
                                     <td class="monitoring-mono">#@a.IssueIdentifier</td>
                                     <td><span class="cockpit-chip" style="color: @StatusColor(a.Status);">@a.Status</span></td>
+                                    <td>
+                                        @if (a.CurrentStep is not null)
+                                        {
+                                            <span class="monitoring-step monitoring-step-@a.CurrentStep.Value.ToString().ToLowerInvariant()">
+                                                @a.CurrentStep.Value.ToDisplayName()
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <span class="monitoring-muted">—</span>
+                                        }
+                                    </td>
                                     <td class="monitoring-mono monitoring-muted">@a.AgentSelector</td>
                                     <td>@(a.DispatchedAt is null ? "—" : Ago(a.DispatchedAt.Value))</td>
                                     <td style="text-align: right;">

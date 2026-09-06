@@ -26,4 +26,11 @@ public sealed record ActiveWorkItemDto
     /// to <c>PipelineConstants.DefaultAgentTimeout</c>.
     /// </summary>
     public int TimeoutSeconds { get; init; }
+
+    /// <summary>
+    /// The current pipeline step, enriched from <c>IOrchestratorRunService</c> at query time.
+    /// Null when no live run is tracked for this item (e.g. just dispatched, or API pod restarted
+    /// before Redis-backed run was seeded). Populated for items whose run is in-memory or in Redis.
+    /// </summary>
+    public PipelineStep? CurrentStep { get; init; }
 }
