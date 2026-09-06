@@ -634,6 +634,31 @@ public class HousekeepingServiceTests
             "agent:done must be removed as part of the rework swap");
     }
 
+    // ── Conflicted → SwapAsync throws → warning, no propagation ─────────────
+
+    [Fact]
+    public async Task ExecuteAsync_ConflictedPr_SwapAsyncThrows_WarningLoggedNoPropagation()
+    {
+        // Covers the catch block in TrySwapIssueToNextAsync when AgentLabelOperations.SwapAsync
+        // throws (e.g. transient API error on AddLabelAsync after RemoveLabelAsync succeeds).
+        var (svc, provider, issues, _) = Create();
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
+        provider.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<string>)["42"]);
+        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(MakeIssue("42", AgentLabels.Error));
+        // Simulate AddLabelAsync failing after RemoveLabelAsync succeeds
+        issues.Setup(i => i.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .Returns(Task.CompletedTask);
+        issues.Setup(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .ThrowsAsync(new InvalidOperationException("API error on add"));
+
+        var ex = await Record.ExceptionAsync(() => ExecAsync(svc, provider, issues, [MakePr(1)]));
+
+        ex.Should().BeNull("SwapAsync failure must be caught and not propagate");
+    }
+
     // ── Conflicted + agent:next → no swap ────────────────────────────────────
 
     [Fact]
@@ -986,6 +1011,88 @@ public class HousekeepingServiceTests
         ex.Should().BeNull("delete failure must be swallowed");
         provider.Verify(p => p.DeleteBranchAsync(branch2, It.IsAny<CancellationToken>()), Times.Once,
             "second branch must still be processed after first delete fails");
+    }
+
+    // ── Branch cleanup: FetchAllOpenAgentPrBranchesAsync throws → cleanup skipped ──
+
+    [Fact]
+    public async Task ExecuteAsync_FetchAllOpenAgentPrBranchesThrows_SkipsCleanup()
+    {
+        // Covers the catch block in RunBranchCleanupAsync when FetchAllOpenAgentPrBranchesAsync throws
+        // (e.g. NotSupportedException from a provider that doesn't implement ListOpenPullRequestsAsync).
+        // Cleanup must be skipped entirely — falling back to the truncated agentDonePrs list would
+        // reproduce the original bug.
+        var (svc, provider, issues, _) = Create();
+        var agentBranch = $"{PipelineConstants.BranchPrefix}42-fix-something";
+
+        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
+        // Override the default ListOpenPullRequestsAsync to throw — simulates a provider
+        // that doesn't support this method (e.g. a stub or unsupported provider).
+        provider.Setup(p => p.ListOpenPullRequestsAsync(
+                    It.IsAny<int>(), It.IsAny<int>(),
+                    It.Is<IReadOnlyList<string>?>(l => l == null),
+                    It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new NotSupportedException("not supported"));
+        // Issue has agent:done — would normally be deleted if cleanup proceeded.
+        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(MakeIssue("42", AgentLabels.Done));
+
+        var ex = await Record.ExceptionAsync(
+            () => ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0));
+
+        ex.Should().BeNull("FetchAllOpenAgentPrBranches failure must not propagate");
+        provider.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+            "cleanup must be skipped entirely when the open-PR fetch fails");
+    }
+
+    // ── Branch cleanup: MaxPages safety cap stops infinite HasMore loop ───────
+
+    [Fact]
+    public async Task FetchAllOpenAgentPrBranches_MaxPagesCap_StopsLoop()
+    {
+        // Exercises the page >= MaxPages break in FetchAllOpenAgentPrBranchesAsync.
+        // Simulates a provider that always returns HasMore=true (malformed pagination).
+        // The method must collect what it finds and break rather than looping forever.
+        var (svc, provider, issues, _) = Create();
+        var agentBranch = $"{PipelineConstants.BranchPrefix}99-capped-feature";
+
+        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
+        // Every page returns HasMore=true, simulating a malformed provider.
+        // The branch only appears on page 1; subsequent pages return empty.
+        provider.Setup(p => p.ListOpenPullRequestsAsync(
+                    1, It.IsAny<int>(),
+                    It.Is<IReadOnlyList<string>?>(l => l == null),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new PagedResult<PullRequestSummary>
+                {
+                    Items = new[] { MakePr(99, agentBranch) }.AsReadOnly(),
+                    Page = 1, PageSize = 100, HasMore = true   // always true — malformed
+                });
+        provider.Setup(p => p.ListOpenPullRequestsAsync(
+                    It.Is<int>(p => p > 1), It.IsAny<int>(),
+                    It.Is<IReadOnlyList<string>?>(l => l == null),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new PagedResult<PullRequestSummary>
+                {
+                    Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
+                    Page = 2, PageSize = 100, HasMore = true   // always true
+                });
+
+        var ex = await Record.ExceptionAsync(
+            () => ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0));
+
+        ex.Should().BeNull("MaxPages cap must not throw");
+        // Branch was collected on page 1 — it must be protected from deletion.
+        provider.Verify(p => p.DeleteBranchAsync(agentBranch, It.IsAny<CancellationToken>()), Times.Never,
+            "branch found before MaxPages cap must still be protected");
+        // Provider must be called MaxPages (50) times, not indefinitely.
+        provider.Verify(p => p.ListOpenPullRequestsAsync(
+            It.IsAny<int>(), It.IsAny<int>(),
+            It.Is<IReadOnlyList<string>?>(l => l == null),
+            It.IsAny<CancellationToken>()), Times.Exactly(50),
+            "exactly MaxPages=50 pages must be fetched before the cap breaks the loop");
     }
 
     [Fact]
