@@ -128,7 +128,8 @@ public partial class QualityGateExecutor
         {
             ciGate = new GateResult
             {
-                GateName = "External CI", Passed = false,
+                GateName = "External CI",
+                Passed = false,
                 Details = $"External CI timed out after {config.ExternalCiTimeout}"
             };
         }
@@ -138,7 +139,8 @@ public partial class QualityGateExecutor
             _logger.Warning(ex, "Pipeline {RunId} external CI check failed, treating as gate failure", run.RunId);
             ciGate = new GateResult
             {
-                GateName = "External CI", Passed = false,
+                GateName = "External CI",
+                Passed = false,
                 Details = $"External CI error: {ex.Message}"
             };
         }
