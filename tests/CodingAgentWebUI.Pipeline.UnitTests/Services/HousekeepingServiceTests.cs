@@ -484,13 +484,46 @@ public class HousekeepingServiceTests
             p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "UpdatePullRequestBranchAsync must not be called when active-run branch data is unavailable");
-        // NOTE: This test only asserts the Step 6b (branch update) path of the conservative
-        //   fallback. The activeRunBranchesUnavailable flag also gates the Step 6a rework-swap path
-        //   (if (activeRunBranchesUnavailable || activeRunBranches.Contains(pr.BranchName))).
-        //   A regression that removes the flag check from Step 6a while leaving Step 6b intact
-        //   would pass all tests. Add a complementary test with a Conflicted PR that asserts
-        //   the rework-swap (label change / TriggerReworkAsync) is also skipped when
-        //   GetActiveRunBranchesAsync throws.
+    }
+
+    // ── GetActiveRunsThrows → conflict rework (Step 6a) is also skipped ──────
+
+    [Fact]
+    public async Task ExecuteAsync_GetActiveRunsThrows_SkipsConflictReworkConservatively()
+    {
+        // Complements ExecuteAsync_GetActiveRunsThrows_SkipsBranchUpdatesConservatively.
+        // The activeRunBranchesUnavailable flag gates BOTH Step 6b (branch update) and
+        // Step 6a (conflict rework). This test pins the Step 6a path — a regression that
+        // removes the flag check from Step 6a while leaving Step 6b intact must fail here.
+        var providerMock = new Mock<IRepositoryProvider>();
+        var issuesMock = new Mock<IIssueProvider>();
+        var runsMock = new Mock<IOrchestratorRunService>();
+        runsMock.Setup(r => r.GetActiveRunBranchesAsync(It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new InvalidOperationException("API down"));
+
+        var svc = new HousekeepingService(runsMock.Object, Log.Logger);
+        svc.FireAndForget = task => task;
+
+        providerMock.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(PrMergeabilityStatus.Conflicted);
+
+        // Act: must not throw
+        var ex = await Record.ExceptionAsync(() =>
+            svc.ExecuteAsync(providerMock.Object, RepoId, issuesMock.Object, IssueProviderId,
+                [MakePr(1)], 1, false, 60, CancellationToken.None));
+
+        ex.Should().BeNull("HousekeepingService must not propagate GetActiveRunBranchesAsync exceptions");
+
+        // Assert: conservative fallback — rework swap must be SKIPPED.
+        // ExtractLinkedIssuesAsync must never be called because TriggerReworkAsync must not be reached.
+        providerMock.Verify(
+            p => p.ExtractLinkedIssuesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "TriggerReworkAsync must not be called when active-run branch data is unavailable");
+        issuesMock.Verify(
+            i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "label swap must not be triggered when active-run branch data is unavailable");
     }
 
     // ── Limit = 0 → clamped to 1 ─────────────────────────────────────────────
@@ -551,10 +584,16 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── Conflicted + agent:done → skip swap (terminal label must not be re-queued) ──
+    // ── Conflicted + agent:done → swap to agent:next (open conflicted PR needs rework) ──
 
+    /// <summary>
+    /// Regression test for the #2236 over-correction: an open PR with merge conflicts whose
+    /// linked issue carries agent:done MUST be re-queued for rework. The issue is done from the
+    /// agent's perspective, but the PR has not merged — conflict resolution requires another run.
+    /// agent:wont-do and agent:cancelled remain blockers (human decisions to abandon the work).
+    /// </summary>
     [Fact]
-    public async Task ExecuteAsync_ConflictedPr_IssueWithAgentDone_SkipsReworkSwap()
+    public async Task ExecuteAsync_ConflictedPr_IssueWithAgentDone_SwapsToAgentNext()
     {
         var (svc, provider, issues, _) = Create();
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
@@ -563,15 +602,23 @@ public class HousekeepingServiceTests
                 .ReturnsAsync((IReadOnlyList<string>)["42"]);
         issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
               .ReturnsAsync(MakeIssue("42", AgentLabels.Done));
+        issues.Setup(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .Returns(Task.CompletedTask);
+        issues.Setup(i => i.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .Returns(Task.CompletedTask);
 
         await ExecAsync(svc, provider, issues, [MakePr(1)]);
 
-        issues.Verify(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Never,
-            "agent:done is a terminal label — must not be re-queued for rework");
-        issues.Verify(i => i.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Never,
-            "SwapAsync calls both Remove+Add; guarding only Add would miss a partial regression");
+        issues.Verify(i => i.AddLabelAsync(
+            It.Is<IssueIdentifier>(id => id.Value == "42"),
+            AgentLabels.Next,
+            It.IsAny<CancellationToken>()), Times.Once,
+            "open conflicted PR with agent:done issue must be re-queued for rework — the PR has not merged");
+        issues.Verify(i => i.RemoveLabelAsync(
+            It.Is<IssueIdentifier>(id => id.Value == "42"),
+            AgentLabels.Done,
+            It.IsAny<CancellationToken>()), Times.Once,
+            "agent:done must be removed as part of the rework swap");
     }
 
     // ── Conflicted + agent:next → no swap ────────────────────────────────────

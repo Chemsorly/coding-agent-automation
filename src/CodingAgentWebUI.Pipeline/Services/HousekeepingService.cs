@@ -37,15 +37,23 @@ public sealed class HousekeepingService : IHousekeepingService
     };
 
     /// <summary>
-    /// Terminal issue labels that must never be re-queued via conflict rework.
+    /// Issue labels representing an explicit human decision to abandon work — conflict rework
+    /// must not re-queue these issues as <c>agent:next</c>.
     /// Distinct from <see cref="ActiveLabels"/> to avoid affecting stale-branch cleanup,
-    /// which should still delete branches for terminal-state issues.
+    /// which should still delete branches for these abandoned issues.
+    /// <para>
+    /// <c>agent:done</c> is intentionally <em>excluded</em>: it means the agent completed a run,
+    /// but the resulting PR may still be open and conflicted. An open conflicted PR always needs
+    /// rework regardless of the issue's current label — <c>agent:done</c> is not a human signal
+    /// to abandon the work.
+    /// </para>
+    /// <para>
     /// <c>agent:error</c> and <c>agent:needs-refinement</c> are intentionally excluded —
     /// they are human-placed signals that the issue should be re-queued for rework.
+    /// </para>
     /// </summary>
     private static readonly HashSet<string> TerminalReworkBlockers = new(StringComparer.Ordinal)
     {
-        AgentLabels.Done,
         AgentLabels.WontDo,
         AgentLabels.Cancelled,
     };
@@ -177,7 +185,7 @@ public sealed class HousekeepingService : IHousekeepingService
             //      Scheduler HttpClient must authenticate with an operator-tier key, not an agent-tier key,
             //      or 403s will be silently swallowed as empty lists.
             _logger.Warning(ex,
-                "HousekeepingService: failed to get active runs for branch exclusion; skipping all branch updates this cycle (conservative fallback)");
+                "HousekeepingService: failed to get active runs for branch exclusion; skipping all branch updates AND conflict rework this cycle (conservative fallback)");
             activeRunBranches = [];
             activeRunBranchesUnavailable = true;
         }
@@ -449,11 +457,12 @@ public sealed class HousekeepingService : IHousekeepingService
     /// <summary>
     /// Fetches the issue linked to a conflicted PR and swaps its label to <c>agent:next</c>
     /// so it is re-queued for rework — unless the issue already carries an active label
-    /// (see <see cref="ActiveLabels"/>) or a terminal label (see <see cref="TerminalReworkBlockers"/>),
+    /// (see <see cref="ActiveLabels"/>) or an abandonment label (see <see cref="TerminalReworkBlockers"/>),
     /// in which case it returns early without modifying any labels.
-    /// <c>agent:error</c> and <c>agent:needs-refinement</c> are intentional rework targets and
-    /// will proceed to a swap; terminal labels (<c>agent:done</c>, <c>agent:wont-do</c>,
-    /// <c>agent:cancelled</c>) must never be re-queued.
+    /// <c>agent:error</c>, <c>agent:needs-refinement</c>, and <c>agent:done</c> are valid rework
+    /// targets — an open conflicted PR always needs another agent run regardless of the issue's
+    /// current label. Only <c>agent:wont-do</c> and <c>agent:cancelled</c> block re-queue, as
+    /// these represent explicit human decisions to abandon the work.
     /// </summary>
     private async Task TrySwapIssueToNextAsync(
         IIssueProvider issueProvider,
@@ -488,7 +497,7 @@ public sealed class HousekeepingService : IHousekeepingService
         if (issue.Labels.Any(l => TerminalReworkBlockers.Contains(l)))
         {
             _logger.Debug(
-                "HousekeepingService: issue {IssueId} linked to conflicted PR #{PrNumber} has a terminal label — skipping rework swap",
+                "HousekeepingService: issue {IssueId} linked to conflicted PR #{PrNumber} has an abandonment label (agent:wont-do or agent:cancelled) — skipping rework swap",
                 issueIdString, prNumber);
             return;
         }
