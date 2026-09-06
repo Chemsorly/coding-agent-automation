@@ -395,7 +395,7 @@ public class QualityGateValidator : IQualityGateValidator
         // not a real test failure. A genuine test failure always produces at least one count in
         // the TRX or stdout. Both streams must be empty to avoid misclassifying failures where
         // stderr contains a diagnosable error (e.g. missing SDK, wrong test project path).
-        // TODO: [WARNING] The heuristic does not explicitly verify that no TRX files exist. The
+        // TODO [WARNING]: The heuristic does not explicitly verify that no TRX files exist. The
         // issue requirement states "no TRX files were written" as a formal precondition. In most
         // cases this is implicitly satisfied: ResolveTestCounts (called above) extracts counts from
         // TRX files, so a TRX with non-zero counts would already set passed/failed/skipped > 0 and
@@ -432,7 +432,7 @@ public class QualityGateValidator : IQualityGateValidator
     /// <summary>
     /// Resolves test counts from TRX files (for .NET) or stdout parsing (for other stacks).
     /// Falls back to stdout parsing when TRX files are missing or empty.
-    /// TODO: [WARNING] No test covers the TRX-parse-found-nothing → stdout-fallback path after extraction.
+    /// TODO [WARNING]: No test covers the TRX-parse-found-nothing → stdout-fallback path after extraction.
     /// Add a test with an empty TRX results directory to assert stdout-based counts are returned,
     /// locking in the fallback behavior and preventing silent regression if the condition changes.
     /// </summary>

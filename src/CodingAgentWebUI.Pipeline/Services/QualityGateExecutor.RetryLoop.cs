@@ -428,7 +428,7 @@ public partial class QualityGateExecutor
             _logger.Information("Pipeline {RunId} quality gates failed, auto-retry {RetryCount}/{MaxRetries}", run.RunId, run.RetryCount, config.MaxRetries);
             callbacks.EmitOutputLine($"🔄 Quality gates failed, retrying (attempt {run.RetryCount}/{config.MaxRetries})");
 
-            // TODO: [WARNING] Two independent guards are combined here via OR:
+            // TODO [WARNING]: Two independent guards are combined here via OR:
             //   1. report.QgcResults.Any(r => r.Tests?.IsInfrastructureFailure == true) — catches
             //      the multi-QGC case where the first failing QGC is a compilation failure but a
             //      later QGC has an infra-kill Tests result (BuildAggregateReport's firstFailingQgc
