@@ -189,6 +189,83 @@ public class QualityGateValidator : IQualityGateValidator
     }
 
     /// <summary>
+    /// Runs a QGC process command with shared timeout/cancellation/error telemetry.
+    /// Records <c>quality_gate.process.duration</c> on every exit path and
+    /// <c>quality_gate.process.timeout</c> on timeout.
+    /// Returns <c>(exitCode, stdout, stderr)</c> on success.
+    /// Re-throws <see cref="OperationCanceledException"/> and unexpected exceptions unchanged;
+    /// converts a process timeout into a <see cref="QgcProcessTimedOutException"/> so callers
+    /// can distinguish it from external cancellation without duplicating catch blocks.
+    /// </summary>
+    private async Task<(int ExitCode, string Stdout, string Stderr)> RunQgcProcessAsync(
+        string command, string arguments, string gateName, string qgcDisplayName,
+        string workspacePath, int timeoutSeconds, Activity? activity, CancellationToken ct)
+    {
+        var timeout = TimeSpan.FromSeconds(timeoutSeconds);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var outcome = "success";
+
+        int exitCode;
+        string stdout, stderr;
+        try
+        {
+            (exitCode, stdout, stderr) = await RunProcessAsync(command, arguments, workspacePath, ct, timeout);
+        }
+        catch (TimeoutException ex)
+        {
+            outcome = "timeout";
+            sw.Stop();
+            _processTimeouts.Add(1,
+                new KeyValuePair<string, object?>("gate_name", gateName),
+                new KeyValuePair<string, object?>("qgc_name", qgcDisplayName));
+            activity?.SetTag("qgc.timed_out", true);
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            _processDuration.Record(sw.Elapsed.TotalSeconds,
+                new KeyValuePair<string, object?>("gate_name", gateName),
+                new KeyValuePair<string, object?>("qgc_name", qgcDisplayName),
+                new KeyValuePair<string, object?>("outcome", outcome));
+            throw new QgcProcessTimedOutException(timeoutSeconds, ex);
+        }
+        catch (OperationCanceledException)
+        {
+            outcome = "cancelled";
+            sw.Stop();
+            _processDuration.Record(sw.Elapsed.TotalSeconds,
+                new KeyValuePair<string, object?>("gate_name", gateName),
+                new KeyValuePair<string, object?>("qgc_name", qgcDisplayName),
+                new KeyValuePair<string, object?>("outcome", outcome));
+            throw;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            outcome = "error";
+            sw.Stop();
+            _processDuration.Record(sw.Elapsed.TotalSeconds,
+                new KeyValuePair<string, object?>("gate_name", gateName),
+                new KeyValuePair<string, object?>("qgc_name", qgcDisplayName),
+                new KeyValuePair<string, object?>("outcome", outcome));
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            throw;
+        }
+
+        sw.Stop();
+        _processDuration.Record(sw.Elapsed.TotalSeconds,
+            new KeyValuePair<string, object?>("gate_name", gateName),
+            new KeyValuePair<string, object?>("qgc_name", qgcDisplayName),
+            new KeyValuePair<string, object?>("outcome", outcome));
+
+        return (exitCode, stdout, stderr);
+    }
+
+    /// <summary>Thrown by <see cref="RunQgcProcessAsync"/> when the process exceeds its timeout.</summary>
+    private sealed class QgcProcessTimedOutException(int timeoutSeconds, Exception inner)
+        : Exception($"Process timed out after {timeoutSeconds}s", inner)
+    {
+        public int TimeoutSeconds { get; } = timeoutSeconds;
+    }
+
+    /// <summary>
     /// Runs the compilation command for a single QGC. Returns null if no compilation command is defined.
     /// </summary>
     private async Task<GateResult?> RunQgcCompilationAsync(
@@ -206,65 +283,23 @@ public class QualityGateValidator : IQualityGateValidator
             ? string.Join(" ", qgc.CompilationArguments)
             : string.Empty;
 
-        var timeout = TimeSpan.FromSeconds(qgc.ProcessTimeoutSeconds);
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        var outcome = "success";
-
         int exitCode;
         string stdout, stderr;
         try
         {
-            (exitCode, stdout, stderr) = await RunProcessAsync(
-                qgc.CompilationCommand, arguments, workspacePath, ct, timeout);
+            (exitCode, stdout, stderr) = await RunQgcProcessAsync(
+                qgc.CompilationCommand, arguments, "compilation", qgc.DisplayName,
+                workspacePath, qgc.ProcessTimeoutSeconds, activity, ct);
         }
-        catch (TimeoutException ex)
+        catch (QgcProcessTimedOutException ex)
         {
-            outcome = "timeout";
-            sw.Stop();
-            _processTimeouts.Add(1,
-                new KeyValuePair<string, object?>("gate_name", "compilation"),
-                new KeyValuePair<string, object?>("qgc_name", qgc.DisplayName));
-            activity?.SetTag("qgc.timed_out", true);
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            _processDuration.Record(sw.Elapsed.TotalSeconds,
-                new KeyValuePair<string, object?>("gate_name", "compilation"),
-                new KeyValuePair<string, object?>("qgc_name", qgc.DisplayName),
-                new KeyValuePair<string, object?>("outcome", outcome));
             return new GateResult
             {
                 GateName = "Compilation",
                 Passed = false,
-                Details = $"Compilation timed out after {qgc.ProcessTimeoutSeconds}s"
+                Details = $"Compilation timed out after {ex.TimeoutSeconds}s"
             };
         }
-        catch (OperationCanceledException)
-        {
-            outcome = "cancelled";
-            sw.Stop();
-            _processDuration.Record(sw.Elapsed.TotalSeconds,
-                new KeyValuePair<string, object?>("gate_name", "compilation"),
-                new KeyValuePair<string, object?>("qgc_name", qgc.DisplayName),
-                new KeyValuePair<string, object?>("outcome", outcome));
-            throw;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            outcome = "error";
-            sw.Stop();
-            _processDuration.Record(sw.Elapsed.TotalSeconds,
-                new KeyValuePair<string, object?>("gate_name", "compilation"),
-                new KeyValuePair<string, object?>("qgc_name", qgc.DisplayName),
-                new KeyValuePair<string, object?>("outcome", outcome));
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.AddException(ex);
-            throw;
-        }
-
-        sw.Stop();
-        _processDuration.Record(sw.Elapsed.TotalSeconds,
-            new KeyValuePair<string, object?>("gate_name", "compilation"),
-            new KeyValuePair<string, object?>("qgc_name", qgc.DisplayName),
-            new KeyValuePair<string, object?>("outcome", outcome));
 
         WriteGateOutput(workspacePath, $"{qgc.DisplayName}-compilation", stdout, stderr);
 
@@ -328,61 +363,21 @@ public class QualityGateValidator : IQualityGateValidator
 
         int exitCode;
         string stdout, stderr;
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        var outcome = "success";
         try
         {
-            (exitCode, stdout, stderr) = await RunProcessAsync(
-                qgc.TestCommand, fullArgs, workspacePath, ct, TimeSpan.FromSeconds(qgc.ProcessTimeoutSeconds));
+            (exitCode, stdout, stderr) = await RunQgcProcessAsync(
+                qgc.TestCommand, fullArgs, "tests", qgc.DisplayName,
+                workspacePath, qgc.ProcessTimeoutSeconds, activity, ct);
         }
-        catch (TimeoutException ex)
+        catch (QgcProcessTimedOutException ex)
         {
-            outcome = "timeout";
-            sw.Stop();
-            _processTimeouts.Add(1,
-                new KeyValuePair<string, object?>("gate_name", "tests"),
-                new KeyValuePair<string, object?>("qgc_name", qgc.DisplayName));
-            activity?.SetTag("qgc.timed_out", true);
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            _processDuration.Record(sw.Elapsed.TotalSeconds,
-                new KeyValuePair<string, object?>("gate_name", "tests"),
-                new KeyValuePair<string, object?>("qgc_name", qgc.DisplayName),
-                new KeyValuePair<string, object?>("outcome", outcome));
             return new GateResult
             {
                 GateName = "Tests",
                 Passed = false,
-                Details = $"Tests timed out after {qgc.ProcessTimeoutSeconds}s"
+                Details = $"Tests timed out after {ex.TimeoutSeconds}s"
             };
         }
-        catch (OperationCanceledException)
-        {
-            outcome = "cancelled";
-            sw.Stop();
-            _processDuration.Record(sw.Elapsed.TotalSeconds,
-                new KeyValuePair<string, object?>("gate_name", "tests"),
-                new KeyValuePair<string, object?>("qgc_name", qgc.DisplayName),
-                new KeyValuePair<string, object?>("outcome", outcome));
-            throw;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            outcome = "error";
-            sw.Stop();
-            _processDuration.Record(sw.Elapsed.TotalSeconds,
-                new KeyValuePair<string, object?>("gate_name", "tests"),
-                new KeyValuePair<string, object?>("qgc_name", qgc.DisplayName),
-                new KeyValuePair<string, object?>("outcome", outcome));
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.AddException(ex);
-            throw;
-        }
-
-        sw.Stop();
-        _processDuration.Record(sw.Elapsed.TotalSeconds,
-            new KeyValuePair<string, object?>("gate_name", "tests"),
-            new KeyValuePair<string, object?>("qgc_name", qgc.DisplayName),
-            new KeyValuePair<string, object?>("outcome", outcome));
 
         WriteGateOutput(workspacePath, $"{qgc.DisplayName}-tests", stdout, stderr);
 
