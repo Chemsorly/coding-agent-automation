@@ -15,8 +15,8 @@ namespace CodingAgentWebUI.Api.IntegrationTests;
 /// Verifies: priority ordering, no-capacity responses, PVC double-assignment prevention,
 /// and the recovery path via <c>POST /api/work-items/{id}/requeue</c>.
 /// </summary>
-[Collection("Sequential")]
-public sealed class SynchronousDispatchEndpointTests : IClassFixture<ApiWebApplicationFactory>
+[Collection(ApiIntegrationTestCollection.Name)]
+public sealed class SynchronousDispatchEndpointTests
 {
     private readonly ApiWebApplicationFactory _factory;
     private readonly HttpClient _client;
