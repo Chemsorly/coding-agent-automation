@@ -56,7 +56,7 @@ public static class PipelineRunFactory
                 IssueProviderConfigId = request.IssueProviderConfigId,
                 RepoProviderConfigId = request.RepoProviderConfigId,
                 RunType = PipelineRunType.Review,
-                InitiatedBy = request.InitiatedBy ?? "rehydrated",
+                InitiatedBy = request.InitiatedBy ?? InitiatedByConstants.Rehydrated,
                 AgentId = agentId,
                 StartedAt = startedAt,
                 ReviewPrBranchName = request.LinkedPullRequest?.BranchName ?? string.Empty,
@@ -76,7 +76,7 @@ public static class PipelineRunFactory
                 IssueProviderConfigId = request.IssueProviderConfigId,
                 RepoProviderConfigId = request.RepoProviderConfigId,
                 RunType = request.RunType,
-                InitiatedBy = request.InitiatedBy ?? "rehydrated",
+                InitiatedBy = request.InitiatedBy ?? InitiatedByConstants.Rehydrated,
                 AgentId = agentId,
                 StartedAt = startedAt,
                 AgentProviderConfigId = request.AgentProviderConfigId,
@@ -90,9 +90,7 @@ public static class PipelineRunFactory
                 IssueUrl = request.IssueDetail?.Url,
                 IssueProviderConfigId = request.IssueProviderConfigId,
                 RepoProviderConfigId = request.RepoProviderConfigId,
-                // TODO: InitiatedBy null fallback — consider whether "rehydrated" is the right
-                // label for all callers, or whether each dispatch path should pass its own fallback.
-                InitiatedBy = request.InitiatedBy ?? "rehydrated",
+                InitiatedBy = request.InitiatedBy ?? InitiatedByConstants.Rehydrated,
                 AgentId = agentId,
                 StartedAt = startedAt,
                 AgentProviderConfigId = request.AgentProviderConfigId,
