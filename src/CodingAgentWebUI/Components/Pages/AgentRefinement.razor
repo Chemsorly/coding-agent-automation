@@ -1,9 +1,0 @@
-@page "/agent-refinement"
-@inject NavigationManager Nav
-
-@* Retired: this was a "Coming soon" placeholder. Issue refinement now happens on the provider;
-   the app surfaces "Needs refinement" items on the Attention screen. Redirect old links to Overview. *@
-
-@code {
-    protected override void OnInitialized() => Nav.NavigateTo("overview", replace: true);
-}
