@@ -122,4 +122,12 @@ public sealed class PipelineRunSummary
     /// can return it to the Scheduler for the housekeeping branch-update guard.
     /// </summary>
     public string? BranchName { get; init; }
+
+    /// <summary>
+    /// Git commit SHA of the agent container image that executed this run, or null for runs
+    /// recorded before this field was introduced. Sourced from the SERVICE_VERSION environment
+    /// variable injected at image build time via the BUILD_COMMIT_SHA Docker build arg.
+    /// Use this to correlate outcome metrics back to a specific harness deployment.
+    /// </summary>
+    public string? HarnessVersion { get; init; }
 }

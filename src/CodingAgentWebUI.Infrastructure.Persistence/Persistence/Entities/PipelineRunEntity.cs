@@ -37,6 +37,14 @@ public class PipelineRunEntity
     /// <summary>Full serialized PipelineRunSummary as JSONB for lossless round-trip.</summary>
     public string? SummaryJson { get; set; }
 
+    /// <summary>
+    /// Git commit SHA of the agent container that executed this run.
+    /// Sourced from SERVICE_VERSION env var (injected via BUILD_COMMIT_SHA ARG at image build time).
+    /// Null for local/test runs and for runs recorded before this field was introduced.
+    /// Denormalized from SummaryJson for efficient grouping and filtering by harness version.
+    /// </summary>
+    public string? HarnessVersion { get; set; }
+
     /// <summary>Concurrency token mapped to PostgreSQL xmin system column.</summary>
     public uint RowVersion { get; set; }
 }

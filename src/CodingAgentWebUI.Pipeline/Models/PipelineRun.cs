@@ -313,6 +313,13 @@ public sealed partial class PipelineRun
     /// <summary>Agent provider config ID used for this run, or null for test runs.</summary>
     public string? AgentProviderConfigId { get; init; }
 
+    /// <summary>
+    /// Git commit SHA of the agent container that executed this run, or null for test/local runs.
+    /// Populated from the SERVICE_VERSION env var (injected at image build time via BUILD_COMMIT_SHA ARG).
+    /// Null for runs recorded before this field was introduced.
+    /// </summary>
+    public string? HarnessVersion { get; set; }
+
     /// <summary>Project ID that owned the dispatching template at dispatch time.</summary>
     public string? ProjectId { get; set; }
 
@@ -410,7 +417,8 @@ public sealed partial class PipelineRun
         ProjectName = ProjectName,
         DecompositionSource = DecompositionSource,
         AgentProviderConfigId = AgentProviderConfigId,
-        BranchName = BranchName
+        BranchName = BranchName,
+        HarnessVersion = HarnessVersion
     };
     #pragma warning restore CS0618
 
