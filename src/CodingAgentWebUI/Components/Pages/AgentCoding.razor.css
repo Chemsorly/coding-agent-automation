@@ -190,3 +190,20 @@
     border-bottom-color: var(--accent);
     cursor: default;
 }
+
+/* ═══ Stop Loop animated spinner (issue #2369) ═══ */
+.loop-stop-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: loop-spin 0.7s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+}
+
+@keyframes loop-spin {
+    to { transform: rotate(360deg); }
+}

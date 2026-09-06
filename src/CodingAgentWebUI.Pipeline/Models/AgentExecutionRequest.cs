@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Services;
 
 namespace CodingAgentWebUI.Pipeline.Models;
 
@@ -23,4 +24,10 @@ internal sealed record AgentExecutionRequest
     /// Null means the child process inherits the parent environment unchanged.
     /// </summary>
     public IReadOnlyDictionary<string, string>? EnvironmentVariables { get; init; }
+
+    /// <summary>
+    /// Optional stall monitor metrics to record when the agent stalls or is killed during this execution.
+    /// Only set for QGC retry agent calls. All other call sites leave this null.
+    /// </summary>
+    public StallMonitorMetrics? StallMetrics { get; init; }
 }

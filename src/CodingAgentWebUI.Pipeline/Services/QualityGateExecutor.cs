@@ -26,6 +26,10 @@ public partial class QualityGateExecutor : IQualityGateExecutor
     private readonly Histogram<double> _stepDuration;
     private readonly Counter<long> _stepCount;
     private readonly Histogram<double> _externalCiDuration;
+    private readonly Counter<long> _stallWarnings;
+    private readonly Counter<long> _stallKills;
+    private readonly Counter<long> _stallProcessDeaths;
+    private readonly StallMonitorMetrics _stallMetrics;
 
     public QualityGateExecutor(
         IQualityGateValidator qualityGateValidator,
@@ -60,7 +64,15 @@ public partial class QualityGateExecutor : IQualityGateExecutor
             _stepDuration = meter.CreateHistogram<double>("pipeline.step.duration", "s", "Duration of individual pipeline steps",
                 advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600] });
             _stepCount = meter.CreateCounter<long>("pipeline.step.count", "{step}", "Pipeline step execution count");
-            _externalCiDuration = meter.CreateHistogram<double>("quality_gate.external_ci.duration", "s", "Time waiting for external CI");
+            _externalCiDuration = meter.CreateHistogram<double>(
+                "quality_gate.external_ci.duration", "s", "Time waiting for external CI",
+                advice: new InstrumentAdvice<double>
+                {
+                    HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600]
+                });
+            _stallWarnings = meter.CreateCounter<long>("quality_gate.stall.warnings", "{warning}", "Agent stall silence warnings by phase");
+            _stallKills = meter.CreateCounter<long>("quality_gate.stall.kills", "{kill}", "Agent stall kill events by phase");
+            _stallProcessDeaths = meter.CreateCounter<long>("quality_gate.stall.process_deaths", "{process_death}", "Agent stall process death events by phase");
         }
         else
         {
@@ -71,7 +83,12 @@ public partial class QualityGateExecutor : IQualityGateExecutor
             _stepDuration = PipelineTelemetry.StepDuration;
             _stepCount = PipelineTelemetry.StepCount;
             _externalCiDuration = PipelineTelemetry.ExternalCiDuration;
+            _stallWarnings = PipelineTelemetry.StallWarnings;
+            _stallKills = PipelineTelemetry.StallKills;
+            _stallProcessDeaths = PipelineTelemetry.StallProcessDeaths;
         }
+
+        _stallMetrics = new StallMonitorMetrics(_stallWarnings, _stallKills, _stallProcessDeaths);
     }
 
     internal static string FormatGateLogValue(GateResult? gate) =>

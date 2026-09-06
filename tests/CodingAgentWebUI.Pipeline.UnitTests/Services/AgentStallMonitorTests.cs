@@ -3,6 +3,9 @@ using Moq;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Pipeline.Telemetry;
+using CodingAgentWebUI.TestUtilities;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
@@ -205,5 +208,160 @@ public class AgentStallMonitorTests
             c.Role == ChatRole.System &&
             c.Content.Contains("Session warm-up") &&
             c.Content.Contains("agent process is no longer alive"));
+    }
+
+    [Fact]
+    public async Task HandleSilenceWarning_EmitsStallWarningsCounter()
+    {
+        var factory = new TestMeterFactory();
+        var meter = factory.Create(new System.Diagnostics.Metrics.MeterOptions(PipelineTelemetry.SourceName));
+        var warningsCounter = meter.CreateCounter<long>("quality_gate.stall.warnings", "{warning}");
+        var killsCounter = meter.CreateCounter<long>("quality_gate.stall.kills", "{kill}");
+        var deathsCounter = meter.CreateCounter<long>("quality_gate.stall.process_deaths", "{process_death}");
+        var stallMetrics = new StallMonitorMetrics(warningsCounter, killsCounter, deathsCounter);
+
+        using var warningCollector = new MetricCollector<long>(factory, PipelineTelemetry.SourceName, "quality_gate.stall.warnings");
+
+        var config = new PipelineConfiguration
+        {
+            StallPollInterval = TimeSpan.FromMilliseconds(50),
+            StallWarningInterval = TimeSpan.FromMilliseconds(50),
+            AgentTimeout = TimeSpan.FromMinutes(30)
+        };
+
+        _mockAgent.Setup(a => a.GetHealthStatus())
+            .Returns(new AgentHealthStatus
+            {
+                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
+                LastOutputTime = DateTime.UtcNow.AddMinutes(-3)
+            });
+
+        var tcs = new TaskCompletionSource<AgentResult>();
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns(tcs.Task);
+
+        var task = AgentStallMonitor.ExecuteWithMonitoringAsync(
+            _mockAgent.Object,
+            new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
+            _run, config, "Quality gate retry agent (attempt 1)", null, _mockLogger.Object,
+            CancellationToken.None, stallMetrics: stallMetrics);
+
+        // Wait for warning to fire
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (warningCollector.GetMeasurementSnapshot().Count == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
+        tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+        await task;
+
+        var snapshot = warningCollector.GetMeasurementSnapshot();
+        snapshot.Should().NotBeEmpty("at least one stall warning should have been emitted");
+        snapshot.Should().Contain(m =>
+            m.Tags.Contains(new KeyValuePair<string, object?>("phase", PipelineTelemetry.StallPhases.QgcRetryAgent)),
+            "phase tag should be normalized to qgc_retry_agent");
+
+        factory.Dispose();
+    }
+
+    [Fact]
+    public async Task HandleKillTimeoutAsync_EmitsStallKillsCounter()
+    {
+        var factory = new TestMeterFactory();
+        var meter = factory.Create(new System.Diagnostics.Metrics.MeterOptions(PipelineTelemetry.SourceName));
+        var warningsCounter = meter.CreateCounter<long>("quality_gate.stall.warnings", "{warning}");
+        var killsCounter = meter.CreateCounter<long>("quality_gate.stall.kills", "{kill}");
+        var deathsCounter = meter.CreateCounter<long>("quality_gate.stall.process_deaths", "{process_death}");
+        var stallMetrics = new StallMonitorMetrics(warningsCounter, killsCounter, deathsCounter);
+
+        using var killCollector = new MetricCollector<long>(factory, PipelineTelemetry.SourceName, "quality_gate.stall.kills");
+
+        var config = new PipelineConfiguration
+        {
+            StallPollInterval = TimeSpan.FromMilliseconds(50),
+            StallWarningInterval = TimeSpan.FromHours(1),
+            AgentTimeout = TimeSpan.FromMilliseconds(100)
+        };
+
+        _mockAgent.Setup(a => a.GetHealthStatus())
+            .Returns(new AgentHealthStatus
+            {
+                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
+                LastOutputTime = DateTime.UtcNow.AddMinutes(-5)
+            });
+
+        var tcs = new TaskCompletionSource<AgentResult>();
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns(tcs.Task);
+        _mockAgent.Setup(a => a.KillAsync()).Returns(Task.CompletedTask);
+
+        var task = AgentStallMonitor.ExecuteWithMonitoringAsync(
+            _mockAgent.Object,
+            new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
+            _run, config, "Quality gate retry agent (attempt 2)", null, _mockLogger.Object,
+            CancellationToken.None, stallMetrics: stallMetrics);
+
+        // Wait for the kill to fire
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (killCollector.GetMeasurementSnapshot().Count == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
+        tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+        await task;
+
+        var snapshot = killCollector.GetMeasurementSnapshot();
+        snapshot.Should().ContainSingle("exactly one kill event should have been emitted");
+        snapshot.Should().Contain(m =>
+            m.Tags.Contains(new KeyValuePair<string, object?>("phase", PipelineTelemetry.StallPhases.QgcRetryAgent)),
+            "phase tag should be normalized to qgc_retry_agent");
+
+        factory.Dispose();
+    }
+
+    [Fact]
+    public async Task HandleProcessDeath_EmitsStallProcessDeathsCounter()
+    {
+        var factory = new TestMeterFactory();
+        var meter = factory.Create(new System.Diagnostics.Metrics.MeterOptions(PipelineTelemetry.SourceName));
+        var warningsCounter = meter.CreateCounter<long>("quality_gate.stall.warnings", "{warning}");
+        var killsCounter = meter.CreateCounter<long>("quality_gate.stall.kills", "{kill}");
+        var deathsCounter = meter.CreateCounter<long>("quality_gate.stall.process_deaths", "{process_death}");
+        var stallMetrics = new StallMonitorMetrics(warningsCounter, killsCounter, deathsCounter);
+
+        using var deathCollector = new MetricCollector<long>(factory, PipelineTelemetry.SourceName, "quality_gate.stall.process_deaths");
+
+        var config = new PipelineConfiguration
+        {
+            StallPollInterval = TimeSpan.FromMilliseconds(50),
+            StallWarningInterval = TimeSpan.FromHours(1)
+        };
+
+        _mockAgent.Setup(a => a.GetHealthStatus())
+            .Returns(new AgentHealthStatus { IsExecuting = true, ProcessId = 99, IsProcessAlive = false });
+
+        var tcs = new TaskCompletionSource<AgentResult>();
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns(tcs.Task);
+
+        var task = AgentStallMonitor.ExecuteWithMonitoringAsync(
+            _mockAgent.Object,
+            new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
+            _run, config, "Quality gate retry agent (attempt 3)", null, _mockLogger.Object,
+            CancellationToken.None, stallMetrics: stallMetrics);
+
+        // Wait for process death to be detected
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (deathCollector.GetMeasurementSnapshot().Count == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
+        tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+        await task;
+
+        var snapshot = deathCollector.GetMeasurementSnapshot();
+        snapshot.Should().ContainSingle("exactly one process death event should have been emitted");
+        snapshot.Should().Contain(m =>
+            m.Tags.Contains(new KeyValuePair<string, object?>("phase", PipelineTelemetry.StallPhases.QgcRetryAgent)),
+            "phase tag should be normalized to qgc_retry_agent");
+
+        factory.Dispose();
     }
 }

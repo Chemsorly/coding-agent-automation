@@ -421,8 +421,7 @@ public partial class QualityGateExecutor
         while (!report.AllPassed && run.RetryCount < config.MaxRetries)
         {
             run.RetryCount++;
-            // NOTE: Consider using BuildTags (run_type + project_id + project_name) for dimensional consistency with duration metrics
-            _qualityGateRetries.Add(1, PipelineTelemetry.RunTypeTag(run.RunType));
+            _qualityGateRetries.Add(1, PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
             var errorSummary = BuildQualityGateErrorSummary(report);
             run.RetryErrors.Enqueue(errorSummary);
 
@@ -470,7 +469,8 @@ public partial class QualityGateExecutor
                         Description = $"{retryAgentDescription} (attempt {run.RetryCount})",
                         Logger = _logger,
                         Phase = null,
-                        EnvironmentVariables = context.InjectedSecrets
+                        EnvironmentVariables = context.InjectedSecrets,
+                        StallMetrics = _stallMetrics
                     },
                     callbacks, ct,
                     resumeSessionId: run.CodegenSessionId);
