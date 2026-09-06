@@ -113,20 +113,6 @@
                                     <td>@(p.RetryCount > 0 ? p.RetryCount.ToString() : "—")</td>
                                     <td title="@p.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")">@Ago(p.CreatedAt)</td>
                                     <td>
-                                        @{
-                                            // TODO: When the user types an out-of-range value (e.g. 1001 or -1) or a
-                                            // non-numeric string, the guard below silently does nothing — the input stays
-                                            // dirty showing the invalid value until the next 10-second auto-refresh tick.
-                                            // The issue recommends using @bind to get automatic DOM revert on validation
-                                            // failure, but PendingWorkItemDto uses init-only properties which are
-                                            // incompatible with @bind. A workaround is to call RefreshQuietAsync() even
-                                            // when the guard fires (or show an inline validation message). (#2360 warning)
-                                            //
-                                            // TODO: The lambda captures `p` from the foreach loop variable. This is safe
-                                            // today because foreach over IReadOnlyList<T> creates a new scope per
-                                            // iteration. If the loop construct changes (e.g. to a for-index loop), the
-                                            // capture would silently become the last item. (#2360 warning)
-                                        }
                                         <input type="number"
                                                class="priority-input"
                                                min="0"
@@ -213,10 +199,8 @@
     private IReadOnlyList<ActiveWorkItemDto> _active = [];
     private bool _loading = true;
     private string? _error;
-    // TODO: _priorityError is a single shared string for all rows. Concurrent edits on two different
-    // rows can overwrite each other's error or have one row's success clear another row's error.
-    // A per-row error model (e.g. Dictionary<Guid, string?>) would scope messages correctly, matching
-    // the behaviour expected from the JobQueueSection.razor reference implementation. (#2360 warning)
+    // _priorityError is shared across all rows; a per-row model would be cleaner but this matches
+    // the single-error pattern used elsewhere on this page.
     private string? _priorityError;
 
     // WorkItem ids with an in-flight cancel request — disables the row's button until it settles.
@@ -318,10 +302,6 @@
             await RefreshQuietAsync();
         }
         catch (OperationCanceledException) { }
-        // TODO: OperationCanceledException is swallowed without clearing _priorityError. If a prior
-        // error is visible and the component is disposed (navigation away triggers _cts.Cancel()),
-        // the error div stays visible briefly during teardown. Adding `_priorityError = null` here
-        // before the swallow would be consistent with how the success path handles cleanup. (#2360 warning)
         catch (Exception ex)
         {
             _priorityError = $"Priority update failed: {ex.Message}";
