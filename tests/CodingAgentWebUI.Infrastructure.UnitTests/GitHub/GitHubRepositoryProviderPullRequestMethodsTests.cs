@@ -182,6 +182,25 @@ public class GitHubRepositoryProviderPullRequestMethodsTests : WireMockTestBase
             .Should().ThrowAsync<ArgumentOutOfRangeException>();
     }
 
+    [Fact]
+    public async Task ListOpenPullRequestsAsync_FiltersClosedPrs_WhenDetailReturnsNonOpenState()
+    {
+        // Regression: Issues API has eventual consistency. A PR that merges during the fetch
+        // window can still appear as open in the Issues API (Step A), but the PR detail
+        // endpoint (Step B) will return state=closed or state=merged. The method must filter
+        // these out before returning, so merged PRs never enter the housekeeping agentDonePrs list.
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues"),
+            new[] { BuildIssueWithPr(10, "feature/just-merged") });
+        // Detail fetch returns closed (just merged)
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/10"),
+            BuildDetailedPR(10, "feature/just-merged", draft: false, state: "closed"));
+
+        await using var provider = CreateProvider();
+        var result = await provider.ListOpenPullRequestsAsync(1, 10, null, CancellationToken.None);
+
+        result.Items.Should().BeEmpty("a PR whose detail returns state=closed must be filtered out");
+    }
+
     // ── AddPrLabelAsync ───────────────────────────────────────────────────────
 
     [Fact]
@@ -505,12 +524,12 @@ public class GitHubRepositoryProviderPullRequestMethodsTests : WireMockTestBase
     }
 
     private static object BuildDetailedPR(int number, string headRef, bool draft,
-        string? body = "PR body") => new
+        string? body = "PR body", string state = "open") => new
     {
         id = number * 100,
         number,
         html_url = $"https://github.com/{Owner}/{Repo}/pull/{number}",
-        state = "open",
+        state,
         title = $"Update feature",
         body,
         draft,

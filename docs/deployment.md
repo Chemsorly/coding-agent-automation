@@ -82,13 +82,13 @@ The chart deploys:
 | `secrets.opencodeConfigContent` | OpenCode config JSON (mounted as file for opencode agents) |
 | `existingSecret` | Use a pre-existing K8s Secret instead of chart-managed one |
 | `otel.endpoint` | OTLP collector endpoint |
-| `otel.orchestratorServiceName` | `OTEL_SERVICE_NAME` for the Orchestrator (default: `coding-agent-orchestrator`). API, Job Controller, and Scheduler have fixed service names set in their own deployment templates. |
+| `otel.orchestratorServiceName` | `OTEL_SERVICE_NAME` for the Orchestrator (default: `coding-agent-orchestrator`). The Orchestrator's service name is hardcoded at compile time via `AddService(serviceName:...)` in `OpenTelemetryRegistration.cs` — it is not configurable via the `OTEL_SERVICE_NAME` env var the way the other processes are. API, Job Controller, and Scheduler read `OTEL_SERVICE_NAME` at startup with fixed-name fallbacks (`coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`). |
 | `orchestrator.env.faroCollectorUrl` | Grafana Faro collector URL for frontend RUM monitoring. Leave empty to disable (default: `""`). See [Faro configuration](configuration.md#frontend-observability-grafana-faro) for details. |
 | `orchestrator.ingress.enabled` | Enable Ingress for external access |
 | `database.host` | PostgreSQL hostname (required) |
 | `database.port` | PostgreSQL port (default: `5432`) |
 | `database.auth.existingSecret` | K8s Secret containing database credentials (keys: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`) |
-| `database.migrateOnStartup` | Apply EF Core migrations on Pipeline API startup (default: `true`). Set `false` only for blue/green deployments where you apply migrations manually via `kubectl exec` into the API pod before cutover. The Orchestrator always performs a fast-fail schema check and will refuse to start against an unmigrated schema. |
+| `database.migrateOnStartup` | Apply EF Core migrations on Pipeline API startup (default: `true`). Set `false` only for blue/green deployments where you apply migrations manually via `kubectl exec` into the API pod before cutover. |
 | `database.sslMode` | Npgsql SSL mode: `Disable`, `Prefer`, `Require`, `VerifyCA`, `VerifyFull`. Defaults to `Require` in production if not set. Use `Disable` for in-cluster Postgres without TLS. |
 | `workDistribution.dispatch.intervalSeconds` | Seconds between dispatch cycles (default: `10`) |
 | `workDistribution.dispatch.rateLimitPerSecond` | Max dispatches per second (default: `10`) |
@@ -141,6 +141,8 @@ jobTemplates:
 When the Kubernetes client is unavailable (e.g., local `dotnet run`), `ILeaderElectionService` logs a warning and remains non-leader for the lifetime of the process. `PipelineLoopService` null-checks the leader gate: when the gate is `null`, the loop runs unconditionally — no leader gate needed for single-instance local dev.
 
 > **Note on `AgentReservationService` and Redis:** When Redis is configured (`signalr.redis.connectionString` is set), `AgentReservationService` switches to distributed per-agent Redis locks (`lock:agent:{id}`, 5-second TTL) instead of the in-process `_selectionLock`. This enables safe agent selection across multiple API replicas. The in-process lock is used only when Redis is absent (local dev or single-replica deployments).
+
+> **Note on Data Protection and Redis:** The Orchestrator (Blazor Server) uses ASP.NET Core Data Protection to encrypt antiforgery tokens for Blazor circuits. In a multi-replica Orchestrator deployment each pod generates its own ephemeral key ring by default. If the load balancer routes the initial page request to replica A (token encrypted with A's key) but the Blazor WebSocket to replica B, circuit initialization fails with a `CryptographicException`. When `signalr.redis.connectionString` is set, the Orchestrator persists Data Protection keys to Redis under `caa:data-protection-keys` so all replicas share one ring. This is the same connection string used for the SignalR backplane — no additional config key is needed.
 
 ### Graceful Shutdown
 
@@ -249,6 +251,17 @@ rules:
     verbs: ["create", "delete"]   # per-Job derived-key Secrets (GC'd via ownerReference)
 ```
 
+### Health Probe Endpoints
+
+All deployments expose `/healthz` (liveness) and `/readyz` (readiness) endpoints on port 8080. No authentication required.
+
+| Process | `/healthz` behavior | `/readyz` behavior |
+|---------|--------------------|--------------------|
+| Pipeline API | `200 ok` unless Redis ping fails (when Redis is configured, returns `503 redis_ping_failed`) | `503` when DB is unreachable or Redis backplane is configured and disconnected |
+| Orchestrator | `200 ok` | `503` during graceful drain (`readinessDrainDelaySeconds` window) or when DB/infrastructure is unreachable |
+| Job Controller | `200 ok` | `200 ok` (non-leader is considered ready; availability is controlled by leader election) |
+| Scheduler | `200 ok` | `200 ok` (same rationale as Job Controller) |
+
 ### Credential Pool Initialization
 
 Kiro agents require CLI authentication tokens stored on persistent volumes. In Kubernetes mode, `DispatchService` claims a PVC from the credential pool for each spawned Job pod, mounting it at `/home/ubuntu/.local/share/kiro-cli`. Before the first dispatch, each PVC must contain valid tokens.
@@ -325,7 +338,7 @@ Set up a `~/.kube/config` pointing at your local cluster. The Kubernetes client 
 dotnet run --project src/CodingAgentWebUI/
 ```
 
-> `Database__Host` must be set — the orchestrator requires PostgreSQL on startup.
+> `PipelineApi__BaseUrl` must be set — the Orchestrator has no direct database connection and will fail to start without the Pipeline API URL. `Database__Host` is required by the **Pipeline API** (`src/CodingAgentWebUI.Api/`), not the Orchestrator.
 
 For the agent project (work-item mode, connecting to the Pipeline API hub on port 8080):
 ```bash

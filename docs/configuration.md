@@ -18,8 +18,8 @@ Projects can override most general settings on a per-project basis using a nulla
 | `agentTimeout` | 00:30:00 | Maximum time for a single agent invocation |
 | `externalCiTimeout` | 00:15:00 | Max wait time for external CI completion (CI runs automatically when a Pipeline Provider is configured on the job template) |
 | `externalCiPollInterval` | 00:00:30 | How often to poll external CI for status updates |
-| `ciNotStartedTimeout` | 00:05:00 | How long to wait for CI runs to appear before concluding CI never started. Triggers re-push instead of burning the full `externalCiTimeout` |
-| `ciNotStartedMaxRetries` | 5 | Max re-push retries when CI never starts (range: 0–20). Each retry creates an empty commit and force-pushes to re-trigger CI |
+| `ciNotStartedTimeout` | 00:10:00 | How long to wait for CI runs to appear before concluding CI never started. Triggers re-push instead of burning the full `externalCiTimeout` |
+| `ciNotStartedMaxRetries` | 15 | Max re-push retries when CI never starts (range: 0–20). Each retry creates an empty commit and force-pushes to re-trigger CI |
 | `acceptanceCriteriaEnabled` | true | Enable acceptance criteria compliance check (runs in parallel with code reviewers, produces structured JSON report) |
 | `blacklistedPaths` | .agent, .brain | Paths excluded from agent commits |
 | `orphanedLabelSweepIntervalMinutes` | 30 | Minutes between orphaned label recovery sweeps (periodic background check for issues stuck with `agent:in-progress` label when no active run exists) |
@@ -110,9 +110,6 @@ Quality gates are configured per-stack via Quality Gate Configurations (see [Lab
 |-------|-------------|
 | `compilationCommand` / `compilationArguments` | Build command that must exit 0 |
 | `testCommand` / `testArguments` | Test command that must have 0 failures |
-| `coverageThreshold` | Minimum code coverage percentage (0-100). Set to `null` or `0` to disable coverage checks. |
-| `coverageReportFormat` | `cobertura` or `jacoco` — determines how coverage reports are parsed |
-| `coverageReportPaths` | Explicit file globs for coverage reports. When not specified, convention-based discovery is used. |
 | `processTimeoutSeconds` | Maximum execution time in seconds for quality gate processes (compilation, tests). Default: `600` (10 minutes). Processes exceeding this limit are killed (entire process tree) and the gate is reported as failed. |
 
 ### Provider Error Handling in the Retry Loop
@@ -136,7 +133,7 @@ Code review behavior is configured via the `codeReview` sub-object on the pipeli
 |---------|---------|-------------|
 | `codeReview.maxIterations` | 2 | Max review → fix cycles |
 | `codeReview.fixPrompt` | *(null)* | When set, review splits into find-then-fix: review agents report findings with severity markers, then this fix prompt runs only if `[CRITICAL]` findings exist. When null, falls back to single-pass behavior |
-| `codeReview.reviewIsolation` | Isolated | Controls whether review agents share the code-generation session or run isolated. Values: `Isolated` (default, no shared context — prevents bias) or `Shared` |
+| `codeReview.reviewIsolation` | Isolated | Review agents always run in isolated sessions (no shared context — prevents self-attribution bias). `Isolated` is the only valid value; the `Shared` option was removed in #2233. |
 
 ### Inline Comments
 
@@ -170,7 +167,7 @@ Controls automated PR branch management for templates with `HousekeepingEnabled:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `housekeepingConcurrencyLimit` | `1` | Max PRs simultaneously in "update triggered, CI running" state per repository. Enforced per `RepoProviderId`, not per template. Minimum effective value: 1 (values ≤ 0 are clamped). Can be overridden per template via `HousekeepingConcurrencyLimit` on the `PipelineJobTemplate`. |
+| `housekeepingConcurrencyLimit` | `1` | Max PRs simultaneously in "update triggered, CI running" state per repository. Enforced per `RepoProviderId`, not per template. Default: 1 (fully serial). Can be overridden per template via `HousekeepingConcurrencyLimit` on the `PipelineJobTemplate`. |
 | `housekeepingBranchCleanupIntervalMinutes` | `60` | How often (in minutes) stale agent branch cleanup runs per repository. Set to `0` to run every poll cycle. Only active when the template has `HousekeepingBranchCleanupEnabled: true`. |
 
 Per-template controls (on `PipelineJobTemplate`):
@@ -317,7 +314,7 @@ The maintenance service is triggered by the Scheduler via `POST /api/scheduler/m
 | `AGENT_LABELS` | Comma-separated labels for routing (e.g., `kiro,dotnet,dotnet10`) |
 | `AGENT_API_KEY` | Must match the orchestrator's key |
 | `AGENT_API_KEY_FILE` | File path containing the API key (K8s Secret mount alternative to `AGENT_API_KEY` env var) |
-| `AGENT_PROVIDER_TYPE` | Agent backend type: `KiroCli` (default) or `OpenCode` |
+| `AGENT_PROVIDER_TYPE` | Agent backend type: `KiroCli` or `OpenCode`. When absent or empty, defaults to `KiroCli`. |
 | `KIRO_CLI_PATH` | Override path for the Kiro CLI executable (default: `/home/ubuntu/.local/bin/kiro-cli`) |
 | `OPENCODE_BASE_URL` | Override base URL for the OpenCode HTTP API (default: `http://127.0.0.1:4096`) |
 | `OPENCODE_CONFIG_CONTENT` | JSON configuration for OpenCode agents (injected as environment variable, not needed for Kiro agents) |
@@ -421,6 +418,27 @@ For HTTP-based MCP servers, use `"type": "http"` with a `url` field instead of `
 ```
 
 The `headers` field passes HTTP request headers to the remote server (e.g., `Authorization` for authenticated endpoints). It is only used for `http` transport — ignored for `stdio` servers.
+
+### SSE-Type MCP Servers
+
+For Server-Sent Events (SSE) based MCP servers, use `"type": "sse"` with a `url` field:
+
+```json
+{
+  "mcpServers": {
+    "my-sse-mcp": {
+      "type": "sse",
+      "url": "https://mcp.example.com/sse",
+      "headers": {
+        "Authorization": "Bearer <token>"
+      },
+      "disabled": false
+    }
+  }
+}
+```
+
+SSE transport uses the same `url` and `headers` fields as `http` transport. Use `sse` when the remote server streams events over Server-Sent Events rather than responding to standard HTTP requests.
 
 ### Project-Level MCP Servers
 
