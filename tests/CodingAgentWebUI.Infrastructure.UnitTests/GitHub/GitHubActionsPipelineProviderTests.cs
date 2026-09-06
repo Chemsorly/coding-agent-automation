@@ -141,7 +141,11 @@ public class GitHubActionsPipelineProviderTests
     [InlineData(WorkflowJobStatus.Queued, null, PipelineRunState.Pending)]
     [InlineData(WorkflowJobStatus.InProgress, null, PipelineRunState.Running)]
     [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Success, PipelineRunState.Passed)]
+    [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Neutral, PipelineRunState.Passed)]
+    [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Skipped, PipelineRunState.Cancelled)]
     [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Failure, PipelineRunState.Failed)]
+    [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.TimedOut, PipelineRunState.Failed)]
+    [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.ActionRequired, PipelineRunState.Failed)]
     [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Cancelled, PipelineRunState.Cancelled)]
     public void MapJobState_MapsCorrectly(WorkflowJobStatus status, WorkflowJobConclusion? conclusion, PipelineRunState expected)
     {

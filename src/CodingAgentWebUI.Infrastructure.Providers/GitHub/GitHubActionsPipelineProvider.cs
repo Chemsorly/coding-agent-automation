@@ -290,7 +290,11 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
         return conclusion switch
         {
             WorkflowJobConclusion.Success => PipelineRunState.Passed,
+            WorkflowJobConclusion.Neutral => PipelineRunState.Passed,   // neutral = not a failure (e.g. no-op jobs)
+            WorkflowJobConclusion.Skipped => PipelineRunState.Cancelled, // skipped by if: condition — not a failure
             WorkflowJobConclusion.Failure => PipelineRunState.Failed,
+            WorkflowJobConclusion.TimedOut => PipelineRunState.Failed,
+            WorkflowJobConclusion.ActionRequired => PipelineRunState.Failed,
             WorkflowJobConclusion.Cancelled => PipelineRunState.Cancelled,
             _ => PipelineRunState.Failed
         };
