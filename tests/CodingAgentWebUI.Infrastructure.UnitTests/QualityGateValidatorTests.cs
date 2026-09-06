@@ -2,6 +2,9 @@ using AwesomeAssertions;
 using System.Runtime.InteropServices;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Pipeline.Telemetry;
+using CodingAgentWebUI.TestUtilities;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests;
 
@@ -450,6 +453,188 @@ public class QualityGateValidatorTests
     // open after being killed (e.g., grandchild inheriting handles) should still allow the method
     // to return within ~5s due to the drain CancellationTokenSource.
     // (Tests moved to CodingAgentWebUI.Infrastructure.IntegrationTests/QualityGateValidatorProcessTests.cs)
+
+    // --- Metric Instrumentation Tests ---
+
+    // TODO: Add tests for the outcome=error path in both RunQgcTestsAsync and RunQgcCompilationAsync.
+    // Use a MetricCapturingValidator variant that throws a non-timeout/non-cancel exception (e.g. IOException)
+    // from RunProcessAsync and assert that:
+    //   (a) RunQgcCompilationAsync records quality_gate.process.duration with outcome=error (existing path, unverified)
+    //   (b) RunQgcTestsAsync records quality_gate.process.duration with outcome=error (path added in review fix)
+    // Without this, a regression that drops the error-path recording would not be caught by the test suite.
+    // (review finding: correctness reviewer WARNING)
+
+    // TODO: Add tests for the outcome=cancelled path in both RunQgcTestsAsync and RunQgcCompilationAsync.
+    // Both methods have an explicit catch (OperationCanceledException) block that records duration with
+    // outcome="cancelled" and then re-throws. There is no test that exercises this path — deleting either
+    // catch block or changing outcome to "success" would not be detected. Use a MetricCapturingValidator
+    // variant that throws OperationCanceledException from RunProcessAsync and assert that duration is
+    // recorded with outcome=cancelled. (review finding: test quality reviewer WARNING)
+
+    // TODO: Add a test for RunQgcCompilationAsync success path that mirrors
+    // RunQgcTestsAsync_WhenProcessSucceeds_RecordsDurationWithSuccessOutcome. The final
+    // _processDuration.Record call in RunQgcCompilationAsync (non-catch path) is untested;
+    // dropping it would not be caught by the test suite. (review finding: test quality reviewer WARNING)
+
+    [Fact]
+    public async Task RunQgcTestsAsync_WhenProcessTimesOut_IncrementsTimeoutCounterAndRecordsDuration()
+    {
+        var factory = new TestMeterFactory();
+        using var timeoutCollector = new MetricCollector<long>(factory, PipelineTelemetry.SourceName, "quality_gate.process.timeout");
+        using var durationCollector = new MetricCollector<double>(factory, PipelineTelemetry.SourceName, "quality_gate.process.duration");
+
+        var validator = new MetricCapturingValidator(simulateTimeout: true, factory: factory);
+        var qgc = new QualityGateConfiguration
+        {
+            DisplayName = "MyTestSuite",
+            TestCommand = "dotnet",
+            TestArguments = ["test"],
+            ProcessTimeoutSeconds = 1
+        };
+
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-metrics-test-{Guid.NewGuid():N}");
+        try
+        {
+            var report = await validator.ValidateAsync(tempWorkspace, [qgc], CancellationToken.None);
+
+            report.Tests!.Passed.Should().BeFalse("timeout causes failure");
+
+            // Timeout counter should have exactly 1 measurement with gate_name=tests and qgc_name=MyTestSuite
+            timeoutCollector.GetMeasurementSnapshot().Should().ContainSingle(m =>
+                m.Value == 1 &&
+                m.Tags.Contains(new KeyValuePair<string, object?>("gate_name", "tests")) &&
+                m.Tags.Contains(new KeyValuePair<string, object?>("qgc_name", "MyTestSuite")),
+                "quality_gate.process.timeout should be incremented once with correct tags on timeout");
+
+            // Duration histogram should record with outcome=timeout
+            durationCollector.GetMeasurementSnapshot().Should().ContainSingle(m =>
+                m.Tags.Contains(new KeyValuePair<string, object?>("gate_name", "tests")) &&
+                m.Tags.Contains(new KeyValuePair<string, object?>("qgc_name", "MyTestSuite")) &&
+                m.Tags.Contains(new KeyValuePair<string, object?>("outcome", "timeout")),
+                "quality_gate.process.duration should be recorded with outcome=timeout");
+        }
+        finally
+        {
+            try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { }
+            factory.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task RunQgcTestsAsync_WhenProcessSucceeds_RecordsDurationWithSuccessOutcome()
+    {
+        var factory = new TestMeterFactory();
+        using var timeoutCollector = new MetricCollector<long>(factory, PipelineTelemetry.SourceName, "quality_gate.process.timeout");
+        using var durationCollector = new MetricCollector<double>(factory, PipelineTelemetry.SourceName, "quality_gate.process.duration");
+
+        var validator = new MetricCapturingValidator(simulateTimeout: false, factory: factory);
+        var qgc = new QualityGateConfiguration
+        {
+            DisplayName = "MyTestSuite",
+            TestCommand = "dotnet",
+            TestArguments = ["test"],
+            ProcessTimeoutSeconds = 60
+        };
+
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-metrics-test-{Guid.NewGuid():N}");
+        try
+        {
+            await validator.ValidateAsync(tempWorkspace, [qgc], CancellationToken.None);
+
+            // No timeout counter increments on success
+            timeoutCollector.GetMeasurementSnapshot().Should().BeEmpty("no timeout event on success");
+
+            // Duration recorded with outcome=success
+            durationCollector.GetMeasurementSnapshot().Should().ContainSingle(m =>
+                m.Tags.Contains(new KeyValuePair<string, object?>("gate_name", "tests")) &&
+                m.Tags.Contains(new KeyValuePair<string, object?>("qgc_name", "MyTestSuite")) &&
+                m.Tags.Contains(new KeyValuePair<string, object?>("outcome", "success")),
+                "quality_gate.process.duration should be recorded with outcome=success");
+        }
+        finally
+        {
+            try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { }
+            factory.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task RunQgcCompilationAsync_WhenProcessTimesOut_IncrementsTimeoutCounterAndRecordsDuration()
+    {
+        var factory = new TestMeterFactory();
+        using var timeoutCollector = new MetricCollector<long>(factory, PipelineTelemetry.SourceName, "quality_gate.process.timeout");
+        using var durationCollector = new MetricCollector<double>(factory, PipelineTelemetry.SourceName, "quality_gate.process.duration");
+
+        var validator = new MetricCapturingValidator(simulateTimeout: true, factory: factory);
+        var qgc = new QualityGateConfiguration
+        {
+            DisplayName = "BuildProject",
+            CompilationCommand = "dotnet",
+            CompilationArguments = ["build"],
+            ProcessTimeoutSeconds = 1
+        };
+
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-metrics-test-{Guid.NewGuid():N}");
+        try
+        {
+            var report = await validator.ValidateAsync(tempWorkspace, [qgc], CancellationToken.None);
+
+            report.Compilation.Passed.Should().BeFalse("timeout causes failure");
+
+            // Timeout counter should have exactly 1 measurement with gate_name=compilation
+            timeoutCollector.GetMeasurementSnapshot().Should().ContainSingle(m =>
+                m.Value == 1 &&
+                m.Tags.Contains(new KeyValuePair<string, object?>("gate_name", "compilation")) &&
+                m.Tags.Contains(new KeyValuePair<string, object?>("qgc_name", "BuildProject")),
+                "quality_gate.process.timeout should be incremented once with correct tags on compilation timeout");
+
+            // Duration histogram should record with outcome=timeout
+            durationCollector.GetMeasurementSnapshot().Should().ContainSingle(m =>
+                m.Tags.Contains(new KeyValuePair<string, object?>("gate_name", "compilation")) &&
+                m.Tags.Contains(new KeyValuePair<string, object?>("qgc_name", "BuildProject")) &&
+                m.Tags.Contains(new KeyValuePair<string, object?>("outcome", "timeout")),
+                "quality_gate.process.duration should be recorded with outcome=timeout for compilation");
+        }
+        finally
+        {
+            try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { }
+            factory.Dispose();
+        }
+    }
+
+    private sealed class MetricCapturingValidator : QualityGateValidator
+    {
+        private readonly bool _simulateTimeout;
+
+        public MetricCapturingValidator(bool simulateTimeout, System.Diagnostics.Metrics.IMeterFactory factory)
+            : base(Serilog.Log.Logger, factory)
+        {
+            _simulateTimeout = simulateTimeout;
+        }
+
+        private protected override Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
+            string fileName, string arguments, string workingDirectory, CancellationToken ct, TimeSpan timeout)
+        {
+            if (_simulateTimeout)
+                throw new TimeoutException($"Process '{fileName} {arguments}' timed out after {timeout.TotalSeconds}s");
+
+            return Task.FromResult((0, "Passed: 5\nTest summary: total: 5; failed: 0; succeeded: 5; skipped: 0; duration: 0.1s", ""));
+        }
+    }
+
+    // TODO: Add ActivityListener-based tests verifying that the "QualityGate.Tests" and "QualityGate.Compilation"
+    // spans carry the expected tags: qgc_name, qgc.timeout_seconds (on every invocation) and qgc.timed_out=true
+    // (on timeout). The production code sets these correctly but there is no regression guard — a refactor could
+    // silently drop the tags without any test failing. Use ActivitySource.AddActivityListener with a filter on
+    // PipelineTelemetry.ActivitySource.Name and assert Activity.Tags after ValidateAsync returns.
+    // (review finding: correctness reviewer WARNING)
+
+    // TODO: Add unit tests for PipelineTelemetry.NormalizeStallPhase covering all branches other than
+    // QgcRetryAgent (which is exercised implicitly by the stall-monitor metric tests). Untested branches:
+    // CodeGen, Analysis, CodeReview, Decomposition, and Unknown (the fallback). A change that accidentally
+    // widens a branch condition — causing a description that should map to Unknown to match CodeReview, for
+    // example — would not be caught by the current test suite.
+    // (review finding: test quality reviewer WARNING)
 
     private sealed class TimeoutSimulatingValidator : QualityGateValidator
     {

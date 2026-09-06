@@ -2,6 +2,7 @@ using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
 using Microsoft.Extensions.DependencyInjection;
+using System.Diagnostics.Metrics;
 
 namespace CodingAgentWebUI.Infrastructure;
 
@@ -30,7 +31,8 @@ public static class ServiceCollectionExtensions
 
         // IQualityGateValidator is consumed by IQualityGateExecutor (singleton).
         // Register as singleton to avoid captive dependency.
-        services.AddSingleton<IQualityGateValidator>(sp => new QualityGateValidator(logger));
+        services.AddSingleton<IQualityGateValidator>(sp =>
+            new QualityGateValidator(logger, sp.GetRequiredService<IMeterFactory>()));
 
         services.AddSingleton<IBrainUpdateService>(sp => new BrainUpdateService(logger));
 
@@ -46,7 +48,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<CiLogWriter>(),
             sp.GetRequiredService<FeedbackService>(),
             logger,
-            sp.GetRequiredService<IPipelineRunHistoryService>()));
+            sp.GetRequiredService<IPipelineRunHistoryService>(),
+            meterFactory: sp.GetRequiredService<IMeterFactory>()));
 
         return services;
     }

@@ -42,6 +42,11 @@ public class PipelineTelemetryQualityGateTests : IDisposable
 
         collector.GetMeasurementSnapshot().Should().ContainSingle(m =>
             m.Value == 1 && m.Tags.Contains(new KeyValuePair<string, object?>("run_type", "implementation")));
+        // TODO: Add a test (or extend this one) that calls PipelineTelemetry.BuildTags(runType, projectId, projectName)
+        // and asserts that pipeline.project_id and pipeline.project_name are also present in the measurement tags.
+        // The production call site (QualityGateExecutor.RetryLoop.cs) was updated to BuildTags per the AC, but the test
+        // still uses the old RunTypeTag form, so a revert of the production call site would not be caught.
+        // (review finding: correctness reviewer WARNING)
     }
 
     [Theory]
