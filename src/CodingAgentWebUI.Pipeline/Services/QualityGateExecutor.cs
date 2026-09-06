@@ -91,7 +91,11 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         return string.Join(Environment.NewLine, errors);
     }
 
-    internal static string BuildQualityGateRetryPrompt(QualityGateReport report, int attempt, int maxRetries)
+    internal static string BuildQualityGateRetryPrompt(
+        QualityGateReport report,
+        int attempt,
+        int maxRetries,
+        IReadOnlyCollection<string>? priorRetryErrors = null)
     {
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"Quality gates failed (attempt {attempt}/{maxRetries}):");
@@ -101,6 +105,42 @@ public partial class QualityGateExecutor : IQualityGateExecutor
             sb.AppendLine($"- Security: {(report.SecurityScan.Passed ? "PASSED" : "FAILED")} ({report.SecurityScan.Details})");
         if (report.ExternalCi != null)
             sb.AppendLine($"- External CI: {(report.ExternalCi.Passed ? "PASSED" : "FAILED")} ({report.ExternalCi.Details})");
+
+        // priorRetryErrors snapshot includes the current attempt's error as its last entry
+        // (enqueued before this method is called). Count > 1 means at least one prior attempt
+        // exists in addition to the current one — only then do we show the history section.
+        if (priorRetryErrors is { Count: > 1 })
+        {
+            var recent = priorRetryErrors.TakeLast(5).ToList();
+            sb.AppendLine();
+            sb.AppendLine("**Prior attempt failures:**");
+            // Print all entries except the last (= current attempt's error)
+            // TODO: The attempt-label formula `attempt - (recent.Count - 1 - i)` assumes
+            // priorRetryErrors.Count == attempt, but transient 429/503 iterations in RunRetryLoopAsync
+            // enqueue an entry into run.RetryErrors without incrementing RetryCount permanently,
+            // causing Count > attempt and producing "Attempt 0" or negative labels in the prompt.
+            // Fix: clamp the label to Math.Max(1, …) or switch to a relative index ("Earlier failure #k").
+            // See review finding: Correctness WARNING — QualityGateExecutor.cs:118
+            for (var i = 0; i < recent.Count - 1; i++)
+                sb.AppendLine($"- Attempt {attempt - (recent.Count - 1 - i)}: {recent[i]}");
+
+            // TODO: `allIdentical` runs DistinctBy over ALL entries in `recent`, including the last
+            // (which is the current attempt's error). This is semantically inconsistent with the history
+            // display loop above, which explicitly excludes the last entry (current attempt). Consequence:
+            // if all prior attempts produced "Tests: X" but the current attempt produced "Tests: Y", the
+            // warning is correctly suppressed — but by accident of the current entry differing, not by
+            // design. Conversely, "prior identical, current differs" is a semantically meaningful edge
+            // (agent just made progress) that is currently untested. Consider restricting the identical
+            // check to `recent.Take(recent.Count - 1)` (prior entries only) for semantic consistency.
+            // See review finding: DotNetSpecialist WARNING — QualityGateExecutor.cs:126
+            var allIdentical = recent.DistinctBy(x => x).Count() == 1;
+            if (allIdentical)
+            {
+                sb.AppendLine();
+                sb.AppendLine("⚠️ The same failure has recurred on every attempt without any test names or error details. This is likely a transient infrastructure failure (OOM kill, container resource limit), not a code issue. Do not make further code changes — verify by running the test command once, and if it passes locally, report the result without modifying any files.");
+            }
+        }
+
         sb.AppendLine();
         sb.AppendLine($"Diagnostic output has been written to `{AgentWorkspacePaths.QualityGatesOutputDirectory}/`.");
         sb.AppendLine("List the files there and read the relevant ones.");

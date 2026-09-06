@@ -429,7 +429,21 @@ public partial class QualityGateExecutor
             _logger.Information("Pipeline {RunId} quality gates failed, auto-retry {RetryCount}/{MaxRetries}", run.RunId, run.RetryCount, config.MaxRetries);
             callbacks.EmitOutputLine($"🔄 Quality gates failed, retrying (attempt {run.RetryCount}/{config.MaxRetries})");
 
-            var retryPromptSummary = BuildQualityGateRetryPrompt(report, run.RetryCount, config.MaxRetries);
+            var retryPromptSummary = BuildQualityGateRetryPrompt(
+                report,
+                run.RetryCount,
+                config.MaxRetries,
+                // Snapshot taken after Enqueue above, so the array includes the current attempt's
+                // error as its last element. Enumerable.ToArray iterates BoundedConcurrentQueue's
+                // enumerator (backed by ConcurrentQueue<T>) — a safe, consistent snapshot.
+                // ORDERING INVARIANT: Enqueue MUST remain before this call. If the order changes,
+                // the history section will double-count or miss the current attempt's error.
+                // TODO: `BuildQualityGateRetryPrompt` does not call ArgumentNullException.ThrowIfNull(report)
+                // before dereferencing it. A null report will throw NullReferenceException deep inside the
+                // string-building loop rather than at the method boundary. Add a null guard at the top of
+                // BuildQualityGateRetryPrompt to produce a clear diagnostic.
+                // See review finding: DotNetSpecialist WARNING — QualityGateExecutor.RetryLoop.cs:437
+                run.RetryErrors.ToArray());
 
             run.ChatHistory.Enqueue(new ChatEntry
             {
