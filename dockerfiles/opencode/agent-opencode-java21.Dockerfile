@@ -90,6 +90,10 @@ RUN chmod 755 /app/entrypoint.sh
 # Switch to non-root user (UID 1000)
 USER ubuntu
 
+# Build args for version tracking — must be declared in the runtime stage to produce ENV
+ARG BUILD_COMMIT_SHA=local
+ENV SERVICE_VERSION=${BUILD_COMMIT_SHA}
+
 # --- Environment variables ---
 # Required: URL of the orchestrator's SignalR hub
 ENV ORCHESTRATOR_URL=""

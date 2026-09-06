@@ -20,7 +20,7 @@ Log.Logger = new LoggerConfiguration()
 var builder = WebApplication.CreateBuilder(args);
 
 // ── Startup identity log ─────────────────────────────────────────────────────
-var version = typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0";
+var version = Environment.GetEnvironmentVariable("SERVICE_VERSION") ?? "local";
 var serviceName = builder.Configuration.GetValue<string>("OTEL_SERVICE_NAME") ?? "coding-agent-api";
 Log.Information("Pipeline API starting: ServiceName={ServiceName} Version={Version}", serviceName, version);
 
@@ -75,7 +75,7 @@ var otelServiceName = builder.Configuration.GetValue<string>("OTEL_SERVICE_NAME"
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(r => r.AddService(
         serviceName: otelServiceName,
-        serviceVersion: typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0"))
+        serviceVersion: version))
     .WithTracing(t =>
     {
         t.AddAspNetCoreInstrumentation()

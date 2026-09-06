@@ -377,6 +377,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             existing.RunType = entity.RunType;
             existing.IssueProviderConfigId = entity.IssueProviderConfigId;
             existing.SummaryJson = entity.SummaryJson;
+            existing.HarnessVersion = entity.HarnessVersion;
         }
         else
         {
@@ -409,6 +410,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
                 retry.RunType = entity.RunType;
                 retry.IssueProviderConfigId = entity.IssueProviderConfigId;
                 retry.SummaryJson = entity.SummaryJson;
+                retry.HarnessVersion = entity.HarnessVersion;
                 await db.SaveChangesAsync(ct).ConfigureAwait(false);
             }
         }
@@ -446,7 +448,8 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             IssueProviderConfigId = summary.InitiatedBy.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal)
                 ? ConsolidationConstants.ProviderConfigId
                 : null,
-            SummaryJson = JsonSerializer.Serialize(summary, JsonOptions)
+            SummaryJson = JsonSerializer.Serialize(summary, JsonOptions),
+            HarnessVersion = summary.HarnessVersion
         };
     }
 
