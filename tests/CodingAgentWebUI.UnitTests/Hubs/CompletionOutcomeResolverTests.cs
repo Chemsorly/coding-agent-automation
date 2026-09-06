@@ -48,11 +48,23 @@ public class CompletionOutcomeResolverTests
     [Fact]
     public void Arbitrary_non_terminal_step_maps_to_Failed()
     {
-        // Any step that isn't Completed or Cancelled hits the wildcard arm → Failed
+        // Any step that isn't Completed, Cancelled, or ConflictRestart hits the wildcard arm → Failed
         var (status, _, _) = CompletionOutcomeResolver.Resolve(
             PipelineStep.GeneratingCode, null, null, Fallback);
 
         status.Should().Be(WorkItemStatus.Failed);
+    }
+
+    [Fact]
+    public void ConflictRestart_step_returns_Succeeded_with_no_error()
+    {
+        // ConflictRestart is a clean automatic recovery, not an agent failure
+        var (status, errorMsg, failureReason) = CompletionOutcomeResolver.Resolve(
+            PipelineStep.ConflictRestart, "PR conflicted", FailureReason.AgentError, Fallback);
+
+        status.Should().Be(WorkItemStatus.Succeeded);
+        errorMsg.Should().BeNull();
+        failureReason.Should().BeNull();
     }
 
     // ── Error message derivation ──────────────────────────────────────────────
@@ -78,7 +90,7 @@ public class CompletionOutcomeResolverTests
     [Fact]
     public void Non_failure_status_yields_null_error_and_null_failure_reason()
     {
-        foreach (var step in new[] { PipelineStep.Completed, PipelineStep.Cancelled })
+        foreach (var step in new[] { PipelineStep.Completed, PipelineStep.Cancelled, PipelineStep.ConflictRestart })
         {
             var (_, errorMsg, failureReason) = CompletionOutcomeResolver.Resolve(
                 step, "some reason", FailureReason.Timeout, Fallback);
