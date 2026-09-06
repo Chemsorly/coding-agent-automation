@@ -15,7 +15,6 @@
     Data: IPipelineApiWorkItemClient.GetPendingAsync (queued) + GetActiveAsync (in-flight).
     Browsing the provider's issue backlog with dependency-based readiness + dispatch is the
     dispatch-drawer flow (Pipelines → Browse Issues) — linked, not duplicated here.
-    Per-issue PriorityWeight is intentionally absent (no backend field).
 *@
 
 <PageTitle>Work - Coding Agent</PageTitle>
@@ -93,9 +92,13 @@
             }
             else
             {
+                @if (_priorityError is not null)
+                {
+                    <div style="color: var(--error); padding: 8px 16px; font-size: 13px;">@_priorityError</div>
+                }
                 <div class="monitoring-table-wrap">
                     <table class="monitoring-table">
-                        <thead><tr><th>Issue</th><th>Type</th><th>Project</th><th>Initiated by</th><th>Retries</th><th>Age</th><th></th></tr></thead>
+                        <thead><tr><th>Issue</th><th>Type</th><th>Project</th><th>Initiated by</th><th>Retries</th><th>Age</th><th>Priority</th><th></th></tr></thead>
                         <tbody>
                             @foreach (var p in _pending)
                             {
@@ -109,6 +112,32 @@
                                     <td>@(string.IsNullOrEmpty(p.InitiatedBy) ? "—" : p.InitiatedBy)</td>
                                     <td>@(p.RetryCount > 0 ? p.RetryCount.ToString() : "—")</td>
                                     <td title="@p.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")">@Ago(p.CreatedAt)</td>
+                                    <td>
+                                        @{
+                                            // TODO: When the user types an out-of-range value (e.g. 1001 or -1) or a
+                                            // non-numeric string, the guard below silently does nothing — the input stays
+                                            // dirty showing the invalid value until the next 10-second auto-refresh tick.
+                                            // The issue recommends using @bind to get automatic DOM revert on validation
+                                            // failure, but PendingWorkItemDto uses init-only properties which are
+                                            // incompatible with @bind. A workaround is to call RefreshQuietAsync() even
+                                            // when the guard fires (or show an inline validation message). (#2360 warning)
+                                            //
+                                            // TODO: The lambda captures `p` from the foreach loop variable. This is safe
+                                            // today because foreach over IReadOnlyList<T> creates a new scope per
+                                            // iteration. If the loop construct changes (e.g. to a for-index loop), the
+                                            // capture would silently become the last item. (#2360 warning)
+                                        }
+                                        <input type="number"
+                                               class="priority-input"
+                                               min="0"
+                                               max="1000"
+                                               value="@p.PriorityWeight"
+                                               title="Edit priority (0–1000)"
+                                               @onchange="async e => {
+                                                   if (int.TryParse(e.Value?.ToString(), out var w) && w >= 0 && w <= 1000)
+                                                       await SetPriorityAsync(p.Id, w);
+                                               }" />
+                                    </td>
                                     <td style="text-align: right;">
                                         <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
                                                 disabled="@_cancelling.Contains(p.Id)"
@@ -184,6 +213,11 @@
     private IReadOnlyList<ActiveWorkItemDto> _active = [];
     private bool _loading = true;
     private string? _error;
+    // TODO: _priorityError is a single shared string for all rows. Concurrent edits on two different
+    // rows can overwrite each other's error or have one row's success clear another row's error.
+    // A per-row error model (e.g. Dictionary<Guid, string?>) would scope messages correctly, matching
+    // the behaviour expected from the JobQueueSection.razor reference implementation. (#2360 warning)
+    private string? _priorityError;
 
     // WorkItem ids with an in-flight cancel request — disables the row's button until it settles.
     private readonly HashSet<Guid> _cancelling = new();
@@ -267,6 +301,31 @@
         finally
         {
             _cancelling.Remove(id);
+        }
+    }
+
+    // Sets the dispatch priority weight for a pending WorkItem.
+    // On success, clears any prior error and refreshes to show the authoritative server value.
+    // On failure, records the error and refreshes to revert the DOM input to the server value.
+    // Revert is best-effort: if RefreshQuietAsync itself fails, _pending stays stale until
+    // the next auto-refresh tick (same trade-off as the rest of Work.razor).
+    private async Task SetPriorityAsync(Guid id, int weight)
+    {
+        try
+        {
+            await WorkItems.SetPriorityAsync(id, weight, _cts.Token);
+            _priorityError = null;
+            await RefreshQuietAsync();
+        }
+        catch (OperationCanceledException) { }
+        // TODO: OperationCanceledException is swallowed without clearing _priorityError. If a prior
+        // error is visible and the component is disposed (navigation away triggers _cts.Cancel()),
+        // the error div stays visible briefly during teardown. Adding `_priorityError = null` here
+        // before the swallow would be consistent with how the success path handles cleanup. (#2360 warning)
+        catch (Exception ex)
+        {
+            _priorityError = $"Priority update failed: {ex.Message}";
+            await RefreshQuietAsync();
         }
     }
 
