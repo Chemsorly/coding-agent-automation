@@ -104,15 +104,7 @@ public partial class QualityGateExecutor
                 };
             }
 
-            ciGate = new GateResult
-            {
-                GateName = "External CI",
-                Passed = ciPassed,
-                Details = ciPassed
-                    ? $"CI passed. {ciStatus.Jobs.Count} job(s) completed."
-                    : QualityGateValidator.BuildCiFailureDetails(ciStatus, ciLogPaths)
-            };
-
+            ciGate = BuildCiGateResult(ciPassed, ciStatus, ciLogPaths, "CI");
             callbacks.EmitOutputLine(ciPassed
                 ? $"✅ External CI passed ({ciStatus.Jobs.Count} jobs)"
                 : $"❌ External CI failed: {ciGate.Details}");
@@ -604,6 +596,29 @@ public partial class QualityGateExecutor
         // Return a deterministic failure rather than an open-ended WaitForCompletionAsync call.
         return new PipelineRunStatus { State = PipelineRunState.Failed, Jobs = Array.Empty<PipelineJobResult>() };
     }
+
+    /// <summary>
+    /// Constructs a <see cref="GateResult"/> for an external CI gate.
+    /// Extracted to eliminate duplication between the pre-PR CI path
+    /// (<see cref="AppendExternalCiIfNeededAsync"/>) and the post-PR CI path
+    /// (<c>WaitForPostPrCiAsync</c> in <c>QualityGateExecutor.RetryLoop.cs</c>).
+    /// </summary>
+    /// <param name="ciPassed">Whether CI passed.</param>
+    /// <param name="ciStatus">The final CI status used to build failure details.</param>
+    /// <param name="ciLogPaths">Optional CI log paths for the failure message.</param>
+    /// <param name="label">Short label used in the Details string (e.g. "CI" or "Post-PR CI").</param>
+    internal static GateResult BuildCiGateResult(
+        bool ciPassed,
+        PipelineRunStatus ciStatus,
+        IReadOnlyDictionary<long, string>? ciLogPaths,
+        string label) => new()
+    {
+        GateName = "External CI",
+        Passed = ciPassed,
+        Details = ciPassed
+            ? $"{label} passed. {ciStatus.Jobs.Count} job(s) completed."
+            : QualityGateValidator.BuildCiFailureDetails(ciStatus, ciLogPaths)
+    };
 
     /// <summary>
     /// Polls GetRunStatusAsync until at least one workflow run/job is detected or the timeout expires.

@@ -1304,4 +1304,67 @@ public class QualityGateExecutorCiConflictRestartTests
         PipelineProvider = _mockPipelineProvider.Object,
         QualityGateConfigs = new List<QualityGateConfiguration>()
     };
+
+    /// <summary>
+    /// Covers the exhaustion-branch conflict check: when CI never starts and the last attempt
+    /// is the exhaustion iteration (attempt == maxRetries), IsPullRequestBehindBaseAsync is called
+    /// and Conflicted → ConflictRestart is returned without pushing a re-trigger commit.
+    /// This is the path flagged as untested by the TODO in WhenConflictedOnAttempt0_ReturnsConflictRestart_NoEmptyCommitPushed.
+    /// </summary>
+    [Fact]
+    public async Task WhenConflictedAtExhaustion_ReturnsConflictRestart_NoCommitPushedOnExhaustionIteration()
+    {
+        // maxRetries = 0 → the single attempt (attempt=0) is immediately the exhaustion iteration.
+        // With maxRetries=0 there is no loop body that pushes — only the exhaustion check fires.
+        const int maxRetries = 0;
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+
+        // All mergeability calls → Conflicted (the only call is at exhaustion)
+        _mockRepoProvider.Setup(r => r.IsPullRequestBehindBaseAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PrMergeabilityStatus.Conflicted);
+
+        var context = BuildContext(run, ciNotStartedMaxRetries: maxRetries);
+        var result = await _executor.AppendExternalCiIfNeededAsync(context, PassingReport, false, CancellationToken.None);
+
+        // ConflictRestart is returned
+        run.CurrentStep.Should().Be(PipelineStep.ConflictRestart,
+            "Conflicted at exhaustion must produce ConflictRestart");
+        run.FinalLabel.Should().Be(AgentLabels.Next);
+        result.ExternalCi.Should().NotBeNull();
+        result.ExternalCi!.Passed.Should().BeFalse();
+
+        // No re-trigger commit was pushed (exhaustion branch exits before the push code)
+        _mockRepoProvider.Verify(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(),
+                It.Is<string>(s => s.Contains("not started")),
+                It.IsAny<IReadOnlyList<string>?>(), true, It.IsAny<CancellationToken>(),
+                It.IsAny<IReadOnlyList<string>?>()),
+            Times.Never,
+            "No re-trigger commit must be pushed on the exhaustion iteration when PR is conflicted");
+    }
+
+    /// <summary>
+    /// Covers the exhaustion-branch non-conflict case: when CI never starts, exhaustion is reached,
+    /// and IsPullRequestBehindBaseAsync returns Unknown — ConflictRestart must NOT be triggered and
+    /// FailureReason must be set to the "CI never started" message.
+    /// </summary>
+    [Fact]
+    public async Task WhenUnknownAtExhaustion_DoesNotTriggerConflictRestart_SetsFailureReason()
+    {
+        const int maxRetries = 0;
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+
+        _mockRepoProvider.Setup(r => r.IsPullRequestBehindBaseAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PrMergeabilityStatus.Unknown);
+
+        var context = BuildContext(run, ciNotStartedMaxRetries: maxRetries);
+        await _executor.AppendExternalCiIfNeededAsync(context, PassingReport, false, CancellationToken.None);
+
+        run.CurrentStep.Should().NotBe(PipelineStep.ConflictRestart,
+            "Unknown mergeability at exhaustion must not produce ConflictRestart");
+        run.FailureReason.Should().Contain("CI never started",
+            "FailureReason must be set to the exhaustion message");
+    }
 }

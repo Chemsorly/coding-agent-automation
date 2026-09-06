@@ -265,15 +265,7 @@ public partial class QualityGateExecutor
                     ciPollStopwatch.Elapsed.TotalSeconds,
                     PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
 
-                ciGate = new GateResult
-                {
-                    GateName = "External CI",
-                    Passed = ciPassed,
-                    Details = ciPassed
-                        ? $"Post-PR CI passed. {ciStatus.Jobs.Count} job(s) completed."
-                        : QualityGateValidator.BuildCiFailureDetails(ciStatus, ciLogPaths)
-                };
-
+                ciGate = BuildCiGateResult(ciPassed, ciStatus, ciLogPaths, "Post-PR CI");
                 callbacks.EmitOutputLine(ciPassed
                     ? $"✅ Post-PR CI passed ({ciStatus.Jobs.Count} jobs)"
                     : $"❌ Post-PR CI failed: {ciGate.Details}");
