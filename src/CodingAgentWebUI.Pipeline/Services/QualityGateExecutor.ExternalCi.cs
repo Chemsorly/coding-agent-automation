@@ -113,7 +113,8 @@ public partial class QualityGateExecutor
         {
             ciGate = new GateResult
             {
-                GateName = "External CI", Passed = false,
+                GateName = "External CI",
+                Passed = false,
                 Details = $"External CI timed out after {config.ExternalCiTimeout}"
             };
         }
@@ -123,7 +124,8 @@ public partial class QualityGateExecutor
             _logger.Warning(ex, "Pipeline {RunId} external CI check failed, treating as gate failure", run.RunId);
             ciGate = new GateResult
             {
-                GateName = "External CI", Passed = false,
+                GateName = "External CI",
+                Passed = false,
                 Details = $"External CI error: {ex.Message}"
             };
         }
@@ -612,13 +614,13 @@ public partial class QualityGateExecutor
         PipelineRunStatus ciStatus,
         IReadOnlyDictionary<long, string>? ciLogPaths,
         string label) => new()
-    {
-        GateName = "External CI",
-        Passed = ciPassed,
-        Details = ciPassed
+        {
+            GateName = "External CI",
+            Passed = ciPassed,
+            Details = ciPassed
             ? $"{label} passed. {ciStatus.Jobs.Count} job(s) completed."
             : QualityGateValidator.BuildCiFailureDetails(ciStatus, ciLogPaths)
-    };
+        };
 
     /// <summary>
     /// Polls GetRunStatusAsync until at least one workflow run/job is detected or the timeout expires.
