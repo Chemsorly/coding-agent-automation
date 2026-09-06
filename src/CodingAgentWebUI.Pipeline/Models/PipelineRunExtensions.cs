@@ -56,4 +56,37 @@ public static class PipelineRunExtensions
                     existing.Cost is null && result.Cost is null ? null : (existing.Cost ?? 0m) + (result.Cost ?? 0m)));
         }
     }
+
+    /// <summary>
+    /// Accumulates token usage directly from a <see cref="TokenUsage"/> instance into the
+    /// pipeline run totals and emits the <c>agent.tokens.used</c> metric.
+    /// <para>
+    /// Cost is <b>not</b> tracked because <see cref="TokenUsage"/> carries no cost information
+    /// — cost is only available on <see cref="AgentResult"/>. Use the
+    /// <see cref="AccumulateTokenUsage(PipelineRun, AgentResult?, string?)"/> overload when
+    /// cost tracking is needed.
+    /// </para>
+    /// </summary>
+    public static void AccumulateTokenUsage(this PipelineRun run, TokenUsage? usage, string? phase = null)
+    {
+        if (usage is null) return;
+        run.TotalTokens += usage.TotalTokens;
+        run.CacheReadTokens += usage.CacheReadTokens;
+        run.CacheWriteTokens += usage.CacheWriteTokens;
+
+        var tags = phase is null
+            ? PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName)
+            : PipelineTelemetry.BuildTagsWithPhase(run.RunType, run.ProjectId, run.ProjectName, phase);
+
+        PipelineTelemetry.TokensUsed.Add(usage.TotalTokens, tags);
+
+        if (phase is not null)
+        {
+            run.Metrics.PhaseBreakdown.AddOrUpdate(phase,
+                new PhaseUsage(usage.TotalTokens, null),  // null cost — TokenUsage carries no cost information
+                (_, existing) => new PhaseUsage(
+                    existing.Tokens + usage.TotalTokens,
+                    existing.Cost));  // preserve any previously-accumulated cost from other sources
+        }
+    }
 }

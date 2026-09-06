@@ -16,11 +16,18 @@ namespace CodingAgentWebUI.Pipeline.Services;
 internal class CodeReviewOrchestrator
 {
     private readonly Serilog.ILogger _logger;
+    private readonly System.Diagnostics.Metrics.Histogram<double> _stepDuration;
+    private readonly System.Diagnostics.Metrics.Counter<long> _stepCount;
 
-    internal CodeReviewOrchestrator(Serilog.ILogger logger)
+    internal CodeReviewOrchestrator(
+        Serilog.ILogger logger,
+        System.Diagnostics.Metrics.Histogram<double>? stepDuration = null,
+        System.Diagnostics.Metrics.Counter<long>? stepCount = null)
     {
         ArgumentNullException.ThrowIfNull(logger);
         _logger = logger;
+        _stepDuration = stepDuration ?? PipelineTelemetry.StepDuration;
+        _stepCount = stepCount ?? PipelineTelemetry.StepCount;
     }
 
     /// <summary>
@@ -194,6 +201,9 @@ internal class CodeReviewOrchestrator
     /// <summary>
     /// Runs acceptance criteria check and injects non-compliant criteria as CRITICAL findings.
     /// Returns the number of additional critical findings injected.
+    /// Unconditionally emits <c>pipeline.step.duration{step_name="AcceptanceCriteriaCheck"}</c>
+    /// and <c>pipeline.step.count</c> metrics via Stopwatch+finally, matching the pattern in
+    /// <see cref="PullRequestFinalizationService"/>.
     /// </summary>
     // NOTE: Add targeted unit tests for InjectAcceptanceCriteriaFindingsAsync branching logic
     // (acResult null, no criteria, no non-compliant criteria). Currently only covered at integration level.
@@ -204,41 +214,52 @@ internal class CodeReviewOrchestrator
     {
         var run = context.Run;
 
-        var acResult = await ExecuteAcceptanceCriteriaSafeAsync(context, ct);
-        if (acResult is null)
-            return 0;
-
-        run.AccumulateTokenUsage(acResult, phase: "acceptance_criteria");
-        run.AcceptanceCriteriaReport = await AcceptanceCriteriaParser.ParseAsync(
-            run.WorkspacePath!, _logger, ct) ?? run.AcceptanceCriteriaReport;
-
-        // Inject non-compliant criteria as CRITICAL findings so the fix agent addresses them
-        if (run.AcceptanceCriteriaReport is not { Criteria.Count: > 0 })
-            return 0;
-
-        var nonCompliant = run.AcceptanceCriteriaReport.Criteria
-            .Where(c => c.Status == CriterionStatus.NonCompliant)
-            .ToList();
-
-        if (nonCompliant.Count == 0)
-            return 0;
-
-        _logger.Information(
-            "Pipeline {RunId} injecting {Count} non-compliant acceptance criteria as CRITICAL findings",
-            run.RunId, nonCompliant.Count);
-        context.Callbacks.EmitOutputLine($"📋 Acceptance criteria: {nonCompliant.Count} non-compliant → injected as CRITICAL");
-
-        if (iterationFindings.Length > 0)
-            iterationFindings.AppendLine("--- Agent: AcceptanceCriteria ---");
-
-        foreach (var criterion in nonCompliant)
+        var sw = Stopwatch.StartNew();
+        try
         {
-            var reasoning = criterion.Reasoning ?? "No reasoning provided";
-            iterationFindings.AppendLine($"[CRITICAL] — Acceptance criterion not met: \"{criterion.Criterion}\". {reasoning}");
-        }
+            var acResult = await ExecuteAcceptanceCriteriaSafeAsync(context, ct);
+            if (acResult is null)
+                return 0;
 
-        run.AddCodeReviewCounts(nonCompliant.Count, 0, 0);
-        return nonCompliant.Count;
+            run.AccumulateTokenUsage(acResult, phase: "acceptance_criteria");
+            run.AcceptanceCriteriaReport = await AcceptanceCriteriaParser.ParseAsync(
+                run.WorkspacePath!, _logger, ct) ?? run.AcceptanceCriteriaReport;
+
+            // Inject non-compliant criteria as CRITICAL findings so the fix agent addresses them
+            if (run.AcceptanceCriteriaReport is not { Criteria.Count: > 0 })
+                return 0;
+
+            var nonCompliant = run.AcceptanceCriteriaReport.Criteria
+                .Where(c => c.Status == CriterionStatus.NonCompliant)
+                .ToList();
+
+            if (nonCompliant.Count == 0)
+                return 0;
+
+            _logger.Information(
+                "Pipeline {RunId} injecting {Count} non-compliant acceptance criteria as CRITICAL findings",
+                run.RunId, nonCompliant.Count);
+            context.Callbacks.EmitOutputLine($"📋 Acceptance criteria: {nonCompliant.Count} non-compliant → injected as CRITICAL");
+
+            if (iterationFindings.Length > 0)
+                iterationFindings.AppendLine("--- Agent: AcceptanceCriteria ---");
+
+            foreach (var criterion in nonCompliant)
+            {
+                var reasoning = criterion.Reasoning ?? "No reasoning provided";
+                iterationFindings.AppendLine($"[CRITICAL] — Acceptance criterion not met: \"{criterion.Criterion}\". {reasoning}");
+            }
+
+            run.AddCodeReviewCounts(nonCompliant.Count, 0, 0);
+            return nonCompliant.Count;
+        }
+        finally
+        {
+            sw.Stop();
+            var tags = PipelineTelemetry.BuildStepTags("AcceptanceCriteriaCheck", run);
+            _stepDuration.Record(sw.Elapsed.TotalSeconds, tags);
+            _stepCount.Add(1, tags);
+        }
     }
 
     /// <summary>

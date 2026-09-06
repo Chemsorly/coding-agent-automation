@@ -19,6 +19,8 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
     private readonly Serilog.ILogger _logger;
     private readonly Counter<long> _analysisGateOutcomes;
     private readonly Counter<long> _reviewSkipped;
+    private readonly Histogram<double> _stepDuration;
+    private readonly Counter<long> _stepCount;
 
     public AgentPhaseExecutor(Serilog.ILogger logger, IMeterFactory? meterFactory = null)
     {
@@ -31,11 +33,16 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
             _analysisGateOutcomes = meter.CreateCounter<long>("pipeline.analysis.gate_outcome", "{outcome}", "Analysis gate decision outcomes");
             _reviewSkipped = meter.CreateCounter<long>("pipeline.review.skipped", "{skip}",
                 "Code review phase skipped due to empty resolved reviewer configs (all deleted or disabled)");
+            _stepDuration = meter.CreateHistogram<double>("pipeline.step.duration", "s", "Duration of individual pipeline steps",
+                advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600] });
+            _stepCount = meter.CreateCounter<long>("pipeline.step.count", "{step}", "Pipeline step execution count");
         }
         else
         {
             _analysisGateOutcomes = PipelineTelemetry.AnalysisGateOutcomes;
             _reviewSkipped = PipelineTelemetry.ReviewSkipped;
+            _stepDuration = PipelineTelemetry.StepDuration;
+            _stepCount = PipelineTelemetry.StepCount;
         }
     }
 

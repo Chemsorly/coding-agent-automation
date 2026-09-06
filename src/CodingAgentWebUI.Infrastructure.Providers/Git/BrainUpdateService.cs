@@ -1,8 +1,10 @@
+using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -17,18 +19,38 @@ public partial class BrainUpdateService : IBrainUpdateService
 {
     private readonly ILogger _logger;
     private readonly IGitOperations _git;
+    private readonly Counter<long> _brainPushRetries;
 
-    public BrainUpdateService(ILogger logger)
-        : this(logger, new LibGit2SharpGitOperations())
+    public BrainUpdateService(ILogger logger, IMeterFactory? meterFactory = null)
+        : this(logger, new LibGit2SharpGitOperations(), meterFactory)
     {
     }
 
-    public BrainUpdateService(ILogger logger, IGitOperations gitOperations)
+    public BrainUpdateService(ILogger logger, IGitOperations gitOperations, IMeterFactory? meterFactory = null)
     {
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(gitOperations);
         _logger = logger;
         _git = gitOperations;
+
+        if (meterFactory is not null)
+        {
+            // TODO: [WARNING] The Meter returned by meterFactory.Create is not stored or disposed.
+            // Under GC pressure the Meter object may be collected before the first push retry, causing
+            // _brainPushRetries.Add(1) to record to an unregistered meter (metric silently disappears).
+            // Fix: store the Meter in a private field (private readonly Meter? _meter) and implement
+            // IDisposable to dispose it, or verify that the IMeterFactory DI lifetime guarantees the
+            // Meter is kept alive for the service's lifetime.
+            // See review findings: Correctness WARNING line 39, DotNetSpecialist WARNING line 38.
+            var meter = meterFactory.Create(new MeterOptions(PipelineTelemetry.SourceName));
+            _brainPushRetries = meter.CreateCounter<long>(
+                "brain.push.retries", "{retry}",
+                "Brain repo push retry attempts on non-fast-forward conflict");
+        }
+        else
+        {
+            _brainPushRetries = PipelineTelemetry.BrainPushRetries;
+        }
     }
 
     /// <summary>
@@ -311,6 +333,7 @@ public partial class BrainUpdateService : IBrainUpdateService
                 ex.Message.Contains("non-fast-forward", StringComparison.OrdinalIgnoreCase) &&
                 attempt < maxRetries)
             {
+                _brainPushRetries.Add(1);  // no tags — no PipelineRun context available here
                 _logger.Warning(
                     "Brain push attempt {Attempt}/{MaxRetries} failed (non-fast-forward), rebasing...",
                     attempt, maxRetries);

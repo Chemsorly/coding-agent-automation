@@ -93,6 +93,9 @@ public class QualityGateValidator : IQualityGateValidator
                 DisplayName = qgc.DisplayName,
                 Compilation = compilationResult,
                 Tests = null,
+                // SecurityScan is intentionally null: no security scanner runs locally.
+                // SecurityScan is only populated when external CI runs a security gate
+                // (see AppendExternalCiIfNeededAsync in QualityGateExecutor.ExternalCi.cs).
                 SecurityScan = null
             }, true);
         }
@@ -107,7 +110,7 @@ public class QualityGateValidator : IQualityGateValidator
                 DisplayName = qgc.DisplayName,
                 Compilation = compilationResult,
                 Tests = testsResult,
-                SecurityScan = null
+                SecurityScan = null  // SecurityScan — see first return path above
             }, true);
         }
 
@@ -117,7 +120,7 @@ public class QualityGateValidator : IQualityGateValidator
             DisplayName = qgc.DisplayName,
             Compilation = compilationResult,
             Tests = testsResult,
-            SecurityScan = null
+            SecurityScan = null  // SecurityScan — see first return path above
         }, false);
     }
 

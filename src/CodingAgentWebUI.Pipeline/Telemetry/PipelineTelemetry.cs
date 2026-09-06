@@ -48,6 +48,9 @@ public static class PipelineTelemetry
 
     public static readonly Counter<long> QualityGateRetries = Meter.CreateCounter<long>(
         "quality_gate.retries", "{retry}", "Quality gate retry attempts");
+    public static readonly Counter<long> QualityGateRetryOutcome = Meter.CreateCounter<long>(
+        "quality_gate.retry.outcome", "{retry}",
+        "Quality gate retry attempts broken down by outcome (transient, auth_abort, session_restart, retry)");
     public static readonly Histogram<double> QualityGateDuration = Meter.CreateHistogram<double>(
         "quality_gate.duration", "s", "Total time in quality gate phase");
     public static readonly Counter<long> QualityGateEvaluations = Meter.CreateCounter<long>(
@@ -91,6 +94,8 @@ public static class PipelineTelemetry
         "brain.files.written", "{file}", "Total brain files committed across all runs");
     public static readonly Counter<long> BrainSyncSkipped = Meter.CreateCounter<long>(
         "brain.sync.skipped", "{sync}", "Runs where post-run brain sync was skipped (tagged by reason)");
+    public static readonly Counter<long> BrainPushRetries = Meter.CreateCounter<long>(
+        "brain.push.retries", "{retry}", "Brain repo push retry attempts on non-fast-forward conflict");
     public static readonly Histogram<double> BrainSyncDuration = Meter.CreateHistogram<double>(
         "brain.sync.duration", "s", "Duration of brain sync operations",
         advice: new InstrumentAdvice<double>

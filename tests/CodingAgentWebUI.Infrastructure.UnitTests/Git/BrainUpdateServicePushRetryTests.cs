@@ -2,6 +2,8 @@ using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.TestUtilities;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using Moq;
 using Serilog;
 
@@ -230,5 +232,69 @@ public class BrainUpdateServicePushRetryTests : IDisposable
             .Returns("base content\n");
         _mockGit.Setup(g => g.FileExists(It.IsAny<string>())).Returns(false);
         _mockGit.Setup(g => g.WriteAllText(It.IsAny<string>(), It.IsAny<string>()));
+    }
+
+    // ── brain.push.retries counter ───────────────────────────────────────────
+
+    [Fact]
+    public async Task CommitAndPushAsync_NonFastForwardRetry_IncrementsBrainPushRetriesCounter()
+    {
+        // Arrange: use TestMeterFactory for isolation — counter is created on the factory's meter,
+        // not the static PipelineTelemetry.BrainPushRetries, to avoid static cross-test contamination.
+        using var factory = new CodingAgentWebUI.TestUtilities.TestMeterFactory();
+        using var collector = new Microsoft.Extensions.Diagnostics.Metrics.Testing.MetricCollector<long>(
+            factory, CodingAgentWebUI.Pipeline.Telemetry.PipelineTelemetry.SourceName, "brain.push.retries");
+
+        var sut = new BrainUpdateService(new LoggerConfiguration().CreateLogger(), _mockGit.Object, factory);
+
+        var callCount = 0;
+        _mockProvider.Setup(p => p.PushBranchAsync(_repoPath, "main", It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                callCount++;
+                if (callCount == 1)
+                    throw new InvalidOperationException("Push failed for ref 'refs/heads/main': non-fast-forward");
+                return Task.CompletedTask;
+            });
+
+        SetupRebaseMocks();
+
+        // Act
+        var result = await sut.CommitAndPushAsync(
+            _repoPath, "run-1", "issue-1", _mockProvider.Object, CancellationToken.None);
+
+        // Assert: push succeeded on second attempt
+        result.Success.Should().BeTrue();
+
+        // Counter must have incremented exactly once (one non-fast-forward retry)
+        var snapshot = collector.GetMeasurementSnapshot();
+        // TODO: [WARNING] ContainSingle(m => m.Value == 1) does not assert tag values — since this counter
+        // is emitted with no tags, explicitly asserting snapshot[0].Tags is empty would make intent clear
+        // and catch a future regression that accidentally adds tags. Also consider asserting
+        // snapshot.Count == 1 separately for a clearer failure message.
+        // See review finding: TestQualityReviewer WARNING line 263.
+        snapshot.Should().ContainSingle(m => m.Value == 1,
+            "brain.push.retries must increment exactly once when the push fails with non-fast-forward on the first attempt and succeeds on the second");
+    }
+
+    [Fact]
+    public async Task CommitAndPushAsync_PushSucceededFirstAttempt_DoesNotIncrementBrainPushRetriesCounter()
+    {
+        using var factory = new CodingAgentWebUI.TestUtilities.TestMeterFactory();
+        using var collector = new Microsoft.Extensions.Diagnostics.Metrics.Testing.MetricCollector<long>(
+            factory, CodingAgentWebUI.Pipeline.Telemetry.PipelineTelemetry.SourceName, "brain.push.retries");
+
+        var sut = new BrainUpdateService(new LoggerConfiguration().CreateLogger(), _mockGit.Object, factory);
+
+        _mockProvider.Setup(p => p.PushBranchAsync(_repoPath, "main", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var result = await sut.CommitAndPushAsync(
+            _repoPath, "run-1", "issue-1", _mockProvider.Object, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+
+        collector.GetMeasurementSnapshot().Should().BeEmpty(
+            "brain.push.retries must NOT increment when the push succeeds on the first attempt");
     }
 }

@@ -135,6 +135,15 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
             ct);
 
         // 9. Return StepResult.Continue on success or StepResult.Stop on failure
+        // Accumulate review/refinement token usage before the ReviewExecuted guard so usage is captured
+        // even on partial execution (e.g., discriminator ran but findings file was missing).
+        // Note: ReviewExecuted=false (disabled path) returns AdversarialReviewResult.Skipped whose
+        // ReviewTokenUsage is null, so these calls are no-ops in the disabled case.
+        if (reviewResult.ReviewTokenUsage is not null)
+            run.AccumulateTokenUsage(reviewResult.ReviewTokenUsage, phase: "decomposition_review");
+        if (reviewResult.RefinementTokenUsage is not null)
+            run.AccumulateTokenUsage(reviewResult.RefinementTokenUsage, phase: "decomposition_refinement");
+
         if (!reviewResult.ReviewExecuted)
         {
             // Review failed to execute (agent crash, etc.) — treat as failure

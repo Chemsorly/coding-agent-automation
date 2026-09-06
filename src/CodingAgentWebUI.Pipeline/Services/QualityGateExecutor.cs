@@ -22,6 +22,7 @@ public partial class QualityGateExecutor : IQualityGateExecutor
     private readonly Histogram<double> _qualityGateDuration;
     private readonly Histogram<double> _postPrCiDuration;
     private readonly Counter<long> _qualityGateRetries;
+    private readonly Counter<long> _qualityGateRetryOutcome;
     private readonly Counter<long> _qualityGateEvaluations;
     private readonly Histogram<double> _stepDuration;
     private readonly Counter<long> _stepCount;
@@ -56,7 +57,16 @@ public partial class QualityGateExecutor : IQualityGateExecutor
             _postPrCiDuration = meter.CreateHistogram<double>("quality_gate.post_pr_ci.duration", "s", "Time waiting for post-PR CI to complete",
                 advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600] });
             _qualityGateRetries = meter.CreateCounter<long>("quality_gate.retries", "{retry}", "Quality gate retry attempts");
+            _qualityGateRetryOutcome = meter.CreateCounter<long>("quality_gate.retry.outcome", "{retry}", "Quality gate retry attempts broken down by outcome");
             _qualityGateEvaluations = meter.CreateCounter<long>("quality_gate.evaluations", "{evaluation}", "Individual gate evaluation events");
+            // TODO: [WARNING] "pipeline.step.duration" and "pipeline.step.count" are also created by
+            // AgentPhaseExecutor when both services share the same IMeterFactory. The OTel SDK allows
+            // duplicate instrument names on the same meter as long as description and units match (which
+            // they do here), but if InstrumentAdvice bucket boundaries ever diverge between the two
+            // registrations a silent duplicate-instrument warning will appear only in SDK debug logs.
+            // Consider using the PipelineTelemetry.StepDuration / StepCount static instruments
+            // (which already exist) instead of re-creating them here to eliminate the duplication.
+            // See review finding: DotNetSpecialist WARNING line 57.
             _stepDuration = meter.CreateHistogram<double>("pipeline.step.duration", "s", "Duration of individual pipeline steps",
                 advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600] });
             _stepCount = meter.CreateCounter<long>("pipeline.step.count", "{step}", "Pipeline step execution count");
@@ -67,6 +77,7 @@ public partial class QualityGateExecutor : IQualityGateExecutor
             _qualityGateDuration = PipelineTelemetry.QualityGateDuration;
             _postPrCiDuration = PipelineTelemetry.PostPrCiDuration;
             _qualityGateRetries = PipelineTelemetry.QualityGateRetries;
+            _qualityGateRetryOutcome = PipelineTelemetry.QualityGateRetryOutcome;
             _qualityGateEvaluations = PipelineTelemetry.QualityGateEvaluations;
             _stepDuration = PipelineTelemetry.StepDuration;
             _stepCount = PipelineTelemetry.StepCount;

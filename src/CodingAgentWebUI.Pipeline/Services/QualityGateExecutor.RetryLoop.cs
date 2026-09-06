@@ -422,6 +422,13 @@ public partial class QualityGateExecutor
         {
             run.RetryCount++;
             // NOTE: Consider using BuildTags (run_type + project_id + project_name) for dimensional consistency with duration metrics
+            // TODO: [WARNING] This counter fires unconditionally for every loop iteration, including TransientWait
+            // and RestartSession outcomes where run.RetryCount is subsequently decremented/unchanged. This means
+            // quality_gate.retries.Sum() will exceed quality_gate.retry.outcome{outcome="retry"}.Sum() by the
+            // number of transient/restart iterations. The two counters are intentionally not 1:1 — the existing
+            // counter counts loop entries, the new counter tags outcomes after classification. If comparing
+            // them in Grafana, account for this asymmetry. Intentional per issue spec:
+            // "for TransientWait, the counter fires but run.RetryCount is decremented — this is intentional".
             _qualityGateRetries.Add(1, PipelineTelemetry.RunTypeTag(run.RunType));
             var errorSummary = BuildQualityGateErrorSummary(report);
             run.RetryErrors.Enqueue(errorSummary);
@@ -486,6 +493,18 @@ public partial class QualityGateExecutor
                         // if the entry condition ever changes so RetryCount is 0 when this branch runs.
                         run.RetryCount = Math.Max(0, run.RetryCount - 1);
                         consecutiveTransientRetries++;
+                        {
+                            // TODO: [WARNING] BuildTags returns a freshly-allocated List<> which is then mutated
+                            // by tags.Add(...). This is safe today, but if BuildTags is ever changed to return a
+                            // cached/shared collection, mutating it would corrupt shared state across all callers.
+                            // Consider using BuildTagsWithOutcome (a new PipelineTelemetry helper) or a TagList
+                            // struct to build the full tag set without post-construction mutation.
+                            // Same pattern applies to the three other outcome blocks below.
+                            // See review finding: DotNetSpecialist WARNING line 490.
+                            var tags = PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName);
+                            tags.Add(new KeyValuePair<string, object?>("outcome", "transient"));
+                            _qualityGateRetryOutcome.Add(1, tags);
+                        }
 
                         if (consecutiveTransientRetries >= MaxConsecutiveTransientRetries)
                         {
@@ -513,6 +532,11 @@ public partial class QualityGateExecutor
                         _logger.Error(
                             "Pipeline {RunId} retry {RetryCount}: permanent auth failure, aborting retry loop",
                             run.RunId, run.RetryCount);
+                        {
+                            var tags = PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName);
+                            tags.Add(new KeyValuePair<string, object?>("outcome", "auth_abort"));
+                            _qualityGateRetryOutcome.Add(1, tags);
+                        }
                         shouldBreak = true;
                         break; // exits switch; shouldBreak will exit the while loop below
 
@@ -523,12 +547,22 @@ public partial class QualityGateExecutor
                             "Pipeline {RunId} retry {RetryCount}: agent returned empty response (0 tokens), " +
                             "clearing session affinity for next attempt",
                             run.RunId, run.RetryCount);
+                        {
+                            var tags = PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName);
+                            tags.Add(new KeyValuePair<string, object?>("outcome", "session_restart"));
+                            _qualityGateRetryOutcome.Add(1, tags);
+                        }
                         run.CodegenSessionId = null;
                         continue; // Skip QG validation — workspace unchanged, go straight to next retry
 
                     default: // RetryOutcome.Retry
                         // Non-transient iteration: reset consecutive transient counter.
                         consecutiveTransientRetries = 0;
+                        {
+                            var tags = PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName);
+                            tags.Add(new KeyValuePair<string, object?>("outcome", "retry"));
+                            _qualityGateRetryOutcome.Add(1, tags);
+                        }
                         if (agentResult != null)
                             await _prOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);
                         break;
