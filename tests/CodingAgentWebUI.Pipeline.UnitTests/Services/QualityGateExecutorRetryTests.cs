@@ -1157,4 +1157,107 @@ public class QualityGateExecutorFailureCategoryTests
         _mockCallbacks.Verify(c => c.AddRunToHistoryAsync(_run), Times.AtLeastOnce,
             "Run must be recorded in history");
     }
+
+    /// <summary>
+    /// ConflictRestart detected inside RunPostRetryCleanupAndFinalizeAsync (the CI pass after cleanup).
+    /// The initial QG passes with CI passing too (entering the cleanup path), then the final QG in
+    /// cleanup passes but CI returns ConflictRestart. Covers RetryLoop.cs lines 135-137.
+    /// </summary>
+    [Fact]
+    public async Task ConflictRestart_InPostRetryCleanupPath_AfterFinalQualityGate_TransitionsToConflictRestart()
+    {
+        // All QG validator calls pass.
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .ReturnsAsync(PassingReport);
+
+        // First WaitForCompletionAsync: pass (initial pre-PR CI succeeds → enters cleanup path).
+        // Second WaitForCompletionAsync: ConflictRestart (final CI in cleanup).
+        var pipelineProvider = new Mock<IPipelineProvider>();
+        var passedStatus = new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [] };
+        var conflictStatus = new PipelineRunStatus { State = PipelineRunState.ConflictRestart, Jobs = [] };
+        pipelineProvider.SetupSequence(p => p.WaitForCompletionAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(passedStatus)         // initial CI passes
+            .ReturnsAsync(conflictStatus);      // cleanup CI → ConflictRestart
+
+        // GetRunStatusAsync returns Running so WaitForCiRunsToAppearAsync detects CI immediately.
+        pipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [] });
+
+        _mockRepoProvider.Setup(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
+        _mockRepoProvider.Setup(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
+        _mockRepoProvider.Setup(r => r.PushBranchAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("sha-head-abc");
+        _mockCallbacks.Setup(c => c.CreateDraftPrIfNotExists(
+                It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.CreatePullRequest(
+                It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var config = new PipelineConfiguration
+        {
+            AgentTimeout = TimeSpan.FromMinutes(10),
+            MaxRetries = 0,
+            CiNotStartedTimeout = TimeSpan.FromMilliseconds(1),
+            CiNotStartedMaxRetries = 0,
+            ExternalCiPollInterval = TimeSpan.FromMilliseconds(5),
+            ExternalCiTimeout = TimeSpan.FromMinutes(5),
+            StallPollInterval = TimeSpan.FromMilliseconds(50),
+            StallWarningInterval = TimeSpan.FromHours(1)
+        };
+
+        var context = new QualityGateContext
+        {
+            Run = _run,
+            Config = config,
+            AgentProvider = _mockAgent.Object,
+            IssueOps = _mockIssueOps.Object,
+            Callbacks = _mockCallbacks.Object,
+            RepoProvider = _mockRepoProvider.Object,
+            PipelineProvider = pipelineProvider.Object,
+            QualityGateConfigs = new[]
+            {
+                new QualityGateConfiguration
+                {
+                    DisplayName = "Test QGC",
+                    CompilationCommand = "dotnet",
+                    CompilationArguments = new[] { "build" },
+                    TestCommand = "dotnet",
+                    TestArguments = new[] { "test" }
+                }
+            },
+            Issue = new IssueDetail
+            {
+                Identifier = "99",
+                Title = "Test Issue",
+                Description = "Test issue description",
+                Labels = new[] { "bug" }
+            }
+        };
+
+        await _executor.ProceedToQualityGatesAsync(context, CancellationToken.None);
+
+        _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.ConflictRestart), Times.AtLeastOnce,
+            "Must transition to ConflictRestart from the cleanup path");
+        _mockCallbacks.Verify(c => c.FinalizePullRequest(
+                It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "FinalizePullRequest must not be called on ConflictRestart in the cleanup path");
+        _mockCallbacks.Verify(c => c.AddRunToHistoryAsync(_run), Times.AtLeastOnce,
+            "Run must be recorded in history");
+    }
 }

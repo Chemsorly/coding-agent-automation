@@ -264,12 +264,18 @@ public class PipelineRunInstrumentationTests : IDisposable
     {
         using var durationCollector = DoubleCollector("pipeline.jobs.duration");
 
+        // Bracket the entire run+freeze window so we know the maximum possible frozen duration.
+        var startTimestamp = Stopwatch.GetTimestamp();
         var instrumentation = StartRun();
         using var mres4 = new ManualResetEventSlim(false);
         mres4.Wait(10); // Ensure non-zero duration before freeze
 
-        var beforeFreezeTimestamp = Stopwatch.GetTimestamp();
         instrumentation.StopTiming();
+        // Capture the upper bound IMMEDIATELY after the first StopTiming call: the frozen duration
+        // cannot exceed elapsed time from before StartRun() to here, plus a small buffer for
+        // the internal Stopwatch.StartNew() call inside StartRun(). This is independent of
+        // scheduling jitter on the post-freeze wait.
+        var upperBoundSeconds = Stopwatch.GetElapsedTime(startTimestamp).TotalSeconds + 0.010;
 
         using var mres5 = new ManualResetEventSlim(false);
         mres5.Wait(50); // Let at least 50ms pass after freeze
@@ -277,12 +283,6 @@ public class PipelineRunInstrumentationTests : IDisposable
         instrumentation.StopTiming(); // must be no-ops
         instrumentation.StopTiming();
         instrumentation.Dispose();
-
-        // Upper bound: time from just before the freeze to now, plus a buffer to absorb
-        // scheduling jitter on loaded CI runners. The buffer must be smaller than the 50ms
-        // post-freeze wait above, so that any accidental extension of the frozen timer would
-        // still exceed the threshold and cause the test to fail.
-        var upperBoundSeconds = Stopwatch.GetElapsedTime(beforeFreezeTimestamp).TotalSeconds + 0.040;
 
         var snapshot = durationCollector.GetMeasurementSnapshot();
         snapshot.Should().ContainSingle();
