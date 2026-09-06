@@ -137,10 +137,12 @@ public class LabelStateMachineTests
     // ── Invalid Transitions ────────────────────────────────────────────────
 
     [Fact]
-    public void IsValidTransition_Done_To_InProgress_IsInvalid()
+    public void IsValidTransition_Done_To_InProgress_IsValid_ManualForceRequeue()
     {
+        // agent:done → agent:in-progress is a recovery transition: IssueDrawerService.DispatchIssueAsync
+        // explicitly force-requeues done issues via AgentLabelOperations.SwapAsync on manual dispatch.
         LabelStateMachine.IsValidTransition(AgentLabels.Done, AgentLabels.InProgress)
-            .Should().BeFalse();
+            .Should().BeTrue();
     }
 
     [Fact]
@@ -158,10 +160,12 @@ public class LabelStateMachineTests
     }
 
     [Fact]
-    public void IsValidTransition_Done_To_Next_IsInvalid()
+    public void IsValidTransition_Done_To_Next_IsValid_ManualForceRequeue()
     {
+        // agent:done → agent:next is a recovery transition: IssueDrawerService.DispatchIssueAsync
+        // explicitly force-requeues done issues via AgentLabelOperations.SwapAsync on manual dispatch.
         LabelStateMachine.IsValidTransition(AgentLabels.Done, AgentLabels.Next)
-            .Should().BeFalse();
+            .Should().BeTrue();
     }
 
     [Fact]
@@ -229,16 +233,18 @@ public class LabelStateMachineTests
     [Fact]
     public void ValidateTransition_InvalidTransition_ReturnsFalse()
     {
-        // Invalid transition — logs warning but returns false (no throw)
-        LabelStateMachine.ValidateTransition(AgentLabels.Done, AgentLabels.InProgress, "issue-42")
+        // Invalid transition — logs warning but returns false (no throw).
+        // agent:done → agent:in-progress is now valid (recovery); use agent:next → agent:done as example.
+        LabelStateMachine.ValidateTransition(AgentLabels.Next, AgentLabels.Done, "issue-42")
             .Should().BeFalse();
     }
 
     [Fact]
     public void ValidateTransition_NullIdentifier_DoesNotThrow()
     {
-        // Should not throw even without an identifier
-        LabelStateMachine.ValidateTransition(AgentLabels.Done, AgentLabels.InProgress)
+        // Should not throw even without an identifier.
+        // agent:done → agent:in-progress is now valid; use agent:next → agent:done as example.
+        LabelStateMachine.ValidateTransition(AgentLabels.Next, AgentLabels.Done)
             .Should().BeFalse();
     }
 
