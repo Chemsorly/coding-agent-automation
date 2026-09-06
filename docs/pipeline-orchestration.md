@@ -34,7 +34,7 @@ When multiple WorkItems are pending and an agent becomes available, the Job Cont
 
 This ordering matches the `WorkItemTaskType` enum values (`Implementation=0, Review=1, Decomposition=2, Consolidation=3`) but dispatch selection is driven by named queue checks in `DispatchScheduler`, not raw enum ordinals. Within the same priority tier, FIFO order is preserved (oldest enqueue time dispatched first).
 
-> **Note:** Consolidation `WorkItem` rows carry `PipelineRunType.Implementation` at the model level and are distinguished by `TaskType == Consolidation`. This is an internal data model detail — it has no effect on dispatch priority or querying from the UI.
+> **Note:** Consolidation `WorkItem` rows carry `PipelineRunType.Consolidation`. They are queryable from the UI via `IConsolidationService.GetRunHistoryAsync` / `IPipelineApiConsolidationRunClient.LoadAllRunsAsync`.
 
 A single ID flows end-to-end:
 

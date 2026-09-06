@@ -33,8 +33,13 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `quality_gate.duration` | Histogram | seconds | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Total time in quality gate phase |
 | `quality_gate.evaluations` | Counter | — | `gate_name`, `result` | Individual gate evaluation events |
 | `quality_gate.external_ci.duration` | Histogram | seconds | — | Time waiting for external CI |
+| `quality_gate.post_pr_ci.duration` | Histogram | seconds | — | Time waiting for post-PR CI to complete |
+| `quality_gate.process.timeout` | Counter | — | `gate_name`, `qgc_name` | QGC process timeouts (compilation or test command exceeded `processTimeoutSeconds`) |
+| `quality_gate.process.duration` | Histogram | seconds | `gate_name`, `qgc_name` | Duration of a single QGC process invocation (compilation or test command). Distinct from `quality_gate.duration` which covers the entire retry phase |
+| `quality_gate.stall.warnings` | Counter | — | `phase` | Agent silence warnings by pipeline phase — fires after each `stallWarningInterval` with no output |
+| `quality_gate.stall.kills` | Counter | — | `phase` | Agent processes killed due to stall timeout |
+| `quality_gate.stall.process_deaths` | Counter | — | `phase` | Agent process death events (process exited unexpectedly) by phase |
 | `dispatch.queue.wait_time` | Histogram | seconds | — | Time a job spent waiting in the dispatch queue |
-| `dispatch.queue.depth` | ObservableGauge | — | — | Jobs waiting for available agent |
 | `agent.jobs.active` | ObservableGauge | — | — | Currently executing agent jobs |
 | `agent.connections.total` | ObservableGauge | — | — | Total registered agents |
 | `consolidation.jobs.expired` | Counter | — | — | Consolidation jobs expired from queue (not currently emitted) |
@@ -43,6 +48,7 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `brain.updates.empty` | Counter | — | — | Runs where agent produced no brain changes |
 | `brain.files.written` | Counter | — | — | Total brain files committed across all runs |
 | `brain.sync.duration` | Histogram | seconds | — | Duration of brain sync operations |
+| `brain.sync.skipped` | Counter | — | `reason` | Brain post-run sync skipped (tagged by reason) |
 | `agent.signalr.failures` | Counter | — | — | Failed or dropped SignalR messages from agent |
 | `pipeline.decomposition.sub_issues.created` | Counter | — | — | Sub-issues created by decomposition |
 | `pipeline.decomposition.sub_issues.failed` | Counter | — | — | Sub-issue creation failures |
@@ -54,6 +60,9 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `pipeline.housekeeping.evicted` | Counter | — | `repo_provider_id` | In-flight entries removed (CI resolved or PR merged/label removed) |
 | `pipeline.housekeeping.conflict_rework_triggered` | Counter | — | `repo_provider_id` | Issues re-queued for rework due to PR merge conflict |
 | `pipeline.housekeeping.branch_deleted` | Counter | — | `repo_provider_id` | Stale agent branches deleted (no open PR, inactive issue label) |
+| `pipeline.queue_sweep.cancelled` | Counter | — | — | WorkItems cancelled as stale by the queue sweep (issue no longer eligible) |
+| `pipeline.queue_sweep.skipped` | Counter | — | — | WorkItems skipped by the queue sweep (provider not polled, rate-limited, or wrong task type) |
+| `pipeline.queue_sweep.failed` | Counter | — | — | Unexpected failures during the queue sweep (`POST /api/work-items/{id}/status` errors) |
 
 ### Tag Schema
 
@@ -65,6 +74,8 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `reason` | `busy`, `shutting_down`, `unknown` | Agent job rejection reason |
 | `failure_reason` | `quality_gate_exhausted`, `agent_error`, `timeout`, `infrastructure_failure`, `token_refresh_failure`, `exit_code_failure`, `unknown` | Job failure classification — only present on `pipeline.jobs.failed` |
 | `repo_provider_id` | provider config UUID | Repository provider config ID — only present on `pipeline.housekeeping.*` metrics |
+| `phase` | `qgc_retry_agent`, `codegen`, `analysis`, `code_review`, `decomposition`, `unknown` | Pipeline phase — only present on `quality_gate.stall.*` metrics |
+| `qgc_name` | QGC display name | Quality gate config name — only present on `quality_gate.process.*` metrics |
 
 ### Prompt Cache and Per-Phase Token Data
 
@@ -100,6 +111,8 @@ Custom bucket boundaries are configured via `InstrumentAdvice<double>` at instru
 |--------|---------------------|
 | `pipeline.jobs.duration` | 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600 |
 | `pipeline.step.duration` | 5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600 |
+| `quality_gate.process.duration` | 5, 10, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600 |
+| `quality_gate.post_pr_ci.duration` | 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600 |
 | `dispatch.queue.wait_time` | 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600 |
 | `workdistribution.dispatch_latency_seconds` | 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600 |
 | `workdistribution.workitems_pending_duration_seconds` | 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600 |
@@ -143,7 +156,7 @@ The Job Controller-side recordings are not affected by any of the above.
 
 ### Work Distribution Metrics
 
-The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetry.cs` (in the `CodingAgentWebUI.Pipeline` assembly, namespace `CodingAgentWebUI.Pipeline.Telemetry`). Instruments are fed by `DispatchService` and `ReconciliationService` in the Job Controller, and by `WorkItemCountsPoller` in the Scheduler.
+The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetry.cs` (in the `CodingAgentWebUI.Pipeline` assembly, namespace `CodingAgentWebUI.Pipeline.Telemetry`). Instruments are fed by `DispatchService` and `ReconciliationService` in the Job Controller, and by `WorkItemMetricsBackgroundService` in the Pipeline API (`workitems_by_status` gauge only).
 
 | Metric | Type | Unit | Tags | Description |
 |--------|------|------|------|-------------|
@@ -197,7 +210,6 @@ All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans mark
 | `Reflection` | `pipeline.run_id` | Post-PR reflection prompt (child of FinalizePullRequest) |
 | `BrainSyncPostRun` | `pipeline.run_id` | Brain repository sync after run (child of FinalizePullRequest) |
 | `FeedbackCollection` | `pipeline.run_id` | Structured feedback collection (child of FinalizePullRequest) |
-| `DrainCycle` | `jobs_dispatched` | Single drain cycle for consolidation dispatch (root span; `JobQueueDrainService` was removed in Spec 041) |
 | `Hub.ReportJobCompleted` | `job_id`, `success` | Hub business logic for job completion |
 | `TokenVending.GenerateToken` | — | Token generation HTTP call |
 | `Agent.ReceiveJob` | `job_id`, `run_type` | Agent job receipt and acceptance/rejection decision |
@@ -255,7 +267,7 @@ Telemetry is exported via OTLP. The OpenTelemetry SDK reads configuration from s
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OTLP collector endpoint |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OTLP collector endpoint. When absent or empty, OTLP export is disabled (no-op). |
 | `OTEL_EXPORTER_OTLP_HEADERS` | — | Auth headers (e.g., `Authorization=Basic <token>`) |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` | Transport protocol: `grpc` or `http/protobuf` |
 

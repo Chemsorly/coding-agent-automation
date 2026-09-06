@@ -67,6 +67,19 @@ public class HousekeepingServiceTests
 
         var svc = new HousekeepingService(runsMock.Object, Log.Logger);
         svc.FireAndForget = task => task;
+
+        // Default: FetchAllOpenAgentPrBranchesAsync returns no open PRs.
+        // Tests that need specific PRs protected from branch cleanup override this setup.
+        providerMock.Setup(p => p.ListOpenPullRequestsAsync(
+                        It.IsAny<int>(), It.IsAny<int>(),
+                        It.Is<IReadOnlyList<string>?>(l => l == null),
+                        It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(new PagedResult<PullRequestSummary>
+                    {
+                        Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
+                        Page = 1, PageSize = 100, HasMore = false
+                    });
+
         return (svc, providerMock, issueProviderMock, runsMock);
     }
 
@@ -857,11 +870,22 @@ public class HousekeepingServiceTests
 
         provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
-        // Return Behind so the mergeability step also runs
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(99, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.UpToDate);
+        // Set up the independent open-PR fetch (FetchAllOpenAgentPrBranchesAsync) to return the open PR.
+        // Pass empty agentDonePrs so the fallback path cannot protect the branch — only the
+        // independent fetch can. This ensures the primary code path (not the fallback) is exercised.
+        provider.Setup(p => p.ListOpenPullRequestsAsync(
+                    It.IsAny<int>(), It.IsAny<int>(),
+                    It.Is<IReadOnlyList<string>?>(l => l == null),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new PagedResult<PullRequestSummary>
+                {
+                    Items = new[] { openPr }.AsReadOnly(),
+                    Page = 1, PageSize = 100, HasMore = false
+                });
 
-        await ExecAsync(svc, provider, issues, [openPr], branchCleanup: true, intervalMinutes: 0);
+        await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0);
 
         provider.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
             "branch has an open PR — must not be deleted");

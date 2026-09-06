@@ -403,6 +403,7 @@ public partial class GitHubRepositoryProvider
             // between the Issues fetch (Step A) and this detail fetch (Step B) will have
             // state="closed" here. Filtering it out prevents merged PRs from entering
             // the housekeeping agentDonePrs list and triggering spurious rework swaps.
+            // null state (field absent in response) → treat as non-open and filter out.
             if (!string.Equals(pr.State, "open", StringComparison.OrdinalIgnoreCase))
                 continue;
 

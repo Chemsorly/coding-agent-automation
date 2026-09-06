@@ -349,15 +349,13 @@ public sealed class HousekeepingService : IHousekeepingService
         }
         catch (Exception ex)
         {
-            // Conservative fallback: if the independent fetch fails, fall back to the
-            // (possibly truncated) agentDonePrs list. This is safer than skipping cleanup
-            // entirely, since the agentDonePrs set covers the most-recently-active PRs.
+            // Skip cleanup this cycle — falling back to the truncated agentDonePrs list would
+            // reproduce the original bug: branches whose PRs were beyond the pagination cap
+            // could still be deleted. It is safer to skip than to delete live branches.
             _logger.Warning(ex,
-                "HousekeepingService: failed to fetch complete open-PR list for branch cleanup; falling back to housekeeping input set: {Error}",
+                "HousekeepingService: failed to fetch complete open-PR list for branch cleanup; skipping branch cleanup this cycle: {Error}",
                 ex.Message);
-            branchesWithOpenPr = new HashSet<string>(
-                agentDonePrs.Select(p => p.BranchName),
-                StringComparer.OrdinalIgnoreCase);
+            return;
         }
 
         foreach (var branchName in allAgentBranches)
@@ -427,6 +425,7 @@ public sealed class HousekeepingService : IHousekeepingService
         var branches = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var page = 1;
         const int PageSize = 100;
+        const int MaxPages = 50; // 5 000 open agent PRs — unreachable ceiling, guards against malformed HasMore
 
         while (true)
         {
@@ -438,6 +437,11 @@ public sealed class HousekeepingService : IHousekeepingService
             }
 
             if (!result.HasMore)
+                break;
+
+            // Safety cap: 50 pages × 100 PRs/page = 5 000 open agent PRs. Unreachable in
+            // practice, but prevents an unbounded loop if HasMore is malformed.
+            if (page >= MaxPages)
                 break;
 
             page++;
