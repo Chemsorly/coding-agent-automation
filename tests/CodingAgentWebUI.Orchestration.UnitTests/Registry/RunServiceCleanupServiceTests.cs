@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Orchestration.Redis;
 using CodingAgentWebUI.Pipeline.LeaderElection;
+using Microsoft.Extensions.Hosting;
 using Moq;
 using ILogger = Serilog.ILogger;
 
@@ -152,11 +153,36 @@ public sealed class RunServiceCleanupServiceTests
         await act.Should().ThrowAsync<OperationCanceledException>();
 
         _store.Verify(s => s.ExistsAsync($"run:{id2}"), Times.Never);
-        // TODO [WARNING]: This test only verifies that id2 was never reached. It does NOT assert
-        // that SetRemoveAsync was called for id1: because ThrowIfCancellationRequested fires at the
-        // top of the next iteration, the removal of id1 (ExistsAsync returned false here) will have
-        // already executed before cancellation takes effect. A test that asserts
-        // SetRemoveAsync("runs:active", id1) was called would provide stronger evidence that the
-        // cancellation boundary is exactly where intended.
+        // id1 removal was already in flight when cancellation was signalled; it completes
+        _store.Verify(s => s.SetRemoveAsync("runs:active", id1), Times.Once,
+            "the member whose check triggered cancellation is already being removed when OCE fires");
+    }
+
+    // ── ExecuteAsync: timer loop ─────────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_OnTick_CallsSweepAsync()
+    {
+        _store.Setup(s => s.SetMembersAsync("runs:active")).ReturnsAsync([]);
+
+        var svc = new CodingAgentWebUI.Orchestration.RunServiceCleanupService(
+            _store.Object, _logger.Object, leaderElection: null,
+            sweepInterval: TimeSpan.FromMilliseconds(1));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await ((IHostedService)svc).StartAsync(cts.Token);
+
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            try { _store.Verify(s => s.SetMembersAsync("runs:active"), Times.AtLeastOnce()); break; }
+            catch (MockException) { await Task.Delay(20); }
+        }
+
+        cts.Cancel();
+        await ((IHostedService)svc).StopAsync(CancellationToken.None);
+
+        _store.Verify(s => s.SetMembersAsync("runs:active"), Times.AtLeastOnce(),
+            "ExecuteAsync timer loop must call SweepAsync on each tick");
     }
 }

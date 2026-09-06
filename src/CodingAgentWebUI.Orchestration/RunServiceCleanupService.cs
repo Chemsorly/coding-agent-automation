@@ -23,17 +23,20 @@ namespace CodingAgentWebUI.Orchestration;
 public sealed class RunServiceCleanupService : RedisSetCleanupService
 {
     private static readonly string[] RunSetKeys = ["runs:active"];
+    private readonly TimeSpan _sweepInterval;
 
     public RunServiceCleanupService(
         IRedisStore store,
         ILogger logger,
-        ILeaderElectionService? leaderElection = null)
+        ILeaderElectionService? leaderElection = null,
+        TimeSpan? sweepInterval = null)
         : base(store, logger, leaderElection)
     {
+        _sweepInterval = sweepInterval ?? TimeSpan.FromMinutes(5);
     }
 
     protected override string ScanSetKey => "runs:active";
     protected override string HashKeyPrefix => "run";
     protected override IReadOnlyList<string> RemovalSetKeys => RunSetKeys;
-    protected override TimeSpan SweepInterval => TimeSpan.FromMinutes(5);
+    protected override TimeSpan SweepInterval => _sweepInterval;
 }

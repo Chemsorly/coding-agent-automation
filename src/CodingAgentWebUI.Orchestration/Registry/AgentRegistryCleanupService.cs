@@ -22,17 +22,20 @@ namespace CodingAgentWebUI.Orchestration.Registry;
 public sealed class AgentRegistryCleanupService : RedisSetCleanupService
 {
     private static readonly string[] AgentSetKeys = ["agents:all", "agents:idle"];
+    private readonly TimeSpan _sweepInterval;
 
     public AgentRegistryCleanupService(
         IRedisStore store,
         ILogger logger,
-        ILeaderElectionService? leaderElection = null)
+        ILeaderElectionService? leaderElection = null,
+        TimeSpan? sweepInterval = null)
         : base(store, logger, leaderElection)
     {
+        _sweepInterval = sweepInterval ?? TimeSpan.FromMinutes(2);
     }
 
     protected override string ScanSetKey => "agents:all";
     protected override string HashKeyPrefix => "agent";
     protected override IReadOnlyList<string> RemovalSetKeys => AgentSetKeys;
-    protected override TimeSpan SweepInterval => TimeSpan.FromMinutes(2);
+    protected override TimeSpan SweepInterval => _sweepInterval;
 }
