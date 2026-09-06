@@ -1,6 +1,4 @@
 using CodingAgentWebUI.Api.Client;
-using CodingAgentWebUI.Api.Client.Stores;
-using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.LeaderElection;
@@ -12,13 +10,24 @@ namespace CodingAgentWebUI.JobController.Dispatch;
 
 /// <summary>
 /// DI registrations for the Job Controller dispatch services.
+///
+/// Issue #2322: <see cref="DispatchService"/> and <see cref="DispatchLoop"/> have been removed.
+/// Work-item dispatch now uses the synchronous <c>POST /api/work-items/dispatch</c> endpoint
+/// in the Pipeline API, which atomically creates the K8s Job and sets WorkItem status to
+/// Dispatched in a single request. The Job Controller retains only reconciliation responsibilities.
+///
+/// <see cref="ConsolidationDispatchService"/> and <see cref="ConsolidationDispatchLoop"/> are
+/// NOT yet migrated (deferred to a follow-up issue) and are preserved unchanged.
 /// </summary>
 public static class DispatchServiceRegistration
 {
     /// <summary>
-    /// Registers <see cref="DispatchService"/>, <see cref="DispatchLoop"/>,
-    /// <see cref="ConsolidationDispatchService"/>, and <see cref="ConsolidationDispatchLoop"/>
+    /// Registers <see cref="ConsolidationDispatchService"/> and <see cref="ConsolidationDispatchLoop"/>
     /// using options from configuration.
+    ///
+    /// <see cref="DispatchService"/> and <see cref="DispatchLoop"/> are no longer registered —
+    /// regular work-item dispatch now uses the synchronous dispatch endpoint on the Pipeline API
+    /// (issue #2322).
     /// </summary>
     public static IServiceCollection AddDispatchService(
         this IServiceCollection services,
@@ -27,46 +36,16 @@ public static class DispatchServiceRegistration
         var options = DispatchServiceOptionsFactory.Create(configuration);
         services.AddSingleton(options);
 
-        // Single process-wide PVC selection lock shared by DispatchLoop and ConsolidationDispatchLoop.
-        // This prevents the two loops from racing each other and selecting the same free PVC
-        // concurrently (cross-loop TOCTOU). See PvcSelectLock for details.
+        // Single process-wide PVC selection lock shared by ConsolidationDispatchLoop.
+        // (Previously also shared with DispatchLoop — that class has been removed.)
         services.AddSingleton<PvcSelectLock>();
 
-        // ── Provider factory for issue-eligibility checks ─────────────────────
-        // ProviderFactory requires IPipelineConfigStore for CreatePipelineProviderAsync, but
-        // the eligibility path only calls CreateIssueProvider (which doesn't touch the config
-        // store). ApiPipelineConfigStore is the pragmatic safe choice matching the Scheduler pattern.
-        // Registration order: concrete first, interface forwarded second (Scheduler convention).
-        // TODO: The forwarding-singleton pattern is fragile if a future caller also registers
-        // IPipelineConfigStore — DI will silently resolve the last-registered one.
-        services.AddSingleton<ApiPipelineConfigStore>(sp =>
-            new ApiPipelineConfigStore(sp.GetRequiredService<IPipelineApiConfigClient>()));
-        services.AddSingleton<IPipelineConfigStore>(sp =>
-            sp.GetRequiredService<ApiPipelineConfigStore>());
-        services.AddSingleton<IProviderFactory>(sp =>
-            new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
-
-        // ── Regular work item dispatch ────────────────────────────────────────
-        services.AddSingleton<DispatchLoop>(sp => new DispatchLoop(
-            sp.GetRequiredService<IPipelineApiWorkItemClient>(),
-            sp.GetRequiredService<IPipelineApiConfigClient>(),
-            sp.GetRequiredService<IKubernetesJobClient>(),
-            sp.GetRequiredService<JobTemplateStore>(),
-            sp.GetRequiredService<DispatchServiceOptions>(),
-            sp.GetRequiredService<PvcSelectLock>(),
-            sp.GetRequiredService<IProviderFactory>()));
-
-        services.AddSingleton<DispatchService>(sp => new DispatchService(
-            sp.GetRequiredService<ILeaderElectionService>(),
-            sp.GetRequiredService<DispatchLoop>(),
-            sp.GetRequiredService<DispatchServiceOptions>()));
-
-        services.AddHostedService(sp => sp.GetRequiredService<DispatchService>());
-
         // ── Consolidation work item dispatch ──────────────────────────────────
-        // Shares the same ILeaderElectionService lease as DispatchService — only the leader
-        // replica dispatches. Stateless: all domain operations delegated to the API via
+        // Shares the same ILeaderElectionService lease as ReconciliationService.
+        // Stateless: all domain operations delegated to the API via
         // IPipelineApiConsolidationWorkItemClient.
+        // TODO: Migrate ConsolidationDispatchLoop to the synchronous dispatch path
+        // (follow-up to issue #2322).
         services.AddSingleton<ConsolidationDispatchLoop>(sp => new ConsolidationDispatchLoop(
             sp.GetRequiredService<IPipelineApiConsolidationWorkItemClient>(),
             sp.GetRequiredService<IKubernetesJobClient>(),

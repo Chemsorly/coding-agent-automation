@@ -205,6 +205,35 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         return result.Select(r => (r.IssueIdentifier, r.IssueProviderConfigId)).ToList();
     }
 
+    public async Task<Guid> DispatchAsync(JobDistributionRequest request, CancellationToken ct = default)
+    {
+        // TODO [WARNING]: HttpRequestMessage and HttpResponseMessage are IDisposable but are not disposed here.
+        // req should use `using var req = new HttpRequestMessage(...)` and response should use
+        // `using var response = await _http.SendAsync(req, ct)` to ensure disposal on all code paths
+        // (including exception paths) and return the underlying connection to the pool promptly.
+        // Under high dispatch rates, undisposed responses can cause connection-pool pressure.
+        // See review findings [WARNING] DotNetSpecialist:PipelineApiWorkItemClient.cs:209 and :216.
+        var req = new HttpRequestMessage(HttpMethod.Post, "/api/work-items/dispatch");
+        if (!string.IsNullOrEmpty(request.RunId))
+            req.Headers.Add("X-Idempotency-Key", request.RunId);
+        req.Content = JsonContent.Create(request, options: PipelineJsonOptions.Default);
+
+        var response = await _http.SendAsync(req, ct);
+
+        // 409 = concurrency limit reached / issue ineligible
+        // 503 = no PVC available or K8s failure
+        if (response.StatusCode is System.Net.HttpStatusCode.Conflict or System.Net.HttpStatusCode.ServiceUnavailable)
+        {
+            var detail = await response.Content.ReadAsStringAsync(ct);
+            throw new DispatchNoCapacityException(
+                response.StatusCode,
+                $"Dispatch endpoint returned {(int)response.StatusCode}: {detail}");
+        }
+
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<Guid>(cancellationToken: ct);
+    }
+
     // Internal DTOs for response deserialization
     /// <summary>Shape of <c>GET /api/work-items/{id}/retry-count</c>. Positional so the
     /// deserializer assigns through the constructor — an init-only property looks unassigned to

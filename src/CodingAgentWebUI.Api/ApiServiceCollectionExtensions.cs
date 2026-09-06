@@ -1,7 +1,9 @@
 using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.Api.Dispatch;
 using CodingAgentWebUI.Infrastructure;
-using CodingAgentWebUI.Infrastructure.Locking;using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Infrastructure.Locking;
+using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Infrastructure.Persistence.Stores;
 using CodingAgentWebUI.Kubernetes;
@@ -445,6 +447,27 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<IPipelineConfigStore>(),
                 sp.GetRequiredService<ModelFetchService>(),
                 Logger: Log.Logger)));
+
+        // ── DispatchLifecycleService (issue #2322: synchronous dispatch path) ──────────────────
+        // Holds an in-process SemaphoreSlim for PVC selection atomicity across concurrent
+        // POST /api/work-items/dispatch requests. Must be a singleton to share the lock.
+        services.AddSingleton<DispatchLifecycleService>(sp =>
+        {
+            var opts = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
+            var k8s = sp.GetService<IKubernetesJobClient>();
+            if (k8s is null)
+            {
+                Log.Warning("API: DispatchLifecycleService: IKubernetesJobClient unavailable — dispatch endpoint will return 503.");
+                return new DispatchLifecycleService(
+                    null!,
+                    sp.GetRequiredService<WorkItemTransitionService>(),
+                    opts);
+            }
+            return new DispatchLifecycleService(
+                k8s,
+                sp.GetRequiredService<WorkItemTransitionService>(),
+                opts);
+        });
 
         // ── ChatJobDispatcher — on-demand ephemeral chat pod dispatch ────────────────────────
         // Moved from the Blazor monolith to the API host (Spec 044/045 follow-up).

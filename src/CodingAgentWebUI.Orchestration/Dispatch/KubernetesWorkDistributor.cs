@@ -39,15 +39,28 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
 
         try
         {
-            var workItemId = await _apiClient.CreateAsync(request, ct);
+            var workItemId = await _apiClient.DispatchAsync(request, ct);
             _logger.LogInformation(
-                "WorkItem {WorkItemId} created via Pipeline API for issue {IssueIdentifier}",
+                "WorkItem {WorkItemId} dispatched synchronously via Pipeline API for issue {IssueIdentifier}",
                 workItemId, request.IssueIdentifier);
-            return new DistributionResult(true, workItemId.ToString(), null, Queued: true);
+            // Queued: false — item is created directly as Dispatched; the label swap to
+            // agent:in-progress happens immediately in DistributeAndFinalizeAsync.
+            return new DistributionResult(true, workItemId.ToString(), null, Queued: false);
+        }
+        catch (DispatchNoCapacityException ex)
+        {
+            // 409 (concurrency limit) or 503 (no PVC / K8s failure) — no capacity right now.
+            // Return Success=false so DistributeAndFinalizeAsync calls RevertFailedDistributionAsync,
+            // which swaps the GitHub label back to agent:next. The Scheduler will re-queue on
+            // the next poll cycle.
+            _logger.LogInformation(
+                "Dispatch endpoint returned no-capacity ({StatusCode}) for issue {IssueIdentifier}: {Message}",
+                (int)ex.StatusCode, request.IssueIdentifier, ex.Message);
+            return new DistributionResult(false, null, ex.Message);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to create WorkItem via Pipeline API for issue {IssueIdentifier}",
+            _logger.LogError(ex, "Failed to dispatch WorkItem via Pipeline API for issue {IssueIdentifier}",
                 request.IssueIdentifier);
             return new DistributionResult(false, null, ex.Message);
         }

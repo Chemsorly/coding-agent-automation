@@ -161,7 +161,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
     {
         var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
         mockApiClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((JobDistributionRequest req, CancellationToken _) =>
             {
                 // Simulate the API honoring request.RunId
@@ -200,7 +200,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         request.Should().NotBeNull();
         request!.RunId.Should().NotBeNullOrEmpty("orchestration must set RunId for hub routing");
 
-        // Act: distribute (creates WorkItem in DB as Pending via API client mock)
+        // Act: distribute (creates WorkItem in DB directly as Dispatched via synchronous dispatch API)
         var result = await distributor.DistributeAsync(request, CancellationToken.None);
         result.Success.Should().BeTrue();
 

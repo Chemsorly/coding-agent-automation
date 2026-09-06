@@ -56,4 +56,12 @@ public interface IPipelineApiWorkItemClient : IWorkItemSweepClient
     /// terminated WorkItems. Used by KubernetesWorkDistributor.GetActiveIssueIdentifiersAsync.
     /// </summary>
     Task<IReadOnlyList<(string IssueIdentifier, string IssueProviderConfigId)>> GetActiveIdentifiersAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Synchronously dispatches a work item via <c>POST /api/work-items/dispatch</c>.
+    /// The API atomically creates the WorkItem as Dispatched and launches the K8s Job.
+    /// Returns the new WorkItemId on success (HTTP 200).
+    /// Throws <see cref="DispatchNoCapacityException"/> on HTTP 409 (concurrency limit) or 503 (no PVC / K8s failure).
+    /// </summary>
+    Task<Guid> DispatchAsync(JobDistributionRequest request, CancellationToken ct = default);
 }

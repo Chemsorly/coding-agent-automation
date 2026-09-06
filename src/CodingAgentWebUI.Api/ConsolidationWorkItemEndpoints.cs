@@ -121,6 +121,32 @@ public static class ConsolidationWorkItemEndpoints
             return TypedResults.UnprocessableEntity("WorkItem has no valid consolidation payload.");
 
         // Step 3: atomic Pending → Dispatched CAS, writing enriched payload
+        // PVC conflict check: if the caller selected a kiro PVC, verify it is not already
+        // claimed by another Dispatched/Running WorkItem. This closes the cross-process
+        // TOCTOU race between ConsolidationDispatchLoop (K8s-based PVC selection) and
+        // DispatchLifecycleService (DB-based PVC selection). Whichever DB write arrives
+        // first holds the PVC; the loser receives 409 and retries on the next cycle.
+        // CRITICAL fix for review finding: Correctness:DispatchLifecycleService.cs:57.
+        if (request.ClaimedPvcName is not null)
+        {
+            var pvcAlreadyClaimed = await db.WorkItems
+                .AsNoTracking()
+                .AnyAsync(
+                    w => w.ClaimedPvcName == request.ClaimedPvcName &&
+                         (w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running),
+                    ct);
+
+            if (pvcAlreadyClaimed)
+            {
+                Serilog.Log.ForContext("SourceContext", nameof(ConsolidationWorkItemEndpoints))
+                    .Warning(
+                        "ConsolidationWorkItemEndpoints: PVC '{PvcName}' already claimed by another Dispatched/Running WorkItem; " +
+                        "rejecting claim for WorkItem {WorkItemId} to prevent double-assignment",
+                        request.ClaimedPvcName, id);
+                return TypedResults.Conflict($"PVC '{request.ClaimedPvcName}' is already claimed by another active work item.");
+            }
+        }
+
         var success = await transitionService.TransitionIfAsync(
             id,
             expectedCurrent: WorkItemStatus.Pending,
@@ -131,6 +157,8 @@ public static class ConsolidationWorkItemEndpoints
                 wi.DispatchedAt = request.DispatchedAt;
                 if (request.K8sJobName is not null)
                     wi.K8sJobName = request.K8sJobName;
+                if (request.ClaimedPvcName is not null)
+                    wi.ClaimedPvcName = request.ClaimedPvcName;
                 wi.Payload = enriched.EnrichedPayloadJson;
             },
             ct: ct);

@@ -453,10 +453,13 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             return new DispatchOutcome(false, false, result.ErrorMessage);
         }
 
-        if (!result.Queued)
-            await ConfirmDistributionLabelAsync(request, ct);
+        // Synchronous dispatch path: the WorkItem is created directly as Dispatched
+        // (no Pending state). Confirm the label swap to agent:in-progress immediately.
+        // The Queued flag is always false on the new synchronous path; the old Pending-queue
+        // path has been removed (issue #2322).
+        await ConfirmDistributionLabelAsync(request, ct);
 
-        return new DispatchOutcome(true, result.Queued, null);
+        return new DispatchOutcome(true, false, null);
     }
 
     /// <inheritdoc />

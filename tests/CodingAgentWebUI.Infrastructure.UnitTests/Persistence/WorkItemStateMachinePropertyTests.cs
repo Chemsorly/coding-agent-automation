@@ -17,12 +17,14 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 public class WorkItemStateMachinePropertyTests
 {
     /// <summary>
-    /// The exhaustive set of allowed state transitions per the work item state machine:
-    /// - Pending → Dispatched, Failed, Cancelled
-    /// - Dispatched → Running, Failed, Cancelled, Pending (re-queue on rejection)
+    /// The exhaustive set of allowed state transitions per the work item state machine (issue #2322):
+    /// - Pending → Dispatched (retained for ConsolidationDispatchLoop, out-of-scope for #2322)
+    /// - Pending → Failed, Cancelled
+    /// - Dispatched → Running, Failed, Cancelled
+    /// - Dispatched → Pending (retained for ConsolidationDispatchLoop K8s failure recovery)
     /// - Running → Succeeded, Failed, Cancelled
-    /// - Failed → Pending (requeue, Req 6.1)
-    /// - Cancelled → Pending (requeue, Req 6.1)
+    /// - Failed → Pending (requeue, POST /api/work-items/{id}/requeue)
+    /// - Cancelled → Pending (requeue, POST /api/work-items/{id}/requeue)
     /// All other pairs (including self-transitions) must be rejected.
     /// </summary>
     private static readonly HashSet<(WorkItemStatus Current, WorkItemStatus Target)> AllowedTransitions =
@@ -33,11 +35,11 @@ public class WorkItemStateMachinePropertyTests
         (WorkItemStatus.Dispatched, WorkItemStatus.Running),
         (WorkItemStatus.Dispatched, WorkItemStatus.Failed),
         (WorkItemStatus.Dispatched, WorkItemStatus.Cancelled),
-        (WorkItemStatus.Dispatched, WorkItemStatus.Pending),
+        (WorkItemStatus.Dispatched, WorkItemStatus.Pending), // ConsolidationDispatchLoop K8s failure recovery
         (WorkItemStatus.Running, WorkItemStatus.Succeeded),
         (WorkItemStatus.Running, WorkItemStatus.Failed),
         (WorkItemStatus.Running, WorkItemStatus.Cancelled),
-        // Requeue paths (Req 6.1 — POST /api/work-items/{id}/requeue)
+        // Requeue paths (POST /api/work-items/{id}/requeue)
         (WorkItemStatus.Failed, WorkItemStatus.Pending),
         (WorkItemStatus.Cancelled, WorkItemStatus.Pending),
     ];
@@ -128,7 +130,7 @@ public class WorkItemStateMachineReachabilityPropertyTests
             steps++;
         }
 
-        // If we hit maxSteps, we're in a cycle (Dispatched↔Pending).
+        // If we hit maxSteps, we're in a cycle (Failed/Cancelled ↔ Pending).
         // That's valid — the system can re-queue indefinitely.
         // Verify current state is non-terminal (otherwise it would have exited above).
         return !TerminalStatuses.Contains(current);
@@ -141,6 +143,8 @@ public class WorkItemStateMachineReachabilityPropertyTests
     [Fact]
     public void EveryNonTerminalState_CanReachATerminalState()
     {
+        // All non-terminal states can reach Succeeded via: Dispatched → Running → Succeeded
+        // (or Pending → Dispatched → Running → Succeeded for consolidation path)
         var nonTerminals = AllStatuses.Except(TerminalStatuses).ToArray();
 
         foreach (var start in nonTerminals)
@@ -170,7 +174,8 @@ public class WorkItemStateMachineReachabilityPropertyTests
     }
 
     /// <summary>
-    /// Property: Pending is reachable from Dispatched, Failed, and Cancelled (requeue paths).
+    /// Property: Pending is reachable from Dispatched (ConsolidationDispatchLoop K8s failure recovery),
+    /// Failed, and Cancelled (explicit requeue via POST /api/work-items/{id}/requeue).
     /// </summary>
     [Fact]
     public void Pending_OnlyReachableFrom_Dispatched()
@@ -180,7 +185,7 @@ public class WorkItemStateMachineReachabilityPropertyTests
             .OrderBy(s => s)
             .ToArray();
 
-        // Dispatched (rejection re-queue) + Failed + Cancelled (explicit requeue, Req 6.1)
+        // Dispatched (ConsolidationDispatchLoop requeue) + Failed + Cancelled (explicit requeue)
         Assert.Equal(3, statesThatCanReachPending.Length);
         Assert.Contains(WorkItemStatus.Dispatched, statesThatCanReachPending);
         Assert.Contains(WorkItemStatus.Failed, statesThatCanReachPending);

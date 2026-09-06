@@ -167,8 +167,11 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
     }
 
     [Fact]
-    public async Task RequeueWorkItemAsync_ValidItem_TransitionsToPending()
+    public async Task RequeueWorkItemAsync_DispatchedItem_TransitionsToPending()
     {
+        // Dispatched → Pending is preserved for ConsolidationDispatchLoop recovery (issue #2322).
+        // The new synchronous dispatch path for regular work items deletes on K8s failure,
+        // but consolidation still uses claim + requeue.
         var id = await SeedWorkItem(WorkItemStatus.Dispatched);
 
         await _facade.RequeueWorkItemAsync(id.ToString(), CancellationToken.None);

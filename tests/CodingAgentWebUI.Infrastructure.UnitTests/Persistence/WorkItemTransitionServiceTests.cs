@@ -17,7 +17,7 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 public class WorkItemTransitionServiceTests
 {
     [Theory]
-    [InlineData(WorkItemStatus.Pending, WorkItemStatus.Dispatched, true)]
+    [InlineData(WorkItemStatus.Pending, WorkItemStatus.Dispatched, true)] // ConsolidationDispatchLoop uses Pending → Dispatched
     [InlineData(WorkItemStatus.Pending, WorkItemStatus.Cancelled, true)]
     [InlineData(WorkItemStatus.Pending, WorkItemStatus.Running, false)]
     [InlineData(WorkItemStatus.Pending, WorkItemStatus.Succeeded, false)]
@@ -26,7 +26,7 @@ public class WorkItemTransitionServiceTests
     [InlineData(WorkItemStatus.Dispatched, WorkItemStatus.Failed, true)]
     [InlineData(WorkItemStatus.Dispatched, WorkItemStatus.Cancelled, true)]
     [InlineData(WorkItemStatus.Dispatched, WorkItemStatus.Succeeded, false)]
-    [InlineData(WorkItemStatus.Dispatched, WorkItemStatus.Pending, true)]
+    [InlineData(WorkItemStatus.Dispatched, WorkItemStatus.Pending, true)] // ConsolidationDispatchLoop requeue on K8s failure
     [InlineData(WorkItemStatus.Running, WorkItemStatus.Succeeded, true)]
     [InlineData(WorkItemStatus.Running, WorkItemStatus.Failed, true)]
     [InlineData(WorkItemStatus.Running, WorkItemStatus.Cancelled, true)]
@@ -35,7 +35,7 @@ public class WorkItemTransitionServiceTests
     [InlineData(WorkItemStatus.Succeeded, WorkItemStatus.Failed, false)]
     [InlineData(WorkItemStatus.Succeeded, WorkItemStatus.Cancelled, false)]
     [InlineData(WorkItemStatus.Succeeded, WorkItemStatus.Pending, false)]
-    // Requeue paths added by Req 6.1 (POST /api/work-items/{id}/requeue): Failed/Cancelled → Pending
+    // Requeue paths (POST /api/work-items/{id}/requeue): Failed/Cancelled → Pending
     [InlineData(WorkItemStatus.Failed, WorkItemStatus.Pending, true)]
     [InlineData(WorkItemStatus.Failed, WorkItemStatus.Running, false)]
     [InlineData(WorkItemStatus.Cancelled, WorkItemStatus.Pending, true)]

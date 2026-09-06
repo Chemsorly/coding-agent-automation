@@ -28,22 +28,22 @@ public class KubernetesWorkDistributorApiTests
             Mock.Of<ILogger<KubernetesWorkDistributor>>());
     }
 
-    // ── DistributeAsync calls CreateAsync ─────────────────────────────────
+    // ── DistributeAsync calls DispatchAsync ─────────────────────────────────
 
     [Fact]
-    public async Task DistributeAsync_CallsApiClientCreateAsync_WithSameRequest()
+    public async Task DistributeAsync_CallsApiClientDispatchAsync_WithSameRequest()
     {
         var workItemId = Guid.NewGuid();
         var request = CreateMinimalRequest();
 
         _mockClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(workItemId);
 
         await _sut.DistributeAsync(request, CancellationToken.None);
 
         _mockClient.Verify(
-            c => c.CreateAsync(
+            c => c.DispatchAsync(
                 It.Is<JobDistributionRequest>(r =>
                     r.IssueIdentifier == request.IssueIdentifier &&
                     r.IssueProviderConfigId == request.IssueProviderConfigId),
@@ -58,7 +58,7 @@ public class KubernetesWorkDistributorApiTests
         var request = CreateMinimalRequest();
 
         _mockClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(workItemId);
 
         var result = await _sut.DistributeAsync(request, CancellationToken.None);
@@ -73,7 +73,7 @@ public class KubernetesWorkDistributorApiTests
         var request = CreateMinimalRequest();
 
         _mockClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("Pipeline API unreachable"));
 
         var result = await _sut.DistributeAsync(request, CancellationToken.None);
@@ -83,19 +83,35 @@ public class KubernetesWorkDistributorApiTests
     }
 
     [Fact]
-    public async Task DistributeAsync_DoesNotInsertIntoLocalDb()
+    public async Task DistributeAsync_WhenNoCapacity_ReturnFailureResult()
+    {
+        var request = CreateMinimalRequest();
+
+        _mockClient
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DispatchNoCapacityException(System.Net.HttpStatusCode.ServiceUnavailable, "No PVC available"));
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("No PVC available");
+    }
+
+    [Fact]
+    public async Task DistributeAsync_DoesNotUseCreateAsync()
     {
         var workItemId = Guid.NewGuid();
         var request = CreateMinimalRequest();
 
         _mockClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(workItemId);
 
         await _sut.DistributeAsync(request, CancellationToken.None);
 
-        // Verify CreateAsync was called (API-backed), and NOT the DB directly
-        _mockClient.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        // Verify DispatchAsync was called (synchronous path), NOT the old CreateAsync (Pending path)
+        _mockClient.Verify(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockClient.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

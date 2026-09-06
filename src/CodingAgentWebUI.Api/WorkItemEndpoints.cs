@@ -10,6 +10,8 @@ using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Api.Dispatch;
+using CodingAgentWebUI.Kubernetes;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -78,6 +80,12 @@ public static class WorkItemEndpoints
         group.MapPost("/{id:guid}/label-swap", PostLabelSwap).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapPost("/{id:guid}/last-progress", PostLastProgress).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapPost("/{id:guid}/priority", PostPriorityWeight).RequireAuthorization(ApiAuthPolicies.Operator);
+
+        // ── Synchronous dispatch endpoint (issue #2322) ───────────────────────
+        // Creates the WorkItem directly as Dispatched (no Pending intermediate state) and
+        // launches the K8s Job atomically. Returns 200 + WorkItemId on success, 409/503 on
+        // no-capacity. Called by KubernetesWorkDistributor instead of POST /api/work-items.
+        group.MapPost("/dispatch", DispatchWorkItem).RequireAuthorization(ApiAuthPolicies.Operator);
 
         // ── Metrics feed for the Scheduler's WorkItemCountsPoller ─────────────
         group.MapGet("/counts-by-status", GetCountsByStatus).RequireAuthorization(ApiAuthPolicies.Operator);
@@ -495,6 +503,70 @@ public static class WorkItemEndpoints
         return TypedResults.Created($"/api/work-items/{workItemId}", workItemId);
     }
 
+    // ── POST /dispatch — synchronous dispatch (issue #2322) ───────────────
+
+    /// <summary>
+    /// POST /api/work-items/dispatch
+    /// Synchronous dispatch path: atomically creates a WorkItem as <c>Dispatched</c> and
+    /// launches the corresponding K8s Job in a single request. No <c>Pending</c> state is written.
+    ///
+    /// <para>
+    /// This endpoint replaces the two-step <c>POST /api/work-items</c> (Pending) +
+    /// Job-Controller <c>DispatchLoop</c> flow. The Scheduler now calls this endpoint directly,
+    /// preserving its priority ordering end-to-end.
+    /// </para>
+    ///
+    /// <list type="bullet">
+    ///   <item><term>200</term><description>WorkItem created as Dispatched; returns new WorkItemId.</description></item>
+    ///   <item><term>409</term><description>Concurrency limit reached, or a live work item already exists for this issue.</description></item>
+    ///   <item><term>503</term><description>No PVC available (kiro pool exhausted) or K8s API failure.</description></item>
+    /// </list>
+    ///
+    /// <para>
+    /// PVC assignment uses <see cref="DispatchLifecycleService"/> which holds an in-process
+    /// <see cref="System.Threading.SemaphoreSlim"/> across PVC selection and K8s Job creation.
+    /// Two concurrent calls for the same kiro pool result in exactly one 200 and one 503.
+    /// </para>
+    /// </summary>
+    internal static async Task<IResult> DispatchWorkItem(
+        [FromBody] JobDistributionRequest request,
+        [FromServices] DispatchLifecycleService dispatchLifecycle,
+        [FromServices] JobTemplateStore templateStore,
+        [FromServices] IDbContextFactory<PipelineDbContext> dbFactory,
+        [FromServices] IOrchestratorRunService runService,
+        CancellationToken ct = default)
+    {
+        // Resolve job template for the agent selector
+        var selector = JobTemplateStore.NormalizeLabels(request.AgentSelector ?? "");
+        var template = templateStore.Resolve(selector);
+        if (template is null)
+        {
+            Log.Warning("DispatchWorkItem: no JobTemplate for selector '{Selector}' (issue {IssueIdentifier})",
+                selector, request.IssueIdentifier);
+            return TypedResults.Problem(
+                detail: $"No JobTemplate configured for agent selector '{selector}'.",
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
+        var result = await dispatchLifecycle.DispatchDirectlyAsync(
+            request, template, runService, dbFactory, ct);
+
+        return result switch
+        {
+            DispatchLifecycleService.DirectDispatchResult.Success s =>
+                TypedResults.Ok(s.WorkItemId),
+            DispatchLifecycleService.DirectDispatchResult.ConcurrencyLimitReached e =>
+                TypedResults.Conflict(e.Reason),
+            DispatchLifecycleService.DirectDispatchResult.Conflict e =>
+                TypedResults.Conflict(e.Reason),
+            DispatchLifecycleService.DirectDispatchResult.ServiceUnavailable e =>
+                TypedResults.Problem(
+                    detail: e.Reason,
+                    statusCode: StatusCodes.Status503ServiceUnavailable),
+            _ => TypedResults.Problem("Unexpected dispatch result", statusCode: 503)
+        };
+    }
+
     /// <summary>
     /// Builds a minimal <see cref="JobDistributionRequest"/> containing only identity fields
     /// that are stored in <c>WorkItems.Payload</c>. Strips all mutable config that will be
@@ -757,9 +829,14 @@ public static class WorkItemEndpoints
 
     /// <summary>
     /// POST /api/work-items/{id}/requeue
-    /// Transitions Failed/Cancelled/Dispatched → Pending, incrementing RetryCount.
-    /// Dispatched→Pending covers the case where Job creation fails after a successful claim
-    /// (ProcessItemAsync calls SafeRequeueAsync while the item is still in Dispatched state).
+    /// Transitions Failed/Cancelled → Pending, incrementing RetryCount.
+    /// Also handles Dispatched → Pending for ConsolidationDispatchLoop error recovery:
+    /// when K8s Job creation fails after a successful claim, the item is re-queued from Dispatched.
+    ///
+    /// Note: The regular work-item dispatch path (issue #2322) no longer uses Dispatched → Pending.
+    /// The synchronous dispatch endpoint deletes the WorkItem on K8s failure. But ConsolidationDispatchLoop
+    /// still uses the old claim-then-create pattern and needs Dispatched → Pending.
+    ///
     /// 200, 409 Conflict (wrong state), 404.
     /// </summary>
     internal static async Task<IResult> RequeueWorkItem(
@@ -800,10 +877,10 @@ public static class WorkItemEndpoints
         if (succeededFromCancelled)
             return TypedResults.Ok();
 
-        // Try Dispatched → Pending — handles Job creation failures where ClaimAsync succeeded
-        // but the K8s Job could not be created (API server unreachable, invalid spec, no PVC).
-        // Without this, the item stays stuck in Dispatched until EnforceDispatchedTimeoutAsync
-        // marks it Failed (losing the retry rather than re-queuing it).
+        // Try Dispatched → Pending — used by ConsolidationDispatchLoop when K8s Job creation
+        // fails after a successful claim (Dispatched item cannot be created as K8s Job).
+        // Note: the new synchronous dispatch path (issue #2322) does NOT use this path —
+        // it deletes the WorkItem entirely on K8s failure. This is only for ConsolidationDispatchLoop.
         var succeededFromDispatched = await transitionService.TransitionIfAsync(
             id,
             expectedCurrent: WorkItemStatus.Dispatched,

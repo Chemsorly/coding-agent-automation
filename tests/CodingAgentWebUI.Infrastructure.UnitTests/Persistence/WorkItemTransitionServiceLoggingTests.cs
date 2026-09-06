@@ -80,7 +80,10 @@ public class WorkItemTransitionServiceLoggingTests
 
         var svc = new WorkItemTransitionService(factory, mockLogger.Object);
 
-        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Dispatched);
+        // Issue #2322: Use Dispatched → Running (Pending → Dispatched no longer valid).
+        // Seed as Dispatched and transition to Running.
+        var itemDispatched = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
+        var result = await svc.TransitionAsync(itemDispatched.Id, WorkItemStatus.Running);
 
         result.Should().BeFalse("all retries were exhausted");
         capturedEx.Should().BeOfType<DbUpdateConcurrencyException>(

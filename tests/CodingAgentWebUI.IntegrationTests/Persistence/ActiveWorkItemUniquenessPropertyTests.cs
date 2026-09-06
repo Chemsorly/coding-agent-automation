@@ -48,8 +48,8 @@ public class ActiveWorkItemUniquenessPropertyTests : IDisposable
             ctx.Database.EnsureCreated();
         _dbFactory = new InMemoryDbContextFactory(_dbOptions);
 
-        // API client: CreateAsync inserts into InMemory DB so dedup queries can find it.
-        // IsIssueDistributedAsync and GetActiveIdentifiersAsync delegate to the DB.
+        // API client: DispatchAsync (synchronous path) inserts into InMemory DB so dedup queries can find it.
+        // CreateAsync kept for completeness; IsIssueDistributedAsync and GetActiveIdentifiersAsync delegate to the DB.
         var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
         mockApiClient
             .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
@@ -58,6 +58,18 @@ public class ActiveWorkItemUniquenessPropertyTests : IDisposable
                 var newId = Guid.NewGuid();
                 await using var db = await _dbFactory.CreateDbContextAsync(ct);
                 db.WorkItems.Add(new WorkItemEntity { Id = newId, IssueIdentifier = req.IssueIdentifier, IssueProviderConfigId = req.IssueProviderConfigId, Status = WorkItemStatus.Pending, CreatedAt = DateTimeOffset.UtcNow, AgentSelector = req.AgentSelector, TimeoutSeconds = req.TimeoutSeconds });
+                await db.SaveChangesAsync(ct);
+                return newId;
+            });
+        // DispatchAsync is the new synchronous dispatch path used by KubernetesWorkDistributor.DistributeAsync.
+        // Insert as Dispatched (matching the real server-side behaviour) so dedup queries return true.
+        mockApiClient
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(async (JobDistributionRequest req, CancellationToken ct) =>
+            {
+                var newId = Guid.NewGuid();
+                await using var db = await _dbFactory.CreateDbContextAsync(ct);
+                db.WorkItems.Add(new WorkItemEntity { Id = newId, IssueIdentifier = req.IssueIdentifier, IssueProviderConfigId = req.IssueProviderConfigId, Status = WorkItemStatus.Dispatched, CreatedAt = DateTimeOffset.UtcNow, AgentSelector = req.AgentSelector, TimeoutSeconds = req.TimeoutSeconds });
                 await db.SaveChangesAsync(ct);
                 return newId;
             });

@@ -163,6 +163,11 @@ public sealed class ConsolidationDispatchLoop
                 // SelectAvailablePvcAsync + CreateJobAsync only (release and re-acquire around ClaimAsync).
 
                 // Claim (API does payload enrichment + token vending server-side)
+                // Pass ClaimedPvcName so the API endpoint can perform a DB-level PVC conflict
+                // check before completing the claim. This closes the cross-process TOCTOU race:
+                // ConsolidationDispatchLoop selects PVCs via K8s Jobs while DispatchLifecycleService
+                // (API process) selects via DB — the claim endpoint uses the DB write as the
+                // authoritative synchronization point (CRITICAL fix: review finding Correctness:57).
                 try
                 {
                     claimed = await _consolidationClient.ClaimAsync(
@@ -171,6 +176,7 @@ public sealed class ConsolidationDispatchLoop
                         {
                             AssignedAgentId = jobName,
                             K8sJobName = jobName,
+                            ClaimedPvcName = pvcName,
                             DispatchedAt = DateTimeOffset.UtcNow
                         },
                         ct);

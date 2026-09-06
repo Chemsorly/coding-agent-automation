@@ -396,6 +396,11 @@ public partial class LayerBoundaryTests
             // It will be deleted once the Orchestration.UnitTests are migrated to test the new
             // ConsolidationDispatchLoop in the JobController.
             "ConsolidationWorkItemDispatchService",
+
+            // Issue #2322: DispatchService (and its inner DispatchLoop) removed from the JobController.
+            // Regular work-item dispatch now uses the synchronous POST /api/work-items/dispatch endpoint
+            // instead. The source file is retained for reference but the service is no longer registered.
+            "DispatchService",
         };
 
         // ── Step 3: find all concrete BackgroundService subclasses in src files ──
