@@ -190,6 +190,26 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
                 return (false, $"Cannot dispatch — issue is blocked by open dependencies: {string.Join(", ", depResult.BlockedBy.Select(n => $"#{n}"))}", null);
         }
 
+        // Manual dispatch is an explicit force-requeue: clear any blocking labels and set agent:next
+        // before creating the WorkItem. Without this, DispatchLoop would see the blocking label,
+        // cancel the WorkItem, and re-stamp the same label — a self-reinforcing cancellation loop.
+        // Only fires when the issue actually carries a blocking label (no-op for clean issues).
+        var blockingLabel = issue.Labels.FirstOrDefault(l => AgentLabels.DispatchIneligibleLabels.Contains(l));
+        if (blockingLabel != null && depProviderConfig != null)
+        {
+            await using var issueProvider = _providerFactory.CreateIssueProvider(depProviderConfig);
+            Logger.Information(
+                "IssueDrawerService: manual dispatch — clearing blocking label {BlockingLabel} and setting agent:next on issue {IssueIdentifier}",
+                blockingLabel, issue.Identifier);
+            await AgentLabelOperations.SwapAsync(
+                removeLabel: (label, ct) => issueProvider.RemoveLabelAsync(issue.Identifier, label, ct),
+                addLabel: (label, ct) => issueProvider.AddLabelAsync(issue.Identifier, label, ct),
+                newLabel: AgentLabels.Next,
+                ct: CancellationToken.None,
+                expectedCurrentLabel: blockingLabel,
+                identifier: issue.Identifier);
+        }
+
         return await DrawerDispatchHelper.DispatchWithOrchestrationAsync(
             _dispatchOrchestration,
             project => _dispatchOrchestration.PrepareDistributionRequestAsync(

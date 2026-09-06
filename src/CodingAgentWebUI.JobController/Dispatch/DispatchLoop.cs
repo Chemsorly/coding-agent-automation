@@ -487,32 +487,20 @@ public sealed class DispatchLoop
     }
 
     /// <summary>
-    /// Returns <c>true</c> when the issue has no ineligible agent labels (per AC #2).
-    /// Checks for the four terminal/error labels explicitly named in the acceptance criteria.
+    /// Returns <c>true</c> when the issue has no ineligible agent labels.
+    /// Uses <see cref="AgentLabels.DispatchIneligibleLabels"/> as the single canonical source of truth.
     /// Absence of <c>agent:next</c> alone is NOT checked — the issue could legitimately have
     /// <c>agent:in-progress</c> (already dispatched by another WorkItem), which is not grounds
     /// for cancellation.
     /// </summary>
     private static bool IsIssueEligible(IssueDetail issue, out string reason)
     {
-        // Cancel only on the four ineligible labels named in AC #2.
-        ReadOnlySpan<string> ineligibleLabels =
-        [
-            AgentLabels.Error,           // "agent:error"
-            AgentLabels.NeedsRefinement, // "agent:needs-refinement"
-            AgentLabels.WontDo,          // "agent:wont-do"
-            AgentLabels.Cancelled        // "agent:cancelled"
-        ];
-
         foreach (var label in issue.Labels)
         {
-            foreach (var ineligible in ineligibleLabels)
+            if (AgentLabels.DispatchIneligibleLabels.Contains(label))
             {
-                if (string.Equals(label, ineligible, StringComparison.OrdinalIgnoreCase))
-                {
-                    reason = $"Issue has ineligible label: {label}";
-                    return false;
-                }
+                reason = $"Issue has ineligible label: {label}";
+                return false;
             }
         }
 

@@ -48,6 +48,22 @@ public static class AgentLabels
     };
 
     /// <summary>
+    /// Labels that make an issue ineligible for dispatch.
+    /// When the <c>DispatchLoop</c> sees any of these labels on the upstream issue it cancels the
+    /// pending <c>WorkItem</c> rather than dispatching it.
+    /// <para>
+    /// Includes <c>agent:done</c> — a completed issue must not be re-dispatched automatically.
+    /// <c>agent:in-progress</c> is intentionally absent: a second WorkItem for an issue that is
+    /// already running is blocked by the partial unique index on <c>WorkItems</c>, not this set.
+    /// <c>agent:next</c> is also absent: it is the normal pre-dispatch signal and must not block dispatch.
+    /// </para>
+    /// </summary>
+    public static readonly IReadOnlySet<string> DispatchIneligibleLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        Done, Error, NeedsRefinement, WontDo, Cancelled
+    };
+
+    /// <summary>
     /// Labels that require explicit human action to set. Agents may not set these via RequestLabelChange.
     /// Every member of this set must also be present in <see cref="All"/>; labels absent from <c>All</c>
     /// would be rejected by the prior guard and never reach the gated-label check.
