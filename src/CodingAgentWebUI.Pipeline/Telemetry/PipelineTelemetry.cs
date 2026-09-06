@@ -215,21 +215,12 @@ public static class PipelineTelemetry
     /// </summary>
     public static string NormalizeStallPhase(string phaseDescription)
     {
-        // TODO: Add ArgumentException.ThrowIfNullOrEmpty(phaseDescription) (or a null-coalesce guard)
-        // to make the null contract explicit. If a caller passes null the first Contains() call throws
-        // NullReferenceException inside the background monitor Task, which is swallowed by the catch block,
-        // silently dropping the metric and halting stall monitoring for that phase. Current call sites all
-        // pass non-null literals/interpolated strings so this is latent; a guard would prevent silent
-        // monitor death if a new call site passes null. (review finding: correctness reviewer WARNING)
-        // TODO: "Final QG retry agent" (QualityGateExecutor.RetryLoop.cs RunPostRetryCleanupAndFinalizeAsync) and
-        // "Post-PR CI retry agent" (QualityGateExecutor.RetryLoop.cs RunPostRetryCleanupAndFinalizeAsync) are not
-        // matched by any branch below and fall through to StallPhases.Unknown. All stall warnings, kills, and
-        // process-death events recorded during those two phases will be attributed phase="unknown", making
-        // per-phase stall dashboards useless for the post-cleanup and post-PR CI retry loops.
-        // Fix: add "Final QG" and "Post-PR CI" as match substrings in the QgcRetryAgent branch, or align
-        // the call-site description strings with an existing branch match pattern. (review finding: correctness reviewer WARNING)
+        ArgumentException.ThrowIfNullOrEmpty(phaseDescription);
+
         if (phaseDescription.Contains("Quality gate retry", StringComparison.OrdinalIgnoreCase) ||
-            phaseDescription.Contains("Pre-PR cleanup", StringComparison.OrdinalIgnoreCase))
+            phaseDescription.Contains("Pre-PR cleanup", StringComparison.OrdinalIgnoreCase) ||
+            phaseDescription.Contains("Final QG", StringComparison.OrdinalIgnoreCase) ||
+            phaseDescription.Contains("Post-PR CI", StringComparison.OrdinalIgnoreCase))
             return StallPhases.QgcRetryAgent;
 
         if (phaseDescription.Contains("Code generation", StringComparison.OrdinalIgnoreCase) ||

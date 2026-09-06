@@ -38,15 +38,13 @@ public class PipelineTelemetryQualityGateTests : IDisposable
     {
         using var collector = new MetricCollector<long>(_factory, PipelineTelemetry.SourceName, "quality_gate.retries");
 
-        _qualityGateRetries.Add(1, PipelineTelemetry.RunTypeTag(PipelineRunType.Implementation));
+        _qualityGateRetries.Add(1, PipelineTelemetry.BuildTags(PipelineRunType.Implementation, "proj-1", "MyProject"));
 
         collector.GetMeasurementSnapshot().Should().ContainSingle(m =>
-            m.Value == 1 && m.Tags.Contains(new KeyValuePair<string, object?>("run_type", "implementation")));
-        // TODO: Add a test (or extend this one) that calls PipelineTelemetry.BuildTags(runType, projectId, projectName)
-        // and asserts that pipeline.project_id and pipeline.project_name are also present in the measurement tags.
-        // The production call site (QualityGateExecutor.RetryLoop.cs) was updated to BuildTags per the AC, but the test
-        // still uses the old RunTypeTag form, so a revert of the production call site would not be caught.
-        // (review finding: correctness reviewer WARNING)
+            m.Value == 1 &&
+            m.Tags.Contains(new KeyValuePair<string, object?>("run_type", "implementation")) &&
+            m.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "proj-1")) &&
+            m.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_name", "MyProject")));
     }
 
     [Theory]
@@ -108,6 +106,8 @@ public class PipelineTelemetryQualityGateTests : IDisposable
     [Theory]
     [InlineData("Quality gate retry agent (attempt 1)", "qgc_retry_agent")]
     [InlineData("Pre-PR cleanup agent", "qgc_retry_agent")]
+    [InlineData("Final QG retry agent", "qgc_retry_agent")]
+    [InlineData("Post-PR CI retry agent", "qgc_retry_agent")]
     [InlineData("Code generation agent", "codegen")]
     [InlineData("Code gen (attempt 2)", "codegen")]
     [InlineData("Analysis agent session", "analysis")]
@@ -118,10 +118,16 @@ public class PipelineTelemetryQualityGateTests : IDisposable
     [InlineData("Acceptance criteria validation", "code_review")]
     [InlineData("Decomposition agent", "decomposition")]
     [InlineData("Some unrecognized description", "unknown")]
-    [InlineData("", "unknown")]
     public void NormalizeStallPhase_MapsDescriptionToExpectedPhase(string description, string expectedPhase)
     {
         PipelineTelemetry.NormalizeStallPhase(description).Should().Be(expectedPhase,
             $"description '{description}' should map to phase '{expectedPhase}'");
+    }
+
+    [Fact]
+    public void NormalizeStallPhase_ThrowsOnEmptyString()
+    {
+        var act = () => PipelineTelemetry.NormalizeStallPhase(string.Empty);
+        act.Should().Throw<ArgumentException>("empty string is not a valid phase description");
     }
 }

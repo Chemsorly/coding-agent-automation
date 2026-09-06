@@ -456,26 +456,6 @@ public class QualityGateValidatorTests
 
     // --- Metric Instrumentation Tests ---
 
-    // TODO: Add tests for the outcome=error path in both RunQgcTestsAsync and RunQgcCompilationAsync.
-    // Use a MetricCapturingValidator variant that throws a non-timeout/non-cancel exception (e.g. IOException)
-    // from RunProcessAsync and assert that:
-    //   (a) RunQgcCompilationAsync records quality_gate.process.duration with outcome=error (existing path, unverified)
-    //   (b) RunQgcTestsAsync records quality_gate.process.duration with outcome=error (path added in review fix)
-    // Without this, a regression that drops the error-path recording would not be caught by the test suite.
-    // (review finding: correctness reviewer WARNING)
-
-    // TODO: Add tests for the outcome=cancelled path in both RunQgcTestsAsync and RunQgcCompilationAsync.
-    // Both methods have an explicit catch (OperationCanceledException) block that records duration with
-    // outcome="cancelled" and then re-throws. There is no test that exercises this path — deleting either
-    // catch block or changing outcome to "success" would not be detected. Use a MetricCapturingValidator
-    // variant that throws OperationCanceledException from RunProcessAsync and assert that duration is
-    // recorded with outcome=cancelled. (review finding: test quality reviewer WARNING)
-
-    // TODO: Add a test for RunQgcCompilationAsync success path that mirrors
-    // RunQgcTestsAsync_WhenProcessSucceeds_RecordsDurationWithSuccessOutcome. The final
-    // _processDuration.Record call in RunQgcCompilationAsync (non-catch path) is untested;
-    // dropping it would not be caught by the test suite. (review finding: test quality reviewer WARNING)
-
     [Fact]
     public async Task RunQgcTestsAsync_WhenProcessTimesOut_IncrementsTimeoutCounterAndRecordsDuration()
     {
@@ -804,14 +784,6 @@ public class QualityGateValidatorTests
     // (on timeout). The production code sets these correctly but there is no regression guard — a refactor could
     // silently drop the tags without any test failing. Use ActivitySource.AddActivityListener with a filter on
     // PipelineTelemetry.ActivitySource.Name and assert Activity.Tags after ValidateAsync returns.
-    // (review finding: correctness reviewer WARNING)
-
-    // TODO: Add unit tests for PipelineTelemetry.NormalizeStallPhase covering all branches other than
-    // QgcRetryAgent (which is exercised implicitly by the stall-monitor metric tests). Untested branches:
-    // CodeGen, Analysis, CodeReview, Decomposition, and Unknown (the fallback). A change that accidentally
-    // widens a branch condition — causing a description that should map to Unknown to match CodeReview, for
-    // example — would not be caught by the current test suite.
-    // (review finding: test quality reviewer WARNING)
 
     private sealed class TimeoutSimulatingValidator : QualityGateValidator
     {

@@ -29,11 +29,7 @@ public partial class QualityGateExecutor : IQualityGateExecutor
     private readonly Counter<long> _stallWarnings;
     private readonly Counter<long> _stallKills;
     private readonly Counter<long> _stallProcessDeaths;
-    // TODO: Change to private readonly. The field is only consumed within this partial class
-    // (QualityGateExecutor.RetryLoop.cs); partial-class members share the same accessibility scope so
-    // internal readonly is unnecessarily wide and exposes the field to all code in the
-    // CodingAgentWebUI.Pipeline assembly. (review finding: dotnet specialist WARNING)
-    internal readonly StallMonitorMetrics _stallMetrics;
+    private readonly StallMonitorMetrics _stallMetrics;
 
     public QualityGateExecutor(
         IQualityGateValidator qualityGateValidator,

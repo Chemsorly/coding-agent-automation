@@ -213,13 +213,6 @@ public class AgentStallMonitorTests
     [Fact]
     public async Task HandleSilenceWarning_EmitsStallWarningsCounter()
     {
-        // TODO: The counters below are created directly on a meter obtained from the factory, not through
-        // QualityGateValidator/QualityGateExecutor constructors. MetricCollector observes recordings only on
-        // instruments it directly tracks; confirm that MetricCollector hooks into instruments by name on the
-        // factory (not just factory-owned meters), otherwise this test may silently observe zero measurements
-        // and the polling loop will time out before snapshot.Should().NotBeEmpty() catches it.
-        // The safer pattern (used in QualityGateValidatorTests) creates the validator with the factory and
-        // lets its constructor create instruments through the factory. (review finding: test quality reviewer WARNING)
         var factory = new TestMeterFactory();
         var meter = factory.Create(new System.Diagnostics.Metrics.MeterOptions(PipelineTelemetry.SourceName));
         var warningsCounter = meter.CreateCounter<long>("quality_gate.stall.warnings", "{warning}");
@@ -262,11 +255,6 @@ public class AgentStallMonitorTests
         await task;
 
         var snapshot = warningCollector.GetMeasurementSnapshot();
-        // TODO: Consider asserting snapshot.Should().ContainSingle(...) (exact count) instead of NotBeEmpty +
-        // Contain. The current ordering — NotBeEmpty then Contain — means a mix of correctly and incorrectly
-        // tagged measurements could satisfy NotBeEmpty while the Contain check would need to match at least
-        // one; the tag assertion is present and correct, but asserting a single measurement with both conditions
-        // in one assertion would be more precise. (review finding: test quality reviewer WARNING)
         snapshot.Should().NotBeEmpty("at least one stall warning should have been emitted");
         snapshot.Should().Contain(m =>
             m.Tags.Contains(new KeyValuePair<string, object?>("phase", PipelineTelemetry.StallPhases.QgcRetryAgent)),
