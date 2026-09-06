@@ -1357,12 +1357,11 @@ public sealed class DispatchLoopTests
 // The static PipelineTelemetry.Meter is process-wide, so concurrent tests may fire
 // QueueWaitTime.Record(...) while a listener is active. Assertions use Contain-style
 // checks to remain robust against concurrent test noise.
-// TODO [WARNING]: DispatchLoopMetricTests is not in a [Collection] fixture to serialize execution
-// against other test classes that listen on PipelineTelemetry.Meter. If two instances run
-// concurrently, _recordings may capture measurements from the other test's dispatch. A false
-// negative is possible (but low-probability) if a concurrent test fires a matching recording
-// before this test's listener is started. The Contain-style assertion prevents false positives.
+// [Collection("Metrics")] serializes execution against ReconciliationLoopMetricTests to
+// prevent concurrent MeterListener subscriptions from capturing each other's PipelineTelemetry
+// emissions.
 
+[Collection("Metrics")]
 public sealed class DispatchLoopMetricTests : IDisposable
 {
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();

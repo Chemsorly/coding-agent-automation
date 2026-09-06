@@ -1397,7 +1397,10 @@ public sealed class ReconciliationLoopErrorTests
 // ReconciliationLoop tests now use TestMeterFactory for isolated instrument capture.
 // LogTerminalStatus tests still use MeterListener against static meters since that method
 // calls static PipelineTelemetry/WorkDistributionTelemetry instruments directly.
+// [Collection("Metrics")] serializes execution against DispatchLoopMetricTests to prevent
+// concurrent MeterListener subscriptions from capturing each other's PipelineTelemetry emissions.
 
+[Collection("Metrics")]
 public sealed class ReconciliationLoopMetricTests : IDisposable
 {
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
