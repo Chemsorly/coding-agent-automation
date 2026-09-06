@@ -14,6 +14,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Serilog;
+using CodingAgentWebUI.Api.Dispatch;
 
 namespace CodingAgentWebUI.Api;
 
@@ -78,6 +79,8 @@ public static class WorkItemEndpoints
         group.MapPost("/{id:guid}/label-swap", PostLabelSwap).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapPost("/{id:guid}/last-progress", PostLastProgress).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapPost("/{id:guid}/priority", PostPriorityWeight).RequireAuthorization(ApiAuthPolicies.Operator);
+        // Synchronous dispatch: creates WorkItem as Dispatched + K8s Job in one call (replaces Pending queue path).
+        group.MapPost("/dispatch", DispatchWorkItem).RequireAuthorization(ApiAuthPolicies.Operator);
 
         // ── Metrics feed for the Scheduler's WorkItemCountsPoller ─────────────
         group.MapGet("/counts-by-status", GetCountsByStatus).RequireAuthorization(ApiAuthPolicies.Operator);
@@ -570,6 +573,55 @@ public static class WorkItemEndpoints
         };
     }
 
+    // ── POST /dispatch — synchronous dispatch ─────────────────────────────
+
+    /// <summary>
+    /// POST /api/work-items/dispatch
+    /// Synchronous dispatch path: atomically creates a WorkItem with Status=Dispatched and a
+    /// matching K8s Job in a single request, bypassing the Pending queue.
+    /// <para>
+    /// Returns 200 + new WorkItemId on success.
+    /// Returns 503 (Service Unavailable) if no PVC is available or K8s Job creation fails.
+    /// Returns 409 (Conflict) if at concurrency limit or issue already has a live WorkItem.
+    /// </para>
+    /// </summary>
+    internal static async Task<IResult> DispatchWorkItem(
+        [FromBody] JobDistributionRequest request,
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        IOrchestratorRunService runService,
+        DispatchLifecycleService dispatchLifecycle,
+        CancellationToken ct = default)
+    {
+        // TODO [WARNING]: ArgumentNullException.ThrowIfNull(request) is redundant here — ASP.NET Core
+        // model binding returns 400 before invoking the handler when the body is missing or deserializes
+        // to null (with default null-rejection). This guard only fires in direct unit-test calls
+        // that bypass the ASP.NET Core binder. The contract inconsistency is minor but worth noting.
+        // See review finding [WARNING] line 590.
+        ArgumentNullException.ThrowIfNull(request);
+
+        // Use RunId from request if provided (ensures WorkItem.Id == PipelineRun.RunId for hub routing).
+        var workItemId = !string.IsNullOrEmpty(request.RunId) && Guid.TryParse(request.RunId, out var parsedRunId)
+            ? parsedRunId
+            : Guid.NewGuid();
+
+        var minimalPayload = BuildMinimalPayload(request);
+        var payloadJson = JsonSerializer.Serialize(minimalPayload, PipelineJsonOptions.Default);
+
+        var (resultId, statusCode) = await dispatchLifecycle.ExecuteSynchronousDispatchAsync(
+            request, workItemId, payloadJson, dbFactory, runService, ct);
+
+        if (statusCode == 409)
+            return TypedResults.Conflict("At concurrency limit or a live work item already exists for this issue.");
+
+        if (statusCode == 503)
+            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+
+        if (resultId is null)
+            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+
+        return TypedResults.Ok(resultId.Value);
+    }
+
     // ── GET /pending ──────────────────────────────────────────────────────
 
     /// <summary>
@@ -800,10 +852,11 @@ public static class WorkItemEndpoints
         if (succeededFromCancelled)
             return TypedResults.Ok();
 
-        // Try Dispatched → Pending — handles Job creation failures where ClaimAsync succeeded
-        // but the K8s Job could not be created (API server unreachable, invalid spec, no PVC).
-        // Without this, the item stays stuck in Dispatched until EnforceDispatchedTimeoutAsync
-        // marks it Failed (losing the retry rather than re-queuing it).
+        // Try Dispatched → Pending — handles consolidation Job creation failures where ClaimAsync succeeded
+        // but the K8s Job could not be created. The regular dispatch path (POST /api/work-items/dispatch)
+        // does not use this transition, but the consolidation path still goes through Pending.
+        // Without this, a consolidation item stays stuck in Dispatched until EnforceDispatchedTimeoutAsync
+        // marks it Failed (losing the retry).
         var succeededFromDispatched = await transitionService.TransitionIfAsync(
             id,
             expectedCurrent: WorkItemStatus.Dispatched,
@@ -830,7 +883,7 @@ public static class WorkItemEndpoints
         if (item is null)
             return TypedResults.NotFound();
 
-        // Item exists but is in wrong state (e.g. Pending/Running/Succeeded)
+        // Item exists but is in wrong state (e.g. Running/Succeeded)
         return TypedResults.Conflict($"Cannot requeue work item in status '{item.Status}'.");
     }
 

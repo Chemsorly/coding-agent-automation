@@ -46,24 +46,52 @@ public sealed class KubernetesWorkDistributorTests
     // ── DistributeAsync ───────────────────────────────────────────────────
 
     [Fact]
-    public async Task DistributeAsync_OnSuccess_ReturnsSuccessResult()
+    public async Task DistributeAsync_OnSuccess_ReturnsSuccessResultNotQueued()
     {
         var workItemId = Guid.NewGuid();
-        _client.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(workItemId);
 
         var result = await _sut.DistributeAsync(MakeRequest(), CancellationToken.None);
 
         result.Success.Should().BeTrue();
         result.WorkItemId.Should().Be(workItemId.ToString());
-        result.Queued.Should().BeTrue();
+        result.Queued.Should().BeFalse("synchronous dispatch never queues as Pending");
         result.ErrorMessage.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DistributeAsync_When503_ReturnsFailureResult()
+    {
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("No capacity", null, System.Net.HttpStatusCode.ServiceUnavailable));
+
+        var result = await _sut.DistributeAsync(MakeRequest(), CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.WorkItemId.Should().BeNull();
+        result.ErrorMessage.Should().NotBeNullOrEmpty();
+        result.ErrorMessage.Should().Contain("503");
+    }
+
+    [Fact]
+    public async Task DistributeAsync_When409_ReturnsFailureResult()
+    {
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Concurrency limit", null, System.Net.HttpStatusCode.Conflict));
+
+        var result = await _sut.DistributeAsync(MakeRequest(), CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.WorkItemId.Should().BeNull();
+        result.ErrorMessage.Should().NotBeNullOrEmpty();
+        result.ErrorMessage.Should().Contain("409");
     }
 
     [Fact]
     public async Task DistributeAsync_WhenClientThrows_ReturnsFailureResult()
     {
-        _client.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("API unavailable"));
 
         var result = await _sut.DistributeAsync(MakeRequest(), CancellationToken.None);

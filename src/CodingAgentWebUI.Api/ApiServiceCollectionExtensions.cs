@@ -416,6 +416,23 @@ public static class ApiServiceCollectionExtensions
             return JobTemplateStore.LoadFromFile(templatesPath);
         });
 
+        // ── DispatchLifecycleService ──────────────────────────────────────────────────────────
+        // Registered as a singleton so POST /api/work-items/dispatch can use it via DI parameter
+        // injection. The _pvcSelectLock inside is a process-wide SemaphoreSlim that serializes
+        // concurrent PVC selection requests, preventing TOCTOU races where two callers observe
+        // the same free PVC before either has written a K8s Job.
+        // Gracefully handles null IKubernetesJobClient (K8s unavailable in test/dev).
+        services.AddSingleton<CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService>(sp =>
+        {
+            var kubeClient = sp.GetService<IKubernetesJobClient>(); // nullable — K8s unavailable degrades gracefully
+            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
+            return new CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService(
+                kubeClient,
+                sp.GetRequiredService<WorkItemTransitionService>(),
+                options,
+                sp.GetRequiredService<JobTemplateStore>());
+        });
+
         // ── DatabaseMaintenanceService ────────────────────────────────────────────────────────
         // The only retention sweep in the system — orphaning it causes Postgres to grow
         // without bound while retention settings still render in the UI.

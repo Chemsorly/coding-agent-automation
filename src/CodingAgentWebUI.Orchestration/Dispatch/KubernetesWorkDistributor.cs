@@ -10,8 +10,9 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// (<see cref="IPipelineApiWorkItemClient"/>). No direct database access.
 /// </summary>
 /// <remarks>
-/// <see cref="DistributeAsync"/> creates a WorkItem row via <c>POST /api/work-items</c>.
-/// The Job Controller's dispatch loop picks up the Pending item and creates the K8s Job.
+/// <see cref="DistributeAsync"/> calls <c>POST /api/work-items/dispatch</c>, which atomically
+/// creates the K8s Job and writes the <see cref="WorkItem"/> as <c>Dispatched</c> in a single
+/// request. No <c>Pending</c> work item is ever written on the live dispatch path.
 /// <para>
 /// Cancel, status-query, and dedup operations route through the same API client.
 /// This class no longer inherits <c>DbWorkDistributorBase</c> — all DB coupling is removed.
@@ -39,15 +40,29 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
 
         try
         {
-            var workItemId = await _apiClient.CreateAsync(request, ct);
+            var workItemId = await _apiClient.DispatchAsync(request, ct);
             _logger.LogInformation(
-                "WorkItem {WorkItemId} created via Pipeline API for issue {IssueIdentifier}",
+                "WorkItem {WorkItemId} dispatched synchronously via Pipeline API for issue {IssueIdentifier}",
                 workItemId, request.IssueIdentifier);
-            return new DistributionResult(true, workItemId.ToString(), null, Queued: true);
+            return new DistributionResult(true, workItemId.ToString(), null, Queued: false);
+        }
+        catch (HttpRequestException ex) when (
+            ex.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable ||
+            ex.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            // 503 = no PVC available or K8s failure; 409 = concurrency limit or issue ineligible.
+            // Return failure so DistributeAndFinalizeAsync reverts the label to agent:next.
+            var reason = ex.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable
+                ? "No capacity (503): no PVC available or K8s Job creation failed"
+                : "No capacity (409): at concurrency limit or issue already has a live work item";
+            _logger.LogInformation(
+                "Dispatch rejected for issue {IssueIdentifier}: {Reason}",
+                request.IssueIdentifier, reason);
+            return new DistributionResult(false, null, reason);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to create WorkItem via Pipeline API for issue {IssueIdentifier}",
+            _logger.LogError(ex, "Failed to dispatch WorkItem via Pipeline API for issue {IssueIdentifier}",
                 request.IssueIdentifier);
             return new DistributionResult(false, null, ex.Message);
         }

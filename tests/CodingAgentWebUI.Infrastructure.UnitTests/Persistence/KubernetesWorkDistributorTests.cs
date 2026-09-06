@@ -27,17 +27,17 @@ public class KubernetesWorkDistributorTests
     // ── DistributeAsync ──────────────────────────────────────────────────
 
     [Fact]
-    public async Task DistributeAsync_CallsApiClientCreateAsync()
+    public async Task DistributeAsync_CallsApiClientDispatchAsync()
     {
         var request = CreateRequest("owner/repo#1", "provider-1");
         _mockApiClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Guid.NewGuid());
 
         await _distributor.DistributeAsync(request, CancellationToken.None);
 
         _mockApiClient.Verify(
-            c => c.CreateAsync(
+            c => c.DispatchAsync(
                 It.Is<JobDistributionRequest>(r => r.IssueIdentifier == request.IssueIdentifier),
                 It.IsAny<CancellationToken>()),
             Times.Once);
@@ -48,14 +48,14 @@ public class KubernetesWorkDistributorTests
     {
         var expectedId = Guid.NewGuid();
         _mockApiClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(expectedId);
 
         var request = CreateRequest("owner/repo#2", "provider-2");
         var result = await _distributor.DistributeAsync(request, CancellationToken.None);
 
         result.Success.Should().BeTrue();
-        result.Queued.Should().BeTrue();
+        result.Queued.Should().BeFalse("synchronous dispatch never queues as Pending");
         result.WorkItemId.Should().Be(expectedId.ToString());
         result.ErrorMessage.Should().BeNull();
     }
@@ -64,7 +64,7 @@ public class KubernetesWorkDistributorTests
     public async Task DistributeAsync_WhenApiThrows_ReturnsFailureResult()
     {
         _mockApiClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("Pipeline API unreachable"));
 
         var request = CreateRequest("owner/repo#3", "provider-3");
@@ -72,6 +72,36 @@ public class KubernetesWorkDistributorTests
 
         result.Success.Should().BeFalse();
         result.ErrorMessage.Should().Contain("Pipeline API unreachable");
+    }
+
+    [Fact]
+    public async Task DistributeAsync_When503_ReturnsFailureNotQueued()
+    {
+        _mockApiClient
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("No PVC available", null, System.Net.HttpStatusCode.ServiceUnavailable));
+
+        var request = CreateRequest("owner/repo#4", "provider-4");
+        var result = await _distributor.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.Queued.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("503");
+    }
+
+    [Fact]
+    public async Task DistributeAsync_When409_ReturnsFailureNotQueued()
+    {
+        _mockApiClient
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Concurrency limit", null, System.Net.HttpStatusCode.Conflict));
+
+        var request = CreateRequest("owner/repo#5", "provider-5");
+        var result = await _distributor.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.Queued.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("409");
     }
 
     // ── CancelJobAsync ───────────────────────────────────────────────────

@@ -453,10 +453,11 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             return new DispatchOutcome(false, false, result.ErrorMessage);
         }
 
-        if (!result.Queued)
-            await ConfirmDistributionLabelAsync(request, ct);
+        // Synchronous dispatch path: DistributeAsync now always dispatches immediately (never queues).
+        // ConfirmDistributionLabelAsync is unconditional — there is no "Queued" state to guard against.
+        await ConfirmDistributionLabelAsync(request, ct);
 
-        return new DispatchOutcome(true, result.Queued, null);
+        return new DispatchOutcome(true, false, null);
     }
 
     /// <inheritdoc />

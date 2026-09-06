@@ -1558,21 +1558,23 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
     }
 
     [Fact]
-    public async Task DistributeAndFinalizeAsync_WhenDistributeSucceedsAndQueued_DoesNotConfirmLabel()
+    public async Task DistributeAndFinalizeAsync_WhenDistributeSucceeds_AlwaysConfirmsLabel()
     {
+        // With synchronous dispatch, DistributeAsync never returns Queued:true anymore.
+        // DistributeAndFinalizeAsync always calls ConfirmDistributionLabelAsync on success.
         _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DistributionResult(true, "work-1", null, Queued: true));
+            .ReturnsAsync(new DistributionResult(true, "work-1", null, Queued: false));
 
         var outcome = await _service.DistributeAndFinalizeAsync(TestRequest, CancellationToken.None);
 
         outcome.Success.Should().BeTrue();
-        outcome.Queued.Should().BeTrue();
+        outcome.Queued.Should().BeFalse("synchronous dispatch never queues");
         outcome.ErrorMessage.Should().BeNull();
 
-        // No label swap should have occurred (drain service handles it later)
+        // Label swap to agent:in-progress must always happen on success
         _mockLabelService.Verify(
-            s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+            s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]

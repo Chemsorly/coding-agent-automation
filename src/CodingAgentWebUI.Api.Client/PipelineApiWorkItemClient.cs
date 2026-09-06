@@ -205,6 +205,18 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         return result.Select(r => (r.IssueIdentifier, r.IssueProviderConfigId)).ToList();
     }
 
+    public async Task<Guid> DispatchAsync(JobDistributionRequest request, CancellationToken ct = default)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Post, "/api/work-items/dispatch");
+        if (!string.IsNullOrEmpty(request.RunId))
+            req.Headers.Add("X-Idempotency-Key", request.RunId);
+        req.Content = JsonContent.Create(request, options: PipelineJsonOptions.Default);
+        var response = await _http.SendAsync(req, ct);
+        // 503 = no PVC or K8s failure, 409 = concurrency limit / ineligible — propagate to caller
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<Guid>(cancellationToken: ct);
+    }
+
     // Internal DTOs for response deserialization
     /// <summary>Shape of <c>GET /api/work-items/{id}/retry-count</c>. Positional so the
     /// deserializer assigns through the constructor — an init-only property looks unassigned to

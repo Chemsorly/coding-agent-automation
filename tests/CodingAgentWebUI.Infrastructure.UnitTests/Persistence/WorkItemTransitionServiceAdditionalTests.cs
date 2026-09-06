@@ -103,16 +103,17 @@ public class WorkItemTransitionServiceAdditionalTests
     public async Task TransitionAsync_ValidTransition_ChangesStatusAndReturnTrue()
     {
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
         var svc = CreateService(opts);
 
-        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Dispatched);
+        // Dispatched → Running is a valid transition
+        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Running);
 
         result.Should().BeTrue();
 
         await using var verify = new TestPipelineDbContext(opts);
         var updated = await verify.WorkItems.FindAsync(item.Id);
-        updated!.Status.Should().Be(WorkItemStatus.Dispatched);
+        updated!.Status.Should().Be(WorkItemStatus.Running);
     }
 
     [Fact]
@@ -139,32 +140,26 @@ public class WorkItemTransitionServiceAdditionalTests
     public async Task TransitionAsync_ConcurrencyRetry_SucceedsAfterOneConflict()
     {
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
         // Factory throws on first save, succeeds on second
         var factory = new ThrowingOnSaveDbContextFactory(opts, throwOnCallNumbers: [1]);
         var svc = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
 
-        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Dispatched);
+        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Running);
 
         result.Should().BeTrue();
     }
 
     [Fact]
-    // TODO: The factory's call counter tracks CreateDbContextAsync invocations, not SaveChangesAsync invocations.
-    // This works because TransitionCoreAsync creates a new context per loop iteration (1:1 mapping). If the
-    // implementation is ever refactored to reuse a single context across retries, throwOnCallNumbers would shift
-    // and the test would silently stop covering the exhausted-retries branch. To make the assumption explicit,
-    // expose a CreateCallCount property on ThrowingOnSaveDbContextFactory and add:
-    //   factory.CreateCallCount.Should().Be(4); // one context per attempt (attempts 0..3 with maxRetries=3)
     public async Task TransitionAsync_ExhaustedRetries_ReturnsFalse()
     {
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
         // Factory always throws on save (all 4 calls = attempts 0..3 with maxRetries=3)
         var factory = new ThrowingOnSaveDbContextFactory(opts, throwOnCallNumbers: [1, 2, 3, 4]);
         var svc = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
 
-        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Dispatched, maxRetries: 3);
+        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Running, maxRetries: 3);
 
         result.Should().BeFalse();
     }
@@ -179,7 +174,7 @@ public class WorkItemTransitionServiceAdditionalTests
         ctx.Database.EnsureCreated();
 
         var svc = CreateService(opts);
-        var result = await svc.TransitionIfAsync(Guid.NewGuid(), WorkItemStatus.Pending, WorkItemStatus.Dispatched);
+        var result = await svc.TransitionIfAsync(Guid.NewGuid(), WorkItemStatus.Dispatched, WorkItemStatus.Running);
 
         result.Should().BeFalse();
     }
@@ -188,11 +183,11 @@ public class WorkItemTransitionServiceAdditionalTests
     public async Task TransitionIfAsync_AlreadyAtTarget_ReturnsFalse_NotIdempotent()
     {
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
         var svc = CreateService(opts);
 
-        // Item is already Dispatched — TransitionIfAsync is NOT idempotent
-        var result = await svc.TransitionIfAsync(item.Id, WorkItemStatus.Pending, WorkItemStatus.Dispatched);
+        // Item is already Running — TransitionIfAsync is NOT idempotent
+        var result = await svc.TransitionIfAsync(item.Id, WorkItemStatus.Dispatched, WorkItemStatus.Running);
 
         result.Should().BeFalse("TransitionIfAsync fails when already at target (not idempotent)");
     }
@@ -204,8 +199,8 @@ public class WorkItemTransitionServiceAdditionalTests
         var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
         var svc = CreateService(opts);
 
-        // Expected = Pending but current = Running → CAS fails
-        var result = await svc.TransitionIfAsync(item.Id, WorkItemStatus.Pending, WorkItemStatus.Dispatched);
+        // Expected = Dispatched but current = Running → CAS fails
+        var result = await svc.TransitionIfAsync(item.Id, WorkItemStatus.Dispatched, WorkItemStatus.Running);
 
         result.Should().BeFalse("CAS guard rejects when current state doesn't match expected");
     }
@@ -227,27 +222,28 @@ public class WorkItemTransitionServiceAdditionalTests
     public async Task TransitionIfAsync_ValidCAS_TransitionsAndReturnsTrue()
     {
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
         var svc = CreateService(opts);
 
-        var result = await svc.TransitionIfAsync(item.Id, WorkItemStatus.Pending, WorkItemStatus.Dispatched);
+        // Dispatched → Running is a valid transition
+        var result = await svc.TransitionIfAsync(item.Id, WorkItemStatus.Dispatched, WorkItemStatus.Running);
 
         result.Should().BeTrue();
 
         await using var verify = new TestPipelineDbContext(opts);
         var updated = await verify.WorkItems.FindAsync(item.Id);
-        updated!.Status.Should().Be(WorkItemStatus.Dispatched);
+        updated!.Status.Should().Be(WorkItemStatus.Running);
     }
 
     [Fact]
     public async Task TransitionIfAsync_WithMutate_SetsAdditionalFields()
     {
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
         var svc = CreateService(opts);
 
         var result = await svc.TransitionIfAsync(
-            item.Id, WorkItemStatus.Pending, WorkItemStatus.Dispatched,
+            item.Id, WorkItemStatus.Dispatched, WorkItemStatus.Running,
             entity => entity.AssignedAgentId = "agent-42");
 
         result.Should().BeTrue();
@@ -260,30 +256,24 @@ public class WorkItemTransitionServiceAdditionalTests
     public async Task TransitionIfAsync_ConcurrencyRetry_SucceedsAfterOneConflict()
     {
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
         var factory = new ThrowingOnSaveDbContextFactory(opts, throwOnCallNumbers: [1]);
         var svc = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
 
-        var result = await svc.TransitionIfAsync(item.Id, WorkItemStatus.Pending, WorkItemStatus.Dispatched);
+        var result = await svc.TransitionIfAsync(item.Id, WorkItemStatus.Dispatched, WorkItemStatus.Running);
 
         result.Should().BeTrue();
     }
 
     [Fact]
-    // TODO: Uses the default maxRetries (3) implicitly — throwOnCallNumbers: [1, 2, 3, 4] assumes this default.
-    // If the public TransitionIfAsync default ever changes, the throw array would under- or over-cover the retries
-    // and the test would pass vacuously. Consider passing maxRetries: 3 explicitly to make the assumption
-    // self-documenting and robust against default changes.
-    // Same fragile call-count coupling as TransitionAsync_ExhaustedRetries_ReturnsFalse: expose CreateCallCount on
-    // ThrowingOnSaveDbContextFactory and assert factory.CreateCallCount.Should().Be(4) to pin iteration count.
     public async Task TransitionIfAsync_AllRetriesExhausted_ReturnsFalse()
     {
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
         var factory = new ThrowingOnSaveDbContextFactory(opts, throwOnCallNumbers: [1, 2, 3, 4]);
         var svc = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
 
-        var result = await svc.TransitionIfAsync(item.Id, WorkItemStatus.Pending, WorkItemStatus.Dispatched);
+        var result = await svc.TransitionIfAsync(item.Id, WorkItemStatus.Dispatched, WorkItemStatus.Running);
 
         result.Should().BeFalse();
     }
@@ -341,16 +331,17 @@ public class WorkItemTransitionServiceAdditionalTests
     public async Task TransitionDetailedAsync_ValidTransition_ReturnsTransitioned()
     {
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
         var svc = CreateService(opts);
 
-        var result = await svc.TransitionDetailedAsync(item.Id, WorkItemStatus.Dispatched);
+        // Dispatched → Running is a valid transition
+        var result = await svc.TransitionDetailedAsync(item.Id, WorkItemStatus.Running);
 
         result.Should().Be(TransitionResult.Transitioned);
 
         await using var verify = new TestPipelineDbContext(opts);
         var updated = await verify.WorkItems.FindAsync(item.Id);
-        updated!.Status.Should().Be(WorkItemStatus.Dispatched);
+        updated!.Status.Should().Be(WorkItemStatus.Running);
     }
 
     [Fact]
@@ -619,7 +610,7 @@ public class WorkItemTransitionServiceAdditionalTests
         // Verify that when a ResiliencePipelineProvider is supplied, the service still succeeds —
         // proving the Polly execution wrapper does not break the normal path.
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
 
         var invoked = false;
         // Build a no-op pipeline using the public API and a separate invocation tracker
@@ -632,7 +623,7 @@ public class WorkItemTransitionServiceAdditionalTests
         var svc = new WorkItemTransitionService(
             new TestDbContextFactory(opts), NullLogger<WorkItemTransitionService>.Instance, provider);
 
-        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Dispatched);
+        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Running);
 
         result.Should().BeTrue();
         invoked.Should().BeTrue("Polly pipeline provider should have been queried");

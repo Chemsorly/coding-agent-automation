@@ -264,10 +264,15 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
     public static bool IsValidTransition(WorkItemStatus current, WorkItemStatus target)
         => (current, target) switch
         {
+            // Pending is used by the consolidation dispatch path (still uses Pending queue).
+            // Regular (implementation/review/decomposition) items are now created directly as Dispatched.
             (WorkItemStatus.Pending, WorkItemStatus.Dispatched or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,
+            // Dispatched→Pending retained for consolidation requeue (Job creation failure recovery).
+            // Regular items on the synchronous dispatch path are never re-queued to Pending;
+            // if K8s Job creation fails, the WorkItem transitions directly to Failed.
             (WorkItemStatus.Dispatched, WorkItemStatus.Running or WorkItemStatus.Failed or WorkItemStatus.Cancelled or WorkItemStatus.Pending) => true,
             (WorkItemStatus.Running, WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,
-            // Requeue paths: Failed/Cancelled → Pending (Req 6.1, POST /api/work-items/{id}/requeue)
+            // Requeue paths: Failed/Cancelled → Pending (POST /api/work-items/{id}/requeue)
             (WorkItemStatus.Failed, WorkItemStatus.Pending) => true,
             (WorkItemStatus.Cancelled, WorkItemStatus.Pending) => true,
             _ => false

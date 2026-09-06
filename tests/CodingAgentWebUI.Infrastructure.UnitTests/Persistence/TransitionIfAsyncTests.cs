@@ -23,17 +23,17 @@ public class TransitionIfAsyncTests
     [Fact]
     public async Task TransitionIfAsync_MatchingExpected_Succeeds()
     {
-        // Arrange: row is Pending
+        // Arrange: row is Dispatched
         var id = Guid.NewGuid();
-        var factory = await CreateFactoryWithItem(id, WorkItemStatus.Pending);
+        var factory = await CreateFactoryWithItem(id, WorkItemStatus.Dispatched);
         var svc = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
 
-        // Act: expectedCurrent=Pending, target=Dispatched
-        var result = await svc.TransitionIfAsync(id, WorkItemStatus.Pending, WorkItemStatus.Dispatched);
+        // Act: expectedCurrent=Dispatched, target=Running
+        var result = await svc.TransitionIfAsync(id, WorkItemStatus.Dispatched, WorkItemStatus.Running);
 
-        // Assert: returns true, row is now Dispatched
+        // Assert: returns true, row is now Running
         result.Should().BeTrue();
-        await AssertStatus(factory, id, WorkItemStatus.Dispatched);
+        await AssertStatus(factory, id, WorkItemStatus.Running);
     }
 
     // ── Test 2: Wrong expected → returns false ────────────────────────────
@@ -41,17 +41,17 @@ public class TransitionIfAsyncTests
     [Fact]
     public async Task TransitionIfAsync_WrongExpected_ReturnsFalse()
     {
-        // Arrange: row is Dispatched
+        // Arrange: row is Running
         var id = Guid.NewGuid();
-        var factory = await CreateFactoryWithItem(id, WorkItemStatus.Dispatched);
+        var factory = await CreateFactoryWithItem(id, WorkItemStatus.Running);
         var svc = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
 
-        // Act: expectedCurrent=Pending (wrong), target=Dispatched
-        var result = await svc.TransitionIfAsync(id, WorkItemStatus.Pending, WorkItemStatus.Dispatched);
+        // Act: expectedCurrent=Dispatched (wrong), target=Running
+        var result = await svc.TransitionIfAsync(id, WorkItemStatus.Dispatched, WorkItemStatus.Running);
 
         // Assert: returns false, row unchanged
         result.Should().BeFalse();
-        await AssertStatus(factory, id, WorkItemStatus.Dispatched);
+        await AssertStatus(factory, id, WorkItemStatus.Running);
     }
 
     // ── Test 3: Already at target → returns false (NOT idempotent) ────────
@@ -59,13 +59,13 @@ public class TransitionIfAsyncTests
     [Fact]
     public async Task TransitionIfAsync_AlreadyAtTarget_ReturnsFalse()
     {
-        // Arrange: row is Dispatched — same as target
+        // Arrange: row is Running — same as target
         var id = Guid.NewGuid();
-        var factory = await CreateFactoryWithItem(id, WorkItemStatus.Dispatched);
+        var factory = await CreateFactoryWithItem(id, WorkItemStatus.Running);
         var svc = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
 
-        // Act: expectedCurrent=Dispatched, target=Dispatched (already there)
-        var result = await svc.TransitionIfAsync(id, WorkItemStatus.Dispatched, WorkItemStatus.Dispatched);
+        // Act: expectedCurrent=Running, target=Running (already there)
+        var result = await svc.TransitionIfAsync(id, WorkItemStatus.Running, WorkItemStatus.Running);
 
         // Assert: returns false — NOT idempotent like TransitionAsync
         result.Should().BeFalse();
@@ -76,19 +76,19 @@ public class TransitionIfAsyncTests
     [Fact]
     public async Task TransitionIfAsync_ConcurrentClaims_OnlyOneSucceeds()
     {
-        // Arrange: single Pending row, two separate service instances (each with its own factory)
+        // Arrange: single Dispatched row, two separate service instances (each with its own factory)
         var id = Guid.NewGuid();
         var dbOptions = CreateInMemoryDbOptions();
-        await SeedItem(dbOptions, id, WorkItemStatus.Pending);
+        await SeedItem(dbOptions, id, WorkItemStatus.Dispatched);
 
         var factory1 = new DirectDbContextFactory(dbOptions);
         var factory2 = new DirectDbContextFactory(dbOptions);
         var svc1 = new WorkItemTransitionService(factory1, NullLogger<WorkItemTransitionService>.Instance);
         var svc2 = new WorkItemTransitionService(factory2, NullLogger<WorkItemTransitionService>.Instance);
 
-        // Act: both callers attempt to claim concurrently
-        var t1 = svc1.TransitionIfAsync(id, WorkItemStatus.Pending, WorkItemStatus.Dispatched);
-        var t2 = svc2.TransitionIfAsync(id, WorkItemStatus.Pending, WorkItemStatus.Dispatched);
+        // Act: both callers attempt to move Dispatched→Running concurrently
+        var t1 = svc1.TransitionIfAsync(id, WorkItemStatus.Dispatched, WorkItemStatus.Running);
+        var t2 = svc2.TransitionIfAsync(id, WorkItemStatus.Dispatched, WorkItemStatus.Running);
         var results = await Task.WhenAll(t1, t2);
 
         // Assert: exactly one true, one false
@@ -101,32 +101,29 @@ public class TransitionIfAsyncTests
     [Fact]
     public async Task TransitionIfAsync_MutateCallback_AppliedOnSuccess()
     {
-        // Arrange: row is Pending
+        // Arrange: row is Dispatched
         var id = Guid.NewGuid();
-        var factory = await CreateFactoryWithItem(id, WorkItemStatus.Pending);
+        var factory = await CreateFactoryWithItem(id, WorkItemStatus.Dispatched);
         var svc = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
 
-        var dispatchedAt = DateTimeOffset.UtcNow;
         const string agentId = "test-agent-001";
 
-        // Act: claim with mutate callback
+        // Act: transition with mutate callback
         var result = await svc.TransitionIfAsync(
             id,
-            WorkItemStatus.Pending,
             WorkItemStatus.Dispatched,
+            WorkItemStatus.Running,
             mutate: entity =>
             {
                 entity.AssignedAgentId = agentId;
-                entity.DispatchedAt = dispatchedAt;
             });
 
         // Assert: success and fields persisted
         result.Should().BeTrue();
         await using var db = new InMemoryPipelineDbContext(factory.Options);
         var item = await db.WorkItems.FindAsync(id);
-        item!.Status.Should().Be(WorkItemStatus.Dispatched);
+        item!.Status.Should().Be(WorkItemStatus.Running);
         item.AssignedAgentId.Should().Be(agentId);
-        item.DispatchedAt.Should().Be(dispatchedAt);
     }
 
     // ── Test 6: Invalid transition → returns false ────────────────────────

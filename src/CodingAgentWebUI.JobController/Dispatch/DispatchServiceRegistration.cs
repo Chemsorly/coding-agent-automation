@@ -16,9 +16,11 @@ namespace CodingAgentWebUI.JobController.Dispatch;
 public static class DispatchServiceRegistration
 {
     /// <summary>
-    /// Registers <see cref="DispatchService"/>, <see cref="DispatchLoop"/>,
-    /// <see cref="ConsolidationDispatchService"/>, and <see cref="ConsolidationDispatchLoop"/>
+    /// Registers <see cref="ConsolidationDispatchService"/> and <see cref="ConsolidationDispatchLoop"/>
     /// using options from configuration.
+    /// Note: <see cref="DispatchService"/> and <see cref="DispatchLoop"/> have been removed.
+    /// Regular work item dispatch is now synchronous via <c>POST /api/work-items/dispatch</c>,
+    /// called directly by <c>KubernetesWorkDistributor</c> in the Scheduler process.
     /// </summary>
     public static IServiceCollection AddDispatchService(
         this IServiceCollection services,
@@ -27,41 +29,18 @@ public static class DispatchServiceRegistration
         var options = DispatchServiceOptionsFactory.Create(configuration);
         services.AddSingleton(options);
 
-        // Single process-wide PVC selection lock shared by DispatchLoop and ConsolidationDispatchLoop.
-        // This prevents the two loops from racing each other and selecting the same free PVC
-        // concurrently (cross-loop TOCTOU). See PvcSelectLock for details.
+        // Single process-wide PVC selection lock shared by ConsolidationDispatchLoop.
+        // Retained for the consolidation path which still uses the Pending-queue pattern.
         services.AddSingleton<PvcSelectLock>();
 
         // ── Provider factory for issue-eligibility checks ─────────────────────
-        // ProviderFactory requires IPipelineConfigStore for CreatePipelineProviderAsync, but
-        // the eligibility path only calls CreateIssueProvider (which doesn't touch the config
-        // store). ApiPipelineConfigStore is the pragmatic safe choice matching the Scheduler pattern.
-        // Registration order: concrete first, interface forwarded second (Scheduler convention).
-        // TODO: The forwarding-singleton pattern is fragile if a future caller also registers
-        // IPipelineConfigStore — DI will silently resolve the last-registered one.
+        // Retained for ConsolidationDispatchLoop which still checks issue eligibility.
         services.AddSingleton<ApiPipelineConfigStore>(sp =>
             new ApiPipelineConfigStore(sp.GetRequiredService<IPipelineApiConfigClient>()));
         services.AddSingleton<IPipelineConfigStore>(sp =>
             sp.GetRequiredService<ApiPipelineConfigStore>());
         services.AddSingleton<IProviderFactory>(sp =>
             new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
-
-        // ── Regular work item dispatch ────────────────────────────────────────
-        services.AddSingleton<DispatchLoop>(sp => new DispatchLoop(
-            sp.GetRequiredService<IPipelineApiWorkItemClient>(),
-            sp.GetRequiredService<IPipelineApiConfigClient>(),
-            sp.GetRequiredService<IKubernetesJobClient>(),
-            sp.GetRequiredService<JobTemplateStore>(),
-            sp.GetRequiredService<DispatchServiceOptions>(),
-            sp.GetRequiredService<PvcSelectLock>(),
-            sp.GetRequiredService<IProviderFactory>()));
-
-        services.AddSingleton<DispatchService>(sp => new DispatchService(
-            sp.GetRequiredService<ILeaderElectionService>(),
-            sp.GetRequiredService<DispatchLoop>(),
-            sp.GetRequiredService<DispatchServiceOptions>()));
-
-        services.AddHostedService(sp => sp.GetRequiredService<DispatchService>());
 
         // ── Consolidation work item dispatch ──────────────────────────────────
         // Shares the same ILeaderElectionService lease as DispatchService — only the leader

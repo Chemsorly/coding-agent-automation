@@ -12,8 +12,8 @@ namespace CodingAgentWebUI.UnitTests.Dispatch;
 
 /// <summary>
 /// Verifies that <see cref="KubernetesWorkDistributor.DistributeAsync"/> calls
-/// <see cref="IPipelineApiWorkItemClient.CreateAsync"/> instead of inserting directly into the DB.
-/// TDD gate: these tests MUST be written and failing before implementing Task 8.
+/// <see cref="IPipelineApiWorkItemClient.DispatchAsync"/> (synchronous dispatch) rather than
+/// the old <see cref="IPipelineApiWorkItemClient.CreateAsync"/> (Pending queue path).
 /// </summary>
 public class KubernetesWorkDistributorApiTests
 {
@@ -28,7 +28,7 @@ public class KubernetesWorkDistributorApiTests
             Mock.Of<ILogger<KubernetesWorkDistributor>>());
     }
 
-    // ── DistributeAsync calls CreateAsync ─────────────────────────────────
+    // ── DistributeAsync calls DispatchAsync ─────────────────────────────────
 
     [Fact]
     public async Task DistributeAsync_CallsApiClientCreateAsync_WithSameRequest()
@@ -37,13 +37,13 @@ public class KubernetesWorkDistributorApiTests
         var request = CreateMinimalRequest();
 
         _mockClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(workItemId);
 
         await _sut.DistributeAsync(request, CancellationToken.None);
 
         _mockClient.Verify(
-            c => c.CreateAsync(
+            c => c.DispatchAsync(
                 It.Is<JobDistributionRequest>(r =>
                     r.IssueIdentifier == request.IssueIdentifier &&
                     r.IssueProviderConfigId == request.IssueProviderConfigId),
@@ -58,13 +58,14 @@ public class KubernetesWorkDistributorApiTests
         var request = CreateMinimalRequest();
 
         _mockClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(workItemId);
 
         var result = await _sut.DistributeAsync(request, CancellationToken.None);
 
         result.Success.Should().BeTrue();
         result.WorkItemId.Should().Be(workItemId.ToString());
+        result.Queued.Should().BeFalse("synchronous dispatch never queues as Pending");
     }
 
     [Fact]
@@ -73,7 +74,7 @@ public class KubernetesWorkDistributorApiTests
         var request = CreateMinimalRequest();
 
         _mockClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("Pipeline API unreachable"));
 
         var result = await _sut.DistributeAsync(request, CancellationToken.None);
@@ -89,13 +90,14 @@ public class KubernetesWorkDistributorApiTests
         var request = CreateMinimalRequest();
 
         _mockClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(workItemId);
 
         await _sut.DistributeAsync(request, CancellationToken.None);
 
-        // Verify CreateAsync was called (API-backed), and NOT the DB directly
-        _mockClient.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        // Verify DispatchAsync was called (API-backed synchronous dispatch), not CreateAsync (old Pending queue path)
+        _mockClient.Verify(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockClient.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
