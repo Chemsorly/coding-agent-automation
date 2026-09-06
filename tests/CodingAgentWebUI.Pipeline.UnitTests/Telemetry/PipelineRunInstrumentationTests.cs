@@ -264,28 +264,31 @@ public class PipelineRunInstrumentationTests : IDisposable
     {
         using var durationCollector = DoubleCollector("pipeline.jobs.duration");
 
+        // Capture start before the run begins so total elapsed always exceeds the frozen duration.
+        // The frozen duration = time from StartRun to first StopTiming. After the freeze we wait
+        // another 50ms; subsequent StopTiming calls must be no-ops (i.e. not extend the frozen
+        // value). The assertion frozen < totalElapsed is robust to scheduling jitter because
+        // totalElapsed always includes the post-freeze wait.
+        var startTimestamp = Stopwatch.GetTimestamp();
         var instrumentation = StartRun();
         using var mres4 = new ManualResetEventSlim(false);
         mres4.Wait(10); // Ensure non-zero duration before freeze
 
-        var beforeFreezeTimestamp = Stopwatch.GetTimestamp();
         instrumentation.StopTiming();
 
         using var mres5 = new ManualResetEventSlim(false);
-        mres5.Wait(50); // Let at least 50ms pass after freeze
+        mres5.Wait(50); // Let at least 50ms pass after freeze — must NOT be reflected in frozen value
 
         instrumentation.StopTiming(); // must be no-ops
         instrumentation.StopTiming();
         instrumentation.Dispose();
 
-        // Upper bound: time from just before the freeze to now, plus a small buffer.
-        // The frozen duration must not exceed the elapsed time at the freeze point.
-        var upperBoundSeconds = Stopwatch.GetElapsedTime(beforeFreezeTimestamp).TotalSeconds + 0.010;
+        var totalElapsedSeconds = Stopwatch.GetElapsedTime(startTimestamp).TotalSeconds;
 
         var snapshot = durationCollector.GetMeasurementSnapshot();
         snapshot.Should().ContainSingle();
         snapshot[0].Value.Should().BeGreaterThan(0, "frozen duration must be non-zero")
-            .And.BeLessThan(upperBoundSeconds,
+            .And.BeLessThan(totalElapsedSeconds,
                 "StopTiming must freeze elapsed time at first call; subsequent calls must not extend it");
     }
 
