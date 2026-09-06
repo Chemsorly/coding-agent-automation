@@ -490,6 +490,7 @@
         [PipelineStep.Completed] = 100,
         [PipelineStep.Failed] = 101,
         [PipelineStep.Cancelled] = 102,
+        [PipelineStep.ConflictRestart] = 103,
     };
 
     private static int LogicalOrder(PipelineStep step) =>
@@ -501,7 +502,7 @@
     {
         var current = Run.CurrentStep;
 
-        if (current is PipelineStep.Failed or PipelineStep.Cancelled)
+        if (current is PipelineStep.Failed or PipelineStep.Cancelled or PipelineStep.ConflictRestart)
             return GetStepStateWhenTerminal(step, current);
 
         if (current == PipelineStep.Completed)
@@ -522,7 +523,9 @@
         var last = GetLastReachedStep();
         if (LogicalOrder(step) < LogicalOrder(last)) return StepState.Completed;
         if (step == last)
-            return current == PipelineStep.Failed ? StepState.Failed : StepState.Cancelled;
+            return current == PipelineStep.Failed ? StepState.Failed
+                 : current == PipelineStep.ConflictRestart ? StepState.Revisited  // auto-recovery → refresh-cw icon (issue #2359)
+                 : StepState.Cancelled;
         return StepState.Pending;
     }
 

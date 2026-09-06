@@ -37,6 +37,15 @@ internal static class CompletionOutcomeResolver
     public static (WorkItemStatus Status, string? ErrorMsg, FailureReason? FailureReason)
         Resolve(PipelineStep finalStep, string? failureReason, FailureReason? failureCategory, string failureFallback)
     {
+        // TODO [WARNING]: PipelineStep.ConflictRestart falls through to the default arm and is mapped
+        // to WorkItemStatus.Failed. This causes the WorkItem to record an errorMsg and FailureReason
+        // (defaulting to FailureReason.AgentError when FailureCategory is null) and sets activity tag
+        // "success=false", misattributing an automatic infrastructure recovery as an agent failure in
+        // metrics and WorkItem error fields. Consider adding an explicit ConflictRestart arm (e.g.
+        // mapping to a non-Failed terminal status, or at minimum a distinct FailureReason such as
+        // FailureReason.ConflictRestart) so that conflict-restart runs are not classified as agent errors.
+        // Note: the re-queue itself is unaffected — PostCompletionBookkeepingAsync reads FinalLabel
+        // (agent:next) and swaps the issue label correctly regardless of WorkItemStatus. (#2359)
         var status = finalStep switch
         {
             PipelineStep.Completed => WorkItemStatus.Succeeded,

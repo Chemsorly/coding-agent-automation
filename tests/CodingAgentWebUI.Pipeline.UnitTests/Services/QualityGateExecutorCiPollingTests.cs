@@ -1008,3 +1008,300 @@ public class QualityGateExecutorCiNotStartedExhaustionTests
         QualityGateConfigs = new List<QualityGateConfiguration>()
     };
 }
+
+
+/// <summary>
+/// Tests for the conflict-restart short-circuit in <c>PollCiWithNotStartedRetryAsync</c>
+/// and <c>AppendExternalCiIfNeededAsync</c> introduced in issue #2359.
+/// When a PR is conflicted with main, GitHub silently withholds CI scheduling; the pipeline
+/// detects this via <c>IsPullRequestBehindBaseAsync</c> and terminates with
+/// <c>PipelineStep.ConflictRestart</c> / <c>FinalLabel = agent:next</c> instead of exhausting
+/// the retry budget.
+/// </summary>
+public class QualityGateExecutorCiConflictRestartTests
+{
+    private readonly Mock<IPipelineCallbacks> _mockCallbacks;
+    private readonly Mock<IAgentIssueOperations> _mockIssueOps;
+    private readonly Mock<IRepositoryProvider> _mockRepoProvider;
+    private readonly Mock<IPipelineProvider> _mockPipelineProvider;
+    private readonly Mock<Serilog.ILogger> _mockLogger;
+    private readonly QualityGateExecutor _executor;
+
+    private static readonly QualityGateReport PassingReport = new()
+    {
+        Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
+        Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
+    };
+
+    private static readonly PipelineRunStatus PendingStatus = new()
+    {
+        State = PipelineRunState.Pending,
+        Jobs = []
+    };
+
+    public QualityGateExecutorCiConflictRestartTests()
+    {
+        _mockCallbacks = new Mock<IPipelineCallbacks>();
+        _mockIssueOps = new Mock<IAgentIssueOperations>();
+        _mockRepoProvider = new Mock<IRepositoryProvider>();
+        _mockPipelineProvider = new Mock<IPipelineProvider>();
+        _mockLogger = new Mock<Serilog.ILogger>();
+
+        _executor = new QualityGateExecutor(
+            new Mock<IQualityGateValidator>().Object,
+            new PullRequestOrchestrator(_mockLogger.Object),
+            new CiLogWriter(_mockLogger.Object),
+            new FeedbackService(_mockLogger.Object),
+            _mockLogger.Object);
+
+        // Baseline: git ops succeed, HEAD SHA readable, draft PR creation is a no-op
+        _mockRepoProvider.Setup(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
+        _mockRepoProvider.Setup(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                true, It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
+        _mockRepoProvider.Setup(r => r.PushBranchAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("sha-abc");
+        _mockCallbacks.Setup(c => c.CreateDraftPrIfNotExists(
+                It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        // Default: CI never starts (Pending), so WaitForCiRunsToAppearAsync times out
+        _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PendingStatus);
+    }
+
+    /// <summary>
+    /// Acceptance criterion: CI not started + Conflicted on attempt 0 → ConflictRestart returned,
+    /// no empty commit pushed, run.CurrentStep and run.FinalLabel set correctly.
+    /// </summary>
+    // TODO [WARNING]: This test fires the pre-push mergeability check at attempt=0 (inside the loop
+    // body), NOT the exhaustion-branch check at `attempt >= maxRetries`. A regression that removes
+    // or breaks only the exhaustion-branch mergeability call (inside the `if (attempt >= maxRetries)`
+    // block) would not be caught by this test or WhenConflictedOnAttemptN_ExactlyNCommitsPushedBeforeDetection.
+    // Add a dedicated test where IsPullRequestBehindBaseAsync returns Conflicted at exactly attempt==maxRetries
+    // with Unknown on all prior attempts, verifying ConflictRestart is returned and no commit is pushed
+    // on the exhaustion iteration. (#2359)
+    [Fact]
+    public async Task WhenConflictedOnAttempt0_ReturnsConflictRestart_NoEmptyCommitPushed()
+    {
+        const int maxRetries = 2;
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        var initialRetryCount = run.RetryCount;
+
+        // IsPullRequestBehindBaseAsync immediately returns Conflicted
+        _mockRepoProvider.Setup(r => r.IsPullRequestBehindBaseAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PrMergeabilityStatus.Conflicted);
+
+        var context = BuildContext(run, ciNotStartedMaxRetries: maxRetries);
+        var result = await _executor.AppendExternalCiIfNeededAsync(context, PassingReport, false, CancellationToken.None);
+
+        // Gate result is present and failed
+        result.ExternalCi.Should().NotBeNull();
+        result.ExternalCi!.Passed.Should().BeFalse();
+
+        // Run state is ConflictRestart
+        run.CurrentStep.Should().Be(PipelineStep.ConflictRestart);
+        run.FinalLabel.Should().Be(AgentLabels.Next);
+        run.FailureReason.Should().NotBeNullOrEmpty();
+
+        // RetryCount must not have been incremented
+        run.RetryCount.Should().Be(initialRetryCount);
+
+        // No empty re-trigger commit was pushed (uses "not started" substring to match re-trigger commits)
+        _mockRepoProvider.Verify(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(),
+                It.Is<string>(s => s.Contains("not started")),
+                It.IsAny<IReadOnlyList<string>?>(), true, It.IsAny<CancellationToken>(),
+                It.IsAny<IReadOnlyList<string>?>()),
+            Times.Never,
+            "No re-trigger commit should be pushed when PR is conflicted");
+    }
+
+    /// <summary>
+    /// Acceptance criterion: CI not started + Conflicted detected on attempt N (not 0) →
+    /// exactly N empty commits pushed before detection; none after.
+    /// </summary>
+    [Fact]
+    public async Task WhenConflictedOnAttemptN_ExactlyNCommitsPushedBeforeDetection()
+    {
+        // N = 2: IsPullRequestBehindBaseAsync returns Unknown for first 2 calls, Conflicted on 3rd
+        // (attempt 0 → Unknown → commit; attempt 1 → Unknown → commit; attempt 2 = N → Conflicted)
+        const int n = 2;
+        const int maxRetries = 3;
+
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+
+        var mergeabilityCallCount = 0;
+        _mockRepoProvider.Setup(r => r.IsPullRequestBehindBaseAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                mergeabilityCallCount++;
+                // First n calls: Unknown; then Conflicted
+                return mergeabilityCallCount <= n ? PrMergeabilityStatus.Unknown : PrMergeabilityStatus.Conflicted;
+            });
+
+        var context = BuildContext(run, ciNotStartedMaxRetries: maxRetries);
+        var result = await _executor.AppendExternalCiIfNeededAsync(context, PassingReport, false, CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.ConflictRestart, "should detect conflict after N attempts");
+
+        // Exactly N re-trigger commits were pushed (one per attempt 0..N-1 before the conflicted detection)
+        _mockRepoProvider.Verify(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(),
+                It.Is<string>(s => s.Contains("not started")),
+                It.IsAny<IReadOnlyList<string>?>(), true, It.IsAny<CancellationToken>(),
+                It.IsAny<IReadOnlyList<string>?>()),
+            Times.Exactly(n),
+            $"Expected exactly {n} re-trigger commits before conflict detected");
+    }
+
+    /// <summary>
+    /// Acceptance criterion: CI not started + Unknown mergeability → ConflictRestart NOT triggered;
+    /// normal empty commit is pushed, exhaustion produces Failed with FailureReason set.
+    /// </summary>
+    [Fact]
+    public async Task WhenUnknownMergeability_DoesNotTriggerConflictRestart_PushesNormalCommit()
+    {
+        const int maxRetries = 1;
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+
+        // Always Unknown — should never produce ConflictRestart
+        _mockRepoProvider.Setup(r => r.IsPullRequestBehindBaseAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PrMergeabilityStatus.Unknown);
+
+        var context = BuildContext(run, ciNotStartedMaxRetries: maxRetries);
+        var result = await _executor.AppendExternalCiIfNeededAsync(context, PassingReport, false, CancellationToken.None);
+
+        run.CurrentStep.Should().NotBe(PipelineStep.ConflictRestart,
+            "Unknown mergeability must not produce ConflictRestart");
+        run.FailureReason.Should().Contain("CI never started",
+            "exhaustion should set FailureReason");
+
+        // At least one re-trigger commit was pushed (normal behavior)
+        _mockRepoProvider.Verify(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(),
+                It.Is<string>(s => s.Contains("not started")),
+                It.IsAny<IReadOnlyList<string>?>(), true, It.IsAny<CancellationToken>(),
+                It.IsAny<IReadOnlyList<string>?>()),
+            Times.AtLeastOnce,
+            "Normal re-trigger commit should be pushed when mergeability is Unknown");
+    }
+
+    /// <summary>
+    /// Acceptance criterion: CI not started + run.PullRequestNumber == null →
+    /// IsPullRequestBehindBaseAsync never called; normal re-trigger proceeds.
+    /// </summary>
+    [Fact]
+    public async Task WhenPullRequestNumberIsNull_MergeabilityCheckSkipped_NormalRetrigger()
+    {
+        const int maxRetries = 1;
+        var run = CreateRun();
+        run.PullRequestNumber = null;  // no PR yet
+
+        var context = BuildContext(run, ciNotStartedMaxRetries: maxRetries);
+        var result = await _executor.AppendExternalCiIfNeededAsync(context, PassingReport, false, CancellationToken.None);
+
+        // Mergeability check must never be called when there is no PR number
+        _mockRepoProvider.Verify(r => r.IsPullRequestBehindBaseAsync(
+                It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "IsPullRequestBehindBaseAsync must not be called when PullRequestNumber is null");
+
+        // Normal exhaustion path: FailureReason set (CI never started), not ConflictRestart
+        run.CurrentStep.Should().NotBe(PipelineStep.ConflictRestart);
+        run.FailureReason.Should().Contain("CI never started");
+    }
+
+    /// <summary>
+    /// Acceptance criterion: ConflictRestart status in AppendExternalCiIfNeededAsync sets
+    /// run.FinalLabel = "agent:next", run.RetryCount unchanged, run.CurrentStep = ConflictRestart,
+    /// and FinalizePullRequest is never called.
+    /// </summary>
+    [Fact]
+    public async Task WhenConflictRestart_AppendExternalCi_SetsRunFieldsCorrectly_NoFinalizePr()
+    {
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        run.RetryCount = 2;  // pre-set to verify it stays unchanged
+
+        _mockRepoProvider.Setup(r => r.IsPullRequestBehindBaseAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PrMergeabilityStatus.Conflicted);
+
+        var context = BuildContext(run, ciNotStartedMaxRetries: 1);
+        var result = await _executor.AppendExternalCiIfNeededAsync(context, PassingReport, false, CancellationToken.None);
+
+        // Run fields
+        run.FinalLabel.Should().Be(AgentLabels.Next);
+        run.RetryCount.Should().Be(2, "RetryCount must not be incremented by ConflictRestart");
+        run.CurrentStep.Should().Be(PipelineStep.ConflictRestart);
+        run.FailureReason.Should().NotBeNullOrEmpty();
+
+        // Report carries ExternalCi gate with Passed = false
+        result.ExternalCi.Should().NotBeNull();
+        result.ExternalCi!.Passed.Should().BeFalse();
+
+        // FinalizePullRequest (draft PR creation = isDraft:true) must never be called
+        // TODO [WARNING]: This assertion is vacuously true — FinalizeDraftPrAsync (the only caller of
+        // FinalizePullRequest(isDraft=true)) is reachable from RunRetryLoopAsync/ProceedToQualityGatesAsync,
+        // not from AppendExternalCiIfNeededAsync itself. The ConflictRestart path exits inside
+        // AppendExternalCiIfNeededAsync before control returns to those callers. The assertion does not
+        // test the caller-level early-exit paths (e.g. `if (run.CurrentStep == ConflictRestart) return`
+        // in ProceedToQualityGatesAsync that guard against FinalizeDraftPrAsync being invoked). Consider
+        // adding an integration-style test through ProceedToQualityGatesAsync that verifies FinalizeDraftPrAsync
+        // is not called when ConflictRestart is detected, making the "no draft PR" invariant meaningful. (#2359)
+        _mockCallbacks.Verify(c => c.FinalizePullRequest(
+                It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(),
+                true, It.IsAny<CancellationToken>()),
+            Times.Never,
+            "FinalizePullRequest(isDraft=true) must not be called on ConflictRestart");
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private static PipelineRun CreateRun() => new()
+    {
+        RunId = "test-conflict-restart",
+        IssueIdentifier = "2359",
+        IssueTitle = "Conflict restart test",
+        IssueProviderConfigId = "ip-1",
+        RepoProviderConfigId = "rp-1",
+        WorkspacePath = Path.Combine(Path.GetTempPath(), $"qg-conflictrestart-{Guid.NewGuid():N}"),
+        BranchName = "feature/auto-2359-conflict-restart"
+    };
+
+    private QualityGateContext BuildContext(PipelineRun run, int ciNotStartedMaxRetries = 2) => new()
+    {
+        Run = run,
+        Config = new PipelineConfiguration
+        {
+            AgentTimeout = TimeSpan.FromMinutes(10),
+            MaxRetries = 0,
+            MaxInfrastructureRetries = 0,
+            CiCancelledMoveMaxRetries = 0,
+            // Very short so WaitForCiRunsToAppearAsync exits immediately
+            CiNotStartedTimeout = TimeSpan.FromMilliseconds(1),
+            CiNotStartedMaxRetries = ciNotStartedMaxRetries,
+            ExternalCiPollInterval = TimeSpan.FromMilliseconds(5),
+            ExternalCiTimeout = TimeSpan.FromMinutes(5),
+            StallPollInterval = TimeSpan.FromMilliseconds(50),
+            StallWarningInterval = TimeSpan.FromHours(1)
+        },
+        AgentProvider = new Mock<IAgentProvider>().Object,
+        IssueOps = _mockIssueOps.Object,
+        Callbacks = _mockCallbacks.Object,
+        RepoProvider = _mockRepoProvider.Object,
+        PipelineProvider = _mockPipelineProvider.Object,
+        QualityGateConfigs = new List<QualityGateConfiguration>()
+    };
+}

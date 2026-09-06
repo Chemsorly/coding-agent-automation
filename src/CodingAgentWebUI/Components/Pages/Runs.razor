@@ -80,6 +80,7 @@
                                             PipelineStep.Completed => "Completed",
                                             PipelineStep.Failed => "Failed",
                                             PipelineStep.Cancelled => "Cancelled",
+                                            PipelineStep.ConflictRestart => "Restarted",
                                             _ => "Running"
                                         };
                                         var resultClass = run.FinalStep switch
@@ -87,6 +88,7 @@
                                             PipelineStep.Completed => "step-completed",
                                             PipelineStep.Cancelled => "step-cancelled",
                                             PipelineStep.Failed => "step-failed",
+                                            PipelineStep.ConflictRestart => "step-restart",
                                             _ => "step-running"
                                         };
                                     }

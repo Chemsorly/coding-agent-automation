@@ -73,6 +73,7 @@ stateDiagram-v2
     QualityGateDecision --> PreparingForPullRequest : all passed
     QualityGateDecision --> GeneratingCode : failed, retries remaining
     QualityGateDecision --> CreatingPullRequest : failed, retries exhausted (draft PR)
+    RunningQualityGates --> ConflictRestart : dirty PR, no retry consumed
 
     state FinalQualityCheck <<choice>>
     PreparingForPullRequest --> FinalQualityCheck : quality gates re-run after cleanup
@@ -88,6 +89,7 @@ stateDiagram-v2
     Completed --> [*]
     Failed --> [*]
     Cancelled --> [*]
+    ConflictRestart --> [*]
 
     note right of Created
         Label swapped to agent in-progress on job acceptance
@@ -106,7 +108,10 @@ stateDiagram-v2
         Only if brain repo configured and not read-only.
         Feedback collected here (success path).
     end note
-```
+    note right of ConflictRestart
+        PR branch became conflicted with main during CI wait.
+        Re-queued as agent:next automatically — no human action required.
+    end note
 
 ## Pipeline Steps
 
@@ -144,6 +149,7 @@ Each step is represented by the `PipelineStep` enum. The pipeline tracks both th
 | **Completed** | Terminal state — run succeeded (or `wont_do` assessment) |
 | **Failed** | Terminal state — unrecoverable error or retries exhausted |
 | **Cancelled** | Terminal state — user cancelled the run |
+| **ConflictRestart** | Terminal-like state — PR branch became conflicted with main during the CI-never-started retry loop. The pipeline terminates without consuming a retry slot and automatically re-queues the issue as `agent:next` via the `FinalLabel` override in `PostCompletionBookkeepingAsync`. A fresh run will rebase the branch (main wins), resolve the conflict, and re-enter the full implementation pipeline. No human action is required |
 
 ## Confidence Gate
 
@@ -195,6 +201,18 @@ The retry prompt includes the full gate failure details and points the agent to 
 
 If all retries are exhausted, a **draft PR** is created with the failing code and the issue label is set to `agent:error`. The pipeline completes with `FailureCategory = QualityGateExhausted`. `agent:error` is applied both when retries are exhausted (draft PR path) and when an unexpected exception escapes the pipeline's error boundary (e.g., unhandled infrastructure failure) — in both cases the issue requires human attention before the next run.
 
+### Conflict-restart short-circuit
+
+When CI never starts and the CI-never-started retry loop detects that the PR branch is **conflicted with main** (GitHub API `mergeable_state == "dirty"`), the pipeline terminates immediately with `PipelineStep.ConflictRestart` instead of exhausting the retry budget. GitHub silently withholds CI scheduling for conflicted PRs regardless of how many re-trigger commits are pushed, so burning 15 retry slots (≈ 150 minutes) before detecting the root cause is wasteful.
+
+The detection happens in `PollCiWithNotStartedRetryAsync` via `IsPullRequestBehindBaseAsync`:
+- Before each empty re-trigger commit push
+- At the retry-exhaustion branch (`attempt >= maxRetries`)
+
+If `Conflicted` is returned, the method returns `PipelineRunState.ConflictRestart` without pushing any commit. The upstream `AppendExternalCiIfNeededAsync` sets `run.FinalLabel = AgentLabels.Next`, `run.CurrentStep = PipelineStep.ConflictRestart`, and `run.FailureReason`. `PostCompletionBookkeepingAsync` then reads `FinalLabel` and swaps the GitHub issue label to `agent:next`, re-queuing the issue for the next dispatch cycle.
+
+The re-dispatched run enters `RunMode.Rework`, checks out the existing PR branch, rebases it against main (main wins), and re-runs the full analysis → implementation → quality gate sequence with a clean branch. The `RetryCount` is **not** incremented — a conflict restart is an external infrastructure event, not an agent code-quality failure.
+
 ## Label Transitions
 
 ```mermaid
@@ -216,6 +234,7 @@ stateDiagram-v2
     ip --> wd : wont_do
     ip --> err : error / timeout
     ip --> cancel : user cancels
+    ip --> next : conflict restart (automatic)
     done --> next : user requests rework
     err --> next : user re-queues
     nr --> next : user refines issue

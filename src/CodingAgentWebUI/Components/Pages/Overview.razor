@@ -113,12 +113,14 @@
                     {
                         PipelineStep.Completed => "step-completed",
                         PipelineStep.Cancelled => "step-cancelled",
+                        PipelineStep.ConflictRestart => "step-restart",
                         _ => "step-failed"
                     };
                     var label = run.FinalStep switch
                     {
                         PipelineStep.Completed => "Completed",
                         PipelineStep.Cancelled => "Cancelled",
+                        PipelineStep.ConflictRestart => "Restarted",
                         _ => "Failed"
                     };
                     <div class="cockpit-run-row" @onclick="() => OpenRun(run.RunId)">

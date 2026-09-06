@@ -507,6 +507,10 @@ select option { background: var(--surface); color: var(--text); }
 .step-badge.step-completed { background: var(--bg-success); color: var(--success); }
 .step-badge.step-failed { background: var(--bg-error); color: var(--error); }
 .step-badge.step-cancelled { background: var(--bg-warning); color: var(--warning); }
+/* ConflictRestart — distinct info/amber color so it reads as "auto-recovery" not "failure" */
+.step-badge.step-restart { background: var(--bg-info); color: var(--accent-light); }
+/* ProviderSelectionPanel uses step.ToString().ToLowerInvariant() — alias to step-restart */
+.step-badge.step-conflictrestart { background: var(--bg-info); color: var(--accent-light); }
 .step-badge.step-generatingcode, .step-badge.step-cloningrepository, .step-badge.step-creatingbranch { background: var(--bg-info); color: var(--accent-light); }
 .step-badge.step-runningqualitygates { background: var(--bg-warning); color: var(--warning); }
 
@@ -765,6 +769,7 @@ select option { background: var(--surface); color: var(--text); }
 .monitoring-step-completed { background: var(--bg-success); color: var(--success); }
 .monitoring-step-failed { background: var(--bg-error); color: var(--error); }
 .monitoring-step-cancelled { background: var(--surface-alt); color: var(--text-muted); }
+.monitoring-step-conflictrestart { background: var(--bg-info); color: var(--accent-light); }
 
 .monitoring-run-detail { margin-top: 12px; padding: 14px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); }
 .monitoring-run-detail h3 { font-size: 0.9rem; font-weight: 600; color: var(--accent-light); margin-bottom: 10px; }

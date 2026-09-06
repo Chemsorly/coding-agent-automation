@@ -80,6 +80,30 @@ public partial class QualityGateExecutor
                 ciPollStopwatch.Elapsed.TotalSeconds,
                 PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
 
+            // ConflictRestart: the PR branch became conflicted with main during the CI-never-started
+            // retry loop. Set the terminal state fields and return immediately — no draft PR, no
+            // feedback agent, no FinalizeDraftPrAsync. The run will be re-queued as agent:next via
+            // PostCompletionBookkeepingAsync reading run.FinalLabel.
+            if (ciStatus.State == PipelineRunState.ConflictRestart)
+            {
+                run.FinalLabel = AgentLabels.Next;
+                run.FailureReason = "PR conflicted with main — restarting pipeline";
+                run.CurrentStep = PipelineStep.ConflictRestart;
+                callbacks.EmitOutputLine("🔄 PR conflicted with main — re-queuing as agent:next for rework...");
+                return new QualityGateReport
+                {
+                    Compilation = report.Compilation,
+                    Tests = report.Tests,
+                    SecurityScan = report.SecurityScan,
+                    ExternalCi = new GateResult
+                    {
+                        GateName = "External CI",
+                        Passed = false,
+                        Details = "Conflict restart — see agent:next re-dispatch"
+                    }
+                };
+            }
+
             ciGate = new GateResult
             {
                 GateName = "External CI",
@@ -201,6 +225,12 @@ public partial class QualityGateExecutor
         var pollCt = linkedCts.Token;
 
         var ciStatus = await PollCiWithNotStartedRetryAsync(context, pollSha, config, callbacks, pollCt);
+
+        // Short-circuit before log-write and branch-moved loop: ConflictRestart means the PR branch
+        // became conflicted with main — no amount of re-polling or log-writing will help.
+        if (ciStatus.State == PipelineRunState.ConflictRestart)
+            return (false, ciStatus, null);
+
         var ciPassed = ciStatus.State == PipelineRunState.Passed;
         IReadOnlyDictionary<long, string>? ciLogPaths = null;
 
@@ -257,6 +287,22 @@ public partial class QualityGateExecutor
         // but is not read after the loop exits — ExecuteInfraRetryAsync reads a fresh SHA after its own push.
         // The mutation is harmless but misleading; a reader might expect pollSha to feed into the infra-retry
         // path. This is a code clarity issue, not a correctness defect.
+
+        // Guard: a ConflictRestart returned inside the branch-moved loop causes the loop to exit
+        // (ConflictRestart != Cancelled). Also covers ConflictRestart returned by ExecuteInfraRetryAsync
+        // inside the infra-retry while-loop below (its CiFailureClassifier.Classify returns Unknown,
+        // so the infra-retry loop exits too and falls here). Both paths: skip log-write and return.
+        //
+        // TODO [WARNING]: The claim that this guard covers ConflictRestart from ExecuteInfraRetryAsync
+        // relies on CiFailureClassifier.Classify returning Unknown (not Infrastructure) for a
+        // ConflictRestart-shaped status, causing the infra-retry loop to exit and fall through here.
+        // This coupling is implicit: if Classify is ever updated to handle ConflictRestart explicitly
+        // (e.g. returning Infrastructure), the loop would iterate again, pushing another empty commit
+        // onto a conflicted PR. Consider adding an explicit `if (ciStatus.State == ConflictRestart) break;`
+        // guard at the top of the infra-retry while-loop body to make the invariant robust rather than
+        // relying on the classifier's return value. (#2359)
+        if (ciStatus.State == PipelineRunState.ConflictRestart)
+            return (false, ciStatus, null);
 
         // Write logs for the final ciStatus only — moved here from immediately after the initial poll
         // to avoid writing misleading Cancelled-state log files for discarded intermediate polls.
@@ -381,6 +427,41 @@ public partial class QualityGateExecutor
             // CI never started within the short timeout
             if (attempt >= maxRetries)
             {
+                // Check for PR merge conflict before failing — a conflicted PR causes GitHub to
+                // withhold CI scheduling silently, making exhaustion the first symptom we see.
+                // If conflicted, signal ConflictRestart so the caller can re-queue as agent:next
+                // rather than burning the retry budget on a situation that won't self-resolve.
+                //
+                // TODO [WARNING]: ct here is pollCt — a linked token that combines the outer ct with
+                // timeoutCts (ExternalCiTimeout budget). After maxRetries attempts of CiNotStartedTimeout
+                // each, pollCt may already be cancelled when IsPullRequestBehindBaseAsync is called here.
+                // A cancelled token causes the call to throw OperationCanceledException immediately,
+                // silently skipping the ConflictRestart path and falling through to the deterministic-
+                // failure branch instead — exactly at the point where conflict detection matters most.
+                // Consider creating a short-lived independent CancellationTokenSource for this check
+                // (e.g. CancellationToken.None or a fresh 10 s timeout) so a timed-out poll budget
+                // does not prevent the conflict from being detected. (#2359)
+                if (run.PullRequestNumber is not null
+                    && int.TryParse(run.PullRequestNumber, out var prNumExhausted))
+                {
+                    var mergeabilityAtExhaustion = await context.RepoProvider.IsPullRequestBehindBaseAsync(prNumExhausted, ct);
+                    if (mergeabilityAtExhaustion == PrMergeabilityStatus.Conflicted)
+                    {
+                        _logger.Warning("Pipeline {RunId} PR #{PrNum} is conflicted (dirty) at retry exhaustion — signalling conflict restart",
+                            run.RunId, prNumExhausted);
+                        callbacks.EmitOutputLine("⚠️ PR has merge conflicts with main — restarting pipeline from beginning...");
+                        return new PipelineRunStatus { State = PipelineRunState.ConflictRestart, Jobs = [] };
+                    }
+                    // Unknown, Behind, UpToDate → fall through to deterministic failure
+                    _logger.Debug("Pipeline {RunId} PR mergeability {Status} at exhaustion — proceeding to failure",
+                        run.RunId, mergeabilityAtExhaustion);
+                }
+                else
+                {
+                    _logger.Debug("Pipeline {RunId} PullRequestNumber is null or non-parseable — skipping mergeability check at exhaustion",
+                        run.RunId);
+                }
+
                 // Deterministic failure — do NOT fall through to WaitForCompletionAsync.
                 // The re-trigger SHA also has no CI runs; blocking for ExternalCiTimeout here
                 // just wastes time before the run reaches FinalizeDraftPrAsync.
@@ -444,6 +525,39 @@ public partial class QualityGateExecutor
                     run.BranchName!, commitSha: null, config.ExternalCiTimeout, ct);
             }
 
+            // Check for PR merge conflict before pushing an empty re-trigger commit.
+            // A conflicted PR causes GitHub to silently withhold CI scheduling regardless of how
+            // many re-trigger pushes are made. Detect this early and signal ConflictRestart so
+            // the caller can re-queue as agent:next without exhausting the retry budget.
+            //
+            // TODO [WARNING]: ct here is pollCt — a linked token that includes the ExternalCiTimeout
+            // budget. If pollCt is cancelled mid-loop (e.g. the timeout fires between attempts),
+            // this IsPullRequestBehindBaseAsync call will throw OperationCanceledException and the
+            // ConflictRestart path will be skipped. In practice the timeout is per-attempt
+            // (CiNotStartedTimeout) so mid-loop cancellation is unlikely, but the exhaustion-branch
+            // risk is higher (see the TODO above). Same fix applies: use an independent short-lived
+            // token for this mergeability check. (#2359)
+            if (run.PullRequestNumber is not null
+                && int.TryParse(run.PullRequestNumber, out var prNum))
+            {
+                var mergeability = await context.RepoProvider.IsPullRequestBehindBaseAsync(prNum, ct);
+                if (mergeability == PrMergeabilityStatus.Conflicted)
+                {
+                    _logger.Warning("Pipeline {RunId} PR #{PrNum} is conflicted (dirty) — signalling conflict restart",
+                        run.RunId, prNum);
+                    callbacks.EmitOutputLine("⚠️ PR has merge conflicts with main — restarting pipeline from beginning...");
+                    return new PipelineRunStatus { State = PipelineRunState.ConflictRestart, Jobs = [] };
+                }
+                // Unknown, Behind, UpToDate → fall through to normal re-trigger
+                _logger.Debug("Pipeline {RunId} PR mergeability {Status} — proceeding with re-trigger",
+                    run.RunId, mergeability);
+            }
+            else
+            {
+                _logger.Debug("Pipeline {RunId} PullRequestNumber is null or non-parseable — skipping mergeability check",
+                    run.RunId);
+            }
+
             // Create empty commit and re-push
             await context.RepoProvider.CommitAllAsync(
                 run.WorkspacePath!,
@@ -458,6 +572,35 @@ public partial class QualityGateExecutor
         }
 
         // Should not reach here — the attempt >= maxRetries branch always returns.
+        // Defense-in-depth: check for conflict before returning a generic failure.
+        if (run.PullRequestNumber is not null
+            && int.TryParse(run.PullRequestNumber, out var prNumFallthrough))
+        {
+            try
+            {
+                var mergeabilityFallthrough = await context.RepoProvider.IsPullRequestBehindBaseAsync(prNumFallthrough, ct);
+                if (mergeabilityFallthrough == PrMergeabilityStatus.Conflicted)
+                {
+                    _logger.Warning("Pipeline {RunId} PR #{PrNum} is conflicted (dirty) at fallthrough — signalling conflict restart",
+                        run.RunId, prNumFallthrough);
+                    return new PipelineRunStatus { State = PipelineRunState.ConflictRestart, Jobs = [] };
+                }
+            }
+            catch (Exception ex)
+            {
+                // TODO [WARNING]: This catch swallows OperationCanceledException when the outer ct
+                // is cancelled (e.g. explicit user cancellation or pipeline-level timeout). The method
+                // then returns PipelineRunState.Failed instead of propagating the cancellation, which
+                // can cause the caller (PollAndHandleInfraRetryAsync) to treat an explicit user
+                // cancellation as a deterministic failure. Since this path is marked "Should not reach
+                // here", the risk is low, but the correct fix is to re-throw OperationCanceledException:
+                //   catch (OperationCanceledException) { throw; }
+                //   catch (Exception ex) { ... log at Debug ... }
+                // (#2359)
+                _logger.Debug(ex, "Pipeline {RunId} mergeability check at fallthrough failed, returning generic failure", run.RunId);
+            }
+        }
+
         // Return a deterministic failure rather than an open-ended WaitForCompletionAsync call.
         return new PipelineRunStatus { State = PipelineRunState.Failed, Jobs = Array.Empty<PipelineJobResult>() };
     }

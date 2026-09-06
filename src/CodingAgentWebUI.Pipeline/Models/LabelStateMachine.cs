@@ -37,7 +37,8 @@ public static class LabelStateMachine
                 AgentLabels.Cancelled,
                 AgentLabels.NeedsRefinement,
                 AgentLabels.WontDo,
-                AgentLabels.EpicReview
+                AgentLabels.EpicReview,
+                AgentLabels.Next   // conflict-restart path: automatic re-queue via FinalLabel override
             },
 
             // Recovery transitions (human re-labels for retry)

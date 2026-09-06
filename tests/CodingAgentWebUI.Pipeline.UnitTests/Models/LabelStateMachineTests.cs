@@ -165,10 +165,10 @@ public class LabelStateMachineTests
     }
 
     [Fact]
-    public void IsValidTransition_InProgress_To_Next_IsInvalid()
+    public void IsValidTransition_InProgress_To_Next_IsValid()
     {
         LabelStateMachine.IsValidTransition(AgentLabels.InProgress, AgentLabels.Next)
-            .Should().BeFalse();
+            .Should().BeTrue();
     }
 
     [Fact]
@@ -303,6 +303,7 @@ public class LabelStateMachineTests
     [InlineData("agent:in-progress", "agent:needs-refinement")] // Analysis: not_ready
     [InlineData("agent:in-progress", "agent:wont-do")]  // Analysis: wont_do
     [InlineData("agent:in-progress", "agent:epic-review")] // Decomposition Phase 1 complete
+    [InlineData("agent:in-progress", "agent:next")]        // Conflict-restart: automatic re-queue via FinalLabel
     [InlineData("agent:epic", "agent:in-progress")]  // Epic dispatch
     [InlineData("agent:epic-review", "agent:epic-approved")] // Human approves plan
     [InlineData("agent:epic-approved", "agent:in-progress")] // Phase 2 dispatched

@@ -41,5 +41,11 @@ public enum PipelineStep
     GeneratingSubIssues = 26,
     CreatingIssues = 27,
     PostingSummary = 28,
-    RunningEnvironmentSetup = 29
+    RunningEnvironmentSetup = 29,
+    /// <summary>
+    /// Terminal state: PR was conflicted with main during the CI-never-started retry loop.
+    /// The pipeline re-queues the issue as <c>agent:next</c> without consuming a retry slot.
+    /// Appended at 30 per wire/DB contract — do NOT reorder.
+    /// </summary>
+    ConflictRestart = 30
 }

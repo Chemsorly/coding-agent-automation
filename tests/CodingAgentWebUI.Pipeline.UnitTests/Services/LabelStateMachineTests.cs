@@ -47,15 +47,16 @@ public sealed class LabelStateMachineTests
     [InlineData(AgentLabels.NeedsRefinement)]
     [InlineData(AgentLabels.WontDo)]
     [InlineData(AgentLabels.EpicReview)]
+    [InlineData(AgentLabels.Next)]  // conflict-restart path: automatic re-queue
     public void IsValidTransition_InProgress_ToTerminal_IsValid(string target)
     {
         LabelStateMachine.IsValidTransition(AgentLabels.InProgress, target).Should().BeTrue();
     }
 
     [Fact]
-    public void IsValidTransition_InProgress_ToNext_IsInvalid()
+    public void IsValidTransition_InProgress_ToNext_IsValid()
     {
-        LabelStateMachine.IsValidTransition(AgentLabels.InProgress, AgentLabels.Next).Should().BeFalse();
+        LabelStateMachine.IsValidTransition(AgentLabels.InProgress, AgentLabels.Next).Should().BeTrue();
     }
 
     [Fact]
