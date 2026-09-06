@@ -507,6 +507,7 @@ select option { background: var(--surface); color: var(--text); }
 .step-badge.step-completed { background: var(--bg-success); color: var(--success); }
 .step-badge.step-failed { background: var(--bg-error); color: var(--error); }
 .step-badge.step-cancelled { background: var(--bg-warning); color: var(--warning); }
+.step-badge.step-restart { background: var(--bg-info); color: var(--accent-light); }
 .step-badge.step-generatingcode, .step-badge.step-cloningrepository, .step-badge.step-creatingbranch { background: var(--bg-info); color: var(--accent-light); }
 .step-badge.step-runningqualitygates { background: var(--bg-warning); color: var(--warning); }
 
@@ -651,6 +652,8 @@ select option { background: var(--surface); color: var(--text); }
 .step-card-cancelled .step-card-name { color: var(--text-muted); font-style: italic; }
 .step-card-revisited { background: #2a2a1a; border-left-color: var(--warning); }
 .step-card-revisited .step-card-name { color: var(--warning); }
+.step-card-restart { background: var(--bg-info); border-left-color: var(--accent-light); }
+.step-card-restart .step-card-name { color: var(--accent-light); }
 
 /* Quality Gate details in sidebar */
 .qg-header-pass { font-weight: 600; color: var(--success); margin-bottom: 4px; }

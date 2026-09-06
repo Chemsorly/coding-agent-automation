@@ -32,6 +32,7 @@ public static class LabelStateMachine
 
             [AgentLabels.InProgress] = new HashSet<string>
             {
+                AgentLabels.Next,  // conflict-restart: auto re-queue via agent:next
                 AgentLabels.Done,
                 AgentLabels.Error,
                 AgentLabels.Cancelled,

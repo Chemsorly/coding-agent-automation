@@ -37,6 +37,20 @@ public class CompletionOutcomeResolverTests
     }
 
     [Fact]
+    public void ConflictRestart_step_returns_Succeeded_with_no_error()
+    {
+        // ConflictRestart is a clean auto-recovery: the pipeline re-queues the issue via
+        // FinalLabel = agent:next. It must not be classified as a failure in WorkItem state
+        // or metrics — the run terminated intentionally, not due to an error.
+        var (status, errorMsg, failureReason) = CompletionOutcomeResolver.Resolve(
+            PipelineStep.ConflictRestart, "PR conflicted with main — restarting pipeline", null, Fallback);
+
+        status.Should().Be(WorkItemStatus.Succeeded);
+        errorMsg.Should().BeNull("ConflictRestart is not a failure, so no error message should be produced");
+        failureReason.Should().BeNull("ConflictRestart is not a failure, so no failure reason should be produced");
+    }
+
+    [Fact]
     public void Failed_step_returns_Failed()
     {
         var (status, _, _) = CompletionOutcomeResolver.Resolve(
@@ -78,7 +92,7 @@ public class CompletionOutcomeResolverTests
     [Fact]
     public void Non_failure_status_yields_null_error_and_null_failure_reason()
     {
-        foreach (var step in new[] { PipelineStep.Completed, PipelineStep.Cancelled })
+        foreach (var step in new[] { PipelineStep.Completed, PipelineStep.Cancelled, PipelineStep.ConflictRestart })
         {
             var (_, errorMsg, failureReason) = CompletionOutcomeResolver.Resolve(
                 step, "some reason", FailureReason.Timeout, Fallback);
