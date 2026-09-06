@@ -142,13 +142,14 @@ public sealed class LabelStateMachineTests
         LabelStateMachine.IsValidTransition("agent:unknown", AgentLabels.InProgress).Should().BeFalse();
     }
 
-    // ── Done is terminal (no outgoing transitions) ────────────────────────
+    // ── Done has recovery transitions (manual force-requeue) ─────────────
 
     [Fact]
-    public void IsValidTransition_Done_ToAnything_IsInvalid()
+    public void IsValidTransition_Done_ToNext_IsValid_ManualForceRequeue()
     {
-        LabelStateMachine.IsValidTransition(AgentLabels.Done, AgentLabels.Next).Should().BeFalse();
-        LabelStateMachine.IsValidTransition(AgentLabels.Done, AgentLabels.InProgress).Should().BeFalse();
+        // agent:done can be force-requeued to agent:next via IssueDrawerService manual dispatch.
+        LabelStateMachine.IsValidTransition(AgentLabels.Done, AgentLabels.Next).Should().BeTrue();
+        LabelStateMachine.IsValidTransition(AgentLabels.Done, AgentLabels.InProgress).Should().BeTrue();
     }
 
     // ── ValidateTransition ────────────────────────────────────────────────
@@ -162,7 +163,9 @@ public sealed class LabelStateMachineTests
     [Fact]
     public void ValidateTransition_InvalidTransition_ReturnsFalse()
     {
-        LabelStateMachine.ValidateTransition(AgentLabels.Done, AgentLabels.Next).Should().BeFalse();
+        // agent:done → agent:next is now a valid recovery transition (see ValidTransitions map).
+        // Use a genuinely invalid transition to pin the false-return behaviour.
+        LabelStateMachine.ValidateTransition(AgentLabels.Next, AgentLabels.Done).Should().BeFalse();
     }
 
     [Fact]
@@ -175,7 +178,8 @@ public sealed class LabelStateMachineTests
     public void ValidateTransition_WithIdentifier_ReturnsCorrectly()
     {
         LabelStateMachine.ValidateTransition(AgentLabels.Next, AgentLabels.InProgress, "GH-42").Should().BeTrue();
-        LabelStateMachine.ValidateTransition(AgentLabels.Done, AgentLabels.Next, "GH-42").Should().BeFalse();
+        // agent:done → agent:next is now valid (recovery transition); use Next → Done as the invalid example.
+        LabelStateMachine.ValidateTransition(AgentLabels.Next, AgentLabels.Done, "GH-42").Should().BeFalse();
     }
 
     // ── ValidTransitions map is populated ────────────────────────────────

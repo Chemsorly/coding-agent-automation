@@ -438,4 +438,211 @@ public class IssueDrawerServiceTests
             new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo" }
         }
     };
+
+    // ── Label clear+set before dispatch (manual force-requeue) ──
+
+    /// <summary>
+    /// Manual dispatch on an issue with a blocking label (agent:cancelled) must:
+    ///   1. Call AddLabelAsync("agent:next") on the issue provider before creating the WorkItem.
+    ///   2. Call RemoveLabelAsync("agent:cancelled") to clear the blocking label.
+    ///   3. Proceed with orchestration dispatch and succeed.
+    /// This verifies the fix for the self-reinforcing cancellation loop: without the label clear,
+    /// DispatchLoop would see agent:cancelled, cancel the WorkItem, and stamp agent:cancelled again.
+    /// </summary>
+    [Theory]
+    [InlineData(AgentLabels.Cancelled)]
+    [InlineData(AgentLabels.Error)]
+    [InlineData(AgentLabels.NeedsRefinement)]
+    [InlineData(AgentLabels.WontDo)]
+    [InlineData(AgentLabels.Done)]
+    public async Task DispatchIssueAsync_WithBlockingLabel_ClearsLabelAndSetsNext_BeforeDispatch(string blockingLabel)
+    {
+        // Arrange — issue has a blocking label
+        var issue = new IssueSummary
+        {
+            Identifier = "42",
+            Title = "Issue 42",
+            Labels = new[] { blockingLabel }
+        };
+        var template = MakeTemplate();
+
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider.Setup(p => p.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockProvider.Object);
+
+        _mockDependencyChecker
+            .Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(),
+                It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+
+        var request = CreateMinimalRequest();
+        _mockDispatchOrchestration
+            .Setup(d => d.PrepareDistributionRequestAsync(It.IsAny<ImplementationDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(request);
+        _mockDispatchOrchestration
+            .Setup(d => d.DistributeAndFinalizeAsync(request, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchOutcome(true, true, null));
+
+        _service.SetProviderContext(IssueProviders, RepoProviders);
+
+        // Act
+        var (success, error, _) = await _service.DispatchIssueAsync(issue, template, IssueProviders, RepoProviders, null);
+
+        // Assert — dispatch succeeds
+        Assert.True(success, $"Expected success but got error: {error}");
+
+        // agent:next must have been added to the issue before orchestration
+        mockProvider.Verify(p => p.AddLabelAsync(
+            It.Is<IssueIdentifier>(id => id.Value == "42"),
+            AgentLabels.Next,
+            It.IsAny<CancellationToken>()),
+            Times.Once,
+            "agent:next must be set on the issue before WorkItem creation");
+
+        // The blocking label must have been removed
+        mockProvider.Verify(p => p.RemoveLabelAsync(
+            It.Is<IssueIdentifier>(id => id.Value == "42"),
+            blockingLabel,
+            It.IsAny<CancellationToken>()),
+            Times.Once,
+            $"{blockingLabel} must be removed from the issue before WorkItem creation");
+    }
+
+    /// <summary>
+    /// Manual dispatch on a clean issue (no blocking label) must NOT call AddLabelAsync or
+    /// RemoveLabelAsync for label management — orchestration proceeds without touching labels.
+    /// The label swap to agent:in-progress happens later in the DispatchLoop, not here.
+    /// </summary>
+    [Fact]
+    public async Task DispatchIssueAsync_WithNoBlockingLabel_DoesNotTouchLabels()
+    {
+        // Arrange — issue has agent:next (clean, scheduler-ready state)
+        var issue = MakeIssue("42");
+        var template = MakeTemplate();
+
+        var mockProvider = new Mock<IIssueProvider>();
+        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockProvider.Object);
+
+        _mockDependencyChecker
+            .Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(),
+                It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+
+        var request = CreateMinimalRequest();
+        _mockDispatchOrchestration
+            .Setup(d => d.PrepareDistributionRequestAsync(It.IsAny<ImplementationDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(request);
+        _mockDispatchOrchestration
+            .Setup(d => d.DistributeAndFinalizeAsync(request, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchOutcome(true, true, null));
+
+        _service.SetProviderContext(IssueProviders, RepoProviders);
+
+        // Act — issue has no labels (MakeIssue returns Labels = Array.Empty<string>())
+        var (success, _, _) = await _service.DispatchIssueAsync(issue, template, IssueProviders, RepoProviders, null);
+
+        // Assert — no label mutations for clean issues
+        Assert.True(success);
+        mockProvider.Verify(p => p.AddLabelAsync(
+            It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "Label management must not fire for issues without blocking labels");
+        mockProvider.Verify(p => p.RemoveLabelAsync(
+            It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "Label management must not fire for issues without blocking labels");
+    }
+
+    /// <summary>
+    /// If label-clear succeeds (agent:next is set on GitHub) but DistributeAndFinalizeAsync then
+    /// fails (e.g. orchestration timeout, 409 from the unique index), DispatchIssueAsync must
+    /// return an error tuple. The issue is left with agent:next and no WorkItem — the scheduler
+    /// loop will pick it up naturally on its next cycle, so the state is recoverable.
+    /// </summary>
+    [Fact]
+    public async Task DispatchIssueAsync_WithBlockingLabel_LabelClearSucceeds_OrchestrationFails_ReturnsError()
+    {
+        // Arrange — issue carries agent:cancelled, label-clear succeeds, orchestration fails
+        var issue = new IssueSummary { Identifier = "42", Title = "Issue 42", Labels = new[] { AgentLabels.Cancelled } };
+        var template = MakeTemplate();
+
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider.Setup(p => p.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockProvider.Object);
+
+        _mockDependencyChecker
+            .Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(),
+                It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+
+        var request = CreateMinimalRequest();
+        _mockDispatchOrchestration
+            .Setup(d => d.PrepareDistributionRequestAsync(It.IsAny<ImplementationDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(request);
+        _mockDispatchOrchestration
+            .Setup(d => d.DistributeAndFinalizeAsync(request, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchOutcome(false, false, "unique index violation"));   // ← orchestration fails
+
+        _service.SetProviderContext(IssueProviders, RepoProviders);
+
+        // Act
+        var (success, error, _) = await _service.DispatchIssueAsync(issue, template, IssueProviders, RepoProviders, null);
+
+        // Assert — error returned to caller
+        Assert.False(success);
+        Assert.Contains("distribution failed", error, StringComparison.OrdinalIgnoreCase);
+
+        // Label-clear still fired — issue is left with agent:next on GitHub (recoverable by scheduler)
+        mockProvider.Verify(p => p.AddLabelAsync(
+            It.Is<IssueIdentifier>(id => id.Value == "42"), AgentLabels.Next, It.IsAny<CancellationToken>()),
+            Times.Once, "agent:next must still be set even if orchestration subsequently fails");
+    }
+
+    /// <summary>
+    /// If CreateIssueProvider throws during the label-clear block (e.g. bad provider config,
+    /// factory misconfiguration), DispatchIssueAsync must catch the exception and return an error
+    /// tuple rather than letting it bubble up to the Blazor circuit handler uncaught.
+    /// </summary>
+    [Fact]
+    public async Task DispatchIssueAsync_WithBlockingLabel_CreateIssueProviderThrows_ReturnsErrorTuple()
+    {
+        // Arrange — issue has agent:error
+        // The factory is called twice: once for the dependency check, once for the label-clear.
+        // First call succeeds (dep-check provider); second call throws (label-clear provider).
+        var issue = new IssueSummary { Identifier = "42", Title = "Issue 42", Labels = new[] { AgentLabels.Error } };
+        var template = MakeTemplate();
+
+        var depCheckProvider = new Mock<IIssueProvider>();
+        _mockProviderFactory
+            .SetupSequence(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(depCheckProvider.Object)                                          // call 1: dep-check — succeeds
+            .Throws(new InvalidOperationException("Provider config is corrupt"));     // call 2: label-clear — throws
+
+        _mockDependencyChecker
+            .Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(),
+                It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+
+        _service.SetProviderContext(IssueProviders, RepoProviders);
+
+        // Act
+        var (success, error, _) = await _service.DispatchIssueAsync(issue, template, IssueProviders, RepoProviders, null);
+
+        // Assert — error tuple returned, orchestration never reached
+        Assert.False(success);
+        Assert.NotNull(error);
+        Assert.Contains("agent:error", error, StringComparison.OrdinalIgnoreCase);
+
+        // Orchestration must never be called — the label-clear failure must short-circuit
+        _mockDispatchOrchestration.Verify(
+            d => d.PrepareDistributionRequestAsync(It.IsAny<ImplementationDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "Orchestration must not proceed when label-clear throws");
+    }
 }
