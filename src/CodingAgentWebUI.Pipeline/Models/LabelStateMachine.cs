@@ -45,6 +45,10 @@ public static class LabelStateMachine
             [AgentLabels.Error] = new HashSet<string> { AgentLabels.Next, AgentLabels.InProgress },
             [AgentLabels.NeedsRefinement] = new HashSet<string> { AgentLabels.Next, AgentLabels.InProgress },
             [AgentLabels.Cancelled] = new HashSet<string> { AgentLabels.Next, AgentLabels.InProgress },
+            // agent:done is a terminal state that can be force-requeued by manual dispatch.
+            // IssueDrawerService.DispatchIssueAsync explicitly handles this transition via
+            // AgentLabelOperations.SwapAsync, so it is a valid programmatic recovery path.
+            [AgentLabels.Done] = new HashSet<string> { AgentLabels.Next, AgentLabels.InProgress },
 
             // Epic decomposition flow
             [AgentLabels.Epic] = new HashSet<string> { AgentLabels.InProgress },
