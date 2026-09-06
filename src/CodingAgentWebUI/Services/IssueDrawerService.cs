@@ -194,20 +194,52 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
         // before creating the WorkItem. Without this, DispatchLoop would see the blocking label,
         // cancel the WorkItem, and re-stamp the same label — a self-reinforcing cancellation loop.
         // Only fires when the issue actually carries a blocking label (no-op for clean issues).
+        //
+        // Note on multiple blocking labels: FirstOrDefault picks the first one as expectedCurrentLabel
+        // for LabelStateMachine logging. AgentLabelOperations.SwapAsync iterates AgentLabels.All and
+        // removes every agent label except agent:next, so ALL blocking labels are cleared regardless
+        // of which one is passed as expectedCurrentLabel. The pipeline invariant is that at most one
+        // agent:* label should be present at a time; additional blocking labels from partial-swap
+        // failures are still removed by the full sweep.
         var blockingLabel = issue.Labels.FirstOrDefault(l => AgentLabels.DispatchIneligibleLabels.Contains(l));
-        if (blockingLabel != null && depProviderConfig != null)
+        if (blockingLabel != null)
         {
-            await using var issueProvider = _providerFactory.CreateIssueProvider(depProviderConfig);
-            Logger.Information(
-                "IssueDrawerService: manual dispatch — clearing blocking label {BlockingLabel} and setting agent:next on issue {IssueIdentifier}",
-                blockingLabel, issue.Identifier);
-            await AgentLabelOperations.SwapAsync(
-                removeLabel: (label, ct) => issueProvider.RemoveLabelAsync(issue.Identifier, label, ct),
-                addLabel: (label, ct) => issueProvider.AddLabelAsync(issue.Identifier, label, ct),
-                newLabel: AgentLabels.Next,
-                ct: CancellationToken.None,
-                expectedCurrentLabel: blockingLabel,
-                identifier: issue.Identifier);
+            if (depProviderConfig == null)
+            {
+                // The template's issue provider is absent from the caller's provider list.
+                // The WorkItem will be created but DispatchLoop will fail-open (not cancel) on the
+                // missing config — the job will never start. Log a warning so this is visible in
+                // the operator UI rather than a silent no-dispatch.
+                Logger.Warning(
+                    "IssueDrawerService: manual dispatch on issue {IssueIdentifier} has blocking label {BlockingLabel} " +
+                    "but issue provider config for template {TemplateId} is not available — cannot clear label before dispatch. " +
+                    "The WorkItem will be created but the job may not start until the label is cleared manually.",
+                    issue.Identifier, blockingLabel, template.Id);
+            }
+            else
+            {
+                try
+                {
+                    await using var issueProvider = _providerFactory.CreateIssueProvider(depProviderConfig);
+                    Logger.Information(
+                        "IssueDrawerService: manual dispatch — clearing blocking label {BlockingLabel} and setting agent:next on issue {IssueIdentifier}",
+                        blockingLabel, issue.Identifier);
+                    await AgentLabelOperations.SwapAsync(
+                        removeLabel: (label, ct) => issueProvider.RemoveLabelAsync(issue.Identifier, label, ct),
+                        addLabel: (label, ct) => issueProvider.AddLabelAsync(issue.Identifier, label, ct),
+                        newLabel: AgentLabels.Next,
+                        ct: CancellationToken.None,
+                        expectedCurrentLabel: blockingLabel,
+                        identifier: issue.Identifier);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Logger.Error(ex,
+                        "IssueDrawerService: failed to clear blocking label {BlockingLabel} on issue {IssueIdentifier} before dispatch",
+                        blockingLabel, issue.Identifier);
+                    return (false, $"Could not clear blocking label '{blockingLabel}' before dispatch — {ex.Message}", null);
+                }
+            }
         }
 
         return await DrawerDispatchHelper.DispatchWithOrchestrationAsync(
