@@ -41,6 +41,7 @@ public sealed class LabelStateMachineTests
     }
 
     [Theory]
+    [InlineData(AgentLabels.Next)]  // conflict-restart auto re-queue (#2359)
     [InlineData(AgentLabels.Done)]
     [InlineData(AgentLabels.Error)]
     [InlineData(AgentLabels.Cancelled)]
@@ -53,9 +54,12 @@ public sealed class LabelStateMachineTests
     }
 
     [Fact]
-    public void IsValidTransition_InProgress_ToNext_IsInvalid()
+    public void IsValidTransition_InProgress_ToNext_IsValid_ConflictRestart()
     {
-        LabelStateMachine.IsValidTransition(AgentLabels.InProgress, AgentLabels.Next).Should().BeFalse();
+        // agent:in-progress → agent:next is valid for the conflict-restart path (#2359):
+        // when a PR branch becomes conflicted during CI polling, the pipeline terminates with
+        // FinalLabel = agent:next to re-queue the issue automatically.
+        LabelStateMachine.IsValidTransition(AgentLabels.InProgress, AgentLabels.Next).Should().BeTrue();
     }
 
     [Fact]

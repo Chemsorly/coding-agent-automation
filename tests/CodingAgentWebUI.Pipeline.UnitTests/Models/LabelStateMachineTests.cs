@@ -169,10 +169,11 @@ public class LabelStateMachineTests
     }
 
     [Fact]
-    public void IsValidTransition_InProgress_To_Next_IsInvalid()
+    public void IsValidTransition_InProgress_To_Next_IsValid_ConflictRestart()
     {
+        // agent:in-progress → agent:next is valid for the conflict-restart path (#2359)
         LabelStateMachine.IsValidTransition(AgentLabels.InProgress, AgentLabels.Next)
-            .Should().BeFalse();
+            .Should().BeTrue();
     }
 
     [Fact]

@@ -41,6 +41,9 @@ internal static class CompletionOutcomeResolver
         {
             PipelineStep.Completed => WorkItemStatus.Succeeded,
             PipelineStep.Cancelled => WorkItemStatus.Cancelled,
+            // ConflictRestart is a clean auto-recovery termination, not a failure.
+            // The pipeline re-queues the issue via FinalLabel = agent:next; no human action required.
+            PipelineStep.ConflictRestart => WorkItemStatus.Succeeded,
             _ => WorkItemStatus.Failed
         };
 

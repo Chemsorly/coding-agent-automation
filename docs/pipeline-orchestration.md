@@ -73,6 +73,7 @@ stateDiagram-v2
     QualityGateDecision --> PreparingForPullRequest : all passed
     QualityGateDecision --> GeneratingCode : failed, retries remaining
     QualityGateDecision --> CreatingPullRequest : failed, retries exhausted (draft PR)
+    QualityGateDecision --> ConflictRestart : dirty PR, no retry consumed
 
     state FinalQualityCheck <<choice>>
     PreparingForPullRequest --> FinalQualityCheck : quality gates re-run after cleanup
@@ -88,6 +89,7 @@ stateDiagram-v2
     Completed --> [*]
     Failed --> [*]
     Cancelled --> [*]
+    ConflictRestart --> [*]
 
     note right of Created
         Label swapped to agent in-progress on job acceptance
@@ -144,6 +146,7 @@ Each step is represented by the `PipelineStep` enum. The pipeline tracks both th
 | **Completed** | Terminal state — run succeeded (or `wont_do` assessment) |
 | **Failed** | Terminal state — unrecoverable error or retries exhausted |
 | **Cancelled** | Terminal state — user cancelled the run |
+| **ConflictRestart** | Terminal-like state — PR branch became conflicted with main during CI polling (GitHub holds all CI checks in "Expected" state for dirty PRs). The pipeline terminates immediately without consuming a retry slot. `FinalLabel = agent:next` causes `PostCompletionBookkeepingAsync` to swap the issue label to `agent:next` automatically, re-queuing the run. The re-dispatched run enters `RunMode.Rework`, rebases (main wins), and re-enters the full pipeline. No human action required. |
 
 ## Confidence Gate
 
@@ -181,6 +184,7 @@ flowchart TD
     FQG -->|fail| RL2{retries remaining?}
     RL2 -->|yes| GC
     RL2 -->|no| DPR
+    GP -->|PR conflicted| CR[ConflictRestart\nno retry consumed]
 ```
 
 Quality gates checked (in order):
@@ -190,6 +194,8 @@ Quality gates checked (in order):
 4. **External CI** — External CI pipeline must pass (if enabled). Requires commit + push before checking
 
 External CI is only evaluated after local gates (compilation, tests, coverage) pass. If any gate (including external CI) fails, the pipeline enters the retry loop — the agent gets error feedback and attempts to fix the code. After all retries are exhausted, the run falls back to a draft PR. Infrastructure-level CI failures (runner crashes, network errors) are counted separately via `MaxInfrastructureRetries` and do not consume the agent's code-fix retry budget.
+
+**Conflict-restart short-circuit:** Before each empty-commit re-trigger push (and before the final exhaustion failure), `PollCiWithNotStartedRetryAsync` checks the PR's mergeability via `IsPullRequestBehindBaseAsync`. If the PR branch is `Conflicted` (dirty) with main, GitHub holds all required CI checks in "Expected — Waiting for status to be reported" state and will not schedule them regardless of how many commits are pushed. When a conflict is detected, the pipeline returns `ConflictRestart` status immediately without pushing any empty commit, without entering the retry loop, and without creating a draft PR. `run.FinalLabel = agent:next` is set, causing the issue to be automatically re-labelled `agent:next` and re-dispatched. The re-dispatched run enters `RunMode.Rework`, rebases (main wins), and re-enters the full pipeline. This avoids exhausting the 15-attempt retry budget (150+ minutes) on a branch that GitHub will never build.
 
 The retry prompt includes the full gate failure details and points the agent to diagnostic output files. Each retry attempt is a `--resume` call, so the agent has full conversation history.
 
@@ -216,6 +222,7 @@ stateDiagram-v2
     ip --> wd : wont_do
     ip --> err : error / timeout
     ip --> cancel : user cancels
+    ip --> next : conflict restart (automatic)
     done --> next : user requests rework
     err --> next : user re-queues
     nr --> next : user refines issue
@@ -224,6 +231,8 @@ stateDiagram-v2
 ```
 
 Re-queueing from `agent:error` or `agent:needs-refinement` requires manual dispatch via the web UI — closed-loop mode skips issues that still carry these labels. Re-queueing from `agent:wont-do` or `agent:cancelled` works in both manual and closed-loop modes.
+
+The `ip → next` conflict-restart transition is automatic and does not require human action. It fires when `PollCiWithNotStartedRetryAsync` detects a conflicted PR branch during CI polling. The re-dispatched run enters `RunMode.Rework` and rebases before re-entering CI.
 
 ## Housekeeping
 

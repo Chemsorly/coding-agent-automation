@@ -43,6 +43,7 @@
             PipelineStep.Completed => "Completed",
             PipelineStep.Failed => "Failed",
             PipelineStep.Cancelled => "Cancelled",
+            PipelineStep.ConflictRestart => "Restarted",
             _ => "Running"
         };
         var resultClass = run.FinalStep switch
@@ -50,6 +51,7 @@
             PipelineStep.Completed => "step-completed",
             PipelineStep.Cancelled => "step-cancelled",
             PipelineStep.Failed => "step-failed",
+            PipelineStep.ConflictRestart => "step-restart",
             _ => "step-running"
         };
 
@@ -73,7 +75,7 @@
                         <span class="run-type-badge run-type-impl"><Icon Name="hammer" Size="14" /> Impl</span>
                     }
                     <span class="step-badge @resultClass">@result</span>
-                    @if (run.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled)
+                    @if (run.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled and not PipelineStep.ConflictRestart)
                     {
                         <span class="cockpit-page-sub">at @run.FinalStep.ToDisplayName()</span>
                     }

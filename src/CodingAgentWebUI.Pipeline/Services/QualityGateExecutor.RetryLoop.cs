@@ -32,11 +32,19 @@ public partial class QualityGateExecutor
 
             report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: false, linkedCt);
             if (run.CurrentStep == PipelineStep.Failed) return;
+            // TODO [WARNING] (#2359 Correctness): If RunRetryLoopAsync later also exits via ConflictRestart
+            // (conflict detected during a retry iteration's AppendExternalCiIfNeededAsync call), the guard
+            // below will call AddRunToHistoryAsync a second time for the same run. Whether this produces
+            // duplicate history records depends on whether AddRunToHistoryAsync is idempotent.
+            // Fix: track whether AddRunToHistoryAsync has already been called for this run, or gate on
+            // run.CurrentStep having just transitioned (i.e. was NOT already ConflictRestart before this call).
+            if (run.CurrentStep == PipelineStep.ConflictRestart) { await callbacks.AddRunToHistoryAsync(run); return; }
 
             LogAndRecordReport(context, report, "quality gates");
 
             report = await RunRetryLoopAsync(context, report, "Quality gate retry agent", linkedCt);
             if (run.CurrentStep == PipelineStep.Failed) return;
+            if (run.CurrentStep == PipelineStep.ConflictRestart) { await callbacks.AddRunToHistoryAsync(run); return; }
 
             if (report.AllPassed)
                 await RunPostRetryCleanupAndFinalizeAsync(context, linkedCt);
@@ -122,10 +130,12 @@ public partial class QualityGateExecutor
         var report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
         report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, linkedCt, skipCiIfNoChanges: true);
         if (run.CurrentStep == PipelineStep.Failed) return;
+        if (run.CurrentStep == PipelineStep.ConflictRestart) { await callbacks.AddRunToHistoryAsync(run); return; }
 
         LogAndRecordReport(context, report, "final quality gates");
         report = await RunRetryLoopAsync(context, report, "Final QG retry agent", linkedCt);
         if (run.CurrentStep == PipelineStep.Failed) return;
+        if (run.CurrentStep == PipelineStep.ConflictRestart) { await callbacks.AddRunToHistoryAsync(run); return; }
 
         if (report.AllPassed)
         {
@@ -210,6 +220,20 @@ public partial class QualityGateExecutor
                 var ciPollStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 var (ciPassed, ciStatus, ciLogPaths) = await PollAndHandleInfraRetryAsync(context, commitSha, config, callbacks, ct);
 
+                // TODO [WARNING] (#2359 DotNetSpecialist): ConflictRestart is out of scope for
+                // WaitForPostPrCiAsync (post-PR CI wait). PollAndHandleInfraRetryAsync can return
+                // PipelineRunState.ConflictRestart here (the same primitive is reused), but this
+                // method does not check for it. The ConflictRestart status flows into
+                // BuildCiFailureDetails (ciPassed == false) and produces a gate failure, which
+                // routes through RunRetryLoopAsync and consumes the full MaxRetries code-fix budget
+                // before falling back to a draft PR — reintroducing exactly the retry-budget-exhaustion
+                // this feature set out to eliminate, just one stage later.
+                // Consequence: "No draft PR created for ConflictRestart" does NOT hold for conflicts
+                // detected during the post-PR CI wait (skipCiIfNoChanges path).
+                // Future fix: add a ConflictRestart short-circuit here analogous to
+                // AppendExternalCiIfNeededAsync — set run.FinalLabel/CurrentStep/FailureReason and
+                // return early without invoking FinalizeDraftPrAsync.
+
                 // PostPrCiDuration is a dedicated histogram for the post-PR CI wait, separate from
                 // ExternalCiDuration (which is recorded in AppendExternalCiIfNeededAsync for the
                 // pre-PR CI pass). Using a distinct metric avoids inflating pre-PR p50/p99 with
@@ -235,7 +259,8 @@ public partial class QualityGateExecutor
             {
                 ciGate = new GateResult
                 {
-                    GateName = "External CI", Passed = false,
+                    GateName = "External CI",
+                    Passed = false,
                     Details = $"Post-PR CI timed out after {config.ExternalCiTimeout}"
                 };
                 callbacks.EmitOutputLine($"❌ Post-PR CI timed out after {config.ExternalCiTimeout}");
@@ -246,7 +271,8 @@ public partial class QualityGateExecutor
                 _logger.Warning(ex, "Pipeline {RunId} post-PR CI check failed, treating as gate failure", run.RunId);
                 ciGate = new GateResult
                 {
-                    GateName = "External CI", Passed = false,
+                    GateName = "External CI",
+                    Passed = false,
                     Details = $"Post-PR CI error: {ex.Message}"
                 };
             }
@@ -571,6 +597,7 @@ public partial class QualityGateExecutor
 
             report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, ct);
             if (run.CurrentStep == PipelineStep.Failed) return report;
+            if (run.CurrentStep == PipelineStep.ConflictRestart) return report;
 
             LogAndRecordReport(context, report, "retry quality gates");
         }
