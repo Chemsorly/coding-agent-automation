@@ -257,8 +257,16 @@ public sealed class ReconciliationServiceTests
         using var stopCts = new CancellationTokenSource();
         var executeTask = RunExecuteForDuration(svc, stopCts.Token);
 
-        // Wait for the first cycle to start (give it a moment)
-        await Task.Delay(50);
+        // Wait for the first cycle to fully complete before firing signals.
+        // Each cycle calls ListJobsAsync 3 times; we wait until calls >= 3 so signals
+        // are guaranteed to arrive mid-second-cycle rather than being drained on startup.
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            var current = _k8sClient.Invocations.Count(i => i.Method.Name == nameof(IKubernetesJobClient.ListJobsAsync));
+            if (current >= 3) break;
+            await Task.Delay(10);
+        }
 
         // Fire 5 concurrent signals — all should collapse into at most 1 wake
         svc.RequestImmediateCycle();
