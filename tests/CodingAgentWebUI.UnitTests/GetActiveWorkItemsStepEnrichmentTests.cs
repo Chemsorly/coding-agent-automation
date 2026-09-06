@@ -44,10 +44,6 @@ public sealed class GetActiveWorkItemsStepEnrichmentTests : IDisposable
 
     // ── Test 1: enriched path ─────────────────────────────────────────────
 
-    // TODO: Only one work item is seeded, so the test cannot distinguish "enriched by RunId match"
-    // from "enriched by coincidence". Consider seeding a second Running item with no live run and
-    // asserting it has CurrentStep == null, making the per-ID key-matching logic directly observable.
-    // (TestQualityReviewer review, line 48)
     [Fact]
     public async Task GetActiveWorkItems_PopulatesCurrentStep_WhenLiveRunExists()
     {
@@ -90,12 +86,6 @@ public sealed class GetActiveWorkItemsStepEnrichmentTests : IDisposable
 
     // ── Test 2: unenriched path ───────────────────────────────────────────
 
-    // TODO: The null runService path (if (runService is not null) guard in the handler) is not covered.
-    // Add a third test passing runService: null and asserting CurrentStep == null to lock in the
-    // defensive-null behaviour required by the acceptance criteria. (Correctness review, line 90 /
-    // TestQualityReviewer review, line 44)
-    // TODO: This test does not assert item.Id == workItemId, unlike Test 1. Add the identity assertion
-    // to guard against a stale DB row surfacing from a prior test run. (TestQualityReviewer review, line 93)
     [Fact]
     public async Task GetActiveWorkItems_CurrentStepIsNull_WhenNoLiveRunExists()
     {
