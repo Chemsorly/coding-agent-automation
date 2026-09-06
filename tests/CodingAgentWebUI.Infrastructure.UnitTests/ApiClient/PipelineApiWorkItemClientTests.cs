@@ -518,4 +518,102 @@ public sealed class PipelineApiWorkItemClientTests : IDisposable
         // malformed. Add a test that inspects the recorded request body to confirm it contains
         // {"priorityWeight": <value>} so regressions in payload serialisation are caught.
     }
+
+    // ── DispatchAsync ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task DispatchAsync_Success_ReturnsWorkItemId()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath("/api/work-items/dispatch").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(workItemId)));
+
+        var request = CreateMinimalDispatchRequest();
+        var result = await _sut.DispatchAsync(request);
+
+        result.Should().Be(workItemId, "a 200 response must deserialize to the WorkItemId Guid");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_ServiceUnavailable_ThrowsHttpRequestException()
+    {
+        _server.Given(Request.Create().WithPath("/api/work-items/dispatch").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(503));
+
+        var request = CreateMinimalDispatchRequest();
+        var act = () => _sut.DispatchAsync(request);
+
+        await act.Should().ThrowAsync<HttpRequestException>(
+            "503 Service Unavailable (no PVC or K8s failure) must propagate to the caller as an exception");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_Conflict_ThrowsHttpRequestException()
+    {
+        _server.Given(Request.Create().WithPath("/api/work-items/dispatch").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(409));
+
+        var request = CreateMinimalDispatchRequest();
+        var act = () => _sut.DispatchAsync(request);
+
+        await act.Should().ThrowAsync<HttpRequestException>(
+            "409 Conflict (concurrency limit or live WorkItem already exists) must propagate to the caller");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WithRunId_SendsIdempotencyKeyHeader()
+    {
+        var workItemId = Guid.NewGuid();
+        var runId = Guid.NewGuid().ToString();
+        _server.Given(Request.Create().WithPath("/api/work-items/dispatch").UsingPost()
+                .WithHeader("X-Idempotency-Key", runId))
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(workItemId)));
+
+        var request = CreateMinimalDispatchRequest(runId: runId);
+        var result = await _sut.DispatchAsync(request);
+
+        result.Should().Be(workItemId,
+            "when RunId is provided, the X-Idempotency-Key header must be sent and matched by the server");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WithoutRunId_DoesNotSendIdempotencyKeyHeader()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath("/api/work-items/dispatch").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(workItemId)));
+
+        // RunId is null/empty — no idempotency header should be added
+        var request = CreateMinimalDispatchRequest(runId: null);
+        var result = await _sut.DispatchAsync(request);
+
+        result.Should().Be(workItemId);
+        _server.LogEntries.Should().HaveCount(1);
+        var logEntry = _server.LogEntries.First();
+        logEntry.RequestMessage!.Headers.Should().NotContainKey("X-Idempotency-Key",
+            "when RunId is absent the idempotency header must not be sent");
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+
+    private static JobDistributionRequest CreateMinimalDispatchRequest(string? runId = null) => new()
+    {
+        IssueIdentifier = "owner/repo#42",
+        IssueProviderConfigId = "github",
+        RepoProviderConfigId = "github-repo",
+        InitiatedBy = "test",
+        TaskType = WorkItemTaskType.Implementation,
+        AgentSelector = "kiro",
+        TimeoutSeconds = 3600,
+        RunId = runId ?? string.Empty
+    };
 }
