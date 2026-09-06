@@ -428,6 +428,96 @@ public sealed class PipelineApiWorkItemClientTests
         result[0].IssueIdentifier.Should().Be("GH-1");
     }
 
+    // ── DispatchAsync ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task DispatchAsync_Success_ReturnsWorkItemId()
+    {
+        var workItemId = Guid.NewGuid();
+        var (client, handler) = Create();
+        handler.Respond = _ => JsonResponse(workItemId);
+
+        var result = await client.DispatchAsync(MakeDispatchRequest());
+
+        result.Should().Be(workItemId, "200 response must return the dispatched WorkItem Guid");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_ServiceUnavailable_ThrowsHttpRequestException()
+    {
+        var (client, handler) = Create();
+        handler.Respond = _ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+
+        var act = () => client.DispatchAsync(MakeDispatchRequest());
+
+        await act.Should().ThrowAsync<HttpRequestException>(
+            "503 (no PVC or K8s failure) must propagate as an exception via EnsureSuccessStatusCode");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_Conflict_ThrowsHttpRequestException()
+    {
+        var (client, handler) = Create();
+        handler.Respond = _ => new HttpResponseMessage(HttpStatusCode.Conflict);
+
+        var act = () => client.DispatchAsync(MakeDispatchRequest());
+
+        await act.Should().ThrowAsync<HttpRequestException>(
+            "409 Conflict must propagate as an exception via EnsureSuccessStatusCode");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WithRunId_SendsIdempotencyKeyHeader()
+    {
+        var workItemId = Guid.NewGuid();
+        var runId = Guid.NewGuid().ToString();
+        HttpRequestMessage? captured = null;
+        var (client, handler) = Create();
+        handler.Respond = req =>
+        {
+            captured = req;
+            return JsonResponse(workItemId);
+        };
+
+        await client.DispatchAsync(MakeDispatchRequest(runId: runId));
+
+        captured.Should().NotBeNull();
+        captured!.Headers.TryGetValues("X-Idempotency-Key", out var values).Should().BeTrue(
+            "when RunId is non-empty the idempotency key header must be sent");
+        values.Should().Contain(runId);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WithoutRunId_DoesNotSendIdempotencyKeyHeader()
+    {
+        var workItemId = Guid.NewGuid();
+        HttpRequestMessage? captured = null;
+        var (client, handler) = Create();
+        handler.Respond = req =>
+        {
+            captured = req;
+            return JsonResponse(workItemId);
+        };
+
+        await client.DispatchAsync(MakeDispatchRequest(runId: string.Empty));
+
+        captured.Should().NotBeNull();
+        captured!.Headers.Contains("X-Idempotency-Key").Should().BeFalse(
+            "when RunId is absent the X-Idempotency-Key header must not be sent");
+    }
+
+    private static JobDistributionRequest MakeDispatchRequest(string? runId = null) => new()
+    {
+        IssueIdentifier = "owner/repo#42",
+        IssueProviderConfigId = "github",
+        RepoProviderConfigId = "github-repo",
+        InitiatedBy = "test",
+        TaskType = WorkItemTaskType.Implementation,
+        AgentSelector = "kiro",
+        TimeoutSeconds = 3600,
+        RunId = runId ?? string.Empty
+    };
+
     // ── Stub ──────────────────────────────────────────────────────────────
 
     internal sealed class StubHandler : HttpMessageHandler

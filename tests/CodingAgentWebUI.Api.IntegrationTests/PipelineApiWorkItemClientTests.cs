@@ -590,4 +590,97 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
             e.RequestMessage!.Method == "POST" &&
             e.RequestMessage.Path == $"/api/work-items/{workItemId}/last-progress");
     }
+
+    // ── DispatchAsync ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task DispatchAsync_Success_ReturnsWorkItemId()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath("/api/work-items/dispatch").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(workItemId)));
+
+        var request = MakeDispatchRequest();
+        var result = await _client.DispatchAsync(request);
+
+        result.Should().Be(workItemId, "a 200 response must deserialize to the WorkItemId Guid");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_ServiceUnavailable_ThrowsHttpRequestException()
+    {
+        _server.Given(Request.Create().WithPath("/api/work-items/dispatch").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(503));
+
+        var request = MakeDispatchRequest();
+        var act = () => _client.DispatchAsync(request);
+
+        await act.Should().ThrowAsync<HttpRequestException>(
+            "503 Service Unavailable (no PVC or K8s failure) must propagate to the caller as an exception");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_Conflict_ThrowsHttpRequestException()
+    {
+        _server.Given(Request.Create().WithPath("/api/work-items/dispatch").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(409));
+
+        var request = MakeDispatchRequest();
+        var act = () => _client.DispatchAsync(request);
+
+        await act.Should().ThrowAsync<HttpRequestException>(
+            "409 Conflict (concurrency limit or live WorkItem already exists) must propagate as an exception");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WithRunId_SendsIdempotencyKeyHeader()
+    {
+        var workItemId = Guid.NewGuid();
+        var runId = Guid.NewGuid().ToString();
+        _server.Given(Request.Create().WithPath("/api/work-items/dispatch").UsingPost()
+                .WithHeader("X-Idempotency-Key", runId))
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(workItemId)));
+
+        var request = MakeDispatchRequest(runId: runId);
+        var result = await _client.DispatchAsync(request);
+
+        result.Should().Be(workItemId,
+            "when RunId is provided the X-Idempotency-Key header must be sent and matched by the server");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WithoutRunId_DoesNotSendIdempotencyKeyHeader()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath("/api/work-items/dispatch").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(workItemId)));
+
+        var request = MakeDispatchRequest(runId: string.Empty);
+        await _client.DispatchAsync(request);
+
+        var entry = _server.LogEntries.Last();
+        entry.RequestMessage!.Headers.Should().NotContainKey("X-Idempotency-Key",
+            "when RunId is absent the X-Idempotency-Key header must not be sent");
+    }
+
+    private static JobDistributionRequest MakeDispatchRequest(string? runId = null) => new()
+    {
+        IssueIdentifier = new IssueIdentifier("owner/repo#42"),
+        IssueProviderConfigId = "github",
+        RepoProviderConfigId = "github-repo",
+        InitiatedBy = "test",
+        TaskType = WorkItemTaskType.Implementation,
+        AgentSelector = "kiro",
+        TimeoutSeconds = 3600,
+        RunId = runId ?? string.Empty
+    };
 }
