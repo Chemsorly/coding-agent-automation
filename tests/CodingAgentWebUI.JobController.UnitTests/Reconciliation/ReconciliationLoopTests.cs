@@ -62,6 +62,13 @@ public sealed class ReconciliationLoopTests
             ItemId,
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Succeeded"),
             It.IsAny<CancellationToken>()), Times.Once);
+        // TODO [WARNING]: The `_k8sClient.Verify(c => c.DeleteJobAsync(...), Times.Never)` assertion
+        // was removed from this test. That assertion verified the behavioural invariant that
+        // reconciliation of a succeeded job must NOT proactively delete the job (K8s TTL or
+        // CleanupOrphans handles deletion). Without it, a future regression where ReconcileOnceAsync
+        // begins calling DeleteJobAsync on success paths will not be caught here.
+        // Restore: _k8sClient.Verify(c => c.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        // (TestQualityReviewer review [WARNING] @ ReconciliationLoopTests.cs:62)
     }
 
     // ─── K8s Failed event ────────────────────────────────────────────────────
@@ -82,6 +89,13 @@ public sealed class ReconciliationLoopTests
             ItemId,
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "AgentError"),
             It.IsAny<CancellationToken>()), Times.Once);
+        // TODO [WARNING]: The `_k8sClient.Verify(c => c.DeleteJobAsync(...), Times.Never)` assertion
+        // was removed from this test. That assertion verified the behavioural invariant that
+        // reconciliation of a failed job must NOT proactively delete the job (only timeout enforcement
+        // deletes jobs). Without it, a future regression where ReconcileOnceAsync begins calling
+        // DeleteJobAsync on failure paths will not be caught here.
+        // Restore: _k8sClient.Verify(c => c.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        // (TestQualityReviewer review [WARNING] @ ReconciliationLoopTests.cs:82)
     }
 
     // ─── Timeout enforcement ──────────────────────────────────────────────────
@@ -442,6 +456,13 @@ public sealed class ReconciliationLoopTests
             ItemId,
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Succeeded"),
             It.IsAny<CancellationToken>()), Times.Once);
+        // TODO [WARNING]: The `_k8sClient.Verify(c => c.DeleteJobAsync(...), Times.Never)` assertion
+        // was removed from this test. That assertion verified that reconciliation of a succeeded job
+        // does not proactively delete it (K8s TTL or CleanupOrphans handles that). Without it, a
+        // future regression where ReconcileOnceAsync begins calling DeleteJobAsync on success paths
+        // will not be caught here.
+        // Restore: _k8sClient.Verify(c => c.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        // (TestQualityReviewer review [WARNING] @ ReconciliationLoopTests.cs:442)
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
