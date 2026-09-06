@@ -28,6 +28,19 @@ namespace CodingAgentWebUI.Api.IntegrationTests;
 /// 2. The lifecycle manager calls can be tracked via a recording stub without Moq.
 /// 3. The test can assert 404 vs 400 without configuring a full WebApplicationFactory.
 /// </summary>
+/// <remarks>
+/// IMPORTANT: This class must be in the <see cref="ApiIntegrationTestCollection"/> (same as
+/// <see cref="WorkItemEndpointTests"/>) to prevent parallel execution.
+/// <see cref="WorkDistributionTelemetry.WorkItemsTerminated"/> is a static counter shared
+/// across all tests in the process. <see cref="WorkItemEndpointTests.PostStatus_TerminalTransition_SetsCompletedAt"/>
+/// posts a real Running→Cancelled HTTP request whose fire-and-forget
+/// <c>EmitTerminalStatusTelemetryAsync</c> increments the static counter. If that background
+/// task completes while a <see cref="MeterListener"/> from this class is active, the
+/// <c>BeEmpty()</c> assertion in
+/// <see cref="PostStatus_AlreadyAtTerminalState_DoesNotIncrementTerminatedCounter"/> fails.
+/// Placing both classes in the same collection serializes them, eliminating the race.
+/// </remarks>
+[Collection(ApiIntegrationTestCollection.Name)]
 public sealed class PostStatusIdempotencyTests
 {
     // ── Helpers ──────────────────────────────────────────────────────────────
