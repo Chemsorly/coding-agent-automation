@@ -240,7 +240,9 @@ public class ChatDispatcherObservabilityTests : IDisposable
     [Fact]
     public async Task DispatchChatPodAsync_Timeout_DispatchActivity_HasErrorStatus()
     {
-        var dispatcher = CreateDispatcher(options: CreateOptions(connectTimeoutSeconds: 1));
+        // Use 3s (not 1s) so the timeout reliably fires on loaded CI runners without
+        // racing against activity-listener registration or scheduler jitter.
+        var dispatcher = CreateDispatcher(options: CreateOptions(connectTimeoutSeconds: 3));
 
         await Assert.ThrowsAsync<ChatPodTimeoutException>(
             () => dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None));
