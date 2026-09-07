@@ -237,7 +237,7 @@ public sealed class DispatchLoop
                 // To fix, perform the claim before acquiring the lock; if Job creation then fails,
                 // issue a compensating unclaim call to release the item. Alternatively, narrow the
                 // critical section to SelectAvailablePvcAsync + CreateJobAsync only.
-                claimed = await TryClaimWorkItemAsync(item.Id, jobName, ct);
+                claimed = await TryClaimWorkItemAsync(item.Id, jobName, ct, kiroPvcName: pvcName);
                 if (claimed is null) return;
 
                 // Build and create K8s Job
@@ -338,13 +338,19 @@ public sealed class DispatchLoop
     /// caller should skip this item (contention or deletion).
     /// </summary>
     private async Task<WorkItemClaimResponse?> TryClaimWorkItemAsync(
-        Guid workItemId, string jobName, CancellationToken ct)
+        Guid workItemId, string jobName, CancellationToken ct, string? kiroPvcName = null)
     {
         try
         {
             var claimed = await _workItemClient.ClaimAsync(
                 workItemId,
-                new ClaimWorkItemRequest { AssignedAgentId = jobName, K8sJobName = jobName, DispatchedAt = DateTimeOffset.UtcNow },
+                new ClaimWorkItemRequest
+                {
+                    AssignedAgentId = jobName,
+                    K8sJobName = jobName,
+                    DispatchedAt = DateTimeOffset.UtcNow,
+                    KiroPvcName = kiroPvcName
+                },
                 ct);
 
             if (claimed is null)

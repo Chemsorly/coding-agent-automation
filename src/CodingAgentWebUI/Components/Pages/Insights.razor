@@ -26,15 +26,27 @@
             <span class="cockpit-page-sub">Trends across the last @_total run@(_total == 1 ? "" : "s")</span>
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
-            <span style="font-size: 11px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em;">Time window:</span>
-            <select class="time-window-select" style="font-size: 12px;" @bind="_recentWindowHours" @bind:after="LoadAsync" title="Filter all metrics to runs started within this window">
-                <option value="1">1h</option>
-                <option value="6">6h</option>
-                <option value="24">24h</option>
-                <option value="168">7d</option>
-                <option value="0">All</option>
-            </select>
-            <span style="font-size: 11px; color: var(--text-muted);">@RecentWindowLabel</span>
+            @* TODO: [WARNING] OnRefresh is wired directly to LoadAsync, which sets _loading = true and
+               replaces the entire page content with the "Loading…" card on every auto-refresh tick,
+               causing a visible flash. Fix: extract a quiet reload variant that does not toggle _loading
+               (keeping stale data visible while re-fetching) and wire the RefreshBar OnRefresh to that
+               quiet path instead, matching the established convention used by Overview/Runs/Work. *@
+            <RefreshBar OnRefresh="LoadAsync" IsLoading="@_loading" />
+
+            @* TODO: [WARNING] Insights aggregates completed run metrics. The run-scoped hub events
+               (OnRunCompleted) are not wired here because they are sent only to run-specific groups.
+               A global "any run completed" broadcast event on the hub would enable push-based refresh.
+               Until then, the RefreshBar auto-refresh polling is the only mechanism for background updates. *@
+            <label style="display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 13px; border: 1px solid var(--ctl-border); border-radius: 9px; background: var(--surface); font-size: 12.5px; font-weight: 600; color: var(--text-muted);">
+                <span style="font-size: 11px; font-weight: 700; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em;">Time window:</span>
+                <select class="time-window-select" style="font-size: 12px;" @bind="_recentWindowHours" @bind:after="LoadAsync" title="Filter all metrics to runs started within this window">
+                    <option value="1">1h</option>
+                    <option value="6">6h</option>
+                    <option value="24">24h</option>
+                    <option value="168">7d</option>
+                    <option value="0">All</option>
+                </select>
+            </label>
         </div>
     </div>
 
