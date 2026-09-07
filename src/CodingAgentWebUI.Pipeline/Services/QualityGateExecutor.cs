@@ -94,6 +94,18 @@ public partial class QualityGateExecutor : IQualityGateExecutor
     internal static string FormatGateLogValue(GateResult? gate) =>
         gate is null ? "N/A" : gate.Passed.ToString();
 
+    /// <summary>
+    /// Builds a <see cref="TagList"/> for quality gate retry metrics, including run_type, project context,
+    /// and an <c>outcome</c> tag distinguishing the type of retry (<c>transient</c>, <c>auth_abort</c>,
+    /// <c>session_restart</c>, <c>retry</c>).
+    /// </summary>
+    private static System.Diagnostics.TagList BuildRetryTags(PipelineRun run, string outcome)
+    {
+        var tags = PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName);
+        tags.Add(new KeyValuePair<string, object?>("outcome", outcome));
+        return tags;
+    }
+
     private static string BuildQualityGateErrorSummary(QualityGateReport report)
     {
         var errors = new List<string>();

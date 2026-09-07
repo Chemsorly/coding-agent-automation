@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Diagnostics.Metrics;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
@@ -15,20 +16,41 @@ namespace CodingAgentWebUI.Infrastructure.Git;
 /// </summary>
 public partial class BrainUpdateService : IBrainUpdateService
 {
+    // Meter source name mirrors PipelineTelemetry.SourceName — kept as a local constant so this
+    // infrastructure class does not need to reference the static PipelineTelemetry type.
+    private const string MeterSourceName = "CodingAgent.Pipeline";
+
     private readonly ILogger _logger;
     private readonly IGitOperations _git;
+    private readonly Counter<long>? _brainPushRetries;
 
     public BrainUpdateService(ILogger logger)
-        : this(logger, new LibGit2SharpGitOperations())
+        : this(logger, new LibGit2SharpGitOperations(), meterFactory: null)
     {
     }
 
     public BrainUpdateService(ILogger logger, IGitOperations gitOperations)
+        : this(logger, gitOperations, meterFactory: null)
+    {
+    }
+
+    /// <summary>
+    /// Primary constructor. When <paramref name="meterFactory"/> is non-null the
+    /// <c>brain.push.retries</c> counter is created from it; otherwise the counter
+    /// is disabled (null-safe: <c>_brainPushRetries?.Add</c> is used at call sites).
+    /// Accepting <see cref="IMeterFactory"/> rather than a pre-built
+    /// <see cref="Counter{T}"/> keeps this infrastructure class free of any direct
+    /// dependency on the static <c>PipelineTelemetry</c> class.
+    /// </summary>
+    public BrainUpdateService(ILogger logger, IGitOperations gitOperations, IMeterFactory? meterFactory)
     {
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(gitOperations);
         _logger = logger;
         _git = gitOperations;
+        _brainPushRetries = meterFactory?.Create(new MeterOptions(MeterSourceName))
+            .CreateCounter<long>("brain.push.retries", "{retry}",
+                "Brain repo push retry attempts on non-fast-forward conflict");
     }
 
     /// <summary>
@@ -314,6 +336,11 @@ public partial class BrainUpdateService : IBrainUpdateService
                 _logger.Warning(
                     "Brain push attempt {Attempt}/{MaxRetries} failed (non-fast-forward), rebasing...",
                     attempt, maxRetries);
+
+                // Increment the brain push retry counter so rebase events are visible in Prometheus.
+                // The counter is incremented here (before the rebase) to reflect that a retry
+                // attempt is being made, regardless of whether the rebase succeeds.
+                _brainPushRetries?.Add(1);
 
                 // Random jitter to reduce collision probability
                 await Task.Delay(Random.Shared.Next(200, 501), ct);
