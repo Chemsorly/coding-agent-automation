@@ -15,6 +15,7 @@ namespace CodingAgentWebUI.JobController.UnitTests.Reconciliation;
 /// Unit tests for ReconciliationLoop — the K8s Job watch and timeout enforcement logic.
 /// Tests are written before implementation (TDD: Task 12b).
 /// </summary>
+[Collection("Metrics")]
 public sealed class ReconciliationLoopTests
 {
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
@@ -600,6 +601,7 @@ public sealed class ReconciliationLoopTests
 
 // ─── Error / exception paths ──────────────────────────────────────────────────
 
+[Collection("Metrics")]
 public sealed class ReconciliationLoopErrorTests
 {
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
