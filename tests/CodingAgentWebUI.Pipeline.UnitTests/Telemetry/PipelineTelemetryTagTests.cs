@@ -9,6 +9,11 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 /// <summary>
 /// Unit tests verifying that pipeline metrics include the run_type and project tags.
 /// </summary>
+// TODO: [WARNING] This class is NOT in the [Collection("Metrics")] xUnit collection. ReconciliationLoopTests
+// IS in that collection and uses the same static meter (PipelineTelemetry.JobsDispatched) via MetricCollector.
+// xUnit runs tests in different collections concurrently by default, so measurements emitted by
+// ReconciliationLoopTests may bleed into _capturedTags here, causing spurious assertion failures.
+// Fix: add [Collection("Metrics")] to this class to serialise execution with ReconciliationLoopTests.
 public class PipelineTelemetryTagTests : IDisposable
 {
     private readonly MeterListener _listener = new();

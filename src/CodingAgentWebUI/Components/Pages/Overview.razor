@@ -192,8 +192,8 @@
         // Runs — one page, active + recent, aggregated client-side
         try
         {
-            // TODO: pageSize must stay aligned with Attention.razor and Insights.razor (both use 100) so that
-            // the "Failed runs" count on the Overview card matches those pages. Consider a dedicated server-side
+            // pageSize matches Attention.razor and Insights.razor (both use 100) so that the "Failed runs"
+            // count on the Overview card agrees with those pages. Consider a dedicated server-side
             // counts/stats endpoint so none of the pages depend on a client-side page window.
             var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: true, projectId: State.SelectedProjectId, ct: _cts.Token);
             var items = runs.Items;
@@ -206,9 +206,19 @@
             _finishedCount = finished.Count;
             var succeeded = finished.Count(r => r.FinalStep == PipelineStep.Completed);
             _successRate = _finishedCount > 0 ? (int)Math.Round(100.0 * succeeded / _finishedCount) : 0;
+            // TODO: [WARNING] _tokensRecent sums all fetched items including active (in-flight) runs, which
+            // have partial token counts that will fluctuate each refresh cycle. Previously only completed
+            // runs were summed. The label "Tokens · recent" may be misleading since active-run tokens are
+            // included and will visibly jump every 10 s for long-running jobs. Consider summing only
+            // _recentRuns (non-active) to restore the previous semantic, or update the label to clarify.
             _tokensRecent = items.Sum(r => r.TotalTokens);
 
             _attnNeedsRefinement = items.Count(r => r.AnalysisRecommendation == AnalysisGateResult.NotReady);
+            // TODO: [WARNING] _attnFailed counts FinalStep == Failed across all fetched items (including
+            // active runs), while _finishedCount/_successRate are computed from _recentRuns (non-active only).
+            // Active runs should never have FinalStep == Failed, but if they momentarily do, a run could be
+            // double-counted. Verify that Attention.razor also uses the full items list (not _recentRuns) for
+            // its failed count so the two pages remain consistent after this pageSize alignment.
             _attnFailed = items.Count(r => r.FinalStep == PipelineStep.Failed);
             _attnPlans = items.Count(r => r.RunType == PipelineRunType.DecompositionAnalysis && r.FinalStep == PipelineStep.Completed);
         }
