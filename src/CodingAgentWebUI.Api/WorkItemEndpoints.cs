@@ -1186,6 +1186,10 @@ public static class WorkItemEndpoints
 
         if (request.Status == WorkItemStatus.Failed)
         {
+            // TODO: This bare Enum.TryParse has no Enum.IsDefined guard (unlike the telemetry path
+            // fixed in issue #2341). A numeric string like "99" will parse to an undefined FailureReason
+            // value and be persisted to the database. Add an Enum.IsDefined check here so that only
+            // named members are written to entity.FailureReason.
             if (request.FailureReason is not null
                 && Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason))
             {
