@@ -13,8 +13,8 @@ namespace CodingAgentWebUI.UnitTests.Hubs;
 /// Additional coverage tests for <see cref="AgentTokenRefreshService"/> targeting
 /// paths not covered by <see cref="AgentTokenRefreshServiceTests"/>:
 /// - Brain config not found in store → <see cref="HubException"/>
-/// - GitLab PAT ExpiresAt is approximately 1 hour in the future
-/// - Pre-vended token ExpiresAt is approximately 1 hour in the future
+/// - GitLab PAT ExpiresAt is a far-future sentinel (~24 hours, never expires naturally)
+/// - Pre-vended static token ExpiresAt is a far-future sentinel (~24 hours)
 /// - K8s mode fallback with null brain config ID on brain kind → still throws
 /// </summary>
 public sealed class AgentTokenRefreshServiceCoverageTests
@@ -59,10 +59,10 @@ public sealed class AgentTokenRefreshServiceCoverageTests
             .WithMessage("*brain-deleted*not found*");
     }
 
-    // ── GitLab PAT ExpiresAt is ~1 hour in the future ─────────────────────
+    // ── GitLab PAT ExpiresAt is a far-future sentinel ─────────────────────
 
     [Fact]
-    public async Task RefreshToken_GitLabPat_ExpiresAtIsApproximatelyOneHourFromNow()
+    public async Task RefreshToken_GitLabPat_ExpiresAtIsFarFutureSentinel()
     {
         var config = new ProviderConfig
         {
@@ -83,15 +83,18 @@ public sealed class AgentTokenRefreshServiceCoverageTests
         var result = await service.RefreshTokenAsync("job-1", ProviderKind.Repository, CancellationToken.None);
 
         result.Token.Should().Be("glpat-valid-token");
-        result.ExpiresAt.Should().BeCloseTo(before.AddHours(1), TimeSpan.FromMinutes(1),
-            "GitLab PAT refresh must set ExpiresAt to ~1 hour from now so agents schedule the next refresh correctly");
+        // Static GitLab PATs use a far-future sentinel (24h) so agents treat them as non-expiring.
+        result.ExpiresAt.Should().BeCloseTo(before.AddHours(24), TimeSpan.FromMinutes(1),
+            "GitLab PAT is a static token — ExpiresAt must be a far-future sentinel, not a short-lived 1h");
     }
 
-    // ── Pre-vended token ExpiresAt is ~1 hour in the future ──────────────
+    // ── Pre-vended static token ExpiresAt is a far-future sentinel ────────
 
     [Fact]
-    public async Task RefreshToken_PreVendedToken_ExpiresAtIsApproximatelyOneHourFromNow()
+    public async Task RefreshToken_PreVendedToken_WithoutExpiryMetadata_ExpiresAtIsFarFutureSentinel()
     {
+        // A static 'token' with no tokenExpiresAt in settings (e.g. a personal access token
+        // stored directly in provider config). Should return a far-future sentinel, not 1h.
         var config = new ProviderConfig
         {
             Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
@@ -111,8 +114,9 @@ public sealed class AgentTokenRefreshServiceCoverageTests
         var result = await service.RefreshTokenAsync("job-1", ProviderKind.Repository, CancellationToken.None);
 
         result.Token.Should().Be("pre-vended-12345");
-        result.ExpiresAt.Should().BeCloseTo(before.AddHours(1), TimeSpan.FromMinutes(1),
-            "pre-vended token refresh must set ExpiresAt to ~1 hour from now");
+        // No expiry metadata → far-future sentinel, not a fabricated 1h.
+        result.ExpiresAt.Should().BeCloseTo(before.AddHours(24), TimeSpan.FromMinutes(1),
+            "static token with no expiry metadata must use a far-future sentinel (24h), not fabricate 1h");
     }
 
     // ── K8s fallback: brain kind, brainId is null → HubException ──────────

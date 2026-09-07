@@ -36,8 +36,42 @@ internal sealed class ConsolidationProviderResolver
     public Task<ProviderResolutionResult<BrainConsolidationProviders>> ResolveBrainConsolidationProvidersAsync(
         ConsolidationJobMessage job, CancellationToken ct)
     {
+        // TODO [WARNING]: This overload (and the equivalent no-proxy overloads for Refactoring and Harness)
+        // are now dead code — LocalConsolidationExecutor exclusively calls the proxy-accepting overloads.
+        // If kept for backward compatibility they should be marked [Obsolete]; otherwise remove them to avoid
+        // confusing future callers about which overload to use. (DotNetSpecialist review finding)
         ArgumentNullException.ThrowIfNull(job);
-        return ResolveAsync<BrainConsolidationProviders>(job, async (factory, disposables) =>
+        return ResolveAsync<BrainConsolidationProviders>(job, null, async (factory, disposables) =>
+        {
+            var brainConfig = FindRequiredConfig(job, ProviderKind.Repository, RepositoryRole.Brain);
+            if (brainConfig is null)
+                return ProviderResolutionResult<BrainConsolidationProviders>.Fail(job.JobId,
+                    "No brain repository provider configuration found in job");
+
+            var agentConfig = FindRequiredConfig(job, ProviderKind.Agent);
+            if (agentConfig is null)
+                return ProviderResolutionResult<BrainConsolidationProviders>.Fail(job.JobId,
+                    "No agent provider configuration found in job");
+
+            var brainProvider = factory.CreateRepositoryProvider(brainConfig);
+            if (brainProvider is IAsyncDisposable bd) disposables.Add(bd);
+
+            var agentProvider = factory.CreateAgentProvider(agentConfig);
+            if (agentProvider is IAsyncDisposable ad) disposables.Add(ad);
+
+            await brainProvider.ValidateAsync(ct);
+            await agentProvider.ValidateAsync(ct);
+
+            return ProviderResolutionResult<BrainConsolidationProviders>.Succeed(
+                new BrainConsolidationProviders(brainProvider, agentProvider));
+        }, ct);
+    }
+
+    public Task<ProviderResolutionResult<BrainConsolidationProviders>> ResolveBrainConsolidationProvidersAsync(
+        ConsolidationJobMessage job, OrchestratorProxy? orchestratorProxy, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+        return ResolveAsync<BrainConsolidationProviders>(job, orchestratorProxy, async (factory, disposables) =>
         {
             var brainConfig = FindRequiredConfig(job, ProviderKind.Repository, RepositoryRole.Brain);
             if (brainConfig is null)
@@ -66,8 +100,57 @@ internal sealed class ConsolidationProviderResolver
     public Task<ProviderResolutionResult<RefactoringProviders>> ResolveRefactoringProvidersAsync(
         ConsolidationJobMessage job, CancellationToken ct)
     {
+        // TODO [WARNING]: Dead code — see note on ResolveBrainConsolidationProvidersAsync(job, ct).
+        // The lambda body here is also a duplicate of the proxy-accepting overload below; any future
+        // logic change must be made in both places, creating a maintenance hazard. (Correctness review finding)
         ArgumentNullException.ThrowIfNull(job);
-        return ResolveAsync<RefactoringProviders>(job, async (factory, disposables) =>
+        return ResolveAsync<RefactoringProviders>(job, null, async (factory, disposables) =>
+        {
+            var repoConfig = FindRequiredConfig(job, ProviderKind.Repository, RepositoryRole.Work);
+            if (repoConfig is null)
+                return ProviderResolutionResult<RefactoringProviders>.Fail(job.JobId,
+                    "No code repository provider configuration found in job");
+
+            var agentConfig = FindRequiredConfig(job, ProviderKind.Agent);
+            if (agentConfig is null)
+                return ProviderResolutionResult<RefactoringProviders>.Fail(job.JobId,
+                    "No agent provider configuration found in job");
+
+            var issueConfig = FindRequiredConfig(job, ProviderKind.Issue);
+            if (issueConfig is null)
+                return ProviderResolutionResult<RefactoringProviders>.Fail(job.JobId,
+                    "No issue provider configuration found in job");
+
+            var brainConfig = job.ProviderConfigs.FirstOrDefault(c =>
+                c.Kind == ProviderKind.Repository && c.RepositoryRole == RepositoryRole.Brain);
+
+            var repoProvider = factory.CreateRepositoryProvider(repoConfig);
+            if (repoProvider is IAsyncDisposable rd) disposables.Add(rd);
+
+            var agentProvider = factory.CreateAgentProvider(agentConfig);
+            if (agentProvider is IAsyncDisposable ad) disposables.Add(ad);
+
+            var issueProvider = CreateIssueProviderForConsolidation(issueConfig);
+            if (issueProvider is IAsyncDisposable id) disposables.Add(id);
+
+            var brainProvider = brainConfig is not null
+                ? await TryCreateAndValidateBrainProviderAsync(factory, brainConfig, disposables, job.JobId, ct)
+                : null;
+
+            await repoProvider.ValidateAsync(ct);
+            await agentProvider.ValidateAsync(ct);
+            await issueProvider.ValidateAsync(ct);
+
+            return ProviderResolutionResult<RefactoringProviders>.Succeed(
+                new RefactoringProviders(repoProvider, agentProvider, issueProvider, brainProvider));
+        }, ct);
+    }
+
+    public Task<ProviderResolutionResult<RefactoringProviders>> ResolveRefactoringProvidersAsync(
+        ConsolidationJobMessage job, OrchestratorProxy? orchestratorProxy, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+        return ResolveAsync<RefactoringProviders>(job, orchestratorProxy, async (factory, disposables) =>
         {
             var repoConfig = FindRequiredConfig(job, ProviderKind.Repository, RepositoryRole.Work);
             if (repoConfig is null)
@@ -143,8 +226,29 @@ internal sealed class ConsolidationProviderResolver
     public Task<ProviderResolutionResult<HarnessProviders>> ResolveHarnessProvidersAsync(
         ConsolidationJobMessage job, CancellationToken ct)
     {
+        // TODO [WARNING]: Dead code — see note on ResolveBrainConsolidationProvidersAsync(job, ct).
         ArgumentNullException.ThrowIfNull(job);
-        return ResolveAsync<HarnessProviders>(job, async (factory, disposables) =>
+        return ResolveAsync<HarnessProviders>(job, null, async (factory, disposables) =>
+        {
+            var agentConfig = FindRequiredConfig(job, ProviderKind.Agent);
+            if (agentConfig is null)
+                return ProviderResolutionResult<HarnessProviders>.Fail(job.JobId,
+                    "No agent provider configuration found in job");
+
+            var agentProvider = factory.CreateAgentProvider(agentConfig);
+            if (agentProvider is IAsyncDisposable ad) disposables.Add(ad);
+
+            await agentProvider.ValidateAsync(ct);
+
+            return ProviderResolutionResult<HarnessProviders>.Succeed(new HarnessProviders(agentProvider));
+        }, ct);
+    }
+
+    public Task<ProviderResolutionResult<HarnessProviders>> ResolveHarnessProvidersAsync(
+        ConsolidationJobMessage job, OrchestratorProxy? orchestratorProxy, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+        return ResolveAsync<HarnessProviders>(job, orchestratorProxy, async (factory, disposables) =>
         {
             var agentConfig = FindRequiredConfig(job, ProviderKind.Agent);
             if (agentConfig is null)
@@ -167,10 +271,11 @@ internal sealed class ConsolidationProviderResolver
     /// </summary>
     private async Task<ProviderResolutionResult<T>> ResolveAsync<T>(
         ConsolidationJobMessage job,
+        OrchestratorProxy? orchestratorProxy,
         Func<AgentProviderFactory, List<IAsyncDisposable>, Task<ProviderResolutionResult<T>>> resolver,
         CancellationToken ct) where T : IAsyncDisposable
     {
-        var factory = new AgentProviderFactory(_orchestrator, _httpClientFactory, job.PipelineConfiguration);
+        var factory = new AgentProviderFactory(_orchestrator, _httpClientFactory, job.PipelineConfiguration, orchestratorProxy);
         var disposables = new List<IAsyncDisposable>();
         try
         {

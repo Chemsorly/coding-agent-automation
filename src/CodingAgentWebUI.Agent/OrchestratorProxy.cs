@@ -20,6 +20,26 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
     private readonly string _jobId;
     private readonly ResiliencePipeline _signalRPipeline;
 
+    // ── Proactive token renewal cache ────────────────────────────────────
+    // Mirrors the 5-minute renewal buffer used by GitHubAppAuthService on the server side.
+    // Keyed by ProviderKind so the repo and brain tokens are cached independently.
+    private static readonly TimeSpan TokenRenewalBuffer = TimeSpan.FromMinutes(5);
+    private readonly Dictionary<ProviderKind, (string Token, DateTimeOffset ExpiresAt)> _tokenCache = new();
+    // TODO [WARNING]: _tokenCacheLock is never disposed. OrchestratorProxy does not implement IDisposable/IAsyncDisposable,
+    // so the SemaphoreSlim's underlying WaitHandle leaks on each job. Implement IDisposable and call
+    // _tokenCacheLock.Dispose(), then update LocalConsolidationExecutor and LocalPipelineExecutor to dispose the proxy.
+    private readonly SemaphoreSlim _tokenCacheLock = new(1, 1);
+
+    /// <summary>
+    /// Test-only delegate for the hub token-refresh call. When non-null (injected via the
+    /// internal test constructor), this replaces the live SignalR invocation in
+    /// <see cref="RequestTokenRefreshAsync"/> so the caching and renewal logic can be exercised
+    /// without a started hub connection.
+    /// </summary>
+    private readonly Func<ProviderKind, CancellationToken, Task<TokenRefreshResponse>>? _tokenRefreshDelegate;
+
+
+
     public OrchestratorProxy(HubConnection connection, string jobId)
     {
         ArgumentNullException.ThrowIfNull(connection);
@@ -28,6 +48,21 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
         _connection = connection;
         _jobId = jobId;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(Log.Logger);
+        _tokenRefreshDelegate = null;
+    }
+
+    /// <summary>
+    /// Test-only constructor that injects a token-refresh delegate instead of a live hub
+    /// connection. Allows unit tests to exercise the caching and proactive-renewal logic
+    /// without needing a started <see cref="HubConnection"/>.
+    /// </summary>
+    internal OrchestratorProxy(
+        HubConnection connection,
+        string jobId,
+        Func<ProviderKind, CancellationToken, Task<TokenRefreshResponse>> tokenRefreshDelegate)
+        : this(connection, jobId)
+    {
+        _tokenRefreshDelegate = tokenRefreshDelegate;
     }
 
     /// <summary>
@@ -107,16 +142,60 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
 
     /// <summary>
     /// Requests a fresh short-lived token from the orchestrator when the current one expires.
+    /// Caches the returned token and proactively renews it when within
+    /// <see cref="TokenRenewalBuffer"/> of expiry, mirroring the server-side
+    /// <c>GitHubAppAuthService</c> renewal buffer.
     /// </summary>
     public async Task<string> RequestTokenRefreshAsync(ProviderKind kind, CancellationToken ct)
     {
-        var response = await _signalRPipeline.ExecuteAsync(async token =>
-            await _connection.InvokeAsync<TokenRefreshResponse>(
-                HubMethodNames.RequestTokenRefresh, _jobId, kind, token), ct);
+        // Fast path: check under lock whether the cached token is still fresh.
+        await _tokenCacheLock.WaitAsync(ct);
+        try
+        {
+            if (_tokenCache.TryGetValue(kind, out var cached))
+            {
+                var remainingLife = cached.ExpiresAt - DateTimeOffset.UtcNow;
+                if (remainingLife > TokenRenewalBuffer)
+                    return cached.Token;
+            }
+        }
+        finally
+        {
+            _tokenCacheLock.Release();
+        }
+
+        // Slow path: ask the orchestrator for a fresh token.
+        // TODO [WARNING]: TOCTOU thundering-herd — two concurrent callers for the same ProviderKind
+        // that both observe a cache miss here will both invoke the hub, both mint tokens, and the last
+        // write to _tokenCache wins. Outcome is functionally correct but wastes SignalR round-trips and
+        // GitHub App quota. Fix: use a single-flight pattern (cache Task<TokenRefreshResponse> under
+        // the lock) so concurrent callers await the same in-flight request.
+        TokenRefreshResponse response;
+        if (_tokenRefreshDelegate is not null)
+        {
+            // Test path: use the injected delegate instead of the live hub connection.
+            response = await _tokenRefreshDelegate(kind, ct);
+        }
+        else
+        {
+            response = await _signalRPipeline.ExecuteAsync(async token =>
+                await _connection.InvokeAsync<TokenRefreshResponse>(
+                    HubMethodNames.RequestTokenRefresh, _jobId, kind, token), ct);
+        }
+
+        // Cache the result so subsequent calls within the token lifetime are free.
+        await _tokenCacheLock.WaitAsync(ct);
+        try
+        {
+            _tokenCache[kind] = (response.Token, response.ExpiresAt);
+        }
+        finally
+        {
+            _tokenCacheLock.Release();
+        }
+
         return response.Token;
     }
-
-    // --- Decomposition-specific operations (proxied to orchestrator via SignalR) ---
 
     /// <summary>
     /// Creates a new issue via the orchestrator. Returns the created issue's identifier and URL.

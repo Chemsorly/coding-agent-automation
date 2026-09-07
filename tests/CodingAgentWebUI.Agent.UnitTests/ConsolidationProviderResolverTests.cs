@@ -168,6 +168,53 @@ public class ConsolidationProviderResolverTests
         await act.Should().ThrowAsync<NotSupportedException>();
     }
 
+    // ── OrchestratorProxy overloads — backward compat and proxy threading ──
+
+    [Fact]
+    public async Task ResolveBrainConsolidation_WithNullProxy_BehavesIdenticallyToNoProxyOverload()
+    {
+        // Regression: passing null proxy explicitly should behave the same as the zero-proxy
+        // overload (both produce a factory without a refresh delegate).
+        var resolver = CreateResolver();
+        var job = CreateJob(ConsolidationRunType.BrainConsolidation, []);
+
+        var resultNoProxy = await resolver.ResolveBrainConsolidationProvidersAsync(job, CancellationToken.None);
+        var resultNullProxy = await resolver.ResolveBrainConsolidationProvidersAsync(job, orchestratorProxy: null, CancellationToken.None);
+
+        // Both overloads should return the same failure (no brain config)
+        resultNoProxy.IsSuccess.Should().BeFalse();
+        resultNullProxy.IsSuccess.Should().BeFalse();
+        resultNullProxy.Failure!.ErrorMessage.Should().Be(resultNoProxy.Failure!.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task ResolveRefactoring_WithNullProxy_BehavesIdenticallyToNoProxyOverload()
+    {
+        var resolver = CreateResolver();
+        var job = CreateJob(ConsolidationRunType.RefactoringDetection, []);
+
+        var resultNoProxy = await resolver.ResolveRefactoringProvidersAsync(job, CancellationToken.None);
+        var resultNullProxy = await resolver.ResolveRefactoringProvidersAsync(job, orchestratorProxy: null, CancellationToken.None);
+
+        resultNoProxy.IsSuccess.Should().BeFalse();
+        resultNullProxy.IsSuccess.Should().BeFalse();
+        resultNullProxy.Failure!.ErrorMessage.Should().Be(resultNoProxy.Failure!.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task ResolveHarness_WithNullProxy_BehavesIdenticallyToNoProxyOverload()
+    {
+        var resolver = CreateResolver();
+        var job = CreateJob(ConsolidationRunType.HarnessSuggestions, []);
+
+        var resultNoProxy = await resolver.ResolveHarnessProvidersAsync(job, CancellationToken.None);
+        var resultNullProxy = await resolver.ResolveHarnessProvidersAsync(job, orchestratorProxy: null, CancellationToken.None);
+
+        resultNoProxy.IsSuccess.Should().BeFalse();
+        resultNullProxy.IsSuccess.Should().BeFalse();
+        resultNullProxy.Failure!.ErrorMessage.Should().Be(resultNoProxy.Failure!.ErrorMessage);
+    }
+
     // ── Refactoring — Unsupported Issue Provider Type ────────────────────
 
     [Fact]
