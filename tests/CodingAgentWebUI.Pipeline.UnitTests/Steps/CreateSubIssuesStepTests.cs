@@ -14,6 +14,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Steps;
 /// Tests timeout enforcement, retry behavior, cap enforcement, and partial failure handling.
 /// Feature: 027-epic-decomposition-pipeline, Requirements: 4.6, 4.12, 10.3, 10.4
 /// </summary>
+[Collection("CreateSubIssues")]
 public class CreateSubIssuesStepTests : IDisposable
 {
     private readonly Mock<IPipelineCallbacks> _callbacks = new();
