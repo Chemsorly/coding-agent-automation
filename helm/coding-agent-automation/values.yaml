@@ -93,6 +93,21 @@ orchestrator:
     # Get this from Grafana Cloud → Frontend Observability → your app → Web SDK Config.
     # Leave empty to disable Faro (no CDN load, no data sent).
     faroCollectorUrl: ""
+    # Base path for the Blazor frontend when the app is served under a reverse proxy sub-path.
+    # Must end with "/" (normalisation happens at runtime in App.razor — the chart does NOT
+    # enforce a trailing slash in the ConfigMap; see TODO below).
+    # TODO: [WARNING] The comment above says "the chart appends it automatically if missing" but
+    # the Helm template (orchestrator-env-configmap.yaml) passes the value as-is. The trailing
+    # slash is only appended by App.razor at render time. If any code ever reads BLAZOR__BASEPATH
+    # before App.razor normalises it, a missing trailing slash will produce a malformed <base href>.
+    # Either enforce the trailing slash in the Helm template (use a `trimSuffix`/`printf` pipeline)
+    # or remove the misleading chart comment.
+    # Examples:
+    #   "" or "./" — direct access at the root (default, no proxy)
+    #   "/k8s/clusters/c-m9gxx9vk/proxy/" — Rancher reverse proxy
+    # This value is injected as BLAZOR__BASEPATH and read by App.razor at render time.
+    # All in-app navigation uses relative hrefs and NavigateTo, so only this one setting is needed.
+    basePath: "./"
 
 # ── Secrets ──────────────────────────────────────────────────────────────────
 

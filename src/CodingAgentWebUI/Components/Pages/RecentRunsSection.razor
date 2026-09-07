@@ -8,6 +8,12 @@
         <span class="monitoring-toggle-icon">@(IsExpanded ? "▾" : "▸")</span>
     </div>
     <div style="margin: 8px 0;">
+        @* TODO: [WARNING] These relative API hrefs resolve against <base href> in the browser.
+             Under Rancher (e.g. base="/proxy/") they become /proxy/api/export/runs.json.
+             ASP.NET Core serves these at the server root (/api/...), so correctness depends
+             entirely on Rancher forwarding the full sub-path to the origin. If the proxy
+             strips the prefix before forwarding, these links will 404. Verify Rancher config
+             or make these absolute paths prefixed with NavigationManager.BaseUri. *@
         <a href="api/export/runs.json" download class="btn-cancel" style="text-decoration: none; display: inline-block; font-size: 0.8rem; padding: 4px 12px;">
             <Icon Name="download" Size="14" /> Export All (JSON)
         </a>

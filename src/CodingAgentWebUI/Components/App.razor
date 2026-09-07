@@ -7,7 +7,17 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Coding Agent</title>
-    <base href="./" />
+    @{
+        // Base path — configurable via Blazor:BasePath (env var BLAZOR__BASEPATH).
+        // Defaults to "./" for direct (non-proxied) deployments.
+        // Set to e.g. "/k8s/clusters/c-xxxxx/proxy/" when accessed through Rancher or another
+        // reverse proxy that mounts the app under a sub-path.
+        // Must end with "/" to be a valid HTML base href.
+        var rawBase = Configuration["Blazor:BasePath"] ?? "./";
+        if (!rawBase.EndsWith('/')) rawBase += "/";
+        var basePath = rawBase;
+    }
+    <base href="@basePath" />
     @{
         // Faro collector URL injected as a meta tag so faro-init.js can read it without
         // hardcoding it in the static bundle. Empty string → Faro disabled (dev/test).

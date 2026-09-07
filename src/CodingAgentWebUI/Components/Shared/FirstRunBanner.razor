@@ -6,7 +6,7 @@
 {
     <div class="first-run-banner" role="alert" aria-live="polite">
         <span class="first-run-banner-message">
-            No job templates configured. Go to <a href="/settings"><strong>Settings → Job Templates</strong></a> to set up your first template before the pipeline can dispatch work.
+            No job templates configured. Go to <a href="settings"><strong>Settings → Job Templates</strong></a> to set up your first template before the pipeline can dispatch work.
         </span>
         <button class="first-run-banner-dismiss" @onclick="DismissAsync" aria-label="Dismiss banner">Dismiss</button>
     </div>
@@ -27,8 +27,11 @@
         var dismissedValue = await ConfigClient.GetKeyValueAsync("first_run_banner_dismissed", CancellationToken.None);
         _dismissed = dismissedValue == "true";
 
-        var currentPath = new Uri(Navigation.Uri).AbsolutePath.TrimEnd('/');
-        var onSettings = string.Equals(currentPath, "/settings", StringComparison.OrdinalIgnoreCase);
+        // Use ToBaseRelativePath so route detection works under a reverse proxy with a non-root
+        // base path (e.g. Rancher). AbsolutePath would include the proxy prefix; the relative path
+        // is always "settings" regardless of where the app is mounted.
+        var relativePath = Navigation.ToBaseRelativePath(Navigation.Uri).TrimEnd('/');
+        var onSettings = string.Equals(relativePath, "settings", StringComparison.OrdinalIgnoreCase);
 
         // show = noEnabledTemplates AND route != "/settings" AND (notDismissed OR noEnabledTemplates)
         // Req 8.2: the third clause is intentionally redundant when noEnabledTemplates is true —

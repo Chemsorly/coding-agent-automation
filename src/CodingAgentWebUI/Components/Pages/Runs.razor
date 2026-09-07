@@ -240,7 +240,10 @@
         await LoadAsync();
     }
 
-    private void OpenRun(string runId) => Nav.NavigateTo($"/runs/{runId}");
+    // Navigate using Nav.BaseUri to build an absolute URL, so this resolves correctly regardless
+    // of the current page path. A bare relative path would double-nest under a proxy sub-path
+    // (e.g. /proxy/runs/old-id → runs/new-id → /proxy/runs/runs/new-id).
+    private void OpenRun(string runId) => Nav.NavigateTo(Nav.BaseUri + $"runs/{runId}");
 
     private static string Truncate(string? s, int n)
         => string.IsNullOrEmpty(s) ? "" : (s.Length > n ? s[..n] + "…" : s);
