@@ -149,39 +149,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
 
     /// <inheritdoc />
     public void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory)
-    {
-        if (string.IsNullOrEmpty(workspacePath) || !Directory.Exists(workspacePath))
-            return;
-
-        var dirInfo = new DirectoryInfo(workspacePath);
-        if (dirInfo.LinkTarget != null)
-        {
-            _logger.Warning("Pipeline {RunId} workspace {Path} is a symlink, skipping cleanup",
-                runId, workspacePath);
-            return;
-        }
-
-        var fullPath = Path.GetFullPath(workspacePath);
-        var fullBase = Path.GetFullPath(workspaceBaseDirectory).TrimEnd(Path.DirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
-        if (!fullPath.StartsWith(fullBase, StringComparison.Ordinal) ||
-            fullPath.TrimEnd(Path.DirectorySeparatorChar) == fullBase.TrimEnd(Path.DirectorySeparatorChar))
-        {
-            _logger.Warning("Pipeline {RunId} workspace path {Path} is not inside base {Base}, skipping cleanup",
-                runId, workspacePath, workspaceBaseDirectory);
-            return;
-        }
-
-        try
-        {
-            Directory.Delete(workspacePath, recursive: true);
-            _logger.Information("Pipeline {RunId} workspace deleted: {Path}", runId, workspacePath);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Pipeline {RunId} failed to delete workspace: {Path}", runId, workspacePath);
-        }
-    }
+        => WorkspaceDeletionGuard.TryDelete(workspacePath, runId, workspaceBaseDirectory, _logger);
 
     /// <inheritdoc />
     public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null)
@@ -307,7 +275,8 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             ct).ConfigureAwait(false);
     }
 
-    private async Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryInternalAsync(CancellationToken ct)    {
+    private async Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryInternalAsync(CancellationToken ct)
+    {
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
         var entities = await db.PipelineRuns
             .AsNoTracking()
