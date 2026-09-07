@@ -296,6 +296,69 @@ public sealed class WorkItemEndpointTests
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    /// <summary>
+    /// Regression guard for issue #2338: when a kiro agent claims a work item, the
+    /// <c>KiroPvcName</c> from the request must be persisted to <c>ClaimedPvcName</c>
+    /// on the <see cref="WorkItemEntity"/>, so that <c>GET /api/agents/credential-pool</c>
+    /// can compute accurate available-PVC counts from the database.
+    ///
+    /// Without this fix the <c>ClaimedPvcName</c> column remained null for Job Controller-
+    /// dispatched items, causing the credential pool tile to always report <c>4/4</c>
+    /// (all available) even when all 4 slots were consumed.
+    /// </summary>
+    [Fact]
+    public async Task ClaimWorkItem_WithKiroPvcName_PersistsClaimedPvcNameToEntity()
+    {
+        var entity = SeedEntity(WorkItemStatus.Pending);
+        var claim = new ClaimWorkItemRequest
+        {
+            AssignedAgentId = "kiro-job-1",
+            K8sJobName = "kiro-job-1",
+            DispatchedAt = DateTimeOffset.UtcNow,
+            KiroPvcName = "kiro-creds-pvc-1"
+        };
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/work-items/{entity.Id}/claim", claim, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var db = _factory.CreateDbContext();
+        var updated = await db.WorkItems.FindAsync(entity.Id);
+        updated.Should().NotBeNull();
+        updated!.ClaimedPvcName.Should().Be("kiro-creds-pvc-1",
+            "KiroPvcName from the claim request must be persisted to ClaimedPvcName so the " +
+            "credential pool endpoint can report accurate availability (issue #2338)");
+    }
+
+    /// <summary>
+    /// Non-kiro agents do not supply a <c>KiroPvcName</c>; <c>ClaimedPvcName</c> must remain
+    /// null so they do not pollute the PVC availability query (issue #2338).
+    /// </summary>
+    [Fact]
+    public async Task ClaimWorkItem_WithoutKiroPvcName_LeavesClaimedPvcNameNull()
+    {
+        var entity = SeedEntity(WorkItemStatus.Pending);
+        var claim = new ClaimWorkItemRequest
+        {
+            AssignedAgentId = "opencode-job-1",
+            K8sJobName = "opencode-job-1",
+            DispatchedAt = DateTimeOffset.UtcNow
+            // KiroPvcName intentionally omitted — non-kiro agent
+        };
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/work-items/{entity.Id}/claim", claim, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var db = _factory.CreateDbContext();
+        var updated = await db.WorkItems.FindAsync(entity.Id);
+        updated.Should().NotBeNull();
+        updated!.ClaimedPvcName.Should().BeNull(
+            "non-kiro agents must not set ClaimedPvcName; PVC availability query is kiro-only");
+    }
+
     // ── Create ────────────────────────────────────────────────────────────────────
 
     [Fact]
