@@ -73,6 +73,7 @@ public class PipelineTelemetryTagTests : IDisposable
     {
         var tags = PipelineTelemetry.BuildTags(PipelineRunType.Implementation, null, null);
 
+        _capturedTags.Clear();
         PipelineTelemetry.JobsDispatched.Add(1, tags);
 
         _capturedTags.Should().Contain(new KeyValuePair<string, object?>("pipeline.project_id", "unknown"));
