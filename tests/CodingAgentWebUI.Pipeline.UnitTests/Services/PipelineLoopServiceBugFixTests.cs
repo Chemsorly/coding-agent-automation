@@ -660,9 +660,12 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
     /// RunHousekeepingAsync is entered but before SweepPendingWorkItemsAsync begins),
     /// the sweep must be skipped.
     ///
-    /// Strategy: the housekeeping mock calls StopLoop() from inside ExecuteAsync, then
-    /// returns. ExecuteCycleAsync's second new guard (`_stopRequested || ct.IsCancellationRequested`)
-    /// fires before SweepPendingWorkItemsAsync, so GetPendingAsync must never be called.
+    /// Strategy: mirrors the AC1 pattern — a <see cref="SemaphoreSlim"/> gate signals
+    /// the test thread the moment housekeeping is entered, giving a deterministic
+    /// synchronization point. StopLoop() is called only after that signal is received,
+    /// then housekeeping is released to complete. This eliminates the timing dependency
+    /// ("did the loop reach housekeeping within N seconds?") that caused the original
+    /// implementation to flake on slow CI runners.
     /// </summary>
     [Fact]
     public async Task WhenStopRequestedDuringHousekeeping_SweepPendingWorkItemsAsync_IsSkipped()
@@ -677,8 +680,17 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(TestPipelineConfig.Default() with { QueueSweepEnabled = true });
 
-        // Housekeeping service that calls StopLoop() from inside ExecuteAsync — simulates
-        // stop being requested while housekeeping is in progress.
+        // Synchronization gates (mirrors the AC1 BlockingDispatchOrchestrationService pattern):
+        //   housekeepingEnteredGate: released by the mock when housekeeping is entered — tells the
+        //                            test thread that the loop is at the correct synchronization point
+        //   housekeepingReleaseGate: released by the test thread to let housekeeping return
+        var housekeepingEnteredGate = new SemaphoreSlim(0, 1);
+        var housekeepingReleaseGate = new SemaphoreSlim(0, 1);
+
+        // Housekeeping service that:
+        //   1. Signals housekeepingEnteredGate so the test thread knows housekeeping has started
+        //   2. Blocks until housekeepingReleaseGate is released (test calls StopLoop() first)
+        //   3. Returns — simulates stop being requested while housekeeping is in progress
         PipelineLoopService? capturedSvc = null;
         var housekeepingMock = new Mock<IHousekeepingService>();
         housekeepingMock
@@ -688,11 +700,13 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
                 It.IsAny<bool>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
-            .Returns(() =>
+            .Returns(async () =>
             {
-                // Trigger stop while housekeeping is "executing" — next guard (before sweep) fires
-                capturedSvc?.StopLoop();
-                return Task.CompletedTask;
+                // Signal test thread: "housekeeping entered — safe to call StopLoop()"
+                housekeepingEnteredGate.Release();
+                // Block until the test thread has called StopLoop() and releases this gate
+                await housekeepingReleaseGate.WaitAsync(TimeSpan.FromSeconds(10));
+                // capturedSvc.StopLoop() has already been called by the test thread at this point
             });
 
         // Template with HousekeepingEnabled=true so RunHousekeepingAsync reaches ExecuteAsync
@@ -729,30 +743,35 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         var started = await svc.StartLoopAsync();
         started.Should().BeTrue("loop should start successfully");
 
-        await WaitUntilAsync(
-            () => svc.IsLoopActive,
-            TimeSpan.FromSeconds(5),
-            "loop should become active after StartLoopAsync");
+        // Wait until the loop thread is inside housekeepingMock.ExecuteAsync (blocking on
+        // housekeepingReleaseGate). This gives a deterministic synchronization point equivalent
+        // to AC1's dispatchEnteredGate, eliminating the timing dependency that caused flakes.
+        var housekeepingEntered = await housekeepingEnteredGate.WaitAsync(TimeSpan.FromSeconds(15));
+        housekeepingEntered.Should().BeTrue("loop should reach housekeeping within 15s");
 
-        // Wait for loop to stop — triggered by housekeeping mock calling StopLoop()
+        // Call StopLoop() while housekeeping is blocked — sets _stopRequested=true
+        svc.StopLoop();
+
+        // Release housekeeping — it returns, ExecuteCycleAsync's second guard (_stopRequested)
+        // fires before SweepPendingWorkItemsAsync is entered.
+        housekeepingReleaseGate.Release();
+
+        // Wait for the loop to fully stop (CleanupAsync sets IsLoopActive=false)
         await WaitUntilAsync(
             () => !svc.IsLoopActive,
-            TimeSpan.FromSeconds(15),
-            "loop should become inactive after StopLoop() called from housekeeping mock");
+            TimeSpan.FromSeconds(10),
+            "loop should become inactive after StopLoop() called from test thread");
 
-        // Assert: housekeeping ran (mock was invoked — stop was set DURING execution)
-        // TODO: [WARNING] Times.AtLeastOnce is weaker than intended — if the loop completes
-        // a full cycle and enters housekeeping a second time before IsLoopActive becomes false,
-        // the sweep assertion may still pass while providing weaker evidence that it was the
-        // second guard (not the first) that prevented the sweep. Change to Times.Once to lock
-        // in the specific interaction sequence described in the test comment.
+        // Assert: housekeeping ran exactly once (stop was set DURING its one-and-only execution).
+        // Times.Once is safe here because the loop is blocked inside housekeeping until we release it,
+        // preventing a second housekeeping invocation before the stop flag is set.
         housekeepingMock.Verify(h => h.ExecuteAsync(
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
             It.IsAny<bool>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.AtLeastOnce,
-            "Housekeeping mock must have been called — stop was requested during its execution");
+            It.IsAny<CancellationToken>()), Times.Once,
+            "Housekeeping mock must have been called exactly once — stop was requested during its execution");
 
         // Assert: sweep was skipped — second guard in ExecuteCycleAsync fired
         workItemClientMock.Verify(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),

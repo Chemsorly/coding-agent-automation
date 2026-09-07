@@ -171,7 +171,8 @@ public sealed class ConsolidationDispatchLoop
                         {
                             AssignedAgentId = jobName,
                             K8sJobName = jobName,
-                            DispatchedAt = DateTimeOffset.UtcNow
+                            DispatchedAt = DateTimeOffset.UtcNow,
+                            KiroPvcName = pvcName
                         },
                         ct);
                 }
