@@ -112,6 +112,8 @@ public static class PipelineTelemetry
         {
             HistogramBucketBoundaries = [1, 2, 5, 10, 20, 30, 60, 120, 300]
         });
+    public static readonly Counter<long> BrainPushRetries = Meter.CreateCounter<long>(
+        "brain.push.retries", "{retry}", "Brain repo push retry attempts on non-fast-forward conflict");
 
     // Token vending metrics
     public static readonly Counter<long> TokenVendingFailures = Meter.CreateCounter<long>(

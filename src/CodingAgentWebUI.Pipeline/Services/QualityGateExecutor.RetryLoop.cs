@@ -443,7 +443,6 @@ public partial class QualityGateExecutor
         while (!report.AllPassed && run.RetryCount < config.MaxRetries)
         {
             run.RetryCount++;
-            _qualityGateRetries.Add(1, PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
             var errorSummary = BuildQualityGateErrorSummary(report);
             run.RetryErrors.Enqueue(errorSummary);
 
@@ -508,6 +507,7 @@ public partial class QualityGateExecutor
                         // if the entry condition ever changes so RetryCount is 0 when this branch runs.
                         run.RetryCount = Math.Max(0, run.RetryCount - 1);
                         consecutiveTransientRetries++;
+                        _qualityGateRetries.Add(1, BuildRetryTags(run, "transient"));
 
                         if (consecutiveTransientRetries >= MaxConsecutiveTransientRetries)
                         {
@@ -535,6 +535,7 @@ public partial class QualityGateExecutor
                         _logger.Error(
                             "Pipeline {RunId} retry {RetryCount}: permanent auth failure, aborting retry loop",
                             run.RunId, run.RetryCount);
+                        _qualityGateRetries.Add(1, BuildRetryTags(run, "auth_abort"));
                         shouldBreak = true;
                         break; // exits switch; shouldBreak will exit the while loop below
 
@@ -545,12 +546,14 @@ public partial class QualityGateExecutor
                             "Pipeline {RunId} retry {RetryCount}: agent returned empty response (0 tokens), " +
                             "clearing session affinity for next attempt",
                             run.RunId, run.RetryCount);
+                        _qualityGateRetries.Add(1, BuildRetryTags(run, "session_restart"));
                         run.CodegenSessionId = null;
                         continue; // Skip QG validation — workspace unchanged, go straight to next retry
 
                     default: // RetryOutcome.Retry
                         // Non-transient iteration: reset consecutive transient counter.
                         consecutiveTransientRetries = 0;
+                        _qualityGateRetries.Add(1, BuildRetryTags(run, "retry"));
                         if (agentResult != null)
                             await _prOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);
                         break;
