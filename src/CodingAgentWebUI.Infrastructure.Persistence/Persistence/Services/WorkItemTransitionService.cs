@@ -463,6 +463,10 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
             item.RetryCount++;
             item.DispatchedAt = null;
             item.AssignedAgentId = null;
+            // Clear the claimed PVC so QueryAvailablePvcsAsync does not count this requeued item
+            // as consuming a credential slot. If the K8s Job creation failed, no agent ever ran
+            // against this PVC, so the slot must be released back to the pool (issue #2338).
+            item.ClaimedPvcName = null;
         }, ct: ct);
     }
 

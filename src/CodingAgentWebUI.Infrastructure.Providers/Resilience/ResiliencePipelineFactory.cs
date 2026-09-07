@@ -131,7 +131,11 @@ public static class ResiliencePipelineFactory
             .AddTimeout(outer)
             .AddRetry(new RetryStrategyOptions
             {
-                MaxRetryAttempts = 2,
+                // 3 retries (4 total attempts) to give the 403 → token-refresh → retry loop enough budget
+                // on long-running runs. PushWithTokenFactory re-fetches a fresh token on every attempt, so
+                // the third retry will use a token obtained at most a few seconds before the push.
+                // Previously 2 retries (3 total attempts); widened as part of issue #2334 auth-retry fix.
+                MaxRetryAttempts = 3,
                 BackoffType = DelayBackoffType.Exponential,
                 UseJitter = true,
                 Delay = ResolveRetryDelay(retryDelay, TimeSpan.FromSeconds(2)),
@@ -140,7 +144,7 @@ public static class ResiliencePipelineFactory
                     .Handle<TimeoutRejectedException>(),
                 OnRetry = args =>
                 {
-                    RecordRetryEvent(args, logger, "GitNetwork", 2);
+                    RecordRetryEvent(args, logger, "GitNetwork", 3);
                     return ValueTask.CompletedTask;
                 }
             })
