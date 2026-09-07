@@ -253,6 +253,12 @@ public sealed partial class PipelineRun
     // concurrent tag additions from step handlers racing a terminal cancel are theoretically unsafe.
     // If step handlers ever set tags on OrchestratorActivity concurrently, guard with a lock or
     // switch to an interlocked ownership pattern. (Reviewer warning, issue #2255)
+    // TODO: OrchestratorActivity is public mutable ({ get; set; }). Any caller can overwrite a live
+    // Activity reference, silently orphaning the open span. Consider restricting to internal set or
+    // init-only to enforce the single-owner invariant at compile time. Also: Activity is not
+    // thread-safe — concurrent SetTag from step handlers racing a terminal Dispose is a latent data
+    // race. Guard with a lock or interlocked ownership pattern if step handlers ever tag this span.
+    // See review warnings (issue #2255).
     public Activity? OrchestratorActivity { get; set; }
 
     /// <summary>Whether brain context was successfully loaded during pre-run sync.</summary>

@@ -128,6 +128,11 @@ otel:
   # under the same service name that the Grafana "Recent Pipeline Traces" panel queries
   # (rootServiceName="coding-agent-orchestrator"). Override to "coding-agent-api" if you
   # need to distinguish API spans from orchestrator (Blazor UI) spans in Tempo.
+  # TODO: This default collapses the API process and the Blazor UI process into the same
+  # service.name in Tempo, making it impossible to distinguish API-origin spans from
+  # orchestrator spans. Consider changing the default to "coding-agent-api" and updating
+  # the Grafana panel query to rootServiceName=~"coding-agent-orchestrator|coding-agent-api".
+  # See review warning (issue #2255).
   apiServiceName: coding-agent-orchestrator
   resourceAttributes: ""
 

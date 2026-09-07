@@ -134,6 +134,10 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
         // Non-terminal callers follow the read-mutate-replace pattern (GetRun → mutate → ReplaceRun)
         // and pass the same object reference back, so previousRun will be ReferenceEqual to run.
         // Only a review-dispatch scenario (or a future caller) would supply a different object.
+        // TODO: TryGetValue + assignment is not atomic. A concurrent RemoveRun between the two
+        // operations could cause the re-inserted run's span to be orphaned (safety-net never fires).
+        // Use ConcurrentDictionary.AddOrUpdate for an atomic compare-and-replace if this becomes a
+        // concern. See review warning (issue #2255).
         _activeRuns.TryGetValue(run.RunId, out var previousRun);
         _activeRuns[run.RunId] = run;
 

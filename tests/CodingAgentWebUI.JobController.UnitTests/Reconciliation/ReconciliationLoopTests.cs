@@ -1397,6 +1397,20 @@ public sealed class ReconciliationLoopErrorTests
 // ReconciliationLoop tests now use TestMeterFactory for isolated instrument capture.
 // LogTerminalStatus tests still use MeterListener against static meters since that method
 // calls static PipelineTelemetry/WorkDistributionTelemetry instruments directly.
+// TODO: [Collection("Metrics")] was removed from ReconciliationLoopMetricTests. DispatchLoopMetricTests
+// (in Dispatch/DispatchLoopTests.cs) still uses [Collection("Metrics")] with a static MeterListener.
+// If these classes run in parallel, PipelineTelemetry emissions from DispatchLoopMetricTests can
+// bleed into this class's shared _pipelineCounters bag, causing intermittent failures. Verify that
+// the scoped MeterListener gate in LogTerminalStatus_Failed is sufficient, or re-add
+// [Collection("Metrics")] to prevent cross-contamination. See review warning (issue #2255).
+
+// TODO: Three tests covering the GetJobPhase counter-fallback guard were deleted:
+//   - ReconcileOnce_RetryingJob_FailedCounterWithActiveCounter_IsNotTreatedAsFailed
+//   - ReconcileOnce_TerminalFailedJob_FailedCounterWithNoActive_IsTreatedAsFailed
+//   - ReconcileOnce_JobWithNullStatus_IsNotTreatedAsFailed
+// These covered the "Failed > 0 && (Active ?? 0) == 0" guard that prevents premature failure of
+// retrying jobs — a documented data-corruption risk. If the guard is still in production code,
+// re-add these regression tests to prevent silent removal. See review warning (issue #2255).
 
 public sealed class ReconciliationLoopMetricTests : IDisposable
 {

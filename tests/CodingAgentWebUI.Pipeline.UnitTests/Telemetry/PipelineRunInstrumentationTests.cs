@@ -281,6 +281,10 @@ public class PipelineRunInstrumentationTests : IDisposable
         // Upper bound: total elapsed time from before StartRun() to now, plus a small buffer.
         // The frozen duration (StartRun → first StopTiming) must be a subset of this window,
         // so it can never exceed it regardless of how long the host takes to schedule.
+        // TODO: The +0.010s buffer makes this assertion permissive on slow hosts — if StopTiming
+        // is broken and returns total elapsed, the assertion could still pass. A tighter fix is to
+        // capture startTimestamp after StartRun() and assert frozen < (elapsed - 50ms wait) to
+        // preserve the original invariant without flakiness. See review warning (issue #2255).
         var upperBoundSeconds = Stopwatch.GetElapsedTime(startTimestamp).TotalSeconds + 0.010;
 
         var snapshot = durationCollector.GetMeasurementSnapshot();

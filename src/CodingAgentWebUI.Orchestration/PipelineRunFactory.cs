@@ -42,6 +42,10 @@ public static class PipelineRunFactory
         // The span spans the full run lifecycle: dispatch → terminal state.
         // PipelineTelemetry.ActivitySource.StartActivity returns null when no ActivityListener is
         // subscribed (e.g. in test environments without a TracerProvider) — all access must be null-guarded.
+        // TODO: If FromDistributionRequest throws between StartActivity and the assignment below,
+        // the started Activity will be orphaned (local variable goes out of scope without Dispose).
+        // Consider wrapping the tag-setting block in try/catch and calling activity?.Dispose() on
+        // exception to prevent open-span leaks in Tempo. See review warning (issue #2255).
         var activity = PipelineTelemetry.ActivitySource.StartActivity("ExecutePipeline");
         activity?.SetTag("pipeline.run_id", run.RunId);
         activity?.SetTag("pipeline.issue", run.IssueIdentifier.Value);

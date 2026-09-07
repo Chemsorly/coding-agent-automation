@@ -372,6 +372,9 @@ public class CreateSubIssuesStepTests : IDisposable
         await step.ExecuteAsync(context, CancellationToken.None);
         counting = false;
 
+        // TODO: Re-add the failure message to the assertion so failures produce actionable output
+        // ("exactly one sub_issues.created measurement must be emitted for a single successful
+        // creation") rather than a generic "Expected 0 to be 1". See review warning (issue #2255).
         Interlocked.Read(ref createdCount).Should().Be(1);
     }
 }

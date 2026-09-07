@@ -111,6 +111,10 @@ public class OrchestratorExecutePipelineSpanTests : IDisposable
 
         run.Should().BeNull();
         // No additional activities should have been started for the consolidation run
+        // TODO: Also assert _stoppedActivities did not grow — a span that is started and immediately
+        // disposed would increment _startedActivities and _stoppedActivities but not show as "net new"
+        // in the count delta. Checking both started and stopped counts would make the assertion
+        // unambiguous. See review warning (issue #2255).
         _startedActivities.Count.Should().Be(activityCountBefore);
     }
 
@@ -124,6 +128,11 @@ public class OrchestratorExecutePipelineSpanTests : IDisposable
 
         await _sut.CompleteRunAsync("run-complete", WorkItemStatus.Succeeded, CancellationToken.None);
 
+        // TODO: Tighten assertion to check the specific Activity instance (run.OrchestratorActivity)
+        // rather than any activity named "ExecutePipeline" — residual activities from prior tests in
+        // the same process could satisfy this check. Also add assertions for expected terminal tags
+        // (pipeline.final_step) so a removal of SetTag calls in RunLifecycleManager would be caught.
+        // See review warnings (issue #2255).
         _stoppedActivities.Should().Contain(a => a.OperationName == "ExecutePipeline",
             "CompleteRunAsync must stop the OrchestratorActivity");
     }
@@ -136,6 +145,9 @@ public class OrchestratorExecutePipelineSpanTests : IDisposable
 
         await _sut.FailRunAsync("run-fail", "test failure", CancellationToken.None);
 
+        // TODO: Tighten assertion to check the specific Activity instance (run.OrchestratorActivity).
+        // Also assert ActivityStatusCode.Error is set — a revert of SetStatus in RunLifecycleManager
+        // would not be caught by the current assertion. See review warnings (issue #2255).
         _stoppedActivities.Should().Contain(a => a.OperationName == "ExecutePipeline",
             "FailRunAsync must stop the OrchestratorActivity");
     }
@@ -148,6 +160,9 @@ public class OrchestratorExecutePipelineSpanTests : IDisposable
 
         await _sut.CancelRunAsync("run-cancel", CancellationToken.None);
 
+        // TODO: Tighten assertion to check the specific Activity instance (run.OrchestratorActivity).
+        // Also assert pipeline.cancelled=true tag is set — its removal would not be caught by the
+        // current assertion. See review warnings (issue #2255).
         _stoppedActivities.Should().Contain(a => a.OperationName == "ExecutePipeline",
             "CancelRunAsync must stop the OrchestratorActivity");
     }
@@ -156,6 +171,8 @@ public class OrchestratorExecutePipelineSpanTests : IDisposable
     public async Task CompleteRunAsync_WhenRunNotFound_DoesNotThrow()
     {
         // No run in the service — should not throw even with no span to stop
+        // TODO: Add assertion that _stoppedActivities remains empty (no phantom stop for missing run).
+        // See review warning (issue #2255).
         await _sut.Invoking(s => s.CompleteRunAsync("nonexistent-run", WorkItemStatus.Succeeded, CancellationToken.None))
             .Should().NotThrowAsync();
     }

@@ -91,6 +91,9 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         // won't appear as child spans/events. If end-to-end coverage of the full terminal sequence
         // is needed, move Dispose to after step 7. Consistent with CancelRunAsync; CompleteRunAsync
         // already disposes near the end. (Reviewer warning, issue #2255)
+        // TODO: Span duration excludes post-history cleanup (ClearAgentState, label-swap, K8s job
+        // delete). If cleanup is slow the span will under-report total run time. Move Dispose to
+        // after step 7 if full end-to-end span coverage is required. See review warning (issue #2255).
         run.OrchestratorActivity?.SetTag("pipeline.final_step", run.CurrentStep.ToString());
         run.OrchestratorActivity?.SetStatus(ActivityStatusCode.Error, failureReason);
         run.OrchestratorActivity?.Dispose();
@@ -234,6 +237,9 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         // (steps 5-7). Those operations are not covered by the span's active window. If end-to-end
         // coverage of the full terminal sequence is needed, move Dispose to after step 7.
         // (Reviewer warning, issue #2255)
+        // TODO: Span duration excludes post-history cleanup (ClearAgentState, label-swap, K8s job
+        // delete). If cleanup is slow the span will under-report total run time. Move Dispose to
+        // after step 7 if full end-to-end span coverage is required. See review warning (issue #2255).
         run.OrchestratorActivity?.SetTag("pipeline.final_step", run.CurrentStep.ToString());
         run.OrchestratorActivity?.SetTag("pipeline.cancelled", true);
         run.OrchestratorActivity?.Dispose();
