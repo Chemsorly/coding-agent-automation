@@ -938,6 +938,11 @@ public static class WorkItemEndpoints
         {
             for (var i = 0; i < items.Count; i++)
             {
+                // TODO: [WARNING] new RunId(items[i].Id.ToString()) bypasses the implicit operator guard
+                // (ArgumentException.ThrowIfNullOrEmpty). Guid.ToString() never returns null/empty so
+                // this is safe in practice, but using the implicit conversion — e.g.
+                // `RunId runId = items[i].Id.ToString()` — would be consistent with the rest of the
+                // codebase and honour the validation contract defined on RunId. See review warning (issue #2362).
                 var liveRun = runService.GetRun(new RunId(items[i].Id.ToString()));
                 if (liveRun is not null)
                     items[i] = items[i] with { CurrentStep = liveRun.CurrentStep };

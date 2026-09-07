@@ -44,10 +44,21 @@ public sealed class GetActiveWorkItemsStepEnrichmentTests : IDisposable
 
     // ── Test 1: enriched path ─────────────────────────────────────────────
 
+    // TODO: [WARNING] Add a test for the runService = null path to verify the null-guard branch
+    // (`if (runService is not null)`) is exercised. Currently all tests pass a non-null service,
+    // so an accidental removal or inversion of the guard would not be caught. Example:
+    //   await WorkItemEndpoints.GetActiveWorkItems(0, _dbFactory, null, null, default)
+    //   → all items.CurrentStep.Should().BeNull()
+    // See review warning (issue #2362).
+
     [Fact]
     public async Task GetActiveWorkItems_PopulatesCurrentStep_WhenLiveRunExists()
     {
         // Arrange — seed a Running WorkItem whose GUID will be used as the run key
+        // TODO: [WARNING] Consider also seeding a Dispatched item alongside this Running item so
+        // the loop is exercised across multiple rows and selective enrichment (only the matched item
+        // gets a non-null step) is verified. As written, the single-item test cannot catch a bug
+        // where the loop enriches the wrong item or corrupts non-matching entries. See review warning (issue #2362).
         var workItemId = Guid.NewGuid();
         await SeedWorkItemAsync(workItemId, WorkItemStatus.Running);
 
@@ -90,6 +101,9 @@ public sealed class GetActiveWorkItemsStepEnrichmentTests : IDisposable
     public async Task GetActiveWorkItems_CurrentStepIsNull_WhenNoLiveRunExists()
     {
         // Arrange — seed a Running WorkItem but register NO live run
+        // TODO: [WARNING] This test seeds only WorkItemStatus.Running. Consider a variant that seeds
+        // a Dispatched item to verify the null-step path works for Dispatched status too (the other
+        // documented graceful-degradation scenario). See review warning (issue #2362).
         var workItemId = Guid.NewGuid();
         await SeedWorkItemAsync(workItemId, WorkItemStatus.Running);
 

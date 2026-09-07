@@ -283,6 +283,13 @@ public class PipelineRunInstrumentationTests : IDisposable
         // Upper bound: total elapsed time from before StartRun to now, plus a small CI jitter buffer.
         // The frozen duration must not exceed this — it was frozen at the first StopTiming call,
         // so it cannot include the 50ms post-freeze sleep.
+        // TODO: [WARNING] The +0.050s buffer is additive on top of the 50ms post-freeze wait already
+        // included in GetElapsedTime(beforeStartTimestamp), making the bound ~100ms wider than the
+        // frozen duration can ever be. If StopTiming were broken and returned total elapsed (~60ms),
+        // the assertion bound (~110ms+) would still pass — this test cannot catch that regression.
+        // A tighter fix: capture a timestamp *after* StartRun, compute frozenUpperBound as
+        // (elapsed from afterStart to firstStopTiming) + epsilon, and assert frozen < frozenUpperBound.
+        // See review warning (issue #2362).
         var upperBoundSeconds = Stopwatch.GetElapsedTime(beforeStartTimestamp).TotalSeconds + 0.050;
 
         var snapshot = durationCollector.GetMeasurementSnapshot();
