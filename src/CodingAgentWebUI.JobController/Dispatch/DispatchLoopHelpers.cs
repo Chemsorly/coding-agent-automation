@@ -60,7 +60,9 @@ internal static class DispatchLoopHelpers
     /// <summary>
     /// Returns <c>true</c> if the K8s Job has reached a terminal phase (Complete or Failed).
     /// Terminal jobs within the log-retention window must not count toward the concurrency limit.
-    /// Mirrors the phase-detection logic in <c>ReconciliationLoop.GetJobPhase</c>.
+    /// Uses the same phase-detection logic as <c>ReconciliationLoop.GetJobPhase</c>: conditions
+    /// are checked first; the counter fallback treats a job as terminal only when
+    /// <c>Failed &gt; 0 &amp;&amp; Active == 0</c>, matching the guard in <c>GetJobPhase</c>.
     /// </summary>
     internal static bool IsJobTerminal(V1Job job)
     {
