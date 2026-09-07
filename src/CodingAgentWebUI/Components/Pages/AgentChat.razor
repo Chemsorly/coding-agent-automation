@@ -190,19 +190,11 @@
         // Runs after OnInitialized so the synchronous setup (agents, templates) completes first.
         _projects = await ConfigStore.LoadProjectsAsync(CancellationToken.None);
 
-        // Start hub connection if not already connected.
-        if (HubConnection.State == HubConnectionState.Disconnected)
-        {
-            try { await HubConnection.StartAsync(CancellationToken.None); }
-            catch (Exception ex) { Log.Warning(ex, "AgentChat: hub connection start failed — responses will not stream"); }
-        }
-
-        // Register hub push handlers.
-        _chatResponseSub = HubConnection.On<string, IReadOnlyList<string>>(
-            HubMethodNames.OnChatResponse, HandleChatResponseReceived);
-
-        _chatCompletedSub = HubConnection.On<string, int, string?>(
-            HubMethodNames.OnChatCompleted, HandleChatCompleted);
+        // Hub connection is NOT started here intentionally.
+        // OnInitializedAsync runs during Blazor prerender (before the interactive circuit exists),
+        // so calling StartAsync here would produce a 404. The hub is started in StartChat() instead,
+        // which is invoked only from user action (after LaunchChatPod succeeds), post-circuit.
+        // See RunPage.razor for the same pattern (hub start in OnAfterRenderAsync/firstRender).
     }
 
     // OnChatResponse: accumulate streaming lines into _streamingContent.
@@ -410,7 +402,7 @@
 
     // ── StartChat (K8s mode) ──────────────────────────────────────────────────
 
-    private Task StartChat()
+    private async Task StartChat()
     {
         // _selectedAgentId is always set by LaunchChatPod before this is called —
         // the guard that was here was a SignalR-era remnant and is unreachable.
@@ -423,6 +415,35 @@
         _messages.Clear();
         _streamingContent.Clear();
 
+        // Start hub and register push handlers now — after the interactive circuit exists
+        // and a chat pod is live. Starting here (from a user action) avoids the 404 that
+        // occurs when StartAsync is called during OnInitializedAsync (prerender).
+        // Handlers are registered before StartAsync so no events are missed during connection.
+        _chatResponseSub?.Dispose();
+        _chatCompletedSub?.Dispose();
+        _chatResponseSub = HubConnection.On<string, IReadOnlyList<string>>(
+            HubMethodNames.OnChatResponse, HandleChatResponseReceived);
+        _chatCompletedSub = HubConnection.On<string, int, string?>(
+            HubMethodNames.OnChatCompleted, HandleChatCompleted);
+
+        if (HubConnection.State == HubConnectionState.Disconnected)
+        {
+            // TODO [WARNING]: Use _cts.Token instead of CancellationToken.None so that if the user
+            // navigates away while StartAsync is in-flight, DisposeAsync cancelling _cts will also
+            // interrupt the hub connection attempt. CancellationToken.None means the in-flight call
+            // will not be cancelled on component teardown.
+            try { await HubConnection.StartAsync(CancellationToken.None); }
+            catch (Exception ex)
+            {
+                // TODO [WARNING]: On StartAsync failure the catch block swallows the exception but
+                // _chatResponseSub and _chatCompletedSub remain pointing to freshly-registered handlers
+                // on a hub that never connected. If the hub later reconnects via its own reconnect logic,
+                // those stale handlers will fire against an unexpected session. Dispose and null both
+                // subscription fields here so the component is in a clean state after a failed StartAsync.
+                Log.Warning(ex, "AgentChat: hub connection start failed — responses will not stream");
+            }
+        }
+
         // Start sending keepalive heartbeats to the API so the server knows the chat window
         // is still open. Interval is 30s — well within the 90s default idle timeout.
         // The timer captures _selectedAgentId by value at creation time; if the field ever
@@ -434,8 +455,6 @@
             if (!string.IsNullOrEmpty(agentIdForKeepalive))
                 ChatDispatcher.SendClientKeepalive(agentIdForKeepalive);
         }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
-
-        return Task.CompletedTask;
     }
 
     // ── SendPrompt ────────────────────────────────────────────────────────────
