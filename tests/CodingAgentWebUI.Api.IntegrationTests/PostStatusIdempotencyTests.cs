@@ -18,6 +18,17 @@ using Serilog.Events;
 namespace CodingAgentWebUI.Api.IntegrationTests;
 
 /// <summary>
+/// Collection definition that disables parallel execution for <see cref="PostStatusIdempotencyTests"/>.
+/// Several tests in that class subscribe to the global <c>workdistribution.workitems_terminated</c>
+/// meter via <see cref="MeterListener"/> and then wait 200 ms for a fire-and-forget background task
+/// to emit. When tests run concurrently, a background task from one test fires into another test's
+/// active listener, causing spurious tag captures (e.g. "AgentError" appearing in the
+/// NumericUndefined test's bag). Serialising the class eliminates that cross-test pollution.
+/// </summary>
+[CollectionDefinition("PostStatusIdempotencyCollection", DisableParallelization = true)]
+public sealed class PostStatusIdempotencyCollection { }
+
+/// <summary>
 /// Direct unit tests for <see cref="WorkItemEndpoints.PostStatus"/> covering the idempotent
 /// already-at-terminal-state path (issue #2226).
 ///
@@ -28,6 +39,7 @@ namespace CodingAgentWebUI.Api.IntegrationTests;
 /// 2. The lifecycle manager calls can be tracked via a recording stub without Moq.
 /// 3. The test can assert 404 vs 400 without configuring a full WebApplicationFactory.
 /// </summary>
+[Collection("PostStatusIdempotencyCollection")]
 public sealed class PostStatusIdempotencyTests
 {
     // ── Helpers ──────────────────────────────────────────────────────────────
