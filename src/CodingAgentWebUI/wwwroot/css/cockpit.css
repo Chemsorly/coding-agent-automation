@@ -395,6 +395,14 @@
 .cockpit-stat-v { font-size: 26px; font-weight: 800; line-height: 1; letter-spacing: -.02em; }
 .cockpit-chip { display: inline-flex; align-items: center; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px; color: var(--text-muted); background: var(--surface-alt); margin: 0 3px 3px 0; }
 
+/* Compact time-window selector inside a stat label */
+.time-window-select {
+    display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--accent); background: transparent;
+    border: none; border-bottom: 1px solid var(--accent); padding: 0 2px;
+    cursor: pointer; appearance: auto; vertical-align: middle; line-height: 1;
+}
+
 .cockpit-run-row {
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
     padding: 12px 18px; border-bottom: 1px solid var(--hairline); cursor: pointer;

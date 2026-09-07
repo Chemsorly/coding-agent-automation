@@ -215,6 +215,63 @@ public class BlockedIssuesServiceTests
     }
 
     [Fact]
+    public async Task GetBacklogAsync_PropagatesIssueLabelsToBacklogIssue()
+    {
+        var template = new PipelineJobTemplate
+        {
+            Id = "t1", Name = "T", IssueProviderId = "prov1", RepoProviderId = "repo1", Enabled = true
+        };
+
+        var config = new Mock<IPipelineApiConfigClient>();
+        config.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { template });
+        config.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new ProviderConfig { Id = "prov1", DisplayName = "P", Kind = ProviderKind.Issue, ProviderType = "GitHub" } });
+
+        // TODO: [WARNING] This fixture does not set LabelColors on IssueSummary, so the color-propagation
+        // path through BlockedIssuesService is untested. A regression that drops LabelColors from the
+        // backlog.Add(...) call would not be caught. Add a parallel test (or extend this one) that sets a
+        // non-null LabelColors on the source IssueSummary and asserts result[0].LabelColors is correct.
+        var labelledIssues = new PagedResult<IssueSummary>
+        {
+            Items = new[]
+            {
+                // TODO: [WARNING] No test covers the case where Labels is null or empty on the source
+                // IssueSummary. The service has a guard path for null Labels that is never exercised —
+                // a NullReferenceException regression there would go undetected. Add a test with Labels = null.
+                new IssueSummary { Identifier = "42", Title = "Bug fix", Labels = new[] { "bug", "agent:next" }, Description = "", Url = null },
+            },
+            Page = 1, PageSize = 20, HasMore = false
+        };
+
+        var provider = new Mock<IIssueProvider>();
+        provider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(labelledIssues);
+        provider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(labelledIssues);
+
+        var factory = new Mock<IProviderFactory>();
+        factory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(provider.Object);
+
+        var dep = new Mock<IDependencyChecker>();
+        dep.Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(),
+                It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+
+        var sut = new BlockedIssuesService(config.Object, factory.Object, dep.Object);
+
+        var result = await sut.GetBacklogAsync(projectId: null, CancellationToken.None);
+
+        Assert.Single(result);
+        Assert.NotNull(result[0].Labels);
+        Assert.Equal(new[] { "bug", "agent:next" }, result[0].Labels);
+        // TODO: [WARNING] No test coverage for time-window filtering logic in Overview.razor and
+        // Insights.razor (client-side filter on StartedAtOffset). The "all runs" branch (_recentWindowHours==0)
+        // is entirely untested. Consider extracting the filter predicate for unit testing, or add
+        // Razor component tests for the boundary conditions (run exactly at cutoff, window==0).
+    }
+
+    [Fact]
     public async Task GetBacklogAsync_DedupesIssuesAcrossProviders()
     {
         var t1 = new PipelineJobTemplate { Id = "t1", Name = "T1", IssueProviderId = "prov1", RepoProviderId = "repo1", Enabled = true };

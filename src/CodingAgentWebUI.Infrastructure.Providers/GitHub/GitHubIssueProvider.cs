@@ -368,13 +368,24 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
 
     private static IssueSummary MapToIssueSummary(Issue issue)
     {
+        var labels = issue.Labels?.ToList() ?? [];
         return new IssueSummary
         {
             Identifier = issue.Number.ToString(),
             Title = issue.Title ?? string.Empty,
             Description = issue.Body,
-            Labels = issue.Labels?.Select(l => l.Name).ToList().AsReadOnly()
-                ?? (IReadOnlyList<string>)Array.Empty<string>(),
+            // TODO: [WARNING] Label.Name is typed as string? in Octokit. A null name would produce a null entry
+            // in the Labels list and throw ArgumentNullException as a dictionary key in LabelColors below.
+            // Fix: add a null guard, e.g. labels.Select(l => l.Name ?? string.Empty).
+            Labels = labels.Select(l => l.Name).ToList().AsReadOnly(),
+            LabelColors = labels.Count > 0
+                ? labels
+                    // TODO: [WARNING] The Where predicate filters on Color but not on Name. A label with a
+                    // null Name would pass this filter and throw ArgumentNullException in ToDictionary.
+                    // Fix: add "&& l.Name != null" (or "!string.IsNullOrEmpty(l.Name)") to the predicate.
+                    .Where(l => !string.IsNullOrEmpty(l.Color))
+                    .ToDictionary(l => l.Name, l => l.Color, StringComparer.OrdinalIgnoreCase)
+                : null,
             CreatedAt = issue.CreatedAt.UtcDateTime,
             Url = issue.HtmlUrl
         };
