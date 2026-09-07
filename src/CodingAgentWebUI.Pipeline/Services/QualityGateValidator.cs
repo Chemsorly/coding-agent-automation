@@ -21,6 +21,10 @@ public class QualityGateValidator : IQualityGateValidator
     private readonly Counter<long> _processTimeouts;
     private readonly Histogram<double> _processDuration;
 
+    private const string TagGateName = "gate_name";
+    private const string TagQgcName = "qgc_name";
+    private const string TagOutcome = "outcome";
+
     public QualityGateValidator(Serilog.ILogger logger, IMeterFactory? meterFactory = null)
     {
         _logger = logger;
@@ -213,14 +217,14 @@ public class QualityGateValidator : IQualityGateValidator
             outcome = "timeout";
             sw.Stop();
             _processTimeouts.Add(1,
-                new KeyValuePair<string, object?>("gate_name", gateName),
-                new KeyValuePair<string, object?>("qgc_name", qgcDisplayName));
+                new KeyValuePair<string, object?>(TagGateName, gateName),
+                new KeyValuePair<string, object?>(TagQgcName, qgcDisplayName));
             activity?.SetTag("qgc.timed_out", true);
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             _processDuration.Record(sw.Elapsed.TotalSeconds,
-                new KeyValuePair<string, object?>("gate_name", gateName),
-                new KeyValuePair<string, object?>("qgc_name", qgcDisplayName),
-                new KeyValuePair<string, object?>("outcome", outcome));
+                new KeyValuePair<string, object?>(TagGateName, gateName),
+                new KeyValuePair<string, object?>(TagQgcName, qgcDisplayName),
+                new KeyValuePair<string, object?>(TagOutcome, outcome));
             throw new QgcProcessTimedOutException(timeoutSeconds, ex);
         }
         catch (OperationCanceledException)
@@ -228,9 +232,9 @@ public class QualityGateValidator : IQualityGateValidator
             outcome = "cancelled";
             sw.Stop();
             _processDuration.Record(sw.Elapsed.TotalSeconds,
-                new KeyValuePair<string, object?>("gate_name", gateName),
-                new KeyValuePair<string, object?>("qgc_name", qgcDisplayName),
-                new KeyValuePair<string, object?>("outcome", outcome));
+                new KeyValuePair<string, object?>(TagGateName, gateName),
+                new KeyValuePair<string, object?>(TagQgcName, qgcDisplayName),
+                new KeyValuePair<string, object?>(TagOutcome, outcome));
             throw;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -238,9 +242,9 @@ public class QualityGateValidator : IQualityGateValidator
             outcome = "error";
             sw.Stop();
             _processDuration.Record(sw.Elapsed.TotalSeconds,
-                new KeyValuePair<string, object?>("gate_name", gateName),
-                new KeyValuePair<string, object?>("qgc_name", qgcDisplayName),
-                new KeyValuePair<string, object?>("outcome", outcome));
+                new KeyValuePair<string, object?>(TagGateName, gateName),
+                new KeyValuePair<string, object?>(TagQgcName, qgcDisplayName),
+                new KeyValuePair<string, object?>(TagOutcome, outcome));
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.AddException(ex);
             throw;
@@ -248,9 +252,9 @@ public class QualityGateValidator : IQualityGateValidator
 
         sw.Stop();
         _processDuration.Record(sw.Elapsed.TotalSeconds,
-            new KeyValuePair<string, object?>("gate_name", gateName),
-            new KeyValuePair<string, object?>("qgc_name", qgcDisplayName),
-            new KeyValuePair<string, object?>("outcome", outcome));
+            new KeyValuePair<string, object?>(TagGateName, gateName),
+            new KeyValuePair<string, object?>(TagQgcName, qgcDisplayName),
+            new KeyValuePair<string, object?>(TagOutcome, outcome));
 
         return (exitCode, stdout, stderr);
     }
@@ -272,8 +276,8 @@ public class QualityGateValidator : IQualityGateValidator
             return null;
 
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("QualityGate.Compilation");
-        activity?.SetTag("gate_name", "compilation");
-        activity?.SetTag("qgc_name", qgc.DisplayName);
+        activity?.SetTag(TagGateName, "compilation");
+        activity?.SetTag(TagQgcName, qgc.DisplayName);
         activity?.SetTag("qgc.timeout_seconds", qgc.ProcessTimeoutSeconds);
 
         var arguments = qgc.CompilationArguments != null
@@ -332,8 +336,8 @@ public class QualityGateValidator : IQualityGateValidator
             return null;
 
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("QualityGate.Tests");
-        activity?.SetTag("gate_name", "tests");
-        activity?.SetTag("qgc_name", qgc.DisplayName);
+        activity?.SetTag(TagGateName, "tests");
+        activity?.SetTag(TagQgcName, qgc.DisplayName);
         activity?.SetTag("qgc.timeout_seconds", qgc.ProcessTimeoutSeconds);
 
         var arguments = qgc.TestArguments != null

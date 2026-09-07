@@ -74,6 +74,9 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         }
     }
 
+    private const string GateStatusPassed = "PASSED";
+    private const string GateStatusFailed = "FAILED";
+
     internal static string FormatGateLogValue(GateResult? gate) =>
         gate is null ? "N/A" : gate.Passed.ToString();
 
@@ -89,6 +92,8 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         // See review finding: DotNetSpecialist WARNING — QualityGateExecutor.cs:80
         if (!report.Tests.Passed)
             errors.Add($"Tests: {report.Tests.Details}");
+        if (report.SecurityScan is { Passed: false })
+            errors.Add($"Security: {report.SecurityScan.Details}");
         if (report.ExternalCi is { Passed: false })
             errors.Add($"External CI: {report.ExternalCi.Details}");
         return string.Join(Environment.NewLine, errors);
@@ -98,15 +103,17 @@ public partial class QualityGateExecutor : IQualityGateExecutor
     {
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"Quality gates failed (attempt {attempt}/{maxRetries}):");
-        sb.AppendLine($"- Compilation: {(report.Compilation.Passed ? "PASSED" : "FAILED")} ({report.Compilation.Details})");
+        sb.AppendLine($"- Compilation: {(report.Compilation.Passed ? GateStatusPassed : GateStatusFailed)} ({report.Compilation.Details})");
         // TODO [WARNING]: report.Tests is dereferenced without a null-conditional. A QGC configured
         // with only a BuildCommand and no TestCommand produces a report where Tests is null, causing
         // a NullReferenceException here. The priorRetryErrors overload correctly uses report.Tests?.Passed
         // and report.Tests?.Details. Apply the same null-conditional pattern here for consistency.
         // See review finding: DotNetSpecialist WARNING — QualityGateExecutor.cs:100
-        sb.AppendLine($"- Tests: {(report.Tests.Passed ? "PASSED" : "FAILED")} ({report.Tests.Details})");
+        sb.AppendLine($"- Tests: {(report.Tests.Passed ? GateStatusPassed : GateStatusFailed)} ({report.Tests.Details})");
+        if (report.SecurityScan != null)
+            sb.AppendLine($"- Security: {(report.SecurityScan.Passed ? GateStatusPassed : GateStatusFailed)} ({report.SecurityScan.Details})");
         if (report.ExternalCi != null)
-            sb.AppendLine($"- External CI: {(report.ExternalCi.Passed ? "PASSED" : "FAILED")} ({report.ExternalCi.Details})");
+            sb.AppendLine($"- External CI: {(report.ExternalCi.Passed ? GateStatusPassed : GateStatusFailed)} ({report.ExternalCi.Details})");
         sb.AppendLine();
         if (hasQualityGateOutput)
         {
@@ -163,12 +170,12 @@ public partial class QualityGateExecutor : IQualityGateExecutor
 
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"Quality gates failed (attempt {attempt}/{maxRetries}):");
-        sb.AppendLine($"- Compilation: {(report.Compilation.Passed ? "PASSED" : "FAILED")} ({report.Compilation.Details})");
-        sb.AppendLine($"- Tests: {(report.Tests?.Passed == true ? "PASSED" : "FAILED")} ({report.Tests?.Details})");
+        sb.AppendLine($"- Compilation: {(report.Compilation.Passed ? GateStatusPassed : GateStatusFailed)} ({report.Compilation.Details})");
+        sb.AppendLine($"- Tests: {(report.Tests?.Passed == true ? GateStatusPassed : GateStatusFailed)} ({report.Tests?.Details})");
         if (report.SecurityScan != null)
-            sb.AppendLine($"- Security: {(report.SecurityScan.Passed ? "PASSED" : "FAILED")} ({report.SecurityScan.Details})");
+            sb.AppendLine($"- Security: {(report.SecurityScan.Passed ? GateStatusPassed : GateStatusFailed)} ({report.SecurityScan.Details})");
         if (report.ExternalCi != null)
-            sb.AppendLine($"- External CI: {(report.ExternalCi.Passed ? "PASSED" : "FAILED")} ({report.ExternalCi.Details})");
+            sb.AppendLine($"- External CI: {(report.ExternalCi.Passed ? GateStatusPassed : GateStatusFailed)} ({report.ExternalCi.Details})");
         sb.AppendLine();
         if (hasQualityGateOutput)
         {
