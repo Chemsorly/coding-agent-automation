@@ -808,6 +808,106 @@ public sealed class ReconciliationLoopErrorTests
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    /// <summary>
+    /// Regression: GetJobPhase counter fallback must NOT return "Failed" when Active > 0.
+    /// A retrying job has Failed=1 (first pod attempt failed) and Active=1 (retry pod running).
+    /// Kubernetes only sets the "Failed" condition type once all retries are exhausted.
+    /// Without the Active == 0 guard, ReconciliationLoop prematurely marks a running work item
+    /// as failed and may cancel the live K8s Job (data-corruption under backoffLimit >= 1).
+    /// This test verifies that GetJobPhase returns Active (not Failed) for Failed=1/Active=1.
+    /// Mirrors the guard already present in DispatchLoopHelpers.IsJobTerminal.
+    /// </summary>
+    [Fact]
+    public async Task ReconcileOnce_RetryingJob_FailedCounterWithActiveCounter_IsNotTreatedAsFailed()
+    {
+        // Arrange: first pod attempt failed (Failed=1), retry pod is running (Active=1), no conditions yet.
+        // This is the Kubernetes state while a retrying job is between pod attempts.
+        var id = Guid.NewGuid();
+        var job = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = $"caa-agent-{id:N}"[..21],
+                Labels = new Dictionary<string, string>
+                {
+                    ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
+                    ["caa/work-item-id"] = id.ToString()
+                }
+            },
+            Spec = new V1JobSpec { Template = new V1PodTemplateSpec { Spec = new V1PodSpec { Volumes = [] } } },
+            Status = new V1JobStatus { Failed = 1, Active = 1, Conditions = [] }
+        };
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        var loop = CreateLoop();
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        // Must NOT post any status — the job is still running
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+        // TODO [WARNING]: This assertion does not verify that ReconcileOnce also skips cancelling/
+        // deleting the K8s Job (e.g. via DeleteJobAsync), which is the described data-corruption
+        // risk. If cancellation goes through a different client method, the Times.Never on
+        // PostStatusAsync would pass while the destructive side effect still occurs. Consider
+        // adding a negative assertion on the K8s delete path.
+    }
+
+    // TODO [WARNING]: Acceptance criterion #2 ("GetJobPhase and IsJobTerminal produce identical
+    // terminal-vs-active results for the same V1Job status inputs, verified by test") is not fully
+    // met. The two tests below exercise GetJobPhase indirectly via ReconcileOnceAsync but neither
+    // calls DispatchLoopHelpers.IsJobTerminal with the same Failed=1/Active=1 and Failed=1/Active=0
+    // inputs to confirm the two functions agree. A cross-function parity test (or parameterised
+    // theory) feeding identical V1Job status objects to both helpers and asserting equivalent
+    // terminal/active classifications is needed to prevent silent re-divergence if one path is
+    // changed independently in future.
+
+    /// <summary>
+    /// Characterization test: GetJobPhase counter fallback MUST return "Failed" when
+    /// Failed > 0 and Active == 0 (all retries exhausted, no pods running). This verifies
+    /// the fix does not break the legitimate terminal-failure path.
+    /// </summary>
+    [Fact]
+    public async Task ReconcileOnce_TerminalFailedJob_FailedCounterWithNoActive_IsTreatedAsFailed()
+    {
+        // Arrange: all retries exhausted — Failed=1, Active=0, no conditions (counter-only path).
+        var id = Guid.NewGuid();
+        var job = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = $"caa-agent-{id:N}"[..21],
+                Labels = new Dictionary<string, string>
+                {
+                    ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
+                    ["caa/work-item-id"] = id.ToString()
+                }
+            },
+            Spec = new V1JobSpec { Template = new V1PodTemplateSpec { Spec = new V1PodSpec { Volumes = [] } } },
+            Status = new V1JobStatus { Failed = 1, Active = 0, Conditions = [] }
+        };
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        var loop = CreateLoop();
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        // Must post Failed status — all retries are exhausted
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "AgentError"),
+            It.IsAny<CancellationToken>()), Times.Once);
+        // TODO [WARNING]: This test (Active=0 explicit) and the pre-existing
+        // ReconcileOnce_JobFailedViaCounter_NotConditions_IsHandled test (Active=null) exercise the
+        // same logical branch under the new guard — null coalesces to 0 via (?? 0). If Kubernetes
+        // client semantics ever distinguish Active=null (field omitted) from Active=0 (explicitly
+        // zero) in a future version, the near-duplication without explicit differentiation could
+        // mask that gap. Consider consolidating into a single Theory with both Active=null and
+        // Active=0 cases to make the intent explicit.
+    }
+
     [Fact]
     public async Task ReconcileOnce_FailedJob_ErrorMessageFromCondition()
     {
