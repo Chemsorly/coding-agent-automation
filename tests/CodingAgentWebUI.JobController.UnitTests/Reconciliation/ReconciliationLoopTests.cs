@@ -952,6 +952,44 @@ public sealed class ReconciliationLoopErrorTests
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    /// <summary>
+    /// Covers the null-Status branch in GetJobPhase's counter-fallback path.
+    /// When job.Status is null entirely, both job.Status?.Failed and job.Status?.Active are null,
+    /// so the new guard (Failed > 0 &amp;&amp; (Active ?? 0) == 0) evaluates to false and
+    /// GetJobPhase returns "Active". This test exercises the null path on the compound null-conditional
+    /// expression introduced in the fix, closing the branch-coverage gap reported by SonarCloud.
+    /// </summary>
+    [Fact]
+    public async Task ReconcileOnce_JobWithNullStatus_IsNotTreatedAsFailed()
+    {
+        // Arrange: K8s job with no Status set (null) — counters and conditions are unavailable.
+        var id = Guid.NewGuid();
+        var job = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = $"caa-agent-{id:N}"[..21],
+                Labels = new Dictionary<string, string>
+                {
+                    ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
+                    ["caa/work-item-id"] = id.ToString()
+                }
+            },
+            Spec = new V1JobSpec { Template = new V1PodTemplateSpec { Spec = new V1PodSpec { Volumes = [] } } },
+            Status = null
+        };
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        var loop = CreateLoop();
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        // Must NOT post any status — null Status means no terminal phase can be determined
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task ReconcileOnce_ActiveJob_NoAction()
     {
