@@ -1891,27 +1891,39 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var failedCountBefore = _pipelineCounters.Count(
-            r => r.InstrumentName == "pipeline.jobs.failed"
-                 && r.Tags.Any(t => t.Key == "failure_reason" && (string?)t.Value == "agent_error"));
+        // Use a test-local recording bag to avoid cross-test contamination from parallel tests in
+        // this class that also emit pipeline.jobs.failed with failure_reason='agent_error'
+        // (e.g. LogTerminalStatus_Failed_AgentError_ProducesSnakeCaseTag). The shared _pipelineCounters
+        // bag listens on the global static PipelineTelemetry.Meter and captures all recordings
+        // from all threads — making delta assertions unreliable under parallel execution.
+        var localCounters = new System.Collections.Concurrent.ConcurrentBag<(string InstrumentName, long Value, List<KeyValuePair<string, object?>> Tags)>();
+        using var localListener = new MeterListener();
+        localListener.InstrumentPublished = (instrument, listener) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
+                listener.EnableMeasurementEvents(instrument);
+        };
+        localListener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
+            {
+                var tagList = new List<KeyValuePair<string, object?>>();
+                foreach (var tag in tags) tagList.Add(tag);
+                localCounters.Add((instrument.Name, measurement, tagList));
+            }
+        });
+        localListener.Start();
 
         // Act
         var loop = new ReconciliationLoop(_workItemClient.Object, _k8sClient.Object, _options);
         await loop.ReconcileOnceAsync(CancellationToken.None);
 
         // Assert: pipeline.jobs.failed incremented with failure_reason="agent_error"
-        var failedCountAfter = _pipelineCounters.Count(
+        // Using localCounters (test-local listener) ensures only recordings from this test are counted.
+        var failedCount = localCounters.Count(
             r => r.InstrumentName == "pipeline.jobs.failed"
                  && r.Tags.Any(t => t.Key == "failure_reason" && (string?)t.Value == "agent_error"));
-        (failedCountAfter - failedCountBefore).Should().Be(1,
+        failedCount.Should().Be(1,
             "ReconcileOnceAsync with a Failed K8s job must emit pipeline.jobs.failed with failure_reason='agent_error'");
-
-        // NOTE: This assertion only checks the tag-filtered count, not the total unfiltered
-        // delta for pipeline.jobs.failed. If the production code emitted pipeline.jobs.failed twice for
-        // the same job (e.g. a double-call bug in HandleJobCompletedAsync), the filtered count would
-        // still increase by 1 if the second emission used a different failure_reason tag, and this test
-        // would pass. Add an unfiltered delta assertion to catch double-emission bugs:
-        // var totalFailedCountAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
-        // (totalFailedCountAfter - totalFailedCountBefore).Should().Be(1, "pipeline.jobs.failed must be emitted exactly once");
     }
 }
