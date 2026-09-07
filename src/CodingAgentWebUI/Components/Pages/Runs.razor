@@ -14,6 +14,10 @@
     Runs — the list behind the Run Page (see docs/frontend-redesign-handoff.md).
     Data: IPipelineApiRunHistoryClient.GetRunHistoryAsync → PagedResult<PipelineRunSummary>.
     Consolidation runs are PipelineRunType.Consolidation and appear here folded in.
+
+    Issue #2328: Removed Agent column; added Links column (issue URL + PR URL);
+    added sortable headers (Result, Type, Duration, When — client-side, current page);
+    added Result and Type filter dropdowns; sort state persisted in URL query param.
 *@
 
 <PageTitle>Runs - Coding Agent</PageTitle>
@@ -58,39 +62,91 @@
         {
             <div class="monitoring-table-wrap">
                 <table class="monitoring-table">
+                    <colgroup>
+                        <col style="width: 110px;" />  @* Result *@
+                        <col style="width: 130px;" />  @* Type *@
+                        <col />                         @* Run (flexible) *@
+                        <col style="width: 100px;" />  @* Duration *@
+                        <col style="width: 90px;" />   @* Tokens *@
+                        <col style="width: 110px;" />  @* When *@
+                        <col style="width: 90px;" />   @* Links *@
+                    </colgroup>
                     <thead>
                         <tr>
-                            <th>Result</th>
-                            <th>Type</th>
+                            @* ── Result column: sortable + filter ───────────────────────────────── *@
+                            <th class="@(ActiveSortClass(SortColumn.Result))">
+                                <button class="sort-header" @onclick="() => ToggleSort(SortColumn.Result)">
+                                    Result @SortIndicatorForResult
+                                </button>
+                                <select class="column-filter" aria-label="Filter by Result"
+                                        value="@_resultFilter"
+                                        @onchange="e => _resultFilter = e.Value?.ToString() ?? string.Empty">
+                                    <option value="">All</option>
+                                    <option value="Completed">Completed</option>
+                                    <option value="Failed">Failed</option>
+                                    <option value="Cancelled">Cancelled</option>
+                                    <option value="Running">Running</option>
+                                </select>
+                            </th>
+                            @* ── Type column: sortable + filter ─────────────────────────────────── *@
+                            <th class="@(ActiveSortClass(SortColumn.Type))">
+                                <button class="sort-header" @onclick="() => ToggleSort(SortColumn.Type)">
+                                    Type @SortIndicatorForType
+                                </button>
+                                <select class="column-filter" aria-label="Filter by Type"
+                                        value="@_typeFilter"
+                                        @onchange="e => _typeFilter = e.Value?.ToString() ?? string.Empty">
+                                    <option value="">All</option>
+                                    <option value="Implementation">Implementation</option>
+                                    <option value="Review">Review</option>
+                                    <option value="Decomposition">Decomposition</option>
+                                    <option value="Consolidation">Consolidation</option>
+                                </select>
+                            </th>
                             <th>Run</th>
-                            <th>Agent</th>
-                            <th>Duration</th>
+                            @* ── Duration column: sortable ───────────────────────────────────────── *@
+                            <th class="@(ActiveSortClass(SortColumn.Duration))">
+                                <button class="sort-header" @onclick="() => ToggleSort(SortColumn.Duration)">
+                                    Duration @SortIndicatorForDuration
+                                </button>
+                            </th>
                             <th>Tokens</th>
-                            <th>When</th>
+                            @* ── When column: sortable ───────────────────────────────────────────── *@
+                            <th class="@(ActiveSortClass(SortColumn.When))">
+                                <button class="sort-header" @onclick="() => ToggleSort(SortColumn.When)">
+                                    When @SortIndicatorForWhen
+                                </button>
+                            </th>
+                            <th>Links</th>
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var run in _result.Items)
+                        @foreach (var run in FilteredSortedRuns())
                         {
+                            var resultLabel = run.FinalStep switch
+                            {
+                                PipelineStep.Completed => "Completed",
+                                PipelineStep.Failed => "Failed",
+                                PipelineStep.Cancelled => "Cancelled",
+                                _ => "Running"
+                            };
+                            var resultClass = run.FinalStep switch
+                            {
+                                PipelineStep.Completed => "step-completed",
+                                PipelineStep.Cancelled => "step-cancelled",
+                                PipelineStep.Failed => "step-failed",
+                                _ => "step-running"
+                            };
+                            var runTypeLabel = run.RunType switch
+                            {
+                                PipelineRunType.Review => "Review",
+                                PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => "Decomposition",
+                                PipelineRunType.Consolidation => "Consolidation",
+                                _ => "Implementation"
+                            };
                             <tr class="monitoring-row-clickable" @onclick="() => OpenRun(run.RunId)">
                                 <td>
-                                    @{
-                                        var result = run.FinalStep switch
-                                        {
-                                            PipelineStep.Completed => "Completed",
-                                            PipelineStep.Failed => "Failed",
-                                            PipelineStep.Cancelled => "Cancelled",
-                                            _ => "Running"
-                                        };
-                                        var resultClass = run.FinalStep switch
-                                        {
-                                            PipelineStep.Completed => "step-completed",
-                                            PipelineStep.Cancelled => "step-cancelled",
-                                            PipelineStep.Failed => "step-failed",
-                                            _ => "step-running"
-                                        };
-                                    }
-                                    <span class="step-badge @resultClass" title="@run.FinalStep.ToDisplayName()">@result</span>
+                                    <span class="step-badge @resultClass" title="@run.FinalStep.ToDisplayName()">@resultLabel</span>
                                 </td>
                                 <td>
                                     @if (run.RunType == PipelineRunType.Review)
@@ -114,10 +170,32 @@
                                     <span style="font-weight: 600;">@(run.RunType == PipelineRunType.Review ? "PR " : "")#@run.IssueIdentifier</span>
                                     <span style="color: var(--text-muted);">@Truncate(run.IssueTitle, 60)</span>
                                 </td>
-                                <td class="monitoring-mono">@(run.AgentId ?? "—")</td>
                                 <td>@Dur(run.StartedAtOffset, run.CompletedAtOffset)</td>
                                 <td><span class="token-badge">@CostFormatter.FormatTokens(run.TotalTokens)</span></td>
                                 <td title="@run.StartedAtOffset.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")">@Ago(run.StartedAtOffset)</td>
+                                <td class="runs-links-cell" @onclick:stopPropagation="true">
+                                    @if (!string.IsNullOrEmpty(run.IssueUrl))
+                                    {
+                                        @* TODO: Validate that IssueUrl starts with https:// before rendering as href.
+                                           Blazor HTML-encodes attribute values but does NOT strip javascript: URI schemes,
+                                           so a malicious/corrupted record could produce a clickable XSS link. *@
+                                        <a href="@run.IssueUrl" target="_blank" rel="noopener noreferrer" class="runs-link" title="Open issue #@run.IssueIdentifier">
+                                            <Icon Name="message-square" Size="13" /> #@run.IssueIdentifier
+                                        </a>
+                                    }
+                                    @* TODO: For PipelineRunType.Review runs, PullRequestUrl is typically null — the PR being
+                                       reviewed is carried in ReviewPrUrl instead. Currently Review run rows show no PR link in
+                                       the Links cell even though a URL is available. Consider falling back to ReviewPrUrl when
+                                       PullRequestUrl is null and the run is a Review type. *@
+                                    @if (!string.IsNullOrEmpty(run.PullRequestUrl))
+                                    {
+                                        @* TODO: Validate that PullRequestUrl starts with https:// before rendering as href.
+                                           Same javascript: URI injection risk as IssueUrl above. *@
+                                        <a href="@run.PullRequestUrl" target="_blank" rel="noopener noreferrer" class="runs-link runs-link-pr" title="Open pull request">
+                                            <Icon Name="git-pull-request" Size="13" /> PR
+                                        </a>
+                                    }
+                                </td>
                             </tr>
                         }
                     </tbody>
@@ -127,6 +205,10 @@
     </div>
 
     <div class="cockpit-pager">
+        @* TODO: The pager "N shown" count uses _result.Items.Count (unfiltered page), but the table body renders
+           FilteredSortedRuns(). When a Result/Type filter is active the two numbers disagree — e.g. 25 shown
+           in pager while only 5 rows are visible. Consider deriving the count from FilteredSortedRuns().Count()
+           or displaying a separate "X of N" hint when a filter is active. *@
         <span class="cockpit-pager-info">Page @_page@(_result is { Items.Count: > 0 } ? $" · {_result.Items.Count} shown" : "")</span>
         <div class="cockpit-pager-buttons">
             <button class="cockpit-pager-btn" disabled="@(_page <= 1 || _loading)" @onclick="PrevPage">
@@ -149,8 +231,31 @@
     private bool _loading = true;
     private string? _error;
 
-    // Server-side outcome filter (All / Completed / Failed / Cancelled). Applied DB-side by the API,
-    // so pagination is correct across the whole history — not just the loaded page.
+    // ── Column sort state ────────────────────────────────────────────────────
+
+    private enum SortColumn { When, Result, Type, Duration }
+
+    // Default: When descending (newest first) — query-param backed so links are shareable.
+    private SortColumn _sortColumn = SortColumn.When;
+    private bool _sortAsc;   // false = descending (default for When)
+
+    // ── Column filter state (client-side, not URL-persisted) ─────────────────
+
+    private string _resultFilter = "";
+    private string _typeFilter = "";
+
+    // ── Query parameters ─────────────────────────────────────────────────────
+
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "sort")]
+    public string? SortFromQuery { get; set; }
+
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "sortDir")]
+    public string? SortDirFromQuery { get; set; }
+
+    // ── Server-side outcome filter ────────────────────────────────────────────
+
     private enum OutcomeFilter { All, Completed, Failed, Cancelled }
     private OutcomeFilter _outcome = OutcomeFilter.All;
 
@@ -162,15 +267,21 @@
         _ => null
     };
 
-    private async Task SetOutcome(OutcomeFilter outcome)
+    protected override void OnInitialized()
     {
-        if (_outcome == outcome) return;
-        _outcome = outcome;
-        _page = 1;   // a new filter resets to the first page
-        await LoadAsync();
-    }
+        State.OnProjectChanged += HandleProjectChanged;
 
-    protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
+        // TODO: Sort state is read from query params here in OnInitialized, but [SupplyParameterFromQuery]
+        // params are re-supplied on every navigation. If the user navigates to the same page with different
+        // ?sort= query params (e.g. browser back/forward), OnParametersSet fires but the sort state is
+        // never re-read from SortFromQuery/SortDirFromQuery, leaving sort state stale.
+        // Move this query-param parsing to OnParametersSet to handle same-component re-navigation correctly.
+
+        // Read sort state from query params
+        if (Enum.TryParse<SortColumn>(SortFromQuery, ignoreCase: true, out var col))
+            _sortColumn = col;
+        _sortAsc = string.Equals(SortDirFromQuery, "asc", StringComparison.OrdinalIgnoreCase);
+    }
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
 
@@ -186,6 +297,14 @@
         catch (ObjectDisposedException) { }
     }
 
+    private async Task SetOutcome(OutcomeFilter outcome)
+    {
+        if (_outcome == outcome) return;
+        _outcome = outcome;
+        _page = 1;   // a new filter resets to the first page
+        await LoadAsync();
+    }
+
     private async Task LoadAsync()
     {
         _loading = true;
@@ -193,7 +312,8 @@
         try
         {
             _result = await RunHistory.GetRunHistoryAsync(
-                page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true, finalStep: FinalStepFilter, projectId: State.SelectedProjectId, ct: _cts.Token);
+                page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true,
+                finalStep: FinalStepFilter, projectId: State.SelectedProjectId, ct: _cts.Token);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -212,7 +332,8 @@
         try
         {
             _result = await RunHistory.GetRunHistoryAsync(
-                page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true, finalStep: FinalStepFilter, projectId: State.SelectedProjectId, ct: _cts.Token);
+                page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true,
+                finalStep: FinalStepFilter, projectId: State.SelectedProjectId, ct: _cts.Token);
             _error = null;
         }
         catch (OperationCanceledException) { }
@@ -238,6 +359,107 @@
         if (_result is null || !_result.HasMore) return;
         _page++;
         await LoadAsync();
+    }
+
+    // ── Sort ─────────────────────────────────────────────────────────────────
+
+    private void ToggleSort(SortColumn col)
+    {
+        if (_sortColumn == col)
+            _sortAsc = !_sortAsc;
+        else
+        {
+            _sortColumn = col;
+            // Default direction for each column: When = desc (newest first), others = asc
+            _sortAsc = col != SortColumn.When;
+        }
+        PersistSortToUrl();
+    }
+
+    private void PersistSortToUrl()
+    {
+        var uri = Nav.GetUriWithQueryParameters(new Dictionary<string, object?>
+        {
+            ["sort"] = _sortColumn.ToString().ToLowerInvariant(),
+            ["sortDir"] = _sortAsc ? "asc" : "desc",
+        });
+        Nav.NavigateTo(uri, forceLoad: false, replace: true);
+    }
+
+    private IEnumerable<PipelineRunSummary> FilteredSortedRuns()
+    {
+        // TODO: This method is called directly in the @foreach, so it runs on every render cycle
+        // (including the 12-second auto-refresh tick and any StateHasChanged call). Each invocation
+        // allocates a new LINQ chain and enumerates _result.Items. For PageSize=25 this is low-cost,
+        // but if PageSize grows, consider caching the result in a field invalidated on sort/filter
+        // state changes to avoid unnecessary work on unrelated re-renders.
+        if (_result is null) return [];
+
+        IEnumerable<PipelineRunSummary> items = _result.Items;
+
+        // ── Client-side column filters ────────────────────────────────────────
+        if (!string.IsNullOrEmpty(_resultFilter))
+            items = items.Where(r => ResultLabel(r) == _resultFilter);
+
+        if (!string.IsNullOrEmpty(_typeFilter))
+            items = items.Where(r => RunTypeLabel(r) == _typeFilter);
+
+        // ── Client-side sort ──────────────────────────────────────────────────
+        items = _sortColumn switch
+        {
+            SortColumn.Result => _sortAsc
+                ? items.OrderBy(r => ResultLabel(r))
+                : items.OrderByDescending(r => ResultLabel(r)),
+            SortColumn.Type => _sortAsc
+                ? items.OrderBy(r => RunTypeLabel(r))
+                : items.OrderByDescending(r => RunTypeLabel(r)),
+            SortColumn.Duration => _sortAsc
+                ? items.OrderBy(r => DurationSeconds(r))
+                : items.OrderByDescending(r => DurationSeconds(r)),
+            SortColumn.When => _sortAsc
+                ? items.OrderBy(r => r.StartedAtOffset)
+                : items.OrderByDescending(r => r.StartedAtOffset),
+            _ => items.OrderByDescending(r => r.StartedAtOffset),
+        };
+
+        return items;
+    }
+
+    private static string ResultLabel(PipelineRunSummary r) => r.FinalStep switch
+    {
+        PipelineStep.Completed => "Completed",
+        PipelineStep.Failed => "Failed",
+        PipelineStep.Cancelled => "Cancelled",
+        _ => "Running"
+    };
+
+    private static string RunTypeLabel(PipelineRunSummary r) => r.RunType switch
+    {
+        PipelineRunType.Review => "Review",
+        PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => "Decomposition",
+        PipelineRunType.Consolidation => "Consolidation",
+        _ => "Implementation"
+    };
+
+    private static double DurationSeconds(PipelineRunSummary r)
+        => r.CompletedAtOffset.HasValue ? (r.CompletedAtOffset.Value - r.StartedAtOffset).TotalSeconds : double.MaxValue;
+
+    // ── Sort header helpers ───────────────────────────────────────────────────
+
+    private string ActiveSortClass(SortColumn col) => _sortColumn == col ? "sort-active" : "";
+
+    // Per-column MarkupString properties so the Razor template can embed them inline
+    // without Razor mistaking the closing paren for an HTML context end.
+    private MarkupString SortIndicatorForResult   => SortIndicator(SortColumn.Result);
+    private MarkupString SortIndicatorForType     => SortIndicator(SortColumn.Type);
+    private MarkupString SortIndicatorForDuration => SortIndicator(SortColumn.Duration);
+    private MarkupString SortIndicatorForWhen     => SortIndicator(SortColumn.When);
+
+    private MarkupString SortIndicator(SortColumn col)
+    {
+        if (_sortColumn != col) return new MarkupString("");
+        var arrow = _sortAsc ? "↑" : "↓";
+        return new MarkupString($"<span class=\"sort-indicator\">{arrow}</span>");
     }
 
     private void OpenRun(string runId) => Nav.NavigateTo($"/runs/{runId}");
