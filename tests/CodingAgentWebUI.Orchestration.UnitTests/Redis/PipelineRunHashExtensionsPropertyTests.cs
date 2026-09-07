@@ -60,6 +60,7 @@ public class PipelineRunHashExtensionsPropertyTests
         run.AgentId        = "agent-xyz";
         run.ModelName      = "claude-sonnet-4";
         run.FailureReason  = "timeout";
+        run.IssueUrl       = "https://github.com/org/repo/issues/42";
         run.PullRequestUrl = "https://github.com/org/repo/pull/99";
         run.RepositoryName = "org/repo";
         run.WorkspacePath  = "/tmp/ws/test-run";
@@ -73,12 +74,45 @@ public class PipelineRunHashExtensionsPropertyTests
         restored.AgentId.Should().Be(run.AgentId);
         restored.ModelName.Should().Be(run.ModelName);
         restored.FailureReason.Should().Be(run.FailureReason);
+        restored.IssueUrl.Should().Be(run.IssueUrl);
         restored.PullRequestUrl.Should().Be(run.PullRequestUrl);
         restored.RepositoryName.Should().Be(run.RepositoryName);
         restored.WorkspacePath.Should().Be(run.WorkspacePath);
         restored.ProjectId.Should().Be(run.ProjectId);
         restored.ProjectName.Should().Be(run.ProjectName);
         restored.FinalLabel.Should().Be(run.FinalLabel);
+    }
+
+    /// <summary>
+    /// Regression test: IssueUrl must survive the Redis hash round-trip.
+    /// In distributed deployments DistributedRunService.GetRun() reconstructs runs from
+    /// the hash — if IssueUrl is absent from the hash it silently returns null and the
+    /// Fleet issue-link chip never renders.
+    /// </summary>
+    [Fact]
+    public void IssueUrl_SurvivesRoundTrip()
+    {
+        var run = MakeMinimalRun();
+        run.IssueUrl = "https://github.com/org/repo/issues/123";
+
+        var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
+
+        restored.IssueUrl.Should().Be("https://github.com/org/repo/issues/123",
+            "IssueUrl must be serialised to the Redis hash so DistributedRunService.GetRun() returns it correctly");
+    }
+
+    /// <summary>
+    /// When IssueUrl is null it must survive as null (not as an empty string).
+    /// </summary>
+    [Fact]
+    public void IssueUrl_Null_SurvivesAsNull()
+    {
+        var run = MakeMinimalRun();
+        run.IssueUrl = null;
+
+        var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
+
+        restored.IssueUrl.Should().BeNull("null IssueUrl must round-trip as null via NullIfEmpty");
     }
 
     // ── Integer counters ──────────────────────────────────────────────────────
@@ -229,6 +263,7 @@ public class PipelineRunHashExtensionsPropertyTests
         run.BranchName                     = "feature/full-roundtrip";
         run.AgentId                        = "agent-full";
         run.ModelName                      = "gpt-4o";
+        run.IssueUrl                       = "https://github.com/org/repo/issues/1";
         run.PullRequestUrl                 = "https://github.com/org/repo/pull/1";
         run.PullRequestBody                = "PR body text";
         run.PullRequestNumber              = "1";
@@ -252,6 +287,7 @@ public class PipelineRunHashExtensionsPropertyTests
         restored.BranchName.Should().Be("feature/full-roundtrip");
         restored.AgentId.Should().Be("agent-full");
         restored.ModelName.Should().Be("gpt-4o");
+        restored.IssueUrl.Should().Be("https://github.com/org/repo/issues/1");
         restored.PullRequestUrl.Should().Be("https://github.com/org/repo/pull/1");
         restored.FilesChangedCount.Should().Be(42);
         restored.LinesAdded.Should().Be(1000);
