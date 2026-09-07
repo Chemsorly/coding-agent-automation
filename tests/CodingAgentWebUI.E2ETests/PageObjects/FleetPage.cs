@@ -57,6 +57,11 @@ public sealed class FleetPage
         }", agentId);
     }
 
+    // TODO: Add tests to assert (a) no element with label text 'Disconnected' exists in .cockpit-stat-l,
+    // and (b) an element with label text containing 'Kiro Credentials' is present. Without these,
+    // accidental reversion of the tile removal or rename would go undetected. Consider also adding a
+    // generic GetStatTileValueAsync(string labelText) helper to avoid duplicating DOM-traversal logic.
+    // See review findings for issue #2329 (TestQualityReviewer warning).
     /// <summary>Total registered agents, read from the "Agents" stat tile.</summary>
     public async Task<int> GetAgentCountAsync()
     {
