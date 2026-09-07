@@ -38,8 +38,6 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
     /// </summary>
     private readonly Func<ProviderKind, CancellationToken, Task<TokenRefreshResponse>>? _tokenRefreshDelegate;
 
-
-
     public OrchestratorProxy(HubConnection connection, string jobId)
     {
         ArgumentNullException.ThrowIfNull(connection);

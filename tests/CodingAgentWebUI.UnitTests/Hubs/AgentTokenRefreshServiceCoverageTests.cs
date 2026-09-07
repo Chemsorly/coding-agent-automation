@@ -30,14 +30,14 @@ public sealed class AgentTokenRefreshServiceCoverageTests
         string jobId = "job-1",
         string repoConfigId = "repo-1",
         string? brainConfigId = null) => new()
-    {
-        RunId = jobId,
-        IssueIdentifier = "org/repo#1",
-        IssueTitle = "Test",
-        IssueProviderConfigId = "issue-1",
-        RepoProviderConfigId = repoConfigId,
-        BrainProviderConfigId = brainConfigId
-    };
+        {
+            RunId = jobId,
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "issue-1",
+            RepoProviderConfigId = repoConfigId,
+            BrainProviderConfigId = brainConfigId
+        };
 
     // ── Brain config not found in store → HubException ───────────────────
 
@@ -66,7 +66,10 @@ public sealed class AgentTokenRefreshServiceCoverageTests
     {
         var config = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitLab", DisplayName = "Repo",
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitLab",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.AccessToken] = "glpat-valid-token"
@@ -97,7 +100,10 @@ public sealed class AgentTokenRefreshServiceCoverageTests
         // stored directly in provider config). Should return a far-future sentinel, not 1h.
         var config = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.Token] = "pre-vended-12345"
@@ -145,7 +151,10 @@ public sealed class AgentTokenRefreshServiceCoverageTests
         var expectedExpiry = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
         var config = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",

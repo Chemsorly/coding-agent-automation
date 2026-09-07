@@ -324,24 +324,24 @@ public class ConsolidationProviderResolverTests
     private static ConsolidationJobMessage CreateJob(
         ConsolidationRunType type,
         IReadOnlyList<ProviderConfig> providerConfigs) => new()
-    {
-        JobId = $"job-{Guid.NewGuid():N}",
-        Type = type,
-        ProviderConfigs = providerConfigs,
-        PipelineConfiguration = new PipelineConfiguration()
-    };
+        {
+            JobId = $"job-{Guid.NewGuid():N}",
+            Type = type,
+            ProviderConfigs = providerConfigs,
+            PipelineConfiguration = new PipelineConfiguration()
+        };
 
     private static ProviderConfig CreateProviderConfig(
         ProviderKind kind,
         string providerType,
         RepositoryRole? role = null,
         Dictionary<string, string>? settings = null) => new()
-    {
-        Id = $"{kind}-{Guid.NewGuid():N}",
-        Kind = kind,
-        ProviderType = providerType,
-        DisplayName = $"Test {kind}",
-        RepositoryRole = role ?? RepositoryRole.Work,
-        Settings = settings ?? new Dictionary<string, string>()
-    };
+        {
+            Id = $"{kind}-{Guid.NewGuid():N}",
+            Kind = kind,
+            ProviderType = providerType,
+            DisplayName = $"Test {kind}",
+            RepositoryRole = role ?? RepositoryRole.Work,
+            Settings = settings ?? new Dictionary<string, string>()
+        };
 }
