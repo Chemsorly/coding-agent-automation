@@ -264,26 +264,28 @@ public class PipelineRunInstrumentationTests : IDisposable
     {
         using var durationCollector = DoubleCollector("pipeline.jobs.duration");
 
+        // Capture startTimestamp before StartRun so that totalElapsedSeconds covers the entire
+        // wall-clock window including the pre-freeze segment (10ms wait) and the post-freeze
+        // segment (50ms wait). The frozen duration only covers start→first StopTiming, so it
+        // must always be strictly less than total (frozen + 50ms post-freeze ≤ total).
+        // This mirrors the approach in StopTiming_FreezesElapsedDuration and avoids the
+        // race where the frozen value slightly exceeds GetElapsedTime(freezeTimestamp) when
+        // the 10ms wait runs long under CI load.
+        var startTimestamp = Stopwatch.GetTimestamp();
         var instrumentation = StartRun();
         using var mres4 = new ManualResetEventSlim(false);
         mres4.Wait(10); // Ensure non-zero duration before freeze
 
-        // Capture the timestamp before StopTiming so it represents the upper bound of
-        // what the frozen duration could possibly be. This prevents a race where
-        // StopTiming() takes measurable time on a loaded CI runner, causing the frozen
-        // value (captured inside StopTiming) to be slightly larger than
-        // Stopwatch.GetElapsedTime(freezeTimestamp) + buffer.
-        var freezeTimestamp = Stopwatch.GetTimestamp();
         instrumentation.StopTiming();
 
         using var mres5 = new ManualResetEventSlim(false);
-        mres5.Wait(50); // Let at least 50ms pass after freeze
+        mres5.Wait(50); // Let at least 50ms pass after freeze — must NOT inflate the frozen value
 
         instrumentation.StopTiming(); // must be no-ops
         instrumentation.StopTiming();
         instrumentation.Dispose();
 
-        var totalElapsedSeconds = Stopwatch.GetElapsedTime(freezeTimestamp).TotalSeconds;
+        var totalElapsedSeconds = Stopwatch.GetElapsedTime(startTimestamp).TotalSeconds;
 
         var snapshot = durationCollector.GetMeasurementSnapshot();
         snapshot.Should().ContainSingle();

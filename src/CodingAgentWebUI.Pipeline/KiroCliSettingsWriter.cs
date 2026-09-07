@@ -57,6 +57,12 @@ public static partial class KiroCliSettingsWriter
             {
                 if (!ValidEffortValues.Contains(effort))
                 {
+                    // TODO: When effort is non-null/non-empty but not in ValidEffortValues, the file is
+                    // still written with chat.defaultModel set but the effort node is omitted (partial write).
+                    // This is intentional — we always persist the model selection — but callers using the
+                    // public API directly with an unrecognised effort string should be aware that they will
+                    // get a partial write (model written, effort skipped) rather than a full write or a
+                    // complete skip. This behaviour is currently untested. See review warning (issue #2346).
                     Serilog.Log.Warning("KiroCliSettingsWriter: invalid effort value rejected: {Effort}", effort);
                 }
                 else

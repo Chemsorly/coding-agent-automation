@@ -322,10 +322,18 @@ public class KiroCliAgentProviderTests
 
             // Invalid model name must be rejected — no file written.
             // Warning is emitted via Serilog.Log (static), not the injected mock logger.
+            // TODO: This assertion (file not written) would also pass if the ApplyAsync call were
+            // accidentally omitted entirely (tempDir is never created, so cli.json can't exist).
+            // A stronger guard would assert that KiroCliSettingsWriter.ApplyAsync is actually
+            // invoked (e.g. via a seam or by verifying Directory.Exists(tempDir) is true, since
+            // Directory.CreateDirectory runs before the model-name check). See review warning (issue #2346).
             File.Exists(settingsPath).Should().BeFalse("invalid model name must not be written to cli.json");
         }
         finally
         {
+            // Note: if the model was correctly rejected, tempDir is still created by
+            // Directory.CreateDirectory inside KiroCliSettingsWriter (before the regex check).
+            // Directory.Delete is safe whether or not the directory was created.
             try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
         }
     }
@@ -344,10 +352,18 @@ public class KiroCliAgentProviderTests
 
             // Invalid model name must be rejected — no file written.
             // Warning is emitted via Serilog.Log (static), not the injected mock logger.
+            // TODO: This assertion (file not written) would also pass if the ApplyAsync call were
+            // accidentally omitted entirely (tempDir is never created, so cli.json can't exist).
+            // A stronger guard would assert that KiroCliSettingsWriter.ApplyAsync is actually
+            // invoked (e.g. via a seam or by verifying Directory.Exists(tempDir) is true, since
+            // Directory.CreateDirectory runs before the model-name check). See review warning (issue #2346).
             File.Exists(settingsPath).Should().BeFalse("model name with spaces must not be written to cli.json");
         }
         finally
         {
+            // Note: if the model was correctly rejected, tempDir is still created by
+            // Directory.CreateDirectory inside KiroCliSettingsWriter (before the regex check).
+            // Directory.Delete is safe whether or not the directory was created.
             try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
         }
     }
@@ -489,6 +505,14 @@ public class KiroCliAgentProviderTests
 
             providerJson.Should().Be(writerJson,
                 "provider must produce exactly the same cli.json as KiroCliSettingsWriter for identical inputs");
+
+            // TODO: This test only verifies byte-for-byte file equality but does not assert that
+            // the effort node is actually present in the output. If AgentEffortLevel.High.ToCliValue()
+            // were to return null or an unrecognised string, the writer would silently omit
+            // chat.modelDefaults, both files would still match, and this test would still pass.
+            // Consider adding an explicit assertion that chat.modelDefaults["claude-opus-4.6"]
+            // ["output_config"]["effort"] equals the expected effort string (e.g. "high").
+            // See review warning (issue #2346).
         }
         finally
         {

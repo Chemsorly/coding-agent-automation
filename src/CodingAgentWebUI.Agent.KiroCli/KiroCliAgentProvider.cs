@@ -271,6 +271,11 @@ public partial class KiroCliAgentProvider : IAgentProvider
         if (!hasModel)
             return;
 
+        // TODO: The rejection warning for invalid model names is now emitted via the static
+        // Serilog.Log sink (inside KiroCliSettingsWriter) rather than through the injected
+        // _logger. Consumers that wrap _logger with custom enrichers or sinks will silently
+        // miss these rejection events. If scoped-logger visibility is required, intercept
+        // the result or duplicate the validation check here. See review warning (issue #2346).
         await KiroCliSettingsWriter.ApplyAsync(_model!, _effort.ToCliValue(), ct, settingsPathOverride);
     }
 
