@@ -696,6 +696,11 @@ public static class WorkItemEndpoints
                 entity.DispatchedAt = request.DispatchedAt;
                 if (request.K8sJobName is not null)
                     entity.K8sJobName = request.K8sJobName;
+                // KiroPvcName is set by the Job Controller for kiro agent dispatches.
+                // Written here so QueryAvailablePvcsAsync can compute accurate PVC availability
+                // from the DB without querying live K8s Jobs (issue #2338).
+                if (request.KiroPvcName is not null)
+                    entity.ClaimedPvcName = request.KiroPvcName;
                 payloadJson = entity.Payload;
             },
             ct: ct);

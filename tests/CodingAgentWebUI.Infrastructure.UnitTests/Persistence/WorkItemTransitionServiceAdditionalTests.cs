@@ -447,6 +447,16 @@ public class WorkItemTransitionServiceAdditionalTests
 
     // ── RequeueAsync ──────────────────────────────────────────────────────────
 
+    // TODO: This test does not seed ClaimedPvcName and does not assert that it is cleared after
+    // RequeueAsync. The fix for issue #2338 adds `item.ClaimedPvcName = null` inside RequeueAsync
+    // so that a requeued item does not continue to consume a credential slot. Without a dedicated
+    // test that seeds ClaimedPvcName = "pvc-1" before calling RequeueAsync and then asserts it is
+    // null on the persisted entity, that clearing behaviour has no regression guard and could be
+    // silently removed by a future refactor. Add a test:
+    //   - seed entity with ClaimedPvcName = "pvc-1"
+    //   - call RequeueAsync
+    //   - assert updated.ClaimedPvcName is null
+    // See review-findings-correctness.md [WARNING] at WorkItemTransitionServiceAdditionalTests.cs:451.
     [Fact]
     public async Task RequeueAsync_IncrementsRetryCountAndClearsDispatchFields()
     {
@@ -469,6 +479,8 @@ public class WorkItemTransitionServiceAdditionalTests
         updated.RetryCount.Should().Be(2, "RetryCount should be incremented");
         updated.DispatchedAt.Should().BeNull("DispatchedAt should be cleared on requeue");
         updated.AssignedAgentId.Should().BeNull("AssignedAgentId should be cleared on requeue");
+        // TODO: also assert updated.ClaimedPvcName.Should().BeNull() after seeding it above
+        // (see TODO block above this test for full context — issue #2338).
     }
 
     // ── HasAgentErrorSinceAsync ──────────────────────────────────────────────

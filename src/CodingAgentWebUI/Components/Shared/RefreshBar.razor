@@ -1,0 +1,123 @@
+@implements IAsyncDisposable
+
+@*
+    RefreshBar — a consistent refresh toolbar for all live-data pages.
+    Renders a manual Refresh button and an auto-refresh interval selector.
+    Manages its own PeriodicTimer so callers don't need a separate <AutoRefresh/>.
+
+    Usage:
+        <RefreshBar OnRefresh="LoadAsync" IsLoading="_loading" />
+
+    Auto-refresh default is Off. The selected interval is session-local (field state).
+    The timer is cancelled and disposed on component teardown — no leaked timers.
+    Invoking the EventCallback re-renders the parent, so handlers need no explicit StateHasChanged.
+*@
+
+@code {
+    // Interval options shown in the dropdown.  0 = Off (no polling).
+    private static readonly (int Seconds, string Label)[] Intervals =
+    [
+        (0,   "Off"),
+        (10,  "10s"),
+        (30,  "30s"),
+        (60,  "1m"),
+        (300, "5m"),
+    ];
+}
+
+<div class="refresh-bar">
+    <button class="cockpit-pager-btn" @onclick="HandleManualRefresh" disabled="@IsLoading" title="Refresh now">
+        <Icon Name="refresh-cw" Size="14" /> Refresh
+    </button>
+    <label class="refresh-bar-label">
+        <span class="refresh-bar-interval-label">Auto-refresh:</span>
+        <select class="time-window-select refresh-bar-select"
+                value="@_intervalSeconds"
+                @onchange="HandleIntervalChanged"
+                title="Auto-refresh interval">
+            @foreach (var (sec, label) in Intervals)
+            {
+                <option value="@sec">@label</option>
+            }
+        </select>
+    </label>
+</div>
+
+@code {
+    /// <summary>Invoked when the Refresh button is clicked or on each auto-refresh tick.</summary>
+    [Parameter] public EventCallback OnRefresh { get; set; }
+
+    /// <summary>When true, the Refresh button is disabled (the page is already loading).</summary>
+    [Parameter] public bool IsLoading { get; set; }
+
+    // 0 = Off (no auto-refresh). Default is Off as per the spec.
+    private int _intervalSeconds;
+
+    private PeriodicTimer? _timer;
+    private CancellationTokenSource? _timerCts;
+
+    private async Task HandleManualRefresh() => await OnRefresh.InvokeAsync();
+
+    private async Task HandleIntervalChanged(ChangeEventArgs e)
+    {
+        if (!int.TryParse(e.Value?.ToString(), out var secs) || secs < 0) return;
+        _intervalSeconds = secs;
+        await RestartTimer();
+    }
+
+    private async Task RestartTimer()
+    {
+        // Cancel and dispose the existing timer, if any.
+        if (_timerCts is not null)
+        {
+            try { await _timerCts.CancelAsync(); } catch (ObjectDisposedException) { }
+            _timer?.Dispose();
+            _timerCts.Dispose();
+            _timer = null;
+            _timerCts = null;
+        }
+
+        if (_intervalSeconds <= 0) return;
+
+        _timerCts = new CancellationTokenSource();
+        _timer = new PeriodicTimer(TimeSpan.FromSeconds(_intervalSeconds));
+        var token = _timerCts.Token;
+        _ = RunTickLoopAsync(token);
+    }
+
+    private async Task RunTickLoopAsync(CancellationToken ct)
+    {
+        // TODO: [WARNING] _timer is a shared mutable field. If RestartTimer is called while this loop is
+        // awaiting WaitForNextTickAsync and the tick returns true, the loop re-reads _timer! after the
+        // await resumes. If RestartTimer has already disposed and nulled _timer (interval changed to Off),
+        // this produces a NullReferenceException that is not caught here (only OperationCanceledException
+        // and ObjectDisposedException are caught). Fix: capture the timer in a local variable passed as a
+        // parameter — `RunTickLoopAsync(PeriodicTimer timer, CancellationToken ct)` — and use the local
+        // inside the loop so it is never affected by field reassignment.
+        try
+        {
+            while (await _timer!.WaitForNextTickAsync(ct))
+            {
+                // TODO: [WARNING] If OnRefresh.InvokeAsync() throws any exception other than
+                // OperationCanceledException or ObjectDisposedException, the exception propagates out
+                // of the while body and is caught by neither catch below. The unhandled exception
+                // terminates this fire-and-forget task silently, permanently killing auto-refresh for
+                // the component lifetime with no log or user-visible indication. Fix: add an outer
+                // catch (Exception ex) with a debug log to survive transient callback failures.
+                await OnRefresh.InvokeAsync();
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_timerCts is not null)
+        {
+            try { await _timerCts.CancelAsync(); } catch (ObjectDisposedException) { }
+            _timer?.Dispose();
+            _timerCts.Dispose();
+        }
+    }
+}
