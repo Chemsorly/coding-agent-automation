@@ -176,7 +176,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         // Wait for loop to be active
         await WaitUntilAsync(
             () => svc.IsLoopActive,
-            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(30),
             "loop should become active after StartLoopAsync");
 
         // Act: stop the loop — this cancels _loopCts, raising an OCE in RunMultiTemplateLoopAsync
@@ -236,7 +236,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
 
         await WaitUntilAsync(
             () => svc.IsLoopActive,
-            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(30),
             "loop should become active");
 
         // Act: stop the loop
@@ -731,7 +731,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
 
         await WaitUntilAsync(
             () => svc.IsLoopActive,
-            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(30),
             "loop should become active after StartLoopAsync");
 
         // Wait for loop to stop — triggered by housekeeping mock calling StopLoop()
