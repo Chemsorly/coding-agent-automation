@@ -10,6 +10,15 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 /// Tests for the <see cref="QualityGateExecutor.BuildQualityGateRetryPrompt"/> conditional
 /// diagnostic-output vs full-diff branch, controlled by <c>hasQualityGateOutput</c>.
 /// </summary>
+// TODO [WARNING]: These tests only exercise the bool-overload of BuildQualityGateRetryPrompt.
+// The production call site in RetryLoop.cs uses the priorRetryErrors overload, which contains
+// its own independent hasQualityGateOutput derivation logic (report.Tests?.IsInfrastructureFailure).
+// The derivation path in the priorRetryErrors overload is not covered by any test here, meaning:
+//   - The null-conditional guard on report.Tests is unverified in that overload.
+//   - The "infra failure → no diagnostic claim" routing via the priorRetryErrors overload is untested.
+// Add tests calling the priorRetryErrors overload directly with infra-failure and non-infra-failure
+// reports to cover the internal derivation path.
+// See review finding: TestQualityReviewer WARNING — QualityGateExecutorRetryPromptTests.cs
 public class QualityGateExecutorRetryPromptTests
 {
     private static QualityGateReport BuildReport(bool infraFailure = false) => new()
@@ -46,6 +55,13 @@ public class QualityGateExecutorRetryPromptTests
     /// AC: BuildQualityGateRetryPrompt with hasQualityGateOutput=true DOES emit the
     /// "Diagnostic output has been written" claim and does NOT emit a full-diff.txt reference.
     /// </summary>
+    // TODO [WARNING]: The negative assertion `prompt.Should().NotContain(AgentWorkspacePaths.FullDiffFilePath)`
+    // is only valid if FullDiffFilePath is not a substring of QualityGatesOutputDirectory or any other string
+    // emitted in the hasQualityGateOutput=true branch. If those paths share a common prefix the assertion
+    // could pass despite the full-diff reference being present. Consider asserting the exact sentence that
+    // should not appear, e.g. prompt.Should().NotContain("terminated abnormally") or
+    // prompt.Should().NotContain("Check `"), which are unique to the no-output branch.
+    // See review finding: TestQualityReviewer WARNING — QualityGateExecutorRetryPromptTests.cs:73
     [Fact]
     public void BuildQualityGateRetryPrompt_HasQualityGateOutput_ContainsDiagnosticClaim_NoFullDiff()
     {

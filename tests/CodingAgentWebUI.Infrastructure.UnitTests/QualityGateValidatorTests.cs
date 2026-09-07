@@ -910,7 +910,10 @@ public class QualityGateValidatorInfraKillTests
             testsResult.Details.Should().Contain("passed");
             testsResult.Details.Should().Contain("failed");
             testsResult.Details.Should().NotContain("infrastructure");
-            testsResult.IsInfrastructureFailure.Should().NotBe(true);
+            // [CRITICAL fix] Use BeNull() not NotBe(true): the contract on GateResult.IsInfrastructureFailure
+            // is null=unknown/not-applicable for non-infra paths. NotBe(true) would also pass for false,
+            // which would violate the documented null contract without being caught.
+            testsResult.IsInfrastructureFailure.Should().BeNull();
         }
         finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
     }
@@ -919,6 +922,10 @@ public class QualityGateValidatorInfraKillTests
     /// Edge case: zero test counts + non-zero exit + non-empty stdout → heuristic must NOT fire.
     /// Stdout with content (even without parseable test counts) disqualifies the infra-kill path.
     /// </summary>
+    // TODO [WARNING]: These two edge-case tests (NonEmptyStdout and NonEmptyStderr) are duplicates differing
+    // only in which stream is non-empty. Consider collapsing into a single [Theory] with two [InlineData]
+    // cases so a removed case is immediately visible as a missing test rather than a silent gap.
+    // See review finding: TestQualityReviewer WARNING — QualityGateValidatorTests.cs:952
     [Fact]
     public async Task InfraKill_AllCountsZero_NonEmptyStdout_DoesNotTriggerInfraHeuristic()
     {
@@ -930,7 +937,7 @@ public class QualityGateValidatorInfraKillTests
 
             var testsResult = report.QgcResults[0].Tests!;
             testsResult.Details.Should().NotContain("infrastructure");
-            testsResult.IsInfrastructureFailure.Should().NotBe(true);
+            testsResult.IsInfrastructureFailure.Should().BeNull();
         }
         finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
     }
@@ -951,7 +958,7 @@ public class QualityGateValidatorInfraKillTests
 
             var testsResult = report.QgcResults[0].Tests!;
             testsResult.Details.Should().NotContain("infrastructure");
-            testsResult.IsInfrastructureFailure.Should().NotBe(true);
+            testsResult.IsInfrastructureFailure.Should().BeNull();
         }
         finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
     }
@@ -972,7 +979,7 @@ public class QualityGateValidatorInfraKillTests
             var testsResult = report.QgcResults[0].Tests!;
             testsResult.Passed.Should().BeTrue();
             testsResult.Details.Should().NotContain("infrastructure");
-            testsResult.IsInfrastructureFailure.Should().NotBe(true);
+            testsResult.IsInfrastructureFailure.Should().BeNull();
         }
         finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
     }

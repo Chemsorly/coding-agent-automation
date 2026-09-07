@@ -421,6 +421,16 @@ public partial class QualityGateExecutor
         {
             run.RetryCount++;
             // NOTE: Consider using BuildTags (run_type + project_id + project_name) for dimensional consistency with duration metrics
+            // TODO [WARNING]: The per-outcome dimension tag (transient/auth_abort/session_restart/retry) was
+            // removed when this counter was moved to the top of the loop. Dashboards or alerts keyed on
+            // outcome=transient or outcome=auth_abort will silently receive zero counts. The replacement
+            // uses only RunTypeTag. Restore BuildRetryTags with an outcome dimension or add a separate
+            // counter per outcome branch to preserve metric dimensionality.
+            // See review finding: Correctness WARNING — QualityGateExecutor.RetryLoop.cs:368-375
+            // TODO [WARNING]: This counter is now incremented before the agent runs. If the loop exits
+            // immediately after (e.g. shouldBreak set by the switch then `if (shouldBreak) break` fires),
+            // the counter is incremented for an attempt that was not executed. Minor double-count risk.
+            // See review finding: Correctness WARNING — QualityGateExecutor.RetryLoop.cs:368
             _qualityGateRetries.Add(1, PipelineTelemetry.RunTypeTag(run.RunType));
             var errorSummary = BuildQualityGateErrorSummary(report);
             run.RetryErrors.Enqueue(errorSummary);
@@ -443,6 +453,22 @@ public partial class QualityGateExecutor
             // Also note: report.Tests is accessed without a null-conditional (?.); if no QGC
             // configures a test gate, QualityGateReport.Tests could be null and this line throws
             // a NullReferenceException. Use report.Tests?.IsInfrastructureFailure == true.
+            // TODO [WARNING]: hasQualityGateOutput is derived solely from the infra-kill flag. However,
+            // WriteGateOutput in QualityGateValidator also skips writing files when stdout AND stderr are
+            // both empty regardless of infra-kill classification. A non-infra failure with empty output
+            // (e.g. a custom test runner that exits 1 with no stdout/stderr but is not SIGKILL'd) would
+            // set hasQualityGateOutput=true here, directing the agent to an empty .agent/quality-gates/
+            // directory. Fix: propagate a "files were written" flag from WriteGateOutput into GateResult
+            // (analogous to IsInfrastructureFailure) so this computation can use the actual write result.
+            // See review finding: Correctness WARNING — QualityGateExecutor.RetryLoop.cs
+            // TODO [WARNING]: This call site re-derives hasQualityGateOutput independently instead of using
+            // the priorRetryErrors overload of BuildQualityGateRetryPrompt (which contains its own identical
+            // derivation). As a result, the prior-attempt history section ("Prior attempt failures") is never
+            // emitted in the main retry loop — the run.RetryErrors snapshot (run.RetryErrors.ToArray()) that
+            // was previously passed is now dropped. If this omission is intentional (history section was
+            // noisy), document it; if accidental, switch to the priorRetryErrors overload and pass
+            // run.RetryErrors.ToArray(). The two derivation copies can also silently diverge on future edits.
+            // See review finding: DotNetSpecialist WARNING — QualityGateExecutor.RetryLoop.cs:457
             var retryPromptSummary = BuildQualityGateRetryPrompt(report, run.RetryCount, config.MaxRetries,
                 hasQualityGateOutput: !(report.QgcResults.Any(r => r.Tests?.IsInfrastructureFailure == true)
                     || report.Tests?.IsInfrastructureFailure == true));
@@ -473,6 +499,13 @@ public partial class QualityGateExecutor
                         Logger = _logger,
                         Phase = null,
                         EnvironmentVariables = context.InjectedSecrets
+                        // TODO [WARNING]: StallMetrics was removed from this AgentExecutionRequest.
+                        // The StallMetrics field on AgentExecutionRequest is nullable (StallMonitorMetrics?),
+                        // so passing null is safe and won't cause a NullReferenceException in the stall
+                        // monitor. However, stall events (warnings, kills, process deaths) during QGC retry
+                        // agent calls will no longer be recorded in any metric. If stall monitoring is still
+                        // active elsewhere, verify this is intentional; if it is, document the decision.
+                        // See review finding: Correctness WARNING — QualityGateExecutor.RetryLoop.cs:481
                     },
                     callbacks, ct,
                     resumeSessionId: run.CodegenSessionId);
@@ -573,6 +606,16 @@ public partial class QualityGateExecutor
 
             report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, ct);
             if (run.CurrentStep == PipelineStep.Failed) return report;
+            // TODO [WARNING]: The ConflictRestart early-return guard that previously appeared here
+            // (`if (run.CurrentStep == PipelineStep.ConflictRestart) return report;`) was removed.
+            // The original TODO comment described an active bug: a ConflictRestart detected inside
+            // AppendExternalCiIfNeededAsync during a retry iteration could cause AddRunToHistoryAsync
+            // to be called twice if the outer ProceedToQualityGatesAsync also detects ConflictRestart.
+            // Removing the guard without replacing it changes runtime behavior: ConflictRestart now
+            // falls through to LogAndRecordReport and continues the retry loop. Verify this is
+            // intentional (e.g., ConflictRestart is now handled at a higher level), and if so,
+            // document why the guard was safe to remove.
+            // See review finding: Correctness WARNING — QualityGateExecutor.RetryLoop.cs:582
 
             LogAndRecordReport(context, report, "retry quality gates");
         }
