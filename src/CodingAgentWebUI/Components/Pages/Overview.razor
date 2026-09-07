@@ -2,19 +2,16 @@
 @layout CockpitLayout
 @implements IAsyncDisposable
 @using CodingAgentWebUI.Api.Client
-@using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
 @using CodingAgentWebUI.Services
 @using CodingAgentWebUI.Components.Shared
-@using Microsoft.AspNetCore.SignalR.Client
 @inject ILoopStatusService LoopService
 @inject IPipelineApiRunHistoryClient RunHistory
 @inject IPipelineApiAgentClient AgentClient
 @inject IPipelineApiWorkItemClient WorkItems
 @inject CockpitState State
 @inject NavigationManager Nav
-@inject IAgentHubConnection HubConnection
 
 @*
     Overview — the cockpit landing (see docs/frontend-redesign-handoff.md).
@@ -30,8 +27,9 @@
             <h1>Overview</h1>
             <span class="cockpit-page-sub">Fleet status at a glance</span>
         </div>
-        <RefreshBar OnRefresh="RefreshDataAsync" />
     </div>
+
+    <AutoRefresh IntervalSeconds="10" OnTick="RefreshDataAsync" />
 
     <!-- loop status hero -->
     <div class="cockpit-card cockpit-card-pad" style="display: flex; align-items: center; justify-content: space-between; gap: 20px;">
@@ -52,16 +50,8 @@
         <div class="cockpit-stat"><span class="cockpit-stat-l">Active</span><span class="cockpit-stat-v">@_activeCount</span></div>
         <div class="cockpit-stat"><span class="cockpit-stat-l">Queue</span><span class="cockpit-stat-v">@_queueCount</span></div>
         <div class="cockpit-stat"><span class="cockpit-stat-l">Agents</span><span class="cockpit-stat-v">@_agentsOnline<span style="font-size: 15px; color: var(--text-faint);">/@_agentsTotal</span></span></div>
-        <div class="cockpit-stat">
-            <span class="cockpit-stat-l">Success · <select class="time-window-select" @bind="_recentWindowHours" @bind:after="RefreshDataAsync" title="Time window for recent metrics">
-                <option value="1">1h</option>
-                <option value="6">6h</option>
-                <option value="24">24h</option>
-                <option value="168">7d</option>
-            </select></span>
-            <span class="cockpit-stat-v">@(_finishedCount > 0 ? $"{_successRate}%" : "—")</span>
-        </div>
-        <div class="cockpit-stat"><span class="cockpit-stat-l">Tokens · @RecentWindowLabel</span><span class="cockpit-stat-v">@CostFormatter.FormatTokens(_tokensRecent)</span></div>
+        <div class="cockpit-stat"><span class="cockpit-stat-l">Success · recent</span><span class="cockpit-stat-v">@(_finishedCount > 0 ? $"{_successRate}%" : "—")</span></div>
+        <div class="cockpit-stat"><span class="cockpit-stat-l">Tokens · recent</span><span class="cockpit-stat-v">@CostFormatter.FormatTokens(_tokensRecent)</span></div>
     </div>
 
     @if (_attnNeedsRefinement + _attnFailed + _attnPlans > 0)
@@ -158,26 +148,6 @@
     private List<PipelineRunSummary> _activeRuns = new();
     private List<PipelineRunSummary> _recentRuns = new();
 
-    // Time window for "recent" metrics. Default 24h; session-persisted via field (resets on page reload).
-    private int _recentWindowHours = 24;
-
-    // Hub subscriptions — disposed in DisposeAsync.
-    private IDisposable? _stepSub;
-    private IDisposable? _completedSub;
-    private bool _hubSubscribed;
-
-    // TODO: [WARNING] This switch has no arm for 0 (unlike Insights, which supports an "All" option).
-    // If _recentWindowHours is ever set to 0 (e.g. by a future code path copying Insights' enum),
-    // the _ default arm returns "24h", silently producing wrong UI text next to the Tokens metric.
-    // Fix: add a 0 => "All" arm, or restrict the dropdown options to exclude 0 on this page.
-    private string RecentWindowLabel => _recentWindowHours switch
-    {
-        1 => "1h",
-        6 => "6h",
-        168 => "7d",
-        _ => "24h"
-    };
-
     protected override void OnInitialized()
     {
         LoopService.OnChange += HandleLoopChanged;
@@ -185,66 +155,6 @@
     }
 
     protected override async Task OnInitializedAsync() => await RefreshDataAsync();
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (firstRender && !_hubSubscribed)
-            await SubscribeHubAsync();
-    }
-
-    // Subscribe to hub run-state events so the page refreshes immediately when any run
-    // transitions step or completes — rather than waiting for the auto-refresh timer.
-    // Uses the shared IAgentHubConnection (one connection per Blazor circuit, not per page).
-    // The handlers are registered globally on the connection; they fire for any run group
-    // the connection is subscribed to (e.g. from RunPage open in the same circuit).
-    // Even without a SubscribeToRun call here the registration ensures the page reacts
-    // as soon as the user also has a run page open, and is the correct hook point if a
-    // global "any run changed" broadcast is added to the hub in the future.
-    private async Task SubscribeHubAsync()
-    {
-        // TODO: [WARNING] _hubSubscribed is set to true before the try block. If HubConnection.StartAsync
-        // throws (e.g. network unreachable on first render), the exception is caught and swallowed but
-        // _hubSubscribed remains true, permanently preventing any retry of hub subscription for this
-        // component instance. The RefreshBar polling fallback still works, but hub-based push is silently
-        // disabled forever after one transient failure. Fix: move `_hubSubscribed = true` inside the try
-        // block, or reset it to false in the catch so OnAfterRenderAsync retries on the next render.
-        _hubSubscribed = true;
-        try
-        {
-            _stepSub = HubConnection.On<string, PipelineStep, DateTimeOffset>(
-                HubMethodNames.OnStepTransition, (_, _, _) => OnRunStateChanged());
-            _completedSub = HubConnection.On<string, JobCompletionPayload>(
-                HubMethodNames.OnRunCompleted, (_, _) => OnRunStateChanged());
-
-            if (HubConnection.State == HubConnectionState.Disconnected)
-                await HubConnection.StartAsync(_cts.Token);
-        }
-        catch (Exception ex)
-        {
-            // Hub subscription is best-effort — the RefreshBar polling fallback still works.
-            Serilog.Log.Debug(ex, "Overview: failed to subscribe to hub events");
-        }
-    }
-
-    // Called on any hub run-state event. Schedules a quiet data refresh on the Blazor circuit.
-    private void OnRunStateChanged()
-    {
-        // TODO: [WARNING] OnStepTransition and OnRunCompleted are sent only to run-specific SignalR groups
-        // (run-{jobId}). This page never calls SubscribeToRun, so these handlers fire only if the same
-        // Blazor circuit also has a RunPage open that is subscribed to that specific run group. For a
-        // standalone Overview page with no RunPage open, no push events are ever delivered and the page
-        // relies entirely on manual/auto-refresh polling. A global "any run changed" broadcast on the hub
-        // would make this reactive path work unconditionally without per-run group membership.
-        _ = InvokeAsync(async () =>
-        {
-            try
-            {
-                await RefreshDataAsync();
-                StateHasChanged();
-            }
-            catch (ObjectDisposedException) { }
-        });
-    }
 
     // Re-fetch when the top-bar project scope changes.
     private async void HandleProjectChanged()
@@ -282,29 +192,33 @@
         // Runs — one page, active + recent, aggregated client-side
         try
         {
-            // TODO: [WARNING] pageSize: 50 caps the history. For wide windows (e.g. 7d) on busy systems,
-            // runs older than the newest 50 are silently excluded, causing the windowed metrics to undercount.
-            // Fix requires either server-side date filtering or a larger page size.
-            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 50, feedbackOnly: false, includeActive: true, projectId: State.SelectedProjectId, ct: _cts.Token);
+            // pageSize matches Attention.razor and Insights.razor (both use 100) so that the "Failed runs"
+            // count on the Overview card agrees with those pages. Consider a dedicated server-side
+            // counts/stats endpoint so none of the pages depend on a client-side page window.
+            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: true, projectId: State.SelectedProjectId, ct: _cts.Token);
             var items = runs.Items;
 
             _activeRuns = items.Where(IsActive).ToList();
             _recentRuns = items.Where(r => !IsActive(r)).ToList();
             _activeCount = _activeRuns.Count;
 
-            // "Recent" window: only completed runs within the selected time window.
-            var windowCutoff = DateTimeOffset.UtcNow.AddHours(-_recentWindowHours);
-            var finished = _recentRuns.Where(r => r.StartedAtOffset >= windowCutoff).ToList();
+            var finished = _recentRuns;
             _finishedCount = finished.Count;
             var succeeded = finished.Count(r => r.FinalStep == PipelineStep.Completed);
             _successRate = _finishedCount > 0 ? (int)Math.Round(100.0 * succeeded / _finishedCount) : 0;
-            // TODO: [WARNING] _tokensRecent previously summed all items including active runs; it now sums only
-            // completed runs in the selected window. This is a silent semantic change: tokens from long-running
-            // active jobs that started before the window cutoff are no longer counted. The change is likely
-            // intentional (windowed "recent" should be consistent), but it is untested and undocumented.
-            _tokensRecent = finished.Sum(r => r.TotalTokens);
+            // TODO: [WARNING] _tokensRecent sums all fetched items including active (in-flight) runs, which
+            // have partial token counts that will fluctuate each refresh cycle. Previously only completed
+            // runs were summed. The label "Tokens · recent" may be misleading since active-run tokens are
+            // included and will visibly jump every 10 s for long-running jobs. Consider summing only
+            // _recentRuns (non-active) to restore the previous semantic, or update the label to clarify.
+            _tokensRecent = items.Sum(r => r.TotalTokens);
 
             _attnNeedsRefinement = items.Count(r => r.AnalysisRecommendation == AnalysisGateResult.NotReady);
+            // TODO: [WARNING] _attnFailed counts FinalStep == Failed across all fetched items (including
+            // active runs), while _finishedCount/_successRate are computed from _recentRuns (non-active only).
+            // Active runs should never have FinalStep == Failed, but if they momentarily do, a run could be
+            // double-counted. Verify that Attention.razor also uses the full items list (not _recentRuns) for
+            // its failed count so the two pages remain consistent after this pageSize alignment.
             _attnFailed = items.Count(r => r.FinalStep == PipelineStep.Failed);
             _attnPlans = items.Count(r => r.RunType == PipelineRunType.DecompositionAnalysis && r.FinalStep == PipelineStep.Completed);
         }
@@ -348,8 +262,6 @@
     {
         LoopService.OnChange -= HandleLoopChanged;
         State.OnProjectChanged -= HandleProjectChanged;
-        _stepSub?.Dispose();
-        _completedSub?.Dispose();
         await _cts.CancelAsync();
         _cts.Dispose();
     }
