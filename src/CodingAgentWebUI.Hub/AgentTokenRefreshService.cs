@@ -2,6 +2,7 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR;
+using System.Globalization;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Hub;
@@ -147,7 +148,7 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
             // reintroducing the stale-token bug this fix was designed to eliminate. (CRITICAL fix)
             if (targetConfig.Settings.TryGetValue(ProviderSettingKeys.TokenExpiresAt, out var expiresAtStr))
             {
-                if (!DateTimeOffset.TryParse(expiresAtStr, out var expiresAtParsed))
+                if (!DateTimeOffset.TryParse(expiresAtStr, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var expiresAtParsed))
                 {
                     // TODO [WARNING]: The raw expiresAtStr value is included in the log. If a misconfigured
                     // provider accidentally stores a partial credential or sensitive string in the 'tokenExpiresAt'
@@ -162,17 +163,11 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
                         "and cannot be validated. The agent must be re-dispatched with a valid provider configuration.");
                 }
 
-                // TODO [WARNING]: DateTimeOffset.TryParse uses the current thread's culture for parsing, which may
-                // differ between developer machines and the server container. The correct overload for roundtrip-safe
-                // parsing of the "O" format is:
-                //   DateTimeOffset.TryParse(expiresAtStr, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var expiresAtParsed)
-                // The current overload will usually succeed on ISO-8601 strings, but is not guaranteed to preserve the
-                // UTC offset precisely across all cultures. Fix to prevent permanent agent blocks on locale-sensitive servers.
-                var renewalBuffer = TimeSpan.FromMinutes(5);
                 // TODO [WARNING]: renewalBuffer is a local variable duplicating OrchestratorProxy.TokenRenewalBuffer (a static
                 // readonly field). These two values must stay in sync — extract them into a shared constant, e.g. in a
                 // TokenRefreshConstants class, to avoid silent skew between the agent proactive-renewal threshold and the
                 // server-side expiry check.
+                var renewalBuffer = TimeSpan.FromMinutes(5);
                 if (expiresAtParsed - DateTimeOffset.UtcNow <= renewalBuffer)
                 {
                     _logger.Warning(
