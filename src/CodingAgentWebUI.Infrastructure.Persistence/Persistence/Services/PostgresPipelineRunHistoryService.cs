@@ -275,7 +275,8 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             ct).ConfigureAwait(false);
     }
 
-    private async Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryInternalAsync(CancellationToken ct)    {
+    private async Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryInternalAsync(CancellationToken ct)
+    {
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
         var entities = await db.PipelineRuns
             .AsNoTracking()

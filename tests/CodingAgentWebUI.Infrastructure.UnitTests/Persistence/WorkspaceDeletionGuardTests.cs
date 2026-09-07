@@ -32,7 +32,7 @@ public sealed class WorkspaceDeletionGuardTests : IDisposable
             {
                 try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); break; }
                 catch (Exception ex) when ((ex is IOException || ex is UnauthorizedAccessException) && i < 9)
-                    { Thread.Sleep(100); }
+                { Thread.Sleep(100); }
             }
         }
 
@@ -40,7 +40,7 @@ public sealed class WorkspaceDeletionGuardTests : IDisposable
         {
             try { if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true); break; }
             catch (Exception ex) when ((ex is IOException || ex is UnauthorizedAccessException) && i < 9)
-                { Thread.Sleep(100); }
+            { Thread.Sleep(100); }
         }
     }
 

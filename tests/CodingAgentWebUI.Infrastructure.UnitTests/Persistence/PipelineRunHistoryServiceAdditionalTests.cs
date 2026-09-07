@@ -39,7 +39,7 @@ public class PipelineRunHistoryServiceAdditionalTests : IDisposable
             {
                 try { Directory.Delete(dir, recursive: true); break; }
                 catch (Exception ex) when ((ex is IOException || ex is UnauthorizedAccessException) && attempt < 9)
-                    { Thread.Sleep(100); }
+                { Thread.Sleep(100); }
             }
         }
         GC.SuppressFinalize(this);

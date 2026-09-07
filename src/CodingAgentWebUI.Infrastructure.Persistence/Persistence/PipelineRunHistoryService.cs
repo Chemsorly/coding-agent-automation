@@ -198,10 +198,10 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
                 }
             }
 
-            #pragma warning disable CS0618 // Fallback to legacy StartedAt for older persisted summaries without StartedAtOffset
+#pragma warning disable CS0618 // Fallback to legacy StartedAt for older persisted summaries without StartedAtOffset
             _runHistory.AddRange(summaries.OrderByDescending(s =>
                 s.StartedAtOffset != default ? s.StartedAtOffset : new DateTimeOffset(s.StartedAt, TimeSpan.Zero)));
-            #pragma warning restore CS0618
+#pragma warning restore CS0618
             _logger.Information("Loaded {Count} pipeline run(s) from history", _runHistory.Count);
         }
         catch (Exception ex)
@@ -236,10 +236,10 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
             if (summary.FinalStep == PipelineStep.Completed)
                 continue;
 
-            #pragma warning disable CS0618 // Fallback to legacy CompletedAt for older persisted summaries without CompletedAtOffset
+#pragma warning disable CS0618 // Fallback to legacy CompletedAt for older persisted summaries without CompletedAtOffset
             var completedOffset = summary.CompletedAtOffset
                 ?? (summary.CompletedAt.HasValue ? new DateTimeOffset(summary.CompletedAt.Value, TimeSpan.Zero) : (DateTimeOffset?)null);
-            #pragma warning restore CS0618
+#pragma warning restore CS0618
 
             if (completedOffset == null || completedOffset > cutoff)
                 continue;
