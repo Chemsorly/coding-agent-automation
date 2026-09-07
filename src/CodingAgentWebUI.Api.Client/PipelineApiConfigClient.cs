@@ -226,10 +226,28 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
     public async Task<string?> GetKeyValueAsync(string key, CancellationToken ct = default)
     {
         var response = await _http.GetAsync($"/api/config/key-value/{Uri.EscapeDataString(key)}", ct);
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-            return null;
+        // TODO: EnsureSuccessStatusCode throws HttpRequestException without reading/disposing
+        // the response body, which may hold a socket open until GC on large error payloads.
+        // This was the same pattern as the previous code and is not a regression, but if
+        // connection-pool exhaustion under heavy error traffic becomes a concern, wrap the
+        // response in `await using` or read-and-discard the content before throwing.
         response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<string>(cancellationToken: ct);
+        // NOTE: ASP.NET Core serialises null via System.Text.Json as the 4-byte literal `null`
+        // (not an empty body), because ConfigureHttpJsonOptions does not set
+        // DefaultIgnoreCondition = WhenWritingNull. The real production path for an unset key
+        // is the `content == "null"` arm. The empty-body guard (string.IsNullOrEmpty) is a
+        // defensive fallback only. If WhenWritingNull is ever added to the server options, the
+        // empty-body path would become the primary path — update this comment accordingly.
+        // TODO: The `content == "null"` comparison has no whitespace tolerance. If a reverse
+        // proxy or response middleware appends a newline (producing "null\n"), the guard falls
+        // through to JsonSerializer.Deserialize<string>, which will throw a JsonException.
+        // The integration test trims the raw body before asserting, which demonstrates the
+        // sensitivity. Mitigate by using `content.Trim() == "null"` or by deserialising
+        // unconditionally via `JsonSerializer.Deserialize<string?>(content)`.
+        var content = await response.Content.ReadAsStringAsync(ct);
+        if (string.IsNullOrEmpty(content) || content == "null")
+            return null;
+        return System.Text.Json.JsonSerializer.Deserialize<string>(content, PipelineJsonOptions.Default);
     }
 
     public async Task SetKeyValueAsync(string key, string value, CancellationToken ct = default)

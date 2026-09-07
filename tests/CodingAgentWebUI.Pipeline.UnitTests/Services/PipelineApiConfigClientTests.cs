@@ -384,7 +384,11 @@ public sealed class PipelineApiConfigClientTests
     public async Task GetKeyValueAsync_WhenNotFound_ReturnsNull()
     {
         var (client, handler) = Create();
-        handler.Respond = _ => Empty(HttpStatusCode.NotFound);
+        // Server now returns 200 with JSON null for unset keys (not 404)
+        handler.Respond = _ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("null", Encoding.UTF8, "application/json")
+        };
 
         var result = await client.GetKeyValueAsync("missing-key");
         result.Should().BeNull();

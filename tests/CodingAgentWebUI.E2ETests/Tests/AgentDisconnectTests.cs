@@ -87,6 +87,11 @@ public sealed class AgentDisconnectTests : E2ETestBase
         var agent = registry.GetByAgentId("disconnect-agent-1");
         Assert.NotNull(agent);
         Assert.Equal(AgentStatus.Disconnected, agent.Status);
+        // TODO: This test validates registry state but does not navigate to /fleet to confirm the
+        // Disconnected tile is absent from the UI. A follow-up test should assert that no
+        // .cockpit-stat-l element with text 'Disconnected' appears on the Fleet page after this
+        // scenario, to prevent the removed tile from reappearing undetected.
+        // See review findings for issue #2329 (TestQualityReviewer warning).
     }
 
     [Fact]
