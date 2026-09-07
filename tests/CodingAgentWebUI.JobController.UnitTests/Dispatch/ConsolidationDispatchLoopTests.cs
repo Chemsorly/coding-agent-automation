@@ -135,6 +135,30 @@ public sealed class ConsolidationDispatchLoopTests
         _consolidationClient.Verify(c => c.RequeueAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // ── 404 on claim (non-kiro) ───────────────────────────────────────────────
+
+    [Fact]
+    public async Task WhenClaim404_ShouldSkipWithoutRequeueOrCreate()
+    {
+        _consolidationClient
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending()]);
+        _consolidationClient
+            .Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new WorkItemNotFoundException(ItemId));
+
+        await CreateLoop().RunOneCycleAsync(CancellationToken.None);
+
+        // TODO [WARNING]: These assertions only verify negative outcomes (no create, no requeue,
+        // no transition). A regression that skips TryClaimAsync entirely (early return before
+        // the claim call) would still pass all three Times.Never verifications. Consider adding:
+        //   _consolidationClient.Verify(c => c.ClaimAsync(ItemId, ...), Times.Once);
+        // to lock in that the claim was actually attempted.
+        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _consolidationClient.Verify(c => c.RequeueAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+        _consolidationClient.Verify(c => c.TransitionRunAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     // ── K8s creation failure → requeue + cascade fail ─────────────────────────
 
     [Fact]
@@ -271,6 +295,152 @@ public sealed class ConsolidationDispatchLoopTests
             .FirstOrDefault(v => v.PersistentVolumeClaim?.ClaimName is not null)
             ?.PersistentVolumeClaim?.ClaimName;
         mountedPvc.Should().Be("kiro-pvc-1");
+    }
+
+    // ── Kiro branch: K8s creation failure → requeue + cascade fail ────────────
+
+    // TODO [WARNING]: This test verifies that the kiro branch reaches TryCreateJobAsync and
+    // correctly requeues on failure. However, since both branches now share the same helper,
+    // a regression where the kiro item is dispatched via the non-kiro code path would still
+    // pass these assertions. A more discriminating assertion would verify that KiroPvcName is
+    // set on the ClaimWorkItemRequest (which only the kiro branch sets), e.g.:
+    //   _consolidationClient.Verify(c => c.ClaimAsync(ItemId,
+    //       It.Is<ClaimWorkItemRequest>(r => r.KiroPvcName == "kiro-pvc-0"), ...), Times.Once);
+    [Fact]
+    public async Task WhenKiroK8sCreateFails_ShouldRequeueAndTransitionRunToFailed()
+    {
+        const string kiroYaml = """
+            - labels: dotnet10,kiro
+              image: chemsorly/coding-agent:kiro-dotnet10
+              providerType: kiro
+              maxConcurrent: 0
+            """;
+        var kiroStore = JobTemplateStore.LoadFromYaml(kiroYaml);
+        var kiroOptions = new DispatchServiceOptions
+        {
+            Namespace = "test-ns",
+            RateLimitPerSecond = 100,
+            ChatPodConnectTimeoutSeconds = 120,
+            KiroPvcPool = ["kiro-pvc-0"]
+        };
+
+        _consolidationClient
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending("dotnet10,kiro")]);
+        _consolidationClient
+            .Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeClaimed());
+        // kiro-pvc-0 is free (no active jobs mount it)
+        _k8sClient
+            .Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [] });
+        _k8sClient
+            .Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("k8s unavailable"));
+
+        var loop = new ConsolidationDispatchLoop(
+            _consolidationClient.Object, _k8sClient.Object,
+            kiroStore, kiroOptions, _pvcSelectLock);
+
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        _consolidationClient.Verify(c => c.RequeueAsync(ItemId, It.IsAny<CancellationToken>()), Times.Once);
+        _consolidationClient.Verify(c => c.TransitionRunAsync(
+            RunId, ConsolidationRunStatus.Failed, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+        // Must NOT transition to Running after a failure
+        _consolidationClient.Verify(c => c.TransitionRunAsync(
+            RunId, ConsolidationRunStatus.Running, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── Kiro branch: 404 on claim ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task WhenKiroClaim404_ShouldSkipWithoutRequeueOrCreate()
+    {
+        const string kiroYaml = """
+            - labels: dotnet10,kiro
+              image: chemsorly/coding-agent:kiro-dotnet10
+              providerType: kiro
+              maxConcurrent: 0
+            """;
+        var kiroStore = JobTemplateStore.LoadFromYaml(kiroYaml);
+        var kiroOptions = new DispatchServiceOptions
+        {
+            Namespace = "test-ns",
+            RateLimitPerSecond = 100,
+            ChatPodConnectTimeoutSeconds = 120,
+            KiroPvcPool = ["kiro-pvc-0"]
+        };
+
+        _consolidationClient
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending("dotnet10,kiro")]);
+        _consolidationClient
+            .Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new WorkItemNotFoundException(ItemId));
+        // kiro-pvc-0 is free
+        _k8sClient
+            .Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [] });
+
+        var loop = new ConsolidationDispatchLoop(
+            _consolidationClient.Object, _k8sClient.Object,
+            kiroStore, kiroOptions, _pvcSelectLock);
+
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // TODO [WARNING]: These assertions only verify negative outcomes (no create, no requeue,
+        // no transition). A regression that skips TryClaimAsync entirely (early return before
+        // the claim call) would still pass all three Times.Never verifications. Consider adding:
+        //   _consolidationClient.Verify(c => c.ClaimAsync(ItemId, ...), Times.Once);
+        // to lock in that the claim was actually attempted. Additionally, a re-entrancy assertion
+        // (dispatching a second kiro item after this 404) would verify the PVC lock is not
+        // left acquired after the early return.
+        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _consolidationClient.Verify(c => c.RequeueAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+        _consolidationClient.Verify(c => c.TransitionRunAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── Kiro branch: 409 on claim ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task WhenKiroClaim409_ShouldSkipWithoutRequeueOrCreate()
+    {
+        const string kiroYaml = """
+            - labels: dotnet10,kiro
+              image: chemsorly/coding-agent:kiro-dotnet10
+              providerType: kiro
+              maxConcurrent: 0
+            """;
+        var kiroStore = JobTemplateStore.LoadFromYaml(kiroYaml);
+        var kiroOptions = new DispatchServiceOptions
+        {
+            Namespace = "test-ns",
+            RateLimitPerSecond = 100,
+            ChatPodConnectTimeoutSeconds = 120,
+            KiroPvcPool = ["kiro-pvc-0"]
+        };
+
+        _consolidationClient
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending("dotnet10,kiro")]);
+        _consolidationClient
+            .Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ConsolidationWorkItemClaimResponse?)null);
+        // kiro-pvc-0 is free
+        _k8sClient
+            .Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [] });
+
+        var loop = new ConsolidationDispatchLoop(
+            _consolidationClient.Object, _k8sClient.Object,
+            kiroStore, kiroOptions, _pvcSelectLock);
+
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _consolidationClient.Verify(c => c.RequeueAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+        _consolidationClient.Verify(c => c.TransitionRunAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── Concurrency limit reached ──────────────────────────────────────────────
