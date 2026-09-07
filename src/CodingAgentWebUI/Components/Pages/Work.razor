@@ -43,8 +43,38 @@
     else
     {
         <div class="cockpit-stat-strip">
-            <div class="cockpit-stat"><span class="cockpit-stat-l">In flight</span><span class="cockpit-stat-v">@_active.Count</span></div>
-            <div class="cockpit-stat"><span class="cockpit-stat-l">Queued</span><span class="cockpit-stat-v">@_pending.Count</span></div>
+            <div class="cockpit-stat">
+                <span class="cockpit-stat-l">In flight</span>
+                <span class="cockpit-stat-v">@_active.Count</span>
+                @if (_active.Count > 0)
+                {
+                    @* TODO: [WARNING] If ALL active items have DispatchedAt == null (pre-dates the field),
+                       this secondary line is silently omitted even when _active.Count > 0,
+                       meaning the "at least one additional data point" criterion is not met. *@
+                    var oldestActive = _active.Where(a => a.DispatchedAt.HasValue).MinBy(a => a.DispatchedAt);
+                    @if (oldestActive?.DispatchedAt is { } dispAt)
+                    {
+                        <span style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Longest running: @Ago(dispAt)</span>
+                    }
+                }
+            </div>
+            <div class="cockpit-stat">
+                <span class="cockpit-stat-l">Queued</span>
+                <span class="cockpit-stat-v">@_pending.Count</span>
+                @if (_pending.Count > 0)
+                {
+                    <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px;">
+                        @foreach (var (label, count) in GetTypeBreakdown(_pending.Select(p => p.TaskType)))
+                        {
+                            <span class="cockpit-chip">@label <strong style="color: var(--text);">@count</strong></span>
+                        }
+                    </div>
+                    @if (_pending.MinBy(p => p.CreatedAt) is { } oldest)
+                    {
+                        <span style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Oldest: @Ago(oldest.CreatedAt)</span>
+                    }
+                }
+            </div>
         </div>
 
         <!-- in flight -->
@@ -158,7 +188,7 @@
             {
                 <div class="monitoring-table-wrap">
                     <table class="monitoring-table">
-                        <thead><tr><th>Issue</th><th>Readiness</th><th></th></tr></thead>
+                        <thead><tr><th>Issue</th><th>Labels</th><th>Readiness</th><th></th></tr></thead>
                         <tbody>
                             @foreach (var b in _backlog)
                             {
@@ -166,6 +196,21 @@
                                     <td>
                                         <span class="monitoring-mono" style="font-weight: 600;">#@b.Identifier</span>
                                         <span style="color: var(--text-muted);">@Truncate(b.Title, 60)</span>
+                                    </td>
+                                    <td>
+                                        @if (b.Labels is { Count: > 0 })
+                                        {
+                                            <div style="display: flex; flex-wrap: wrap; gap: 3px;">
+                                                @foreach (var label in b.Labels.Take(5))
+                                                {
+                                                    <span class="sidebar-label @UiFormatters.GetLabelClass(label)" style="@GetLabelStyle(label, b.LabelColors)">@label</span>
+                                                }
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <span style="color: var(--text-faint);">—</span>
+                                        }
                                     </td>
                                     <td>
                                         @if (b.IsReady)
@@ -340,6 +385,44 @@
         if (d.TotalMinutes < 60) return $"{(int)d.TotalMinutes}m ago";
         if (d.TotalHours < 24) return $"{(int)d.TotalHours}h ago";
         return $"{(int)d.TotalDays}d ago";
+    }
+
+    /// <summary>Returns a short label + count for each distinct task type, ordered by count descending.</summary>
+    private static IEnumerable<(string Label, int Count)> GetTypeBreakdown(IEnumerable<WorkItemTaskType> types)
+        => types
+            .GroupBy(t => t)
+            .OrderByDescending(g => g.Count())
+            .Select(g => (Label: g.Key switch
+            {
+                WorkItemTaskType.Review => "Review",
+                WorkItemTaskType.Decomposition => "Decomp",
+                WorkItemTaskType.Consolidation => "Consol",
+                _ => "Impl"
+            }, Count: g.Count()));
+
+    /// <summary>
+    /// Returns an inline style string for a label chip using the provider hex colour when available,
+    /// falling back to empty string (CSS class styling applies instead).
+    /// </summary>
+    private static string GetLabelStyle(string labelName, IReadOnlyDictionary<string, string>? colors)
+    {
+        if (colors is null || !colors.TryGetValue(labelName, out var hex) || string.IsNullOrEmpty(hex))
+            return string.Empty;
+
+        // GitHub hex colours are 6-digit without '#'. Use as background with auto-contrast text.
+        // Compute perceived luminance to pick white or dark text.
+        if (hex.Length == 6
+            && byte.TryParse(hex.AsSpan(0, 2), System.Globalization.NumberStyles.HexNumber, null, out var r)
+            && byte.TryParse(hex.AsSpan(2, 2), System.Globalization.NumberStyles.HexNumber, null, out var g)
+            && byte.TryParse(hex.AsSpan(4, 2), System.Globalization.NumberStyles.HexNumber, null, out var b))
+        {
+            // Perceived luminance (ITU-R BT.709)
+            var luminance = 0.2126 * r / 255.0 + 0.7152 * g / 255.0 + 0.0722 * b / 255.0;
+            var textColor = luminance > 0.5 ? "#1a1a1a" : "#ffffff";
+            return $"background: #{hex}; color: {textColor}; border-color: #{hex};";
+        }
+
+        return string.Empty;
     }
 
     public async ValueTask DisposeAsync()

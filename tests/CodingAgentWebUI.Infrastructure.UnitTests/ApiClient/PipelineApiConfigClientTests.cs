@@ -194,8 +194,12 @@ public sealed class PipelineApiConfigClientTests : IDisposable
     [Fact]
     public async Task GetKeyValueAsync_NotFound_ReturnsNull()
     {
+        // Server now returns 200 with JSON null for unset keys (not 404)
         _server.Given(Request.Create().WithPath("/api/config/key-value/nokey").UsingGet())
-            .RespondWith(Response.Create().WithStatusCode(404));
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("null"));
 
         var result = await _sut.GetKeyValueAsync("nokey");
 
