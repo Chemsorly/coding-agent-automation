@@ -491,3 +491,25 @@
 .cockpit .agent-main { padding-left: 8px; padding-right: 8px; }
 /* Consolidation is folded into Pipelines as a section — hide its own page heading. */
 .cockpit .consolidation-header { display: none; }
+
+/* ---- RefreshBar — consistent refresh control (issue #2339) ---------------- */
+.refresh-bar {
+    display: flex; align-items: center; gap: 10px; align-self: center; flex-shrink: 0;
+}
+.refresh-bar-label {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 34px; padding: 0 10px 0 13px;
+    border: 1px solid var(--ctl-border); border-radius: 9px; background: var(--surface);
+    font-size: 12.5px; font-weight: 600; color: var(--text-muted); cursor: default;
+}
+.refresh-bar-interval-label {
+    font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--text-faint); white-space: nowrap;
+}
+/* The interval <select> reuses .time-window-select but without the forced uppercase/letter-spacing
+   so the "Off" option reads naturally in sentence case. */
+.refresh-bar-select {
+    text-transform: none !important; letter-spacing: normal !important;
+    font-size: 12px !important; font-weight: 600; color: var(--text) !important;
+    border-bottom-color: var(--ctl-border) !important;
+}

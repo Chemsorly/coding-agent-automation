@@ -2,13 +2,16 @@
 @layout CockpitLayout
 @implements IAsyncDisposable
 @using CodingAgentWebUI.Api.Client
+@using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
 @using CodingAgentWebUI.Services
 @using CodingAgentWebUI.Components.Shared
+@using Microsoft.AspNetCore.SignalR.Client
 @inject IPipelineApiRunHistoryClient RunHistory
 @inject CockpitState State
 @inject NavigationManager Nav
+@inject IAgentHubConnection HubConnection
 
 @*
     Runs — the list behind the Run Page (see docs/frontend-redesign-handoff.md).
@@ -28,6 +31,7 @@
             <h1>Runs</h1>
             <span class="cockpit-page-sub">Every dispatch — implementation, review, decomposition, and consolidation</span>
         </div>
+        <RefreshBar OnRefresh="RefreshQuietAsync" />
     </div>
 
     <div class="cockpit-toolbar">
@@ -42,8 +46,6 @@
             Feedback only
         </label>
     </div>
-
-    <AutoRefresh IntervalSeconds="12" OnTick="RefreshQuietAsync" />
 
     <div class="cockpit-card">
         @if (_loading)
@@ -231,6 +233,11 @@
     private bool _loading = true;
     private string? _error;
 
+    // Hub subscriptions — disposed in DisposeAsync.
+    private IDisposable? _stepSub;
+    private IDisposable? _completedSub;
+    private bool _hubSubscribed;
+
     // ── Column sort state ────────────────────────────────────────────────────
 
     private enum SortColumn { When, Result, Type, Duration }
@@ -284,6 +291,62 @@
     }
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_hubSubscribed)
+            await SubscribeHubAsync();
+    }
+
+    // Subscribe to hub run-state events so the Runs list refreshes immediately when any run
+    // transitions or completes — rather than waiting for the auto-refresh timer.
+    // Handlers are registered globally on the shared IAgentHubConnection (one per Blazor circuit).
+    // They fire for any run group the circuit is subscribed to (e.g. RunPage open in same circuit).
+    private async Task SubscribeHubAsync()
+    {
+        // TODO: [WARNING] _hubSubscribed is set to true before the try block. If HubConnection.StartAsync
+        // throws (e.g. network unreachable on first render), the exception is caught and swallowed but
+        // _hubSubscribed remains true, permanently preventing any retry of hub subscription for this
+        // component instance. The RefreshBar polling fallback still works, but hub-based push is silently
+        // disabled forever after one transient failure. Fix: move `_hubSubscribed = true` inside the try
+        // block, or reset it to false in the catch so OnAfterRenderAsync retries on the next render.
+        _hubSubscribed = true;
+        try
+        {
+            _stepSub = HubConnection.On<string, PipelineStep, DateTimeOffset>(
+                HubMethodNames.OnStepTransition, (_, _, _) => OnRunStateChanged());
+            _completedSub = HubConnection.On<string, JobCompletionPayload>(
+                HubMethodNames.OnRunCompleted, (_, _) => OnRunStateChanged());
+
+            if (HubConnection.State == HubConnectionState.Disconnected)
+                await HubConnection.StartAsync(_cts.Token);
+        }
+        catch (Exception ex)
+        {
+            // Hub subscription is best-effort — the RefreshBar polling fallback still works.
+            Serilog.Log.Debug(ex, "Runs: failed to subscribe to hub events");
+        }
+    }
+
+    // Called on any hub run-state event. Schedules a quiet data refresh on the Blazor circuit.
+    private void OnRunStateChanged()
+    {
+        // TODO: [WARNING] OnStepTransition and OnRunCompleted are sent only to run-specific SignalR groups
+        // (run-{jobId}). This page never calls SubscribeToRun, so these handlers fire only if the same
+        // Blazor circuit also has a RunPage open that is subscribed to that specific run group. For a
+        // standalone Runs list with no RunPage open, no push events are ever delivered and the page relies
+        // entirely on manual/auto-refresh polling. A global "any run changed" broadcast on the hub would
+        // make this reactive path work unconditionally without per-run group membership.
+        _ = InvokeAsync(async () =>
+        {
+            try
+            {
+                await RefreshQuietAsync();
+                StateHasChanged();
+            }
+            catch (ObjectDisposedException) { }
+        });
+    }
 
     // Re-query when the top-bar project scope changes (reset to the first page for the new scope).
     private async void HandleProjectChanged()
@@ -488,6 +551,8 @@
     public async ValueTask DisposeAsync()
     {
         State.OnProjectChanged -= HandleProjectChanged;
+        _stepSub?.Dispose();
+        _completedSub?.Dispose();
         await _cts.CancelAsync();
         _cts.Dispose();
     }

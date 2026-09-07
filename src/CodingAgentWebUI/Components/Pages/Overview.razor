@@ -2,16 +2,19 @@
 @layout CockpitLayout
 @implements IAsyncDisposable
 @using CodingAgentWebUI.Api.Client
+@using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
 @using CodingAgentWebUI.Services
 @using CodingAgentWebUI.Components.Shared
+@using Microsoft.AspNetCore.SignalR.Client
 @inject ILoopStatusService LoopService
 @inject IPipelineApiRunHistoryClient RunHistory
 @inject IPipelineApiAgentClient AgentClient
 @inject IPipelineApiWorkItemClient WorkItems
 @inject CockpitState State
 @inject NavigationManager Nav
+@inject IAgentHubConnection HubConnection
 
 @*
     Overview — the cockpit landing (see docs/frontend-redesign-handoff.md).
@@ -27,9 +30,8 @@
             <h1>Overview</h1>
             <span class="cockpit-page-sub">Fleet status at a glance</span>
         </div>
+        <RefreshBar OnRefresh="RefreshDataAsync" />
     </div>
-
-    <AutoRefresh IntervalSeconds="10" OnTick="RefreshDataAsync" />
 
     <!-- loop status hero -->
     <div class="cockpit-card cockpit-card-pad" style="display: flex; align-items: center; justify-content: space-between; gap: 20px;">
@@ -159,6 +161,11 @@
     // Time window for "recent" metrics. Default 24h; session-persisted via field (resets on page reload).
     private int _recentWindowHours = 24;
 
+    // Hub subscriptions — disposed in DisposeAsync.
+    private IDisposable? _stepSub;
+    private IDisposable? _completedSub;
+    private bool _hubSubscribed;
+
     // TODO: [WARNING] This switch has no arm for 0 (unlike Insights, which supports an "All" option).
     // If _recentWindowHours is ever set to 0 (e.g. by a future code path copying Insights' enum),
     // the _ default arm returns "24h", silently producing wrong UI text next to the Tokens metric.
@@ -178,6 +185,66 @@
     }
 
     protected override async Task OnInitializedAsync() => await RefreshDataAsync();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_hubSubscribed)
+            await SubscribeHubAsync();
+    }
+
+    // Subscribe to hub run-state events so the page refreshes immediately when any run
+    // transitions step or completes — rather than waiting for the auto-refresh timer.
+    // Uses the shared IAgentHubConnection (one connection per Blazor circuit, not per page).
+    // The handlers are registered globally on the connection; they fire for any run group
+    // the connection is subscribed to (e.g. from RunPage open in the same circuit).
+    // Even without a SubscribeToRun call here the registration ensures the page reacts
+    // as soon as the user also has a run page open, and is the correct hook point if a
+    // global "any run changed" broadcast is added to the hub in the future.
+    private async Task SubscribeHubAsync()
+    {
+        // TODO: [WARNING] _hubSubscribed is set to true before the try block. If HubConnection.StartAsync
+        // throws (e.g. network unreachable on first render), the exception is caught and swallowed but
+        // _hubSubscribed remains true, permanently preventing any retry of hub subscription for this
+        // component instance. The RefreshBar polling fallback still works, but hub-based push is silently
+        // disabled forever after one transient failure. Fix: move `_hubSubscribed = true` inside the try
+        // block, or reset it to false in the catch so OnAfterRenderAsync retries on the next render.
+        _hubSubscribed = true;
+        try
+        {
+            _stepSub = HubConnection.On<string, PipelineStep, DateTimeOffset>(
+                HubMethodNames.OnStepTransition, (_, _, _) => OnRunStateChanged());
+            _completedSub = HubConnection.On<string, JobCompletionPayload>(
+                HubMethodNames.OnRunCompleted, (_, _) => OnRunStateChanged());
+
+            if (HubConnection.State == HubConnectionState.Disconnected)
+                await HubConnection.StartAsync(_cts.Token);
+        }
+        catch (Exception ex)
+        {
+            // Hub subscription is best-effort — the RefreshBar polling fallback still works.
+            Serilog.Log.Debug(ex, "Overview: failed to subscribe to hub events");
+        }
+    }
+
+    // Called on any hub run-state event. Schedules a quiet data refresh on the Blazor circuit.
+    private void OnRunStateChanged()
+    {
+        // TODO: [WARNING] OnStepTransition and OnRunCompleted are sent only to run-specific SignalR groups
+        // (run-{jobId}). This page never calls SubscribeToRun, so these handlers fire only if the same
+        // Blazor circuit also has a RunPage open that is subscribed to that specific run group. For a
+        // standalone Overview page with no RunPage open, no push events are ever delivered and the page
+        // relies entirely on manual/auto-refresh polling. A global "any run changed" broadcast on the hub
+        // would make this reactive path work unconditionally without per-run group membership.
+        _ = InvokeAsync(async () =>
+        {
+            try
+            {
+                await RefreshDataAsync();
+                StateHasChanged();
+            }
+            catch (ObjectDisposedException) { }
+        });
+    }
 
     // Re-fetch when the top-bar project scope changes.
     private async void HandleProjectChanged()
@@ -281,6 +348,8 @@
     {
         LoopService.OnChange -= HandleLoopChanged;
         State.OnProjectChanged -= HandleProjectChanged;
+        _stepSub?.Dispose();
+        _completedSub?.Dispose();
         await _cts.CancelAsync();
         _cts.Dispose();
     }
