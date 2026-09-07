@@ -1,3 +1,4 @@
+using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Models;
@@ -15,6 +16,13 @@ public class HousekeepingConfigTests
     {
         var config = new PipelineConfiguration();
         Assert.Equal(1, config.HousekeepingConcurrencyLimit);
+    }
+
+    [Fact]
+    public void HousekeepingTriggerCooldownMinutes_DefaultIs25()
+    {
+        var config = new PipelineConfiguration();
+        config.HousekeepingTriggerCooldownMinutes.Should().Be(25);
     }
 
     // ── PipelineJobTemplate defaults ─────────────────────────────────────

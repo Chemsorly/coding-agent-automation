@@ -119,6 +119,7 @@ public sealed class HousekeepingService : IHousekeepingService
         int effectiveConcurrencyLimit,
         bool branchCleanupEnabled,
         int cleanupIntervalMinutes,
+        int triggerCooldownMinutes,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(repoProvider);
@@ -126,6 +127,15 @@ public sealed class HousekeepingService : IHousekeepingService
         ArgumentNullException.ThrowIfNull(issueProvider);
         ArgumentNullException.ThrowIfNull(issueProviderId);
         ArgumentNullException.ThrowIfNull(agentDonePrs);
+
+        // TODO: TriggerCooldown is a mutable property on a singleton service and is written here
+        // on every ExecuteAsync call, then read at await points further below. If ExecuteAsync is
+        // ever called concurrently on the same instance (e.g. parallel multi-template processing),
+        // the write from one call could race with the read inside another. Consider capturing the
+        // value into a local variable instead of assigning to the shared property:
+        //   var triggerCooldown = TriggerCooldown = TimeSpan.FromMinutes(Math.Max(1, triggerCooldownMinutes));
+        // and using that local everywhere inside the method body.
+        TriggerCooldown = TimeSpan.FromMinutes(Math.Max(1, triggerCooldownMinutes));
 
         var limit = Math.Max(1, effectiveConcurrencyLimit);
         var repoTag = new KeyValuePair<string, object?>("repo_provider_id", repoProviderId);

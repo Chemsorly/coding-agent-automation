@@ -83,7 +83,7 @@ public class HousekeepingServiceTests
         return (svc, providerMock, issueProviderMock, runsMock);
     }
 
-    /// <summary>Runs service with no cleanup, standard defaults.</summary>
+    /// <summary>Runs service with no cleanup, standard defaults. Pass <paramref name="triggerCooldownMinutes"/> to override the cooldown (default 25).</summary>
     private static Task ExecAsync(
         HousekeepingService svc,
         Mock<IRepositoryProvider> repo,
@@ -91,10 +91,11 @@ public class HousekeepingServiceTests
         IReadOnlyList<PullRequestSummary> prs,
         int limit = 1,
         bool branchCleanup = false,
-        int intervalMinutes = 60)
+        int intervalMinutes = 60,
+        int triggerCooldownMinutes = 25)
         => svc.ExecuteAsync(
             repo.Object, RepoId, issues.Object, IssueProviderId,
-            prs, limit, branchCleanup, intervalMinutes, CancellationToken.None);
+            prs, limit, branchCleanup, intervalMinutes, triggerCooldownMinutes, CancellationToken.None);
 
     private static PipelineRun ActiveRun(string branch) => new()
     {
@@ -483,10 +484,15 @@ public class HousekeepingServiceTests
         providerMock.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
                     .ReturnsAsync(PrMergeabilityStatus.Behind);
 
+        // TODO: triggerCooldownMinutes=25 is passed here to satisfy the updated signature but does
+        // not exercise the Math.Max(1, triggerCooldownMinutes) clamping path in ExecuteAsync. Consider
+        // adding a dedicated test (e.g. ExecuteAsync_TriggerCooldownMinutes_ClampedToMinimumOfOne) that
+        // passes 0 or a negative value and asserts TriggerCooldown ends up as TimeSpan.FromMinutes(1).
+
         // Act: must not throw
         var ex = await Record.ExceptionAsync(() =>
             svc.ExecuteAsync(providerMock.Object, RepoId, issuesMock.Object, IssueProviderId,
-                [MakePr(1)], 1, false, 60, CancellationToken.None));
+                [MakePr(1)], 1, false, 60, 25, CancellationToken.None));
 
         ex.Should().BeNull("HousekeepingService must not propagate GetActiveRunBranchesAsync exceptions");
 
@@ -523,7 +529,7 @@ public class HousekeepingServiceTests
         // Act: must not throw
         var ex = await Record.ExceptionAsync(() =>
             svc.ExecuteAsync(providerMock.Object, RepoId, issuesMock.Object, IssueProviderId,
-                [MakePr(1)], 1, false, 60, CancellationToken.None));
+                [MakePr(1)], 1, false, 60, 25, CancellationToken.None));
 
         ex.Should().BeNull("HousekeepingService must not propagate GetActiveRunBranchesAsync exceptions");
 
@@ -1257,12 +1263,17 @@ public class HousekeepingServiceTests
                 .Returns(Task.CompletedTask);
 
         // Use a very long cooldown so a single trigger puts each PR in cooldown for the test
+        // TODO: The refactored test passes triggerCooldownMinutes identically on every ExecAsync cycle,
+        // so no test covers the case where svc.TriggerCooldown is set directly to a value different
+        // from what ExecuteAsync would derive (the explicit acceptance criterion "internal TriggerCooldown
+        // setter is preserved for test overrides"). Consider adding a test that calls ExecuteAsync with
+        // one cooldown, then sets svc.TriggerCooldown directly to a shorter value, and verifies the
+        // direct-setter override takes effect. This would pin the setter injection path against regressions.
         var clock = DateTimeOffset.UtcNow;
         svc.UtcNow = () => clock;
-        svc.TriggerCooldown = TimeSpan.FromHours(24);
 
         // Cycle 1: triggers PR #10 (auto-merge, tier 0). PR #20 skipped (slot full, limit 1).
-        await ExecAsync(svc, provider, issues, [autoMergePr, regularPr]);
+        await ExecAsync(svc, provider, issues, [autoMergePr, regularPr], triggerCooldownMinutes: (int)TimeSpan.FromHours(24).TotalMinutes);
 
         // Advance just enough that PR #10 is evicted from _inFlight (Behind → not Blocked/Unknown)
         // but still within the 24h cooldown window.
@@ -1271,7 +1282,7 @@ public class HousekeepingServiceTests
 
         // Cycle 2: PR #10 is in cooldown (tier 2). PR #20 has no cooldown entry (tier 1) — triggers.
         provider.Invocations.Clear();
-        await ExecAsync(svc, provider, issues, [autoMergePr, regularPr]);
+        await ExecAsync(svc, provider, issues, [autoMergePr, regularPr], triggerCooldownMinutes: (int)TimeSpan.FromHours(24).TotalMinutes);
         provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Once,
             "cycle 2: regular PR must trigger once to enter cooldown");
 
@@ -1281,7 +1292,7 @@ public class HousekeepingServiceTests
 
         // Cycle 3: both PRs are in cooldown — nothing should trigger.
         provider.Invocations.Clear();
-        await ExecAsync(svc, provider, issues, [autoMergePr, regularPr]);
+        await ExecAsync(svc, provider, issues, [autoMergePr, regularPr], triggerCooldownMinutes: (int)TimeSpan.FromHours(24).TotalMinutes);
 
         provider.Verify(p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
             Times.Never, "no PR should be triggered when both are within their 24h cooldown window");
