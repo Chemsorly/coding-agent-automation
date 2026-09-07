@@ -1221,14 +1221,18 @@ public static class WorkItemEndpoints
                     duration = item.CompletedAt.Value - item.DispatchedAt.Value;
             }
 
+            // Enum.TryParse succeeds for numeric string inputs (e.g. "99") even when they don't
+            // correspond to a named FailureReason member, yielding an undefined enum instance that
+            // would become a high-cardinality metric tag. The IsDefined guard rejects such values
+            // so only named members reach the telemetry dimension. (Issue #2341)
+            FailureReason? failureReason = Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason)
+                && Enum.IsDefined(typeof(FailureReason), parsedReason)
+                ? parsedReason
+                : (FailureReason?)null;
+
             WorkDistributionTelemetry.LogTerminalStatus(
                 id, request.Status, duration, request.AgentId,
-                // TODO: Enum.TryParse succeeds for numeric string inputs (e.g. "99") even when they don't
-                // correspond to a named FailureReason member, allowing callers to inject undefined enum values
-                // as metric tags. This can cause high-cardinality label explosion in the metrics backend.
-                // Fix: add Enum.IsDefined check after TryParse, or use a switch/dictionary over expected names.
-                // (Issue #2202 review, SecurityReviewer)
-                failureReason: Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason) ? parsedReason : (FailureReason?)null);
+                failureReason);
         }
         catch (Exception ex)
         {
