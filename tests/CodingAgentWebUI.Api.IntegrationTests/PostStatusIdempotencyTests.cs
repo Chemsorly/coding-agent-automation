@@ -378,6 +378,162 @@ public sealed class PostStatusIdempotencyTests
             "CancelRunAsync must be called exactly once on a real Running→Cancelled transition");
     }
 
+    // ── FailureReason IsDefined guard (issue #2341) ───────────────────────────
+
+    /// <summary>
+    /// Regression test for issue #2341.
+    /// A failureReason string that parses to a numeric value not backed by a named
+    /// <see cref="FailureReason"/> member (e.g. "99") must result in a null failureReason
+    /// dimension — i.e. the workdistribution.workitems_terminated metric must carry
+    /// failure_reason="none", not an undefined numeric enum value.
+    ///
+    /// Without the Enum.IsDefined guard, Enum.TryParse&lt;FailureReason&gt;("99", ...) succeeds,
+    /// yielding an undefined enum instance whose ToString() produces "99" — a distinct tag value
+    /// that can cause high-cardinality label explosion in the metrics backend.
+    /// </summary>
+    [Fact]
+    public async Task PostStatus_NumericUndefinedFailureReason_EmitsNoneTag()
+    {
+        // Arrange
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
+        var transitionService = CreateTransitionService(opts);
+        var dbFactory = CreateDbFactory(opts);
+
+        // Capture the failure_reason tag value from workdistribution.workitems_terminated
+        var capturedTags = new System.Collections.Concurrent.ConcurrentBag<string?>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName
+                && instrument.Name == "workdistribution.workitems_terminated")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "failure_reason")
+                {
+                    capturedTags.Add(tag.Value?.ToString());
+                    break;
+                }
+            }
+        });
+        listener.Start();
+
+        // "99" is a numeric string that Enum.TryParse<FailureReason> parses successfully
+        // because FailureReason is backed by int — but 99 has no named member.
+        // TODO: Add a boundary-case variant for "0" (and "-1"). Enum.TryParse<FailureReason>("0")
+        // also succeeds (int backing type), but 0 is not a named member of FailureReason — the guard
+        // should reject it too. If a member is ever added at value 0 (or the enum is reordered),
+        // the guard semantics change silently and only a "0" test would catch the regression.
+        var request = new WorkItemStatusRequest
+        {
+            Status = WorkItemStatus.Failed,
+            FailureReason = "99"
+        };
+        var runService = new Mock<IOrchestratorRunService>().Object;
+        var lifecycleManager = new Mock<IRunLifecycleManager>();
+        lifecycleManager
+            .Setup(m => m.FailRunAsync(
+                It.IsAny<RunId>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<FailureReason?>()))
+            .ReturnsAsync((PipelineRun?)null);
+
+        // Act
+        var result = await WorkItemEndpoints.PostStatus(
+            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory);
+
+        // EmitTerminalStatusTelemetryAsync is fire-and-forget — wait for it
+        // TODO: Task.Delay(200) is a timing-dependent synchronisation mechanism and is known to be
+        // flaky on loaded CI hosts (see existing TODO at PostStatus_ActualTerminalTransition_EmitsTelemetry).
+        // If capturedTags is empty on CI, the background task likely hadn't completed within 200 ms.
+        // Consider replacing with a polling loop (e.g. SpinWait / polling capturedTags with a timeout)
+        // or restructuring EmitTerminalStatusTelemetryAsync to be awaitable in tests.
+        await Task.Delay(200);
+
+        // Assert
+        result.Should().BeOfType<Ok>();
+        capturedTags.Should().NotBeEmpty(
+            "workdistribution.workitems_terminated must have been emitted");
+        capturedTags.Should().OnlyContain(
+            tag => tag == "none",
+            "a numeric string (\"99\") not backed by a named FailureReason member must be " +
+            "treated as null and emitted as failure_reason=\"none\", not as the raw numeric string");
+    }
+
+    /// <summary>
+    /// Verify that a valid named FailureReason string (e.g. "AgentError") still passes through
+    /// the IsDefined guard and reaches the metric tag unchanged.
+    /// </summary>
+    [Fact]
+    public async Task PostStatus_NamedFailureReason_EmitsCorrectTag()
+    {
+        // Arrange
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
+        var transitionService = CreateTransitionService(opts);
+        var dbFactory = CreateDbFactory(opts);
+
+        var capturedTags = new System.Collections.Concurrent.ConcurrentBag<string?>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName
+                && instrument.Name == "workdistribution.workitems_terminated")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "failure_reason")
+                {
+                    capturedTags.Add(tag.Value?.ToString());
+                    break;
+                }
+            }
+        });
+        listener.Start();
+
+        var request = new WorkItemStatusRequest
+        {
+            Status = WorkItemStatus.Failed,
+            FailureReason = "AgentError"
+        };
+        var runService = new Mock<IOrchestratorRunService>().Object;
+        var lifecycleManager = new Mock<IRunLifecycleManager>();
+        lifecycleManager
+            .Setup(m => m.FailRunAsync(
+                It.IsAny<RunId>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<FailureReason?>()))
+            .ReturnsAsync((PipelineRun?)null);
+
+        // Act
+        var result = await WorkItemEndpoints.PostStatus(
+            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory);
+
+        // TODO: Task.Delay(200) is a timing-dependent synchronisation mechanism and is known to be
+        // flaky on loaded CI hosts (see existing TODO at PostStatus_ActualTerminalTransition_EmitsTelemetry).
+        // If capturedTags is empty on CI, the background task likely hadn't completed within 200 ms.
+        // Consider replacing with a polling loop or restructuring EmitTerminalStatusTelemetryAsync
+        // to be awaitable in tests.
+        await Task.Delay(200);
+
+        // Assert
+        result.Should().BeOfType<Ok>();
+        capturedTags.Should().NotBeEmpty(
+            "workdistribution.workitems_terminated must have been emitted");
+        capturedTags.Should().OnlyContain(
+            tag => tag == "AgentError",
+            "a named FailureReason (\"AgentError\") must pass through IsDefined and reach the metric tag");
+    }
+
     // ── Test Infrastructure ───────────────────────────────────────────────────
 
     /// <summary>
