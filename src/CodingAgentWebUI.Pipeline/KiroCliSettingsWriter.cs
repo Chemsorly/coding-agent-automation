@@ -1,10 +1,9 @@
-namespace CodingAgentWebUI.Agent;
+namespace CodingAgentWebUI.Pipeline;
 
 /// <summary>
 /// Writes Kiro CLI model and effort settings to <c>~/.kiro/settings/cli.json</c>.
-/// Extracted from <c>KiroCliAgentProvider.ApplyCliSettingsAsync</c> so both work-item
-/// pods (via <c>KiroCliAgentProvider</c>) and chat pods (via <c>AgentConnectionLifecycle</c>)
-/// share the same file-write logic.
+/// Used by both work-item pods (via <c>KiroCliAgentProvider</c>) and chat pods
+/// (via <c>AgentConnectionLifecycle</c>) so all code paths share the same file-write logic.
 /// </summary>
 public static partial class KiroCliSettingsWriter
 {
@@ -58,6 +57,12 @@ public static partial class KiroCliSettingsWriter
             {
                 if (!ValidEffortValues.Contains(effort))
                 {
+                    // TODO: When effort is non-null/non-empty but not in ValidEffortValues, the file is
+                    // still written with chat.defaultModel set but the effort node is omitted (partial write).
+                    // This is intentional — we always persist the model selection — but callers using the
+                    // public API directly with an unrecognised effort string should be aware that they will
+                    // get a partial write (model written, effort skipped) rather than a full write or a
+                    // complete skip. This behaviour is currently untested. See review warning (issue #2346).
                     Serilog.Log.Warning("KiroCliSettingsWriter: invalid effort value rejected: {Effort}", effort);
                 }
                 else
@@ -94,6 +99,11 @@ public static partial class KiroCliSettingsWriter
     [System.Text.RegularExpressions.GeneratedRegex(@"^[a-zA-Z0-9._-]+$")]
     private static partial System.Text.RegularExpressions.Regex ModelNamePattern();
 
-    private static readonly HashSet<string> ValidEffortValues =
-        new(["high", "medium", "low"], StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// Valid effort level strings accepted by the Kiro CLI.
+    /// Covers all <see cref="CodingAgentWebUI.Pipeline.Models.AgentEffortLevel"/> enum values
+    /// that produce a non-null <c>ToCliValue()</c> result.
+    /// </summary>
+    public static readonly IReadOnlySet<string> ValidEffortValues =
+        new HashSet<string>(["low", "medium", "high", "xhigh", "max"], StringComparer.OrdinalIgnoreCase);
 }
