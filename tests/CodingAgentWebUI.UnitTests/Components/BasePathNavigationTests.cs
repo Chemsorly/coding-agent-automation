@@ -42,7 +42,9 @@ public class BasePathNavigationTests : BunitContext
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
                 Items = Array.Empty<PipelineRunSummary>(),
-                Page = 1, PageSize = 50, HasMore = false
+                Page = 1,
+                PageSize = 50,
+                HasMore = false
             });
         return mock;
     }
@@ -105,7 +107,9 @@ public class BasePathNavigationTests : BunitContext
                         RunType = PipelineRunType.Implementation
                     }
                 },
-                Page = 1, PageSize = 50, HasMore = false
+                Page = 1,
+                PageSize = 50,
+                HasMore = false
             });
         return mock;
     }
