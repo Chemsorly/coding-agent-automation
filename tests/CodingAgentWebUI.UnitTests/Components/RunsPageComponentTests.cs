@@ -5,6 +5,7 @@ using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 
@@ -21,6 +22,7 @@ namespace CodingAgentWebUI.UnitTests.Components;
 public class RunsPageComponentTests : BunitContext
 {
     private readonly Mock<IPipelineApiRunHistoryClient> _mockRunHistory = new();
+    private readonly Mock<IAgentHubConnection> _mockHubConnection = new();
 
     private static PipelineRunSummary MakeSummary(
         string runId,
@@ -68,7 +70,18 @@ public class RunsPageComponentTests : BunitContext
                 It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage());
 
+        // IAgentHubConnection is injected into Runs.razor for SignalR subscriptions.
+        // Set up a no-op mock so bUnit can resolve the dependency without a real hub.
+        _mockHubConnection.Setup(h => h.State).Returns(HubConnectionState.Disconnected);
+        _mockHubConnection.Setup(h => h.StartAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _mockHubConnection.Setup(h => h.On(It.IsAny<string>(), It.IsAny<Action>())).Returns(Mock.Of<IDisposable>());
+        _mockHubConnection.Setup(h => h.On<It.IsAnyType>(It.IsAny<string>(), It.IsAny<Action<It.IsAnyType>>())).Returns(Mock.Of<IDisposable>());
+        _mockHubConnection.Setup(h => h.On<It.IsAnyType, It.IsAnyType>(It.IsAny<string>(), It.IsAny<Action<It.IsAnyType, It.IsAnyType>>())).Returns(Mock.Of<IDisposable>());
+        _mockHubConnection.Setup(h => h.On<It.IsAnyType, It.IsAnyType, It.IsAnyType>(It.IsAny<string>(), It.IsAny<Action<It.IsAnyType, It.IsAnyType, It.IsAnyType>>())).Returns(Mock.Of<IDisposable>());
+        _mockHubConnection.Setup(h => h.DisposeAsync()).Returns(ValueTask.CompletedTask);
+
         Services.AddSingleton(_mockRunHistory.Object);
+        Services.AddSingleton(_mockHubConnection.Object);
         Services.AddSingleton(new CockpitState());
         // NavigationManager is provided automatically by bunit.
     }

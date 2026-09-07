@@ -20,12 +20,14 @@
             <h1>Fleet</h1>
             <span class="cockpit-page-sub">Registered agents — status, capacity, and current work</span>
         </div>
-        <button class="cockpit-pager-btn" @onclick="LoadAsync" disabled="@_loading">
-            <Icon Name="refresh-cw" Size="14" /> Refresh
-        </button>
+        <RefreshBar OnRefresh="RefreshQuietAsync" IsLoading="@(_loading && _agents is null)" />
     </div>
 
-    <AutoRefresh IntervalSeconds="10" OnTick="RefreshQuietAsync" />
+    @* TODO: [WARNING] Fleet shows agent status (Idle/Busy) which changes on job assignment/completion.
+       The run-scoped hub events (OnStepTransition, OnRunCompleted) are not wired here because they are
+       sent only to run-specific groups and agent heartbeat/status events are not exposed via
+       IAgentHubUiClient. A global agent-status push event would enable reactive Fleet updates.
+       Until then, the RefreshBar auto-refresh polling is the only mechanism for background updates. *@
 
     @if (_loading && _agents is null)
     {

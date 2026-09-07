@@ -25,12 +25,19 @@
             <h1>Work</h1>
             <span class="cockpit-page-sub">Queued and in-flight work items</span>
         </div>
-        <a href="/pipelines" class="cockpit-pager-btn" style="text-decoration: none;">
-            <Icon Name="search" Size="14" /> Browse &amp; dispatch
-        </a>
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <RefreshBar OnRefresh="RefreshQuietAsync" />
+            <a href="/pipelines" class="cockpit-pager-btn" style="text-decoration: none;">
+                <Icon Name="search" Size="14" /> Browse &amp; dispatch
+            </a>
+        </div>
     </div>
 
-    <AutoRefresh IntervalSeconds="10" OnTick="RefreshQuietAsync" />
+    @* TODO: [WARNING] Work shows queue depth and in-flight counts that change on job dispatch/completion.
+       The run-scoped hub events (OnStepTransition, OnRunCompleted) are not wired here because the hub
+       sends them only to run-specific groups (run-{jobId}), and subscribing per-run on a list page is
+       impractical. A global "queue changed" broadcast event on the hub would enable push-based refresh.
+       Until then, the RefreshBar auto-refresh polling is the only mechanism for background updates. *@
 
     @if (_loading)
     {
