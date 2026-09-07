@@ -532,4 +532,28 @@ public class PipelineConfigurationTests
         result.MaxDecompositionSubIssueFiles.Should().Be(20);
     }
 
+    // ── AgentTimeout validation ────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(-3600)]
+    public void AgentTimeout_ZeroOrNegative_ThrowsArgumentOutOfRangeException(int totalSeconds)
+    {
+        var act = () => new PipelineConfiguration { AgentTimeout = TimeSpan.FromSeconds(totalSeconds) };
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName("AgentTimeout");
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(60)]
+    [InlineData(1800)]
+    [InlineData(28800)]
+    public void AgentTimeout_Positive_IsAccepted(int totalSeconds)
+    {
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromSeconds(totalSeconds) };
+        config.AgentTimeout.Should().Be(TimeSpan.FromSeconds(totalSeconds));
+    }
+
 }

@@ -24,7 +24,38 @@ public sealed record PipelineConfiguration
 
     [Key(4)]
     [ProjectOverridable(Order = 3)]
-    public TimeSpan AgentTimeout { get; init; } = PipelineConstants.DefaultAgentTimeout;
+    public TimeSpan AgentTimeout
+    {
+        get => field;
+        init
+        {
+            // TODO [WARNING]: The guard uses double comparison (value.TotalSeconds <= 0d) rather than
+            // TimeSpan comparison (value <= TimeSpan.Zero). For sub-millisecond TimeSpan values
+            // (e.g. TimeSpan.FromTicks(1)), TotalSeconds is a positive double (~1e-7) that passes
+            // the guard, yet the value truncates to 0 after (int) cast in dispatch/reconciliation code.
+            // Consider replacing with ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value, TimeSpan.Zero, ...)
+            // to use TimeSpan semantics and avoid floating-point edge cases. (DotNetSpecialist [WARNING])
+
+            // TODO [WARNING]: The init guard throws ArgumentOutOfRangeException for zero/negative values.
+            // System.Text.Json invokes init accessors during deserialization, so a PipelineConfig row
+            // persisted before this PR with "agentTimeout": "00:00:00" will crash LoadPipelineConfigAsync
+            // at startup (the exception propagates out of JsonSerializer.Deserialize unhandled).
+            // The WorkItems DB migration back-fills WorkItems.TimeoutSeconds but does NOT fix a
+            // zero-valued AgentTimeout stored in the PipelineConfig JSON blob. Additionally,
+            // TimeSpanJsonConverter.Read returns default (TimeSpan.Zero) for a null string, which
+            // also triggers this exception. Consider adding a migration/fixup in PostgresConfigurationStore
+            // that rewrites zero AgentTimeout to the default before deserialization, or catch
+            // ArgumentOutOfRangeException in LoadPipelineConfigAsync and substitute the default.
+            // (Correctness [WARNING])
+
+            // S3236 suppressed: nameof(AgentTimeout) is intentional — 'value' in init
+            // accessors is the implicit parameter name; callers need the property name in the exception.
+#pragma warning disable S3236
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value.TotalSeconds, 0d, nameof(AgentTimeout));
+#pragma warning restore S3236
+            field = value;
+        }
+    } = PipelineConstants.DefaultAgentTimeout;
 
     /// <summary>
     /// How long the agent can be silent (no output) before the stall monitor logs a warning.

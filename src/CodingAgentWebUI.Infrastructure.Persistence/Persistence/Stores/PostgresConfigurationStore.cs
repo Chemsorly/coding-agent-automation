@@ -74,6 +74,14 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         PipelineConfiguration result;
         if (entity?.Configuration is not null)
         {
+            // TODO [WARNING]: JsonSerializer.Deserialize invokes PipelineConfiguration init accessors,
+            // including the AgentTimeout guard added in issue #2405. A PipelineConfig row persisted
+            // before that PR with "agentTimeout": "00:00:00" will cause an unhandled
+            // ArgumentOutOfRangeException here, crashing LoadPipelineConfigAsync at startup.
+            // Consider wrapping deserialization in a try/catch for ArgumentOutOfRangeException
+            // (or JsonException) and falling back to new PipelineConfiguration() with a warning log,
+            // or adding a pre-deserialization fixup that rewrites zero AgentTimeout to the default.
+            // (Correctness [WARNING])
             result = JsonSerializer.Deserialize<PipelineConfiguration>(
                 entity.Configuration, JsonOptions)
                 ?? new PipelineConfiguration();

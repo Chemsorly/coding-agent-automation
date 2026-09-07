@@ -55,7 +55,7 @@ public sealed class ConsolidationDispatchLoopTests
             .ReturnsAsync(new V1JobList { Items = [] });
     }
 
-    private static PendingWorkItemDto MakePending(string agentSelector = "dotnet10,opencode", int timeoutSeconds = 0) =>
+    private static PendingWorkItemDto MakePending(string agentSelector = "dotnet10,opencode", int timeoutSeconds = 1800) =>
         new()
         {
             Id = ItemId,
@@ -432,13 +432,6 @@ public sealed class ConsolidationDispatchLoopTests
     {
         // item timeout (900s = 15 min) → activeDeadlineSeconds == 960 (900 + 60 buffer)
         // Verifies per-project AgentTimeout=15m → activeDeadlineSeconds=960 (acceptance criterion)
-        // TODO: Add two sibling tests to complete ConsolidationDispatchLoop timeout coverage:
-        // 1. WhenItemTimeoutIsGlobalDefault_K8sJob_ActiveDeadlineSeconds_Is1860 — passes
-        //    MakePending(timeoutSeconds: 1800) and asserts activeDeadlineSeconds == 1860L.
-        // 2. WhenItemTimeoutIsZero_FallsBackToGlobalDefault_K8sJob_Is1860 — passes
-        //    MakePending(timeoutSeconds: 0) and asserts activeDeadlineSeconds == 1860L,
-        //    verifying the zero-fallback path for legacy rows.
-        // (TestQualityReviewer review [WARNING] @ ConsolidationDispatchLoopTests.cs:417)
         _consolidationClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending(timeoutSeconds: 900)]);
         _consolidationClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
@@ -454,6 +447,30 @@ public sealed class ConsolidationDispatchLoopTests
 
         capturedJob.Should().NotBeNull();
         capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(960L); // 900 + 60
+    }
+
+    [Fact]
+    public async Task WhenItemTimeoutIsDefaultValue_K8sJob_ActiveDeadlineSeconds_Is1860()
+    {
+        // item timeout = 1800s (30-minute default from PipelineConfiguration.AgentTimeout)
+        // activeDeadlineSeconds == 1800 + 60 == 1860
+        // The zero-sentinel fallback has been removed (issue #2405); TimeoutSeconds is passed
+        // through directly. This test verifies the standard default-value dispatch path.
+        _consolidationClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending(timeoutSeconds: 1800)]);
+        _consolidationClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeClaimed());
+
+        V1Job? capturedJob = null;
+        _k8sClient.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((job, _, _) => capturedJob = job)
+            .Returns(Task.CompletedTask);
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        capturedJob.Should().NotBeNull();
+        capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(1860L); // 1800 + 60
     }
 
     // ── Metric / telemetry tests ───────────────────────────────────────────────

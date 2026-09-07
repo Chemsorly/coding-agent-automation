@@ -153,8 +153,6 @@ public sealed class ReconciliationLoop
             return;
         }
 
-        var globalDefaultSeconds = (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds;
-
         foreach (var item in timedOut)
         {
             if (ct.IsCancellationRequested) break;
@@ -162,16 +160,21 @@ public sealed class ReconciliationLoop
             // Only time out Running items here; Dispatched items are handled by EnforceDispatchedTimeoutAsync
             if (item.Status != WorkItemStatus.Running) continue;
 
-            // Resolve the effective timeout for this item.
-            // TimeoutSeconds == 0 means the value was not stored (pre-dates this field) — fall back
-            // to the global PipelineConfiguration.AgentTimeout default for backward compatibility.
-            // TODO: The zero sentinel is not enforced at the entity/DTO layer — it is indistinguishable
-            // from an explicitly set value of 0. Consider adding a DB constraint or a positive-value
-            // check at the enqueue endpoint (WorkItemEndpoints) so that TimeoutSeconds > 0 is always
-            // guaranteed for new rows, narrowing this fallback to truly legacy data only.
-            var effectiveTimeoutSeconds = item.TimeoutSeconds > 0
-                ? item.TimeoutSeconds
-                : globalDefaultSeconds;
+            // All WorkItems written after issue #2179 carry a positive TimeoutSeconds value.
+            // The DB migration for issue #2405 back-filled 1800 for any legacy zero rows,
+            // so no zero-sentinel fallback is needed here.
+            // TODO [WARNING]: There is a narrow deployment window where a work item dispatched after
+            // the new code is deployed but before the DB migration has committed could have
+            // TimeoutSeconds == 0. In that case effectiveTimeoutSeconds == 0, the canary guard
+            // (executionAgeSeconds < TimeoutCanaryMinAgeSeconds) will not fire (0 < canary threshold
+            // evaluates to false for any non-negative age), and the item will be incorrectly reported
+            // as timed out on every reconciliation cycle. The issue description states "Do NOT remove
+            // the fallbacks before migration", but migration and fallback removal are in the same PR
+            // with no deployment-ordering enforcement. If zero rows are possible in the window between
+            // deploy and migration, consider adding an explicit guard (skip enforcement if
+            // TimeoutSeconds == 0) or ensuring the migration runs before the new code reaches
+            // production. (Correctness [WARNING])
+            var effectiveTimeoutSeconds = item.TimeoutSeconds;
 
             // Compute execution age from DispatchedAt. If DispatchedAt is null (items dispatched before
             // the field was added), fall back to effectiveTimeoutSeconds — safe to enforce.

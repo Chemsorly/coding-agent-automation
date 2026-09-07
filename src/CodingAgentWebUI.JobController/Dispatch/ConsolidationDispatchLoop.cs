@@ -193,9 +193,7 @@ public sealed class ConsolidationDispatchLoop
                 {
                     WorkItemId = item.Id,
                     AgentSelector = selector,
-                    TimeoutSeconds = item.TimeoutSeconds > 0
-                        ? item.TimeoutSeconds
-                        : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
+                    TimeoutSeconds = item.TimeoutSeconds,
                     JobName = jobName,
                     ClaimedPvc = pvcName,
                     OrchestratorUrl = _options.OrchestratorUrl,
@@ -260,9 +258,7 @@ public sealed class ConsolidationDispatchLoop
             {
                 WorkItemId = item.Id,
                 AgentSelector = selector,
-                TimeoutSeconds = item.TimeoutSeconds > 0
-                    ? item.TimeoutSeconds
-                    : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
+                TimeoutSeconds = item.TimeoutSeconds,
                 JobName = jobName,
                 ClaimedPvc = pvcName,
                 OrchestratorUrl = _options.OrchestratorUrl,

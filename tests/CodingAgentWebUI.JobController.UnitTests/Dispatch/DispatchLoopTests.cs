@@ -96,7 +96,7 @@ public sealed class DispatchLoopTests
             .ReturnsAsync(new[] { DefaultProviderConfig });
     }
 
-    private static PendingWorkItemDto MakePending(string agentSelector = "dotnet10,opencode", int timeoutSeconds = 0) =>
+    private static PendingWorkItemDto MakePending(string agentSelector = "dotnet10,opencode", int timeoutSeconds = 1800) =>
         new()
         {
             Id = ItemId,
@@ -582,12 +582,14 @@ public sealed class DispatchLoopTests
     }
 
     [Fact]
-    public async Task WhenItemTimeoutIsZero_K8sJob_ActiveDeadlineSeconds_UsesDefaultAgentTimeout()
+    public async Task WhenItemTimeoutIsDefaultValue_K8sJob_ActiveDeadlineSeconds_Is1860()
     {
-        // item.TimeoutSeconds == 0 (not set) → falls back to PipelineConstants.DefaultAgentTimeout (30 min = 1800s)
+        // item timeout = 1800s (30-minute default from PipelineConfiguration.AgentTimeout)
         // activeDeadlineSeconds == 1800 + 60 == 1860
+        // The zero-sentinel fallback has been removed (issue #2405); TimeoutSeconds is passed
+        // through directly. This test verifies the standard default-value dispatch path.
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakePending(timeoutSeconds: 0)]);
+            .ReturnsAsync([MakePending(timeoutSeconds: 1800)]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
 

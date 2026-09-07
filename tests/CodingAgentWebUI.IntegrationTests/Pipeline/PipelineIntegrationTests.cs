@@ -113,7 +113,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
         var original = new PipelineConfiguration
         {
             WorkspaceBaseDirectory = WorkspaceBase,
-            AgentTimeout = TimeSpan.Zero,
+            AgentTimeout = TimeSpan.FromSeconds(1),
             ExternalCiTimeout = TimeSpan.FromMilliseconds(1),
             ExternalCiPollInterval = TimeSpan.FromHours(2) + TimeSpan.FromMinutes(30) + TimeSpan.FromSeconds(15),
             StallWarningInterval = TimeSpan.FromDays(1),
@@ -124,12 +124,29 @@ public class PipelineIntegrationTests : IntegrationTestBase
         await ConfigStore.SavePipelineConfigAsync(original, CancellationToken.None);
         var loaded = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
 
-        loaded.AgentTimeout.Should().Be(TimeSpan.Zero);
+        loaded.AgentTimeout.Should().Be(TimeSpan.FromSeconds(1));
         loaded.ExternalCiTimeout.Should().Be(TimeSpan.FromMilliseconds(1));
         loaded.ExternalCiPollInterval.Should().Be(TimeSpan.FromHours(2) + TimeSpan.FromMinutes(30) + TimeSpan.FromSeconds(15));
         loaded.StallWarningInterval.Should().Be(TimeSpan.FromDays(1));
         loaded.StallPollInterval.Should().Be(TimeSpan.FromSeconds(1));
         loaded.ClosedLoopPollInterval.Should().Be(TimeSpan.FromTicks(123456789));
+    }
+
+    [Fact]
+    public void AgentTimeout_Zero_ThrowsArgumentOutOfRangeException()
+    {
+        // AgentTimeout = TimeSpan.Zero is now explicitly rejected at construction time.
+        var act = () => new PipelineConfiguration { AgentTimeout = TimeSpan.Zero };
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName("AgentTimeout");
+    }
+
+    [Fact]
+    public void AgentTimeout_Negative_ThrowsArgumentOutOfRangeException()
+    {
+        var act = () => new PipelineConfiguration { AgentTimeout = TimeSpan.FromSeconds(-1) };
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName("AgentTimeout");
     }
 
     [Fact]
