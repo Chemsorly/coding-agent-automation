@@ -131,6 +131,7 @@ public class PipelineConfigurationMessagePackBinaryTests
         deserialized.MaxConsolidationDispatchRetries.Should().Be(7);
         deserialized.TransientRetryDelay.Should().Be(TimeSpan.FromSeconds(15));
         deserialized.CiCancelledMoveMaxRetries.Should().Be(7);
+        deserialized.HousekeepingTriggerCooldownMinutes.Should().Be(30);
     }
 
     private static PipelineConfiguration CreateFullyPopulatedConfig() => new()
@@ -219,5 +220,6 @@ public class PipelineConfigurationMessagePackBinaryTests
         MaxConsolidationDispatchRetries = 7,
         TransientRetryDelay = TimeSpan.FromSeconds(15),
         CiCancelledMoveMaxRetries = 7,
+        HousekeepingTriggerCooldownMinutes = 30,
     };
 }

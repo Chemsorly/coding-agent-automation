@@ -34,7 +34,12 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IQualityGateValidator>(sp =>
             new QualityGateValidator(logger, sp.GetRequiredService<IMeterFactory>()));
 
-        services.AddSingleton<IBrainUpdateService>(sp => new BrainUpdateService(logger));
+        // BrainUpdateService creates its brain.push.retries counter internally from IMeterFactory,
+        // keeping the infrastructure layer free of any static PipelineTelemetry reference.
+        services.AddSingleton<IBrainUpdateService>(sp => new BrainUpdateService(
+            logger,
+            new LibGit2SharpGitOperations(),
+            sp.GetRequiredService<IMeterFactory>()));
 
         services.AddSingleton<IAgentPhaseExecutor>(sp => new AgentPhaseExecutor(logger));
 

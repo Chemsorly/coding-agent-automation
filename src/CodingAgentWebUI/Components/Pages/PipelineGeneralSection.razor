@@ -57,6 +57,14 @@
         {
         <div class="form-group">
             <div class="label-with-hint">
+                <label>Branch Update Trigger Cooldown (minutes)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Minimum time between consecutive branch-update triggers for the same PR. Prevents a single PR from monopolising the update slot when CI takes longer than one poll cycle. Default: 25 minutes.">?</span>
+            </div>
+            <input type="number" @bind="_housekeepingTriggerCooldownMinutes" min="1" />
+            <span class="form-hint">Minimum cooldown per PR after a branch update is triggered. Must be at least 1 minute.</span>
+        </div>
+        <div class="form-group">
+            <div class="label-with-hint">
                 <label>Max Analysis Retries</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Retry cap for the analysis phase specifically. 0 = no retry (fail on first failure). Default: 2">?</span>
             </div>
@@ -130,6 +138,7 @@
     private bool _showAdvanced;
     private int _housekeepingConcurrencyLimit = 1;
     private int _branchCleanupIntervalMinutes = 60;
+    private int _housekeepingTriggerCooldownMinutes = 25;
 
     protected override async Task OnInitializedAsync()
     {
@@ -147,6 +156,7 @@
         _blacklistedPathsText = string.Join(",", config.BlacklistedPaths);
         _housekeepingConcurrencyLimit = config.HousekeepingConcurrencyLimit;
         _branchCleanupIntervalMinutes = config.HousekeepingBranchCleanupIntervalMinutes;
+        _housekeepingTriggerCooldownMinutes = config.HousekeepingTriggerCooldownMinutes;
     }
 
     private async Task SaveAsync()
@@ -172,7 +182,8 @@
                     IssuePageSize = _issuePageSize,
                     BlacklistedPaths = blacklistedPaths,
                     HousekeepingConcurrencyLimit = Math.Max(1, _housekeepingConcurrencyLimit),
-                    HousekeepingBranchCleanupIntervalMinutes = Math.Max(0, _branchCleanupIntervalMinutes)
+                    HousekeepingBranchCleanupIntervalMinutes = Math.Max(0, _branchCleanupIntervalMinutes),
+                    HousekeepingTriggerCooldownMinutes = Math.Max(1, _housekeepingTriggerCooldownMinutes)
                 },
                 CancellationToken.None);
             await OnShowStatus.InvokeAsync(("General settings saved.", false));

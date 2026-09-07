@@ -75,7 +75,7 @@ public class AccumulateTokenUsageTests
     {
         var run = CreateRun();
 
-        run.AccumulateTokenUsage(null);
+        run.AccumulateTokenUsage((AgentResult?)null);
 
         run.CacheReadTokens.Should().Be(0);
         run.CacheWriteTokens.Should().Be(0);

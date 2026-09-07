@@ -471,8 +471,15 @@ public sealed class PostStatusIdempotencyTests
         result.Should().BeOfType<Ok>();
         capturedTags.Should().NotBeEmpty(
             "workdistribution.workitems_terminated must have been emitted");
-        capturedTags.Should().OnlyContain(
-            tag => tag == "none",
+        // Use Contain rather than OnlyContain: WorkDistributionTelemetry.WorkItemsTerminated is a
+        // static instrument shared across all tests in the process. Parallel tests (e.g.
+        // WorkItemEndpointTests.PostStatus_FailedWithTimeoutReason_Returns200AndPersistsFailureReason)
+        // can emit failure_reason="Timeout" via a fire-and-forget task that fires during the 200 ms
+        // wait window, causing OnlyContain to fail spuriously on CI. The invariant under test is that
+        // THIS call emits failure_reason="none" — not that no other concurrent test emits a different
+        // tag on the same shared instrument.
+        capturedTags.Should().Contain(
+            "none",
             "a numeric string (\"99\") not backed by a named FailureReason member must be " +
             "treated as null and emitted as failure_reason=\"none\", not as the raw numeric string");
     }
@@ -541,8 +548,12 @@ public sealed class PostStatusIdempotencyTests
         result.Should().BeOfType<Ok>();
         capturedTags.Should().NotBeEmpty(
             "workdistribution.workitems_terminated must have been emitted");
-        capturedTags.Should().OnlyContain(
-            tag => tag == "AgentError",
+        // Use Contain rather than OnlyContain for the same reason as
+        // PostStatus_NumericUndefinedFailureReason_EmitsNoneTag: the static WorkItemsTerminated
+        // instrument is shared across all parallel tests, so concurrent emissions from other tests
+        // may appear in capturedTags during the 200 ms wait window.
+        capturedTags.Should().Contain(
+            "AgentError",
             "a named FailureReason (\"AgentError\") must pass through IsDefined and reach the metric tag");
     }
 
