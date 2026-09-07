@@ -19,11 +19,13 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
     private readonly Serilog.ILogger _logger;
     private readonly Counter<long> _analysisGateOutcomes;
     private readonly Counter<long> _reviewSkipped;
+    private readonly IMeterFactory? _meterFactory;
 
     public AgentPhaseExecutor(Serilog.ILogger logger, IMeterFactory? meterFactory = null)
     {
         ArgumentNullException.ThrowIfNull(logger);
         _logger = logger;
+        _meterFactory = meterFactory;
 
         if (meterFactory is not null)
         {

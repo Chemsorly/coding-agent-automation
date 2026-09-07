@@ -134,6 +134,14 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
             logger,
             ct);
 
+        // Accumulate token usage from adversarial review and refinement before checking success.
+        // Mirrors the pattern in AgentPhaseExecutor.Analysis.cs — tokens are always recorded
+        // regardless of whether the review found issues or triggered refinement.
+        if (reviewResult.ReviewTokenUsage is not null)
+            run.AccumulateTokenUsage(reviewResult.ReviewTokenUsage, phase: "decomposition_review");
+        if (reviewResult.RefinementTokenUsage is not null)
+            run.AccumulateTokenUsage(reviewResult.RefinementTokenUsage, phase: "decomposition_refinement");
+
         // 9. Return StepResult.Continue on success or StepResult.Stop on failure
         if (!reviewResult.ReviewExecuted)
         {
