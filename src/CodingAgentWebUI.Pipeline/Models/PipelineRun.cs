@@ -372,7 +372,7 @@ public sealed partial class PipelineRun
     /// <summary>Creates a <see cref="PipelineRunSummary"/> from this run's current state.</summary>
     /// <param name="finalStepOverride">If non-null, used as <see cref="PipelineRunSummary.FinalStep"/> instead of <see cref="CurrentStep"/>.</param>
     // NOTE: [ARC-10] FinalStep = CurrentStep without terminal state guard — edge case if called before TransitionTo completes
-    #pragma warning disable CS0618 // Obsolete members used intentionally for backward-compat serialization
+#pragma warning disable CS0618 // Obsolete members used intentionally for backward-compat serialization
     public PipelineRunSummary ToSummary(PipelineStep? finalStepOverride = null) => new()
     {
         RunId = RunId,
@@ -420,7 +420,7 @@ public sealed partial class PipelineRun
         BranchName = BranchName,
         HarnessVersion = HarnessVersion
     };
-    #pragma warning restore CS0618
+#pragma warning restore CS0618
 
     /// <summary>Flattens a quality-gate report into slim per-gate (name, passed) outcomes for the summary.</summary>
     private static IReadOnlyList<GateOutcome> FlattenQualityGates(QualityGateReport report)
