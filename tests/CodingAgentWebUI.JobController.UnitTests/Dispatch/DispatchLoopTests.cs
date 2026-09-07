@@ -922,6 +922,13 @@ public sealed class DispatchLoopTests
     /// AC #2: WorkItem whose issue has any ineligible label must be cancelled, not dispatched.
     /// Covers: agent:error, agent:needs-refinement, agent:wont-do, agent:cancelled.
     /// </summary>
+    // TODO: AgentLabels.Done was previously covered by this theory and by a dedicated regression test
+    // (WhenIssueHasDoneLabel_ShouldCancelWorkItem_NotDispatch). Both were removed in the issue #2316
+    // implementation, but no corresponding production code change removed Done from
+    // AgentLabels.DispatchIneligibleLabels. If Done remains in the ineligible set, re-dispatch of
+    // completed issues is unguarded in tests. Verify whether Done was intentionally removed from
+    // DispatchIneligibleLabels; if not, restore the [InlineData(nameof(AgentLabels.Done))] case and
+    // the dedicated regression test.
     [Theory]
     [InlineData(nameof(AgentLabels.Error))]
     [InlineData(nameof(AgentLabels.NeedsRefinement))]

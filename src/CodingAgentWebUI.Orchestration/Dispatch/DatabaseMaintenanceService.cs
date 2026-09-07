@@ -367,6 +367,15 @@ public class DatabaseMaintenanceService
         {
             await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
+            // TODO: This load-all-then-update pattern differs from every other sweep in this service,
+            // which uses ExecuteDeleteAsync / ExecuteUpdateAsync for set-based server-side SQL. For the
+            // current 33 ghost runs this is harmless, but the method runs on every maintenance cycle.
+            // If the forward fix (try-finally in PullRequestFinalizationService) regresses or the
+            // separate terminal gap in QualityGateExecutor.RetryLoop produces orphans at scale, the
+            // in-memory load could grow unbounded. Consider replacing with:
+            //   await db.PipelineRuns
+            //       .Where(r => r.CompletedAt == null && ...)
+            //       .ExecuteUpdateAsync(s => s.SetProperty(r => r.CompletedAt, DateTimeOffset.UtcNow), ct);
             var orphans = await db.PipelineRuns
                 .Where(r => r.CompletedAt == null &&
                             (r.FinalStep == PipelineStep.Completed ||

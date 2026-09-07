@@ -140,6 +140,16 @@ public sealed class PullRequestFinalizationService
             _stepCount.Add(1, tags);
         }
 
+        // TODO: This guard is only reached on the normal (non-exception) control-flow path. If an
+        // OperationCanceledException propagates out of the outer try block (e.g. from
+        // CreatePullRequestAsync observing a cancelled token), the OCE bypasses this return statement
+        // and falls directly into the second try-finally below. On that path prCreationSucceeded is
+        // still false and finalStep retains its default value (PipelineStep.Completed), so the finally
+        // block stamps run.CurrentStep = Completed and run.FinalLabel = AgentLabels.Done even though
+        // no PR was actually created. The resulting state is observable by the orchestrator and may
+        // conflict with the label applied by ReportJobCompleted on the OCE-abort path. Consider
+        // guarding the second try-finally with a check on prCreationSucceeded, or catching OCE from
+        // the outer try and re-throwing only after explicitly setting finalStep to Failed/Cancelled.
         if (!prCreationSucceeded)
             return;
 

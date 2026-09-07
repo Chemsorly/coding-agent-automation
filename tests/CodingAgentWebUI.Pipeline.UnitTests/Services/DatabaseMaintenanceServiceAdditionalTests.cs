@@ -314,6 +314,12 @@ public class DatabaseMaintenanceServiceAdditionalTests : IDisposable
                         && r.CompletedAt == null)
             .CountAsync();
 
+        // TODO: This assertion queries all terminal-step rows globally, not just the ones seeded
+        // by this test. If another test in the class leaves a terminal-step row with null CompletedAt
+        // (e.g. a setup failure), a count of 0 here could be achieved by the reconciliation sweep
+        // cleaning up that unrelated row rather than the three seeded above, masking incomplete
+        // reconciliation. The more targeted assertion on seededIds below is robust; consider
+        // replacing this global count check with a scoped filter: .Where(r => seededIds.Contains(r.RunId) && r.CompletedAt == null).
         remaining.Should().Be(0, "no terminal-step run should have null CompletedAt after reconciliation");
 
         // Each seeded ghost row must now have CompletedAt set to approximately now.
