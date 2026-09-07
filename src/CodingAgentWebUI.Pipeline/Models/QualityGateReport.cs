@@ -17,8 +17,7 @@ public sealed class QualityGateReport
     [Key(3)]
     public IReadOnlyList<QgcExecutionResult> QgcResults { get; init; } = [];
 
-    [Key(4)]
-    public GateResult? SecurityScan { get; init; }
+    // Key(4) is retired (was SecurityScan). Do not reuse to avoid deserialization issues with existing data.
 
     [Key(5)]
     public required GateResult Tests { get; init; }
@@ -30,6 +29,5 @@ public sealed class QualityGateReport
     public bool AllPassed => QgcResults.Count > 0
         ? QgcResults.All(r => r.Passed) && (ExternalCi?.Passed ?? true)
         : Compilation.Passed && Tests.Passed
-            && (SecurityScan?.Passed ?? true)
             && (ExternalCi?.Passed ?? true);
 }

@@ -304,9 +304,6 @@ public static class FeedbackPromptBuilder
         AppendGateResult(sb, "Compilation", report.Compilation.Passed, report.Compilation.Details);
         AppendTestsSection(sb, report.Tests);
 
-        if (report.SecurityScan is not null)
-            AppendGateResult(sb, "Security Scan", report.SecurityScan.Passed, report.SecurityScan.Details);
-
         if (report.ExternalCi is not null)
             AppendGateResult(sb, "External CI", report.ExternalCi.Passed, report.ExternalCi.Details);
 

@@ -308,25 +308,14 @@ public class AgentHubTests
         var report = new QualityGateReport
         {
             Compilation = new GateResult { GateName = "Compilation", Passed = true },
-            Tests = new GateResult { GateName = "Tests", Passed = true },
-            SecurityScan = new GateResult { GateName = "Security", Passed = true }
+            Tests = new GateResult { GateName = "Tests", Passed = true }
         };
 
         report.AllPassed.Should().BeTrue();
     }
 
-    [Fact]
-    public void QualityGateReport_AllPassed_WithSecurityFailing_ReturnsFalse()
-    {
-        var report = new QualityGateReport
-        {
-            Compilation = new GateResult { GateName = "Compilation", Passed = true },
-            Tests = new GateResult { GateName = "Tests", Passed = true },
-            SecurityScan = new GateResult { GateName = "Security", Passed = false }
-        };
-
-        report.AllPassed.Should().BeFalse();
-    }
+    // Deleted (behavior removed): QualityGateReport_AllPassed_WithSecurityFailing_ReturnsFalse —
+    // SecurityScan property was retired from QualityGateReport (Key(4) tombstoned).
 
     // ── GateResult ──────────────────────────────────────────────────────
 

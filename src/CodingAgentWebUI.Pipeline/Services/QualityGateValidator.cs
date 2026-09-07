@@ -113,8 +113,7 @@ public class QualityGateValidator : IQualityGateValidator
                 QgcId = qgc.Id,
                 DisplayName = qgc.DisplayName,
                 Compilation = compilationResult,
-                Tests = null,
-                SecurityScan = null
+                Tests = null
             }, true);
         }
 
@@ -127,8 +126,7 @@ public class QualityGateValidator : IQualityGateValidator
                 QgcId = qgc.Id,
                 DisplayName = qgc.DisplayName,
                 Compilation = compilationResult,
-                Tests = testsResult,
-                SecurityScan = null
+                Tests = testsResult
             }, true);
         }
 
@@ -137,8 +135,7 @@ public class QualityGateValidator : IQualityGateValidator
             QgcId = qgc.Id,
             DisplayName = qgc.DisplayName,
             Compilation = compilationResult,
-            Tests = testsResult,
-            SecurityScan = null
+            Tests = testsResult
         }, false);
     }
 
@@ -183,7 +180,6 @@ public class QualityGateValidator : IQualityGateValidator
         {
             Compilation = aggregateCompilation,
             Tests = aggregateTests,
-            SecurityScan = null,
             QgcResults = qgcResults
         };
     }

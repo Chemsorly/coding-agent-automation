@@ -490,7 +490,7 @@ public class QualityGateExecutorEdgeCaseTests
     public async Task CleanupAgent_Succeeds_UpdatesFileStatsAndFinalizes()
     {
         // Covers line 194: cleanupResult != null → UpdateFileChangeStatsAsync is called.
-        // Also covers lines 541-543: Coverage + SecurityScan EmitGateEvaluation via SetupValidatorAlwaysPasses.
+        // Also covers the EmitGateEvaluation calls in LogAndRecordReport via SetupValidatorAlwaysPasses.
         SetupValidatorAlwaysPasses();
 
         _mockPipelineProvider
@@ -783,8 +783,7 @@ public class QualityGateExecutorEdgeCaseTests
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "ok" },
-                Tests = new GateResult { GateName = "Tests", Passed = true, Details = "ok" },
-                SecurityScan = new GateResult { GateName = "SecurityScan", Passed = true, Details = "ok" }
+                Tests = new GateResult { GateName = "Tests", Passed = true, Details = "ok" }
             });
     }
 

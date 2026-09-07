@@ -16,8 +16,7 @@ public class QualityGateValidatorTests
         var report = new QualityGateReport
         {
             Compilation = new GateResult { GateName = "Compilation", Passed = true },
-            Tests = new GateResult { GateName = "Tests", Passed = true },
-            SecurityScan = new GateResult { GateName = "Security", Passed = true }
+            Tests = new GateResult { GateName = "Tests", Passed = true }
         };
 
         report.AllPassed.Should().BeTrue();
@@ -50,11 +49,14 @@ public class QualityGateValidatorTests
     [Fact]
     public void AllPassed_WithNullOptionalGates_ReturnsTrue()
     {
+        // TODO: This test now covers the same effective scenario as the first AllPassed test (all required
+        // gates passing, no optional gates). It previously distinguished SecurityScan=null, but SecurityScan
+        // was retired (Key(4) tombstoned). Update one of these tests to cover ExternalCi=null vs.
+        // ExternalCi present-and-passing to restore differentiated coverage of the remaining optional gate.
         var report = new QualityGateReport
         {
             Compilation = new GateResult { GateName = "Compilation", Passed = true },
-            Tests = new GateResult { GateName = "Tests", Passed = true },
-            SecurityScan = null
+            Tests = new GateResult { GateName = "Tests", Passed = true }
         };
 
         report.AllPassed.Should().BeTrue();

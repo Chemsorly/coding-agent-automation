@@ -207,8 +207,6 @@ public static partial class PipelineFormatting
             FormatTestGateSummary(report.Tests)
         };
 
-        if (report.SecurityScan is not null)
-            parts.Add($"Security {(report.SecurityScan.Passed ? "✅" : "❌")}");
         if (report.ExternalCi is not null)
             parts.Add($"External CI {(report.ExternalCi.Passed ? "✅" : "❌")}");
 

@@ -301,7 +301,6 @@ public partial class QualityGateExecutor
         {
             Compilation = report.Compilation,
             Tests = report.Tests,
-            SecurityScan = report.SecurityScan,
             ExternalCi = ciGate
         };
     }
@@ -649,14 +648,12 @@ public partial class QualityGateExecutor
         run.QualityGateHistory.Enqueue(report);
         callbacks.EmitOutputLine(PipelineFormatting.FormatQualityGateSummary(report));
 
-        _logger.Information("Pipeline {RunId} {Phase}: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}, SecurityScan={SecurityResult}, ExternalCi={ExternalCiResult}",
+        _logger.Information("Pipeline {RunId} {Phase}: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}, ExternalCi={ExternalCiResult}",
             run.RunId, phase, report.AllPassed, report.Compilation.Passed, report.Tests.Passed,
-            FormatGateLogValue(report.SecurityScan), FormatGateLogValue(report.ExternalCi));
+            FormatGateLogValue(report.ExternalCi));
 
         EmitGateEvaluation(PipelineTelemetry.QualityGateNames.Compilation, report.Compilation.Passed);
         EmitGateEvaluation(PipelineTelemetry.QualityGateNames.Tests, report.Tests.Passed);
-        if (report.SecurityScan is not null)
-            EmitGateEvaluation(PipelineTelemetry.QualityGateNames.Security, report.SecurityScan.Passed);
         if (report.ExternalCi is not null)
             EmitGateEvaluation(PipelineTelemetry.QualityGateNames.ExternalCi, report.ExternalCi.Passed);
 

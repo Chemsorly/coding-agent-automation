@@ -191,12 +191,6 @@ public class HubMessageSerializationTests
                 TestsFailed = 0,
                 TestsSkipped = 3
             },
-            SecurityScan = new GateResult
-            {
-                GateName = "SecurityScan",
-                Passed = false,
-                Details = "1 high-severity vulnerability in dependency"
-            },
             ExternalCi = new GateResult
             {
                 GateName = "ExternalCI",
@@ -220,13 +214,16 @@ public class HubMessageSerializationTests
                         TestsSkipped = 1
                     }
                 },
+                // TODO: The qgc-security fixture uses Compilation=null and Tests=null, which null-coalesces
+                // to Passed=true via QgcExecutionResult.Passed. This passes but only due to null-coalesce
+                // defaults, not because of an explicitly passing scenario. Replace with explicit passing
+                // GateResult values to make intent clear and guard against future null-coalesce changes.
                 new()
                 {
                     QgcId = "qgc-security",
                     DisplayName = "Security Scan",
                     Compilation = null,
-                    Tests = null,
-                    SecurityScan = new GateResult { GateName = "SecurityScan", Passed = false, Details = "CVE-2026-1234" }
+                    Tests = null
                 }
             },
             Timestamp = timestamp
@@ -246,12 +243,6 @@ public class HubMessageSerializationTests
         deserialized.Tests.TestsPassed.Should().Be(142);
         deserialized.Tests.TestsFailed.Should().Be(0);
         deserialized.Tests.TestsSkipped.Should().Be(3);
-
-        // SecurityScan (optional, populated)
-        deserialized.SecurityScan.Should().NotBeNull();
-        deserialized.SecurityScan!.GateName.Should().Be("SecurityScan");
-        deserialized.SecurityScan.Passed.Should().BeFalse();
-        deserialized.SecurityScan.Details.Should().Be("1 high-severity vulnerability in dependency");
 
         // ExternalCi (optional, populated)
         deserialized.ExternalCi.Should().NotBeNull();
@@ -273,15 +264,15 @@ public class HubMessageSerializationTests
         qgc2.DisplayName.Should().Be("Security Scan");
         qgc2.Compilation.Should().BeNull();
         qgc2.Tests.Should().BeNull();
-        qgc2.SecurityScan.Should().NotBeNull();
-        qgc2.SecurityScan!.Passed.Should().BeFalse();
-        qgc2.SecurityScan.Details.Should().Be("CVE-2026-1234");
+        // TODO: Add an assertion that Key(5) (retired SecurityScan) does not corrupt deserialization
+        // e.g. confirm that a round-trip of a payload that previously had Key(5) set still deserializes
+        // cleanly (null for that slot) without throwing. Currently no test guards this regression.
 
         // Timestamp
         deserialized.Timestamp.Should().Be(timestamp);
 
-        // Computed property (not serialized but should be consistent)
-        deserialized.AllPassed.Should().BeFalse(); // SecurityScan failed
+        // Computed property (not serialized but should be consistent with remaining gates)
+        deserialized.AllPassed.Should().BeTrue(); // All gates pass; SecurityScan was retired
     }
 
     /// <summary>
