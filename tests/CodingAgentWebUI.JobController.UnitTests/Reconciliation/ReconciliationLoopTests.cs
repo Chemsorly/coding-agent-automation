@@ -1698,13 +1698,19 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
     [Fact]
     public void LogTerminalStatus_Failed_EmitsPipelineJobsFailed_WithSnakeCaseTag()
     {
-        // Snapshot before to tolerate stray recordings
-        var failedCountBefore = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
+        // Snapshot before to tolerate stray recordings from other concurrently running test assemblies.
+        // Filtering by failure_reason="timeout" avoids inflated counts from parallel tests that emit
+        // pipeline.jobs.failed with a different failure_reason tag (e.g. "unknown", "agent_error").
+        var failedCountBefore = _pipelineCounters.Count(
+            r => r.InstrumentName == "pipeline.jobs.failed"
+                 && r.Tags.Any(t => t.Key == "failure_reason" && (string?)t.Value == "timeout"));
 
         WorkDistributionTelemetry.LogTerminalStatus(
             Guid.NewGuid(), WorkItemStatus.Failed, TimeSpan.FromSeconds(60), null, FailureReason.Timeout);
 
-        var failedCountAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
+        var failedCountAfter = _pipelineCounters.Count(
+            r => r.InstrumentName == "pipeline.jobs.failed"
+                 && r.Tags.Any(t => t.Key == "failure_reason" && (string?)t.Value == "timeout"));
         (failedCountAfter - failedCountBefore).Should().Be(1,
             "pipeline.jobs.failed must be incremented once for a Failed status");
 
