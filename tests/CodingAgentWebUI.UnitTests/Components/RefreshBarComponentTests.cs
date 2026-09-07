@@ -57,10 +57,10 @@ public class RefreshBarComponentTests : BunitContext
         options.Should().HaveCountGreaterThanOrEqualTo(5, "must have at least Off/10s/30s/1m/5m options");
 
         var values = options.Select(o => o.GetAttribute("value")).ToList();
-        values.Should().Contain("0",   "must include Off (0)");
-        values.Should().Contain("10",  "must include 10s");
-        values.Should().Contain("30",  "must include 30s");
-        values.Should().Contain("60",  "must include 1m (60s)");
+        values.Should().Contain("0", "must include Off (0)");
+        values.Should().Contain("10", "must include 10s");
+        values.Should().Contain("30", "must include 30s");
+        values.Should().Contain("60", "must include 1m (60s)");
         values.Should().Contain("300", "must include 5m (300s)");
     }
 
