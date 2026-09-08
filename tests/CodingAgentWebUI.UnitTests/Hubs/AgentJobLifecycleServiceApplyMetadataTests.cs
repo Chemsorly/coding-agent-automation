@@ -230,6 +230,34 @@ public class AgentJobLifecycleServiceApplyMetadataTests
         run.CodeReviewSuggestionCount.Should().Be(3);
     }
 
+    // ── PullRequestUrl ────────────────────────────────────────────────────────
+
+    [Fact]
+    public void ApplyStepMetadata_PullRequestUrl_ValidUrl_SetsProperty()
+    {
+        var run = MakeRun();
+        Apply(run, new() { ["PullRequestUrl"] = "https://github.com/test/repo/pull/42" });
+        run.PullRequestUrl.Should().Be("https://github.com/test/repo/pull/42");
+    }
+
+    [Fact]
+    public void ApplyStepMetadata_PullRequestUrl_EmptyString_PreservesExistingValue()
+    {
+        var run = MakeRun();
+        run.PullRequestUrl = "https://github.com/test/repo/pull/1";
+        Apply(run, new() { ["PullRequestUrl"] = "" });
+        run.PullRequestUrl.Should().Be("https://github.com/test/repo/pull/1",
+            "empty PullRequestUrl must not overwrite an existing non-empty value");
+    }
+
+    [Fact]
+    public void ApplyStepMetadata_PullRequestUrl_NullWhenNoMetadataKey_RemainsNull()
+    {
+        var run = MakeRun();
+        Apply(run, new() { ["BranchName"] = "feature/test" });
+        run.PullRequestUrl.Should().BeNull("PullRequestUrl must remain null when not present in metadata");
+    }
+
     // ── CodeReviewAgentsRun ───────────────────────────────────────────────────
 
     [Fact]

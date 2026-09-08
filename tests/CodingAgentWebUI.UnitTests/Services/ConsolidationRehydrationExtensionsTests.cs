@@ -38,12 +38,12 @@ public sealed class ConsolidationRehydrationExtensionsTests
         return builder.Build();
     }
 
-    private void SetupDefaults(IReadOnlyList<AgentEntry>? agents = null,
+    private void SetupDefaults(IReadOnlyList<AgentEntryDto>? agents = null,
         IReadOnlyList<ConsolidationRun>? queuedRuns = null)
     {
         _apiAgentClient
             .Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(agents ?? Array.Empty<AgentEntry>());
+            .ReturnsAsync(agents ?? Array.Empty<AgentEntryDto>());
 
         _consolidationService
             .Setup(s => s.CleanupOrphanedRunsAsync(
@@ -86,7 +86,7 @@ public sealed class ConsolidationRehydrationExtensionsTests
     [Fact]
     public async Task RunConsolidationStartupAsync_NoLiveAgents_CallsCleanupWithEmptySet()
     {
-        SetupDefaults(agents: Array.Empty<AgentEntry>());
+        SetupDefaults(agents: Array.Empty<AgentEntryDto>());
         await using var app = BuildApp();
 
         await app.RunConsolidationStartupAsync(new PipelineConfiguration());
@@ -102,7 +102,7 @@ public sealed class ConsolidationRehydrationExtensionsTests
     public async Task RunConsolidationStartupAsync_AgentWithActiveJob_ExcludesItFromOrphanSet()
     {
         // An agent actively running a job should NOT be treated as orphaned
-        var activeAgent = new AgentEntry
+        var activeAgent = AgentEntryDto.From(new AgentEntry
         {
             AgentId = "agent-1",
             ConnectionId = "conn-1",
@@ -110,7 +110,7 @@ public sealed class ConsolidationRehydrationExtensionsTests
             Labels = [],
             RegisteredAt = DateTimeOffset.UtcNow,
             ActiveJobId = "job-abc-123"
-        };
+        }, run: null);
         SetupDefaults(agents: [activeAgent]);
         await using var app = BuildApp();
 

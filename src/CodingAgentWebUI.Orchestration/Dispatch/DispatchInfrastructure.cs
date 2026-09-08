@@ -262,7 +262,8 @@ public class DispatchInfrastructure
             Identifier = issueDetail.Identifier,
             Labels = issueDetail.Labels,
             Title = issueDetail.Title,
-            Images = images
+            Images = images,
+            Url = issueDetail.Url
         };
 
         // Detect existing analysis and rework state from comments.
