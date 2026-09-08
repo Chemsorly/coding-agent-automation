@@ -343,7 +343,12 @@ public static class WorkItemEndpoints
         IOrchestratorRunService runService,
         IRunLifecycleManager runLifecycleManager,
         IDbContextFactory<PipelineDbContext>? dbFactory = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        // Test seam: when non-null, the telemetry task is awaited synchronously so tests can
+        // assert metric side-effects without Task.Delay races. In production this is always null
+        // and the fire-and-forget path is used. The route registration lambda does not pass this
+        // parameter, so the default (null) applies for all real HTTP requests.
+        Func<Guid, WorkItemStatusRequest, IDbContextFactory<PipelineDbContext>?, CancellationToken, Task>? telemetryFunc = null)
     {
         var transitionResult = await transitionService.TransitionDetailedAsync(
             id, request.Status,
@@ -385,13 +390,22 @@ public static class WorkItemEndpoints
                 await runLifecycleManager.CancelRunAsync(new RunId(id.ToString()), ct);
             }
 
-            // Emit telemetry for terminal transitions — fire-and-forget: enrichment query must
-            // not block the agent's 200 response, and a slow/failed DB read must not surface as a 500.
-            // Pass CancellationToken.None because the task runs independently of the HTTP request
-            // lifetime; using the request-scoped ct would cause spurious OperationCanceledException
-            // warnings when ASP.NET Core cancels the token as soon as the response is sent.
+            // Emit telemetry for terminal transitions.
+            // Production path: fire-and-forget so the enrichment DB read does not block the
+            // agent's 200 response and a slow/failed read does not surface as a 500.
+            // Test path: when telemetryFunc is provided the task is awaited, eliminating the
+            // Task.Delay race that made telemetry-asserting tests flaky on loaded CI hosts.
+            // CancellationToken.None is intentional: this task outlives the HTTP request lifetime;
+            // using the request-scoped ct would cause spurious OperationCanceledException warnings
+            // when ASP.NET Core cancels the token as soon as the response is sent.
             if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-                _ = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, CancellationToken.None);
+            {
+                var emitTask = (telemetryFunc ?? EmitTerminalStatusTelemetryAsync)(id, request, dbFactory, CancellationToken.None);
+                if (telemetryFunc is not null)
+                    await emitTask;
+                else
+                    _ = emitTask; // fire-and-forget in production
+            }
         }
 
         return TypedResults.Ok();
@@ -1205,7 +1219,7 @@ public static class WorkItemEndpoints
             entity.CompletedAt = DateTimeOffset.UtcNow;
     }
 
-    private static async Task EmitTerminalStatusTelemetryAsync(
+    internal static async Task EmitTerminalStatusTelemetryAsync(
         Guid id,
         WorkItemStatusRequest request,
         IDbContextFactory<PipelineDbContext>? dbFactory,

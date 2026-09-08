@@ -279,17 +279,12 @@ public sealed class PostStatusIdempotencyTests
         var runService = new Mock<IOrchestratorRunService>().Object;
         var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
 
-        // Act
+        // Act — pass EmitTerminalStatusTelemetryAsync as telemetryFunc so PostStatus awaits it
+        // before returning. This eliminates the Task.Delay(200) race: the metric is recorded
+        // synchronously (from the test's perspective) before the assertion runs.
         var result = await WorkItemEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager, dbFactory);
-
-        // EmitTerminalStatusTelemetryAsync is fire-and-forget — wait for it
-        // TODO: 200 ms is a timing-dependent wait for the fire-and-forget telemetry task. This can
-        // produce flaky false-negatives on a slow CI machine (task hasn't run yet when assertion fires)
-        // or false-positives if the task is never queued. Consider refactoring EmitTerminalStatusTelemetryAsync
-        // to return the Task (store it in a local) so it can be awaited directly in tests, or use a
-        // TaskCompletionSource/ManualResetEventSlim signalled from within the telemetry path.
-        await Task.Delay(200);
+            item.Id, request, transitionService, runService, lifecycleManager, dbFactory,
+            telemetryFunc: WorkItemEndpoints.EmitTerminalStatusTelemetryAsync);
 
         // Assert
         result.Should().BeOfType<Ok>();
@@ -443,17 +438,12 @@ public sealed class PostStatusIdempotencyTests
                 It.IsAny<FailureReason?>()))
             .ReturnsAsync((PipelineRun?)null);
 
-        // Act
+        // Act — pass EmitTerminalStatusTelemetryAsync as telemetryFunc so PostStatus awaits it.
+        // This eliminates the Task.Delay(200) race and the cross-test meter-listener leakage
+        // that caused {"Timeout"} to appear instead of {"none"} on loaded CI hosts.
         var result = await WorkItemEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory);
-
-        // EmitTerminalStatusTelemetryAsync is fire-and-forget — wait for it
-        // TODO: Task.Delay(200) is a timing-dependent synchronisation mechanism and is known to be
-        // flaky on loaded CI hosts (see existing TODO at PostStatus_ActualTerminalTransition_EmitsTelemetry).
-        // If capturedTags is empty on CI, the background task likely hadn't completed within 200 ms.
-        // Consider replacing with a polling loop (e.g. SpinWait / polling capturedTags with a timeout)
-        // or restructuring EmitTerminalStatusTelemetryAsync to be awaitable in tests.
-        await Task.Delay(200);
+            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory,
+            telemetryFunc: WorkItemEndpoints.EmitTerminalStatusTelemetryAsync);
 
         // Assert
         result.Should().BeOfType<Ok>();
@@ -514,16 +504,10 @@ public sealed class PostStatusIdempotencyTests
                 It.IsAny<FailureReason?>()))
             .ReturnsAsync((PipelineRun?)null);
 
-        // Act
+        // Act — pass EmitTerminalStatusTelemetryAsync as telemetryFunc so PostStatus awaits it.
         var result = await WorkItemEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory);
-
-        // TODO: Task.Delay(200) is a timing-dependent synchronisation mechanism and is known to be
-        // flaky on loaded CI hosts (see existing TODO at PostStatus_ActualTerminalTransition_EmitsTelemetry).
-        // If capturedTags is empty on CI, the background task likely hadn't completed within 200 ms.
-        // Consider replacing with a polling loop or restructuring EmitTerminalStatusTelemetryAsync
-        // to be awaitable in tests.
-        await Task.Delay(200);
+            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory,
+            telemetryFunc: WorkItemEndpoints.EmitTerminalStatusTelemetryAsync);
 
         // Assert
         result.Should().BeOfType<Ok>();
