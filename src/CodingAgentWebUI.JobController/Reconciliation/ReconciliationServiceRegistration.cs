@@ -1,5 +1,4 @@
 using CodingAgentWebUI.Api.Client;
-using CodingAgentWebUI.JobController.Dispatch;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Pipeline.LeaderElection;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,9 +14,7 @@ public static class ReconciliationServiceRegistration
     /// Registers <see cref="ReconciliationService"/> and <see cref="ReconciliationLoop"/>.
     /// Requires <see cref="DispatchServiceOptions"/> to already be registered.
     /// Also registers <see cref="IReconciliationTrigger"/> as a forwarding alias to the singleton
-    /// <see cref="ReconciliationService"/> instance, allowing <see cref="DispatchLoop"/> and
-    /// <see cref="ConsolidationDispatchLoop"/> to request early reconciliation cycles without
-    /// depending on the concrete service type.
+    /// <see cref="ReconciliationService"/> instance.
     /// </summary>
     public static IServiceCollection AddReconciliationService(this IServiceCollection services)
     {
@@ -31,10 +28,12 @@ public static class ReconciliationServiceRegistration
             sp.GetRequiredService<ReconciliationLoop>()));
 
         // Register IReconciliationTrigger as a forwarding alias to the same ReconciliationService
-        // singleton. Both DispatchLoop and ConsolidationDispatchLoop depend on this interface
-        // to signal an early reconciliation cycle when needed.
-        // The factory is lazy — IReconciliationTrigger is resolved only when DispatchLoop
-        // is first requested, at which point ReconciliationService is already registered.
+        // singleton. Previously used by DispatchLoop and ConsolidationDispatchLoop (both removed)
+        // to signal early reconciliation cycles. The registration is kept because
+        // ReconciliationService implements IReconciliationTrigger and the interface may be used
+        // by future dispatch components.
+        // The factory is lazy — IReconciliationTrigger is resolved only when first requested,
+        // at which point ReconciliationService is already registered.
         services.AddSingleton<IReconciliationTrigger>(sp => sp.GetRequiredService<ReconciliationService>());
 
         services.AddHostedService(sp => sp.GetRequiredService<ReconciliationService>());

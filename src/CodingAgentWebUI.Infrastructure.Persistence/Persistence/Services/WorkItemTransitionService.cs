@@ -264,17 +264,18 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
     public static bool IsValidTransition(WorkItemStatus current, WorkItemStatus target)
         => (current, target) switch
         {
-            // Pending→Dispatched: used exclusively by the consolidation dispatch path (ClaimWorkItem
-            // endpoint and ConsolidationDispatchLoop). The regular live dispatch path (issue #2322)
-            // no longer creates items as Pending — it creates them directly as Dispatched. This
-            // transition MUST remain until the consolidation dispatch is migrated to the synchronous
-            // path (explicitly out of scope for issue #2322; see "Out of Scope" section).
-            // TODO [CRITICAL]: Remove Pending→Dispatched once consolidation dispatch is migrated.
+            // Pending→Dispatched: used by the consolidation claim endpoint (ClaimWorkItem).
+            // The regular live dispatch path (issue #2322) no longer creates items as Pending —
+            // it creates them directly as Dispatched. The consolidation JobController dispatch
+            // path (ConsolidationDispatchLoop) was removed in issue #2323.
+            // TODO [CRITICAL]: Remove Pending→Dispatched once the ClaimWorkItem endpoint is confirmed
+            // to have no remaining callers and consolidation claim flow is fully retired.
             (WorkItemStatus.Pending, WorkItemStatus.Dispatched or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,
-            // Dispatched→Pending: used by the consolidation dispatch path's K8s Job creation failure
-            // recovery (ConsolidationDispatchLoop.TryCreateK8sJobAsync calls RequeueAsync on failure,
-            // which transitions Dispatched→Pending). Also out of scope for issue #2322.
-            // TODO [CRITICAL]: Remove Dispatched→Pending once consolidation dispatch is migrated.
+            // Dispatched→Pending: was used by ConsolidationDispatchLoop.TryCreateK8sJobAsync
+            // (which called RequeueAsync on K8s Job creation failure, transitioning Dispatched→Pending).
+            // ConsolidationDispatchLoop was removed in issue #2323.
+            // TODO [CRITICAL]: Remove Dispatched→Pending once the consolidation claim/requeue flow
+            // is confirmed to have no remaining callers.
             (WorkItemStatus.Dispatched, WorkItemStatus.Running or WorkItemStatus.Failed or WorkItemStatus.Cancelled or WorkItemStatus.Pending) => true,
             (WorkItemStatus.Running, WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,
             // Requeue paths: Failed/Cancelled → Pending (Req 6.1, POST /api/work-items/{id}/requeue)

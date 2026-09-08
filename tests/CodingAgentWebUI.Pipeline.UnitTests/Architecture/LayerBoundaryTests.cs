@@ -389,12 +389,14 @@ public partial class LayerBoundaryTests
             // The T4 scanner does not detect the cast pattern — service is actively registered.
             "LoopStatusPollingService",
 
-            // Spec 049: ConsolidationWorkItemDispatchService moved from CodingAgentWebUI.Api to
-            // the JobController (as ConsolidationDispatchService). The source file remains in the
-            // Api project for existing unit test coverage (CodingAgentWebUI.Orchestration.UnitTests)
-            // but it is no longer registered as a hosted service anywhere in the API.
-            // It will be deleted once the Orchestration.UnitTests are migrated to test the new
-            // ConsolidationDispatchLoop in the JobController.
+            // Issue #2323: ConsolidationWorkItemDispatchService was moved from CodingAgentWebUI.Api
+            // to the JobController (as ConsolidationDispatchService + ConsolidationDispatchLoop).
+            // Both the JobController dispatch service and its loop were subsequently removed in
+            // issue #2323 (they were already no-ops in production — consolidation items are
+            // dispatched synchronously via POST /api/work-items/dispatch).
+            // The Api project source file is retained only for existing unit test coverage
+            // (CodingAgentWebUI.Orchestration.UnitTests); it is not registered as a hosted service
+            // anywhere in production and will be deleted once those tests are migrated.
             "ConsolidationWorkItemDispatchService",
         };
 
