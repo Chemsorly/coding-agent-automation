@@ -237,7 +237,8 @@ public partial class QualityGateExecutor
             {
                 ciGate = new GateResult
                 {
-                    GateName = "External CI", Passed = false,
+                    GateName = "External CI",
+                    Passed = false,
                     Details = $"Post-PR CI timed out after {config.ExternalCiTimeout}"
                 };
                 callbacks.EmitOutputLine($"❌ Post-PR CI timed out after {config.ExternalCiTimeout}");
@@ -248,7 +249,8 @@ public partial class QualityGateExecutor
                 _logger.Warning(ex, "Pipeline {RunId} post-PR CI check failed, treating as gate failure", run.RunId);
                 ciGate = new GateResult
                 {
-                    GateName = "External CI", Passed = false,
+                    GateName = "External CI",
+                    Passed = false,
                     Details = $"Post-PR CI error: {ex.Message}"
                 };
             }
