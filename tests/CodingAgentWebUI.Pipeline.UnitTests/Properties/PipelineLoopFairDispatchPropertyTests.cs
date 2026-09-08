@@ -194,7 +194,8 @@ public class PipelineLoopFairDispatchPropertyTests
         {
             ClosedLoopPollInterval = TimeSpan.FromSeconds(60),
             ClosedLoopMaxRunsPerCycle = input.Budget,
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            WorkspaceBaseDirectory = Path.GetTempPath(),
+            ClosedLoopAutoStart = true,
         };
 
         var mockStore = new Mock<IConfigurationStore>();

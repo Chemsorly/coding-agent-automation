@@ -30,6 +30,20 @@ public sealed partial class PipelineLoopService
                 continue;
             }
 
+            // Detect DB-based stop: another pod (or a restart) wrote ClosedLoopAutoStart=false.
+            // SnapshotCycleConfigAsync re-reads PipelineConfiguration from the store every cycle,
+            // so this check sees the updated value within one poll interval (bounded by the
+            // ApiPipelineConfigStore TTL, typically ≤ 60s). Calling StopLoop() (rather than just
+            // break) ensures _stopRequested is set, CleanupAsync fires with
+            // rearmForLeaderReacquisition=false, IsLoopActive becomes false, and NotifyChange()
+            // propagates the updated status — identical semantics to a direct StopLoop() call.
+            if (!snapshot.Config.ClosedLoopAutoStart)
+            {
+                _logger.Information("Pipeline loop stopping — ClosedLoopAutoStart=false read from config");
+                StopLoop();
+                break;
+            }
+
             if (!await ExecuteCycleAsync(snapshot, stoppingToken, ct))
                 break;
         }

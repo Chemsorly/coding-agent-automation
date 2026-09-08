@@ -61,6 +61,7 @@ public static class TestPipelineConfig
         CiCancelledMoveMaxRetries = PipelineConstants.DefaultCiCancelledMoveMaxRetries,
         FeedbackTimeoutSeconds = 60,
         HousekeepingTriggerCooldownMinutes = 25,
+        ClosedLoopAutoStart = true,
     };
 
     /// <summary>
@@ -116,5 +117,6 @@ public static class TestPipelineConfig
         CiCancelledMoveMaxRetries = PipelineConstants.DefaultCiCancelledMoveMaxRetries,
         FeedbackTimeoutSeconds = 60,
         HousekeepingTriggerCooldownMinutes = 25,
+        ClosedLoopAutoStart = true,
     };
 }

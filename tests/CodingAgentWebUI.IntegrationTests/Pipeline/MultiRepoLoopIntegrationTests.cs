@@ -37,7 +37,8 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
         {
             WorkspaceBaseDirectory = WorkspaceBase,
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-            ClosedLoopMaxConsecutivePollFailures = 5
+            ClosedLoopMaxConsecutivePollFailures = 5,
+            ClosedLoopAutoStart = true,
         };
         await ConfigStore.SavePipelineConfigAsync(config, CancellationToken.None);
 

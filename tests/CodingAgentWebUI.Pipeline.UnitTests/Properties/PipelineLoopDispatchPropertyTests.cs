@@ -30,7 +30,8 @@ public class PipelineLoopDispatchPropertyTests
         {
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
             ClosedLoopMaxRunsPerCycle = 100,
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            WorkspaceBaseDirectory = Path.GetTempPath(),
+            ClosedLoopAutoStart = true,
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -119,7 +120,8 @@ public class PipelineLoopDispatchPropertyTests
         {
             ClosedLoopPollInterval = TimeSpan.FromSeconds(60), // Long interval so only one cycle runs
             ClosedLoopMaxRunsPerCycle = limit,
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            WorkspaceBaseDirectory = Path.GetTempPath(),
+            ClosedLoopAutoStart = true,
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -199,7 +201,8 @@ public class PipelineLoopDispatchPropertyTests
         {
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(30),
             ClosedLoopMaxConsecutivePollFailures = 2,
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            WorkspaceBaseDirectory = Path.GetTempPath(),
+            ClosedLoopAutoStart = true,
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -283,7 +286,8 @@ public class PipelineLoopDispatchPropertyTests
 
         var config = new PipelineConfiguration
         {
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            WorkspaceBaseDirectory = Path.GetTempPath(),
+            ClosedLoopAutoStart = true,
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -320,7 +324,8 @@ public class PipelineLoopDispatchPropertyTests
         var config = new PipelineConfiguration
         {
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            WorkspaceBaseDirectory = Path.GetTempPath(),
+            ClosedLoopAutoStart = true,
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -396,7 +401,8 @@ public class PipelineLoopDispatchPropertyTests
         var config = new PipelineConfiguration
         {
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            WorkspaceBaseDirectory = Path.GetTempPath(),
+            ClosedLoopAutoStart = true,
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -464,7 +470,8 @@ public class PipelineLoopDispatchPropertyTests
         var config = new PipelineConfiguration
         {
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            WorkspaceBaseDirectory = Path.GetTempPath(),
+            ClosedLoopAutoStart = true,
         };
 
         var mockStore = new Mock<IConfigurationStore>();
