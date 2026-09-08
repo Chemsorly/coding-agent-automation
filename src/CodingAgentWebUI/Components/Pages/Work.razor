@@ -99,8 +99,15 @@
                         <tbody>
                             @foreach (var a in _active)
                             {
-                                <tr>
-                                    <td class="monitoring-mono">#@a.IssueIdentifier</td>
+                                <tr class="monitoring-row-clickable" @onclick="() => OpenRun(a.Id)">
+                                    <td>
+                                        <span class="monitoring-mono" style="font-weight: 600;">#@a.IssueIdentifier</span>
+                                        @if (!string.IsNullOrEmpty(a.IssueTitle))
+                                        {
+                                            @(" ")<!-- space between number and title, matching Queue/ProviderBacklog pattern -->
+                                            <span style="color: var(--text-muted);">@Truncate(a.IssueTitle, 60)</span>
+                                        }
+                                    </td>
                                     <td><span class="cockpit-chip" style="color: @StatusColor(a.Status);">@a.Status</span></td>
                                     <td>
                                         @if (a.CurrentStep is not null)
@@ -120,7 +127,8 @@
                                         <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
                                                 disabled="@_cancelling.Contains(a.Id)"
                                                 title="Cancel this in-flight run"
-                                                @onclick="() => CancelWorkItemAsync(a.Id)">
+                                                @onclick="() => CancelWorkItemAsync(a.Id)"
+                                                @onclick:stopPropagation="true">
                                             @(_cancelling.Contains(a.Id) ? "Cancelling…" : "Cancel")
                                         </button>
                                     </td>
@@ -393,6 +401,14 @@
         WorkItemStatus.Failed => "var(--error)",
         _ => "var(--text-muted)"
     };
+
+    // WorkItem.Id == run id. NavigationManager.NavigateTo with a relative path resolves against
+    // BaseUri, which is correct Blazor Server behaviour.
+    // TODO: [WARNING] Acceptance criterion "Clicking an active run row on the Overview page opens the run
+    // detail / pipeline sidebar" was not changed by this PR. Overview.razor already had @onclick on its
+    // active-run rows (cockpit-run-row → OpenRun) prior to this diff. If the criterion was genuinely
+    // broken at time of filing, the root cause was not identified here and may still be present.
+    private void OpenRun(Guid id) => Nav.NavigateTo($"runs/{id}");
 
     private static string Truncate(string? s, int n)
         => string.IsNullOrEmpty(s) ? "" : (s.Length > n ? s[..n] + "…" : s);

@@ -34,4 +34,11 @@ public sealed record ActiveWorkItemDto
     /// API process has restarted (in-memory state lost) and the Redis-backed path is not in use.
     /// </summary>
     public PipelineStep? CurrentStep { get; init; }
+
+    /// <summary>
+    /// Issue title extracted from <c>JobDistributionRequest.IssueDetail.Title</c> in the Payload.
+    /// Null when payload is absent, has no IssueDetail, or payload is malformed.
+    /// Populated by the API for display purposes only — not used by the Job Controller.
+    /// </summary>
+    public string? IssueTitle { get; init; }
 }

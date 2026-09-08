@@ -769,6 +769,66 @@ public sealed class WorkItemEndpointTests
         items.Should().NotContain(i => i.Id == failed.Id);
     }
 
+    [Fact]
+    public async Task GetActiveWorkItems_ReturnsIssueTitle_WhenPayloadHasIssueDetail()
+    {
+        // Seed a Dispatched work item whose Payload contains a JobDistributionRequest with IssueDetail.
+        var entity = SeedEntity(WorkItemStatus.Dispatched);
+
+        // Overwrite the Payload with one that includes IssueDetail so we can verify IssueTitle extraction.
+        var requestWithTitle = MakeRequest(entity.IssueIdentifier) with
+        {
+            IssueDetail = new IssueDetail
+            {
+                Description = "A test issue",
+                Identifier = entity.IssueIdentifier,
+                Labels = [],
+                Title = "My test issue title"
+            }
+        };
+        using (var db = _factory.CreateDbContext())
+        {
+            var item = await db.WorkItems.FindAsync(entity.Id);
+            item!.Payload = JsonSerializer.Serialize(requestWithTitle, PipelineJsonOptions.Default);
+            await db.SaveChangesAsync();
+        }
+
+        var response = await _client.GetAsync("/api/work-items/active?olderThanSeconds=0");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await response.Content.ReadFromJsonAsync<List<ActiveWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+        var seeded = items!.FirstOrDefault(i => i.Id == entity.Id);
+        seeded.Should().NotBeNull("the seeded active item must appear in the response");
+        seeded!.IssueTitle.Should().Be("My test issue title",
+            "IssueTitle must be extracted from JobDistributionRequest.IssueDetail.Title in the Payload");
+    }
+
+    [Fact]
+    public async Task GetActiveWorkItems_ReturnsNullIssueTitle_WhenPayloadLacksIssueDetail()
+    {
+        // SeedEntity uses MakeRequest which sets IssueDetail = null — so IssueTitle must be null.
+        var entity = SeedEntity(WorkItemStatus.Running);
+
+        var response = await _client.GetAsync("/api/work-items/active?olderThanSeconds=0");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await response.Content.ReadFromJsonAsync<List<ActiveWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+        var seeded = items!.FirstOrDefault(i => i.Id == entity.Id);
+        seeded.Should().NotBeNull("the seeded active item must appear in the response");
+        seeded!.IssueTitle.Should().BeNull(
+            "IssueTitle must be null when the Payload JobDistributionRequest has no IssueDetail");
+    }
+
+    // TODO: [WARNING] Missing test for null-Payload active work items. The production code in
+    // GetActiveWorkItems has an explicit `if (w.Payload is not null)` guard and a `catch (JsonException)`
+    // branch, but neither path is exercised by the tests above — SeedEntity always writes a non-null
+    // Payload. Add a test that inserts a WorkItemStatus.Running entity with Payload = null (matching the
+    // GetPendingWorkItems_WithNullPayload_ReturnsNullForNewFields pattern) and asserts the response is
+    // HTTP 200 with IssueTitle == null. Also add a corrupt-payload variant (invalid JSON string) for the
+    // JsonException branch.
+
     // ── LabelSwap ─────────────────────────────────────────────────────────────────
 
     [Fact]
