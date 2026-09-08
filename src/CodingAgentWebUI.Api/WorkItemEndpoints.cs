@@ -336,14 +336,24 @@ public static class WorkItemEndpoints
     // concrete class with an in-memory DB. Consider adding TransitionDetailedAsync to an interface
     // (e.g. IWorkItemTransitionService or a new IWorkItemTransitionDetailedService) so PostStatus can
     // be tested with pure mocks and to allow future DI substitution.
-    internal static async Task<IResult> PostStatus(
+    internal static async Task<IResult> PostStatus( // NOSONAR S107 — 8th param is a test-only seam; CA1068 suppressed via attribute below
         Guid id,
         WorkItemStatusRequest request,
         WorkItemTransitionService transitionService,
         IOrchestratorRunService runService,
         IRunLifecycleManager runLifecycleManager,
         IDbContextFactory<PipelineDbContext>? dbFactory = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        // Test seam only: when true, the telemetry task is awaited before returning so tests can
+        // assert metric side-effects deterministically. In production the route lambda never passes
+        // this parameter, so it defaults to false and the fire-and-forget path is unchanged.
+        // Suppression: CA1068 (ct not last) and S107 (>7 params) are acceptable here because
+        // this is an internal method with a test-only parameter appended after the conventional
+        // CancellationToken position. Moving the bool before ct would break naming conventions;
+        // splitting into an overload doubles the S107 surface area. The bool is never passed by
+        // production callers.
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1068", Justification = "Test seam bool appended after ct intentionally")]
+        bool awaitTelemetry = false)
     {
         var transitionResult = await transitionService.TransitionDetailedAsync(
             id, request.Status,
@@ -385,13 +395,22 @@ public static class WorkItemEndpoints
                 await runLifecycleManager.CancelRunAsync(new RunId(id.ToString()), ct);
             }
 
-            // Emit telemetry for terminal transitions — fire-and-forget: enrichment query must
-            // not block the agent's 200 response, and a slow/failed DB read must not surface as a 500.
-            // Pass CancellationToken.None because the task runs independently of the HTTP request
-            // lifetime; using the request-scoped ct would cause spurious OperationCanceledException
-            // warnings when ASP.NET Core cancels the token as soon as the response is sent.
+            // Emit telemetry for terminal transitions.
+            // Production path (awaitTelemetry=false): fire-and-forget so the enrichment DB read
+            // does not block the agent's 200 response and a slow/failed read does not surface as a 500.
+            // Test path (awaitTelemetry=true): task is awaited before returning, eliminating the
+            // Task.Delay race that made telemetry-asserting tests flaky on loaded CI hosts.
+            // CancellationToken.None is intentional: this task outlives the HTTP request lifetime;
+            // using the request-scoped ct would cause spurious OperationCanceledException warnings
+            // when ASP.NET Core cancels the token as soon as the response is sent.
             if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-                _ = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, CancellationToken.None);
+            {
+                var emitTask = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, CancellationToken.None);
+                if (awaitTelemetry)
+                    await emitTask;
+                else
+                    _ = emitTask;
+            }
         }
 
         return TypedResults.Ok();
