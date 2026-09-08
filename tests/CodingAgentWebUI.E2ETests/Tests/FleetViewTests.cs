@@ -47,7 +47,8 @@ public sealed class FleetViewTests : E2ETestBase
             Identifier = issueId,
             Title = $"Fleet test issue {issueId}",
             Description = "E2E test",
-            Labels = ["enhancement"]
+            Labels = ["enhancement"],
+            Url = $"https://github.com/test/repo/issues/{issueId}"
         });
 
         var codingPage = new AgentCodingPage(Page, BaseUrl);
