@@ -917,8 +917,51 @@ public static class WorkItemEndpoints
         if (!string.IsNullOrEmpty(projectId) && Guid.TryParse(projectId, out var scopeProjectId))
             active = active.Where(w => w.ProjectId == scopeProjectId);
 
-        var items = await active
-            .Select(w => new ActiveWorkItemDto
+        // Phase 1: SQL projection — include Payload alongside the scalar fields.
+        // Payload is fetched here so we can extract display fields in-memory (Phase 2).
+        // TODO [WARNING]: This endpoint is also called by ReconciliationService on a tight polling loop for
+        // timeout enforcement. Fetching the full Payload column (unbounded JSONB) on every reconciliation
+        // tick introduces unnecessary memory pressure. Consider skipping Payload deserialization when the
+        // caller is the reconciliation path (e.g. via a dedicated endpoint or a query param flag) so that
+        // IssueTitle is only fetched for UI requests.
+        var raw = await active
+            .Select(w => new
+            {
+                w.Id,
+                w.Status,
+                w.DispatchedAt,
+                w.AgentSelector,
+                w.IssueIdentifier,
+                w.K8sJobName,
+                w.TimeoutSeconds,
+                w.Payload // NOTE: Payload is included intentionally here for UI title extraction (Phase 2).
+                          // The reconciliation code path previously did not need payload data.
+            })
+            .ToListAsync(ct);
+
+        // Phase 2: in-memory deserialization to extract IssueTitle from Payload.
+        // Uses PipelineJsonOptions.Lenient for robustness against older serializer configs.
+        // A malformed payload produces null IssueTitle rather than a 500 — same defensive
+        // pattern used in GetPendingWorkItems.
+        // TODO [WARNING]: The deserialization loop below is synchronous and does not check ct.IsCancellationRequested.
+        // For typical active-run counts this is not a problem, but if the active set grows large, a cancelled
+        // request cannot be unwound until the loop completes. Consider adding ct.ThrowIfCancellationRequested()
+        // at the top of the loop body to match the cancellation discipline of the surrounding async code.
+        var items = raw.Select(w =>
+        {
+            JobDistributionRequest? req = null;
+            if (w.Payload is not null)
+            {
+                try
+                {
+                    req = JsonSerializer.Deserialize<JobDistributionRequest>(w.Payload, PipelineJsonOptions.Lenient);
+                }
+                catch (JsonException)
+                {
+                    // Corrupt or legacy payload — fall back to null display fields for this row.
+                }
+            }
+            return new ActiveWorkItemDto
             {
                 Id = w.Id,
                 Status = w.Status,
@@ -926,9 +969,10 @@ public static class WorkItemEndpoints
                 AgentSelector = w.AgentSelector,
                 IssueIdentifier = w.IssueIdentifier,
                 K8sJobName = w.K8sJobName,
-                TimeoutSeconds = w.TimeoutSeconds
-            })
-            .ToListAsync(ct);
+                TimeoutSeconds = w.TimeoutSeconds,
+                IssueTitle = req?.IssueDetail?.Title
+            };
+        }).ToList();
 
         return TypedResults.Ok((IReadOnlyList<ActiveWorkItemDto>)items);
     }

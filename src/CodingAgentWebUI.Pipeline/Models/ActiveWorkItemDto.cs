@@ -26,4 +26,11 @@ public sealed record ActiveWorkItemDto
     /// to <c>PipelineConstants.DefaultAgentTimeout</c>.
     /// </summary>
     public int TimeoutSeconds { get; init; }
+
+    // ── Display fields for the Work Queue UI ─────────────────────────────────
+    // Populated by the API from the Payload JSONB column.
+    // The Job Controller claim/reconciliation path never reads these fields; they are null-safe additions.
+
+    /// <summary>Issue title from <c>JobDistributionRequest.IssueDetail.Title</c>. Null when payload is absent or has no IssueDetail.</summary>
+    public string? IssueTitle { get; init; }
 }

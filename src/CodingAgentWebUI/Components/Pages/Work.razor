@@ -99,12 +99,20 @@
                         <tbody>
                             @foreach (var a in _active)
                             {
-                                <tr>
-                                    <td class="monitoring-mono">#@a.IssueIdentifier</td>
+                                <tr class="monitoring-row-clickable" @onclick="() => OpenRunDetail(a.Id)">
+                                    <td>
+                                        <span class="monitoring-mono" style="font-weight: 600;">#@a.IssueIdentifier</span>
+                                        <span style="color: var(--text-muted);">@Truncate(a.IssueTitle, 60)</span>
+                                    </td>
                                     <td><span class="cockpit-chip" style="color: @StatusColor(a.Status);">@a.Status</span></td>
                                     <td class="monitoring-mono monitoring-muted">@a.AgentSelector</td>
                                     <td>@(a.DispatchedAt is null ? "—" : Ago(a.DispatchedAt.Value))</td>
-                                    <td style="text-align: right;">
+                                    @* TODO [WARNING]: @onclick:stopPropagation="true" is placed on the <td> rather than the <button>.
+                                         Blazor's event delegation currently prevents the <tr> handler from firing when the button
+                                         is clicked, but this relies on internal Blazor delegation behaviour. If that changes,
+                                         the Cancel button could accidentally trigger OpenRunDetail. Consider moving
+                                         @onclick:stopPropagation="true" directly onto the <button> element for clarity and safety. *@
+                                    <td style="text-align: right;" @onclick:stopPropagation="true">
                                         <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
                                                 disabled="@_cancelling.Contains(a.Id)"
                                                 title="Cancel this in-flight run"
@@ -339,6 +347,10 @@
             _cancelling.Remove(id);
         }
     }
+
+    // Navigates to the run detail page for an in-flight work item.
+    // WorkItem.Id equals the PipelineRun.RunId (Guid string), so /runs/{id} is the correct route.
+    private void OpenRunDetail(Guid id) => Nav.NavigateTo($"/runs/{id}");
 
     // Sets the dispatch priority weight for a pending WorkItem.
     // On success, clears any prior error and refreshes to show the authoritative server value.

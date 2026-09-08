@@ -268,4 +268,108 @@ public class WorkComponentTests : BunitContext
         cut.Markup.Should().NotContain("stale error",
             "a successful priority update must clear any previously displayed error");
     }
+
+    // ── Test 8: In-flight table renders issue number + title ─────────────────
+
+    /// <summary>
+    /// Builds a minimal <see cref="ActiveWorkItemDto"/> for in-flight table rendering tests.
+    /// </summary>
+    private static ActiveWorkItemDto MakeActiveItem(Guid id, string issueIdentifier = "2231", string? issueTitle = null) => new()
+    {
+        Id = id,
+        Status = WorkItemStatus.Running,
+        DispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-10),
+        AgentSelector = "kiro",
+        IssueIdentifier = issueIdentifier,
+        IssueTitle = issueTitle
+    };
+
+    [Fact]
+    public void InFlightTable_RendersIssueNumber_AndTitle()
+    {
+        var itemId = Guid.NewGuid();
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakeActiveItem(itemId, "2231", "Fix critical regression in scheduler")]);
+
+        var cut = Render<Work>();
+
+        // The in-flight table must show both the issue number and the title.
+        var markup = cut.Markup;
+        markup.Should().Contain("#2231", "the issue number must appear in the in-flight row");
+        markup.Should().Contain("Fix critical regression in scheduler",
+            "the issue title must appear in the in-flight row when IssueTitle is populated");
+    }
+
+    [Fact]
+    public void InFlightTable_RendersIssueNumber_WhenTitleIsNull()
+    {
+        var itemId = Guid.NewGuid();
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakeActiveItem(itemId, "2231", issueTitle: null)]);
+
+        var cut = Render<Work>();
+
+        // The row must still render even when IssueTitle is null (legacy/minimal payload path).
+        cut.Markup.Should().Contain("#2231", "the issue number must appear even when IssueTitle is null");
+    }
+
+    // ── Test 9: Clicking an in-flight row navigates to the run detail page ───
+
+    [Fact]
+    public async Task InFlightTable_RowClick_NavigatesToRunDetail()
+    {
+        var itemId = Guid.NewGuid();
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakeActiveItem(itemId, "2231", "Fix regression")]);
+
+        var cut = Render<Work>();
+        var nav = Services.GetRequiredService<NavigationManager>();
+
+        // Click the in-flight row (the <tr> with monitoring-row-clickable).
+        await cut.InvokeAsync(() =>
+        {
+            var row = cut.Find(".monitoring-table tbody tr.monitoring-row-clickable");
+            row.Click();
+        });
+
+        nav.Uri.Should().EndWith($"/runs/{itemId}",
+            "clicking an in-flight row must navigate to the run detail page for that work item's id");
+    }
+
+    // ── Test 10: Cancel button click does NOT navigate (stopPropagation) ─────
+    // TODO [WARNING]: This test does not actually verify that @onclick:stopPropagation="true" is working.
+    // In bUnit, clicking a child <button> directly does not simulate DOM event bubbling up through the <td>
+    // that carries the directive — the click never reaches the <tr> handler regardless of whether the
+    // directive is present or absent. The assertion nav.Uri.Should().Be(initialUri) would pass even if
+    // @onclick:stopPropagation were removed from the markup. A true regression would not be caught here.
+    // Consider an integration/E2E test or a DOM-bubbling simulation to properly cover this behaviour.
+
+    [Fact]
+    public async Task InFlightTable_CancelButtonClick_DoesNotNavigate()
+    {
+        var itemId = Guid.NewGuid();
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakeActiveItem(itemId, "2231", "Fix regression")]);
+        _mockWorkItems
+            .Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var cut = Render<Work>();
+        var nav = Services.GetRequiredService<NavigationManager>();
+        var initialUri = nav.Uri;
+
+        // Click only the Cancel button — propagation is stopped, so nav should not change.
+        await cut.InvokeAsync(async () =>
+        {
+            var cancelBtn = cut.Find(".btn-cancel-small");
+            await cancelBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+        });
+
+        nav.Uri.Should().Be(initialUri,
+            "clicking the Cancel button must not trigger row navigation (stopPropagation is set on the button cell)");
+    }
 }

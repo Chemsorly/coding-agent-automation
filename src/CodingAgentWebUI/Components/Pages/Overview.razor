@@ -230,6 +230,12 @@
         => r.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled;
 
     private void OpenRun(string runId) => Nav.NavigateTo($"/runs/{runId}");
+    // TODO [WARNING]: The acceptance criterion "Clicking an active run row on the Overview page opens the
+    // run detail / pipeline sidebar" was listed as a required fix in issue #2335. This handler was already
+    // present before the fix branch was cut, so no code change was made here. There is currently no
+    // automated test covering this click behaviour on the Overview page. Consider adding a bUnit test
+    // (similar to InFlightTable_RowClick_NavigatesToRunDetail in WorkComponentTests) to verify that
+    // clicking a cockpit-run-row on Overview navigates to /runs/{runId}.
 
     // ── loop hero (read-only) ───────────────────────────────────────────────
     private string LoopTitle => LoopService.IsSchedulerUnreachable ? "Scheduler unavailable"
