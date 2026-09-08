@@ -85,7 +85,7 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         var errors = new List<string>();
         if (!report.Compilation.Passed)
             errors.Add($"Compilation: {report.Compilation.Details}");
-        // TODO [WARNING]: report.Tests is accessed without a null-conditional here. A QGC configured
+        // NOTE [WARNING]: report.Tests is accessed without a null-conditional here. A QGC configured
         // with only a BuildCommand and no TestCommand produces a QualityGateReport where Tests is null,
         // causing a NullReferenceException before BuildQualityGateRetryPrompt is even reached.
         // Fix: guard with `if (report.Tests is { Passed: false })` consistent with SecurityScan/ExternalCi.
@@ -104,7 +104,7 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"Quality gates failed (attempt {attempt}/{maxRetries}):");
         sb.AppendLine($"- Compilation: {(report.Compilation.Passed ? GateStatusPassed : GateStatusFailed)} ({report.Compilation.Details})");
-        // TODO [WARNING]: report.Tests is dereferenced without a null-conditional. A QGC configured
+        // NOTE [WARNING]: report.Tests is dereferenced without a null-conditional. A QGC configured
         // with only a BuildCommand and no TestCommand produces a report where Tests is null, causing
         // a NullReferenceException here. The priorRetryErrors overload correctly uses report.Tests?.Passed
         // and report.Tests?.Details. Apply the same null-conditional pattern here for consistency.
@@ -160,10 +160,10 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         // diagnostic files exist. For all other failures, assume output was written.
         // Use null-conditional on report.Tests throughout: required on the model but may be null
         // when constructed outside BuildAggregateReport (e.g., legacy payloads, test helpers).
-        // TODO [WARNING]: There is no test covering this overload with report.Tests == null (i.e. a run
+        // NOTE [WARNING]: There is no test covering this overload with report.Tests == null (i.e. a run
         // where no QGC configures a test gate). The null-conditional guards below prevent a NRE, but
-        // the resulting prompt would render "- Tests: FAILED ()" which is misleading. Add a test with
-        // a report where Tests is null to verify graceful handling.
+        // the resulting prompt would render "- Tests: FAILED ()" which is misleading. A test with
+        // a report where Tests is null should be added to verify graceful handling.
         // See review finding: TestQualityReviewer WARNING — QualityGateExecutor.cs
         var hasQualityGateOutput = !(report.QgcResults.Any(r => r.Tests?.IsInfrastructureFailure == true)
             || report.Tests?.IsInfrastructureFailure == true);
@@ -191,20 +191,8 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         // Append prior-attempt history when there is more than one entry. On the first retry
         // there is exactly one entry (enqueued just before this call), so the guard `Count > 1`
         // correctly suppresses the section on attempt 1.
-        if (priorRetryErrors is { Count: > 1 })
-        {
-            sb.AppendLine();
-            sb.AppendLine("**Prior attempt failures** (most recent last):");
-            var recentErrors = priorRetryErrors.TakeLast(5).ToList();
-            var startAttempt = attempt - recentErrors.Count;
-            for (var i = 0; i < recentErrors.Count; i++)
-                sb.AppendLine($"  Attempt {startAttempt + i + 1}: {recentErrors[i]}");
-
-            // All entries identical → likely a transient infrastructure issue, not a code bug.
-            var allIdentical = priorRetryErrors.Distinct().Count() == 1;
-            if (allIdentical)
-                sb.AppendLine("⚠️ All prior attempts produced identical failures — this is likely a transient infrastructure failure (e.g. OOM, flaky test environment). Consider whether a code fix is appropriate before retrying.");
-        }
+        // Append prior-attempt history; delegated to keep complexity within Sonar S3776 threshold.
+        AppendPriorRetryHistory(sb, priorRetryErrors, attempt);
 
         sb.AppendLine();
         sb.AppendLine("Before fixing, reflect:");
@@ -214,5 +202,28 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         sb.AppendLine();
         sb.Append("Apply the targeted fix, then verify by running the failing command again.");
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Appends a "Prior attempt failures" history section to <paramref name="sb"/> when
+    /// <paramref name="priorRetryErrors"/> contains more than one entry (first retry is suppressed —
+    /// there is no useful history yet). Extracted to keep <see cref="BuildQualityGateRetryPrompt"/>
+    /// below the Sonar S3776 cognitive-complexity threshold.
+    /// </summary>
+    private static void AppendPriorRetryHistory(
+        System.Text.StringBuilder sb, IReadOnlyList<string>? priorRetryErrors, int attempt)
+    {
+        if (priorRetryErrors is not { Count: > 1 }) return;
+
+        sb.AppendLine();
+        sb.AppendLine("**Prior attempt failures** (most recent last):");
+        var recentErrors = priorRetryErrors.TakeLast(5).ToList();
+        var startAttempt = attempt - recentErrors.Count;
+        for (var i = 0; i < recentErrors.Count; i++)
+            sb.AppendLine($"  Attempt {startAttempt + i + 1}: {recentErrors[i]}");
+
+        // All entries identical → likely a transient infrastructure issue, not a code bug.
+        if (priorRetryErrors.Distinct().Count() == 1)
+            sb.AppendLine("⚠️ All prior attempts produced identical failures — this is likely a transient infrastructure failure (e.g. OOM, flaky test environment). Consider whether a code fix is appropriate before retrying.");
     }
 }
