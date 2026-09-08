@@ -946,7 +946,9 @@ public sealed class DispatchLoopTests
             .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
-                Identifier = "1", Title = "Test", Description = "",
+                Identifier = "1",
+                Title = "Test",
+                Description = "",
                 Labels = new[] { label }
             });
 
@@ -1010,7 +1012,9 @@ public sealed class DispatchLoopTests
             .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
-                Identifier = "1", Title = "Test", Description = "",
+                Identifier = "1",
+                Title = "Test",
+                Description = "",
                 Labels = new[] { AgentLabels.Done }
             });
 
@@ -1084,15 +1088,25 @@ public sealed class DispatchLoopTests
 
         var item1 = new PendingWorkItemDto
         {
-            Id = id1, IssueIdentifier = "1", IssueProviderConfigId = "gh-1",
-            TaskType = WorkItemTaskType.Implementation, CreatedAt = DateTimeOffset.UtcNow,
-            AgentSelector = "dotnet10,opencode", RetryCount = 0, TimeoutSeconds = 0
+            Id = id1,
+            IssueIdentifier = "1",
+            IssueProviderConfigId = "gh-1",
+            TaskType = WorkItemTaskType.Implementation,
+            CreatedAt = DateTimeOffset.UtcNow,
+            AgentSelector = "dotnet10,opencode",
+            RetryCount = 0,
+            TimeoutSeconds = 0
         };
         var item2 = new PendingWorkItemDto
         {
-            Id = id2, IssueIdentifier = "1", IssueProviderConfigId = "gh-1",
-            TaskType = WorkItemTaskType.Implementation, CreatedAt = DateTimeOffset.UtcNow,
-            AgentSelector = "dotnet10,opencode", RetryCount = 0, TimeoutSeconds = 0
+            Id = id2,
+            IssueIdentifier = "1",
+            IssueProviderConfigId = "gh-1",
+            TaskType = WorkItemTaskType.Implementation,
+            CreatedAt = DateTimeOffset.UtcNow,
+            AgentSelector = "dotnet10,opencode",
+            RetryCount = 0,
+            TimeoutSeconds = 0
         };
 
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
