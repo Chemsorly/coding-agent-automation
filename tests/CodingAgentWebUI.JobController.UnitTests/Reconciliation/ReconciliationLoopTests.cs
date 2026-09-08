@@ -224,6 +224,12 @@ public sealed class ReconciliationLoopTests
             TimeoutSeconds = 0 // legacy: field not stored
         };
 
+        // TODO [WARNING]: The mock setup uses It.IsAny<int>() for the GetActiveAsync canary threshold.
+        // If EnforceTimeoutsAsync passes a wrong canary threshold, the mock still returns legacyItem
+        // and PostStatusAsync fires, making this test a false-green that masks the wrong argument.
+        // Add a Verify call (analogous to WhenExecutionAgeExceedsTimeout_TimesOutAndDeletesJob) to
+        // confirm GetActiveAsync was called with the correct canary threshold value (60s).
+        // See review finding: TestQualityReviewer WARNING — ReconciliationLoopTests.cs:~230
         _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([legacyItem]);
 

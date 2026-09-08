@@ -652,6 +652,11 @@ public partial class QualityGateExecutor
         run.QualityGateHistory.Enqueue(report);
         callbacks.EmitOutputLine(PipelineFormatting.FormatQualityGateSummary(report));
 
+        // TODO [WARNING]: report.Tests is dereferenced without a null-conditional in the log call and
+        // EmitGateEvaluation below. A QGC configured with only a BuildCommand (no TestCommand) produces
+        // a report where Tests is null, which will throw NullReferenceException here. Apply the same
+        // null-conditional guard used for ExternalCi (null check before EmitGateEvaluation).
+        // See review finding: DotNetSpecialist WARNING — QualityGateExecutor.RetryLoop.cs LogAndRecordReport
         _logger.Information("Pipeline {RunId} {Phase}: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}, ExternalCi={ExternalCiResult}",
             run.RunId, phase, report.AllPassed, report.Compilation.Passed, report.Tests.Passed,
             FormatGateLogValue(report.ExternalCi));
