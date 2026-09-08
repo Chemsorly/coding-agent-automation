@@ -435,6 +435,67 @@ public sealed class WorkItemEndpointTests
 
     // ── Pending ───────────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// AC: POST /api/work-items with TimeoutSeconds = 0 must persist DefaultAgentTimeout (1800),
+    /// not zero. This is the sole runtime guard that prevents a zero row from reaching the
+    /// dispatch loops after the BackfillZeroTimeoutSeconds migration removed the sentinel fallback.
+    /// </summary>
+    [Fact]
+    public async Task CreateWorkItem_WithZeroTimeoutSeconds_PersistsDefaultTimeout()
+    {
+        var request = MakeRequest() with { TimeoutSeconds = 0 };
+
+        var response = await _client.PostAsJsonAsync("/api/work-items", request, PipelineJsonOptions.Default);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var id = await response.Content.ReadFromJsonAsync<Guid>(PipelineJsonOptions.Default);
+
+        using var db = _factory.CreateDbContext();
+        var entity = await db.WorkItems.FindAsync(id);
+        entity.Should().NotBeNull();
+        entity!.TimeoutSeconds.Should().Be((int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
+            "TimeoutSeconds = 0 must be substituted with the default — zero rows cause immediate " +
+            "false-timeouts in ReconciliationLoop now that the sentinel fallback is gone");
+    }
+
+    /// <summary>
+    /// AC: POST /api/work-items with a negative TimeoutSeconds must also persist DefaultAgentTimeout.
+    /// Negative values are not a valid timeout and should be treated like zero.
+    /// </summary>
+    [Fact]
+    public async Task CreateWorkItem_WithNegativeTimeoutSeconds_PersistsDefaultTimeout()
+    {
+        var request = MakeRequest() with { TimeoutSeconds = -1 };
+
+        var response = await _client.PostAsJsonAsync("/api/work-items", request, PipelineJsonOptions.Default);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var id = await response.Content.ReadFromJsonAsync<Guid>(PipelineJsonOptions.Default);
+
+        using var db = _factory.CreateDbContext();
+        var entity = await db.WorkItems.FindAsync(id);
+        entity.Should().NotBeNull();
+        entity!.TimeoutSeconds.Should().Be((int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
+            "negative TimeoutSeconds must be substituted with the default, same as zero");
+    }
+
+    /// <summary>
+    /// Positive TimeoutSeconds must be persisted as-is (guard must not substitute valid values).
+    /// </summary>
+    [Fact]
+    public async Task CreateWorkItem_WithPositiveTimeoutSeconds_PersiststheValue()
+    {
+        var request = MakeRequest() with { TimeoutSeconds = 900 };
+
+        var response = await _client.PostAsJsonAsync("/api/work-items", request, PipelineJsonOptions.Default);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var id = await response.Content.ReadFromJsonAsync<Guid>(PipelineJsonOptions.Default);
+
+        using var db = _factory.CreateDbContext();
+        var entity = await db.WorkItems.FindAsync(id);
+        entity.Should().NotBeNull();
+        entity!.TimeoutSeconds.Should().Be(900, "a positive TimeoutSeconds must be stored as-is");
+    }
+
+
     [Fact]
     public async Task GetPendingWorkItems_OrderedByCreatedAtAsc()
     {

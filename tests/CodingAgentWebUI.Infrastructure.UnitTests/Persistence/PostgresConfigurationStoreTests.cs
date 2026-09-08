@@ -741,6 +741,64 @@ public class PostgresConfigurationStoreTests : IDisposable
         loaded.Id.Should().NotBe(staleJsonId);
     }
 
+    // ── Invalid stored config fallback (#2405) ──────────────────────────
+
+    [Fact]
+    public async Task LoadPipelineConfig_StoredConfigWithInvalidAgentTimeout_FallsBackToDefaults()
+    {
+        // Seed a PipelineConfigEntity whose JSON contains AgentTimeout = "00:00:00"
+        // (which now fails the strict init-setter validation added in #2405).
+        // The store must fall back to defaults instead of propagating the exception.
+        const string invalidJson = """{"AgentTimeout":"00:00:00","MaxRetries":5}""";
+        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineConfig.Add(new PipelineConfigEntity
+            {
+                Id = Guid.NewGuid(),
+                Configuration = invalidJson
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var freshStore = CreateFreshStore();
+        var config = await freshStore.LoadPipelineConfigAsync(CancellationToken.None);
+
+        // Must not throw; must return the default AgentTimeout (not zero, not the stored 5)
+        config.AgentTimeout.Should().Be(TimeSpan.FromMinutes(30),
+            "invalid AgentTimeout in stored config must fall back to default");
+        config.MaxRetries.Should().Be(3,
+            "entire config must fall back to defaults when stored JSON is invalid");
+    }
+
+    [Fact]
+    public async Task UpdatePipelineConfig_StoredConfigWithInvalidAgentTimeout_AppliesTransformOverDefaults()
+    {
+        // Seed a PipelineConfigEntity whose JSON contains AgentTimeout = "00:00:00".
+        // UpdatePipelineConfigAsync must fall back to defaults, apply the transform on top,
+        // then save the corrected value.
+        const string invalidJson = """{"AgentTimeout":"00:00:00","MaxRetries":7}""";
+        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineConfig.Add(new PipelineConfigEntity
+            {
+                Id = Guid.NewGuid(),
+                Configuration = invalidJson
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var freshStore = CreateFreshStore();
+
+        // Apply a transform that changes MaxRetries; AgentTimeout should be corrected to default
+        await freshStore.UpdatePipelineConfigAsync(
+            c => c with { MaxRetries = 42 }, CancellationToken.None);
+
+        var reloaded = await CreateFreshStore().LoadPipelineConfigAsync(CancellationToken.None);
+        reloaded.MaxRetries.Should().Be(42, "transform must be applied on top of default config");
+        reloaded.AgentTimeout.Should().Be(TimeSpan.FromMinutes(30),
+            "AgentTimeout must be corrected to default after fallback from invalid stored value");
+    }
+
     // ── Helper: InMemoryDbContextFactory ────────────────────────────────
 
     private PostgresConfigurationStore CreateFreshStore()
