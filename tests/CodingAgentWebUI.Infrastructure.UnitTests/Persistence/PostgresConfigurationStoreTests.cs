@@ -746,10 +746,11 @@ public class PostgresConfigurationStoreTests : IDisposable
     [Fact]
     public async Task LoadPipelineConfig_StoredConfigWithInvalidAgentTimeout_FallsBackToDefaults()
     {
-        // Seed a PipelineConfigEntity whose JSON contains AgentTimeout = "00:00:00"
+        // Seed a PipelineConfigEntity whose JSON contains agentTimeout = "00:00:00"
         // (which now fails the strict init-setter validation added in #2405).
         // The store must fall back to defaults instead of propagating the exception.
-        const string invalidJson = """{"AgentTimeout":"00:00:00","MaxRetries":5}""";
+        // Use camelCase keys to match PipelineJsonOptions.Default (PropertyNamingPolicy = CamelCase).
+        const string invalidJson = """{"agentTimeout":"00:00:00","maxRetries":5}""";
         await using (var db = new InMemoryPipelineDbContext(_dbOptions))
         {
             db.PipelineConfig.Add(new PipelineConfigEntity
@@ -773,10 +774,11 @@ public class PostgresConfigurationStoreTests : IDisposable
     [Fact]
     public async Task UpdatePipelineConfig_StoredConfigWithInvalidAgentTimeout_AppliesTransformOverDefaults()
     {
-        // Seed a PipelineConfigEntity whose JSON contains AgentTimeout = "00:00:00".
+        // Seed a PipelineConfigEntity whose JSON contains agentTimeout = "00:00:00".
         // UpdatePipelineConfigAsync must fall back to defaults, apply the transform on top,
         // then save the corrected value.
-        const string invalidJson = """{"AgentTimeout":"00:00:00","MaxRetries":7}""";
+        // Use camelCase keys to match PipelineJsonOptions.Default (PropertyNamingPolicy = CamelCase).
+        const string invalidJson = """{"agentTimeout":"00:00:00","maxRetries":7}""";
         await using (var db = new InMemoryPipelineDbContext(_dbOptions))
         {
             db.PipelineConfig.Add(new PipelineConfigEntity
