@@ -106,6 +106,10 @@ public sealed class MonitoringInteractionTests : E2ETestBase
         // Use WaitUntilState.Commit (not the default Load) because Blazor's Nav.NavigateTo fires a
         // history.pushState — a SPA URL change — that never raises a network-level "load" event.
         await Page.WaitForURLAsync($"**/runs/{runId}", new() { Timeout = 15_000, WaitUntil = WaitUntilState.Commit });
+        // Wait for the run content to render — RunPage.razor does an async API call in
+        // OnParametersSetAsync before populating the page body. WaitForURLAsync with Commit only
+        // waits for the SPA navigation push, not for Blazor to finish rendering.
+        await Page.Locator("h1").Filter(new() { HasTextString = "#71" }).WaitForAsync(new() { Timeout = 15_000 });
         var pageText = await Page.TextContentAsync("body");
         Assert.Contains("#71", pageText);
     }
