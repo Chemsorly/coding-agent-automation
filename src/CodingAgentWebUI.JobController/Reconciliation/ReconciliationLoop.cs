@@ -129,8 +129,8 @@ public sealed class ReconciliationLoop
     /// <summary>
     /// Enforces the session timeout: marks Running items that have exceeded their per-item
     /// <see cref="ActiveWorkItemDto.TimeoutSeconds"/> as Failed.
-    /// Items without a stored timeout (zero) fall back to the global default
-    /// (<see cref="PipelineConstants.DefaultAgentTimeout"/>).
+    /// All rows have a positive <see cref="ActiveWorkItemDto.TimeoutSeconds"/> value since
+    /// migration #2405 back-filled any legacy zero rows to 1800 seconds (30 min default).
     /// </summary>
     public async Task EnforceTimeoutsAsync(CancellationToken ct)
     {
@@ -153,8 +153,6 @@ public sealed class ReconciliationLoop
             return;
         }
 
-        var globalDefaultSeconds = (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds;
-
         foreach (var item in timedOut)
         {
             if (ct.IsCancellationRequested) break;
@@ -163,15 +161,17 @@ public sealed class ReconciliationLoop
             if (item.Status != WorkItemStatus.Running) continue;
 
             // Resolve the effective timeout for this item.
-            // TimeoutSeconds == 0 means the value was not stored (pre-dates this field) — fall back
-            // to the global PipelineConfiguration.AgentTimeout default for backward compatibility.
-            // TODO: The zero sentinel is not enforced at the entity/DTO layer — it is indistinguishable
-            // from an explicitly set value of 0. Consider adding a DB constraint or a positive-value
-            // check at the enqueue endpoint (WorkItemEndpoints) so that TimeoutSeconds > 0 is always
-            // guaranteed for new rows, narrowing this fallback to truly legacy data only.
-            var effectiveTimeoutSeconds = item.TimeoutSeconds > 0
-                ? item.TimeoutSeconds
-                : globalDefaultSeconds;
+            // All rows written after migration #2405 have a positive TimeoutSeconds value.
+            // The migration back-filled any legacy zero rows to 1800 (30 min default),
+            // so TimeoutSeconds is always positive and no fallback is needed.
+            // TODO [WARNING]: In a rolling deployment where the binary is updated before the migration
+            // runs (or if the migration fails silently), in-flight rows with TimeoutSeconds=0 could
+            // reach this path. With effectiveTimeoutSeconds=0 any Running item older than
+            // TimeoutCanaryMinAgeSeconds (60s) is immediately force-failed (executionAge >= 0 is
+            // always true once the canary guard passes). Consider adding a defensive
+            // `if (item.TimeoutSeconds <= 0) continue;` guard here as low-cost insurance against
+            // this deployment-ordering scenario. (Correctness + DotNetSpecialist review [WARNING])
+            var effectiveTimeoutSeconds = item.TimeoutSeconds;
 
             // Compute execution age from DispatchedAt. If DispatchedAt is null (items dispatched before
             // the field was added), fall back to effectiveTimeoutSeconds — safe to enforce.

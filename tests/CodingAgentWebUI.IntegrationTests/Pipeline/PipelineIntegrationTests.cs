@@ -113,7 +113,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
         var original = new PipelineConfiguration
         {
             WorkspaceBaseDirectory = WorkspaceBase,
-            AgentTimeout = TimeSpan.Zero,
+            AgentTimeout = TimeSpan.FromSeconds(1), // Minimum positive value — zero is now rejected by validation
             ExternalCiTimeout = TimeSpan.FromMilliseconds(1),
             ExternalCiPollInterval = TimeSpan.FromHours(2) + TimeSpan.FromMinutes(30) + TimeSpan.FromSeconds(15),
             StallWarningInterval = TimeSpan.FromDays(1),
@@ -124,7 +124,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
         await ConfigStore.SavePipelineConfigAsync(original, CancellationToken.None);
         var loaded = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
 
-        loaded.AgentTimeout.Should().Be(TimeSpan.Zero);
+        loaded.AgentTimeout.Should().Be(TimeSpan.FromSeconds(1));
         loaded.ExternalCiTimeout.Should().Be(TimeSpan.FromMilliseconds(1));
         loaded.ExternalCiPollInterval.Should().Be(TimeSpan.FromHours(2) + TimeSpan.FromMinutes(30) + TimeSpan.FromSeconds(15));
         loaded.StallWarningInterval.Should().Be(TimeSpan.FromDays(1));
@@ -355,7 +355,9 @@ public class PipelineIntegrationTests : IntegrationTestBase
         File.WriteAllText(Path.Combine(RunsDir, $"{expiredRunId}.json"),
             System.Text.Json.JsonSerializer.Serialize(new PipelineRunSummary
             {
-                RunId = expiredRunId, IssueIdentifier = "1", IssueTitle = "Expired run",
+                RunId = expiredRunId,
+                IssueIdentifier = "1",
+                IssueTitle = "Expired run",
                 FinalStep = PipelineStep.Failed,
                 StartedAt = DateTime.UtcNow.AddDays(-30),
                 CompletedAt = DateTime.UtcNow.AddDays(-30)
@@ -364,7 +366,9 @@ public class PipelineIntegrationTests : IntegrationTestBase
         File.WriteAllText(Path.Combine(RunsDir, $"{recentRunId}.json"),
             System.Text.Json.JsonSerializer.Serialize(new PipelineRunSummary
             {
-                RunId = recentRunId, IssueIdentifier = "2", IssueTitle = "Recent run",
+                RunId = recentRunId,
+                IssueIdentifier = "2",
+                IssueTitle = "Recent run",
                 FinalStep = PipelineStep.Failed,
                 StartedAt = DateTime.UtcNow.AddDays(-1),
                 CompletedAt = DateTime.UtcNow.AddDays(-1)

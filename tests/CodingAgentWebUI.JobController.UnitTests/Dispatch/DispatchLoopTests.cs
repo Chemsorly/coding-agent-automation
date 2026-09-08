@@ -96,7 +96,7 @@ public sealed class DispatchLoopTests
             .ReturnsAsync(new[] { DefaultProviderConfig });
     }
 
-    private static PendingWorkItemDto MakePending(string agentSelector = "dotnet10,opencode", int timeoutSeconds = 0) =>
+    private static PendingWorkItemDto MakePending(string agentSelector = "dotnet10,opencode", int timeoutSeconds = 1800) =>
         new()
         {
             Id = ItemId,
@@ -582,12 +582,36 @@ public sealed class DispatchLoopTests
     }
 
     [Fact]
-    public async Task WhenItemTimeoutIsZero_K8sJob_ActiveDeadlineSeconds_UsesDefaultAgentTimeout()
+    public async Task WhenItemTimeoutIsZero_DispatchIsSkipped_NoK8sJobCreated()
     {
-        // item.TimeoutSeconds == 0 (not set) → falls back to PipelineConstants.DefaultAgentTimeout (30 min = 1800s)
-        // activeDeadlineSeconds == 1800 + 60 == 1860
+        // After migration #2405, TimeoutSeconds=0 rows should not exist in production
+        // (back-filled to 1800 by the migration). If a zero-timeout row somehow reaches
+        // dispatch (e.g., migration not yet applied, bug in enqueue path), dispatching it
+        // would produce a K8s activeDeadlineSeconds of ~60s — killing the pod almost instantly.
+        // The guard added in DispatchLoop.ProcessItemAsync skips such items with a warning log.
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending(timeoutSeconds: 0)]);
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // No K8s job should be created — the item is skipped by the TimeoutSeconds <= 0 guard.
+        _k8sClient.Verify(
+            c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        // No claim should be attempted either — the guard fires before any mutation.
+        _workItemClient.Verify(
+            c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task WhenItemHasDefaultTimeout_K8sJob_ActiveDeadlineSeconds_UsesDefaultAgentTimeout()
+    {
+        // Post-migration: rows that had TimeoutSeconds=0 were back-filled to 1800 (30 min default).
+        // Verify that a row with TimeoutSeconds=1800 produces activeDeadlineSeconds = 1800 + 60 = 1860.
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending(timeoutSeconds: 1800)]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
 
@@ -600,8 +624,14 @@ public sealed class DispatchLoopTests
         await loop.RunOneCycleAsync(CancellationToken.None);
 
         capturedJob.Should().NotBeNull();
-        // DefaultAgentTimeout = 30 min = 1800s; JobSpecBuilder adds 60s grace period → 1860
-        capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(1860L); // 1800 + 60
+        // TimeoutSeconds=1800 (the back-filled value); JobSpecBuilder adds 60s grace → 1800 + 60 = 1860
+        // TODO [WARNING]: Input and expected value are both hardcoded to 1800/1860. If DefaultAgentTimeout
+        // changes from 30 min, the test still passes because the magic input round-trips through
+        // JobSpecBuilder unchanged. Drive both values from PipelineConstants.DefaultAgentTimeout so a
+        // regression is caught: timeoutSeconds: (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds
+        // and expected: (long)PipelineConstants.DefaultAgentTimeout.TotalSeconds + 60.
+        // (TestQualityReviewer review [WARNING] @ DispatchLoopTests.cs:617)
+        capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(1860L);
     }
 
     // ─── Concurrency map: completed jobs within retention window ─────────────
@@ -945,7 +975,9 @@ public sealed class DispatchLoopTests
             .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
-                Identifier = "1", Title = "Test", Description = "",
+                Identifier = "1",
+                Title = "Test",
+                Description = "",
                 Labels = new[] { label }
             });
 
@@ -976,7 +1008,9 @@ public sealed class DispatchLoopTests
             .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
-                Identifier = "1", Title = "Test", Description = "",
+                Identifier = "1",
+                Title = "Test",
+                Description = "",
                 Labels = new[] { AgentLabels.Done }
             });
 
@@ -1083,15 +1117,25 @@ public sealed class DispatchLoopTests
 
         var item1 = new PendingWorkItemDto
         {
-            Id = id1, IssueIdentifier = "1", IssueProviderConfigId = "gh-1",
-            TaskType = WorkItemTaskType.Implementation, CreatedAt = DateTimeOffset.UtcNow,
-            AgentSelector = "dotnet10,opencode", RetryCount = 0, TimeoutSeconds = 0
+            Id = id1,
+            IssueIdentifier = "1",
+            IssueProviderConfigId = "gh-1",
+            TaskType = WorkItemTaskType.Implementation,
+            CreatedAt = DateTimeOffset.UtcNow,
+            AgentSelector = "dotnet10,opencode",
+            RetryCount = 0,
+            TimeoutSeconds = 1800
         };
         var item2 = new PendingWorkItemDto
         {
-            Id = id2, IssueIdentifier = "1", IssueProviderConfigId = "gh-1",
-            TaskType = WorkItemTaskType.Implementation, CreatedAt = DateTimeOffset.UtcNow,
-            AgentSelector = "dotnet10,opencode", RetryCount = 0, TimeoutSeconds = 0
+            Id = id2,
+            IssueIdentifier = "1",
+            IssueProviderConfigId = "gh-1",
+            TaskType = WorkItemTaskType.Implementation,
+            CreatedAt = DateTimeOffset.UtcNow,
+            AgentSelector = "dotnet10,opencode",
+            RetryCount = 0,
+            TimeoutSeconds = 1800
         };
 
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
@@ -1490,7 +1534,7 @@ public sealed class DispatchLoopMetricTests : IDisposable
             CreatedAt = createdAt,
             AgentSelector = "dotnet10,opencode",
             RetryCount = 0,
-            TimeoutSeconds = 0
+            TimeoutSeconds = 1800
         };
 
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))

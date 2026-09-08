@@ -205,24 +205,28 @@ public sealed class ReconciliationLoopTests
     }
 
     [Fact]
-    public async Task WhenTimeoutSecondsIsZero_FallsBackToGlobalDefault()
+    public async Task WhenTimeoutSecondsIsZero_TimeoutIsEnforcedAtZero()
     {
         var jobName = JobNameFor(ItemId);
-        // TimeoutSeconds = 0 means field was not stored (pre-dates this feature).
-        // Fall back to PipelineConstants.DefaultAgentTimeout (30 min = 1800s).
-        // Item has been running for 1801s — must be timed out via fallback.
-        // TODO: Replace magic number 1800 with (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds
-        // so a change to DefaultAgentTimeout causes this test to fail rather than silently pass.
-        // See review finding [WARNING] — TestQualityReviewer @ ReconciliationLoopTests.cs:187.
-        const int globalDefaultSeconds = 1800;
+        // After migration #2405, TimeoutSeconds=0 rows no longer exist in production
+        // (back-filled to 1800 by the migration). The zero-sentinel fallback has been removed.
+        // This test documents post-migration behavior: TimeoutSeconds=0 is used as-is,
+        // so any item with TimeoutSeconds=0 that has been running for > 0s will be timed out.
+        const int itemTimeoutSeconds = 0;
+        // TODO [WARNING]: canaryMinAgeSeconds duplicates the internal ReconciliationLoop.TimeoutCanaryMinAgeSeconds
+        // constant (60). If that constant changes in production, this test may silently stop covering
+        // the canary guard interaction. Source this value from the production constant instead of
+        // duplicating it here. (TestQualityReviewer review [WARNING] @ ReconciliationLoopTests.cs:228)
+        const int canaryMinAgeSeconds = 60; // ReconciliationLoop.TimeoutCanaryMinAgeSeconds
         var legacyItem = new ActiveWorkItemDto
         {
             Id = ItemId,
             Status = WorkItemStatus.Running,
-            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(globalDefaultSeconds + 1)),
+            // Running for 61s — exceeds TimeoutSeconds=0 and the canary minimum (60s).
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(canaryMinAgeSeconds + 1)),
             AgentSelector = "dotnet10,opencode",
             IssueIdentifier = "owner/repo#1",
-            TimeoutSeconds = 0 // legacy: field not stored
+            TimeoutSeconds = itemTimeoutSeconds
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
@@ -231,6 +235,7 @@ public sealed class ReconciliationLoopTests
         var loop = CreateLoop();
         await loop.EnforceTimeoutsAsync(CancellationToken.None);
 
+        // executionAge (61s) >= effectiveTimeoutSeconds (0) → should time out
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
@@ -238,6 +243,13 @@ public sealed class ReconciliationLoopTests
 
         _k8sClient.Verify(c => c.DeleteJobAsync(jobName, _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    // TODO [WARNING]: Add a negative case for `WhenTimeoutSecondsIsZero_TimeoutIsEnforcedAtZero`:
+    // an item with TimeoutSeconds=0 running for < canary minimum (e.g. 30s) should NOT be marked
+    // Failed. Currently the canary guard interaction with a zero-timeout is only tested for the
+    // age-exceeds-minimum path; the below-minimum path (item should be left alone) is not covered.
+    // This would complete coverage of the canary guard + zero-timeout combination.
+    // (TestQualityReviewer review [WARNING] @ ReconciliationLoopTests.cs:205)
 
     // ─── Short-circuit Dispatched sweep ──────────────────────────────────────
 

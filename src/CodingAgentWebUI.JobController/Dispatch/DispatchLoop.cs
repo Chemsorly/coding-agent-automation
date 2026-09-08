@@ -154,6 +154,20 @@ public sealed class DispatchLoop
             return;
         }
 
+        // TimeoutSeconds guard: all rows should have a positive value since migration #2405
+        // back-filled any legacy zero rows to 1800. A zero or negative value here indicates
+        // either a pre-migration row that was not yet updated, or a bug in the enqueue path.
+        // Dispatching with TimeoutSeconds <= 0 would produce a K8s activeDeadlineSeconds of
+        // ~60s (just the grace period), killing the pod almost immediately — skip instead.
+        if (item.TimeoutSeconds <= 0)
+        {
+            Log.Warning(
+                "DispatchLoop: WorkItem {Id} has TimeoutSeconds={Timeout} (expected > 0); skipping dispatch. " +
+                "Run migration #2405 to back-fill zero rows or investigate the enqueue path.",
+                item.Id, item.TimeoutSeconds);
+            return;
+        }
+
         // Eligibility gate: verify the upstream issue is still open and has no ineligible labels.
         // Fires before ClaimAsync — read-only check precedes any mutation.
         // On failure (network error, missing config): fail open — skip without cancelling.
@@ -250,9 +264,7 @@ public sealed class DispatchLoop
                 {
                     WorkItemId = item.Id,
                     AgentSelector = selector,
-                    TimeoutSeconds = item.TimeoutSeconds > 0
-                        ? item.TimeoutSeconds
-                        : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
+                    TimeoutSeconds = item.TimeoutSeconds,
                     JobName = jobName,
                     ClaimedPvc = pvcName,
                     OrchestratorUrl = _options.OrchestratorUrl,
@@ -287,9 +299,7 @@ public sealed class DispatchLoop
             {
                 WorkItemId = item.Id,
                 AgentSelector = selector,
-                TimeoutSeconds = item.TimeoutSeconds > 0
-                    ? item.TimeoutSeconds
-                    : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
+                TimeoutSeconds = item.TimeoutSeconds,
                 JobName = jobName,
                 ClaimedPvc = pvcName,
                 OrchestratorUrl = _options.OrchestratorUrl,
