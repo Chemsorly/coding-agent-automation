@@ -16,9 +16,14 @@ namespace CodingAgentWebUI.JobController.Dispatch;
 public static class DispatchServiceRegistration
 {
     /// <summary>
-    /// Registers <see cref="DispatchService"/>, <see cref="DispatchLoop"/>,
-    /// <see cref="ConsolidationDispatchService"/>, and <see cref="ConsolidationDispatchLoop"/>
+    /// Registers <see cref="ConsolidationDispatchService"/> and <see cref="ConsolidationDispatchLoop"/>
     /// using options from configuration.
+    /// <para>
+    /// Regular work item dispatch (<c>DispatchService</c> / <c>DispatchLoop</c>) has been removed.
+    /// <c>KubernetesWorkDistributor</c> now calls <c>POST /api/work-items/dispatch</c> directly,
+    /// which atomically creates the K8s Job and transitions the WorkItem to <c>Dispatched</c>
+    /// without passing through the <c>Pending</c> queue.
+    /// </para>
     /// </summary>
     public static IServiceCollection AddDispatchService(
         this IServiceCollection services,
@@ -27,9 +32,7 @@ public static class DispatchServiceRegistration
         var options = DispatchServiceOptionsFactory.Create(configuration);
         services.AddSingleton(options);
 
-        // Single process-wide PVC selection lock shared by DispatchLoop and ConsolidationDispatchLoop.
-        // This prevents the two loops from racing each other and selecting the same free PVC
-        // concurrently (cross-loop TOCTOU). See PvcSelectLock for details.
+        // Single process-wide PVC selection lock shared by ConsolidationDispatchLoop.
         services.AddSingleton<PvcSelectLock>();
 
         // ── Provider factory for issue-eligibility checks ─────────────────────
@@ -46,27 +49,11 @@ public static class DispatchServiceRegistration
         services.AddSingleton<IProviderFactory>(sp =>
             new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
 
-        // ── Regular work item dispatch ────────────────────────────────────────
-        services.AddSingleton<DispatchLoop>(sp => new DispatchLoop(
-            sp.GetRequiredService<IPipelineApiWorkItemClient>(),
-            sp.GetRequiredService<IPipelineApiConfigClient>(),
-            sp.GetRequiredService<IKubernetesJobClient>(),
-            sp.GetRequiredService<JobTemplateStore>(),
-            sp.GetRequiredService<DispatchServiceOptions>(),
-            sp.GetRequiredService<PvcSelectLock>(),
-            sp.GetRequiredService<IProviderFactory>()));
-
-        services.AddSingleton<DispatchService>(sp => new DispatchService(
-            sp.GetRequiredService<ILeaderElectionService>(),
-            sp.GetRequiredService<DispatchLoop>(),
-            sp.GetRequiredService<DispatchServiceOptions>()));
-
-        services.AddHostedService(sp => sp.GetRequiredService<DispatchService>());
-
         // ── Consolidation work item dispatch ──────────────────────────────────
-        // Shares the same ILeaderElectionService lease as DispatchService — only the leader
+        // Shares the same ILeaderElectionService lease as before — only the leader
         // replica dispatches. Stateless: all domain operations delegated to the API via
         // IPipelineApiConsolidationWorkItemClient.
+        // Regular item dispatch (DispatchLoop) has been removed — see doc comment above.
         services.AddSingleton<ConsolidationDispatchLoop>(sp => new ConsolidationDispatchLoop(
             sp.GetRequiredService<IPipelineApiConsolidationWorkItemClient>(),
             sp.GetRequiredService<IKubernetesJobClient>(),

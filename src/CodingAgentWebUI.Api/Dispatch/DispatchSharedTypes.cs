@@ -56,4 +56,17 @@ internal sealed record DispatchLifecycleContext(
     bool IsKiroAgent,
     List<string> AvailablePvcs,
     Dictionary<string, int> ConcurrencyBySelector,
-    string LogPrefix);
+    string LogPrefix)
+{
+    /// <summary>
+    /// The status the WorkItem is expected to have when loaded from the database.
+    /// The lifecycle aborts if the loaded status differs (race-condition guard).
+    /// <para>
+    /// <see cref="WorkItemStatus.Pending"/> (default) is used by the consolidation dispatch path,
+    /// which creates items as Pending and relies on <c>ClaimWorkItem</c> to transition them.
+    /// <see cref="WorkItemStatus.Dispatched"/> is used by the synchronous dispatch endpoint
+    /// (POST /api/work-items/dispatch, issue #2322), which creates items directly as Dispatched.
+    /// </para>
+    /// </summary>
+    public WorkItemStatus ExpectedInitialStatus { get; init; } = WorkItemStatus.Pending;
+}

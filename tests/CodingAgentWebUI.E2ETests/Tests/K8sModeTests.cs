@@ -17,8 +17,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 
 /// <summary>
 /// Kubernetes-mode E2E tests: validates the K8s-specific dispatch pipeline where
-/// WorkItems are inserted as Pending, DispatchService polls and creates K8s Jobs,
-/// and KubernetesWorkDistributor handles distribution.
+/// KubernetesWorkDistributor calls POST /api/work-items/dispatch and the WorkItem is
+/// created directly as Dispatched (K8s Job running), without passing through a Pending queue.
 /// Uses FakeKubernetesJobClient to capture Job creation calls without real K8s.
 /// </summary>
 [Trait("Category", "E2E")]
@@ -29,11 +29,11 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     public K8sModeTests(E2EFixture fixture) : base(fixture) { }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // G5: KubernetesWorkDistributor — DistributeAsync inserts WorkItem row
+    // G5: KubernetesWorkDistributor — DistributeAsync synchronously dispatches
     // ═══════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task K8sMode_DistributeAsync_InsertsWorkItemAsPending()
+    public async Task K8sMode_DistributeAsync_CreatesWorkItemAsDispatched()
     {
         // Act: distribute via the real KubernetesWorkDistributor
         var result = await DistributeDirectlyAsync("k8s-issue-100", "kiro,dotnet");
@@ -41,18 +41,19 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         // Assert: distribution succeeded
         Assert.True(result.Success, $"Distribution failed: {result.ErrorMessage}");
         Assert.NotNull(result.WorkItemId);
-        Assert.True(result.Queued, "K8s mode always queues (Pending) — DispatchService handles pod creation");
+        // Synchronous dispatch path: Queued=false — item is Dispatched, not in a Pending queue
+        Assert.False(result.Queued, "K8s synchronous dispatch path: Queued should be false (item is Dispatched immediately)");
 
-        // Assert: WorkItem exists in DB as Pending
+        // Assert: WorkItem exists in DB as Dispatched (K8s Job already created)
         var workItemId = Guid.Parse(result.WorkItemId);
         await using var db = Fixture.DbContextFactory.CreateDbContext();
         var item = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == workItemId);
 
         Assert.NotNull(item);
-        Assert.Equal(WorkItemStatus.Pending, item.Status);
+        Assert.Equal(WorkItemStatus.Dispatched, item.Status);
         Assert.Equal("k8s-issue-100", item.IssueIdentifier);
         Assert.Equal("kiro,dotnet", item.AgentSelector);
-        Assert.Null(item.DispatchedAt); // Not dispatched yet — DispatchService does this
+        Assert.NotNull(item.DispatchedAt); // Dispatched synchronously
     }
 
     [Fact]
@@ -70,18 +71,17 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // G1: KubernetesWorkDistributor inserts Pending + K8s Job creation path
-    // (DispatchService not running in this test factory — tested via unit tests.
-    //  Here we verify the DB insert + transition path works correctly.)
+    // G1: KubernetesWorkDistributor synchronous dispatch — WorkItem created as Dispatched
+    // (DispatchService removed — dispatch now happens inline in POST /api/work-items/dispatch)
     // ═══════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task K8sMode_WorkItemTransition_PendingToDispatched()
+    public async Task K8sMode_WorkItemCreatedAsDispatched_K8sJobAlreadyRunning()
     {
-        // Arrange: insert a Pending WorkItem
+        // Arrange + Act: dispatch creates the WorkItem directly as Dispatched
         var workItemId = await InsertPendingWorkItemAsync("k8s-dispatch-200", "kiro,dotnet");
-
-        // Act: manually transition to Dispatched (simulating what DispatchService does)
+        // InsertPendingWorkItemAsync inserts as Pending for legacy path compatibility;
+        // transition to Dispatched to simulate the synchronous dispatch result
         var transitionService = Fixture.ApiServices.GetRequiredService<CodingAgentWebUI.Infrastructure.Persistence.Services.WorkItemTransitionService>();
         var transitioned = await transitionService.TransitionAsync(
             workItemId, WorkItemStatus.Dispatched,
@@ -118,17 +118,18 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
         Assert.IsType<KubernetesWorkDistributor>(distributor);
 
-        // Verify it inserts as Pending (not Dispatched like SignalR mode)
+        // Verify it dispatches synchronously (Queued=false, item is Dispatched immediately)
         var result = await DistributeDirectlyAsync("k8s-type-check-500");
         Assert.True(result.Success);
-        Assert.True(result.Queued); // K8s mode always returns Queued=true
+        Assert.False(result.Queued); // Synchronous dispatch: Queued=false
 
         await using var db = Fixture.DbContextFactory.CreateDbContext();
         var item = await db.WorkItems.AsNoTracking()
             .FirstOrDefaultAsync(w => w.IssueIdentifier == "k8s-type-check-500");
         Assert.NotNull(item);
-        Assert.Equal(WorkItemStatus.Pending, item.Status);
-        Assert.Null(item.DispatchedAt); // Not dispatched — DispatchService does this
+        // Synchronous dispatch: item is Dispatched (not Pending)
+        Assert.Equal(WorkItemStatus.Dispatched, item.Status);
+        Assert.NotNull(item.DispatchedAt);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -169,8 +170,8 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
         var status = await distributor.GetJobStatusAsync(result.WorkItemId!, CancellationToken.None);
 
-        // Assert: should be Pending (K8s mode inserts as Pending)
-        Assert.Equal(JobDistributionStatus.Pending, status);
+        // Assert: should be Dispatched (synchronous dispatch path creates item directly as Dispatched)
+        Assert.Equal(JobDistributionStatus.Dispatched, status);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -181,7 +182,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     [Fact]
     public async Task K8sMode_AgentFetchesAssignment_ReturnsValidPayload()
     {
-        // Arrange: insert a WorkItem with a full Payload (as KubernetesWorkDistributor does)
+        // Arrange: insert a WorkItem via synchronous dispatch (directly as Dispatched)
         var result = await DistributeDirectlyAsync("k8s-fetch-assign-900");
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
@@ -205,10 +206,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        // Transition to Dispatched (as DispatchService would do)
-        var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
-        await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
-            w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
+        // WorkItem is already Dispatched via synchronous dispatch — no manual transition needed
 
         // Act: call the assignment endpoint (same as WorkItemHttpClient.GetAssignmentAsync)
         using var httpClient = Fixture.CreateApiClient();
@@ -272,14 +270,11 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     [Fact]
     public async Task K8sMode_AgentPostsRunningStatus_TransitionAccepted()
     {
-        // Arrange: distribute + transition to Dispatched
+        // Arrange: distribute → synchronous dispatch creates item as Dispatched
         var result = await DistributeDirectlyAsync("k8s-status-running-1000");
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
-
-        var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
-        await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
-            w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
+        // Item is already Dispatched — no manual transition needed
 
         // Act: agent POSTs Running status (as WorkItemAgentService does)
         using var httpClient = Fixture.CreateApiClient();
@@ -304,43 +299,42 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     [Fact]
     public async Task K8sMode_AgentPostsRunningStatus_InvalidTransition_Returns400()
     {
-        // Arrange: WorkItem is Pending (can't go directly to Running — must go through Dispatched)
+        // Arrange: WorkItem is Dispatched after synchronous dispatch.
+        // Dispatched→Running is valid. Test an actually invalid transition instead:
+        // try to go directly from Dispatched to Succeeded (must go through Running first).
         var result = await DistributeDirectlyAsync("k8s-status-invalid-1001");
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
-        // WorkItem is Pending — Running is not a valid transition from Pending
+        // WorkItem is Dispatched — Dispatched→Succeeded is not a valid transition
 
-        // Act
+        // Act: try to transition Dispatched → Succeeded directly (skipping Running)
         using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
-        var statusBody = new { Status = "Running", AgentId = "caa-test-pod-2" };
+        var statusBody = new { Status = "Succeeded", AgentId = "caa-test-pod-2" };
         var response = await httpClient.PostAsJsonAsync(
             $"/api/work-items/{workItemId}/status", statusBody);
 
-        // Assert: rejected (400 Bad Request — invalid state transition)
+        // Assert: rejected (400 Bad Request — Dispatched→Succeeded is not a valid transition)
         Assert.Equal(System.Net.HttpStatusCode.BadRequest, response.StatusCode);
 
-        // Assert: DB state unchanged — still Pending, no agent assigned
+        // Assert: DB state unchanged — still Dispatched, no agent assigned
         await using var db = Fixture.DbContextFactory.CreateDbContext();
         var item = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == workItemId);
         Assert.NotNull(item);
-        Assert.Equal(WorkItemStatus.Pending, item.Status);
-        Assert.Null(item.AssignedAgentId);
+        Assert.Equal(WorkItemStatus.Dispatched, item.Status);
     }
 
     [Fact]
     public async Task K8sMode_AgentPostsFailedStatus_TransitionAccepted()
     {
-        // Arrange: distribute → dispatch → running
+        // Arrange: distribute → synchronous dispatch creates item as Dispatched → transition to Running
         var result = await DistributeDirectlyAsync("k8s-status-failed-1002");
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
 
         var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
-        await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
-            w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, ct: CancellationToken.None);
 
         // Act: agent POSTs Failed status (as WorkItemAgentService does on pipeline failure)
@@ -479,14 +473,12 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     [Fact]
     public async Task K8sMode_AgentPostsSucceededStatus_WithResultPayload_Accepted()
     {
-        // Arrange: full lifecycle → Dispatched → Running
+        // Arrange: full lifecycle → Dispatched (from synchronous dispatch) → Running
         var result = await DistributeDirectlyAsync("k8s-status-succeeded-1300");
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
 
         var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
-        await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
-            w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, ct: CancellationToken.None);
 
         // Act: agent POSTs Succeeded with a result payload (completion data)
@@ -531,8 +523,6 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         var workItemId = Guid.Parse(result.WorkItemId!);
 
         var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
-        await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
-            w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, ct: CancellationToken.None);
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Failed,
             w => { w.CompletedAt = DateTimeOffset.UtcNow; w.ErrorMessage = "First failure"; },
@@ -870,11 +860,11 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
 
     // ═══════════════════════════════════════════════════════════════════════
     // G16: FULL LIFECYCLE — single test exercises the entire K8s agent pipeline
-    // This is the "golden path" test that would have caught the original bug
-    // (missing RegisterAgent) instantly. Every step is exercised as the real
+    // This is the "golden path" test. Every step is exercised as the real
     // agent would perform it: HTTP + SignalR interleaved, same as production.
     //
-    // Flow: Distribute → Dispatch → Agent fetches assignment (HTTP) →
+    // Flow (synchronous dispatch path): Distribute → WorkItem created as Dispatched
+    //       (K8s Job already running) → Agent fetches assignment (HTTP) →
     //       Agent POSTs Running (HTTP) → Agent registers on hub (SignalR) →
     //       Agent refreshes token (SignalR) → Agent POSTs Succeeded (HTTP)
     // ═══════════════════════════════════════════════════════════════════════
@@ -914,7 +904,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        // ── Step 1: Distribute via KubernetesWorkDistributor ──
+        // ── Step 1: Distribute via KubernetesWorkDistributor (synchronous dispatch) ──
         var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
         var distResult = await distributor.DistributeAsync(new JobDistributionRequest
         {
@@ -929,28 +919,21 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         }, CancellationToken.None);
 
         Assert.True(distResult.Success, $"Distribution failed: {distResult.ErrorMessage}");
+        Assert.False(distResult.Queued, "Synchronous dispatch: Queued should be false");
         var workItemId = Guid.Parse(distResult.WorkItemId!);
 
-        // Verify: DB has Pending work item with full payload
+        // Verify: DB has Dispatched work item (synchronous dispatch path)
         await using (var db = Fixture.DbContextFactory.CreateDbContext())
         {
             var wi = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == workItemId);
             Assert.NotNull(wi);
-            Assert.Equal(WorkItemStatus.Pending, wi.Status);
+            // Synchronous dispatch creates the item directly as Dispatched
+            Assert.Equal(WorkItemStatus.Dispatched, wi.Status);
             Assert.NotNull(wi.Payload);
+            Assert.NotNull(wi.DispatchedAt);
         }
 
-        // ── Step 2: Simulate DispatchService transitioning to Dispatched ──
-        var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
-        var dispatched = await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
-            w =>
-            {
-                w.DispatchedAt = DateTimeOffset.UtcNow;
-                w.K8sJobName = $"caa-{workItemId.ToString("N")[..8]}";
-            }, ct: CancellationToken.None);
-        Assert.True(dispatched, "Pending → Dispatched transition should succeed");
-
-        // ── Step 3: Agent fetches assignment (HTTP — as WorkItemHttpClient does) ──
+        // ── Step 2: Agent fetches assignment (HTTP — as WorkItemHttpClient does) ──
         using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
@@ -964,7 +947,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         Assert.Equal(workItemId.ToString(), assignRoot.GetProperty("jobId").GetString());
         Assert.Equal("repo-lifecycle-e2e", assignRoot.GetProperty("repoProviderConfigId").GetString());
 
-        // ── Step 4: Agent POSTs Running status (HTTP — as WorkItemAgentService does) ──
+        // ── Step 3: Agent POSTs Running status (HTTP — as WorkItemAgentService does) ──
         var runningResponse = await httpClient.PostAsJsonAsync(
             $"/api/work-items/{workItemId}/status",
             new { Status = "Running", AgentId = "caa-lifecycle-pod" });
@@ -978,7 +961,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
             Assert.Equal("caa-lifecycle-pod", wi.AssignedAgentId);
         }
 
-        // ── Step 5: Agent connects to SignalR and registers with ActiveJob ──
+        // ── Step 4: Agent connects to SignalR and registers with ActiveJob ──
         await using var agent = new FakeAgentClient("caa-lifecycle-pod", "kiro", "dotnet");
         await agent.ConnectWithActiveJobAsync(
             AgentHubUrl,
@@ -994,13 +977,13 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         Assert.Equal(AgentStatus.Busy, agentEntry.Status);
         Assert.Equal(workItemId.ToString(), agentEntry.ActiveJobId);
 
-        // ── Step 6: Agent refreshes token (SignalR — the operation that broke in production) ──
+        // ── Step 5: Agent refreshes token (SignalR — the operation that broke in production) ──
         var tokenResponse = await agent.RequestTokenRefreshAsync(workItemId.ToString(), ProviderKind.Repository);
         Assert.NotNull(tokenResponse);
         Assert.Equal("fake-lifecycle-token-e2e", tokenResponse.Token);
         Assert.True(tokenResponse.ExpiresAt > DateTimeOffset.UtcNow, "Token expiry should be in the future");
 
-        // ── Step 7: Agent POSTs Succeeded status with result payload (HTTP) ──
+        // ── Step 6: Agent POSTs Succeeded status with result payload (HTTP) ──
         var resultPayload = System.Text.Json.JsonSerializer.Serialize(new
         {
             FinalStep = "Completed",

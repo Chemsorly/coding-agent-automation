@@ -17,13 +17,10 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 public class WorkItemStateMachinePropertyTests
 {
     /// <summary>
-    /// The exhaustive set of allowed state transitions per the work item state machine:
-    /// - Pending → Dispatched, Failed, Cancelled
-    /// - Dispatched → Running, Failed, Cancelled, Pending (re-queue on rejection)
-    /// - Running → Succeeded, Failed, Cancelled
-    /// - Failed → Pending (requeue, Req 6.1)
-    /// - Cancelled → Pending (requeue, Req 6.1)
-    /// All other pairs (including self-transitions) must be rejected.
+    /// The exhaustive set of allowed state transitions per the work item state machine.
+    /// Pending→Dispatched and Dispatched→Pending are preserved for the consolidation dispatch
+    /// path (ClaimWorkItem endpoint). The regular live dispatch path (issue #2322) no longer
+    /// creates items as Pending, but these transitions remain valid for consolidation items.
     /// </summary>
     private static readonly HashSet<(WorkItemStatus Current, WorkItemStatus Target)> AllowedTransitions =
     [
@@ -171,6 +168,7 @@ public class WorkItemStateMachineReachabilityPropertyTests
 
     /// <summary>
     /// Property: Pending is reachable from Dispatched, Failed, and Cancelled (requeue paths).
+    /// Dispatched→Pending is retained for the consolidation dispatch path (out of scope for #2322).
     /// </summary>
     [Fact]
     public void Pending_OnlyReachableFrom_Dispatched()
@@ -180,7 +178,7 @@ public class WorkItemStateMachineReachabilityPropertyTests
             .OrderBy(s => s)
             .ToArray();
 
-        // Dispatched (rejection re-queue) + Failed + Cancelled (explicit requeue, Req 6.1)
+        // Dispatched (claim recovery) + Failed + Cancelled (explicit requeue, Req 6.1)
         Assert.Equal(3, statesThatCanReachPending.Length);
         Assert.Contains(WorkItemStatus.Dispatched, statesThatCanReachPending);
         Assert.Contains(WorkItemStatus.Failed, statesThatCanReachPending);

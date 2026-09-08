@@ -1560,19 +1560,25 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
     [Fact]
     public async Task DistributeAndFinalizeAsync_WhenDistributeSucceedsAndQueued_DoesNotConfirmLabel()
     {
+        // With the synchronous dispatch path, Queued=true is no longer used by KubernetesWorkDistributor.
+        // However, DistributeAndFinalizeAsync now ALWAYS calls ConfirmDistributionLabelAsync on success
+        // regardless of the Queued flag — the synchronous dispatch path means the item is always Dispatched
+        // immediately. This test verifies that ConfirmDistributionLabelAsync is called even when Queued=true
+        // (e.g., for legacy or other distributor implementations that might still return Queued=true).
         _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(true, "work-1", null, Queued: true));
 
         var outcome = await _service.DistributeAndFinalizeAsync(TestRequest, CancellationToken.None);
 
         outcome.Success.Should().BeTrue();
-        outcome.Queued.Should().BeTrue();
+        // DistributeAndFinalizeAsync now always returns Queued=false (synchronous dispatch path)
+        outcome.Queued.Should().BeFalse("DistributeAndFinalizeAsync always returns Queued=false on success");
         outcome.ErrorMessage.Should().BeNull();
 
-        // No label swap should have occurred (drain service handles it later)
+        // Label IS now swapped unconditionally on success — the drain service no longer defers it
         _mockLabelService.Verify(
-            s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+            s => s.SwapLabelAsync("ipc-1", "owner/repo#42", AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]

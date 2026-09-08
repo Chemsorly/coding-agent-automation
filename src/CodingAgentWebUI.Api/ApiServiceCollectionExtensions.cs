@@ -430,6 +430,47 @@ public static class ApiServiceCollectionExtensions
             sp.GetRequiredService<IConfiguration>(),
             sp.GetRequiredService<IPipelineConfigStore>()));
 
+        // ── Synchronous dispatch services (POST /api/work-items/dispatch) ────────────────────
+        // DispatchLifecycleService — shared PVC-selection lock + K8s Job creation lifecycle.
+        // DispatchTemplateResolver — agent-selector → JobTemplate fallback resolution.
+        // DispatchStateBuilder     — builds concurrency map and PVC availability state.
+        // These were previously only used internally by ConsolidationWorkItemDispatchService.
+        // They are now also used by the new synchronous dispatch endpoint, which eliminates
+        // the Pending queue for regular work items.
+        services.AddSingleton<CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService>(sp =>
+        {
+            var jobClient = sp.GetService<IKubernetesJobClient>();
+            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
+            if (jobClient is null)
+            {
+                Log.Warning("API: DispatchLifecycleService — IKubernetesJobClient is null. " +
+                    "POST /api/work-items/dispatch will fail if called without K8s configured.");
+                // TODO [WARNING]: The null-forgiving operator below passes null to DispatchLifecycleService
+                // even after the null-guard above. In a non-K8s deployment (or misconfiguration), the
+                // singleton is constructed successfully but any call to POST /api/work-items/dispatch
+                // will throw NullReferenceException inside CreateK8sJobAsync. Consider throwing an
+                // InvalidOperationException here with a descriptive message (instead of accepting null),
+                // or registering a stub DispatchLifecycleService that returns 503 immediately when K8s
+                // is not configured. This would surface the misconfiguration at startup rather than at
+                // runtime and produce a cleaner error than an unhandled NullReferenceException.
+            }
+            return new CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService(
+                jobClient!,
+                sp.GetRequiredService<WorkItemTransitionService>(),
+                options);
+        });
+        services.AddSingleton<CodingAgentWebUI.Api.Dispatch.DispatchTemplateResolver>(sp =>
+            new CodingAgentWebUI.Api.Dispatch.DispatchTemplateResolver(
+                sp.GetService<IAgentProfileStore>(),
+                sp.GetRequiredService<JobTemplateStore>()));
+        services.AddSingleton<CodingAgentWebUI.Api.Dispatch.DispatchStateBuilder>(sp =>
+            new CodingAgentWebUI.Api.Dispatch.DispatchStateBuilder(
+                sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+                sp.GetRequiredService<CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService>(),
+                sp.GetRequiredService<JobTemplateStore>(),
+                sp.GetRequiredService<CodingAgentWebUI.Api.Dispatch.DispatchTemplateResolver>(),
+                DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>())));
+
         // ── WorkItemMetricsBackgroundService ──────────────────────────────────────────────────
         // Spec 047: Removed from API hosted services — replaced by WorkItemCountsPoller in
         // CodingAgentWebUI.Scheduler. WorkItemCountsPoller polls GET /api/work-items/counts-by-status
