@@ -52,7 +52,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         Assert.NotNull(item);
         Assert.Equal(WorkItemStatus.Dispatched, item.Status);
         Assert.Equal("k8s-issue-100", item.IssueIdentifier);
-        Assert.Equal("kiro,dotnet", item.AgentSelector);
+        Assert.Equal("dotnet,kiro", item.AgentSelector); // NormalizeLabels sorts alphabetically
         Assert.NotNull(item.DispatchedAt); // Dispatched synchronously
     }
 

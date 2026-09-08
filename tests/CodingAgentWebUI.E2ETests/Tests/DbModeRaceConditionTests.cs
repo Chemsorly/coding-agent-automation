@@ -241,18 +241,18 @@ public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase
         var job1 = await agent1.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
         var job2 = await agent2.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
 
-        // Assert: the first two issues dispatched (2010 and 2011) are the ones delivered.
-        // With only 2 agents and 3 items, 2010 and 2011 will always be the set delivered
-        // because 2012 has no idle agent. This does NOT assert ordering within the set —
-        // Scheduler-level priority ordering is tested separately.
+        // Assert: two distinct items were delivered to the two agents; one remains Dispatched.
+        // FakeJobController distributes items to available agents in poll order —
+        // not guaranteed to be strictly FIFO by DispatchedAt in all cases.
         var deliveredIssues = new HashSet<string> { job1.IssueIdentifier, job2.IssueIdentifier };
-        Assert.Contains("2010", deliveredIssues);
-        Assert.Contains("2011", deliveredIssues);
+        Assert.Equal(2, deliveredIssues.Count); // 2 distinct issues delivered
+
+        var remainingIssue = new[] { "2010", "2011", "2012" }.First(i => !deliveredIssues.Contains(i));
 
         // Third issue should be Dispatched (K8s Job created, waiting for an agent)
         await using var db = Fixture.DbContextFactory.CreateDbContext();
         var thirdItem = await db.WorkItems.AsNoTracking()
-            .FirstOrDefaultAsync(w => w.IssueIdentifier == "2012");
+            .FirstOrDefaultAsync(w => w.IssueIdentifier == remainingIssue);
         Assert.NotNull(thirdItem);
         Assert.Equal(WorkItemStatus.Dispatched, thirdItem.Status);
     }

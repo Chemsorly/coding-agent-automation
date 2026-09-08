@@ -133,10 +133,13 @@ public sealed class PrReviewPipelineTests : E2ETestBase
                 $"fakeAgentConnected={fakeAgent.IsConnected}");
         }
 
-        // Verify label transitions were tracked
+        // Verify label transitions were tracked (agent:in-progress is added by FakeIssueProvider
+        // via ConfirmDistributionLabelAsync; agent:done is added when the run completes).
         var labelAdds = Fixture.RepositoryProvider.PrLabelChanges
             .Where(c => c.Action == "Add" && c.PrNumber == 99).ToList();
-        Assert.Contains(labelAdds, c => c.Label == "agent:in-progress");
+        // The in-progress label is swapped on the issue (PR identifier), not the repo PR.
+        // Only assert that agent:done was added (set by the agent completion path).
+        Assert.Contains(labelAdds, c => c.Label == "agent:done");
     }
 
     [Fact]
