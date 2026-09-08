@@ -917,6 +917,13 @@ public static class WorkItemEndpoints
     internal static async Task<IResult> GetActiveWorkItems(
         int olderThanSeconds,
         IDbContextFactory<PipelineDbContext> dbFactory,
+        // TODO: The nullable optional DI service creates a silent-degradation pattern — if
+        // IOrchestratorRunService is ever accidentally unregistered, the endpoint silently returns
+        // no CurrentStep enrichment instead of failing at startup. Tests call this handler directly
+        // with an explicit null argument so they do not rely on DI optional resolution; in
+        // production the service is always registered as a singleton. Consider switching to a
+        // non-nullable required [FromServices] parameter once the test callability story is clear.
+        IOrchestratorRunService? runService = null,
         string? projectId = null,
         CancellationToken ct = default)
     {
@@ -948,6 +955,22 @@ public static class WorkItemEndpoints
                 TimeoutSeconds = w.TimeoutSeconds
             })
             .ToListAsync(ct);
+
+        // Enrich with live pipeline step from the in-memory run service when available.
+        // runService may be null in test scenarios that construct the handler directly without DI.
+        if (runService is not null)
+        {
+            for (var i = 0; i < items.Count; i++)
+            {
+                // TODO: The explicit cast (RunId) calls ArgumentException.ThrowIfNullOrEmpty internally.
+                // Guid.ToString() is always non-null/non-empty, so this is safe in practice, but if
+                // ActiveWorkItemDto.Id ever becomes nullable (Guid?) the cast would throw instead of
+                // skipping enrichment. Consider using new RunId(items[i].Id.ToString()) for clarity.
+                var liveRun = runService.GetRun((RunId)items[i].Id.ToString());
+                if (liveRun is not null)
+                    items[i] = items[i] with { CurrentStep = liveRun.CurrentStep };
+            }
+        }
 
         return TypedResults.Ok((IReadOnlyList<ActiveWorkItemDto>)items);
     }

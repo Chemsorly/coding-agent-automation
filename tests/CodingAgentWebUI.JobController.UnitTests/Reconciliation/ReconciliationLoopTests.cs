@@ -604,15 +604,13 @@ public sealed class ReconciliationLoopTests
 
 // ─── Error / exception paths ──────────────────────────────────────────────────
 
-// TODO [WARNING]: [Collection("Metrics")] was removed from this class. If any test in
-// ReconciliationLoopErrorTests calls a code path that emits measurements on the static
-// PipelineTelemetry or WorkDistributionTelemetry meters, those recordings can bleed into
-// ReconciliationLoopMetricTests (which uses [Collection("Metrics")] with a static MeterListener),
-// causing spurious snapshot-delta failures (delta of 2 instead of expected 1). Before removing
-// this TODO, confirm that no method called by tests in this class ultimately calls
-// PipelineTelemetry.JobsFailed.Add or WorkDistributionTelemetry instruments.
-// If they do, re-add [Collection("Metrics")] to this class.
-// (TestQualityReviewer review [WARNING] @ ReconciliationLoopTests.cs:604)
+// [Collection("Metrics")] is required here: several tests call ReconcileOnceAsync or
+// EnforceDispatchedTimeoutAsync with failed/timed-out jobs, which flows through
+// HandleJobCompletedAsync → WorkDistributionTelemetry.LogTerminalStatus →
+// PipelineTelemetry.JobsFailed.Add(). Without serialisation against
+// ReconciliationLoopMetricTests, those emissions bleed into snapshot-delta
+// assertions and produce a spurious "delta of 2 instead of 1" failure.
+[Collection("Metrics")]
 public sealed class ReconciliationLoopErrorTests
 {
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();

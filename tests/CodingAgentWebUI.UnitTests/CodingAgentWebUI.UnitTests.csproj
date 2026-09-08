@@ -41,6 +41,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\CodingAgentWebUI\CodingAgentWebUI.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgentWebUI.Api\CodingAgentWebUI.Api.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Api.Client\CodingAgentWebUI.Api.Client.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Infrastructure.Providers\CodingAgentWebUI.Infrastructure.Providers.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Infrastructure.Persistence\CodingAgentWebUI.Infrastructure.Persistence.csproj" />
