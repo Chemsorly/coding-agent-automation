@@ -6,9 +6,7 @@ namespace CodingAgentWebUI.JobController.Reconciliation;
 /// </summary>
 /// <remarks>
 /// Implemented by <see cref="ReconciliationService"/>.
-/// Injecting this interface (rather than the concrete service) keeps
-/// <see cref="CodingAgentWebUI.JobController.Dispatch.DispatchLoop"/> and
-/// <see cref="CodingAgentWebUI.JobController.Dispatch.ConsolidationDispatchLoop"/>
+/// Injecting this interface (rather than the concrete service) keeps dispatch components
 /// decoupled from the reconciliation implementation and makes the trigger
 /// easily mockable in unit tests.
 /// </remarks>

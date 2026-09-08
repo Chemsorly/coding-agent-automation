@@ -12,9 +12,12 @@ namespace CodingAgentWebUI.Api;
 
 /// <summary>
 /// Minimal API endpoints for consolidation work item dispatch.
-/// Called by the Job Controller's ConsolidationDispatchLoop — mirrors the /api/work-items
-/// endpoints but scoped to TaskType=Consolidation and includes server-side payload enrichment
-/// (provider config resolution + token vending) so the JC stays stateless and EF-free.
+/// These endpoints (<c>GET /api/consolidation-work-items/pending</c> and
+/// <c>POST /api/consolidation-work-items/{id}/claim</c>) were originally called by the
+/// Job Controller's <c>ConsolidationDispatchLoop</c>, which was removed in issue #2323.
+/// The endpoints are retained as part of the API surface; they have no production callers
+/// from the JobController. Consolidation items are now dispatched synchronously via
+/// <c>POST /api/work-items/dispatch</c> (<c>DispatchLifecycleService</c>).
 /// All endpoints require Operator-tier authentication (master key).
 /// </summary>
 [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "API endpoint handlers with EF + token vending — covered by integration tests, not unit tests.")]
