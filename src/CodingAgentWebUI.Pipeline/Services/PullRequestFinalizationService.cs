@@ -143,38 +143,43 @@ public sealed class PullRequestFinalizationService
         if (!prCreationSucceeded)
             return;
 
-        // TODO: RunPostPrSequenceAsync executes outside the try-catch above. Any non-OCE exception
-        // thrown here (e.g., from transitionCallback invocations for GeneratingPrDescription,
-        // ReflectingOnRun, SyncingBrainRepoPostRun) will propagate without setting the activity
-        // error status or emitting the _logger.Error call that the original in-try placement
-        // provided. Consider wrapping this call and the state-mutation lines below in their own
-        // try-catch to restore the error logging and activity status on failure.
-        await RunPostPrSequenceAsync(
-            new PostPrSequenceRequest
-            {
-                Run = run,
-                IsDraft = isDraft,
-                AgentProvider = agentProvider,
-                RepoProvider = repoProvider,
-                Config = config,
-                BrainSync = brainSync,
-                BrainProvider = brainProvider,
-                FeedbackService = feedbackService,
-                HistoryService = historyService,
-                EmitOutputLine = emitOutputLine,
-                TransitionCallback = transitionCallback
-            },
-            ct);
-
-        run.MarkCompleted();
-        // TODO: run.MarkCompleted(), run.CurrentStep, and run.FinalLabel are set here outside
-        // any exception handler. If RunPostPrSequenceAsync propagates an OperationCanceledException
-        // (ct is passed through), these mutations are skipped, leaving the run without a
-        // CompletedAt timestamp and in an inconsistent step state. Consider wrapping
-        // RunPostPrSequenceAsync and these lines in a try-finally or try-catch to guarantee
-        // final state is always set.
-        run.CurrentStep = finalStep;
-        run.FinalLabel = isDraft ? AgentLabels.Error : AgentLabels.Done;
+        try
+        {
+            await RunPostPrSequenceAsync(
+                new PostPrSequenceRequest
+                {
+                    Run = run,
+                    IsDraft = isDraft,
+                    AgentProvider = agentProvider,
+                    RepoProvider = repoProvider,
+                    Config = config,
+                    BrainSync = brainSync,
+                    BrainProvider = brainProvider,
+                    FeedbackService = feedbackService,
+                    HistoryService = historyService,
+                    EmitOutputLine = emitOutputLine,
+                    TransitionCallback = transitionCallback
+                },
+                ct);
+        }
+        finally
+        {
+            // Always set terminal state regardless of whether RunPostPrSequenceAsync threw
+            // (including OperationCanceledException from brain sync or reflection steps).
+            // A run that reached PR creation must always exit with CompletedAt set so that
+            // DatabaseMaintenanceService retention sweeps can clean it up and the Active Runs
+            // panel does not accumulate ghost records with null CompletedAt.
+            run.MarkCompleted();
+            run.CurrentStep = finalStep;
+            // TODO: FinalLabel is set unconditionally here even when RunPostPrSequenceAsync threw and the
+            // OCE propagates out of RunFullPrCreationAsync. On the OCE path the caller (orchestrator)
+            // may apply its own label-swap via ReportJobCompleted, potentially conflicting with this
+            // unconditional assignment. The draft-path OCE case (FinalLabel = AgentLabels.Error) is also
+            // untested — a regression that incorrectly sets Done instead of Error on a cancelled draft run
+            // would not be caught. Consider whether FinalLabel should be conditioned on whether the finally
+            // is executing normally vs. due to an exception, or document the expected orchestrator behaviour.
+            run.FinalLabel = isDraft ? AgentLabels.Error : AgentLabels.Done;
+        }
     }
 
     /// <summary>

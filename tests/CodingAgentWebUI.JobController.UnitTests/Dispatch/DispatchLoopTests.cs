@@ -963,39 +963,6 @@ public sealed class DispatchLoopTests
         _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    // ─── Eligibility gate — regression: open issue dispatches normally (AC #3) ─
-
-    /// <summary>
-    /// AC #3: A Pending WorkItem whose issue is open with agent:next must be dispatched normally.
-    /// This is the regression check — the eligibility gate must NOT prevent normal dispatch.
-    /// </summary>
-    [Fact]
-    public async Task WhenIssueIsOpenWithAgentNext_ShouldDispatchNormally()
-    {
-        // Default setup already returns open + agent:next — just verify dispatch proceeds
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakePending()]);
-        _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(MakeClaimed());
-
-        var loop = CreateLoop();
-        await loop.RunOneCycleAsync(CancellationToken.None);
-
-        // Item must be claimed and dispatched
-        _workItemClient.Verify(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Once);
-        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
-
-        // Must NOT be cancelled
-        _workItemClient.Verify(c => c.PostStatusAsync(
-            It.IsAny<Guid>(),
-            It.Is<WorkItemStatusUpdate>(u => u.Status == nameof(WorkItemStatus.Cancelled)),
-            It.IsAny<CancellationToken>()),
-            Times.Never);
-
-        // Must NOT be requeued
-        _workItemClient.Verify(c => c.RequeueAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
     // ─── Eligibility gate — agent:done blocks dispatch (regression) ─────────
 
     /// <summary>
@@ -1030,6 +997,39 @@ public sealed class DispatchLoopTests
         _k8sClient.Verify(c => c.CreateJobAsync(
             It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    // ─── Eligibility gate — regression: open issue dispatches normally (AC #3) ─
+
+    /// <summary>
+    /// AC #3: A Pending WorkItem whose issue is open with agent:next must be dispatched normally.
+    /// This is the regression check — the eligibility gate must NOT prevent normal dispatch.
+    /// </summary>
+    [Fact]
+    public async Task WhenIssueIsOpenWithAgentNext_ShouldDispatchNormally()
+    {
+        // Default setup already returns open + agent:next — just verify dispatch proceeds
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending()]);
+        _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeClaimed());
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // Item must be claimed and dispatched
+        _workItemClient.Verify(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
+
+        // Must NOT be cancelled
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(),
+            It.Is<WorkItemStatusUpdate>(u => u.Status == nameof(WorkItemStatus.Cancelled)),
+            It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        // Must NOT be requeued
+        _workItemClient.Verify(c => c.RequeueAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ─── Eligibility gate — fail open on network error (AC #4) ───────────────
@@ -1352,14 +1352,11 @@ public sealed class DispatchLoopTests
 }
 
 // ─── Metric / telemetry tests ─────────────────────────────────────────────────
-// These tests use MeterListener directly (IDisposable, no [Collection] fixture)
-// because the JobController test project has no Metrics collection definition.
+// These tests use MeterListener directly (IDisposable).
 // The static PipelineTelemetry.Meter is process-wide, so concurrent tests may fire
-// QueueWaitTime.Record(...) while a listener is active. Assertions use Contain-style
-// checks to remain robust against concurrent test noise.
-// [Collection("Metrics")] serializes execution against ReconciliationLoopMetricTests to
-// prevent concurrent MeterListener subscriptions from capturing each other's PipelineTelemetry
-// emissions.
+// QueueWaitTime.Record(...) while a listener is active. [Collection("Metrics")] serializes
+// execution against other test classes that listen on the same static meters, preventing
+// stray recordings from contaminating snapshot-delta or Contain-style assertions.
 
 [Collection("Metrics")]
 public sealed class DispatchLoopMetricTests : IDisposable
