@@ -100,15 +100,12 @@ public sealed class MonitoringInteractionTests : E2ETestBase
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
         var runRow = Page.Locator(".cockpit-run-row").Filter(new() { HasTextString = "#71" });
         await runRow.First.WaitForAsync(new() { Timeout = 15_000 });
-
-        // Start waiting for URL before the click so the full 30s budget is available
-        // regardless of how quickly Blazor begins routing on the CI runner.
-        var navigationTask = Page.WaitForURLAsync($"**/runs/{runId}", new() { Timeout = 30_000 });
         await runRow.First.ClickAsync();
-        await navigationTask;
-        // Wait specifically for the run detail h1 containing "#71" — a generic h1 wait can resolve
-        // immediately on the still-present Overview h1 before Blazor finishes re-rendering RunPage.
-        await Page.WaitForSelectorAsync("h1:has-text(\"#71\")", new() { Timeout = 15_000 });
+
+        // Assert: we land on the run detail page and it shows the issue.
+        // Use WaitUntilState.Commit (not the default Load) because Blazor's Nav.NavigateTo fires a
+        // history.pushState — a SPA URL change — that never raises a network-level "load" event.
+        await Page.WaitForURLAsync($"**/runs/{runId}", new() { Timeout = 15_000, WaitUntil = WaitUntilState.Commit });
         var pageText = await Page.TextContentAsync("body");
         Assert.Contains("#71", pageText);
     }
