@@ -341,20 +341,8 @@ public class PipelineFormattingTests
         result.Should().Contain("External CI ✅");
     }
 
-    [Fact]
-    public void FormatQualityGateSummary_WithSecurityScan_IncludesSecurityStatus()
-    {
-        var report = new QualityGateReport
-        {
-            Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
-            Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" },
-            SecurityScan = new GateResult { GateName = "Security", Passed = false, Details = "2 vulnerabilities" }
-        };
-
-        var result = PipelineFormatting.FormatQualityGateSummary(report);
-
-        result.Should().Contain("Security ❌");
-    }
+    // Deleted (behavior removed): FormatQualityGateSummary_WithSecurityScan_IncludesSecurityStatus —
+    // SecurityScan property was retired from QualityGateReport (Key(4) tombstoned).
 
     [Fact]
     public void FormatQualityGateSummary_TestsWithoutCounts_OmitsCounts()
