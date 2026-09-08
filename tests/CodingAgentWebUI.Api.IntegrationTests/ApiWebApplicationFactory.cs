@@ -2,6 +2,7 @@ using CodingAgentWebUI.Api;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Models;
@@ -140,6 +141,12 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
             // The passthrough stub returns the identity request as-is — sufficient for endpoint routing tests.
             services.RemoveAll<AssignmentEnricher>();
             services.AddSingleton<AssignmentEnricher>(new PassthroughAssignmentEnricher());
+
+            // Register a no-op IKubernetesJobClient so DispatchLifecycleService (required by
+            // POST /api/work-items/dispatch) can be constructed at startup. The integration tests
+            // do not call the dispatch endpoint so the no-op implementation is never invoked.
+            services.RemoveAll<IKubernetesJobClient>();
+            services.AddSingleton(new Mock<IKubernetesJobClient>().Object);
         });
     }
 

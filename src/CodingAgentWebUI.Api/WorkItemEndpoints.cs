@@ -641,19 +641,21 @@ public static class WorkItemEndpoints
             .GroupBy(w => w.AgentSelector)
             .Select(g => new { Selector = g.Key, Count = g.Count() })
             .ToListAsync(ct);
-        // TODO [WARNING]: The concurrency map key uses AgentSelector as stored in existing WorkItems.
-        // If any existing item was stored with a normalized selector (dots instead of commas, different
-        // casing) versus the raw selector in the incoming request, GetValueOrDefault below will miss
-        // those entries and under-count active items, allowing over-dispatch. Ensure AgentSelector is
-        // normalized consistently on write (e.g. always via JobTemplateStore.NormalizeLabels) or
-        // normalize the lookup key here to match the stored format.
-        var concurrencyBySelector = activeCounts.ToDictionary(x => x.Selector, x => x.Count);
+        // Normalise stored selectors before building the lookup key so that items written by
+        // any path (including the old DispatchLoop which may have normalised differently) are
+        // counted correctly. NormalizeLabels is idempotent — normalising an already-normalised
+        // key is a no-op.
+        var concurrencyBySelector = activeCounts.ToDictionary(
+            x => JobTemplateStore.NormalizeLabels(x.Selector),
+            x => x.Count,
+            StringComparer.Ordinal);
 
         // Concurrency gate
         var maxConcurrent = template.MaxConcurrent;
         if (maxConcurrent > 0)
         {
-            var currentCount = concurrencyBySelector.GetValueOrDefault(request.AgentSelector ?? "", 0);
+            var lookupKey = JobTemplateStore.NormalizeLabels(request.AgentSelector ?? "");
+            var currentCount = concurrencyBySelector.GetValueOrDefault(lookupKey, 0);
             if (currentCount >= maxConcurrent)
             {
                 Log.Information("DispatchWorkItem: concurrency limit reached for selector {Selector} ({Current}/{Max}) — returning 409",
@@ -702,7 +704,7 @@ public static class WorkItemEndpoints
             Status = WorkItemStatus.Dispatched,
             DispatchedAt = DateTimeOffset.UtcNow,
             Payload = payloadJson,
-            AgentSelector = request.AgentSelector ?? "",
+            AgentSelector = JobTemplateStore.NormalizeLabels(request.AgentSelector ?? ""),
             TimeoutSeconds = request.TimeoutSeconds,
             ProjectId = request.ProjectId,
             CreatedAt = DateTimeOffset.UtcNow,
@@ -719,20 +721,27 @@ public static class WorkItemEndpoints
         catch (Exception ex) when (IsUniqueViolation(ex))
         {
             // Idempotent retry: a work item with this ID already exists.
-            // TODO [WARNING]: This returns 200 OK regardless of the existing item's status. If the
-            // previous dispatch attempt failed (item is Failed, Cancelled, or Pending with no K8s Job),
-            // the caller (KubernetesWorkDistributor) treats the 200 as a successful new dispatch and
-            // DispatchOrchestrationService will swap the GitHub label to agent:in-progress — even though
-            // no K8s Job is running. Consider checking the existing item's status before returning 200:
-            // return 409 if the item is in a terminal or non-running state, so the Scheduler re-queues
-            // the issue rather than treating it as dispatched.
+            // Return 200 only when the existing item is still active (Dispatched or Running).
+            // For terminal or Pending states, return 409 so the Scheduler re-queues the issue
+            // rather than treating it as dispatched — a Failed/Cancelled item has no K8s Job
+            // and returning 200 would cause DispatchOrchestrationService to swap the GitHub
+            // label to agent:in-progress with no running job.
             //
             // Use a fresh DbContext — after DbUpdateException the original context is in a faulted state
             // and further queries on it may return stale results or fail.
             await using var freshDb = await dbFactory.CreateDbContextAsync(ct);
-            var existsById = await freshDb.WorkItems.AsNoTracking().AnyAsync(w => w.Id == workItemId, ct);
-            if (existsById)
-                return TypedResults.Ok(workItemId);
+            var existing = await freshDb.WorkItems.AsNoTracking()
+                .Select(w => new { w.Id, w.Status })
+                .FirstOrDefaultAsync(w => w.Id == workItemId, ct);
+            if (existing is not null)
+            {
+                var isActive = existing.Status is WorkItemStatus.Dispatched or WorkItemStatus.Running;
+                if (isActive)
+                    return TypedResults.Ok(workItemId);
+                Log.Warning("DispatchWorkItem: idempotent retry for {WorkItemId} but existing item is in non-active state {Status} — returning 409",
+                    workItemId, existing.Status);
+                return TypedResults.Conflict($"Work item {workItemId} already exists in non-active state {existing.Status}.");
+            }
             return TypedResults.Conflict("A live work item already exists for this issue.");
         }
 

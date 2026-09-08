@@ -442,20 +442,12 @@ public static class ApiServiceCollectionExtensions
             var jobClient = sp.GetService<IKubernetesJobClient>();
             var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
             if (jobClient is null)
-            {
-                Log.Warning("API: DispatchLifecycleService — IKubernetesJobClient is null. " +
-                    "POST /api/work-items/dispatch will fail if called without K8s configured.");
-                // TODO [WARNING]: The null-forgiving operator below passes null to DispatchLifecycleService
-                // even after the null-guard above. In a non-K8s deployment (or misconfiguration), the
-                // singleton is constructed successfully but any call to POST /api/work-items/dispatch
-                // will throw NullReferenceException inside CreateK8sJobAsync. Consider throwing an
-                // InvalidOperationException here with a descriptive message (instead of accepting null),
-                // or registering a stub DispatchLifecycleService that returns 503 immediately when K8s
-                // is not configured. This would surface the misconfiguration at startup rather than at
-                // runtime and produce a cleaner error than an unhandled NullReferenceException.
-            }
+                throw new InvalidOperationException(
+                    "API: IKubernetesJobClient is not registered. " +
+                    "POST /api/work-items/dispatch requires a Kubernetes client. " +
+                    "Register IKubernetesJobClient in DI or disable the synchronous dispatch endpoint.");
             return new CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService(
-                jobClient!,
+                jobClient,
                 sp.GetRequiredService<WorkItemTransitionService>(),
                 options);
         });

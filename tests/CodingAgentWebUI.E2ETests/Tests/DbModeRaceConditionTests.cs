@@ -211,7 +211,7 @@ public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase
     // ═══════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task Race_QueueOrdering_JobsDispatchedInFIFOOrder()
+    public async Task Race_QueueOrdering_AllItemsDispatchedImmediately_AgentsReceiveTheirJobs()
     {
         // Arrange: seed 3 issues and dispatch them in order WITHOUT agents
         await SeedIssueAndProfileAsync("2010", "FIFO first");
@@ -219,6 +219,8 @@ public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase
         await SeedIssueAndProfileAsync("2012", "FIFO third");
 
         // Dispatch in strict order — synchronous path (issue #2322): all created as Dispatched
+        // immediately. End-to-end priority ordering is enforced by the Scheduler before this
+        // point; this test only verifies that dispatched items reach connected agents.
         var r1 = await DispatchIssueAsync("2010");
         await Task.Delay(50); // Small delay to ensure CreatedAt ordering in DB
         var r2 = await DispatchIssueAsync("2011");
@@ -239,8 +241,10 @@ public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase
         var job1 = await agent1.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
         var job2 = await agent2.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
 
-        // Assert: the first two issues dispatched (2010 and 2011) are the ones delivered
-        // (FIFO by DispatchedAt/CreatedAt ordering in GetActiveAsync).
+        // Assert: the first two issues dispatched (2010 and 2011) are the ones delivered.
+        // With only 2 agents and 3 items, 2010 and 2011 will always be the set delivered
+        // because 2012 has no idle agent. This does NOT assert ordering within the set —
+        // Scheduler-level priority ordering is tested separately.
         var deliveredIssues = new HashSet<string> { job1.IssueIdentifier, job2.IssueIdentifier };
         Assert.Contains("2010", deliveredIssues);
         Assert.Contains("2011", deliveredIssues);

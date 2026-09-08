@@ -171,10 +171,15 @@ public sealed class FakeJobController : IAsyncDisposable
                     await db.SaveChangesAsync(ct);
                 }
             }
-            catch
+            catch (Exception ex)
             {
                 // Best-effort — if the write fails, StartAssignedWorkItemAsync will get a 403
                 // and silently return; the job controller will retry on the next poll.
+                // Log so the failure is visible in test output rather than producing a silent timeout.
+                Serilog.Log.Warning(ex,
+                    "FakeJobController: failed to write AssignedAgentId for WorkItem {WorkItemId} — " +
+                    "StartAssignedWorkItemAsync may return 403 on GET /assignment",
+                    item.Id);
             }
 
             if (FakeAgentClient.TryGetConnected(agent.AgentId.Value, out var fakeAgent))

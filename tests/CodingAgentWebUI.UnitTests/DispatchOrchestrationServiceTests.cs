@@ -1558,13 +1558,12 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
     }
 
     [Fact]
-    public async Task DistributeAndFinalizeAsync_WhenDistributeSucceedsAndQueued_DoesNotConfirmLabel()
+    public async Task DistributeAndFinalizeAsync_WhenDistributeSucceedsWithQueuedTrue_StillConfirmsLabel()
     {
-        // With the synchronous dispatch path, Queued=true is no longer used by KubernetesWorkDistributor.
-        // However, DistributeAndFinalizeAsync now ALWAYS calls ConfirmDistributionLabelAsync on success
-        // regardless of the Queued flag — the synchronous dispatch path means the item is always Dispatched
-        // immediately. This test verifies that ConfirmDistributionLabelAsync is called even when Queued=true
-        // (e.g., for legacy or other distributor implementations that might still return Queued=true).
+        // DistributeAndFinalizeAsync always calls ConfirmDistributionLabelAsync on success
+        // regardless of the Queued flag — the synchronous dispatch path means the item is always
+        // Dispatched immediately. This test verifies that even if a distributor returns Queued=true
+        // (e.g., a legacy or alternative implementation), the label swap still fires unconditionally.
         _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(true, "work-1", null, Queued: true));
 
