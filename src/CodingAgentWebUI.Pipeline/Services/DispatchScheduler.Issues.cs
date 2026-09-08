@@ -43,7 +43,7 @@ internal sealed partial class DispatchScheduler
                         RepoProviderId = template.RepoProviderId,
                         BrainProviderId = template.BrainProviderId,
                         PipelineProviderId = template.PipelineProviderId,
-                        InitiatedBy = "loop",
+                        InitiatedBy = InitiatedByConstants.LoopIssue,
                         Project = dispatchProject ?? new PipelineProject { Id = "", Name = UnknownProjectName }
                     },
                     ct),

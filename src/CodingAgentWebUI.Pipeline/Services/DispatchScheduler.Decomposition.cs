@@ -61,7 +61,7 @@ internal sealed partial class DispatchScheduler
                         IssueProviderId = template.IssueProviderId,
                         RepoProviderId = template.RepoProviderId,
                         BrainProviderId = template.BrainProviderId,
-                        InitiatedBy = "loop",
+                        InitiatedBy = InitiatedByConstants.LoopDecomposition,
                         // TODO: Add a test where templateProjectLookup is missing an entry for a pollable template
                         // to guard against regression and validate fallback PipelineProject behavior downstream.
                         Project = decompProject ?? new PipelineProject { Id = "", Name = UnknownProjectName }
@@ -263,7 +263,7 @@ internal sealed partial class DispatchScheduler
                         IssueProviderId = candidate.Template.IssueProviderId,
                         RepoProviderId = candidate.Template.RepoProviderId,
                         BrainProviderId = candidate.Template.BrainProviderId,
-                        InitiatedBy = "loop",
+                        InitiatedBy = InitiatedByConstants.LoopDecomposition,
                         Project = projLevelProject ?? new PipelineProject { Id = "", Name = UnknownProjectName },
                         DecompositionSource = "project-level"
                     },

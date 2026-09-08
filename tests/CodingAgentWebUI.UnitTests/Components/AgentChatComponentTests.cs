@@ -509,3 +509,172 @@ public class AgentChatMcpConfigPathTests : BunitContext
         Assert.Equal("/home/ubuntu/.kiro/settings/mcp.json", captured!.McpConfigPath);
     }
 }
+
+
+/// <summary>
+/// Tests that the hub connection is NOT started eagerly during page initialization (prerender),
+/// but IS started only after the user launches a chat pod (post-circuit, from a user action).
+///
+/// Background: starting SignalR during OnInitializedAsync fails with 404 because prerender
+/// runs before the interactive circuit exists. The hub must be started only from StartChat(),
+/// which is called after LaunchChatPod succeeds.
+/// </summary>
+public class AgentChatHubStartTimingTests : BunitContext
+{
+    private readonly Mock<IAgentHubConnection> _mockHub;
+    private readonly Mock<IChatJobDispatcher> _mockDispatcher;
+
+    private const string FakeAgentId = "chat-agent-timing-1";
+    private const string TemplateLabels = "kiro,dotnet";
+
+    public AgentChatHubStartTimingTests()
+    {
+        var mockLogger = new Mock<Serilog.ILogger>();
+        var mockStore = new Mock<IConfigurationStore>();
+        _mockDispatcher = new Mock<IChatJobDispatcher>();
+        _mockHub = new Mock<IAgentHubConnection>();
+
+        var mockHistory = new Mock<IPipelineRunHistoryService>();
+        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
+
+        mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
+        mockStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+        mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineProject>());
+
+        _mockDispatcher
+            .Setup(d => d.DispatchChatPodAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(FakeAgentId);
+
+        // Hub starts disconnected, StartAsync transitions to connected for subsequent InvokeAsync calls.
+        var connected = false;
+        _mockHub.Setup(h => h.State)
+            .Returns(() => connected ? HubConnectionState.Connected : HubConnectionState.Disconnected);
+        _mockHub.Setup(h => h.StartAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => connected = true)
+            .Returns(Task.CompletedTask);
+        _mockHub.Setup(h => h.InvokeAsync(It.IsAny<string>(), It.IsAny<object?>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockHub.Setup(h => h.On(It.IsAny<string>(), It.IsAny<Action>()))
+            .Returns(Mock.Of<IDisposable>());
+        _mockHub.Setup(h => h.On<string, IReadOnlyList<string>>(It.IsAny<string>(), It.IsAny<Action<string, IReadOnlyList<string>>>()))
+            .Returns(Mock.Of<IDisposable>());
+        _mockHub.Setup(h => h.On<string, int, string?>(It.IsAny<string>(), It.IsAny<Action<string, int, string?>>()))
+            .Returns(Mock.Of<IDisposable>());
+
+        var lifecycle = new PipelineRunLifecycleService(mockHistory.Object, null, mockLogger.Object);
+        var registry = new AgentRegistryService(mockLogger.Object);
+
+        Services.AddSingleton(lifecycle);
+        Services.AddSingleton(registry);
+        Services.AddSingleton<IAgentRegistryService>(registry);
+        Services.AddSingleton(mockStore.Object);
+        Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
+        Services.AddSingleton(new Mock<IJSRuntime>().Object);
+        Services.AddSingleton(JobTemplateStore.CreateEmpty());
+        Services.AddSingleton(_mockDispatcher.Object);
+        Services.AddSingleton(_mockHub.Object);
+        Services.AddSingleton(Mock.Of<IPipelineApiAgentClient>());
+        Services.AddSingleton<IChatPromptBuilder>(new ChatPromptBuilder());
+        Services.AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
+    }
+
+    [Fact]
+    public void AgentChat_DoesNotStartHubDuringPageInitialization()
+    {
+        // Render the page (triggers OnInitialized + OnInitializedAsync)
+        var cut = Render<AgentChat>();
+
+        // StartAsync must NOT be called during initialization — only after pod launch
+        // TODO [WARNING]: These negative-only tests cannot distinguish "bug is fixed" from "launch
+        // path was never exercised at all". They only check Times.Never, which is trivially satisfied
+        // if any conditional prevents the code path from being reached. The paired positive tests
+        // AgentChat_StartsHubAfterLaunchChatPod / AgentChat_RegistersHubHandlersAfterLaunchChatPod
+        // serve as the counterpart; ensure they are kept in sync — deleting or breaking them would
+        // leave these negative tests unable to catch a regression.
+        _mockHub.Verify(h => h.StartAsync(It.IsAny<CancellationToken>()), Times.Never,
+            "Hub StartAsync must not be called during page initialization (prerender runs before the interactive circuit exists, causing 404)");
+    }
+
+    [Fact]
+    public void AgentChat_DoesNotRegisterHubHandlersDuringPageInitialization()
+    {
+        // Render the page (triggers OnInitialized + OnInitializedAsync)
+        var cut = Render<AgentChat>();
+
+        // On<> handlers must NOT be registered during initialization
+        _mockHub.Verify(
+            h => h.On<string, IReadOnlyList<string>>(It.IsAny<string>(), It.IsAny<Action<string, IReadOnlyList<string>>>()),
+            Times.Never,
+            "Hub On<> handlers must not be registered during page initialization");
+        _mockHub.Verify(
+            h => h.On<string, int, string?>(It.IsAny<string>(), It.IsAny<Action<string, int, string?>>()),
+            Times.Never,
+            "Hub On<> handlers must not be registered during page initialization");
+    }
+
+    [Fact]
+    public async Task AgentChat_StartsHubAfterLaunchChatPod()
+    {
+        // TODO [WARNING]: This test uses JobTemplateStore.CreateEmpty(), so the select dropdown has no
+        // real <option> elements. The Change("kiro,dotnet") call works via Blazor @bind regardless of
+        // DOM options, but the setup would silently test a blocked launch path if the component ever
+        // validates that the selected value corresponds to an actual template entry. Consider registering
+        // a JobTemplateStore with a template whose labels match TemplateLabels so DOM state mirrors the
+        // real UI.
+        //
+        // TODO [WARNING]: Does not test the re-launch scenario (EndChat followed by a second LaunchChatPod).
+        // On re-launch, StartAsync should NOT be called again if the hub is still Connected, but handlers
+        // must still be re-registered. Add a test covering this case to verify the
+        // `if (State == Disconnected)` guard and the handler re-registration behave correctly.
+        var cut = Render<AgentChat>();
+
+        // Before launch: StartAsync must not have been called
+        _mockHub.Verify(h => h.StartAsync(It.IsAny<CancellationToken>()), Times.Never);
+
+        // Select template and click Launch Chat Pod
+        var select = cut.Find("select#template-select");
+        await cut.InvokeAsync(() => select.Change(TemplateLabels));
+
+        var launchBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Launch Chat Pod"));
+        await cut.InvokeAsync(() => launchBtn.Click());
+
+        // Wait for chat window to appear (launch succeeded)
+        cut.WaitForAssertion(() => Assert.Contains("chat-window", cut.Markup), timeout: TimeSpan.FromSeconds(5));
+
+        // After launch: StartAsync must have been called exactly once
+        _mockHub.Verify(h => h.StartAsync(It.IsAny<CancellationToken>()), Times.Once,
+            "Hub StartAsync must be called exactly once after LaunchChatPod succeeds");
+    }
+
+    [Fact]
+    public async Task AgentChat_RegistersHubHandlersAfterLaunchChatPod()
+    {
+        var cut = Render<AgentChat>();
+
+        // Select template and click Launch Chat Pod
+        var select = cut.Find("select#template-select");
+        await cut.InvokeAsync(() => select.Change(TemplateLabels));
+
+        var launchBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Launch Chat Pod"));
+        await cut.InvokeAsync(() => launchBtn.Click());
+
+        cut.WaitForAssertion(() => Assert.Contains("chat-window", cut.Markup), timeout: TimeSpan.FromSeconds(5));
+
+        // After launch: On<> handlers must be registered
+        _mockHub.Verify(
+            h => h.On<string, IReadOnlyList<string>>(HubMethodNames.OnChatResponse, It.IsAny<Action<string, IReadOnlyList<string>>>()),
+            Times.Once,
+            "OnChatResponse handler must be registered after pod launch");
+        _mockHub.Verify(
+            h => h.On<string, int, string?>(HubMethodNames.OnChatCompleted, It.IsAny<Action<string, int, string?>>()),
+            Times.Once,
+            "OnChatCompleted handler must be registered after pod launch");
+    }
+}

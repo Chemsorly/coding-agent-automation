@@ -26,7 +26,8 @@ internal static class TestAgentWorkerServiceFactory
             KiroCliLib.Core.IKiroCliOrchestrator? orchestrator = null,
             Serilog.ILogger? logger = null,
             IHubConnectionManager? hubManager = null,
-            IHubConnectionManagerFactory? hubManagerFactory = null)
+            IHubConnectionManagerFactory? hubManagerFactory = null,
+            TimeSpan? chatGracePeriod = null)
     {
         var mockLogger = logger ?? new Mock<Serilog.ILogger>().Object;
         var mockOrchestrator = orchestrator ?? new Mock<KiroCliLib.Core.IKiroCliOrchestrator>().Object;
@@ -54,7 +55,8 @@ internal static class TestAgentWorkerServiceFactory
             isOpenCodeProvider: (Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType) ?? "")
                 .Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase),
             isChatMode: string.Equals(
-                Environment.GetEnvironmentVariable(AgentDefaults.EnvChatMode), "true", StringComparison.OrdinalIgnoreCase));
+                Environment.GetEnvironmentVariable(AgentDefaults.EnvChatMode), "true", StringComparison.OrdinalIgnoreCase),
+            chatGracePeriod: chatGracePeriod);
         var consolidationHandler = CreateConsolidationJobHandler(lifecycle, slotManager, mockOrchestrator, mockLogger);
 
         var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
@@ -75,9 +77,11 @@ internal static class TestAgentWorkerServiceFactory
         IHostApplicationLifetime? hostLifetime = null,
         IJobCompletionReporter? completionReporter = null,
         KiroCliLib.Core.IKiroCliOrchestrator? orchestrator = null,
-        Serilog.ILogger? logger = null)
+        Serilog.ILogger? logger = null,
+        TimeSpan? chatGracePeriod = null)
     {
-        return CreateWithComponents(hostLifetime, completionReporter, orchestrator, logger).Service;
+        return CreateWithComponents(hostLifetime, completionReporter, orchestrator, logger,
+            chatGracePeriod: chatGracePeriod).Service;
     }
 
     /// <summary>
@@ -91,7 +95,8 @@ internal static class TestAgentWorkerServiceFactory
         Serilog.ILogger? logger = null,
         Func<Task>? signalAgentReady = null,
         bool isOpenCodeProvider = false,
-        bool isChatMode = false)
+        bool isChatMode = false,
+        TimeSpan? chatGracePeriod = null)
     {
         var mockLogger = logger ?? new Mock<Serilog.ILogger>().Object;
         var mockOrchestrator = orchestrator ?? new Mock<KiroCliLib.Core.IKiroCliOrchestrator>().Object;
@@ -105,7 +110,13 @@ internal static class TestAgentWorkerServiceFactory
             SignalAgentReady: signalAgentReady ?? (() => Task.CompletedTask),
             IsOpenCodeProvider: isOpenCodeProvider,
             IsChatMode: isChatMode,
-            Logger: mockLogger));
+            Logger: mockLogger)
+        {
+            // Defaults to the production 10s. Only "times out when the chat task hangs" tests pass a
+            // small value; "waits for the chat task" tests keep the default so the handler stays in
+            // its wait when they assert on it.
+            ChatTaskCompletionGracePeriod = chatGracePeriod ?? TimeSpan.FromSeconds(10)
+        });
     }
 
     /// <summary>

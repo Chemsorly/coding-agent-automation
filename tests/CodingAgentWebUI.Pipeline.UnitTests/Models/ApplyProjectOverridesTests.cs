@@ -98,6 +98,7 @@ public class ApplyProjectOverridesTests
         result.BrainReadOnly.Should().Be(config.BrainReadOnly);
         result.MaxConsolidationDispatchRetries.Should().Be(config.MaxConsolidationDispatchRetries);
         result.CiCancelledMoveMaxRetries.Should().Be(config.CiCancelledMoveMaxRetries);
+        result.FeedbackTimeoutSeconds.Should().Be(config.FeedbackTimeoutSeconds);
     }
 
     // ── Non-null fields → override global values ───────────────────────────────
@@ -367,7 +368,7 @@ public class ApplyProjectOverridesTests
         {
             MaxIterations = 5,
             FixPrompt = "Custom fix prompt",
-            ReviewIsolation = ReviewIsolation.Shared,
+            ReviewIsolation = ReviewIsolation.Isolated,
             InlineComments = new InlineCommentOverrides
             {
                 Enabled = false,
@@ -384,7 +385,16 @@ public class ApplyProjectOverridesTests
         // All specified override values are applied
         result.CodeReview.MaxIterations.Should().Be(5);
         result.CodeReview.FixPrompt.Should().Be("Custom fix prompt");
-        result.CodeReview.ReviewIsolation.Should().Be(ReviewIsolation.Shared);
+        // TODO: This assertion cannot distinguish "ReviewIsolation was actively applied from the
+        // override" from "default Isolated was left in place". Both the override value and the
+        // default are ReviewIsolation.Isolated since Shared was removed. The pre-change test used
+        // ReviewIsolation.Shared precisely to make this assertion meaningful. Now that only Isolated
+        // exists, the merge path for ReviewIsolation is not covered: ApplyOverrides could silently
+        // drop the ReviewIsolation field and this assertion would still pass. Consider removing the
+        // ReviewIsolation field from CodeReviewConfiguration/CodeReviewOverrides entirely (see the
+        // [SUGGESTION] in review findings) to remove the dead merge path rather than leaving an
+        // untestable code branch.
+        result.CodeReview.ReviewIsolation.Should().Be(ReviewIsolation.Isolated);
         result.CodeReview.InlineComments.Enabled.Should().BeFalse();
         result.CodeReview.InlineComments.MaxInlineComments.Should().Be(10);
         result.CodeReview.InlineComments.MaxRetries.Should().Be(3);
@@ -687,6 +697,30 @@ public class ApplyProjectOverridesTests
         var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.CiCancelledMoveMaxRetries.Should().Be(5);
+    }
+
+    // ── FeedbackTimeoutSeconds override ───────────────────────────────────────
+
+    [Fact]
+    public void FeedbackTimeoutSeconds_NonNull_OverridesGlobal()
+    {
+        var config = TestPipelineConfig.Default() with { FeedbackTimeoutSeconds = 60 };
+        var project = TestPipelineConfig.WithProject() with { FeedbackTimeoutSeconds = 120 };
+
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
+
+        result.FeedbackTimeoutSeconds.Should().Be(120);
+    }
+
+    [Fact]
+    public void FeedbackTimeoutSeconds_NullOverride_InheritsFromGlobal()
+    {
+        var config = TestPipelineConfig.Default() with { FeedbackTimeoutSeconds = 90 };
+        var project = TestPipelineConfig.WithProject(); // FeedbackTimeoutSeconds is null
+
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
+
+        result.FeedbackTimeoutSeconds.Should().Be(90);
     }
 
     // ── Drift-detection tests ──────────────────────────────────────────────────

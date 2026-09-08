@@ -608,8 +608,8 @@ public class AgentWorkerServiceTests : IDisposable
     [Fact]
     public async Task HandleCancelChat_TimesOutIfChatTaskHangs()
     {
-        // Arrange — chat task that never completes
-        var service = CreateService();
+        // Arrange — chat task that never completes; 50ms grace (injected) so the timeout fires fast.
+        var service = CreateService(chatGracePeriod: TimeSpan.FromMilliseconds(50));
         var neverCompletes = new TaskCompletionSource();
         var chatCts = new CancellationTokenSource();
 
@@ -617,12 +617,11 @@ public class AgentWorkerServiceTests : IDisposable
         SetPrivateField(GetSlotManager(service), "_activeChatTask", neverCompletes.Task);
         SetPrivateField(GetSlotManager(service), "_chatCts", chatCts);
 
-        // Act — cancel handler should time out after ~10s and still complete
+        // Act — cancel handler should time out (after the injected 50ms grace) and still complete
         var chatJobHandler = GetChatJobHandler(service);
         var cancelTask = chatJobHandler.HandleCancelChatAsync("session-hang");
 
-        // Should complete within 15s (10s timeout + buffer)
-        var completed = await Task.WhenAny(cancelTask, Task.Delay(15000));
+        var completed = await Task.WhenAny(cancelTask, Task.Delay(5000));
         completed.Should().Be(cancelTask, "cancel handler should time out and complete");
     }
 
@@ -897,9 +896,9 @@ public class AgentWorkerServiceTests : IDisposable
         return (ConsolidationJobHandler)field.GetValue(service)!;
     }
 
-    private static AgentWorkerService CreateService()
+    private static AgentWorkerService CreateService(TimeSpan? chatGracePeriod = null)
     {
-        return TestAgentWorkerServiceFactory.Create();
+        return TestAgentWorkerServiceFactory.Create(chatGracePeriod: chatGracePeriod);
     }
 
     private static AgentWorkerService CreateServiceWithOrchestrator(KiroCliLib.Core.IKiroCliOrchestrator orchestrator)

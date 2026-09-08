@@ -53,24 +53,25 @@ public class LocalPipelineExecutorErrorPathTests
     }
 
     [Fact]
-    public void BuildFailurePayload_PreservesIsRework_WhenLinkedPrExists()
+    public void BuildFailurePayload_PreservesRunMode_WhenLinkedPrExists()
     {
         var run = CreateRunAtStep(PipelineStep.GeneratingCode);
         run.LinkedPullRequest = new LinkedPullRequest { Number = 42, BranchName = "fix/thing", Url = "http://pr/42", IsDraft = false };
+        run.RunMode = RunMode.Rework;
 
         var payload = LocalPipelineExecutor.BuildFailurePayload(run, "crash");
 
-        payload.IsRework.Should().BeTrue();
+        payload.RunMode.Should().Be(RunMode.Rework);
     }
 
     [Fact]
-    public void BuildFailurePayload_IsReworkFalse_WhenNoLinkedPr()
+    public void BuildFailurePayload_RunModeNew_WhenNoLinkedPr()
     {
         var run = CreateRunAtStep(PipelineStep.GeneratingCode);
 
         var payload = LocalPipelineExecutor.BuildFailurePayload(run, "crash");
 
-        payload.IsRework.Should().BeFalse();
+        payload.RunMode.Should().Be(RunMode.New);
     }
 
     [Fact]

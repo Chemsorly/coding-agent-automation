@@ -18,6 +18,17 @@ public class DownloadIssueImagesStepTests : IDisposable
     private readonly Serilog.ILogger _logger = new Serilog.LoggerConfiguration().CreateLogger();
     private readonly List<CancellationTokenSource> _tokenSources = new();
 
+    // Injected into the step so image "downloads" never touch the real network (example.com URLs
+    // otherwise incur real DNS + HTTP, ~20s per test and network-flaky). Returns 404 so the step
+    // exercises its graceful-degradation path without downloading anything.
+    private readonly StubImageHandler _imageHandler = new();
+
+    private sealed class StubImageHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.NotFound));
+    }
+
     public DownloadIssueImagesStepTests()
     {
         _agentProvider.Setup(p => p.SupportsVisionInput).Returns(true);
@@ -249,7 +260,8 @@ public class DownloadIssueImagesStepTests : IDisposable
             var tokenRequested = false;
             var step = new DownloadIssueImagesStep(
                 _ => { tokenRequested = true; return Task.FromResult("token"); },
-                CreateRepoConfig());
+                CreateRepoConfig(),
+                _imageHandler);
 
             var result = await step.ExecuteAsync(context, CancellationToken.None);
 
@@ -295,7 +307,8 @@ public class DownloadIssueImagesStepTests : IDisposable
             var tokenRequested = false;
             var step = new DownloadIssueImagesStep(
                 _ => { tokenRequested = true; return Task.FromResult("token"); },
-                CreateRepoConfig());
+                CreateRepoConfig(),
+                _imageHandler);
 
             // Step will attempt download — token should be requested for merged images
             var result = await step.ExecuteAsync(context, CancellationToken.None);
@@ -336,5 +349,6 @@ public class DownloadIssueImagesStepTests : IDisposable
         foreach (var cts in _tokenSources)
             cts.Dispose();
         (_logger as IDisposable)?.Dispose();
+        _imageHandler.Dispose();
     }
 }

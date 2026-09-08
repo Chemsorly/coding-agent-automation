@@ -17,10 +17,17 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         _http = http;
     }
 
-    public async Task<IReadOnlyList<PendingWorkItemDto>> GetPendingAsync(int maxResults = 50, CancellationToken ct = default)
+    public Task<IReadOnlyList<PendingWorkItemDto>> GetPendingAsync(int maxResults = 50, CancellationToken ct = default)
+        => GetPendingAsync(maxResults, null, ct);
+
+    public async Task<IReadOnlyList<PendingWorkItemDto>> GetPendingAsync(int maxResults, string? projectId, CancellationToken ct = default)
     {
+        var url = $"/api/work-items/pending?maxResults={maxResults}";
+        if (!string.IsNullOrEmpty(projectId))
+            url += $"&projectId={Uri.EscapeDataString(projectId)}";
+
         var result = await _http.GetFromJsonAsync<List<PendingWorkItemDto>>(
-            $"/api/work-items/pending?maxResults={maxResults}",
+            url,
             PipelineJsonOptions.Default,
             ct);
         return result ?? [];
@@ -126,10 +133,14 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         response.EnsureSuccessStatusCode();
     }
 
-    public async Task<IReadOnlyList<ActiveWorkItemDto>> GetActiveAsync(int olderThanSeconds, CancellationToken ct = default)
+    public async Task<IReadOnlyList<ActiveWorkItemDto>> GetActiveAsync(int olderThanSeconds, string? projectId = null, CancellationToken ct = default)
     {
+        var url = $"/api/work-items/active?olderThanSeconds={olderThanSeconds}";
+        if (!string.IsNullOrEmpty(projectId))
+            url += $"&projectId={Uri.EscapeDataString(projectId)}";
+
         var result = await _http.GetFromJsonAsync<List<ActiveWorkItemDto>>(
-            $"/api/work-items/active?olderThanSeconds={olderThanSeconds}",
+            url,
             PipelineJsonOptions.Default,
             ct);
         return result ?? [];
@@ -171,6 +182,17 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         var url = $"/api/work-items/is-distributed?issueIdentifier={Uri.EscapeDataString(issueIdentifier)}&issueProviderConfigId={Uri.EscapeDataString(issueProviderConfigId)}";
         var result = await _http.GetFromJsonAsync<IsDistributedResponse>(url, PipelineJsonOptions.Default, ct);
         return result?.IsDistributed ?? false;
+    }
+
+    public async Task SetPriorityAsync(Guid workItemId, int priorityWeight, CancellationToken ct = default)
+    {
+        var body = new { priorityWeight };
+        var response = await _http.PostAsJsonAsync(
+            $"/api/work-items/{workItemId}/priority",
+            body,
+            PipelineJsonOptions.Default,
+            ct);
+        response.EnsureSuccessStatusCode();
     }
 
     public async Task<IReadOnlyList<(string IssueIdentifier, string IssueProviderConfigId)>> GetActiveIdentifiersAsync(CancellationToken ct = default)

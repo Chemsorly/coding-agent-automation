@@ -14,12 +14,13 @@ public partial class AgentCoding : IDisposable
     [Inject] private ILoopStatusService LoopService { get; set; } = default!;
     [Inject] private IAgentRegistryService Registry { get; set; } = default!;
     [Inject] private AgentCodingPageService PageService { get; set; } = default!;
-    [CascadingParameter] private MainLayout? Layout { get; set; }
+    [CascadingParameter] private CockpitLayout? Layout { get; set; }
 
     private string? _errorMessage;
     private string? _successMessage;
     private bool _showAgentSummary = true;
     private bool _hideLoopToast;
+    private bool _stopPending;
     private string? _lastLoopStatus;
     private bool _disposed;
 
@@ -279,8 +280,36 @@ public partial class AgentCoding : IDisposable
 
     private async Task StopLoop()
     {
+        // Guard: do not dispatch a second stop request while one is already in progress.
+        // The primary prevention mechanism is the disabled button attribute in the razor template,
+        // but this guard provides defence-in-depth for programmatic calls (keyboard shortcuts,
+        // automated tests, etc.) that bypass the disabled attribute.
+        if (_stopPending) return;
+
+        _stopPending = true;
+        // TODO: Consider replacing with `await InvokeAsync(StateHasChanged)` for consistency with
+        // HandleStateChanged, which always uses InvokeAsync for thread safety. Direct StateHasChanged()
+        // is safe here because StopLoop runs on the Blazor render thread (UI event), but the asymmetry
+        // is confusing and could silently fail if this method is ever called from a background context.
+        StateHasChanged(); // Forces Blazor to re-render before awaiting, disabling the button immediately
         var (success, error) = await PageService.StopLoopAsync();
-        if (!success) _errorMessage = error;
+        if (!success)
+        {
+            // Stop request failed (scheduler returned error, network failure, etc.).
+            // IsLoopActive will remain true — HandleStateChanged will never clear _stopPending.
+            // Reset it explicitly here so the button does not stay permanently disabled.
+            _stopPending = false;
+            _errorMessage = error;
+            StateHasChanged();
+        }
+        // TODO: Add a try/catch around StopLoopAsync to handle unexpected exceptions
+        // (e.g. TaskCanceledException during component disposal, ObjectDisposedException).
+        // If an unhandled exception escapes this method, _stopPending stays true permanently,
+        // leaving the Stop button disabled. StartLoop() above wraps its call in try/catch for
+        // exactly this reason — StopLoop() should follow the same pattern. See review finding
+        // from DotNetSpecialist (issue #2369).
+        // On success: _stopPending stays true until HandleStateChanged sees !IsLoopActive,
+        // keeping the button disabled until the poller confirms the loop has actually stopped.
     }
 
     private async Task ResumeLoop()
@@ -554,6 +583,16 @@ public partial class AgentCoding : IDisposable
             await InvokeAsync(() =>
             {
                 if (_disposed) return;
+                // Clear _stopPending when the poller confirms the loop has stopped.
+                // Must be inside InvokeAsync: HandleStateChanged fires on a background thread
+                // and state mutations must be marshalled to the Blazor render thread.
+                // TODO: There is a subtle race: if the loop stops and immediately restarts between two
+                // HandleStateChanged calls, _stopPending is cleared prematurely while a new cycle begins.
+                // Also note that _stopPending is cleared for any IsLoopActive=false transition, not only
+                // stop-requested ones — this is intentional (natural completion also releases the guard)
+                // but should be revisited if a dedicated IsStopPending DTO field is ever added (#2369).
+                if (!LoopService.IsLoopActive)
+                    _stopPending = false;
                 var currentStatus = LoopService.StatusMessage;
                 if (currentStatus != _lastLoopStatus)
                 {

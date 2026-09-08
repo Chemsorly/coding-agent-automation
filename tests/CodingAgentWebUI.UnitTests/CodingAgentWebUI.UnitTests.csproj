@@ -18,6 +18,7 @@
     <PackageReference Include="FsCheck" />
     <PackageReference Include="FsCheck.Xunit" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" />
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="Moq" />
@@ -29,11 +30,18 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Update="xunit.runner.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\CodingAgentWebUI\CodingAgentWebUI.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgentWebUI.Api\CodingAgentWebUI.Api.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Api.Client\CodingAgentWebUI.Api.Client.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Infrastructure.Providers\CodingAgentWebUI.Infrastructure.Providers.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Infrastructure.Persistence\CodingAgentWebUI.Infrastructure.Persistence.csproj" />

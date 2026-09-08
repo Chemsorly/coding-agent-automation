@@ -11,13 +11,20 @@ namespace CodingAgentWebUI.Api.Client;
 public interface IPipelineApiAgentClient
 {
     /// <summary>
-    /// Returns every agent currently registered with the Pipeline API, regardless of status.
+    /// Returns every agent currently registered with the Pipeline API, regardless of status,
+    /// enriched with issue/run/PR context from the active run service.
     /// </summary>
     /// <remarks>
     /// The endpoint requires the operator (master) key — a per-pod derived agent key is rejected
     /// with 403. Callers holding only a derived key must not use this client.
     /// </remarks>
-    Task<IReadOnlyList<AgentEntry>> GetAgentsAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<AgentEntryDto>> GetAgentsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns the Kiro credential (PVC) pool snapshot — configured slots, available, and claimed —
+    /// for the Fleet screen. <see cref="CredentialPoolStatus.Total"/> is 0 when pooling isn't configured.
+    /// </summary>
+    Task<CredentialPoolStatus> GetCredentialPoolAsync(CancellationToken ct = default);
 
     /// <summary>
     /// Delivers a chat prompt to the agent identified by <paramref name="agentId"/> via

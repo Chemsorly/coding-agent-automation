@@ -479,4 +479,43 @@ public sealed class PipelineApiWorkItemClientTests : IDisposable
 
         _server.LogEntries.Should().HaveCount(1);
     }
+
+    // ── SetPriorityAsync ─────────────────────────────────────────────────
+
+    [Fact]
+    public async Task SetPriorityAsync_Success_DoesNotThrow()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/priority").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(200));
+
+        var act = () => _sut.SetPriorityAsync(workItemId, 500);
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task SetPriorityAsync_Conflict_ThrowsHttpRequestException()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/priority").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(409));
+
+        var act = () => _sut.SetPriorityAsync(workItemId, 100);
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task SetPriorityAsync_BadRequest_ThrowsHttpRequestException()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/priority").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(400));
+
+        var act = () => _sut.SetPriorityAsync(workItemId, -1);
+        await act.Should().ThrowAsync<HttpRequestException>();
+        // TODO: The three SetPriorityAsync tests do not verify the request body serialisation.
+        // WireMock stubs match on path only, so they would pass even if the body were empty or
+        // malformed. Add a test that inspects the recorded request body to confirm it contains
+        // {"priorityWeight": <value>} so regressions in payload serialisation are caught.
+    }
 }

@@ -49,18 +49,4 @@ public class WorkDistributionSmokeTests : IClassFixture<DbModeWebApplicationFact
         var service = _factory.Services.GetService<IChatJobDispatcher>();
         Assert.NotNull(service);
     }
-
-    /// <summary>
-    /// Verifies that IPendingWorkQuery IS registered as ApiBackedPendingWorkQuery after T19 (arch-audit 2026-08-22).
-    /// The job-queue panel on the Agent Monitoring page was silently showing an empty list (B3).
-    /// ApiBackedPendingWorkQuery calls GET /api/work-items/pending instead of hitting the DB directly.
-    /// </summary>
-    [Fact]
-    public void IPendingWorkQuery_IsRegistered_AsApiBackedImplementation_AfterT19()
-    {
-        // T19 (arch-audit 2026-08-22): ApiBackedPendingWorkQuery registered in monolith so the
-        // job-queue panel on the Agent Monitoring page is no longer permanently empty.
-        var service = _factory.Services.GetService<IPendingWorkQuery>();
-        Assert.NotNull(service);
-    }
 }

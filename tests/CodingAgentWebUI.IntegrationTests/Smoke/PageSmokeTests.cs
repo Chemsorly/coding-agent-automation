@@ -14,7 +14,10 @@ public class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>
 
     [Theory]
     [InlineData("/agent-coding")]
-    [InlineData("/agent-monitoring")]
+    [InlineData("/overview")]
+    [InlineData("/work")]
+    [InlineData("/fleet")]
+    [InlineData("/runs")]
     [InlineData("/settings")]
     [InlineData("/about")]
     public async Task Get_Page_Returns_Success(string path)

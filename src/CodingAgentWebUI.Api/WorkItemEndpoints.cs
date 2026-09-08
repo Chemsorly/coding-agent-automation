@@ -201,7 +201,27 @@ public static class WorkItemEndpoints
         // Old schema: PayloadSchemaVersion == null → serve from frozen snapshot.
         // New schema: PayloadSchemaVersion == 1  → fresh-fetch all mutable config.
         if (request.PayloadSchemaVersion == 1 && assignmentEnricher is not null)
-            request = await EnrichRequestAsync(request, projectStore, assignmentEnricher, ct);
+        {
+            try
+            {
+                request = await EnrichRequestAsync(request, projectStore, assignmentEnricher, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // EnrichAsync already logged at Error level; return 503 so the agent retries.
+                // The WorkItem remains in Dispatched state — the reconciler TTL provides the hard timeout.
+                // TODO: [WARNING] For the null-return path (no profile matched), EnrichAsync does NOT log
+                // at Error — it returns null after Warning-level logs in EnrichCoreAsync, and then
+                // EnrichRequestAsync throws InvalidOperationException which propagates here unlogged at
+                // Error level. Add Log.Error(ex, ...) here so all paths producing a 503 have an Error-level
+                // trace, regardless of where in the call chain the exception originates. This makes permanent
+                // config failures (missing profile, deleted provider) distinguishable from transient failures
+                // in alerting dashboards.
+                return TypedResults.Problem(
+                    detail: "Assignment enrichment failed; please retry.",
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+        }
         // TODO: When assignmentEnricher is null and request.PayloadSchemaVersion == 1 (new-schema path),
         // enrichment is silently skipped and an identity-only 200 is returned with no log output.
         // A DI misconfiguration that drops AssignmentEnricher is now undetectable from logs at this site.
@@ -224,21 +244,21 @@ public static class WorkItemEndpoints
     /// Enriches a new-schema request (PayloadSchemaVersion == 1) by fetching mutable config fresh
     /// from the database. Resolves the project for steering + config override context, falling
     /// back to a minimal stub for project-less items.
-    /// If enrichment fails, returns the original request as a best-effort degraded response.
     /// </summary>
+    /// <remarks>
+    /// Any exception from <see cref="AssignmentEnricher.EnrichAsync"/> (other than
+    /// <see cref="OperationCanceledException"/>) propagates to the caller so it can return HTTP 503.
+    /// When <see cref="AssignmentEnricher.EnrichAsync"/> returns <c>null</c> (permanent failure —
+    /// profile not found, provider config removed), this also surfaces as a 503 via
+    /// <see cref="InvalidOperationException"/> so the agent retries rather than proceeding with
+    /// an incomplete job spec.
+    /// </remarks>
     private static async Task<JobDistributionRequest> EnrichRequestAsync(
         JobDistributionRequest request,
         IProjectStore projectStore,
         AssignmentEnricher assignmentEnricher,
         CancellationToken ct)
     {
-        // NOTE: [WARNING] assignmentEnricher is nullable ([FromServices] optional). If the DI
-        // container fails to resolve it at startup (transitive dependency missing), ASP.NET
-        // Core silently injects null and every new-schema work item gets a degraded identity-only
-        // 200 with no configs — no startup error, no warning log at this site.
-        // TODO: This method is only called when assignmentEnricher is not null (see GetAssignment
-        // call site). However, the outer GetAssignment still silently skips enrichment when
-        // assignmentEnricher is null. Restore the Log.Warning at the call site for that path.
         PipelineProject project;
         if (request.ProjectId.HasValue)
         {
@@ -250,10 +270,26 @@ public static class WorkItemEndpoints
             project = BuildMinimalProject(request);
         }
 
+        // EnrichAsync propagates transient failures (DB timeout, etc.) — let them bubble up.
+        // A null return indicates a permanent/configuration failure (no profile matched).
         var enriched = await assignmentEnricher.EnrichAsync(request, project, ct);
-        // If enrichment fails, fall through to serve the identity-only request as a
-        // best-effort degraded response (missing configs, but RunId/IssueIdentifier intact).
-        return enriched ?? request;
+        if (enriched is null)
+        {
+            // Profile resolution failure is permanent but should still be treated as a 503 so
+            // the reconciler TTL can expire the work item rather than the agent silently using
+            // an identity-only payload with no configs.
+            // TODO: [WARNING] This InvalidOperationException propagates to the GetAssignment catch block
+            // which does not log it at Error level (the comment there says "EnrichAsync already logged at
+            // Error level", which is true for the transient-exception path but NOT for the null-return
+            // path — EnrichCoreAsync only logs at Warning for no-profile-matched). Add Error-level logging
+            // here or in the catch block so permanent config failures are visible without querying Warning
+            // logs.
+            throw new InvalidOperationException(
+                $"AssignmentEnricher returned null for IssueIdentifier {request.IssueIdentifier}; " +
+                "no agent profile matched the selector. Cannot serve a valid job spec.");
+        }
+
+        return enriched;
     }
 
     /// <summary>
@@ -300,14 +336,24 @@ public static class WorkItemEndpoints
     // concrete class with an in-memory DB. Consider adding TransitionDetailedAsync to an interface
     // (e.g. IWorkItemTransitionService or a new IWorkItemTransitionDetailedService) so PostStatus can
     // be tested with pure mocks and to allow future DI substitution.
-    internal static async Task<IResult> PostStatus(
+    internal static async Task<IResult> PostStatus( // NOSONAR S107 — 8th param is a test-only seam; CA1068 suppressed via attribute below
         Guid id,
         WorkItemStatusRequest request,
         WorkItemTransitionService transitionService,
         IOrchestratorRunService runService,
         IRunLifecycleManager runLifecycleManager,
         IDbContextFactory<PipelineDbContext>? dbFactory = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        // Test seam only: when true, the telemetry task is awaited before returning so tests can
+        // assert metric side-effects deterministically. In production the route lambda never passes
+        // this parameter, so it defaults to false and the fire-and-forget path is unchanged.
+        // Suppression: CA1068 (ct not last) and S107 (>7 params) are acceptable here because
+        // this is an internal method with a test-only parameter appended after the conventional
+        // CancellationToken position. Moving the bool before ct would break naming conventions;
+        // splitting into an overload doubles the S107 surface area. The bool is never passed by
+        // production callers.
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1068", Justification = "Test seam bool appended after ct intentionally")]
+        bool awaitTelemetry = false)
     {
         var transitionResult = await transitionService.TransitionDetailedAsync(
             id, request.Status,
@@ -349,13 +395,22 @@ public static class WorkItemEndpoints
                 await runLifecycleManager.CancelRunAsync(new RunId(id.ToString()), ct);
             }
 
-            // Emit telemetry for terminal transitions — fire-and-forget: enrichment query must
-            // not block the agent's 200 response, and a slow/failed DB read must not surface as a 500.
-            // Pass CancellationToken.None because the task runs independently of the HTTP request
-            // lifetime; using the request-scoped ct would cause spurious OperationCanceledException
-            // warnings when ASP.NET Core cancels the token as soon as the response is sent.
+            // Emit telemetry for terminal transitions.
+            // Production path (awaitTelemetry=false): fire-and-forget so the enrichment DB read
+            // does not block the agent's 200 response and a slow/failed read does not surface as a 500.
+            // Test path (awaitTelemetry=true): task is awaited before returning, eliminating the
+            // Task.Delay race that made telemetry-asserting tests flaky on loaded CI hosts.
+            // CancellationToken.None is intentional: this task outlives the HTTP request lifetime;
+            // using the request-scoped ct would cause spurious OperationCanceledException warnings
+            // when ASP.NET Core cancels the token as soon as the response is sent.
             if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-                _ = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, CancellationToken.None);
+            {
+                var emitTask = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, CancellationToken.None);
+                if (awaitTelemetry)
+                    await emitTask;
+                else
+                    _ = emitTask;
+            }
         }
 
         return TypedResults.Ok();
@@ -412,7 +467,7 @@ public static class WorkItemEndpoints
             TimeoutSeconds = request.TimeoutSeconds,
             ProjectId = request.ProjectId,
             CreatedAt = DateTimeOffset.UtcNow,
-            PriorityWeight = string.Equals(request.InitiatedBy, "manual", StringComparison.Ordinal) ? 100 : 0,
+            PriorityWeight = InitiatedByConstants.IsManual(request.InitiatedBy) ? 100 : 0,
             // Capture the W3C traceparent from the current API span so the worker K8s Job
             // can restore it and attach its spans to this trace rather than starting a new root.
             // Activity.Current here is the ASP.NET Core request span — the API span that the
@@ -546,16 +601,23 @@ public static class WorkItemEndpoints
     internal static async Task<IResult> GetPendingWorkItems(
         IDbContextFactory<PipelineDbContext> dbFactory,
         int maxResults = 50,
+        string? projectId = null,
         CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
         // Phase 1: SQL projection — include Payload and ProjectId alongside the 7 scalar fields.
         // Payload is fetched here so we can extract display fields in-memory (Phase 2).
-        var raw = await db.WorkItems
+        var pending = db.WorkItems
             .AsNoTracking()
             .Where(w => w.Status == WorkItemStatus.Pending
-                     && w.TaskType != WorkItemTaskType.Consolidation)
+                     && w.TaskType != WorkItemTaskType.Consolidation);
+        // Optional project scope. WorkItem.ProjectId is a uuid column while the switcher passes the
+        // project's id as a string (PipelineProject.Id is a Guid-string), so parse before comparing.
+        if (!string.IsNullOrEmpty(projectId) && Guid.TryParse(projectId, out var scopeProjectId))
+            pending = pending.Where(w => w.ProjectId == scopeProjectId);
+
+        var raw = await pending
             .OrderByDescending(w => w.PriorityWeight)
             .ThenBy(w => w.CreatedAt)
             .Take(maxResults)
@@ -653,6 +715,11 @@ public static class WorkItemEndpoints
                 entity.DispatchedAt = request.DispatchedAt;
                 if (request.K8sJobName is not null)
                     entity.K8sJobName = request.K8sJobName;
+                // KiroPvcName is set by the Job Controller for kiro agent dispatches.
+                // Written here so QueryAvailablePvcsAsync can compute accurate PVC availability
+                // from the DB without querying live K8s Jobs (issue #2338).
+                if (request.KiroPvcName is not null)
+                    entity.ClaimedPvcName = request.KiroPvcName;
                 payloadJson = entity.Payload;
             },
             ct: ct);
@@ -850,20 +917,65 @@ public static class WorkItemEndpoints
     internal static async Task<IResult> GetActiveWorkItems(
         int olderThanSeconds,
         IDbContextFactory<PipelineDbContext> dbFactory,
-        CancellationToken ct)
+        // TODO: The nullable optional DI service creates a silent-degradation pattern — if
+        // IOrchestratorRunService is ever accidentally unregistered, the endpoint silently returns
+        // no CurrentStep enrichment instead of failing at startup. Tests call this handler directly
+        // with an explicit null argument so they do not rely on DI optional resolution; in
+        // production the service is always registered as a singleton. Consider switching to a
+        // non-nullable required [FromServices] parameter once the test callability story is clear.
+        IOrchestratorRunService? runService = null,
+        string? projectId = null,
+        CancellationToken ct = default)
     {
         var cutoff = DateTimeOffset.UtcNow.AddSeconds(-olderThanSeconds);
 
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var items = await db.WorkItems
+        var active = db.WorkItems
             .AsNoTracking()
             .Where(w => (w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
                      && (w.DispatchedAt < cutoff
                          // Fallback for items where DispatchedAt is null (e.g., claim write failed):
                          // use CreatedAt so they are not permanently invisible to timeout enforcement.
                          // 1C-001: NULL < cutoff evaluates to NULL (falsy) in SQL, excluding these rows.
-                         || (w.DispatchedAt == null && w.CreatedAt < cutoff)))
-            .Select(w => new ActiveWorkItemDto
+                         || (w.DispatchedAt == null && w.CreatedAt < cutoff)));
+        // Optional project scope (not passed by reconciliation). ProjectId is a uuid column; parse the
+        // switcher's Guid-string id before comparing.
+        if (!string.IsNullOrEmpty(projectId) && Guid.TryParse(projectId, out var scopeProjectId))
+            active = active.Where(w => w.ProjectId == scopeProjectId);
+
+        var items = await active
+            .Select(w => new
+            {
+                w.Id,
+                w.Status,
+                w.DispatchedAt,
+                w.AgentSelector,
+                w.IssueIdentifier,
+                w.K8sJobName,
+                w.TimeoutSeconds,
+                w.Payload
+            })
+            .ToListAsync(ct);
+
+        // Phase 2: in-memory deserialization to extract IssueTitle from Payload.
+        // Same defensive pattern as GetPendingWorkItems — a malformed or absent payload
+        // produces a null IssueTitle rather than a 500.
+        var dtos = items.Select(w =>
+        {
+            string? issueTitle = null;
+            if (w.Payload is not null)
+            {
+                try
+                {
+                    var req = JsonSerializer.Deserialize<JobDistributionRequest>(w.Payload, PipelineJsonOptions.Lenient);
+                    issueTitle = req?.IssueDetail?.Title;
+                }
+                catch (JsonException)
+                {
+                    // Corrupt or legacy payload — leave IssueTitle null.
+                }
+            }
+            return new ActiveWorkItemDto
             {
                 Id = w.Id,
                 Status = w.Status,
@@ -871,11 +983,32 @@ public static class WorkItemEndpoints
                 AgentSelector = w.AgentSelector,
                 IssueIdentifier = w.IssueIdentifier,
                 K8sJobName = w.K8sJobName,
-                TimeoutSeconds = w.TimeoutSeconds
-            })
-            .ToListAsync(ct);
+                TimeoutSeconds = w.TimeoutSeconds,
+                IssueTitle = issueTitle
+            };
+        // TODO [WARNING]: ct is available and used in the SQL phase (ToListAsync(ct)) but is not
+        // propagated to this in-memory LINQ loop. Under normal payload sizes this is harmless because
+        // the deserialization is synchronous and fast. If payload sizes grow significantly, consider
+        // adding a cancellation check (ct.ThrowIfCancellationRequested()) inside the loop body.
+        }).ToList();
 
-        return TypedResults.Ok((IReadOnlyList<ActiveWorkItemDto>)items);
+        // Enrich with live pipeline step from the in-memory run service when available.
+        // runService may be null in test scenarios that construct the handler directly without DI.
+        if (runService is not null)
+        {
+            for (var i = 0; i < dtos.Count; i++)
+            {
+                // TODO: The explicit cast (RunId) calls ArgumentException.ThrowIfNullOrEmpty internally.
+                // Guid.ToString() is always non-null/non-empty, so this is safe in practice, but if
+                // ActiveWorkItemDto.Id ever becomes nullable (Guid?) the cast would throw instead of
+                // skipping enrichment. Consider using new RunId(dtos[i].Id.ToString()) for clarity.
+                var liveRun = runService.GetRun((RunId)dtos[i].Id.ToString());
+                if (liveRun is not null)
+                    dtos[i] = dtos[i] with { CurrentStep = liveRun.CurrentStep };
+            }
+        }
+
+        return TypedResults.Ok((IReadOnlyList<ActiveWorkItemDto>)dtos);
     }
 
     // ── POST /{id}/label-swap ─────────────────────────────────────────────
@@ -1131,6 +1264,10 @@ public static class WorkItemEndpoints
 
         if (request.Status == WorkItemStatus.Failed)
         {
+            // TODO: This bare Enum.TryParse has no Enum.IsDefined guard (unlike the telemetry path
+            // fixed in issue #2341). A numeric string like "99" will parse to an undefined FailureReason
+            // value and be persisted to the database. Add an Enum.IsDefined check here so that only
+            // named members are written to entity.FailureReason.
             if (request.FailureReason is not null
                 && Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason))
             {
@@ -1166,14 +1303,18 @@ public static class WorkItemEndpoints
                     duration = item.CompletedAt.Value - item.DispatchedAt.Value;
             }
 
+            // Enum.TryParse succeeds for numeric string inputs (e.g. "99") even when they don't
+            // correspond to a named FailureReason member, yielding an undefined enum instance that
+            // would become a high-cardinality metric tag. The IsDefined guard rejects such values
+            // so only named members reach the telemetry dimension. (Issue #2341)
+            FailureReason? failureReason = Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason)
+                && Enum.IsDefined(typeof(FailureReason), parsedReason)
+                ? parsedReason
+                : (FailureReason?)null;
+
             WorkDistributionTelemetry.LogTerminalStatus(
                 id, request.Status, duration, request.AgentId,
-                // TODO: Enum.TryParse succeeds for numeric string inputs (e.g. "99") even when they don't
-                // correspond to a named FailureReason member, allowing callers to inject undefined enum values
-                // as metric tags. This can cause high-cardinality label explosion in the metrics backend.
-                // Fix: add Enum.IsDefined check after TryParse, or use a switch/dictionary over expected names.
-                // (Issue #2202 review, SecurityReviewer)
-                failureReason: Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason) ? parsedReason : (FailureReason?)null);
+                failureReason);
         }
         catch (Exception ex)
         {

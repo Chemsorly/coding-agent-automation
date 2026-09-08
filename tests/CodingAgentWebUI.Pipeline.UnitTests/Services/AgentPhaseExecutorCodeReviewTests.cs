@@ -80,6 +80,12 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
     }
 
     [Fact]
+    // TODO [WARNING]: This test covers the null-configs path but only asserts that the agent is never
+    // called — it does NOT assert the mandatory _logger.Warning signal introduced by issue #2228.
+    // This makes it a weaker duplicate of WhenResolvedReviewerConfigsIsNull_LogsWarningAtWarnLevel below.
+    // A future refactor removing the logger call would leave this test green while silently losing the
+    // observable signal. Consider consolidating: either remove this test (WhenResolvedReviewerConfigsIsNull
+    // is the authoritative coverage) or extend it with the Warning assertion. (Correctness + TestQuality review, issue #2228)
     public async Task CodeReview_NoResolvedReviewers_EarlyReturn()
     {
         await _executor.ExecuteCodeReviewAsync(BuildContext(), CancellationToken.None, resolvedReviewerConfigs: null);
@@ -88,12 +94,67 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
     }
 
     [Fact]
+    // TODO [WARNING]: This test covers the empty-list-configs path but only asserts that the agent is
+    // never called — it does NOT assert the mandatory _logger.Warning signal introduced by issue #2228.
+    // This makes it a weaker duplicate of WhenResolvedReviewerConfigsIsEmpty_LogsWarningAtWarnLevel below.
+    // Consider consolidating with the Warning-asserting test below. (TestQuality review, issue #2228)
     public async Task CodeReview_EmptyResolvedReviewers_EarlyReturn()
     {
         await _executor.ExecuteCodeReviewAsync(BuildContext(), CancellationToken.None,
             resolvedReviewerConfigs: Array.Empty<ReviewerConfiguration>());
 
         _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task WhenResolvedReviewerConfigsIsNull_LogsWarningAtWarnLevel()
+    {
+        await _executor.ExecuteCodeReviewAsync(BuildContext(), CancellationToken.None, resolvedReviewerConfigs: null);
+
+        // TODO [WARNING]: The second argument uses It.IsAny<string>() which does not verify that the actual
+        // run.RunId ("test-run-review") is passed — any string (including empty or null) would satisfy this
+        // mock verification. Tighten to It.Is<string>(id => id == _run.RunId) to make the RunId assertion
+        // meaningful and prevent a regression where the implementation passes the wrong field. (TestQuality review, issue #2228)
+        _mockLogger.Verify(
+            l => l.Warning(
+                "Pipeline {RunId} no reviewer configurations matched — review phase skipped (no configs or all disabled). " +
+                "To restore review, add or re-enable a reviewer configuration in Settings → Reviewers.",
+                It.IsAny<string>()),
+            Times.Once);
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task WhenResolvedReviewerConfigsIsEmpty_LogsWarningAtWarnLevel()
+    {
+        await _executor.ExecuteCodeReviewAsync(BuildContext(), CancellationToken.None,
+            resolvedReviewerConfigs: Array.Empty<ReviewerConfiguration>());
+
+        // TODO [WARNING]: Same weak assertion as above — It.IsAny<string>() for the RunId argument does not
+        // verify the correct field is passed. Tighten to It.Is<string>(id => id == _run.RunId). (TestQuality review, issue #2228)
+        _mockLogger.Verify(
+            l => l.Warning(
+                "Pipeline {RunId} no reviewer configurations matched — review phase skipped (no configs or all disabled). " +
+                "To restore review, add or re-enable a reviewer configuration in Settings → Reviewers.",
+                It.IsAny<string>()),
+            Times.Once);
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task WhenResolvedReviewerConfigsHasEntries_DoesNotLogSkipWarning()
+    {
+        SetupAgentWritingFindings("correctness", "");
+        var config = _config with { CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = null } };
+
+        await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
+
+        _mockLogger.Verify(
+            l => l.Warning(
+                "Pipeline {RunId} no reviewer configurations matched — review phase skipped (no configs or all disabled). " +
+                "To restore review, add or re-enable a reviewer configuration in Settings → Reviewers.",
+                It.IsAny<string>()),
+            Times.Never);
     }
 
     [Fact]

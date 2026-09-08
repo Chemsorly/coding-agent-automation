@@ -168,6 +168,31 @@ curl -X POST \
 
 ---
 
+### POST /api/work-items/{id}/priority
+
+Set the dispatch priority weight for a pending work item. Operators call this to reorder items within the same priority tier before they are claimed by the Job Controller.
+
+**Authentication:** OperatorApiKey
+
+**Request body:**
+
+```json
+{ "priorityWeight": 100 }
+```
+
+`priorityWeight` must be in the range `[0, 1000]`. Default is `0`. Higher values dispatch first within the same `RunType` tier.
+
+**Responses:**
+
+| Status | Description |
+|--------|-------------|
+| 200 | Priority updated |
+| 400 | `priorityWeight` outside `[0, 1000]` |
+| 404 | Work item not found |
+| 409 | Work item is not in `Pending` status, or a concurrent update conflict occurred (retry) |
+
+---
+
 ## Config Import/Export Endpoints
 
 > ⚠️ **Warning:** The import endpoint is destructive — it clears ALL existing configuration before inserting the uploaded bundle. This operation is transactional (atomic commit or full rollback).
@@ -348,7 +373,8 @@ curl -o feedback-runs.json "http://localhost:8080/api/export/runs.json?feedbackO
     "runType": "Implementation",
     "modelName": "claude-sonnet-4-20250514",
     "agentId": "agent-dotnet-1",
-    "initiatedBy": "loop",
+    "initiatedBy": "loop:issue",
+    "harnessVersion": "1.2.3+abc1234",
     "totalTokens": 125000,
     "totalCost": 0.45,
     "feedback": null
@@ -357,6 +383,22 @@ curl -o feedback-runs.json "http://localhost:8080/api/export/runs.json?feedbackO
 ```
 
 The response is a JSON array of run summary objects. Each object includes run metadata, timing, token/cost usage, and optional feedback. The full schema has 25+ fields — see `PipelineRunSummary` in the source for the complete list.
+
+**`initiatedBy` values:**
+
+| Value | Meaning |
+|-------|---------|
+| `loop:issue` | Issue-implementation run dispatched by the polling loop |
+| `loop:review` | PR review run dispatched by the polling loop |
+| `loop:decomposition` | Epic decomposition run dispatched by the polling loop |
+| `manual` | Run dispatched manually from the UI |
+| `consolidation:manual` | Consolidation run triggered via the Consolidation page |
+| `consolidation:auto` | Consolidation run triggered automatically |
+| `rehydrated` | Run re-created from a restarted orchestrator (original source unknown) |
+
+**`harnessVersion` field:**
+
+Present on runs recorded after the version identity feature was introduced. Contains the semantic version and git SHA of the agent container that executed the run (e.g., `"1.2.3+abc1234"`). `null` for older runs predating this field. Set from the `SERVICE_VERSION` environment variable on the agent pod.
 
 ---
 
@@ -414,6 +456,7 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 |--------|------|------|-------------|
 | GET | `/api/work-items/{id}/assignment` | AgentApiKey | Fetch job assignment |
 | POST | `/api/work-items/{id}/status` | AgentApiKey | Report status transition |
+| POST | `/api/work-items/{id}/priority` | OperatorApiKey | Set dispatch priority weight (Pending items only) |
 | GET | `/api/config/export` | OperatorApiKey | Download config bundle |
 | POST | `/api/config/import` | OperatorApiKey | Upload config bundle (destructive) |
 | GET | `/api/export/runs.json` | OperatorApiKey | Download run history |

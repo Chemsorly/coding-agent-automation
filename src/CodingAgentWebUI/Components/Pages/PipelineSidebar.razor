@@ -197,7 +197,7 @@
         })
     };
 
-    private enum StepState { Completed, Active, Pending, Failed, Cancelled, Revisited }
+    private enum StepState { Completed, Active, Pending, Failed, Cancelled, Revisited, Restarted }
     private enum PhaseState { Completed, Active, Pending, Failed, Cancelled, Retry }
 
     private sealed record PhaseDefinition(string Name, string TestId, PipelineStep[] Steps);
@@ -356,7 +356,7 @@
             if (state != StepState.Completed) allCompleted = false;
             if (state != StepState.Pending) allPending = false;
             if (state == StepState.Active) hasActive = true;
-            if (state == StepState.Failed) hasFailed = true;
+            if (state is StepState.Failed or StepState.Restarted) hasFailed = true;
             if (state == StepState.Cancelled) hasCancelled = true;
             if (state == StepState.Revisited) hasRevisited = true;
         }
@@ -452,6 +452,7 @@
         StepState.Failed => "failed",
         StepState.Cancelled => "cancelled",
         StepState.Revisited => "revisited",
+        StepState.Restarted => "restart",
         _ => "pending"
     };
 
@@ -490,6 +491,7 @@
         [PipelineStep.Completed] = 100,
         [PipelineStep.Failed] = 101,
         [PipelineStep.Cancelled] = 102,
+        [PipelineStep.ConflictRestart] = 103,
     };
 
     private static int LogicalOrder(PipelineStep step) =>
@@ -504,8 +506,12 @@
         if (current is PipelineStep.Failed or PipelineStep.Cancelled)
             return GetStepStateWhenTerminal(step, current);
 
+        // ConflictRestart is a terminal-like state: show RunningQualityGates as the "last reached" step
+        if (current == PipelineStep.ConflictRestart)
+            return GetStepStateWhenConflictRestart(step);
+
         if (current == PipelineStep.Completed)
-            return step is PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled
+            return step is PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled or PipelineStep.ConflictRestart
                 ? StepState.Pending
                 : StepState.Completed;
 
@@ -515,6 +521,17 @@
             return StepState.Revisited;
 
         return LogicalOrder(step) < LogicalOrder(current) ? StepState.Completed : StepState.Pending;
+    }
+
+    private StepState GetStepStateWhenConflictRestart(PipelineStep step)
+    {
+        // For conflict restart, show steps up through RunningQualityGates as completed,
+        // and RunningQualityGates itself (where the conflict was detected) as the terminal point.
+        if (step == PipelineStep.ConflictRestart) return StepState.Restarted;
+        var last = GetLastReachedStep();
+        if (LogicalOrder(step) < LogicalOrder(last)) return StepState.Completed;
+        if (step == last) return StepState.Restarted;
+        return StepState.Pending;
     }
 
     private StepState GetStepStateWhenTerminal(PipelineStep step, PipelineStep current)
@@ -535,6 +552,7 @@
         StepState.Failed => "x-circle",
         StepState.Cancelled => "slash",
         StepState.Revisited => "refresh-cw",
+        StepState.Restarted => "refresh-cw",
         _ => "circle"
     };
 
@@ -559,7 +577,7 @@
         PipelineStep.RunningQualityGates => Run.LatestQualityReport != null,
         PipelineStep.ExtractingLinkedIssues => true,
         PipelineStep.PostingFindings => true,
-        PipelineStep.PreparingForPullRequest => false,
+        PipelineStep.PreparingForPullRequest => !string.IsNullOrEmpty(Run.PullRequestUrl),
         PipelineStep.CreatingPullRequest => !string.IsNullOrEmpty(Run.PullRequestUrl),
         PipelineStep.ReflectingOnRun => Run.BrainProviderConfigId != null,
         PipelineStep.SyncingBrainRepoPostRun => Run.BrainProviderConfigId != null,
@@ -588,6 +606,8 @@
             => RenderRunningQualityGatesDetails(state),
         PipelineStep.ExtractingLinkedIssues => RenderExtractingLinkedIssuesDetails(state),
         PipelineStep.PostingFindings => RenderPostingFindingsDetails(state),
+        PipelineStep.PreparingForPullRequest when !string.IsNullOrEmpty(Run.PullRequestUrl)
+            => RenderPreparingForPullRequestDetails(state),
         PipelineStep.CreatingPullRequest when !string.IsNullOrEmpty(Run.PullRequestUrl)
             => RenderCreatingPullRequestDetails(state),
         PipelineStep.ReflectingOnRun when Run.BrainProviderConfigId != null
@@ -784,21 +804,6 @@
             @if (qr.Tests.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Tests
             <span class="qg-sub">@(qr.Tests.TestsPassed ?? 0) passed, @(qr.Tests.TestsFailed ?? 0) failed</span>
         </div>
-        @RenderSecurityLine(qr)
-    };
-
-    private static RenderFragment RenderSecurityLine(QualityGateReport qr) => __builder =>
-    {
-        @if (qr.SecurityScan is { } sec)
-        {
-            <div class="qg-line @(sec.Passed ? "qg-pass" : "qg-fail")">
-                @if (sec.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Security
-            </div>
-        }
-        else
-        {
-            <div class="qg-line qg-skip">— Security</div>
-        }
     };
 
     private static RenderFragment RenderExternalCiLine(QualityGateReport qr) => __builder =>
@@ -876,6 +881,14 @@
                     <div><a href="@Run.ReviewPrUrl" target="_blank" rel="noopener noreferrer" @onclick:stopPropagation="true">🔗 View PR</a></div>
                 }
             }
+        </div>
+    };
+
+    private RenderFragment RenderPreparingForPullRequestDetails(StepState state) => __builder =>
+    {
+        <div class="step-detail-box">
+            <div>Existing PR @(!string.IsNullOrEmpty(Run.PullRequestNumber) ? $"#{Run.PullRequestNumber}" : "") @(Run.IsDraftPr ? "(draft)" : "(final)")</div>
+            <div><a href="@Run.PullRequestUrl" target="_blank" rel="noopener noreferrer" @onclick:stopPropagation="true">🔗 View on GitHub</a></div>
         </div>
     };
 

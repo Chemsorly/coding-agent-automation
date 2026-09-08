@@ -174,7 +174,7 @@ public partial class AgentPhaseExecutor
                 await FailPhaseAsync(new FailPhaseRequest(
                     run,
                     $"Analysis failed after {attempt + 1} attempt(s): {ex.Message}",
-                    AgentLabels.Error, PipelineStep.Failed, context.IssueOps, context.Callbacks, CancellationToken.None));
+                    AgentLabels.NeedsRefinement, PipelineStep.Failed, context.IssueOps, context.Callbacks, CancellationToken.None));
                 return (false, null);
             }
         }
@@ -370,7 +370,7 @@ public partial class AgentPhaseExecutor
         run.AnalysisBlockingIssues = assessment?.BlockingIssues ?? Array.Empty<string>();
 
         if (run.AnalysisRecommendation is not null)
-            PipelineTelemetry.RecordAnalysisGateOutcome(run.AnalysisRecommendation.Value, run);
+            RecordAnalysisGateOutcome(run.AnalysisRecommendation.Value, run);
 
         // isNotReady is checked first: non-empty blockingIssues forces not_ready regardless of recommendation
         var isNotReady = assessment != null && (

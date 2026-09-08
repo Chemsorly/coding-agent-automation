@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Threading;
 using CodingAgentWebUI.Pipeline.Services;
 
@@ -28,6 +29,8 @@ public sealed partial class PipelineRun
     public required IssueIdentifier IssueIdentifier { get; init; }
     // NOTE: Semantically set-once (populated after construction from fetched issue title). Cannot be init-only without restructuring call sites.
     public required string IssueTitle { get; set; }
+    /// <summary>Web URL of the issue on the provider, or null if unknown (populated from the fetched issue).</summary>
+    public string? IssueUrl { get; set; }
     public required string IssueProviderConfigId { get; init; }
     public required string RepoProviderConfigId { get; init; }
 
@@ -222,6 +225,42 @@ public sealed partial class PipelineRun
     /// <summary>Pipeline provider config ID, or null if no pipeline provider configured.</summary>
     public string? PipelineProviderConfigId { get; set; }
 
+    /// <summary>
+    /// Orchestrator-side <see cref="Activity"/> wrapping the full run lifecycle on the API process.
+    /// Started by <c>PipelineRunFactory.CreateFromWorkItem</c> and stopped by
+    /// <c>RunLifecycleManager</c> when the run reaches a terminal state (Completed, Failed, Cancelled).
+    /// <para>
+    /// This is the <c>ExecutePipeline</c> span emitted from the <c>coding-agent-orchestrator</c>
+    /// (API process) that the Grafana "Recent Pipeline Traces" panel queries for.
+    /// Null for runs created before this feature was added, or for Consolidation runs
+    /// (<c>CreateFromWorkItem</c> returns null for those).
+    /// </para>
+    /// <para>
+    /// Not serialized — it is an in-memory token valid only for the lifetime of the API process.
+    /// Rehydrated runs (pod restart) will not have a span; that is intentional.
+    /// </para>
+    /// <para>
+    /// Ownership: <c>OrchestratorRunService.RemoveRun</c> is the single-owner claim —
+    /// <c>TryRemove</c> is atomic, so only one terminal path obtains the <c>PipelineRun</c> and
+    /// disposes this activity. Concurrent terminal calls (e.g. Fail + Complete racing) are safe
+    /// because only the winning <c>TryRemove</c> caller gets the run. This invariant must be
+    /// maintained: never dispose this activity outside of a terminal <c>RunLifecycleManager</c>
+    /// path or <c>OrchestratorRunService.RemoveRun</c>.
+    /// </para>
+    /// </summary>
+    // NOTE: System.Diagnostics.Activity is not thread-safe for concurrent tag mutation + Dispose.
+    // The "single-owner via TryRemove" invariant above prevents concurrent Dispose today, but
+    // concurrent tag additions from step handlers racing a terminal cancel are theoretically unsafe.
+    // If step handlers ever set tags on OrchestratorActivity concurrently, guard with a lock or
+    // switch to an interlocked ownership pattern. (Reviewer warning, issue #2255)
+    // TODO: OrchestratorActivity is public mutable ({ get; set; }). Any caller can overwrite a live
+    // Activity reference, silently orphaning the open span. Consider restricting to internal set or
+    // init-only to enforce the single-owner invariant at compile time. Also: Activity is not
+    // thread-safe — concurrent SetTag from step handlers racing a terminal Dispose is a latent data
+    // race. Guard with a lock or interlocked ownership pattern if step handlers ever tag this span.
+    // See review warnings (issue #2255).
+    public Activity? OrchestratorActivity { get; set; }
+
     /// <summary>Whether brain context was successfully loaded during pre-run sync.</summary>
     public bool BrainContextLoaded { get; set; }
 
@@ -248,6 +287,13 @@ public sealed partial class PipelineRun
 
     /// <summary>How this run was initiated: "manual" or "loop".</summary>
     public string InitiatedBy { get; init; } = "manual";
+
+    /// <summary>
+    /// What the pipeline did with the branch when this run started.
+    /// Set by <c>DetectReworkStep</c> after querying for existing agent PRs.
+    /// Defaults to <see cref="RunMode.New"/> until DetectReworkStep runs.
+    /// </summary>
+    public RunMode RunMode { get; set; } = RunMode.New;
 
     /// <summary>Discriminates implementation vs review runs.</summary>
     public PipelineRunType RunType { get; init; } = PipelineRunType.Implementation;
@@ -303,6 +349,13 @@ public sealed partial class PipelineRun
 
     /// <summary>Agent provider config ID used for this run, or null for test runs.</summary>
     public string? AgentProviderConfigId { get; init; }
+
+    /// <summary>
+    /// Git commit SHA of the agent container that executed this run, or null for test/local runs.
+    /// Populated from the SERVICE_VERSION env var (injected at image build time via BUILD_COMMIT_SHA ARG).
+    /// Null for runs recorded before this field was introduced.
+    /// </summary>
+    public string? HarnessVersion { get; set; }
 
     /// <summary>Project ID that owned the dispatching template at dispatch time.</summary>
     public string? ProjectId { get; set; }
@@ -362,6 +415,8 @@ public sealed partial class PipelineRun
         RunId = RunId,
         IssueIdentifier = IssueIdentifier,
         IssueTitle = IssueTitle,
+        IssueUrl = IssueUrl,
+        QualityGateOutcomes = LatestQualityReport is { } qgReport ? FlattenQualityGates(qgReport) : null,
         FinalStep = finalStepOverride ?? CurrentStep,
         StartedAt = StartedAt,
         CompletedAt = CompletedAt,
@@ -378,10 +433,12 @@ public sealed partial class PipelineRun
         ModelName = ModelName,
         BrainRepoUsed = BrainProviderConfigId != null,
         BrainUpdatesPushed = BrainUpdatesPushed,
+        BrainContextLoaded = BrainContextLoaded,
+        BrainKnowledgeFileCount = BrainKnowledgeFileCount,
         AgentId = AgentId,
         InitiatedBy = InitiatedBy,
         AnalysisRecommendation = AnalysisRecommendation,
-        IsRework = LinkedPullRequest != null,
+        RunMode = RunMode,
         FailureReason = FailureReason,
         Feedback = Feedback,
         TotalTokens = TotalTokens,
@@ -397,7 +454,28 @@ public sealed partial class PipelineRun
         ProjectName = ProjectName,
         DecompositionSource = DecompositionSource,
         AgentProviderConfigId = AgentProviderConfigId,
-        BranchName = BranchName
+        BranchName = BranchName,
+        HarnessVersion = HarnessVersion
     };
     #pragma warning restore CS0618
+
+    /// <summary>Flattens a quality-gate report into slim per-gate (name, passed) outcomes for the summary.</summary>
+    private static IReadOnlyList<GateOutcome> FlattenQualityGates(QualityGateReport report)
+    {
+        var outcomes = new List<GateOutcome>();
+        if (report.QgcResults.Count > 0)
+        {
+            // Quality-gate-command mode: each configured command is its own named gate.
+            foreach (var qgc in report.QgcResults)
+                outcomes.Add(new GateOutcome(qgc.DisplayName, qgc.Passed));
+        }
+        else
+        {
+            // Legacy mode: the built-in gates that ran (Compilation + Tests are always present).
+            outcomes.Add(new GateOutcome(report.Compilation.GateName, report.Compilation.Passed));
+            outcomes.Add(new GateOutcome(report.Tests.GateName, report.Tests.Passed));
+        }
+        if (report.ExternalCi is { } externalCi) outcomes.Add(new GateOutcome(externalCi.GateName, externalCi.Passed));
+        return outcomes;
+    }
 }

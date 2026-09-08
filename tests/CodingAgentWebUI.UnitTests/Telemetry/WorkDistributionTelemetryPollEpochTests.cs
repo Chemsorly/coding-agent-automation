@@ -21,7 +21,6 @@ namespace CodingAgentWebUI.UnitTests.Telemetry;
 /// in isolation-dependency order. All three share [Collection("Metrics")] to prevent
 /// MeterListener collisions with the other metric tests in this assembly.
 /// </summary>
-[Collection("Metrics")]
 [Trait("Feature", "DispatcherLastPollEpoch")]
 public sealed class WorkDistributionTelemetryPollEpochTests : IDisposable
 {

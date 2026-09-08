@@ -160,4 +160,42 @@ public sealed class JobCompletionMapperTests
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("payload");
     }
+
+    [Fact]
+    public void Apply_PropagatesFinalLabel()
+    {
+        // FinalLabel must be copied from payload to run so CompleteRunAsync can read it
+        // and produce the correct label (agent:needs-refinement, agent:wont-do, etc.)
+        // rather than always falling back to a terminalStatus-derived label.
+        var run = CreateRun();
+        run.FinalLabel = null;
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            FinalLabel = AgentLabels.NeedsRefinement
+        };
+
+        JobCompletionMapper.Apply(run, payload);
+
+        run.FinalLabel.Should().Be(AgentLabels.NeedsRefinement);
+    }
+
+    [Fact]
+    public void Apply_PropagatesFinalLabel_WhenNull()
+    {
+        // Null FinalLabel in payload should clear any existing value on the run
+        var run = CreateRun();
+        run.FinalLabel = AgentLabels.Done; // pre-existing (shouldn't happen in production, but guard it)
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            FinalLabel = null
+        };
+
+        JobCompletionMapper.Apply(run, payload);
+
+        run.FinalLabel.Should().BeNull();
+    }
 }

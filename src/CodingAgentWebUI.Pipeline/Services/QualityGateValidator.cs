@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services.Parsers;
@@ -17,10 +18,30 @@ namespace CodingAgentWebUI.Pipeline.Services;
 public class QualityGateValidator : IQualityGateValidator
 {
     private readonly Serilog.ILogger _logger;
+    private readonly Counter<long> _processTimeouts;
+    private readonly Histogram<double> _processDuration;
 
-    public QualityGateValidator(Serilog.ILogger logger)
+    public QualityGateValidator(Serilog.ILogger logger, IMeterFactory? meterFactory = null)
     {
         _logger = logger;
+        if (meterFactory is not null)
+        {
+            var meter = meterFactory.Create(new MeterOptions(PipelineTelemetry.SourceName));
+            _processTimeouts = meter.CreateCounter<long>(
+                "quality_gate.process.timeout", "{timeout}", "QGC process timeouts by gate and QGC name");
+            _processDuration = meter.CreateHistogram<double>(
+                "quality_gate.process.duration", "s",
+                "Single process invocation duration (compilation or test command). Distinct from quality_gate.duration which covers the entire retry phase.",
+                advice: new InstrumentAdvice<double>
+                {
+                    HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600]
+                });
+        }
+        else
+        {
+            _processTimeouts = PipelineTelemetry.QgcProcessTimeouts;
+            _processDuration = PipelineTelemetry.QgcProcessDuration;
+        }
     }
 
     /// <summary>
@@ -92,8 +113,7 @@ public class QualityGateValidator : IQualityGateValidator
                 QgcId = qgc.Id,
                 DisplayName = qgc.DisplayName,
                 Compilation = compilationResult,
-                Tests = null,
-                SecurityScan = null
+                Tests = null
             }, true);
         }
 
@@ -106,8 +126,7 @@ public class QualityGateValidator : IQualityGateValidator
                 QgcId = qgc.Id,
                 DisplayName = qgc.DisplayName,
                 Compilation = compilationResult,
-                Tests = testsResult,
-                SecurityScan = null
+                Tests = testsResult
             }, true);
         }
 
@@ -116,8 +135,7 @@ public class QualityGateValidator : IQualityGateValidator
             QgcId = qgc.Id,
             DisplayName = qgc.DisplayName,
             Compilation = compilationResult,
-            Tests = testsResult,
-            SecurityScan = null
+            Tests = testsResult
         }, false);
     }
 
@@ -162,9 +180,85 @@ public class QualityGateValidator : IQualityGateValidator
         {
             Compilation = aggregateCompilation,
             Tests = aggregateTests,
-            SecurityScan = null,
             QgcResults = qgcResults
         };
+    }
+
+    /// <summary>
+    /// Runs a QGC process command with shared timeout/cancellation/error telemetry.
+    /// Records <c>quality_gate.process.duration</c> on every exit path and
+    /// <c>quality_gate.process.timeout</c> on timeout.
+    /// Returns <c>(exitCode, stdout, stderr)</c> on success.
+    /// Re-throws <see cref="OperationCanceledException"/> and unexpected exceptions unchanged;
+    /// converts a process timeout into a <see cref="QgcProcessTimedOutException"/> so callers
+    /// can distinguish it from external cancellation without duplicating catch blocks.
+    /// </summary>
+    private async Task<(int ExitCode, string Stdout, string Stderr)> RunQgcProcessAsync(
+        string command, string arguments, string gateName, string qgcDisplayName,
+        string workspacePath, int timeoutSeconds, Activity? activity, CancellationToken ct)
+    {
+        var timeout = TimeSpan.FromSeconds(timeoutSeconds);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var outcome = "success";
+
+        int exitCode;
+        string stdout, stderr;
+        try
+        {
+            (exitCode, stdout, stderr) = await RunProcessAsync(command, arguments, workspacePath, ct, timeout);
+        }
+        catch (TimeoutException ex)
+        {
+            outcome = "timeout";
+            sw.Stop();
+            _processTimeouts.Add(1,
+                new KeyValuePair<string, object?>("gate_name", gateName),
+                new KeyValuePair<string, object?>("qgc_name", qgcDisplayName));
+            activity?.SetTag("qgc.timed_out", true);
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            _processDuration.Record(sw.Elapsed.TotalSeconds,
+                new KeyValuePair<string, object?>("gate_name", gateName),
+                new KeyValuePair<string, object?>("qgc_name", qgcDisplayName),
+                new KeyValuePair<string, object?>("outcome", outcome));
+            throw new QgcProcessTimedOutException(timeoutSeconds, ex);
+        }
+        catch (OperationCanceledException)
+        {
+            outcome = "cancelled";
+            sw.Stop();
+            _processDuration.Record(sw.Elapsed.TotalSeconds,
+                new KeyValuePair<string, object?>("gate_name", gateName),
+                new KeyValuePair<string, object?>("qgc_name", qgcDisplayName),
+                new KeyValuePair<string, object?>("outcome", outcome));
+            throw;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            outcome = "error";
+            sw.Stop();
+            _processDuration.Record(sw.Elapsed.TotalSeconds,
+                new KeyValuePair<string, object?>("gate_name", gateName),
+                new KeyValuePair<string, object?>("qgc_name", qgcDisplayName),
+                new KeyValuePair<string, object?>("outcome", outcome));
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            throw;
+        }
+
+        sw.Stop();
+        _processDuration.Record(sw.Elapsed.TotalSeconds,
+            new KeyValuePair<string, object?>("gate_name", gateName),
+            new KeyValuePair<string, object?>("qgc_name", qgcDisplayName),
+            new KeyValuePair<string, object?>("outcome", outcome));
+
+        return (exitCode, stdout, stderr);
+    }
+
+    /// <summary>Thrown by <see cref="RunQgcProcessAsync"/> when the process exceeds its timeout.</summary>
+    private sealed class QgcProcessTimedOutException(int timeoutSeconds, Exception inner)
+        : Exception($"Process timed out after {timeoutSeconds}s", inner)
+    {
+        public int TimeoutSeconds { get; } = timeoutSeconds;
     }
 
     /// <summary>
@@ -178,53 +272,50 @@ public class QualityGateValidator : IQualityGateValidator
 
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("QualityGate.Compilation");
         activity?.SetTag("gate_name", "compilation");
+        activity?.SetTag("qgc_name", qgc.DisplayName);
+        activity?.SetTag("qgc.timeout_seconds", qgc.ProcessTimeoutSeconds);
 
+        var arguments = qgc.CompilationArguments != null
+            ? string.Join(" ", qgc.CompilationArguments)
+            : string.Empty;
+
+        int exitCode;
+        string stdout, stderr;
         try
         {
-            var arguments = qgc.CompilationArguments != null
-                ? string.Join(" ", qgc.CompilationArguments)
-                : string.Empty;
-
-            var timeout = TimeSpan.FromSeconds(qgc.ProcessTimeoutSeconds);
-            var (exitCode, stdout, stderr) = await RunProcessAsync(
-                qgc.CompilationCommand, arguments, workspacePath, ct, timeout);
-
-            WriteGateOutput(workspacePath, $"{qgc.DisplayName}-compilation", stdout, stderr);
-
-            string details;
-            if (exitCode == ExitCodes.Success)
-            {
-                details = "Build succeeded";
-            }
-            else
-            {
-                var (errors, warnings) = ParseBuildErrorCounts(stdout + "\n" + stderr);
-                details = $"Build failed with exit code {exitCode}. {errors} error(s), {warnings} warning(s).";
-            }
-
-            return new GateResult
-            {
-                GateName = "Compilation",
-                Passed = exitCode == ExitCodes.Success,
-                Details = details
-            };
+            (exitCode, stdout, stderr) = await RunQgcProcessAsync(
+                qgc.CompilationCommand, arguments, "compilation", qgc.DisplayName,
+                workspacePath, qgc.ProcessTimeoutSeconds, activity, ct);
         }
-        catch (TimeoutException ex)
+        catch (QgcProcessTimedOutException ex)
         {
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             return new GateResult
             {
                 GateName = "Compilation",
                 Passed = false,
-                Details = $"Compilation timed out after {qgc.ProcessTimeoutSeconds}s"
+                Details = $"Compilation timed out after {ex.TimeoutSeconds}s"
             };
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+
+        WriteGateOutput(workspacePath, $"{qgc.DisplayName}-compilation", stdout, stderr);
+
+        string details;
+        if (exitCode == ExitCodes.Success)
         {
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.AddException(ex);
-            throw;
+            details = "Build succeeded";
         }
+        else
+        {
+            var (errors, warnings) = ParseBuildErrorCounts(stdout + "\n" + stderr);
+            details = $"Build failed with exit code {exitCode}. {errors} error(s), {warnings} warning(s).";
+        }
+
+        return new GateResult
+        {
+            GateName = "Compilation",
+            Passed = exitCode == ExitCodes.Success,
+            Details = details
+        };
     }
 
     /// <summary>
@@ -241,6 +332,8 @@ public class QualityGateValidator : IQualityGateValidator
 
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("QualityGate.Tests");
         activity?.SetTag("gate_name", "tests");
+        activity?.SetTag("qgc_name", qgc.DisplayName);
+        activity?.SetTag("qgc.timeout_seconds", qgc.ProcessTimeoutSeconds);
 
         var arguments = qgc.TestArguments != null
             ? string.Join(" ", qgc.TestArguments)
@@ -268,17 +361,17 @@ public class QualityGateValidator : IQualityGateValidator
         string stdout, stderr;
         try
         {
-            (exitCode, stdout, stderr) = await RunProcessAsync(
-                qgc.TestCommand, fullArgs, workspacePath, ct, TimeSpan.FromSeconds(qgc.ProcessTimeoutSeconds));
+            (exitCode, stdout, stderr) = await RunQgcProcessAsync(
+                qgc.TestCommand, fullArgs, "tests", qgc.DisplayName,
+                workspacePath, qgc.ProcessTimeoutSeconds, activity, ct);
         }
-        catch (TimeoutException ex)
+        catch (QgcProcessTimedOutException ex)
         {
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             return new GateResult
             {
                 GateName = "Tests",
                 Passed = false,
-                Details = $"Tests timed out after {qgc.ProcessTimeoutSeconds}s"
+                Details = $"Tests timed out after {ex.TimeoutSeconds}s"
             };
         }
 

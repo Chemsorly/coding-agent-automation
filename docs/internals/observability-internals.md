@@ -43,11 +43,38 @@ Event tags:
 
 Metric `run_type` values are lowercased (`implementation`), while span `pipeline.run_type` values are PascalCase (`Implementation`). Use the appropriate casing when querying.
 
+## QGC Process and Stall Metrics
+
+These metrics cover individual QGC process invocations and agent silence detection. All defined in `PipelineTelemetry` (`CodingAgent.Pipeline` meter).
+
+| Metric | Type | Tags | Description |
+|--------|------|------|-------------|
+| `quality_gate.process.timeout` | Counter | `gate_name`, `qgc_name` | QGC process (compilation or test command) killed for exceeding `processTimeoutSeconds` |
+| `quality_gate.process.duration` | Histogram | `gate_name`, `qgc_name` | Single-invocation duration. Distinct from `quality_gate.duration` (entire retry phase) |
+| `quality_gate.stall.warnings` | Counter | `phase` | Agent silence warning — fires after each `stallWarningInterval` with no output. `phase` uses a closed-set constant from `PipelineTelemetry.StallPhases` |
+| `quality_gate.stall.kills` | Counter | `phase` | Agent process killed due to stall timeout |
+| `quality_gate.stall.process_deaths` | Counter | `phase` | Agent process exited unexpectedly (not stall-killed) |
+| `quality_gate.post_pr_ci.duration` | Histogram | — | Time waiting for post-PR CI to complete. Recorded by `QualityGateExecutor` on the post-PR finalization path |
+
+The `phase` tag uses a closed set to prevent unbounded cardinality:
+- `qgc_retry_agent` — quality gate retry, pre-PR cleanup, final QG, post-PR CI
+- `codegen` — code generation / rework
+- `analysis` — analysis agent
+- `code_review` — review agents, acceptance criteria, review summary
+- `decomposition` — decomposition phases
+- `unknown` — unmapped phases
+
+## Grafana Faro Frontend Observability
+
+The Orchestrator (Blazor Server) emits frontend Real User Monitoring data to Grafana Faro. Faro is initialized in `wwwroot/js/faro-init.js` via an async CDN bundle load from `unpkg.com`. When `Faro__CollectorUrl` is absent or empty, Faro stays as a no-op stub — no errors, no impact on page load.
+
+Data collected includes: page load timing, Blazor circuit errors, unhandled JS exceptions, and custom frontend log events. See [Configuration — Frontend Observability](../configuration.md#frontend-observability-grafana-faro) for setup.
+
 ## Work Distribution Metrics
 
 The `CodingAgent.WorkDistribution` meter (defined in `WorkDistributionTelemetry.cs` in `CodingAgentWebUI.Pipeline`, namespace `CodingAgentWebUI.Pipeline.Telemetry`) emits metrics for Kubernetes dispatch. The instruments are fed by `DispatchService` and `ReconciliationService` in the **Job Controller** (`service.name=coding-agent-jobcontroller`), and `workitems_by_status` is fed by `WorkItemMetricsBackgroundService` in the **Pipeline API** (`service.name=coding-agent-api`).
 
-See [Observability — Work Distribution Metrics](../observability.md#work-distribution-metrics) for the full metric table including all 14 instruments.
+See [Observability — Work Distribution Metrics](../observability.md#work-distribution-metrics) for the full metric table.
 
 ## CriticalMessageBuffer (Chat Pod Agent-Side)
 

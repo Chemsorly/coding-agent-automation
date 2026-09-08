@@ -5,6 +5,13 @@ using Serilog.Core;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests.Telemetry;
 
+/// <summary>
+/// Tests for <see cref="SerilogOtlpExtensions.WriteToOtlpIfConfigured"/>. These verify sink
+/// CONFIGURATION only (that the logger builds and the OTLP sink is wired), so they intentionally
+/// do not emit a log event: emitting one queues it for export, and disposing the logger then
+/// flushes it to the unreachable test endpoint (localhost:4317), costing ~3s per test on the
+/// batched gRPC exporter's failure/backoff path.
+/// </summary>
 [Collection("EnvironmentVariables")]
 public class SerilogOtlpExtensionsTests : IDisposable
 {
@@ -39,7 +46,6 @@ public class SerilogOtlpExtensionsTests : IDisposable
             .CreateLogger();
 
         Assert.NotNull(logger);
-        logger.Information("Test message");
         logger.Dispose();
     }
 
@@ -53,7 +59,6 @@ public class SerilogOtlpExtensionsTests : IDisposable
             .CreateLogger();
 
         Assert.NotNull(logger);
-        logger.Information("Test message");
         logger.Dispose();
     }
 
@@ -69,7 +74,6 @@ public class SerilogOtlpExtensionsTests : IDisposable
             .CreateLogger();
 
         Assert.NotNull(logger);
-        logger.Information("Test message");
         logger.Dispose();
     }
 
@@ -87,7 +91,6 @@ public class SerilogOtlpExtensionsTests : IDisposable
             .CreateLogger();
 
         Assert.NotNull(logger);
-        logger.Information("Test message");
         logger.Dispose();
     }
 
@@ -102,7 +105,6 @@ public class SerilogOtlpExtensionsTests : IDisposable
             .CreateLogger();
 
         Assert.NotNull(logger);
-        logger.Information("Test message");
         logger.Dispose();
     }
 
@@ -120,7 +122,6 @@ public class SerilogOtlpExtensionsTests : IDisposable
             .CreateLogger();
 
         Assert.NotNull(logger);
-        logger.Information("Test message");
         logger.Dispose();
     }
 
@@ -138,7 +139,6 @@ public class SerilogOtlpExtensionsTests : IDisposable
             .CreateLogger();
 
         Assert.NotNull(logger);
-        logger.Information("Test message");
         logger.Dispose();
     }
 
@@ -153,7 +153,6 @@ public class SerilogOtlpExtensionsTests : IDisposable
             .CreateLogger();
 
         Assert.NotNull(logger);
-        logger.Information("Test message");
         logger.Dispose();
     }
 
@@ -188,7 +187,6 @@ public class SerilogOtlpExtensionsTests : IDisposable
                 .WriteToOtlpIfConfigured("test-service", "Test")
                 .CreateLogger();
 
-            logger.Information("Test message");
 
             // Assert the OTLP sink was configured — endpoint is set so WriteTo.OpenTelemetry() must have been called.
             // Walk the sink tree to verify that at least one sink in the chain is an OpenTelemetry sink.

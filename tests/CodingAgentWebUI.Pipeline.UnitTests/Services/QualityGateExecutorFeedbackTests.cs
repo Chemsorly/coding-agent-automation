@@ -179,6 +179,37 @@ public class QualityGateExecutorFeedbackTests
     }
 
     [Fact]
+    public async Task CollectFailureFeedback_UsesConfiguredTimeoutNotConstant()
+    {
+        // Arrange: set FeedbackTimeoutSeconds = 120 (not the default 60)
+        var configWithCustomTimeout = _config with { FeedbackTimeoutSeconds = 120 };
+        SetupValidatorAlwaysFails();
+
+        AgentRequest? capturedRequest = null;
+        _mockAgent.Setup(a => a.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Pipeline Failure Feedback")),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) => capturedRequest = req)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        var context = BuildContext(configWithCustomTimeout);
+
+        // Act
+        await _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
+
+        // Assert: AgentRequest.Timeout reflects the configured value, not the hard-coded constant
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.Timeout.Should().Be(TimeSpan.FromSeconds(120));
+        // TODO: The CancellationTokenSource deadline (timeoutCts.CancelAfter) in QualityGateExecutor.RetryLoop is set
+        // independently from AgentRequest.Timeout and is not directly observable here. If a future edit reverts the CTS
+        // line back to the constant while leaving AgentRequest.Timeout on the config value, this test would still pass
+        // even though the effective hard-cancel timeout would have reverted to 60s. Consider an indirect assertion
+        // (e.g., verifying the agent is invoked without a pre-cancelled token when timeout is generous) to close the gap.
+        // (Warning from review #2225)
+    }
+
+    [Fact]
     public async Task Pipeline_ContinuesToDraftPR_RegardlessOfFeedbackOutcome_WhenFeedbackSucceeds()
     {
         // Arrange: validator always fails, feedback succeeds
@@ -272,12 +303,12 @@ public class QualityGateExecutorFeedbackTests
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = new[] { feedbackJson } });
     }
 
-    private QualityGateContext BuildContext()
+    private QualityGateContext BuildContext(PipelineConfiguration? config = null)
     {
         return new QualityGateContext
         {
             Run = _run,
-            Config = _config,
+            Config = config ?? _config,
             AgentProvider = _mockAgent.Object,
             IssueOps = _mockIssueOps.Object,
             Callbacks = _mockCallbacks.Object,

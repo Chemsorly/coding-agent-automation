@@ -17,9 +17,9 @@ internal sealed class PipelineApiAgentClient : IPipelineApiAgentClient
         _http = http;
     }
 
-    public async Task<IReadOnlyList<AgentEntry>> GetAgentsAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<AgentEntryDto>> GetAgentsAsync(CancellationToken ct = default)
     {
-        var agents = await _http.GetFromJsonAsync<List<AgentEntry>>(
+        var agents = await _http.GetFromJsonAsync<List<AgentEntryDto>>(
             "/api/agents",
             PipelineJsonOptions.Default,
             ct);
@@ -28,6 +28,15 @@ internal sealed class PipelineApiAgentClient : IPipelineApiAgentClient
         // GetFromJsonAsync types it as nullable — collapse it to empty rather than propagating null
         // into an IReadOnlyList the callers dereference without checking.
         return agents ?? [];
+    }
+
+    public async Task<CredentialPoolStatus> GetCredentialPoolAsync(CancellationToken ct = default)
+    {
+        var status = await _http.GetFromJsonAsync<CredentialPoolStatus>(
+            "/api/agents/credential-pool",
+            PipelineJsonOptions.Default,
+            ct);
+        return status ?? new CredentialPoolStatus(0, 0, 0);
     }
 
     public async Task AssignChatPromptAsync(string agentId, ChatPromptMessage message, CancellationToken ct = default)

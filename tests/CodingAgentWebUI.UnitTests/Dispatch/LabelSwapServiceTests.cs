@@ -33,16 +33,14 @@ public sealed class LabelSwapServiceTests
     [Fact]
     public async Task SwapLabel_FirstAttemptSucceeds_CallsSwapLabelStrictOnce()
     {
-        // TODO: This test only asserts call count. Add `await act.Should().NotThrowAsync()` (or
-        // equivalent) to also assert that SwapLabelWithRetryAsync completes cleanly on the happy
-        // path. Without a completion assertion, an implementation that throws after calling the
-        // swap would still pass this test.
         _mockLabelService
             .Setup(l => l.SwapLabelStrictAsync(Provider, Identifier, AgentLabels.InProgress, Kind, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var service = CreateService(maxAttempts: 3);
-        await service.SwapLabelWithRetryAsync(WorkItemId, Provider, Identifier, Kind, CancellationToken.None);
+        var act = async () => await service.SwapLabelWithRetryAsync(WorkItemId, Provider, Identifier, Kind, CancellationToken.None);
+
+        await act.Should().NotThrowAsync("happy path must complete without throwing");
 
         _mockLabelService.Verify(
             l => l.SwapLabelStrictAsync(Provider, Identifier, AgentLabels.InProgress, Kind, It.IsAny<CancellationToken>()),
@@ -52,10 +50,6 @@ public sealed class LabelSwapServiceTests
     [Fact]
     public async Task SwapLabel_FirstAttemptFails_RetriesAndSucceeds()
     {
-        // TODO: This test only asserts call count. Add `await act.Should().NotThrowAsync()` (or
-        // equivalent) to also assert that SwapLabelWithRetryAsync completes cleanly when a retry
-        // succeeds. Without a completion assertion, an implementation that throws after the
-        // successful second attempt would still pass this test.
         var callCount = 0;
         _mockLabelService
             .Setup(l => l.SwapLabelStrictAsync(Provider, Identifier, AgentLabels.InProgress, Kind, It.IsAny<CancellationToken>()))
@@ -68,7 +62,9 @@ public sealed class LabelSwapServiceTests
             });
 
         var service = CreateService(maxAttempts: 3);
-        await service.SwapLabelWithRetryAsync(WorkItemId, Provider, Identifier, Kind, CancellationToken.None);
+        var act = async () => await service.SwapLabelWithRetryAsync(WorkItemId, Provider, Identifier, Kind, CancellationToken.None);
+
+        await act.Should().NotThrowAsync("successful retry must complete without throwing");
 
         _mockLabelService.Verify(
             l => l.SwapLabelStrictAsync(Provider, Identifier, AgentLabels.InProgress, Kind, It.IsAny<CancellationToken>()),

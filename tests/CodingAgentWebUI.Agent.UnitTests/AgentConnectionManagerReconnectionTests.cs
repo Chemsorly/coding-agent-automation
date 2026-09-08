@@ -1,6 +1,5 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
-using Microsoft.Extensions.Hosting;
 using Moq;
 using Xunit;
 
@@ -22,137 +21,7 @@ public sealed class AgentConnectionManagerReconnectionTests
     };
 
     // ── Constructor guards ────────────────────────────────────────────────
-
-    [Fact]
-    public void Constructor_NullHubManager_Throws()
-    {
-        var act = () => new AgentConnectionManager(
-            null!,
-            new FakeHubConnectionManagerFactory(() => new FakeHubConnectionManager()),
-            new AgentId("test"),
-            Mock.Of<Serilog.ILogger>());
-        act.Should().Throw<ArgumentNullException>().WithParameterName("hubManager");
-    }
-
-    [Fact]
-    public void Constructor_NullFactory_Throws()
-    {
-        var act = () => new AgentConnectionManager(
-            new FakeHubConnectionManager(),
-            null!,
-            new AgentId("test"),
-            Mock.Of<Serilog.ILogger>());
-        act.Should().Throw<ArgumentNullException>().WithParameterName("hubManagerFactory");
-    }
-
-    [Fact]
-    public void Constructor_NullLogger_Throws()
-    {
-        var act = () => new AgentConnectionManager(
-            new FakeHubConnectionManager(),
-            new FakeHubConnectionManagerFactory(() => new FakeHubConnectionManager()),
-            new AgentId("test"),
-            null!);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
-    }
-
-    // ── IsConnected / Connection ──────────────────────────────────────────
-
-    [Fact]
-    public void IsConnected_FakeHub_ReturnsFalse()
-    {
-        var (manager, _) = CreateManager();
-        manager.IsConnected.Should().BeFalse(
-            "FakeHubConnectionManager.IsConnected is always false (not started against a real server)");
-    }
-
-    [Fact]
-    public void Connection_ReturnsUnderlyingHubConnection()
-    {
-        var (manager, _) = CreateManager();
-        manager.Connection.Should().NotBeNull();
-    }
-
-    // ── UpdateCurrentStep ─────────────────────────────────────────────────
-
-    [Fact]
-    public void UpdateCurrentStep_WithStep_DoesNotThrow()
-    {
-        var (manager, _) = CreateManager();
-        var act = () => manager.UpdateCurrentStep(PipelineStep.GeneratingCode);
-        act.Should().NotThrow();
-    }
-
-    [Fact]
-    public void UpdateCurrentStep_NullStep_DoesNotThrow()
-    {
-        var (manager, _) = CreateManager();
-        var act = () => manager.UpdateCurrentStep(null);
-        act.Should().NotThrow();
-    }
-
-    [Fact]
-    public void UpdateCurrentStep_MultipleUpdates_DoesNotThrow()
-    {
-        var (manager, _) = CreateManager();
-        var act = () =>
-        {
-            manager.UpdateCurrentStep(PipelineStep.CloningRepository);
-            manager.UpdateCurrentStep(PipelineStep.GeneratingCode);
-            manager.UpdateCurrentStep(null);
-        };
-        // Volatile write has no observable state; assert no exception is the correct contract check
-        act.Should().NotThrow();
-    }
-
-    // ── UpdateRegistration ────────────────────────────────────────────────
-
-    [Fact]
-    public void UpdateRegistration_ValidMessage_DoesNotThrow()
-    {
-        var (manager, _) = CreateManager();
-        var act = () => manager.UpdateRegistration(DefaultRegistration);
-        act.Should().NotThrow();
-    }
-
-    [Fact]
-    public void UpdateRegistration_Null_ThrowsArgumentNullException()
-    {
-        var (manager, _) = CreateManager();
-        var act = () => manager.UpdateRegistration(null!);
-        act.Should().Throw<ArgumentNullException>();
-    }
-
-    // ── OnCancelJobReceived ───────────────────────────────────────────────
-
-    [Fact]
-    public void OnCancelJobReceived_CanSubscribe_NoThrow()
-    {
-        var (manager, _) = CreateManager();
-        manager.OnCancelJobReceived += _ => Task.CompletedTask;
-        // Subscription must not throw
-        manager.Should().NotBeNull();
-    }
-
-    // ── OnForceDisconnect ─────────────────────────────────────────────────
-
-    [Fact]
-    public void OnForceDisconnect_CanSubscribe_NoThrow()
-    {
-        var (manager, _) = CreateManager();
-        manager.OnForceDisconnect += () => Task.CompletedTask;
-        manager.Should().NotBeNull();
-    }
-
-    // ── OnReconnected ─────────────────────────────────────────────────────
-
-    [Fact]
-    public void OnReconnected_CanSubscribe_NoThrow()
-    {
-        var (manager, _) = CreateManager();
-        manager.OnReconnected += () => Task.CompletedTask;
-        manager.Should().NotBeNull();
-    }
+    // (tested in AgentConnectionManagerTests.cs — not duplicated here)
 
     // ── DisposeAsync ──────────────────────────────────────────────────────
 
@@ -308,20 +177,7 @@ public sealed class AgentConnectionManagerReconnectionTests
     }
 
     // ── IAgentConnectionManager interface compliance ──────────────────────
-
-    [Fact]
-    public void ImplementsIAgentConnectionManager()
-    {
-        var (manager, _) = CreateManager();
-        manager.Should().BeAssignableTo<IAgentConnectionManager>();
-    }
-
-    [Fact]
-    public void ImplementsIAsyncDisposable()
-    {
-        var (manager, _) = CreateManager();
-        manager.Should().BeAssignableTo<IAsyncDisposable>();
-    }
+    // (tested in AgentConnectionManagerTests.cs — not duplicated here)
 
     // ── Helpers ───────────────────────────────────────────────────────────
 

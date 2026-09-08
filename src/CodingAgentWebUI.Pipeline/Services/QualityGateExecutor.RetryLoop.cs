@@ -32,11 +32,19 @@ public partial class QualityGateExecutor
 
             report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: false, linkedCt);
             if (run.CurrentStep == PipelineStep.Failed) return;
+            // TODO [WARNING] (#2359 Correctness): If RunRetryLoopAsync later also exits via ConflictRestart
+            // (conflict detected during a retry iteration's AppendExternalCiIfNeededAsync call), the guard
+            // below will call AddRunToHistoryAsync a second time for the same run. Whether this produces
+            // duplicate history records depends on whether AddRunToHistoryAsync is idempotent.
+            // Fix: track whether AddRunToHistoryAsync has already been called for this run, or gate on
+            // run.CurrentStep having just transitioned (i.e. was NOT already ConflictRestart before this call).
+            if (run.CurrentStep == PipelineStep.ConflictRestart) { await callbacks.AddRunToHistoryAsync(run); return; }
 
             LogAndRecordReport(context, report, "quality gates");
 
             report = await RunRetryLoopAsync(context, report, "Quality gate retry agent", linkedCt);
             if (run.CurrentStep == PipelineStep.Failed) return;
+            if (run.CurrentStep == PipelineStep.ConflictRestart) { await callbacks.AddRunToHistoryAsync(run); return; }
 
             if (report.AllPassed)
                 await RunPostRetryCleanupAndFinalizeAsync(context, linkedCt);
@@ -69,7 +77,7 @@ public partial class QualityGateExecutor
         }
         finally
         {
-            PipelineTelemetry.QualityGateDuration.Record(
+            _qualityGateDuration.Record(
                 qgStopwatch.Elapsed.TotalSeconds,
                 PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
         }
@@ -122,10 +130,12 @@ public partial class QualityGateExecutor
         var report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
         report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, linkedCt, skipCiIfNoChanges: true);
         if (run.CurrentStep == PipelineStep.Failed) return;
+        if (run.CurrentStep == PipelineStep.ConflictRestart) { await callbacks.AddRunToHistoryAsync(run); return; }
 
         LogAndRecordReport(context, report, "final quality gates");
         report = await RunRetryLoopAsync(context, report, "Final QG retry agent", linkedCt);
         if (run.CurrentStep == PipelineStep.Failed) return;
+        if (run.CurrentStep == PipelineStep.ConflictRestart) { await callbacks.AddRunToHistoryAsync(run); return; }
 
         if (report.AllPassed)
         {
@@ -198,60 +208,99 @@ public partial class QualityGateExecutor
         var priorInfraRetryCount = run.InfrastructureRetryCount;
         run.InfrastructureRetryCount = 0;
 
+        // Tracks the entire post-PR CI wait including polling and infra retries, so that
+        // pipeline_step_duration_seconds{step_name="WaitForPostPrCi"} accounts for time that
+        // would otherwise be invisible in the "Avg Step Duration" Grafana panel.
+        var waitSw = System.Diagnostics.Stopwatch.StartNew();
         GateResult ciGate;
         try
         {
-            var ciPollStopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var (ciPassed, ciStatus, ciLogPaths) = await PollAndHandleInfraRetryAsync(context, commitSha, config, callbacks, ct);
-
-            PipelineTelemetry.PostPrCiDuration.Record(
-                ciPollStopwatch.Elapsed.TotalSeconds,
-                PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
-
-            ciGate = new GateResult
+            try
             {
-                GateName = "External CI",
-                Passed = ciPassed,
-                Details = ciPassed
-                    ? $"Post-PR CI passed. {ciStatus.Jobs.Count} job(s) completed."
-                    : QualityGateValidator.BuildCiFailureDetails(ciStatus, ciLogPaths)
-            };
+                var ciPollStopwatch = System.Diagnostics.Stopwatch.StartNew();
+                var (ciPassed, ciStatus, ciLogPaths) = await PollAndHandleInfraRetryAsync(context, commitSha, config, callbacks, ct);
 
-            callbacks.EmitOutputLine(ciPassed
-                ? $"✅ Post-PR CI passed ({ciStatus.Jobs.Count} jobs)"
-                : $"❌ Post-PR CI failed: {ciGate.Details}");
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            ciGate = new GateResult
+                // TODO [WARNING] (#2359 DotNetSpecialist): ConflictRestart is out of scope for
+                // WaitForPostPrCiAsync (post-PR CI wait). PollAndHandleInfraRetryAsync can return
+                // PipelineRunState.ConflictRestart here (the same primitive is reused), but this
+                // method does not check for it. The ConflictRestart status flows into
+                // BuildCiFailureDetails (ciPassed == false) and produces a gate failure, which
+                // routes through RunRetryLoopAsync and consumes the full MaxRetries code-fix budget
+                // before falling back to a draft PR — reintroducing exactly the retry-budget-exhaustion
+                // this feature set out to eliminate, just one stage later.
+                // Consequence: "No draft PR created for ConflictRestart" does NOT hold for conflicts
+                // detected during the post-PR CI wait (skipCiIfNoChanges path).
+                // Future fix: add a ConflictRestart short-circuit here analogous to
+                // AppendExternalCiIfNeededAsync — set run.FinalLabel/CurrentStep/FailureReason and
+                // return early without invoking FinalizeDraftPrAsync.
+
+                // PostPrCiDuration is a dedicated histogram for the post-PR CI wait, separate from
+                // ExternalCiDuration (which is recorded in AppendExternalCiIfNeededAsync for the
+                // pre-PR CI pass). Using a distinct metric avoids inflating pre-PR p50/p99 with
+                // post-PR observations and makes the per-phase time budget observable in Grafana.
+                _postPrCiDuration.Record(
+                    ciPollStopwatch.Elapsed.TotalSeconds,
+                    PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
+
+                ciGate = new GateResult
+                {
+                    GateName = "External CI",
+                    Passed = ciPassed,
+                    Details = ciPassed
+                        ? $"Post-PR CI passed. {ciStatus.Jobs.Count} job(s) completed."
+                        : QualityGateValidator.BuildCiFailureDetails(ciStatus, ciLogPaths)
+                };
+
+                callbacks.EmitOutputLine(ciPassed
+                    ? $"✅ Post-PR CI passed ({ciStatus.Jobs.Count} jobs)"
+                    : $"❌ Post-PR CI failed: {ciGate.Details}");
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                GateName = "External CI", Passed = false,
-                Details = $"Post-PR CI timed out after {config.ExternalCiTimeout}"
-            };
-            callbacks.EmitOutputLine($"❌ Post-PR CI timed out after {config.ExternalCiTimeout}");
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Pipeline {RunId} post-PR CI check failed, treating as gate failure", run.RunId);
-            ciGate = new GateResult
+                ciGate = new GateResult
+                {
+                    GateName = "External CI",
+                    Passed = false,
+                    Details = $"Post-PR CI timed out after {config.ExternalCiTimeout}"
+                };
+                callbacks.EmitOutputLine($"❌ Post-PR CI timed out after {config.ExternalCiTimeout}");
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
             {
-                GateName = "External CI", Passed = false,
-                Details = $"Post-PR CI error: {ex.Message}"
-            };
+                _logger.Warning(ex, "Pipeline {RunId} post-PR CI check failed, treating as gate failure", run.RunId);
+                ciGate = new GateResult
+                {
+                    GateName = "External CI",
+                    Passed = false,
+                    Details = $"Post-PR CI error: {ex.Message}"
+                };
+            }
+            finally
+            {
+                // Restore the accumulated count so the run summary reflects the total infra retries
+                // across both pre-PR and post-PR CI polls.
+                run.InfrastructureRetryCount += priorInfraRetryCount;
+            }
         }
         finally
         {
-            // Restore the accumulated count so the run summary reflects the total infra retries
-            // across both pre-PR and post-PR CI polls.
-            run.InfrastructureRetryCount += priorInfraRetryCount;
+            waitSw.Stop();
+            var stepTags = PipelineTelemetry.BuildStepTags("WaitForPostPrCi", run);
+            // TODO: This finally block fires on genuine OperationCanceledException (ct.IsCancellationRequested).
+            // The inner catch (OperationCanceledException) { throw; } re-throws and the outer finally still
+            // executes, recording a partial elapsed time as a complete WaitForPostPrCi observation and
+            // incrementing the step count. For long CI waits (potentially hours) a cancellation mid-poll
+            // produces an unrealistically short sample that will distort p50/p99 histogram aggregations.
+            // Consider guarding with: if (!ct.IsCancellationRequested) { ... Record/Add ... }
+            _stepDuration.Record(waitSw.Elapsed.TotalSeconds, stepTags);
+            _stepCount.Add(1, stepTags);
         }
 
         return new QualityGateReport
         {
             Compilation = report.Compilation,
             Tests = report.Tests,
-            SecurityScan = report.SecurityScan,
             ExternalCi = ciGate
         };
     }
@@ -318,16 +367,16 @@ public partial class QualityGateExecutor
             var feedbackPrompt = FeedbackPromptBuilder.BuildFailureFeedbackPrompt(
                 run, issue, latestReport, harnessCategories, issueCategories);
 
-            // Execute agent with UseResume = true and 60-second timeout
+            // Execute agent with UseResume = true and operator-configured timeout
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(FeedbackConstraints.FailureFeedbackTimeoutSeconds));
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(context.Config.FeedbackTimeoutSeconds));
 
             var agentResult = await context.AgentProvider.ExecuteAsync(
                 new AgentRequest
                 {
                     Prompt = feedbackPrompt,
                     WorkspacePath = run.WorkspacePath!,
-                    Timeout = TimeSpan.FromSeconds(FeedbackConstraints.FailureFeedbackTimeoutSeconds),
+                    Timeout = TimeSpan.FromSeconds(context.Config.FeedbackTimeoutSeconds),
                     UseResume = true
                 },
                 timeoutCts.Token,
@@ -345,7 +394,7 @@ public partial class QualityGateExecutor
         {
             // Timeout on the feedback call itself (not pipeline cancellation)
             _logger.Warning(ex, "Pipeline {RunId} failure feedback collection timed out after {Timeout}s",
-                run.RunId, FeedbackConstraints.FailureFeedbackTimeoutSeconds);
+                run.RunId, context.Config.FeedbackTimeoutSeconds);
             run.Feedback = _feedbackService.CreateFallbackFeedback(
                 FeedbackOutcome.Failure, "Feedback collection timed out", DateTime.UtcNow);
         }
@@ -385,7 +434,7 @@ public partial class QualityGateExecutor
         const int MaxConsecutiveTransientRetries = 10;
         var consecutiveTransientRetries = 0;
 
-        // TODO: [WARNING] run.RetryErrors accumulates one entry per loop iteration (including transient
+        // NOTE: run.RetryErrors accumulates one entry per loop iteration (including transient
         // provider-error iterations where no fix was attempted). On repeated 429/503 responses, this
         // produces stale entries in the failure-feedback prompt and draft PR summary that were never
         // associated with actual fix attempts. Consider gating the enqueue on a "real work was done"
@@ -393,15 +442,27 @@ public partial class QualityGateExecutor
         while (!report.AllPassed && run.RetryCount < config.MaxRetries)
         {
             run.RetryCount++;
-            // NOTE: Consider using BuildTags (run_type + project_id + project_name) for dimensional consistency with duration metrics
-            PipelineTelemetry.QualityGateRetries.Add(1, PipelineTelemetry.RunTypeTag(run.RunType));
             var errorSummary = BuildQualityGateErrorSummary(report);
             run.RetryErrors.Enqueue(errorSummary);
 
             _logger.Information("Pipeline {RunId} quality gates failed, auto-retry {RetryCount}/{MaxRetries}", run.RunId, run.RetryCount, config.MaxRetries);
             callbacks.EmitOutputLine($"🔄 Quality gates failed, retrying (attempt {run.RetryCount}/{config.MaxRetries})");
 
-            var retryPromptSummary = BuildQualityGateRetryPrompt(report, run.RetryCount, config.MaxRetries);
+            var retryPromptSummary = BuildQualityGateRetryPrompt(
+                report,
+                run.RetryCount,
+                config.MaxRetries,
+                // Snapshot taken after Enqueue above, so the array includes the current attempt's
+                // error as its last element. Enumerable.ToArray iterates BoundedConcurrentQueue's
+                // enumerator (backed by ConcurrentQueue<T>) — a safe, consistent snapshot.
+                // ORDERING INVARIANT: Enqueue MUST remain before this call. If the order changes,
+                // the history section will double-count or miss the current attempt's error.
+                // TODO: `BuildQualityGateRetryPrompt` does not call ArgumentNullException.ThrowIfNull(report)
+                // before dereferencing it. A null report will throw NullReferenceException deep inside the
+                // string-building loop rather than at the method boundary. Add a null guard at the top of
+                // BuildQualityGateRetryPrompt to produce a clear diagnostic.
+                // See review finding: DotNetSpecialist WARNING — QualityGateExecutor.RetryLoop.cs:437
+                run.RetryErrors.ToArray());
 
             run.ChatHistory.Enqueue(new ChatEntry
             {
@@ -415,6 +476,7 @@ public partial class QualityGateExecutor
             run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = fixPrompt });
             callbacks.NotifyChange();
 
+            var shouldBreak = false;
             try
             {
                 var agentResult = await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
@@ -427,99 +489,97 @@ public partial class QualityGateExecutor
                         Description = $"{retryAgentDescription} (attempt {run.RetryCount})",
                         Logger = _logger,
                         Phase = null,
-                        EnvironmentVariables = context.InjectedSecrets
+                        EnvironmentVariables = context.InjectedSecrets,
+                        StallMetrics = _stallMetrics
                     },
                     callbacks, ct,
                     resumeSessionId: run.CodegenSessionId);
 
-                // Check for provider-side transient failures that must not consume retry budget.
-                // agentResult is nullable — ExecuteAgentAndRecordAsync returns null when it absorbs
-                // a non-cancellation exception, so the ?. null-conditional is mandatory here.
-                //
                 // Intentional asymmetry: PipelineTelemetry and RetryErrors (incremented above) are NOT
                 // rolled back — rolling back a monotonic counter is non-idiomatic in OpenTelemetry, and the
                 // RetryErrors entry (from the prior QG failure) is harmless noise. Only RetryCount matters
                 // for loop exit logic, so that is the only value corrected.
-                if (agentResult?.ErrorCategory is AgentErrorCategory.ProviderRateLimit
-                    or AgentErrorCategory.ProviderOverload)
+                switch (ClassifyRetryOutcome(agentResult))
                 {
-                    // TODO: [WARNING] run.RetryCount-- can produce RetryCount == -1 if this branch is
-                    // entered on the very first loop iteration (RetryCount starts at 0 then increments
-                    // to 1 at the loop top, so this decrement brings it back to 0 — in practice no
-                    // underflow occurs). However, if the entry condition ever changes so RetryCount is
-                    // 0 when this branch is entered, the decrement would produce -1 and that value
-                    // would appear in log messages. Consider adding an underflow guard:
-                    //   if (run.RetryCount > 0) run.RetryCount--;
-                    run.RetryCount--; // Undo the increment at the top of the loop
-                    consecutiveTransientRetries++;
+                    case RetryOutcome.TransientWait:
+                        // Undo the increment at the top of the loop. Math.Max guards against underflow
+                        // if the entry condition ever changes so RetryCount is 0 when this branch runs.
+                        run.RetryCount = Math.Max(0, run.RetryCount - 1);
+                        consecutiveTransientRetries++;
+                        _qualityGateRetries.Add(1, BuildRetryTags(run, "transient"));
 
-                    if (consecutiveTransientRetries >= MaxConsecutiveTransientRetries)
-                    {
-                        // TODO: [WARNING] run.RetryCount is logged here after the decrement above, so
-                        // the displayed value reflects the corrected (pre-increment) count. If RetryCount
-                        // ever reaches this branch as 0 (see underflow note above), the log will show -1
-                        // which is misleading. Capture the corrected value before the log call if legibility
-                        // becomes an issue.
+                        if (consecutiveTransientRetries >= MaxConsecutiveTransientRetries)
+                        {
+                            _logger.Warning(
+                                "Pipeline {RunId} retry {RetryCount}: reached consecutive transient error cap " +
+                                "({Cap} consecutive transient responses), breaking retry loop",
+                                run.RunId, run.RetryCount, MaxConsecutiveTransientRetries);
+                            shouldBreak = true;
+                            break; // exits switch; shouldBreak will exit the while loop below
+                        }
+
                         _logger.Warning(
-                            "Pipeline {RunId} retry {RetryCount}: reached consecutive transient error cap " +
-                            "({Cap} consecutive {Category} responses), breaking retry loop",
-                            run.RunId, run.RetryCount, MaxConsecutiveTransientRetries, agentResult.ErrorCategory);
+                            "Pipeline {RunId} retry {RetryCount}: transient agent result, " +
+                            "not consuming retry budget, waiting before next attempt " +
+                            "({Consecutive}/{Cap} consecutive transient retries)",
+                            run.RunId, run.RetryCount,
+                            consecutiveTransientRetries, MaxConsecutiveTransientRetries);
+                        await Task.Delay(config.TransientRetryDelay, ct);
+                        continue;
+
+                    case RetryOutcome.AbortAuth:
+                        // Permanent auth failures cannot be fixed by retrying — abort immediately.
+                        // RetryCount is intentionally NOT decremented: one real agent call was attempted,
+                        // so a count of 1 accurately reflects what happened.
+                        _logger.Error(
+                            "Pipeline {RunId} retry {RetryCount}: permanent auth failure, aborting retry loop",
+                            run.RunId, run.RetryCount);
+                        _qualityGateRetries.Add(1, BuildRetryTags(run, "auth_abort"));
+                        shouldBreak = true;
+                        break; // exits switch; shouldBreak will exit the while loop below
+
+                    case RetryOutcome.RestartSession:
+                        // Agent returned successfully but produced nothing — session context window
+                        // overflowed. Clear session affinity so the next retry uses a fresh session.
+                        _logger.Warning(
+                            "Pipeline {RunId} retry {RetryCount}: agent returned empty response (0 tokens), " +
+                            "clearing session affinity for next attempt",
+                            run.RunId, run.RetryCount);
+                        _qualityGateRetries.Add(1, BuildRetryTags(run, "session_restart"));
+                        run.CodegenSessionId = null;
+                        continue; // Skip QG validation — workspace unchanged, go straight to next retry
+
+                    default: // RetryOutcome.Retry
+                        // Non-transient iteration: reset consecutive transient counter.
+                        consecutiveTransientRetries = 0;
+                        _qualityGateRetries.Add(1, BuildRetryTags(run, "retry"));
+                        if (agentResult != null)
+                            await _prOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);
                         break;
-                    }
-
-                    _logger.Warning(
-                        "Pipeline {RunId} retry {RetryCount}: provider transient error ({Category}), " +
-                        "not consuming retry budget, waiting before next attempt " +
-                        "({Consecutive}/{Cap} consecutive transient retries)",
-                        run.RunId, run.RetryCount, agentResult.ErrorCategory,
-                        consecutiveTransientRetries, MaxConsecutiveTransientRetries);
-                    await Task.Delay(config.TransientRetryDelay, ct);
-                    continue;
                 }
-
-                // Non-transient iteration: reset consecutive transient counter.
-                consecutiveTransientRetries = 0;
-
-                // Permanent auth failures cannot be fixed by retrying — abort immediately.
-                // RetryCount is intentionally NOT decremented: one real agent call was attempted,
-                // so a count of 1 accurately reflects what happened (unlike transient errors where
-                // the agent never did any work).
-                if (agentResult?.ErrorCategory == AgentErrorCategory.PermanentAuthFailure)
-                {
-                    _logger.Error(
-                        "Pipeline {RunId} retry {RetryCount}: permanent auth failure, aborting retry loop",
-                        run.RunId, run.RetryCount);
-                    break;
-                }
-
-                // Detect dead/exhausted session: agent returned successfully but produced nothing.
-                // This typically means the session's context window overflowed and the provider
-                // returned an empty response. Clear session affinity so the next retry uses a fresh session.
-                if (agentResult is { ExitCode: 0 } && agentResult.Usage?.TotalTokens == 0 && agentResult.OutputLines.Count == 0)
-                {
-                    _logger.Warning("Pipeline {RunId} retry {RetryCount}: agent returned empty response (0 tokens), " +
-                                    "clearing session affinity for next attempt", run.RunId, run.RetryCount);
-                    run.CodegenSessionId = null;
-                    continue; // Skip QG validation — workspace unchanged, go straight to next retry
-                }
-
-                if (agentResult != null)
-                    await _prOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                // TODO: [WARNING] When ExecuteAgentAndRecordAsync absorbs a non-cancellation exception
-                // and returns null, the transient-category check (agentResult?.ErrorCategory) evaluates
-                // to null, skipping both the transient branch and the consecutive-counter increment.
-                // The null path falls through to the non-transient reset (consecutiveTransientRetries = 0)
-                // only if it reaches the bottom of the try block — but when agentResult is null the try
-                // body does not reach the reset line (the catch fires instead). So for the absorbed-exception
-                // path: transient counter is neither incremented nor reset. If the provider is consistently
-                // returning errors that are absorbed as exceptions (rather than surfaced as
-                // AgentErrorCategory.ProviderRateLimit/ProviderOverload), the transient cap never fires
-                // and the loop drains the standard retry budget instead. This is a behavioural gap: the
-                // cap only protects against errors surfaced via the ErrorCategory enum, not via exceptions.
+                // TODO: [WARNING] This catch depends on the contract that ExecuteAgentAndRecordAsync
+                // absorbs all non-cancellation agent exceptions and returns null (those are then
+                // classified as TransientWait in the switch above, keeping consecutiveTransientRetries
+                // correct). If that contract is ever broken — e.g. ExecuteAgentAndRecordAsync is
+                // refactored so an exception escapes — it will be silently consumed here, the transient
+                // counter will not increment, and the exception-gap this issue was meant to close will
+                // reopen. If that contract changes, route the caught exception through ClassifyRetryOutcome
+                // (e.g. by re-wrapping it as a null agentResult path) or call shouldBreak = true here.
+                //
+                // TODO: [WARNING] shouldBreak may already be true when this catch fires (if the default
+                // branch set it and UpdateFileChangeStatsAsync then threw). The catch does not reset
+                // shouldBreak, so the if (shouldBreak) break below still exits the loop correctly — but
+                // the flow is non-obvious. If this catch block is ever extended, preserve that invariant.
+                //
+                // TODO: [WARNING] When shouldBreak is already true (e.g. transient cap fired in the
+                // TransientWait branch) and UpdateFileChangeStatsAsync subsequently throws, this log
+                // emits "retry fix agent call failed" — a misleading message because no fix was
+                // attempted on that iteration. If log clarity matters, gate the message on !shouldBreak
+                // or use a distinct message when shouldBreak is true.
                 _logger.Warning(ex, "Pipeline {RunId} retry fix agent call failed", run.RunId);
                 run.ChatHistory.Enqueue(new ChatEntry
                 {
@@ -528,16 +588,55 @@ public partial class QualityGateExecutor
                 });
             }
 
+            if (shouldBreak) break;
+
             callbacks.TransitionTo(PipelineStep.RunningQualityGates);
             report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, ct);
 
             report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, ct);
             if (run.CurrentStep == PipelineStep.Failed) return report;
+            if (run.CurrentStep == PipelineStep.ConflictRestart) return report;
 
             LogAndRecordReport(context, report, "retry quality gates");
         }
 
         return report;
+    }
+
+    /// <summary>
+    /// Classifies a single retry-loop agent result into a discrete <see cref="RetryOutcome"/>.
+    /// Pure function — no I/O, no side effects.
+    /// </summary>
+    /// <param name="agentResult">
+    /// The result returned by <see cref="AgentPhaseExecutor.ExecuteAgentAndRecordAsync"/>, or
+    /// <see langword="null"/> when that method absorbed a non-cancellation exception. A null result
+    /// is treated as <see cref="RetryOutcome.TransientWait"/> so the consecutive-transient cap can
+    /// fire for exception-surfaced provider failures, not just <see cref="AgentErrorCategory"/>-based ones.
+    /// </param>
+    internal static RetryOutcome ClassifyRetryOutcome(AgentResult? agentResult)
+    {
+        // null means ExecuteAgentAndRecordAsync absorbed a non-cancellation exception.
+        // Treat as transient so the consecutive counter increments and the cap can fire.
+        // NOTE: All absorbed exceptions are classified as transient — this is slightly broad
+        // (also catches programming errors like NullReferenceException), but the 10-iteration
+        // cap bounds the blast radius and the simplicity outweighs the risk.
+        if (agentResult is null)
+            return RetryOutcome.TransientWait;
+
+        if (agentResult.ErrorCategory is AgentErrorCategory.ProviderRateLimit
+            or AgentErrorCategory.ProviderOverload)
+            return RetryOutcome.TransientWait;
+
+        if (agentResult.ErrorCategory == AgentErrorCategory.PermanentAuthFailure)
+            return RetryOutcome.AbortAuth;
+
+        // Dead/exhausted session: agent returned successfully but produced nothing.
+        if (agentResult is { ExitCode: 0 } &&
+            agentResult.Usage?.TotalTokens == 0 &&
+            agentResult.OutputLines.Count == 0)
+            return RetryOutcome.RestartSession;
+
+        return RetryOutcome.Retry;
     }
 
     /// <summary>
@@ -552,20 +651,18 @@ public partial class QualityGateExecutor
         run.QualityGateHistory.Enqueue(report);
         callbacks.EmitOutputLine(PipelineFormatting.FormatQualityGateSummary(report));
 
-        _logger.Information("Pipeline {RunId} {Phase}: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}, SecurityScan={SecurityResult}, ExternalCi={ExternalCiResult}",
+        _logger.Information("Pipeline {RunId} {Phase}: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}, ExternalCi={ExternalCiResult}",
             run.RunId, phase, report.AllPassed, report.Compilation.Passed, report.Tests.Passed,
-            FormatGateLogValue(report.SecurityScan), FormatGateLogValue(report.ExternalCi));
+            FormatGateLogValue(report.ExternalCi));
 
         EmitGateEvaluation(PipelineTelemetry.QualityGateNames.Compilation, report.Compilation.Passed);
         EmitGateEvaluation(PipelineTelemetry.QualityGateNames.Tests, report.Tests.Passed);
-        if (report.SecurityScan is not null)
-            EmitGateEvaluation(PipelineTelemetry.QualityGateNames.Security, report.SecurityScan.Passed);
         if (report.ExternalCi is not null)
             EmitGateEvaluation(PipelineTelemetry.QualityGateNames.ExternalCi, report.ExternalCi.Passed);
 
-        static void EmitGateEvaluation(string gateName, bool passed)
+        void EmitGateEvaluation(string gateName, bool passed)
         {
-            PipelineTelemetry.QualityGateEvaluations.Add(1,
+            _qualityGateEvaluations.Add(1,
                 new("gate_name", gateName), new("result", passed ? "pass" : "fail"));
         }
     }

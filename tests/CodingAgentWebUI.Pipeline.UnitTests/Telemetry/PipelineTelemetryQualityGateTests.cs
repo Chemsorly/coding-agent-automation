@@ -1,52 +1,50 @@
-using System.Collections.Concurrent;
-using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
+using CodingAgentWebUI.TestUtilities;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
 /// <summary>
 /// Unit tests verifying quality gate metric instruments emit correct tags.
+/// Uses <see cref="TestMeterFactory"/> and <see cref="MetricCollector{T}"/> for isolation —
+/// no cross-test contamination via the shared static <see cref="PipelineTelemetry.Meter"/>.
 /// </summary>
-[Collection("Metrics")]
 public class PipelineTelemetryQualityGateTests : IDisposable
 {
-    private readonly MeterListener _listener = new();
-    private readonly ConcurrentBag<(string InstrumentName, KeyValuePair<string, object?>[] Tags)> _measurements = [];
+    private readonly TestMeterFactory _factory = new();
+    private readonly System.Diagnostics.Metrics.Meter _meter;
+    private readonly System.Diagnostics.Metrics.Counter<long> _qualityGateRetries;
+    private readonly System.Diagnostics.Metrics.Counter<long> _qualityGateEvaluations;
+    private readonly System.Diagnostics.Metrics.Histogram<double> _qualityGateDuration;
+    private readonly System.Diagnostics.Metrics.Histogram<double> _externalCiDuration;
+    private readonly System.Diagnostics.Metrics.Histogram<double> _postPrCiDuration;
 
     public PipelineTelemetryQualityGateTests()
     {
-        _listener.InstrumentPublished = (instrument, listener) =>
-        {
-            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
-                listener.EnableMeasurementEvents(instrument);
-        };
-
-        _listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, state) =>
-        {
-            _measurements.Add((instrument.Name, tags.ToArray()));
-        });
-
-        _listener.SetMeasurementEventCallback<double>((instrument, measurement, tags, state) =>
-        {
-            _measurements.Add((instrument.Name, tags.ToArray()));
-        });
-
-        _listener.Start();
+        _meter = _factory.Create(new System.Diagnostics.Metrics.MeterOptions(PipelineTelemetry.SourceName));
+        _qualityGateRetries = _meter.CreateCounter<long>("quality_gate.retries", "{retry}", "Quality gate retry attempts");
+        _qualityGateEvaluations = _meter.CreateCounter<long>("quality_gate.evaluations", "{evaluation}", "Individual gate evaluation events");
+        _qualityGateDuration = _meter.CreateHistogram<double>("quality_gate.duration", "s", "Total time in quality gate phase");
+        _externalCiDuration = _meter.CreateHistogram<double>("quality_gate.external_ci.duration", "s", "Time waiting for external CI");
+        _postPrCiDuration = _meter.CreateHistogram<double>("quality_gate.post_pr_ci.duration", "s", "Time waiting for post-PR CI to complete");
     }
 
-    public void Dispose() => _listener.Dispose();
+    public void Dispose() => _factory.Dispose();
 
     [Fact]
     public void QualityGateRetries_Add_IncludesRunTypeTag()
     {
-        PipelineTelemetry.QualityGateRetries.Add(1, PipelineTelemetry.RunTypeTag(PipelineRunType.Implementation));
+        using var collector = new MetricCollector<long>(_factory, PipelineTelemetry.SourceName, "quality_gate.retries");
 
-        var entries = _measurements.Where(m => m.InstrumentName == "quality_gate.retries").ToList();
-        entries.Should().NotBeEmpty();
-        entries.Should().Contain(e =>
-            e.Tags.Contains(new KeyValuePair<string, object?>("run_type", "implementation")));
+        _qualityGateRetries.Add(1, PipelineTelemetry.BuildTags(PipelineRunType.Implementation, "proj-1", "MyProject"));
+
+        collector.GetMeasurementSnapshot().Should().ContainSingle(m =>
+            m.Value == 1 &&
+            m.Tags.Contains(new KeyValuePair<string, object?>("run_type", "implementation")) &&
+            m.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "proj-1")) &&
+            m.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_name", "MyProject")));
     }
 
     [Theory]
@@ -54,42 +52,46 @@ public class PipelineTelemetryQualityGateTests : IDisposable
     [InlineData(false, "fail")]
     public void QualityGateEvaluations_Add_IncludesGateNameAndResult(bool passed, string expectedResult)
     {
-        PipelineTelemetry.QualityGateEvaluations.Add(1,
+        using var collector = new MetricCollector<long>(_factory, PipelineTelemetry.SourceName, "quality_gate.evaluations");
+
+        _qualityGateEvaluations.Add(1,
             new("gate_name", PipelineTelemetry.QualityGateNames.Compilation),
             new("result", passed ? "pass" : "fail"));
 
-        var entries = _measurements.Where(m => m.InstrumentName == "quality_gate.evaluations").ToList();
-        entries.Should().NotBeEmpty();
-        entries.Should().Contain(e =>
-            e.Tags.Contains(new KeyValuePair<string, object?>("gate_name", "compilation")) &&
-            e.Tags.Contains(new KeyValuePair<string, object?>("result", expectedResult)));
+        collector.GetMeasurementSnapshot().Should().ContainSingle(m =>
+            m.Value == 1 &&
+            m.Tags.Contains(new KeyValuePair<string, object?>("gate_name", "compilation")) &&
+            m.Tags.Contains(new KeyValuePair<string, object?>("result", expectedResult)));
     }
 
     [Fact]
     public void QualityGateDuration_Record_AcceptsValue()
     {
-        PipelineTelemetry.QualityGateDuration.Record(42.5,
-            PipelineTelemetry.BuildTags(PipelineRunType.Implementation, "proj-1", "TestProj"));
+        using var collector = new MetricCollector<double>(_factory, PipelineTelemetry.SourceName, "quality_gate.duration");
 
-        _measurements.Should().Contain(m => m.InstrumentName == "quality_gate.duration");
+        _qualityGateDuration.Record(42.5, PipelineTelemetry.BuildTags(PipelineRunType.Implementation, "proj-1", "TestProj"));
+
+        collector.GetMeasurementSnapshot().Should().ContainSingle(m => Math.Abs(m.Value - 42.5) < 0.001);
     }
 
     [Fact]
     public void ExternalCiDuration_Record_AcceptsValue()
     {
-        PipelineTelemetry.ExternalCiDuration.Record(120.0,
-            PipelineTelemetry.BuildTags(PipelineRunType.Implementation, "proj-1", "TestProj"));
+        using var collector = new MetricCollector<double>(_factory, PipelineTelemetry.SourceName, "quality_gate.external_ci.duration");
 
-        _measurements.Should().Contain(m => m.InstrumentName == "quality_gate.external_ci.duration");
+        _externalCiDuration.Record(120.0, PipelineTelemetry.BuildTags(PipelineRunType.Implementation, "proj-1", "TestProj"));
+
+        collector.GetMeasurementSnapshot().Should().ContainSingle(m => Math.Abs(m.Value - 120.0) < 0.001);
     }
 
     [Fact]
     public void PostPrCiDuration_Record_AcceptsValue()
     {
-        PipelineTelemetry.PostPrCiDuration.Record(95.0,
-            PipelineTelemetry.BuildTags(PipelineRunType.Implementation, "proj-1", "TestProj"));
+        using var collector = new MetricCollector<double>(_factory, PipelineTelemetry.SourceName, "quality_gate.post_pr_ci.duration");
 
-        _measurements.Should().Contain(m => m.InstrumentName == "quality_gate.post_pr_ci.duration");
+        _postPrCiDuration.Record(95.0, PipelineTelemetry.BuildTags(PipelineRunType.Implementation, "proj-1", "TestProj"));
+
+        collector.GetMeasurementSnapshot().Should().ContainSingle(m => Math.Abs(m.Value - 95.0) < 0.001);
     }
 
     [Fact]
@@ -99,5 +101,33 @@ public class PipelineTelemetryQualityGateTests : IDisposable
         PipelineTelemetry.QualityGateNames.Tests.Should().Be("tests");
         PipelineTelemetry.QualityGateNames.Security.Should().Be("security");
         PipelineTelemetry.QualityGateNames.ExternalCi.Should().Be("external_ci");
+    }
+
+    [Theory]
+    [InlineData("Quality gate retry agent (attempt 1)", "qgc_retry_agent")]
+    [InlineData("Pre-PR cleanup agent", "qgc_retry_agent")]
+    [InlineData("Final QG retry agent", "qgc_retry_agent")]
+    [InlineData("Post-PR CI retry agent", "qgc_retry_agent")]
+    [InlineData("Code generation agent", "codegen")]
+    [InlineData("Code gen (attempt 2)", "codegen")]
+    [InlineData("Analysis agent session", "analysis")]
+    [InlineData("Analysis phase", "analysis")]
+    [InlineData("Code review agent", "code_review")]
+    [InlineData("Follow-up for reviewer #1", "code_review")]
+    [InlineData("Review summary agent", "code_review")]
+    [InlineData("Acceptance criteria validation", "code_review")]
+    [InlineData("Decomposition agent", "decomposition")]
+    [InlineData("Some unrecognized description", "unknown")]
+    public void NormalizeStallPhase_MapsDescriptionToExpectedPhase(string description, string expectedPhase)
+    {
+        PipelineTelemetry.NormalizeStallPhase(description).Should().Be(expectedPhase,
+            $"description '{description}' should map to phase '{expectedPhase}'");
+    }
+
+    [Fact]
+    public void NormalizeStallPhase_ThrowsOnEmptyString()
+    {
+        var act = () => PipelineTelemetry.NormalizeStallPhase(string.Empty);
+        act.Should().Throw<ArgumentException>("empty string is not a valid phase description");
     }
 }

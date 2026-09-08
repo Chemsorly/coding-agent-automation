@@ -229,7 +229,8 @@ public sealed class AgentConnectionManagerAdditionalTests
             hub, factory, new AgentId("agent-1"),
             Mock.Of<Serilog.ILogger>());
 
-        await manager.HandleTerminalClosedAsync(null, maxAttempts: 3);
+        // delayOverride => zero so the 3 attempts don't wait real reconnection backoff (~15s).
+        await manager.HandleTerminalClosedAsync(null, maxAttempts: 3, delayOverride: _ => TimeSpan.Zero);
 
         disposedManagers.Should().HaveCount(3, "one manager per attempt");
         disposedManagers.Should().AllSatisfy(m =>

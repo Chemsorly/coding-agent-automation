@@ -380,27 +380,47 @@ public partial class GitHubRepositoryProvider
         var hasMore = prsFetched.Count > pageSize;
         var prIssues = prsFetched.Take(pageSize).ToList();
 
-        // Fetch full PR details for each matching issue to get Draft, Head, Base info
+        // Fetch full PR details for each matching issue to get Draft, Head, Base, AutoMerge.
+        // Uses raw IConnection.Get<T> with a minimal DTO to capture auto_merge, which
+        // Octokit's typed PullRequest model does not expose.
+        // Octokit's SimpleJsonSerializer maps PascalCase → ruby_case automatically
+        // (e.g. AutoMerge → auto_merge, HtmlUrl → html_url) so no [Parameter] attributes needed.
         var items = new List<PullRequestSummary>();
         foreach (var issue in prIssues)
         {
             var pr = await ExecuteWithResilienceAsync(
-                client => client.PullRequest.Get(Owner, Repo, issue.Number),
+                async client =>
+                {
+                    var uri = new Uri(client.Connection.BaseAddress,
+                        $"repos/{Owner}/{Repo}/pulls/{issue.Number}");
+                    var response = await client.Connection.Get<GitHubPrDetailDto>(
+                        uri, null, "application/vnd.github+json", ct);
+                    return response.Body;
+                },
                 "ListOpenPullRequests.GetDetail", ct);
+
+            // Guard against the Issues API eventual-consistency window: a PR that merged
+            // between the Issues fetch (Step A) and this detail fetch (Step B) will have
+            // state="closed" here. Filtering it out prevents merged PRs from entering
+            // the housekeeping agentDonePrs list and triggering spurious rework swaps.
+            // null state (field absent in response) → treat as non-open and filter out.
+            if (!string.Equals(pr.State, "open", StringComparison.OrdinalIgnoreCase))
+                continue;
 
             items.Add(new PullRequestSummary
             {
                 Number = pr.Number,
                 Identifier = pr.Number.ToString(),
-                Title = pr.Title,
+                Title = pr.Title ?? string.Empty,
                 Description = pr.Body ?? string.Empty,
-                Labels = pr.Labels.Select(l => l.Name).ToArray(),
-                BranchName = pr.Head.Ref,
-                TargetBranch = pr.Base.Ref,
-                Url = pr.HtmlUrl,
+                Labels = pr.Labels?.Select(l => l.Name ?? string.Empty).ToArray() ?? [],
+                BranchName = pr.Head?.Ref ?? string.Empty,
+                TargetBranch = pr.Base?.Ref ?? string.Empty,
+                Url = pr.HtmlUrl ?? string.Empty,
                 IsDraft = pr.Draft,
                 Author = pr.User?.Login,
-                CreatedAt = pr.CreatedAt.UtcDateTime
+                CreatedAt = pr.CreatedAt.UtcDateTime,
+                HasAutoMerge = pr.AutoMerge is not null,
             });
         }
 
@@ -475,12 +495,6 @@ public partial class GitHubRepositoryProvider
                 }
             }
 
-            if (issueNumbers.Count > 0)
-            {
-                // API found results — still parse title/body for additional references
-                // that may not appear in timeline events (e.g., "Related to #42" without closing keyword).
-                // The HashSet deduplicates across all sources.
-            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -492,14 +506,26 @@ public partial class GitHubRepositoryProvider
         // Body uses ParseClosingKeywords only (Closes/Fixes/Resolves #N) — the broad SimpleHashPattern
         // picks up any bare #N in the body prose (e.g., "PR #2194" in AI review text), which can
         // return spurious numbers including the PR's own number.
-        var pr = await ExecuteWithResilienceAsync(
-            client => client.PullRequest.Get(Owner, Repo, prNumber),
-            "ExtractLinkedIssues.GetPr", ct);
+        // GetPr is guarded independently so a transient failure here does not discard timeline results.
+        Octokit.PullRequest? pr = null;
+        try
+        {
+            pr = await ExecuteWithResilienceAsync(
+                client => client.PullRequest.Get(Owner, Repo, prNumber),
+                "ExtractLinkedIssues.GetPr", ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Warning(ex, "Failed to fetch PR metadata for #{PrNumber}, skipping title/body parsing", prNumber);
+        }
 
-        // Title first (priority b) — full patterns including (#N) parenthetical convention
-        ParseIssueReferences(pr.Title, issueNumbers);
-        // Body (priority c) — closing keywords only to avoid false positives from prose mentions
-        IssueReferenceParser.ParseClosingKeywords(pr.Body, issueNumbers);
+        if (pr is not null)
+        {
+            // Title first (priority b) — full patterns including (#N) parenthetical convention
+            ParseIssueReferences(pr.Title, issueNumbers);
+            // Body (priority c) — closing keywords only to avoid false positives from prose mentions
+            IssueReferenceParser.ParseClosingKeywords(pr.Body, issueNumbers);
+        }
 
         return issueNumbers.ToList().AsReadOnly();
     }
@@ -581,5 +607,49 @@ public partial class GitHubRepositoryProvider
         }
 
         return results.OrderBy(c => c.CreatedAt).ToList().AsReadOnly();
+    }
+
+    // ── DTOs for raw IConnection.Get<T> calls ────────────────────────────────
+    // These capture only the fields we need, avoiding a dependency on Octokit's
+    // typed PullRequest model while still benefiting from its SimpleJsonSerializer
+    // (PascalCase → ruby_case mapping is automatic via ToRubyCase()).
+
+    private sealed class GitHubPrDetailDto
+    {
+        public int Number { get; set; }
+        public string? Title { get; set; }
+        public string? Body { get; set; }
+        public bool Draft { get; set; }
+        /// <summary>Non-null when auto-merge is enabled on the PR.</summary>
+        public object? AutoMerge { get; set; }
+        public GitHubPrRefDto? Head { get; set; }
+        public GitHubPrRefDto? Base { get; set; }
+        public string? HtmlUrl { get; set; }
+        public GitHubPrUserDto? User { get; set; }
+        public DateTimeOffset CreatedAt { get; set; }
+        public GitHubPrLabelDto[]? Labels { get; set; }
+        /// <summary>
+        /// PR state as returned by GitHub: "open", "closed". Captured to filter out PRs
+        /// that merged or closed between the Issues API fetch (Step A) and the detail fetch (Step B).
+        /// GitHub's Issues API has eventual consistency — a just-merged PR can still appear as open
+        /// in the Issues index for a brief window. Filtering here prevents merged PRs from entering
+        /// the housekeeping <c>agentDonePrs</c> list.
+        /// </summary>
+        public string? State { get; set; }
+    }
+
+    private sealed class GitHubPrRefDto
+    {
+        public string? Ref { get; set; }
+    }
+
+    private sealed class GitHubPrUserDto
+    {
+        public string? Login { get; set; }
+    }
+
+    private sealed class GitHubPrLabelDto
+    {
+        public string? Name { get; set; }
     }
 }

@@ -197,6 +197,61 @@ public class PipelineSidebarComponentTests : BunitContext
         Assert.Contains("Preparing for Pull Request", cut.Find("#step-PreparingForPullRequest .step-card-name").TextContent);
     }
 
+    // --- PreparingForPullRequest rework detail rendering ---
+
+    [Fact]
+    public void PreparingForPullRequest_ReworkRun_ActiveStep_ShowsDetailBoxWithLink()
+    {
+        // Exercises the RenderStepDetails fix (active step path).
+        // step-card-details wrapper is always rendered for active steps; we assert on .step-detail-box
+        // (inner content) and the anchor to confirm the new render fragment fires.
+        var run = CreateRun(PipelineStep.PreparingForPullRequest, PipelineStep.PreparingForPullRequest);
+        run.PullRequestUrl = "https://github.com/org/repo/pull/47";
+        run.PullRequestNumber = "47";
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        // Inner content div must be present
+        Assert.NotNull(cut.Find("#step-PreparingForPullRequest .step-detail-box"));
+        // Link must point to the PR URL
+        var anchor = cut.Find("#step-PreparingForPullRequest a[href='https://github.com/org/repo/pull/47']");
+        Assert.NotNull(anchor);
+        Assert.Contains("View on GitHub", anchor.TextContent);
+        // PR number and draft/final status must be shown
+        var stepText = cut.Find("#step-PreparingForPullRequest").TextContent;
+        Assert.Contains("#47", stepText);
+        Assert.Contains("(final)", stepText);
+    }
+
+    [Fact]
+    public void PreparingForPullRequest_FirstPassRun_ActiveStep_ShowsNoDetailBox()
+    {
+        // First-pass run: PullRequestUrl is null. step-card-details wrapper renders (active step),
+        // but .step-detail-box must NOT be present — no inner content emitted.
+        var run = CreateRun(PipelineStep.PreparingForPullRequest, PipelineStep.PreparingForPullRequest);
+        // PullRequestUrl is null by default
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        Assert.Empty(cut.FindAll("#step-PreparingForPullRequest .step-detail-box"));
+    }
+
+    [Fact]
+    public void PreparingForPullRequest_ReworkRun_CompletedStep_IsExpandable()
+    {
+        // Exercises the HasDetails fix (completed step path).
+        // When run has moved past PreparingForPullRequest, the step must be expandable and show the detail box.
+        var run = CreateRun(PipelineStep.CreatingPullRequest, PipelineStep.CreatingPullRequest);
+        run.PullRequestUrl = "https://github.com/org/repo/pull/47";
+        run.PullRequestNumber = "47";
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        // PreparingForPullRequest is Completed with HasDetails=true, so isExpanded=true and step-card-details renders
+        Assert.NotNull(cut.Find("#step-PreparingForPullRequest .step-detail-box"));
+        Assert.NotNull(cut.Find("#step-PreparingForPullRequest a[href='https://github.com/org/repo/pull/47']"));
+    }
+
     // --- AnalysisRecommendation badge rendering ---
 
     [Fact]
@@ -539,7 +594,7 @@ public class PipelineSidebarComponentTests : BunitContext
         Assert.NotEmpty(cut.FindAll(".phase-breakdown-body"));
 
         // Simulate a live update: add a new phase to the same PipelineRun object and force re-render.
-        // In production, StateHasChanged is called on the parent (AgentMonitoring.razor) which passes
+        // In production, StateHasChanged is called on the parent (RunPage.razor) which passes
         // the same PipelineRun reference. Here we trigger StateHasChanged directly on the component
         // via reflection (it is protected on ComponentBase).
         run.Metrics.PhaseBreakdown.TryAdd("codegen", new PhaseUsage(10000, 0.08m));

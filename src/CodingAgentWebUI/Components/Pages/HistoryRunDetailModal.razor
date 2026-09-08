@@ -35,6 +35,7 @@
                             PipelineStep.Completed => "Completed",
                             PipelineStep.Failed => "Failed",
                             PipelineStep.Cancelled => "Cancelled",
+                            PipelineStep.ConflictRestart => "Restarted",
                             _ => "Running"
                         };
                         var detailResultClass = Run.FinalStep switch
@@ -42,18 +43,19 @@
                             PipelineStep.Completed => "step-completed",
                             PipelineStep.Cancelled => "step-cancelled",
                             PipelineStep.Failed => "step-failed",
+                            PipelineStep.ConflictRestart => "step-restart",
                             _ => "step-running"
                         };
                     }
                     <span class="step-badge @detailResultClass">@detailResult</span>
-                    @if (Run.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled)
+                    @if (Run.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled and not PipelineStep.ConflictRestart)
                     {
                         <span style="font-size: 0.8rem; color: var(--text-muted); margin-left: 6px;">(at @Run.FinalStep.ToDisplayName())</span>
                     }
                 </div>
                 <div><strong>Duration:</strong> @FormatDuration(Run.StartedAt, Run.CompletedAt)</div>
                 <div><strong>Agent:</strong> @(_resolvedAgentName ?? Run.AgentId ?? "—")</div>
-                <div><strong>Initiated By:</strong> @Run.InitiatedBy</div>
+                <div><strong>Initiated By:</strong> @InitiatedByConstants.ToDisplayString(Run.InitiatedBy, Run.RunMode)</div>
                 @if (Run.RunType == PipelineRunType.Review)
                 {
                     @if (!string.IsNullOrEmpty(Run.ReviewPrUrl))
@@ -66,7 +68,6 @@
                     }
                     @if (Run.CodeReviewCriticalCount > 0 || Run.CodeReviewWarningCount > 0 || Run.CodeReviewSuggestionCount > 0)
                     {
-                        @* TODO(#1774): CSS classes text-danger, text-warning, text-info are not defined in app.css — icons will not be colored until these are added (dependency #906) *@
                         <div><strong>Findings:</strong> <Icon Name="circle" Size="12" Class="text-danger" /> @Run.CodeReviewCriticalCount critical · <Icon Name="circle" Size="12" Class="text-warning" /> @Run.CodeReviewWarningCount warning · <Icon Name="circle" Size="12" Class="text-info" /> @Run.CodeReviewSuggestionCount suggestion</div>
                     }
                     else
@@ -123,9 +124,9 @@
                 {
                     <div><strong>Brain:</strong> Used @(Run.BrainUpdatesPushed ? "(updates pushed)" : "(read-only)")</div>
                 }
-                @if (Run.IsRework)
+                @if (Run.RunMode != RunMode.New)
                 {
-                    <div><strong>Rework:</strong> Yes</div>
+                    <div><strong>Run Mode:</strong> @Run.RunMode</div>
                 }
                 @if (!string.IsNullOrEmpty(Run.PullRequestUrl) && Run.RunType != PipelineRunType.Review)
                 {
@@ -162,17 +163,9 @@
             _resolvedAgentName = null;
             return;
         }
-        // TODO: CancellationToken.None is used here because the component does not implement IAsyncDisposable.
-        // If the component is torn down (modal dismissed, navigation) while this call is in flight, the task
-        // will complete and set _resolvedAgentName after disposal, potentially applying a stale value to the
-        // next run shown in the modal. Fix: add a component-scoped CancellationTokenSource + IAsyncDisposable
-        // (same pattern as ProjectDetailSection) and pass its token here.
         var config = await ConfigStore.GetProviderConfigByIdAsync(
             Run.AgentProviderConfigId, ProviderKind.Agent, CancellationToken.None);
         _resolvedAgentName = config?.DisplayName;
-        // TODO: StateHasChanged() is redundant here — Blazor automatically re-renders after OnParametersSetAsync.
-        // Combined with the missing cancellation above, this extra call widens the race window where a stale
-        // _resolvedAgentName from a previous run can be rendered for the current run.
         StateHasChanged();
     }
 

@@ -1,3 +1,5 @@
+using CodingAgentWebUI.Pipeline.Models;
+
 namespace CodingAgentWebUI.Pipeline.Services.Steps;
 
 /// <summary>
@@ -34,9 +36,16 @@ public sealed class DetectReworkStep : IPipelineStep
                 if (candidate is not null)
                 {
                     context.Run.LinkedPullRequest = candidate;
+                    context.Run.RunMode = RunMode.Rework;
                     context.Callbacks.EmitOutputLine($"🔄 Rework mode: updating existing PR #{candidate.Number}");
                 }
+                else
+                {
+                    // Only drafts existed — all were closed, fresh branch will be created
+                    context.Run.RunMode = RunMode.Retry;
+                }
             }
+            // else: no PRs found — RunMode stays New (default)
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

@@ -1,0 +1,50 @@
+@implements IAsyncDisposable
+
+@*
+    AutoRefresh — a headless helper that fires OnTick on a fixed interval.
+    Renders nothing. Owns a PeriodicTimer and its disposal so live screens
+    (Overview / Fleet / Runs / Work) stay current without each re-implementing
+    the loop. The tick handler should refetch *quietly* — no loading spinner,
+    keep stale data on a transient error — so the screen never flickers.
+    Invoking the EventCallback re-renders the parent, so handlers need no
+    explicit StateHasChanged.
+*@
+
+@code {
+    /// <summary>Seconds between ticks (floored at 2s).</summary>
+    [Parameter] public int IntervalSeconds { get; set; } = 10;
+
+    /// <summary>Invoked on each tick, on the component's dispatcher.</summary>
+    [Parameter] public EventCallback OnTick { get; set; }
+
+    private PeriodicTimer? _timer;
+    private CancellationTokenSource? _cts;
+
+    protected override void OnInitialized()
+    {
+        _cts = new CancellationTokenSource();
+        _timer = new PeriodicTimer(TimeSpan.FromSeconds(Math.Max(2, IntervalSeconds)));
+        _ = RunAsync(_cts.Token);
+    }
+
+    private async Task RunAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (await _timer!.WaitForNextTickAsync(ct))
+            {
+                await OnTick.InvokeAsync();
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        try { _cts?.Cancel(); } catch (ObjectDisposedException) { }
+        _timer?.Dispose();
+        _cts?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}

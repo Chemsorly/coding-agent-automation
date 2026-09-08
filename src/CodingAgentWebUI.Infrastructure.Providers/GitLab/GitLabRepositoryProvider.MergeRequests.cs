@@ -321,7 +321,8 @@ public partial class GitLabRepositoryProvider
             Url = mr.WebUrl,
             IsDraft = mr.Draft,
             Author = mr.Author?.Username,
-            CreatedAt = mr.CreatedAt.ToUniversalTime()
+            CreatedAt = mr.CreatedAt.ToUniversalTime(),
+            HasAutoMerge = mr.MergeWhenPipelineSucceeds,
         }).ToList();
 
         return new PagedResult<PullRequestSummary>

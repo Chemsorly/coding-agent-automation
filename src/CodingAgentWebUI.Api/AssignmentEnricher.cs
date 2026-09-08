@@ -77,9 +77,16 @@ public class AssignmentEnricher
     /// <param name="ct">Cancellation token.</param>
     /// <returns>
     /// The enriched <see cref="JobDistributionRequest"/> with fresh provider configs, QGs,
-    /// reviewers, MCP servers, and issue context; or <c>null</c> if enrichment fails
-    /// (e.g., provider config not found, profile resolution fails).
+    /// reviewers, MCP servers, and issue context; or <c>null</c> if the profile cannot be
+    /// resolved or <see cref="DispatchInfrastructure.PrepareDispatchCoreAsync"/> returns null
+    /// (permanent configuration failure — profile not found, provider config removed, etc.).
     /// </returns>
+    /// <exception cref="Exception">
+    /// Propagates any exception thrown by <see cref="EnrichCoreAsync"/> that is not an
+    /// <see cref="OperationCanceledException"/>. Transient failures (DB timeout, network error)
+    /// are logged at <c>Error</c> level and re-thrown so the caller can return HTTP 503,
+    /// allowing the agent to retry rather than proceeding with an invalid job spec.
+    /// </exception>
     public virtual async Task<JobDistributionRequest?> EnrichAsync(
         JobDistributionRequest identity,
         PipelineProject project,
@@ -94,15 +101,10 @@ public class AssignmentEnricher
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // NOTE: [WARNING] This catch-all swallows both permanent failures (provider not found)
-            // and transient infrastructure failures (DB timeout, network error). For transient
-            // failures, returning 503 and letting the agent retry would be more correct than silently
-            // serving an incomplete assignment. Consider distinguishing exception types and propagating
-            // transient failures so the caller can return 503 instead of a degraded 200.
-            _logger.Warning(ex,
-                "AssignmentEnricher: failed to enrich assignment for WorkItem with IssueIdentifier {IssueIdentifier}; falling back to identity payload",
+            _logger.Error(ex,
+                "AssignmentEnricher: failed to enrich assignment for WorkItem with IssueIdentifier {IssueIdentifier}; returning 503 so agent can retry",
                 identity.IssueIdentifier);
-            return null;
+            throw;
         }
     }
 

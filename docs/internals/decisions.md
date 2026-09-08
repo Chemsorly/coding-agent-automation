@@ -12,6 +12,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 <!-- Session: 17 | Last run: 2026-08-29 | Decisions added: 5 (WorkItems.Payload dispatch-time snapshot, EmitOutputLine→Serilog, AgentJobTimeoutSeconds hierarchy, PriorityWeight secondary sort, Grafana Faro CDN-only); issues created: #2178; stale audit: Chat keepalive Redis #2133 text updated (warning now implemented) -->
 <!-- Session: 18 | Last run: 2026-08-29 | Decisions added: 3 (PR description via file, FeedbackTimeoutSeconds config, single AgentTimeout); no-opinions: 3 (registration race, terminal guard pattern, concurrency map filter); issues created: #2179; stale: AgentJobTimeoutSeconds decision superseded by #2179 -->
 <!-- Session: 19 | Last run: 2026-08-31 | Decisions added: 6 (DistributedAgentRegistry cache staleness, Payload null-discriminator, PostPrCiDuration metric, live K8s dual ListJobsAsync correctness, AssignmentEnricher 503 semantics, traceparent bidirectional); issues created: #2219/#2220/#2221/#2222/#2223 -->
+<!-- Session: 20 | Last run: 2026-09-06 | Decisions added: 6 (SecurityScan zombie removal, dead parser removal, HousekeepingTriggerCooldown config, cleanup prompt budget, RetryErrors transient-enqueue, PostPrCiDuration panel still pending); issues created: #2400/#2401 -->
+<!-- Session: 21 | Last run: 2026-09-06 | Decisions added: 6 (AgentTimeout chain verified, FeedbackTimeoutSeconds stale log #2403, PostPrCiDuration panel added, HousekeepingTriggerCooldown #2404, TimeoutSeconds zero-sentinel #2405, Q6 constructor injection pattern); issues created: #2403/#2404/#2405; Grafana panel 57 added -->
 <!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService razor component decomposition, PostPrCiDuration Grafana panels after #2220 lands, Faro CSP script-src when CSP added, TimeoutSeconds end-to-end after #2179 -->
 
 ---
@@ -145,6 +147,25 @@ Leader election continues to handle multi-replica safety. The split was driven b
 
 ---
 
+### RetryErrors.Enqueue on transient iterations: known noise, bounded by transient cap
+
+**Date:** 2026-09-06
+**Category:** architecture
+
+**Decision:** `run.RetryErrors.Enqueue(errorSummary)` fires at the top of every `RunRetryLoopAsync` iteration, including `TransientWait` iterations (rate limit, network error). This means `RetryErrors` accumulates entries for iterations where no fix was attempted, producing stale content in the failure-feedback prompt and draft PR body. This is known noise, not intentional design. The `MaxConsecutiveTransientRetries = 10` cap bounds the blast radius — at most 10 stale entries can accumulate before the loop breaks.
+
+The practical impact is low: draft PRs are rare (require retry exhaustion), and the agent reading the failure history gets some noise entries alongside real fix-attempt summaries. A correct fix would gate `Enqueue` on `ClassifyRetryOutcome(agentResult) == RetryOutcome.Retry` (i.e., only after a real fix attempt). However, this is low-priority given the bounded noise and rarity of the scenario.
+
+**Do NOT** unilaterally move `Enqueue` before the outcome classification is confirmed to be `Retry` — the ordering invariant documented in the code (Enqueue MUST precede `BuildQualityGateRetryPrompt` snapshot) must be preserved if the gating is ever added.
+
+**Context:** `ClassifyRetryOutcome` was extracted in #2342, making the fix boundary structurally clear. The underlying issue was noted as a TODO in `QualityGateExecutor.RetryLoop.cs`.
+
+**Alternatives considered:** Enqueue only on non-transient outcomes (correct but requires care around the ordering invariant and `run.RetryCount` rollback interaction) — deferred, low priority.
+
+**Reassess when:** If failure-feedback prompt quality becomes a measurable accuracy concern, or if the `MaxConsecutiveTransientRetries` cap is ever removed (at which point unbounded stale entries become a real problem).
+
+---
+
 ### Confidence gate is intentionally fail-closed
 
 **Date:** 2026-07-04
@@ -199,7 +220,7 @@ Leader election continues to handle multi-replica safety. The split was driven b
 
 **Topology (verified 2026-08-22):**
 - GitHub App PEM and GitLab access tokens live exclusively in the database (`ProviderConfig.Settings["privateKeyBase64"]` / `Settings["accessToken"]`). No K8s Secret in the Helm chart contains these credentials — the chart manages only `agent-api-key` (the HMAC master key).
-- `TokenVendingService` is registered in both `CodingAgentWebUI.Api` and `CodingAgentWebUI.Orchestration`. Both processes read `ProviderConfig` from Postgres and perform the GitHub JWT exchange in-process.
+- `TokenVendingService` is registered in `CodingAgentWebUI.Api`, `CodingAgentWebUI` (Orchestrator), and `CodingAgentWebUI.Scheduler`. All three processes read `ProviderConfig` from Postgres and perform the GitHub JWT exchange in-process.
 - Agent pods receive only: (a) the HMAC-derived per-job key (`HMAC-SHA256(master, jobName)`, mounted from the chart Secret), and (b) short-lived GitHub installation access tokens (1-hour expiry) vended via SignalR `RefreshToken` calls handled by `AgentTokenRefreshService` in the API hub. The raw PEM and long-lived GitLab PATs never enter the agent container.
 - The agent's `HubConnectionManager` receives the master key at construction and derives its per-agent key internally (`DeriveKey(masterKey, agentId.Value)`) — it never sends the master key over the wire.
 - Assembly boundary: NetArchTest rules in `LayerBoundaryTests.cs` prevent `CodingAgentWebUI.Agent`, `Agent.KiroCli`, and `Agent.OpenCode` from depending on `CodingAgentWebUI.Orchestration` (where `TokenVendingService` and `ProviderSettingKeys.PrivateKeyBase64` live). This is structural enforcement, not a named invariant test.
@@ -208,7 +229,7 @@ Leader election continues to handle multi-replica safety. The split was driven b
 
 **DerivedKeySecretName footgun:** `JobSpecBuilder.BuildContext.DerivedKeySecretName` must NEVER be set for work-item or consolidation pods. Setting it injects an already-derived key, causing `HubConnectionManager` to double-derive and fail auth. The comment in `DispatchLifecycleService.cs` and `DispatchLoop.cs` is the only guard. If this configuration needs to be made impossible to express accidentally, add a startup validation guard in `JobSpecBuilder`.
 
-**Context:** The `TokenVendingService` generates GitHub installation tokens (1-hour expiry). `AgentTokenRefreshService` handles mid-job refresh requests from agents over SignalR (triggered when token age exceeds 45 minutes). The SignalR dependency for refresh is acceptable because agents already depend on SignalR for lifecycle management. This pattern mirrors GitHub Actions' per-job `GITHUB_TOKEN` injection.
+**Context:** The `TokenVendingService` generates GitHub installation tokens (1-hour expiry). `AgentTokenRefreshService` handles mid-job refresh requests from agents over SignalR — agents call `RequestTokenRefresh` unconditionally before each token-requiring provider operation (git push, PR creation, etc.); there is no age-based or timer-based proactive refresh on the agent side. `TokenExpiresAt` is written into the initial `ProviderConfig.Settings` snapshot at dispatch time (`TokenVendingService.PrepareAgentConfigsAsync`) but is not read by agent code — the server-side `GitHubAppAuthService` (5-minute renewal buffer, `_renewalBuffer = TimeSpan.FromMinutes(5)`) ensures the orchestrator never vends an expired token, making per-call refresh safe in practice. The SignalR dependency for refresh is acceptable because agents already depend on SignalR for lifecycle management. This pattern mirrors GitHub Actions' per-job `GITHUB_TOKEN` injection.
 
 **Alternatives considered:** Direct credential injection via K8s secrets (eliminates SignalR dependency but exposes long-lived keys), projected volumes with short-lived tokens (K8s only), environment-dependent strictness.
 
@@ -221,13 +242,15 @@ Leader election continues to handle multi-replica safety. The split was driven b
 **Date:** 2026-07-04
 **Category:** architecture
 
-**Decision:** Review agents ALWAYS run in isolated sessions (fresh context, no access to codegen conversation history). The `Shared` mode (legacy) must be removed entirely — see #1042. Self-attribution bias is a proven phenomenon (arXiv:2603.04582): models evaluate their own output as more correct when they can see their own reasoning chain. Cross-context review (arXiv:2603.12123) demonstrates that fresh-session review catches significantly more errors.
+**Decision:** Review agents ALWAYS run in isolated sessions (fresh context, no access to codegen conversation history). The `Shared` mode (legacy) has been removed — #1042 resolved in #2233. Self-attribution bias is a proven phenomenon (arXiv:2603.04582): models evaluate their own output as more correct when they can see their own reasoning chain. Cross-context review (arXiv:2603.12123) demonstrates that fresh-session review catches significantly more errors.
 
 **Context:** `Isolated` was already the default; `Shared` existed as a legacy backward-compat option. The decision to remove `Shared` reflects that there is no valid use case for it — it actively harms review quality. Isolated mode also enables parallel execution (multiple review agents running concurrently), which is faster.
 
 **Alternatives considered:** Shared with a different model (reduces self-attribution but loses parallelism), configurable per-issue-complexity, keep Shared as escape hatch.
 
 **Reassess when:** Never for the isolation principle. If a future research paper demonstrates that context-aware review outperforms isolated review with appropriate debiasing techniques, reconsider — but current evidence strongly favors isolation.
+
+**Status (2026-09-02):** Resolved. `ReviewIsolation.Shared` removed in #2233. Field retained at Key(4) with `Isolated`-only enum; stored configs containing `"Shared"` map to `Isolated` via `ReviewIsolationJsonConverter` (registered at the enum type level).
 
 ---
 
@@ -437,6 +460,81 @@ Leader election continues to handle multi-replica safety. The split was driven b
 
 ---
 
+### AgentTimeout end-to-end: chain verified complete (session 21)
+
+**Date:** 2026-09-06
+**Category:** architecture
+
+**Decision:** The `PipelineConfiguration.AgentTimeout` → `WorkItemEntity.TimeoutSeconds` → `BuildContext.TimeoutSeconds` → `V1JobSpec.ActiveDeadlineSeconds = TimeoutSeconds + 60` chain is complete and working. The +60 second buffer is a fixed infrastructure margin (not configurable). Per-project overrides of `AgentTimeout` correctly propagate to K8s `activeDeadlineSeconds` for both work-item and consolidation pods.
+
+**Zero-sentinel fallback:** `DispatchLoop`, `ConsolidationDispatchLoop`, and `ReconciliationLoop` all contain `item.TimeoutSeconds > 0 ? item.TimeoutSeconds : DefaultAgentTimeout` as a backward-compat guard for DB rows created before #2179. All rows created after #2179 have positive `TimeoutSeconds`. A follow-up issue (#2405) tracks the DB migration and guard removal.
+
+**Chat pods are separate:** `ChatJobDispatcher` uses `DispatchServiceOptions.ChatJobMaxDurationSeconds` (not `AgentTimeout`) — intentional by design, documented in `DispatchServiceOptions`.
+
+**Operator-observable confirmation:** After 8 hours the `activeDeadlineSeconds` fires and kills whatever is still running — the chain reaches K8s correctly.
+
+**Context:** The chain was broken before #2158/#2179 — `DispatchLoop` was using the Helm `AgentJobTimeoutSeconds` instead of the per-WorkItem value. Both issues resolved the divergence.
+
+**Reassess when:** Never for the chain itself. Once #2405 migrates the legacy zero rows, remove the zero-sentinel guards.
+
+---
+
+### FeedbackTimeoutSeconds stale log: one-line fix in QualityGateExecutor — #2403
+
+**Date:** 2026-09-06
+**Category:** architecture
+
+**Decision:** `QualityGateExecutor.RetryLoop.cs` line ~402 logs the feedback timeout duration using `FeedbackConstraints.FailureFeedbackTimeoutSeconds` (hardcoded 60) instead of `context.Config.FeedbackTimeoutSeconds` (the actual configured value). The CTS is correctly created with `context.Config.FeedbackTimeoutSeconds` — only the log message is wrong. #2403 tracks the one-line fix.
+
+**Impact:** Operators who configure non-default `FeedbackTimeoutSeconds` see misleading "timed out after 60s" logs when the actual timeout was different. Low severity but directly misleads incident responders.
+
+**Reassess when:** Never once #2403 is fixed.
+
+---
+
+### WorkItemEntity.TimeoutSeconds zero-sentinel: keep fallback until DB migration — #2405
+
+**Date:** 2026-09-06
+**Category:** architecture
+
+**Decision:** The `item.TimeoutSeconds > 0 ? ... : DefaultAgentTimeout` fallback in `DispatchLoop`, `ConsolidationDispatchLoop`, and `ReconciliationLoop` MUST NOT be removed until a DB migration back-fills all zero rows to `DefaultAgentTimeout` (1800s). All rows created after #2179 (Aug 29 2026) have positive values — the zero rows are purely historical. The removal is a three-step operation: (1) DB migration, (2) add `ArgumentOutOfRangeException` guard to `PipelineConfiguration.AgentTimeout` setter to reject `TimeSpan.Zero`, (3) remove the three sentinel guards.
+
+**Context:** #2179 established the correct flow but did not back-fill existing rows. No new zero rows can be created by the current code. The zero-sentinel guards are the only thing preventing legacy rows from getting a 0-second `activeDeadlineSeconds` on the K8s Job.
+
+**Reassess when:** #2405 is implemented and confirmed deployed. At that point the guards are dead code.
+
+---
+
+**Date:** 2026-09-06
+**Category:** architecture
+
+**Decision:** `QualityGateConfiguration.Key(8)` (`SecurityScanEnabled`) was tombstoned in #2249 (coverage-threshold removal). The corresponding result field `QualityGateReport.SecurityScan` (Key 4) and all downstream executor checks are dead code — nothing currently populates `SecurityScan` with a non-null value. Both the result field and all callers (`QualityGateExecutor`, `QualityGateExecutor.ExternalCi`, `PipelineFormatting`, `FeedbackPromptBuilder`) must be removed. #2400 tracks the cleanup.
+
+**MessagePack invariant:** Key(4) must be tombstoned (`// Key(4) is retired`) rather than deleted, following the same pattern used for Keys 1/7/8/11/12/13. Do not reuse the slot.
+
+**Context:** The coverage removal commit tombstoned config keys correctly but left the result-side infrastructure intact, creating an asymmetry where the gate can never be configured but the executor still checks its result. Confirmed by grepping: zero callers set `SecurityScan` to non-null.
+
+**Alternatives considered:** Preserve as a future placeholder — rejected because undocumented placeholder fields are agent traps; if security scanning returns, the field can be re-introduced with a new key.
+
+**Reassess when:** Security scanning is re-introduced as a feature. At that point, add a new `Key(N)` field (after the current highest key), not a resurrection of Key(4).
+
+---
+
+### CoberturaParser / JacocoParser: dead code after coverage removal — #2401 tracks deletion
+
+**Date:** 2026-09-06
+**Category:** architecture
+
+**Decision:** `CoberturaParser` and `JacocoParser` have zero callers after #2249 removed the `CoverageThreshold` config field. Both classes and their associated test files (`CoberturaParserTests`, `JacocoParserTests`) must be deleted. If coverage scanning is re-introduced, the parsers can be recreated from git history.
+
+**Context:** The coverage removal commit modified the parsers but did not delete them, leaving dead test suites that always pass. Dead-code tests that always pass are noise — they inflate the test count without providing safety net value and mislead agents into thinking the parsers are active.
+
+**Alternatives considered:** Keep with explicit `// Preserved for future use` comment — rejected because zero-caller classes with no caller path are agent traps regardless of comments; deletion + git history is cleaner.
+
+**Reassess when:** Never for this cleanup. If coverage returns, start fresh.
+
+---
+
 ### Cleanup step before PR is intentional quality polish
 
 **Date:** 2026-07-04
@@ -449,6 +547,23 @@ Leader election continues to handle multi-replica safety. The split was driven b
 **Alternatives considered:** No cleanup (ship as soon as tests pass), advisory-only cleanup (no re-validation), separate retry budget for cleanup-induced failures.
 
 **Reassess when:** If cleanup consistently passes without changes (agents stop leaving debris), the step can be skipped for efficiency. Track via telemetry: cleanup QG pass rate.
+
+---
+
+### Cleanup prompt tool-call budget (10): first approximation, not a hard cap
+
+**Date:** 2026-09-06
+**Category:** architecture
+
+**Decision:** The `BuildCleanupPrompt()` "Budget: 10 tool calls maximum" instruction was added to prevent agents spending hours running linters and formatters — a real observed failure mode before the constraint was introduced. The number 10 was not empirically derived; it is a rough estimate of the minimum required operations (1 diff command + ~5-8 file inspections + 1 linter invocation + 1 report write). If linting/formatting should be a breaking quality gate, that's what CI is for — the cleanup step is a best-effort cosmetic pass, not a correctness gate.
+
+The budget is a soft prompt constraint (not mechanically enforced). Agents may exceed 10 calls if genuinely needed, but the prompt sets the expectation. If runs with large diffs (30+ changed files) consistently fail cleanup due to the budget, the right fix is either increasing the number or implementing a smarter file-sampling strategy — not removing the constraint.
+
+**Context:** Commit `fe6cf46f` scoped the cleanup prompt to diff-only files and added the budget. The key behavioral change: agents can no longer drift into full-codebase linting, which was the root cause of the multi-hour cleanup runs.
+
+**Alternatives considered:** Hard mechanical enforcement via tool-call counting (not feasible in current agent interface), configurable per-project budget (deferred — no demand yet), removing the budget (reverts to unbounded linting runs).
+
+**Reassess when:** Cleanup step runs consistently exceed the budget on normal-sized diffs, or if agents report the budget prevents meaningful cleanup. Track via: cleanup step duration in telemetry.
 
 ---
 
@@ -660,7 +775,24 @@ Leader election continues to handle multi-replica safety. The split was driven b
 
 ---
 
-### Housekeeping auto-update concurrency: 1 is the correct permanent default
+### HousekeepingTriggerCooldownMinutes: must be a PipelineConfiguration field — #2404 tracks promotion
+
+**Date:** 2026-09-06 · **Updated:** 2026-09-06 (session 21 — added implementation direction)
+**Category:** configuration
+
+**Decision:** `HousekeepingService.TriggerCooldown = TimeSpan.FromMinutes(25)` is a hardcoded `internal` property. It must be promoted to a `PipelineConfiguration` field (`HousekeepingTriggerCooldownMinutes`, default 25, hidden-advanced section). The 25-minute default is "comfortably exceeds a typical CI run (~20 min)" but different deployments have CI durations ranging from 2 minutes (unit-test-only) to 45+ minutes (integration suites). Operators cannot tune this without a recompile.
+
+**Implementation direction (session 21):** Add as a **method parameter** to `ExecuteAsync`, consistent with how `effectiveConcurrencyLimit` and `cleanupIntervalMinutes` are already passed per-call from the config snapshot. This is preferable to constructor injection because the value comes from a per-template config snapshot at call time, not from a singleton config object. The `internal` setter remains for test overrides — do not remove it.
+
+The internal setter (`internal TimeSpan TriggerCooldown { get; set; }`) can remain for test overrides — it is the test injection point and should not be removed.
+
+**Context:** The cooldown was introduced in #2304 as a fairness mechanism: a recently-triggered PR backs off while CI runs so other PRs get a turn at the single housekeeping concurrency slot. It follows the same pattern as `FeedbackTimeoutSeconds` (promoted session 18) and the `AgentJobTimeoutSeconds` removal (session 17/18) — no hardcoded timeout constants should exist in the system.
+
+**Alternatives considered:** Keep hardcoded (simpler, and 25 min is a reasonable universal heuristic) — rejected because `ProcessTimeoutSeconds = 600` in QGC, `FeedbackTimeoutSeconds`, and every other timeout in the system are configurable; consistency requires this one be too. Constructor injection — rejected because the value is a per-call config snapshot value, not a startup singleton dependency.
+
+**Reassess when:** Never once promoted. The advanced-section placement keeps it out of the default configuration view.
+
+---
 
 **Date:** 2026-08-14
 **Category:** configuration
@@ -1502,6 +1634,8 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 
 **Context:** The TODO in `WaitForPostPrCiAsync` documents this gap. On paths where both pre-PR and post-PR CI run (e.g., cleanup made no changes → skipCiIfNoChanges → post-PR CI fires), two histogram samples land in `ExternalCiDuration`, making the p99 appear 2× higher than actual worst-case single-phase duration.
 
+**Status (2026-09-06):** `PostPrCiDuration` histogram implemented in #2220. Grafana panel "Post-PR CI Duration (avg / p95)" added as panel 57 in the `coding-agent-pipeline` dashboard (session 21). Panel shows avg and p95 for `quality_gate_post_pr_ci_duration_seconds`, positioned alongside the existing External CI Duration panel. Dashboard update complete — queued item closed.
+
 **Alternatives considered:** Keep single metric with a phase tag (`phase=pre_pr|post_pr`) — equally valid but requires a Grafana filter to disaggregate; separate histograms are more natural for Grafana dashboard panels that show one thing per panel. Run-level aggregation (`TotalCiWaitDuration` emitted once at end) — accurate but loses per-phase granularity needed for debugging.
 
 **Reassess when:** Never for the separation principle. If a third CI poll phase is added, follow the same pattern.
@@ -1575,7 +1709,7 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 - "AgentJobTimeoutSeconds: unified backstop" enables "Chat keepalive Redis required for multi-replica" (the backstop fires when the idle-kill circuit fails, which happens when Redis is absent in multi-replica)
 - "Chat keepalive Redis required for multi-replica" scoped by "HMAC key derivation for agent auth" (Redis is already in the dependency stack for multi-replica SignalR; this adds one more reason it's required)
 - "ExternalCiDuration vs PostPrCiDuration" scoped by "Telemetry philosophy: instrument every decision point" (the split follows from the principle that each observable event gets its own instrument)
-- "PostPrCiDuration: separate histogram" scoped by "ExternalCiDuration vs PostPrCiDuration" (the new histogram is the actionable consequence of the separation decision); #2220 tracks
+- "PostPrCiDuration: separate histogram" scoped by "ExternalCiDuration vs PostPrCiDuration" (the new histogram is the actionable consequence of the separation decision); #2220 implemented; Grafana panel update still pending
 - "WorkItems.Payload dispatch-time snapshot" scoped by "Dual JSON options (Default/Lenient)" (fresh fetch at assignment uses Lenient deserialization for backward compat); currently broken — #2171 tracks the fix
 - "WorkItems.Payload null-discriminator: no strong opinion" scoped by "WorkItems.Payload dispatch-time snapshot" (discriminator is the schema boundary guard for the snapshot feature); #2221 tracks
 - "AssignmentEnricher: 503 on enrichment failure" scoped by "WorkItems.Payload dispatch-time snapshot" (enrichment failure must not produce a partial assignment — 503 preserves the freshness contract)
@@ -1593,25 +1727,44 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 - "PR description via .agent/pr-description.md" scoped by "Filesystem-as-context" (structured agent outputs delivered via files, not stdout)
 - "PR description via .agent/pr-description.md" enables "Partial failure contract" (description failure is non-fatal; reading from file makes fallback cleaner — no stdout pollution)
 - "Grafana Faro CDN-only" scoped by "Telemetry philosophy: instrument every decision point" (RUM is the frontend telemetry complement; CDN-only is acceptable for current deployment target)
+- "SecurityScan: zombie code → #2400" scoped by "Confidence gate is fail-closed" (dead gate check that never fires cannot contribute to gate outcome)
+- "CoberturaParser/JacocoParser: dead code → #2401" scoped by "SecurityScan: zombie code → #2400" (both are artifacts of the coverage/security scan removal; same cleanup pattern)
+- "Cleanup prompt budget (10 calls): first approximation" scoped by "Cleanup step before PR is intentional quality polish" (budget bounds the step's cost, not its intent)
+- "RetryErrors.Enqueue on transient iterations: known noise" scoped by "MaxRetries=3 arbitrary default" (transient-cap bounds the blast radius; bounded noise within a bounded retry budget)
+- "RetryErrors.Enqueue on transient iterations: known noise" correlates with "Partial failure contract" (transient provider errors are non-fatal enrichment noise, not critical-path failures)
+- "HousekeepingTriggerCooldownMinutes: must be PipelineConfiguration field" scoped by "FeedbackTimeoutSeconds: must be PipelineConfiguration field" (same pattern: no hardcoded timeout constants anywhere in the system)
+- "HousekeepingTriggerCooldownMinutes: must be PipelineConfiguration field" scoped by "Housekeeping auto-update concurrency: 1 is permanent default" (the cooldown and concurrency limit together define the housekeeping slot-fairness contract)
+- "AgentTimeout chain: verified complete" enables "WorkItemEntity.TimeoutSeconds zero-sentinel: keep until migration" (chain only verified safe once the sentinel guards are audited end-to-end)
+- "WorkItemEntity.TimeoutSeconds zero-sentinel → #2405" scoped by "AgentTimeout chain: verified complete" (sentinel is the one remaining correctness gap in the otherwise-complete chain)
+- "WorkItemEntity.TimeoutSeconds zero-sentinel → #2405" constrains "AgentTimeout end-to-end: chain verified" (removal gated on DB migration)
+- "FeedbackTimeoutSeconds stale log → #2403" scoped by "FeedbackTimeoutSeconds: must be PipelineConfiguration field" (promotion fixed the timeout logic; log message was missed)
+- "PostPrCiDuration Grafana panel: added session 21" resolves "PostPrCiDuration Grafana panel: confirmed pending session 20"
 ### Coverage Gaps (auto-detected)
 - Automated calibration design remains explicitly deferred
 - Housekeeping feature calibration data — no empirical data yet; revisit after 50+ housekeeping cycles
 - AgentCodingPageService decomposition — decision captured but implementation not yet started
 - `RateLimiter` null-forgiving operator (#1994) — no opinion captured, implementation detail
-- Timeout field proliferation: `FailureFeedbackTimeoutSeconds` const is the last remaining hardcoded timeout (session 18 decision queues its promotion)
+- ~~Timeout field proliferation~~ — HousekeepingTriggerCooldown is the last remaining hardcoded timeout (session 20/21); #2404 tracks
 - DistributedAgentRegistry `_allAgentsCache` races — session 19: no-opinion, #2219 tracks
 - Payload null-discriminator fragility — session 19: no-opinion, #2221 tracks
-- PostPrCiDuration metric gap — session 19: issue #2220 created
+- ~~PostPrCiDuration Grafana panel~~ — resolved session 21: panel 57 added to `coding-agent-pipeline` dashboard
 - AssignmentEnricher 503 correctness gap — session 19: issue #2222 created
 - Traceparent agent→orchestrator gap — session 19: issue #2223 created
+- SecurityScan zombie code — session 20: issue #2400 created
+- Dead CoberturaParser/JacocoParser — session 20: issue #2401 created
+- RetryErrors transient-enqueue noise — session 20: known, low-priority, bounded by transient cap
+- ~~AgentTimeout end-to-end propagation~~ — resolved session 21: chain verified complete; #2405 tracks zero-sentinel cleanup
+- FeedbackTimeoutSeconds stale log — session 21: issue #2403 created
+- WorkItemEntity.TimeoutSeconds zero-sentinel — session 21: issue #2405 created (migration + guard removal)
+- HousekeepingTriggerCooldownMinutes promotion — session 21: issue #2404 created
 
 ### Queued Questions (for next session)
 - Automated calibration design — when a clear mechanism emerges, revisit
 - Housekeeping calibration: after 50+ branch-update cycles, is concurrency=1 still correct?
 - AgentCodingPageService decomposition: after extraction, was the per-drawer split the right granularity?
-- PostPrCiDuration: after #2220 lands, verify Grafana panels updated
 - Grafana Faro CSP: when CSP is added, revisit `script-src` to include `unpkg.com`
-- After #2171 + #2179 land: verify `TimeoutSeconds` propagation to `activeDeadlineSeconds` end-to-end
+- RetryErrors transient-enqueue gate: if failure-feedback prompt accuracy degrades, revisit gating Enqueue on RetryOutcome.Retry
+- HousekeepingTriggerCooldownMinutes: after #2404 lands, verify the method-parameter plumbing matches how `cleanupIntervalMinutes` flows from config snapshots
 
 ---
 

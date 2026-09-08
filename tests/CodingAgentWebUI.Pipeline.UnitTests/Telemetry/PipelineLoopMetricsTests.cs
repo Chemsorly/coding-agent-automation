@@ -1,71 +1,78 @@
-using System.Collections.Concurrent;
-using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Telemetry;
+using CodingAgentWebUI.TestUtilities;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Telemetry;
 
 /// <summary>
 /// Unit tests verifying pipeline loop metric instruments emit correct names and tags.
-/// Uses <see cref="MeterListener"/> to capture emissions from the static <see cref="PipelineTelemetry.Meter"/>.
+/// Uses <see cref="TestMeterFactory"/> and <see cref="MetricCollector{T}"/> for isolation —
+/// no cross-test contamination via the shared static <see cref="PipelineTelemetry.Meter"/>.
 /// </summary>
-[Collection("Metrics")]
 public class PipelineLoopMetricsTests : IDisposable
 {
-    private readonly MeterListener _listener = new();
-    private readonly ConcurrentBag<(string Name, long Value, KeyValuePair<string, object?>[] Tags)> _counters = [];
+    private readonly TestMeterFactory _factory = new();
+    private readonly System.Diagnostics.Metrics.Meter _meter;
+    private readonly System.Diagnostics.Metrics.Counter<long> _loopPolls;
+    private readonly System.Diagnostics.Metrics.Counter<long> _loopIssuesFound;
+    private readonly System.Diagnostics.Metrics.Counter<long> _loopDispatchDecisions;
+    private readonly System.Diagnostics.Metrics.Counter<long> _loopBackoffEvents;
+    private readonly System.Diagnostics.Metrics.Counter<long> _loopCircuitBreakerTrips;
 
     public PipelineLoopMetricsTests()
     {
-        _listener.InstrumentPublished = (instrument, listener) =>
-        {
-            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
-                listener.EnableMeasurementEvents(instrument);
-        };
-
-        _listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, state) =>
-        {
-            _counters.Add((instrument.Name, measurement, tags.ToArray()));
-        });
-
-        _listener.Start();
+        _meter = _factory.Create(new System.Diagnostics.Metrics.MeterOptions(PipelineTelemetry.SourceName));
+        _loopPolls = _meter.CreateCounter<long>("pipeline.loop.polls", "{poll}", "Pipeline loop poll attempts");
+        _loopIssuesFound = _meter.CreateCounter<long>("pipeline.loop.issues_found", "{issue}", "Issues found per poll cycle");
+        _loopDispatchDecisions = _meter.CreateCounter<long>("pipeline.loop.dispatch_decisions", "{decision}", "Dispatch decisions made by the loop");
+        _loopBackoffEvents = _meter.CreateCounter<long>("pipeline.loop.backoff_events", "{event}", "Backoff escalations due to poll failures");
+        _loopCircuitBreakerTrips = _meter.CreateCounter<long>("pipeline.loop.circuit_breaker_trips", "{trip}", "Circuit breaker trip events");
     }
 
-    public void Dispose() => _listener.Dispose();
+    public void Dispose() => _factory.Dispose();
 
     [Fact]
     public void LoopPolls_EmitsWithResultSuccess()
     {
-        PipelineTelemetry.LoopPolls.Add(1, new KeyValuePair<string, object?>("result", "success"));
+        using var collector = new MetricCollector<long>(_factory, PipelineTelemetry.SourceName, "pipeline.loop.polls");
 
-        _counters.Should().Contain(c => c.Name == "pipeline.loop.polls"
-            && c.Tags.Contains(new KeyValuePair<string, object?>("result", "success")));
+        _loopPolls.Add(1, new KeyValuePair<string, object?>("result", "success"));
+
+        collector.GetMeasurementSnapshot().Should().ContainSingle(m =>
+            m.Value == 1 && m.Tags.Contains(new KeyValuePair<string, object?>("result", "success")));
     }
 
     [Fact]
     public void LoopPolls_EmitsWithResultFailure()
     {
-        PipelineTelemetry.LoopPolls.Add(1, new KeyValuePair<string, object?>("result", "failure"));
+        using var collector = new MetricCollector<long>(_factory, PipelineTelemetry.SourceName, "pipeline.loop.polls");
 
-        _counters.Should().Contain(c => c.Name == "pipeline.loop.polls"
-            && c.Tags.Contains(new KeyValuePair<string, object?>("result", "failure")));
+        _loopPolls.Add(1, new KeyValuePair<string, object?>("result", "failure"));
+
+        collector.GetMeasurementSnapshot().Should().ContainSingle(m =>
+            m.Value == 1 && m.Tags.Contains(new KeyValuePair<string, object?>("result", "failure")));
     }
 
     [Fact]
     public void LoopPolls_EmitsWithResultPartialFailure()
     {
-        PipelineTelemetry.LoopPolls.Add(1, new KeyValuePair<string, object?>("result", "partial_failure"));
+        using var collector = new MetricCollector<long>(_factory, PipelineTelemetry.SourceName, "pipeline.loop.polls");
 
-        _counters.Should().Contain(c => c.Name == "pipeline.loop.polls"
-            && c.Tags.Contains(new KeyValuePair<string, object?>("result", "partial_failure")));
+        _loopPolls.Add(1, new KeyValuePair<string, object?>("result", "partial_failure"));
+
+        collector.GetMeasurementSnapshot().Should().ContainSingle(m =>
+            m.Value == 1 && m.Tags.Contains(new KeyValuePair<string, object?>("result", "partial_failure")));
     }
 
     [Fact]
     public void LoopIssuesFound_EmitsWithCorrectCount()
     {
-        PipelineTelemetry.LoopIssuesFound.Add(7);
+        using var collector = new MetricCollector<long>(_factory, PipelineTelemetry.SourceName, "pipeline.loop.issues_found");
 
-        _counters.Should().Contain(c => c.Name == "pipeline.loop.issues_found" && c.Value == 7);
+        _loopIssuesFound.Add(7);
+
+        collector.GetMeasurementSnapshot().Should().ContainSingle(m => m.Value == 7);
     }
 
     [Theory]
@@ -77,26 +84,32 @@ public class PipelineLoopMetricsTests : IDisposable
     [InlineData(PipelineTelemetry.LoopDecisions.SkippedFilteredByLabel)]
     public void LoopDispatchDecisions_EmitsWithDecisionTag(string decision)
     {
-        PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", decision));
+        using var collector = new MetricCollector<long>(_factory, PipelineTelemetry.SourceName, "pipeline.loop.dispatch_decisions");
 
-        _counters.Should().Contain(c => c.Name == "pipeline.loop.dispatch_decisions"
-            && c.Tags.Contains(new KeyValuePair<string, object?>("decision", decision)));
+        _loopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", decision));
+
+        collector.GetMeasurementSnapshot().Should().ContainSingle(m =>
+            m.Value == 1 && m.Tags.Contains(new KeyValuePair<string, object?>("decision", decision)));
     }
 
     [Fact]
     public void LoopBackoffEvents_Emits()
     {
-        PipelineTelemetry.LoopBackoffEvents.Add(1);
+        using var collector = new MetricCollector<long>(_factory, PipelineTelemetry.SourceName, "pipeline.loop.backoff_events");
 
-        _counters.Should().Contain(c => c.Name == "pipeline.loop.backoff_events" && c.Value == 1);
+        _loopBackoffEvents.Add(1);
+
+        collector.GetMeasurementSnapshot().Should().ContainSingle(m => m.Value == 1);
     }
 
     [Fact]
     public void LoopCircuitBreakerTrips_Emits()
     {
-        PipelineTelemetry.LoopCircuitBreakerTrips.Add(1);
+        using var collector = new MetricCollector<long>(_factory, PipelineTelemetry.SourceName, "pipeline.loop.circuit_breaker_trips");
 
-        _counters.Should().Contain(c => c.Name == "pipeline.loop.circuit_breaker_trips" && c.Value == 1);
+        _loopCircuitBreakerTrips.Add(1);
+
+        collector.GetMeasurementSnapshot().Should().ContainSingle(m => m.Value == 1);
     }
 
     [Fact]

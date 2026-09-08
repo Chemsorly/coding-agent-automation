@@ -53,7 +53,9 @@ public class ChatDispatcherObservabilityTests : IDisposable
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
-    private static DispatchServiceOptions CreateOptions(int connectTimeoutSeconds = 5) => new()
+    // gracePeriod defaults to 1s (not the production 120s): terminate tests whose mock watcher never
+    // reaches a terminal state otherwise wait out the full grace period.
+    private static DispatchServiceOptions CreateOptions(int connectTimeoutSeconds = 5, int gracePeriod = 1) => new()
     {
         Namespace = TestNamespace,
         KiroPvcPool = ["pvc-0"],
@@ -62,7 +64,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
         AgentServiceAccountName = "caa-agent",
         ChatPodConnectTimeoutSeconds = connectTimeoutSeconds,
         ChatJobMaxDurationSeconds = 7200,
-        ChatTerminationGracePeriodSeconds = 120
+        ChatTerminationGracePeriodSeconds = gracePeriod
     };
 
     private static AgentRegistryService CreateRegistry() =>
@@ -332,7 +334,9 @@ public class ChatDispatcherObservabilityTests : IDisposable
             return (logger, events);
         }
 
-        private static DispatchServiceOptions CreateOptions(int connectTimeoutSeconds = 5) => new()
+        // gracePeriod defaults to 1s (not the production 120s) so terminate tests never wait out the
+        // full grace period when the mock watcher stays non-terminal.
+        private static DispatchServiceOptions CreateOptions(int connectTimeoutSeconds = 5, int gracePeriod = 1) => new()
         {
             Namespace = TestNamespace,
             KiroPvcPool = ["pvc-0"],
@@ -341,7 +345,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
             AgentServiceAccountName = "caa-agent",
             ChatPodConnectTimeoutSeconds = connectTimeoutSeconds,
             ChatJobMaxDurationSeconds = 7200,
-            ChatTerminationGracePeriodSeconds = 120
+            ChatTerminationGracePeriodSeconds = gracePeriod
         };
 
         private static AgentRegistryService CreateRegistry() => new(Mock.Of<ILogger>());

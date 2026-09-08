@@ -239,7 +239,9 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 FinalStep = PipelineStep.Failed,
                 FailureReason = ex.Message,
                 CompletedAt = DateTimeOffset.UtcNow,
-                IsRework = message.LinkedPullRequest is not null
+                // RunMode: outer catch fires before or during executor setup; DetectReworkStep has not run.
+                // LinkedPullRequest from the assignment is the best available signal.
+                RunMode = message.LinkedPullRequest is not null ? RunMode.Rework : RunMode.New
             };
         }
         finally

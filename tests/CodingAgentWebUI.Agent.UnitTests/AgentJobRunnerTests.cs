@@ -11,7 +11,7 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 /// <summary>
 /// Tests for <see cref="AgentJobRunner"/>.
 /// Verifies: execution delegation, OperationCanceledException handling (Cancelled payload),
-/// general Exception handling (Failed payload), and IsRework propagation.
+/// general Exception handling (Failed payload), and RunMode propagation.
 /// </summary>
 public class AgentJobRunnerTests
 {
@@ -78,7 +78,7 @@ public class AgentJobRunnerTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_OperationCanceledException_SetsIsReworkFromLinkedPr()
+    public async Task ExecuteAsync_OperationCanceledException_SetsRunModeFromLinkedPr()
     {
         _mockExecutor.Setup(e => e.ExecuteAsync(
             It.IsAny<JobAssignmentMessage>(), It.IsAny<HubConnection>(),
@@ -90,7 +90,7 @@ public class AgentJobRunnerTests
             _mockExecutor.Object, _assignment, null!,
             _ => { }, ct: CancellationToken.None);
 
-        result.IsRework.Should().BeTrue(); // LinkedPullRequest is set
+        result.RunMode.Should().Be(RunMode.Rework); // LinkedPullRequest is set
     }
 
     [Fact]
@@ -114,7 +114,7 @@ public class AgentJobRunnerTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_GeneralException_SetsIsReworkFromLinkedPr()
+    public async Task ExecuteAsync_GeneralException_SetsRunModeFromLinkedPr()
     {
         _mockExecutor.Setup(e => e.ExecuteAsync(
             It.IsAny<JobAssignmentMessage>(), It.IsAny<HubConnection>(),
@@ -126,11 +126,11 @@ public class AgentJobRunnerTests
             _mockExecutor.Object, _assignment, null!,
             _ => { }, ct: CancellationToken.None);
 
-        result.IsRework.Should().BeTrue();
+        result.RunMode.Should().Be(RunMode.Rework);
     }
 
     [Fact]
-    public async Task ExecuteAsync_NoLinkedPr_IsReworkIsFalse()
+    public async Task ExecuteAsync_NoLinkedPr_RunModeIsNew()
     {
         var assignmentNoPr = _assignment with { LinkedPullRequest = null };
 
@@ -144,7 +144,7 @@ public class AgentJobRunnerTests
             _mockExecutor.Object, assignmentNoPr, null!,
             _ => { }, CancellationToken.None);
 
-        result.IsRework.Should().BeFalse();
+        result.RunMode.Should().Be(RunMode.New);
     }
 
     [Fact]

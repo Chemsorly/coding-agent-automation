@@ -38,7 +38,6 @@ namespace CodingAgentWebUI.UnitTests.Telemetry;
 /// Consider adding agent-specific coverage when the agent program setup becomes unit-testable.
 /// (TestQualityReviewer finding)
 /// </remarks>
-[Collection("Metrics")]
 public sealed class OtelMetricsConfigurationTests : IDisposable
 {
     private readonly Meter _meter;

@@ -1,4 +1,3 @@
-using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
@@ -8,26 +7,8 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Telemetry;
 /// <summary>
 /// Tests verifying that AccumulateTokenUsage populates the PhaseBreakdown dictionary correctly.
 /// </summary>
-[Collection("Metrics")]
-public class PhaseBreakdownTests : IDisposable
+public class PhaseBreakdownTests
 {
-    private readonly MeterListener _listener = new();
-
-    public PhaseBreakdownTests()
-    {
-        _listener.InstrumentPublished = (instrument, listener) =>
-        {
-            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
-                listener.EnableMeasurementEvents(instrument);
-        };
-
-        _listener.SetMeasurementEventCallback<long>((_, _, _, _) => { });
-        _listener.SetMeasurementEventCallback<double>((_, _, _, _) => { });
-        _listener.Start();
-    }
-
-    public void Dispose() => _listener.Dispose();
-
     [Fact]
     public void AccumulateTokenUsage_SamePhase_SumsTokensAndCost()
     {

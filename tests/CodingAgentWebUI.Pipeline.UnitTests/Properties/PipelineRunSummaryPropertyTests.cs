@@ -13,18 +13,18 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 public class PipelineRunSummaryPropertyTests
 {
     /// <summary>
-    /// Feature: 009-pr-rework-pipeline, Property 5: IsRework reflects LinkedPullRequest
-    /// 
-    /// For any PipelineRun instance, ToSummary().IsRework equals (LinkedPullRequest != null).
-    /// 
+    /// Feature: 009-pr-rework-pipeline, Property 5: RunMode reflects PipelineRun.RunMode
+    ///
+    /// For any PipelineRun instance, ToSummary().RunMode equals run.RunMode.
+    ///
     /// **Validates: Requirements REQ-11.2**
     /// </summary>
     [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunArbitraries) })]
-    public void ToSummary_IsRework_ReflectsLinkedPullRequest(PipelineRun run)
+    public void ToSummary_RunMode_ReflectsPipelineRunRunMode(PipelineRun run)
     {
         var summary = run.ToSummary();
 
-        summary.IsRework.Should().Be(run.LinkedPullRequest != null);
+        summary.RunMode.Should().Be(run.RunMode);
     }
 
     // --- Custom Arbitraries for PipelineRun and LinkedPullRequest ---

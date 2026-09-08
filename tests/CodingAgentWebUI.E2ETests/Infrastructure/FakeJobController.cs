@@ -92,7 +92,7 @@ public sealed class FakeJobController : IAsyncDisposable
     {
         await ReconcileOnceAsync(ct);
 
-        var pending = await _workItems.GetPendingAsync(50, ct);
+        var pending = await _workItems.GetPendingAsync(50, ct: ct);
         if (pending.Count == 0) return;
 
         foreach (var item in pending)

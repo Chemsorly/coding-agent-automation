@@ -10,7 +10,6 @@ namespace CodingAgentWebUI.UnitTests.Telemetry;
 /// Verifies the shared method's contract: correct timestamp selection, null-coalescing of
 /// AgentSelector, and that both histograms are recorded.
 /// </summary>
-[Collection("Metrics")]
 [Trait("Feature", "DispatchLatencyMetrics")]
 public sealed class WorkDistributionTelemetryDispatchLatencyTests : IDisposable
 {

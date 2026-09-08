@@ -828,7 +828,7 @@ public sealed class ApiBackedServicesTests
     {
         var client = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiRunHistoryClient>();
         var page = new PagedResult<PipelineRunSummary> { Items = [], Page = 1, PageSize = 1000, HasMore = false };
-        client.Setup(c => c.GetRunHistoryAsync(1, 1000, false, false, It.IsAny<CancellationToken>()))
+        client.Setup(c => c.GetRunHistoryAsync(1, 1000, false, false, It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(page);
 
         var svc = CreateHistoryService(client.Object);
@@ -978,5 +978,52 @@ public sealed class ApiBackedServicesTests
         await dispatcher.TerminateChatSessionAsync(new AgentId("agent-1"), CancellationToken.None);
 
         client.Verify(c => c.TerminateChatSessionAsync("agent-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // ApiBackedPendingWorkQuery — PriorityWeight mapping
+    // ─────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task PendingWorkQuery_GetPendingJobsAsync_MapsPriorityWeight()
+    {
+        var mockClient = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiWorkItemClient>();
+        var dto = new PendingWorkItemDto
+        {
+            Id = Guid.NewGuid(),
+            IssueIdentifier = "GH-10",
+            IssueProviderConfigId = "github",
+            TaskType = WorkItemTaskType.Implementation,
+            CreatedAt = DateTimeOffset.UtcNow,
+            AgentSelector = "kiro",
+            RetryCount = 0,
+            TimeoutSeconds = 0,
+            PriorityWeight = 250
+        };
+        mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PendingWorkItemDto> { dto } as IReadOnlyList<PendingWorkItemDto>);
+
+        var query = new ApiBackedPendingWorkQuery(mockClient.Object);
+        var result = await query.GetPendingJobsAsync();
+
+        result.Should().HaveCount(1);
+        result[0].PriorityWeight.Should().Be(250,
+            because: "PriorityWeight must be mapped from PendingWorkItemDto to PendingJob");
+    }
+
+    [Fact]
+    public async Task PendingWorkQuery_GetPendingJobsAsync_DefaultsPriorityWeightToZero()
+    {
+        var mockClient = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiWorkItemClient>();
+        // MakePendingDto() leaves PriorityWeight at its default of 0
+        mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PendingWorkItemDto> { MakePendingDto() } as IReadOnlyList<PendingWorkItemDto>);
+
+        var query = new ApiBackedPendingWorkQuery(mockClient.Object);
+        var result = await query.GetPendingJobsAsync();
+
+        result.Should().HaveCount(1);
+        result[0].PriorityWeight.Should().Be(0,
+            because: "when PriorityWeight is absent from the DTO it defaults to 0");
     }
 }

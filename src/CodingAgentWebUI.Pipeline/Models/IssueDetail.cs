@@ -19,4 +19,8 @@ public sealed class IssueDetail
 
     [Key(4)]
     public IReadOnlyList<ImageReference> Images { get; init; } = [];
+
+    /// <summary>Web URL of the issue on the provider (e.g. GitHub HtmlUrl / GitLab WebUrl), or null if unknown.</summary>
+    [Key(5)]
+    public string? Url { get; init; }
 }

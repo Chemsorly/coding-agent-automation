@@ -52,14 +52,38 @@ public static class PipelineTelemetry
         "quality_gate.duration", "s", "Total time in quality gate phase");
     public static readonly Counter<long> QualityGateEvaluations = Meter.CreateCounter<long>(
         "quality_gate.evaluations", "{evaluation}", "Individual gate evaluation events");
-    // TODO: Verify that ExternalCiDuration bucket boundaries are not configured via an AddView/ExplicitBucketHistogramConfiguration
-    // in the SDK host (Program.cs). If custom 30s–6h buckets are applied to ExternalCiDuration via a view, PostPrCiDuration must
-    // be covered by the same view. Both histograms currently have no InstrumentAdvice — if explicit buckets are required per the
-    // telemetry philosophy decision, add matching InstrumentAdvice<double> { HistogramBucketBoundaries = [...] } to both.
+    public static readonly Counter<long> ReviewSkipped = Meter.CreateCounter<long>(
+        "pipeline.review.skipped", "{skip}",
+        "Code review phase skipped due to empty resolved reviewer configs (all deleted or disabled)");
     public static readonly Histogram<double> ExternalCiDuration = Meter.CreateHistogram<double>(
-        "quality_gate.external_ci.duration", "s", "Time waiting for external CI");
+        "quality_gate.external_ci.duration", "s", "Time waiting for external CI",
+        advice: new InstrumentAdvice<double>
+        {
+            HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600]
+        });
+
+    // QGC process-level instrumentation (issue #2367)
+    public static readonly Counter<long> QgcProcessTimeouts = Meter.CreateCounter<long>(
+        "quality_gate.process.timeout", "{timeout}", "QGC process timeouts by gate and QGC name");
+    public static readonly Histogram<double> QgcProcessDuration = Meter.CreateHistogram<double>(
+        "quality_gate.process.duration", "s",
+        "Single process invocation duration (compilation or test command). Distinct from quality_gate.duration which covers the entire retry phase.",
+        advice: new InstrumentAdvice<double>
+        {
+            HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600]
+        });
+    public static readonly Counter<long> StallWarnings = Meter.CreateCounter<long>(
+        "quality_gate.stall.warnings", "{warning}", "Agent stall silence warnings by phase");
+    public static readonly Counter<long> StallKills = Meter.CreateCounter<long>(
+        "quality_gate.stall.kills", "{kill}", "Agent stall kill events by phase");
+    public static readonly Counter<long> StallProcessDeaths = Meter.CreateCounter<long>(
+        "quality_gate.stall.process_deaths", "{process_death}", "Agent stall process death events by phase");
     public static readonly Histogram<double> PostPrCiDuration = Meter.CreateHistogram<double>(
-        "quality_gate.post_pr_ci.duration", "s", "Time waiting for post-PR CI (pull_request event workflows)");
+        "quality_gate.post_pr_ci.duration", "s", "Time waiting for post-PR CI to complete",
+        advice: new InstrumentAdvice<double>
+        {
+            HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600]
+        });
 
     public static readonly Histogram<double> QueueWaitTime = Meter.CreateHistogram<double>(
         "dispatch.queue.wait_time", "s", "Time a job spent waiting in the dispatch queue",
@@ -80,19 +104,16 @@ public static class PipelineTelemetry
         "brain.updates.empty", "{sync}", "Runs where agent produced no brain changes");
     public static readonly Counter<long> BrainFilesWritten = Meter.CreateCounter<long>(
         "brain.files.written", "{file}", "Total brain files committed across all runs");
-    public static readonly Histogram<double> BrainSyncDuration = Meter.CreateHistogram<double>(
-        "brain.sync.duration", "s", "Duration of brain sync operations");
-    /// <summary>
-    /// Incremented whenever the post-run brain sync gate is skipped in
-    /// <c>RunPostPrSequenceAsync</c>. Tags: <c>reason</c> — one of
-    /// <c>is_draft</c>, <c>no_provider</c>, <c>no_sync_service</c>, <c>read_only</c>.
-    /// Use this metric to diagnose why <c>brain.updates.committed</c> and
-    /// <c>brain.updates.empty</c> are absent: at least one post-run brain metric
-    /// will now be populated on every run that reaches finalization, making the
-    /// skip reason visible in Prometheus even when the sync itself is skipped.
-    /// </summary>
     public static readonly Counter<long> BrainSyncSkipped = Meter.CreateCounter<long>(
-        "brain.sync.skipped", "{skip}", "Post-run brain sync gate skipped (not an error; tagged with reason)");
+        "brain.sync.skipped", "{sync}", "Runs where post-run brain sync was skipped (tagged by reason)");
+    public static readonly Histogram<double> BrainSyncDuration = Meter.CreateHistogram<double>(
+        "brain.sync.duration", "s", "Duration of brain sync operations",
+        advice: new InstrumentAdvice<double>
+        {
+            HistogramBucketBoundaries = [1, 2, 5, 10, 20, 30, 60, 120, 300]
+        });
+    public static readonly Counter<long> BrainPushRetries = Meter.CreateCounter<long>(
+        "brain.push.retries", "{retry}", "Brain repo push retry attempts on non-fast-forward conflict");
 
     // Token vending metrics
     public static readonly Counter<long> TokenVendingFailures = Meter.CreateCounter<long>(
@@ -171,8 +192,60 @@ public static class PipelineTelemetry
     {
         public const string Compilation = "compilation";
         public const string Tests = "tests";
+        // TODO: Security constant is dead code — the only call site (EmitGateEvaluation for SecurityScan)
+        // was removed when QualityGateReport.SecurityScan was tombstoned (Key(4) retired, issue #2400).
+        // Remove or tombstone this constant when cleaning up telemetry dead code.
         public const string Security = "security";
         public const string ExternalCi = "external_ci";
+    }
+
+    /// <summary>
+    /// Normalized phase tag values for stall-monitor metrics (issue #2367).
+    /// Using a closed constant set prevents unbounded label cardinality on the
+    /// <c>quality_gate.stall.*</c> counters.
+    /// </summary>
+    public static class StallPhases
+    {
+        public const string QgcRetryAgent = "qgc_retry_agent";
+        public const string CodeGen = "codegen";
+        public const string Analysis = "analysis";
+        public const string CodeReview = "code_review";
+        public const string Decomposition = "decomposition";
+        public const string Unknown = "unknown";
+    }
+
+    /// <summary>
+    /// Maps a raw <paramref name="phaseDescription"/> string to one of the closed-set
+    /// <see cref="StallPhases"/> constants, preventing unbounded metric cardinality.
+    /// </summary>
+    public static string NormalizeStallPhase(string phaseDescription)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(phaseDescription);
+
+        if (phaseDescription.Contains("Quality gate retry", StringComparison.OrdinalIgnoreCase) ||
+            phaseDescription.Contains("Pre-PR cleanup", StringComparison.OrdinalIgnoreCase) ||
+            phaseDescription.Contains("Final QG", StringComparison.OrdinalIgnoreCase) ||
+            phaseDescription.Contains("Post-PR CI", StringComparison.OrdinalIgnoreCase))
+            return StallPhases.QgcRetryAgent;
+
+        if (phaseDescription.Contains("Code generation", StringComparison.OrdinalIgnoreCase) ||
+            phaseDescription.Contains("Code gen", StringComparison.OrdinalIgnoreCase))
+            return StallPhases.CodeGen;
+
+        if (phaseDescription.Contains("Analysis agent", StringComparison.OrdinalIgnoreCase) ||
+            phaseDescription.StartsWith("Analysis", StringComparison.OrdinalIgnoreCase))
+            return StallPhases.Analysis;
+
+        if (phaseDescription.Contains("Code review", StringComparison.OrdinalIgnoreCase) ||
+            phaseDescription.Contains("Follow-up for reviewer", StringComparison.OrdinalIgnoreCase) ||
+            phaseDescription.Contains("Review summary", StringComparison.OrdinalIgnoreCase) ||
+            phaseDescription.Contains("Acceptance criteria", StringComparison.OrdinalIgnoreCase))
+            return StallPhases.CodeReview;
+
+        if (phaseDescription.Contains("Decomposition", StringComparison.OrdinalIgnoreCase))
+            return StallPhases.Decomposition;
+
+        return StallPhases.Unknown;
     }
 
     /// <summary>

@@ -38,7 +38,7 @@ public sealed class ReconciliationServiceTests
             .Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [] });
         _workItemClient
-            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
     }
 
@@ -96,7 +96,7 @@ public sealed class ReconciliationServiceTests
             Times.Never,
             "ReconcileOnceAsync must not be called when this instance is not the leader");
         _workItemClient.Verify(
-            c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "EnforceTimeoutsAsync / EnforceDispatchedTimeoutAsync must not be called when not the leader");
     }

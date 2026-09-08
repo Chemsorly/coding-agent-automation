@@ -6,6 +6,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using k8s.Models;
 using Serilog;
+using System.Diagnostics.Metrics;
 
 namespace CodingAgentWebUI.JobController.Reconciliation;
 
@@ -53,6 +54,9 @@ public sealed class ReconciliationLoop
     // Consider replacing with a ConcurrentDictionary<Guid, byte> or adding a lock if the public
     // surface of OnLeadershipAcquired is ever called from a different thread than ReconcileOnceAsync.
     private readonly HashSet<Guid> _reconciledTerminalIds = new();
+    private readonly Histogram<double> _timeoutExecutionAge;
+    private readonly Counter<long> _timeoutCanaryViolations;
+    private readonly Counter<long> _agentTimeouts;
 
     /// <summary>
     /// Called by <see cref="ReconciliationService"/> when this instance becomes the leader.
@@ -64,7 +68,9 @@ public sealed class ReconciliationLoop
     public ReconciliationLoop(
         IPipelineApiWorkItemClient workItemClient,
         IKubernetesJobClient k8sClient,
-        DispatchServiceOptions options)
+        DispatchServiceOptions options,
+        IMeterFactory? pipelineMeterFactory = null,
+        IMeterFactory? workDistMeterFactory = null)
     {
         ArgumentNullException.ThrowIfNull(workItemClient);
         ArgumentNullException.ThrowIfNull(k8sClient);
@@ -72,6 +78,24 @@ public sealed class ReconciliationLoop
         _workItemClient = workItemClient;
         _k8sClient = k8sClient;
         _options = options;
+
+        if (workDistMeterFactory is not null)
+        {
+            var meter = workDistMeterFactory.Create(new MeterOptions(WorkDistributionTelemetry.MeterName));
+            _timeoutExecutionAge = meter.CreateHistogram<double>("workdistribution.timeout_execution_age_seconds", "s",
+                "Execution age at timeout enforcement — canary for anchor correctness",
+                advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600] });
+            _timeoutCanaryViolations = meter.CreateCounter<long>("workdistribution.timeout_canary_violations", "{violation}",
+                "Timeout enforcement blocked by canary invariant — indicates timestamp bug");
+            _agentTimeouts = meter.CreateCounter<long>("workdistribution.agent_timeouts", "{job}",
+                "Agent jobs killed by session timeout enforcer");
+        }
+        else
+        {
+            _timeoutExecutionAge = WorkDistributionTelemetry.TimeoutExecutionAge;
+            _timeoutCanaryViolations = WorkDistributionTelemetry.TimeoutCanaryViolations;
+            _agentTimeouts = WorkDistributionTelemetry.AgentTimeouts;
+        }
     }
 
     /// <summary>
@@ -105,8 +129,8 @@ public sealed class ReconciliationLoop
     /// <summary>
     /// Enforces the session timeout: marks Running items that have exceeded their per-item
     /// <see cref="ActiveWorkItemDto.TimeoutSeconds"/> as Failed.
-    /// Items without a stored timeout (zero) fall back to the global default
-    /// (<see cref="PipelineConstants.DefaultAgentTimeout"/>).
+    /// All rows have a positive <see cref="ActiveWorkItemDto.TimeoutSeconds"/> value since
+    /// migration #2405 back-filled any legacy zero rows to 1800 seconds (30 min default).
     /// </summary>
     public async Task EnforceTimeoutsAsync(CancellationToken ct)
     {
@@ -121,15 +145,13 @@ public sealed class ReconciliationLoop
         IReadOnlyList<ActiveWorkItemDto> timedOut;
         try
         {
-            timedOut = await _workItemClient.GetActiveAsync(TimeoutCanaryMinAgeSeconds, ct);
+            timedOut = await _workItemClient.GetActiveAsync(TimeoutCanaryMinAgeSeconds, ct: ct);
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to query active work items for timeout enforcement");
             return;
         }
-
-        var globalDefaultSeconds = (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds;
 
         foreach (var item in timedOut)
         {
@@ -139,15 +161,17 @@ public sealed class ReconciliationLoop
             if (item.Status != WorkItemStatus.Running) continue;
 
             // Resolve the effective timeout for this item.
-            // TimeoutSeconds == 0 means the value was not stored (pre-dates this field) — fall back
-            // to the global PipelineConfiguration.AgentTimeout default for backward compatibility.
-            // TODO: The zero sentinel is not enforced at the entity/DTO layer — it is indistinguishable
-            // from an explicitly set value of 0. Consider adding a DB constraint or a positive-value
-            // check at the enqueue endpoint (WorkItemEndpoints) so that TimeoutSeconds > 0 is always
-            // guaranteed for new rows, narrowing this fallback to truly legacy data only.
-            var effectiveTimeoutSeconds = item.TimeoutSeconds > 0
-                ? item.TimeoutSeconds
-                : globalDefaultSeconds;
+            // All rows written after migration #2405 have a positive TimeoutSeconds value.
+            // The migration back-filled any legacy zero rows to 1800 (30 min default),
+            // so TimeoutSeconds is always positive and no fallback is needed.
+            // TODO [WARNING]: In a rolling deployment where the binary is updated before the migration
+            // runs (or if the migration fails silently), in-flight rows with TimeoutSeconds=0 could
+            // reach this path. With effectiveTimeoutSeconds=0 any Running item older than
+            // TimeoutCanaryMinAgeSeconds (60s) is immediately force-failed (executionAge >= 0 is
+            // always true once the canary guard passes). Consider adding a defensive
+            // `if (item.TimeoutSeconds <= 0) continue;` guard here as low-cost insurance against
+            // this deployment-ordering scenario. (Correctness + DotNetSpecialist review [WARNING])
+            var effectiveTimeoutSeconds = item.TimeoutSeconds;
 
             // Compute execution age from DispatchedAt. If DispatchedAt is null (items dispatched before
             // the field was added), fall back to effectiveTimeoutSeconds — safe to enforce.
@@ -164,7 +188,7 @@ public sealed class ReconciliationLoop
                 ? (DateTimeOffset.UtcNow - item.DispatchedAt.Value).TotalSeconds
                 : effectiveTimeoutSeconds;
 
-            WorkDistributionTelemetry.TimeoutExecutionAge.Record(executionAgeSeconds,
+            _timeoutExecutionAge.Record(executionAgeSeconds,
                 new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
 
             // Canary guard: if age is suspiciously low the timeout anchor is wrong (INV-001).
@@ -173,7 +197,7 @@ public sealed class ReconciliationLoop
             {
                 Log.Warning("WorkItem {Id} timeout canary violation: execution age {AgeSeconds:F1}s < {MinAge}s — skipping enforcement",
                     item.Id, executionAgeSeconds, TimeoutCanaryMinAgeSeconds);
-                WorkDistributionTelemetry.TimeoutCanaryViolations.Add(1,
+                _timeoutCanaryViolations.Add(1,
                     new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
                 continue;
             }
@@ -219,7 +243,7 @@ public sealed class ReconciliationLoop
                     duration: null, agentId: jobName,
                     failureReason: FailureReason.Timeout);
 
-                WorkDistributionTelemetry.AgentTimeouts.Add(1,
+                _agentTimeouts.Add(1,
                     new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
 
                 await SafeDeleteJobAsync(jobName, ct);
@@ -242,7 +266,7 @@ public sealed class ReconciliationLoop
         IReadOnlyList<ActiveWorkItemDto> items;
         try
         {
-            items = await _workItemClient.GetActiveAsync(_options.ChatPodConnectTimeoutSeconds, ct);
+            items = await _workItemClient.GetActiveAsync(_options.ChatPodConnectTimeoutSeconds, ct: ct);
         }
         catch (Exception ex)
         {
@@ -332,7 +356,7 @@ public sealed class ReconciliationLoop
             // Pass olderThanSeconds=0 to get ALL active (Dispatched+Running) work items regardless of age.
             // This builds the "active" set used to exclude Jobs from orphan deletion — we never want to
             // delete a Job that has a corresponding active WorkItem, even a brand-new one.
-            activeItems = await _workItemClient.GetActiveAsync(0, ct);
+            activeItems = await _workItemClient.GetActiveAsync(0, ct: ct);
         }
         catch (Exception ex)
         {
@@ -502,18 +526,24 @@ public sealed class ReconciliationLoop
 
         // Fall back to counters
         if (job.Status?.Succeeded > 0) return JobPhaseSucceeded;
-        // TODO [WARNING]: This fallback returns JobPhaseFailed when Failed > 0 without checking
-        // Active == 0, which is incorrect for a retrying job. When a job's first pod attempt fails
-        // (Status.Failed=1, Status.Active=1), Kubernetes creates a retry pod and only sets the
-        // "Failed" condition type once all retries are exhausted. Until then, this path returns
-        // JobPhaseFailed prematurely, potentially causing ReconciliationLoop to mark a still-running
-        // work item as failed and cancel the K8s Job while a retry pod is executing (data-corruption
-        // risk under default backoffLimit ≥ 1). Fix: guard with Active == 0:
-        //   if (job.Status?.Failed > 0 && (job.Status?.Active ?? 0) == 0) return JobPhaseFailed;
-        // Note: IsJobTerminal in DispatchLoopHelpers already applies this guard correctly — the two
-        // subsystems are inconsistent in this fallback path. Tracked as pre-existing defect surfaced
-        // during issue #2176 investigation. See also issue #2177.
-        if (job.Status?.Failed > 0) return JobPhaseFailed;
+        // Guard Active == 0: a retrying job has Failed=1 while Active=1 (Kubernetes creates a
+        // retry pod after each failed attempt). The "Failed" condition type is only set once all
+        // retries are exhausted. Returning JobPhaseFailed while Active > 0 would prematurely mark
+        // a running work item as failed and cancel the live K8s Job (data-corruption under the
+        // default backoffLimit >= 1). This guard matches the equivalent check already present in
+        // DispatchLoopHelpers.IsJobTerminal, making the two counter-fallback paths behaviorally
+        // identical.
+        // TODO [WARNING]: The counter-fallback paths in GetJobPhase and IsJobTerminal are now
+        // aligned, but the condition-path branches differ subtly: GetJobPhase issues two separate
+        // conditions.Any(...) calls (one for "Complete", one for "Failed"), while IsJobTerminal
+        // combines both into a single conditions.Any(c => (c.Type == "Complete" || c.Type ==
+        // "Failed") && c.Status == "True"). The observable difference is short-circuit order when
+        // both condition types are simultaneously True — a state Kubernetes does not produce in
+        // normal operation, so this is not a data-corruption risk. However, the updated XML doc on
+        // IsJobTerminal claims "the same phase-detection logic" which is technically inaccurate for
+        // the condition path. If the condition-path branches are ever unified, the XML doc should
+        // be updated to reflect true parity.
+        if (job.Status?.Failed > 0 && (job.Status?.Active ?? 0) == 0) return JobPhaseFailed;
         return "Active";
     }
 

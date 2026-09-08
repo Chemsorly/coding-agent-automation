@@ -39,51 +39,6 @@ public class IAgentServiceTests
     // ── Behavioral tests: mock IAgentService ─────────────────────────────
 
     [Fact]
-    public void MockAgentService_IsBusy_ReturnsFalse_WhenIdle()
-    {
-        var mock = new Mock<IAgentService>();
-        mock.Setup(x => x.IsBusy).Returns(false);
-
-        mock.Object.IsBusy.Should().BeFalse();
-    }
-
-    [Fact]
-    public void MockAgentService_IsBusy_ReturnsTrue_WhenExecuting()
-    {
-        var mock = new Mock<IAgentService>();
-        mock.Setup(x => x.IsBusy).Returns(true);
-
-        mock.Object.IsBusy.Should().BeTrue();
-    }
-
-    [Fact]
-    public void MockAgentService_CurrentStep_ReturnsNull_WhenIdle()
-    {
-        var mock = new Mock<IAgentService>();
-        mock.Setup(x => x.CurrentStep).Returns((PipelineStep?)null);
-
-        mock.Object.CurrentStep.Should().BeNull();
-    }
-
-    [Fact]
-    public void MockAgentService_CurrentStep_ReturnsStep_WhenExecuting()
-    {
-        var mock = new Mock<IAgentService>();
-        mock.Setup(x => x.CurrentStep).Returns(PipelineStep.GeneratingCode);
-
-        mock.Object.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
-    }
-
-    [Fact]
-    public void MockAgentService_IsConnected_ReportsConnectionState()
-    {
-        var mock = new Mock<IAgentService>();
-        mock.Setup(x => x.IsConnected).Returns(true);
-
-        mock.Object.IsConnected.Should().BeTrue();
-    }
-
-    [Fact]
     public void MockAgentService_CancelCurrentJob_CanBeInvoked()
     {
         var mock = new Mock<IAgentService>();

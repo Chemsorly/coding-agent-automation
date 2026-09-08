@@ -38,7 +38,7 @@ public class PipelineConfigurationTests
             {
                 MaxIterations = 5,
                 FixPrompt = "Custom fix prompt",
-                ReviewIsolation = ReviewIsolation.Shared,
+                ReviewIsolation = ReviewIsolation.Isolated,
                 InlineComments = new InlineCommentSettings
                 {
                     Enabled = false,
@@ -120,6 +120,8 @@ public class PipelineConfigurationTests
             TransientRetryDelay = TimeSpan.FromSeconds(45),
             QueueSweepEnabled = true,
             CiCancelledMoveMaxRetries = 7,
+            FeedbackTimeoutSeconds = 90,
+            HousekeepingTriggerCooldownMinutes = 30,
         };
 
         // Act
@@ -139,7 +141,7 @@ public class PipelineConfigurationTests
 
         // Count the properties explicitly set above (all [Key] properties on the record).
         // If this fails, a new [Key] property was added — add it to the config above.
-        keyPropertyCount.Should().Be(74,
+        keyPropertyCount.Should().Be(76,
             "this test must cover all [Key]-annotated properties on PipelineConfiguration. " +
             "If a new property was added, set it to a non-default value in the config above.");
     }
@@ -226,6 +228,7 @@ public class PipelineConfigurationTests
         config.ImageDownloadTimeoutSeconds.Should().Be(30);
         config.ModelFetchTimeoutSeconds.Should().Be(120);
         config.HousekeepingConcurrencyLimit.Should().Be(1);
+        config.HousekeepingTriggerCooldownMinutes.Should().Be(25);
 
         // CodeReview defaults
         config.CodeReview.Should().NotBeNull();
@@ -236,6 +239,7 @@ public class PipelineConfigurationTests
 
         // Transient retry delay default
         config.TransientRetryDelay.Should().Be(TimeSpan.FromSeconds(30));
+        config.FeedbackTimeoutSeconds.Should().Be(60);
     }
 
     // ── ApplyProjectOverrides — Scalars ────────────────────────────────────────
@@ -469,6 +473,32 @@ public class PipelineConfigurationTests
         var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.AnalysisCommitThreshold.Should().Be(50);
+    }
+
+    // TODO: The two FeedbackTimeoutSeconds override tests below duplicate the identical scenarios already covered by
+    // ApplyProjectOverridesTests.FeedbackTimeoutSeconds_NonNull_OverridesGlobal and
+    // ApplyProjectOverridesTests.FeedbackTimeoutSeconds_NullOverride_InheritsFromGlobal. No additional coverage is added.
+    // Consider removing these duplicates to reduce noise on failures. (Warning from review #2225)
+    [Fact]
+    public void ApplyProjectOverrides_FeedbackTimeoutSeconds_OverridesCorrectly()
+    {
+        var config = TestPipelineConfig.Default() with { FeedbackTimeoutSeconds = 60 };
+        var project = TestPipelineConfig.WithProject() with { FeedbackTimeoutSeconds = 120 };
+
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
+
+        result.FeedbackTimeoutSeconds.Should().Be(120);
+    }
+
+    [Fact]
+    public void ApplyProjectOverrides_FeedbackTimeoutSeconds_NullOverride_InheritsFromGlobal()
+    {
+        var config = TestPipelineConfig.Default() with { FeedbackTimeoutSeconds = 90 };
+        var project = TestPipelineConfig.WithProject(); // FeedbackTimeoutSeconds is null
+
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
+
+        result.FeedbackTimeoutSeconds.Should().Be(90);
     }
 
     // ── MaxDecompositionSubIssueFiles validation ───────────────────────────────

@@ -73,7 +73,7 @@ public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
     /// Spec 044 left <c>MapHub&lt;AgentHub&gt;</c> — and with it <c>RegisterAgent</c>, the only
     /// writer of any agent registry — in the API process, while this host kept binding
     /// <c>IAgentRegistryService</c> to its own <c>AgentRegistryService</c>. Nothing ever wrote to
-    /// that instance, so <c>AgentMonitoring</c>, <c>SidebarHealthIndicators</c> and the drawer
+    /// that instance, so <c>Fleet</c>, <c>SidebarHealthIndicators</c> and the drawer
     /// services reported an empty cluster in every deployment. Rebinding it to the local type again
     /// would restore that defect silently, which is what this test is here to prevent.
     /// </para>

@@ -271,7 +271,7 @@ public sealed class PrReviewPipelineTests : E2ETestBase
         Assert.NotNull(statusText);
         Assert.Contains("Queued PR #55 for review", statusText);
 
-        var pending = await Fixture.WorkItems.GetPendingAsync(50, CancellationToken.None);
+        var pending = await Fixture.WorkItems.GetPendingAsync(50, ct: CancellationToken.None);
         Assert.Contains(pending, w => w.IssueIdentifier == "55");
     }
 }

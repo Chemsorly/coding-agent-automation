@@ -334,42 +334,22 @@ public sealed class FeedbackFlowTests : E2ETestBase
         // Wait for history to record the run before navigating to monitoring UI
         await WaitForHistoryAsync(r => r.IssueIdentifier == "83");
 
-        // Act: navigate to monitoring page and open the run detail
-        var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
-        await monitoringPage.NavigateAsync();
+        // Act: open the completed run's detail page (RunPage hosts the feedback section).
+        var history = Fixture.Factory.HistoryService;
+        var completedRun = (await history.GetRunHistoryAsync()).FirstOrDefault(r => r.IssueIdentifier == "83");
+        Assert.NotNull(completedRun);
 
-        // Click on the history section to find the completed run
-        // The run should be in the "Recent Runs" section
-        var historyRow = await Page.QuerySelectorAsync("tr:has-text('#83')");
-        if (historyRow is not null)
-        {
-            await historyRow.ClickAsync();
+        var detail = new RunDetailPage(Page, BaseUrl);
+        await detail.NavigateAsync(completedRun.RunId);
 
-            // Wait for modal/detail view to open
-            await Page.WaitForSelectorAsync(".feedback-section", new() { Timeout = 5_000 });
-
-            // Assert: feedback section is visible in the modal/detail view
-            var feedbackSection = await Page.QuerySelectorAsync(".feedback-section");
-            Assert.NotNull(feedbackSection);
-
-            // Verify feedback content is rendered
-            var feedbackText = await Page.TextContentAsync(".feedback-section");
-            Assert.Contains("Harness Feedback", feedbackText);
-            Assert.Contains("slow build", feedbackText);
-            Assert.Contains("Cache NuGet packages between runs", feedbackText);
-            Assert.Contains("Issue Feedback", feedbackText);
-            Assert.Contains("Issue was well-written", feedbackText);
-        }
-        else
-        {
-            // If the run isn't in the clickable history table, verify it's at least in the history service
-            var history = Fixture.Factory.HistoryService;
-            var runs = (await history.GetRunHistoryAsync());
-            var completedRun = runs.FirstOrDefault(r => r.IssueIdentifier == "83");
-            Assert.NotNull(completedRun);
-            Assert.NotNull(completedRun.Feedback);
-            Assert.Equal("slow build", completedRun.Feedback.Harness.Category);
-        }
+        // Assert: the feedback section renders with the persisted content.
+        await Page.WaitForSelectorAsync(".feedback-section", new() { Timeout = 10_000 });
+        var feedbackText = await Page.TextContentAsync(".feedback-section");
+        Assert.Contains("Harness Feedback", feedbackText);
+        Assert.Contains("slow build", feedbackText);
+        Assert.Contains("Cache NuGet packages between runs", feedbackText);
+        Assert.Contains("Issue Feedback", feedbackText);
+        Assert.Contains("Issue was well-written", feedbackText);
     }
 
     [Fact]

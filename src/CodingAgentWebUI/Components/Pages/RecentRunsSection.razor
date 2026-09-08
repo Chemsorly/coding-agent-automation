@@ -79,12 +79,14 @@
                                             PipelineStep.Completed => "Completed",
                                             PipelineStep.Failed => "Failed",
                                             PipelineStep.Cancelled => "Cancelled",
+                                            PipelineStep.ConflictRestart => "Restarted",
                                             _ => "Failed"
                                         };
                                         var resultClass = run.FinalStep switch
                                         {
                                             PipelineStep.Completed => "step-completed",
                                             PipelineStep.Cancelled => "step-cancelled",
+                                            PipelineStep.ConflictRestart => "step-restart",
                                             _ => "step-failed"
                                         };
                                     }
@@ -109,7 +111,7 @@
                                         <span>—</span>
                                     }
                                 </td>
-                                <td>@run.InitiatedBy</td>
+                                <td>@InitiatedByConstants.ToDisplayString(run.InitiatedBy, run.RunMode)</td>
                             </tr>
                         }
                     </tbody>

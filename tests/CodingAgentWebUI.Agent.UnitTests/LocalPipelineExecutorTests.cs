@@ -437,6 +437,7 @@ public class LocalPipelineExecutorTests : IDisposable
             FinalLabel = AgentLabels.Done,
             LinkedPullRequest = new LinkedPullRequest { Url = "https://github.com/owner/repo/pull/41", Number = 41, BranchName = "agent/issue-41", IsDraft = false }
         };
+        run.RunMode = RunMode.Rework;
         run.AnalysisConcerns = ["concern-1"];
         run.AnalysisBlockingIssues = ["blocker-1"];
         run.BlacklistedFilesDetected = ["secret.env"];
@@ -454,7 +455,7 @@ public class LocalPipelineExecutorTests : IDisposable
         payload.LinesRemoved.Should().Be(20);
         payload.BrainUpdatesPushed.Should().BeTrue();
         payload.AnalysisRecommendation.Should().Be(AnalysisGateResult.Ready);
-        payload.IsRework.Should().BeTrue();
+        payload.RunMode.Should().Be(RunMode.Rework);
         payload.AnalysisConcerns.Should().ContainSingle().Which.Should().Be("concern-1");
         payload.AnalysisBlockingIssues.Should().ContainSingle().Which.Should().Be("blocker-1");
         payload.BlacklistedFilesDetected.Should().ContainSingle().Which.Should().Be("secret.env");
@@ -464,7 +465,7 @@ public class LocalPipelineExecutorTests : IDisposable
     }
 
     [Fact]
-    public void BuildCompletionPayload_NullLinkedPullRequest_IsReworkFalse()
+    public void BuildCompletionPayload_NullLinkedPullRequest_RunModeIsNew()
     {
         var run = new PipelineRun
         {
@@ -480,7 +481,7 @@ public class LocalPipelineExecutorTests : IDisposable
 
         var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
 
-        payload.IsRework.Should().BeFalse();
+        payload.RunMode.Should().Be(RunMode.New);
     }
 
     [Fact]
@@ -531,11 +532,11 @@ public class LocalPipelineExecutorTests : IDisposable
         payload.FilesChangedCount.Should().Be(2);
         payload.LinesAdded.Should().Be(10);
         payload.LinesRemoved.Should().Be(5);
-        payload.IsRework.Should().BeFalse();
+        payload.RunMode.Should().Be(RunMode.New);
     }
 
     [Fact]
-    public void BuildFailurePayload_WithLinkedPR_IsReworkTrue()
+    public void BuildFailurePayload_WithLinkedPR_RunModeIsRework()
     {
         var run = new PipelineRun
         {
@@ -545,12 +546,13 @@ public class LocalPipelineExecutorTests : IDisposable
             IssueProviderConfigId = "ip",
             RepoProviderConfigId = "rp",
             StartedAt = DateTime.UtcNow,
+            RunMode = RunMode.Rework,
             LinkedPullRequest = new LinkedPullRequest { Url = "https://github.com/owner/repo/pull/10", Number = 10, BranchName = "agent/issue-10", IsDraft = false }
         };
 
         var payload = LocalPipelineExecutor.BuildFailurePayload(run, "error");
 
-        payload.IsRework.Should().BeTrue();
+        payload.RunMode.Should().Be(RunMode.Rework);
     }
 
     [Fact]

@@ -263,7 +263,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                         FinalStep = PipelineStep.Cancelled,
                         CompletedAt = DateTimeOffset.UtcNow,
                         RetryCount = run.RetryCount,
-                        IsRework = run.LinkedPullRequest is not null,
+                        RunMode = run.RunMode,
                         FinalLabel = AgentLabels.Cancelled
                     };
 
@@ -307,7 +307,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         FinalStep = PipelineStep.Failed, // Placeholder — callers override via 'with'
         CompletedAt = DateTimeOffset.UtcNow, // Placeholder — callers override via 'with'
         RetryCount = run.RetryCount,
-        IsRework = run.LinkedPullRequest is not null,
+        RunMode = run.RunMode,
         FilesChangedCount = run.FilesChangedCount,
         LinesAdded = run.LinesAdded,
         LinesRemoved = run.LinesRemoved,
@@ -321,7 +321,8 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         Feedback = run.Feedback,
         TotalTokens = run.TotalTokens,
         TotalCost = run.TotalCost,
-        FinalLabel = run.FinalLabel
+        FinalLabel = run.FinalLabel,
+        HarnessVersion = Environment.GetEnvironmentVariable("SERVICE_VERSION")
     };
 
     /// <summary>

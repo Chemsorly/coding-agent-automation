@@ -463,7 +463,8 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
             Title = issue.Title ?? string.Empty,
             Description = issue.Description ?? string.Empty,
             Labels = issue.Labels?.ToList().AsReadOnly()
-                ?? (IReadOnlyList<string>)Array.Empty<string>()
+                ?? (IReadOnlyList<string>)Array.Empty<string>(),
+            Url = issue.WebUrl
         };
     }
 
@@ -479,7 +480,8 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
             Description = issue.Description,
             Labels = issue.Labels?.ToList().AsReadOnly()
                 ?? (IReadOnlyList<string>)Array.Empty<string>(),
-            CreatedAt = issue.CreatedAt.ToUniversalTime()
+            CreatedAt = issue.CreatedAt.ToUniversalTime(),
+            Url = issue.WebUrl
         };
     }
 

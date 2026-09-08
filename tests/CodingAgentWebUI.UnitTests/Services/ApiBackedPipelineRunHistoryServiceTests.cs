@@ -159,7 +159,7 @@ public sealed class ApiBackedPipelineRunHistoryServiceTests
     {
         var items = new List<PipelineRunSummary> { MakeSummary(), MakeSummary() };
         _client
-            .Setup(c => c.GetRunHistoryAsync(1, 1000, false, false, It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetRunHistoryAsync(1, 1000, false, false, It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = items, Page = 1, PageSize = 1000, HasMore = false });
 
         var sut = CreateSut();
@@ -182,7 +182,7 @@ public sealed class ApiBackedPipelineRunHistoryServiceTests
         };
 
         _client
-            .Setup(c => c.GetRunHistoryAsync(2, 10, false, false, It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetRunHistoryAsync(2, 10, false, false, It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(expected);
 
         var sut = CreateSut();
@@ -207,13 +207,13 @@ public sealed class ApiBackedPipelineRunHistoryServiceTests
         };
 
         _client
-            .Setup(c => c.GetRunHistoryAsync(1, 20, true, false, It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetRunHistoryAsync(1, 20, true, false, It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(expected);
 
         var sut = CreateSut();
         var result = await sut.GetRunHistoryAsync(page: 1, pageSize: 20, feedbackOnly: true);
 
-        _client.Verify(c => c.GetRunHistoryAsync(1, 20, true, false, It.IsAny<CancellationToken>()), Times.Once);
+        _client.Verify(c => c.GetRunHistoryAsync(1, 20, true, false, It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
         result.Items.Should().BeEmpty();
     }
 

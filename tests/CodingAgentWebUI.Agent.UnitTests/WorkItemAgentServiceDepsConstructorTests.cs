@@ -41,60 +41,29 @@ public class WorkItemAgentServiceDepsConstructorTests
 
     // ── Null guards — required members ──────────────────────────────────
 
-    [Fact]
-    public void DepsConstructor_NullWorkItemId_Throws()
+    [Theory]
+    [InlineData(nameof(WorkItemAgentServiceDependencies.WorkItemId), "deps.WorkItemId")]
+    [InlineData(nameof(WorkItemAgentServiceDependencies.WorkItemClient), "deps.WorkItemClient")]
+    [InlineData(nameof(WorkItemAgentServiceDependencies.ConnectionManager), "deps.ConnectionManager")]
+    [InlineData(nameof(WorkItemAgentServiceDependencies.WorkItemExecutor), "deps.WorkItemExecutor")]
+    [InlineData(nameof(WorkItemAgentServiceDependencies.CompletionReporter), "deps.CompletionReporter")]
+    [InlineData(nameof(WorkItemAgentServiceDependencies.Lifetime), "deps.Lifetime")]
+    [InlineData(nameof(WorkItemAgentServiceDependencies.Logger), "deps.Logger")]
+    public void DepsConstructor_NullRequiredMember_Throws(string memberName, string expectedParamName)
     {
-        var deps = CreateValidDeps() with { WorkItemId = null! };
+        var deps = memberName switch
+        {
+            nameof(WorkItemAgentServiceDependencies.WorkItemId) => CreateValidDeps() with { WorkItemId = null! },
+            nameof(WorkItemAgentServiceDependencies.WorkItemClient) => CreateValidDeps() with { WorkItemClient = null! },
+            nameof(WorkItemAgentServiceDependencies.ConnectionManager) => CreateValidDeps() with { ConnectionManager = null! },
+            nameof(WorkItemAgentServiceDependencies.WorkItemExecutor) => CreateValidDeps() with { WorkItemExecutor = null! },
+            nameof(WorkItemAgentServiceDependencies.CompletionReporter) => CreateValidDeps() with { CompletionReporter = null! },
+            nameof(WorkItemAgentServiceDependencies.Lifetime) => CreateValidDeps() with { Lifetime = null! },
+            nameof(WorkItemAgentServiceDependencies.Logger) => CreateValidDeps() with { Logger = null! },
+            _ => throw new ArgumentOutOfRangeException(nameof(memberName))
+        };
         var act = () => new WorkItemAgentService(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.WorkItemId");
-    }
-
-    [Fact]
-    public void DepsConstructor_NullWorkItemClient_Throws()
-    {
-        var deps = CreateValidDeps() with { WorkItemClient = null! };
-        var act = () => new WorkItemAgentService(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.WorkItemClient");
-    }
-
-    [Fact]
-    public void DepsConstructor_NullConnectionManager_Throws()
-    {
-        var deps = CreateValidDeps() with { ConnectionManager = null! };
-        var act = () => new WorkItemAgentService(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.ConnectionManager");
-    }
-
-    [Fact]
-    public void DepsConstructor_NullWorkItemExecutor_Throws()
-    {
-        var deps = CreateValidDeps() with { WorkItemExecutor = null! };
-        var act = () => new WorkItemAgentService(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.WorkItemExecutor");
-    }
-
-    [Fact]
-    public void DepsConstructor_NullCompletionReporter_Throws()
-    {
-        var deps = CreateValidDeps() with { CompletionReporter = null! };
-        var act = () => new WorkItemAgentService(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.CompletionReporter");
-    }
-
-    [Fact]
-    public void DepsConstructor_NullLifetime_Throws()
-    {
-        var deps = CreateValidDeps() with { Lifetime = null! };
-        var act = () => new WorkItemAgentService(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Lifetime");
-    }
-
-    [Fact]
-    public void DepsConstructor_NullLogger_Throws()
-    {
-        var deps = CreateValidDeps() with { Logger = null! };
-        var act = () => new WorkItemAgentService(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Logger");
+        act.Should().Throw<ArgumentNullException>().WithParameterName(expectedParamName);
     }
 
     // ── Valid construction ───────────────────────────────────────────────

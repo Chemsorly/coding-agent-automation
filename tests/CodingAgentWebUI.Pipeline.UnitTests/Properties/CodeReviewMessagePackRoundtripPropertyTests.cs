@@ -163,7 +163,7 @@ public class CodeReviewMessagePackRoundtripPropertyTests
                 "Rewrite the affected code section")
             from maxIterations in Gen.Choose(1, 5)
             from inlineComments in inlineSettingsGen
-            from reviewIsolation in Gen.Elements(ReviewIsolation.Shared, ReviewIsolation.Isolated)
+            from reviewIsolation in Gen.Elements(ReviewIsolation.Isolated)
             select new CodeReviewConfiguration
             {
                 FixPrompt = hasFixPrompt ? fixPrompt : null,

@@ -29,6 +29,11 @@ public class BrainUpdateServicePushRetryTests : IDisposable
         _mockGit.Setup(g => g.HasConflicts(It.IsAny<string>())).Returns(false);
         _mockGit.Setup(g => g.GetHeadCommitFileCount(It.IsAny<string>())).Returns(1);
 
+        // TODO: [WARNING] The BrainUpdateService under test is constructed without a meterFactory
+        // (counter disabled). None of the retry tests below assert that _brainPushRetries?.Add(1)
+        // fired the expected number of times. A regression deleting the Add(1) call would be
+        // undetected. Add a test that passes a TestMeterFactory (or IMeterFactory mock) via the
+        // three-arg constructor and asserts counter.Value == N after N non-fast-forward retries.
         _sut = new BrainUpdateService(new LoggerConfiguration().CreateLogger(), _mockGit.Object);
     }
 

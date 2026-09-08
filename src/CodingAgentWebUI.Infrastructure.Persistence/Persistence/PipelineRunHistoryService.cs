@@ -189,7 +189,7 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
                 {
                     var json = File.ReadAllText(file.FullName);
                     var summary = System.Text.Json.JsonSerializer.Deserialize<PipelineRunSummary>(json, JsonOptions);
-                    if (summary != null && summary.InitiatedBy != ConsolidationConstants.InitiatedBy)
+                    if (summary != null && summary.InitiatedBy?.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal) != true)
                         summaries.Add(summary);
                 }
                 catch (Exception ex)
@@ -198,10 +198,10 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
                 }
             }
 
-            #pragma warning disable CS0618 // Fallback to legacy StartedAt for older persisted summaries without StartedAtOffset
+#pragma warning disable CS0618 // Fallback to legacy StartedAt for older persisted summaries without StartedAtOffset
             _runHistory.AddRange(summaries.OrderByDescending(s =>
                 s.StartedAtOffset != default ? s.StartedAtOffset : new DateTimeOffset(s.StartedAt, TimeSpan.Zero)));
-            #pragma warning restore CS0618
+#pragma warning restore CS0618
             _logger.Information("Loaded {Count} pipeline run(s) from history", _runHistory.Count);
         }
         catch (Exception ex)
@@ -214,40 +214,8 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     /// Attempts to delete a workspace directory. Logs but does not throw on failure.
     /// Validates the path is a subdirectory of the workspace base and not a symlink.
     /// </summary>
-
     public void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory)
-    {
-        if (string.IsNullOrEmpty(workspacePath) || !Directory.Exists(workspacePath))
-            return;
-
-        var dirInfo = new DirectoryInfo(workspacePath);
-        if (dirInfo.LinkTarget != null)
-        {
-            _logger.Warning("Pipeline {RunId} workspace {Path} is a symlink, skipping cleanup",
-                runId, workspacePath);
-            return;
-        }
-
-        var fullPath = Path.GetFullPath(workspacePath);
-        var fullBase = Path.GetFullPath(workspaceBaseDirectory).TrimEnd(Path.DirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
-        if (!fullPath.StartsWith(fullBase, StringComparison.Ordinal) || fullPath.TrimEnd(Path.DirectorySeparatorChar) == fullBase.TrimEnd(Path.DirectorySeparatorChar))
-        {
-            _logger.Warning("Pipeline {RunId} workspace path {Path} is not inside base {Base}, skipping cleanup",
-                runId, workspacePath, workspaceBaseDirectory);
-            return;
-        }
-
-        try
-        {
-            Directory.Delete(workspacePath, recursive: true);
-            _logger.Information("Pipeline {RunId} workspace deleted: {Path}", runId, workspacePath);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Pipeline {RunId} failed to delete workspace: {Path}", runId, workspacePath);
-        }
-    }
+        => WorkspaceDeletionGuard.TryDelete(workspacePath, runId, workspaceBaseDirectory, _logger);
 
     /// <summary>
     /// Cleans up expired workspace folders for failed/cancelled runs based on retention policy.
@@ -268,10 +236,10 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
             if (summary.FinalStep == PipelineStep.Completed)
                 continue;
 
-            #pragma warning disable CS0618 // Fallback to legacy CompletedAt for older persisted summaries without CompletedAtOffset
+#pragma warning disable CS0618 // Fallback to legacy CompletedAt for older persisted summaries without CompletedAtOffset
             var completedOffset = summary.CompletedAtOffset
                 ?? (summary.CompletedAt.HasValue ? new DateTimeOffset(summary.CompletedAt.Value, TimeSpan.Zero) : (DateTimeOffset?)null);
-            #pragma warning restore CS0618
+#pragma warning restore CS0618
 
             if (completedOffset == null || completedOffset > cutoff)
                 continue;

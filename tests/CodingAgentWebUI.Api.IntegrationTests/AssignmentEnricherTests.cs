@@ -410,12 +410,12 @@ public sealed class AssignmentEnricherTests
         result.Should().BeNull("null from PrepareDispatchCoreAsync must return null from EnrichAsync");
     }
 
-    // ── Exception swallowing path ─────────────────────────────────────────────────
+    // ── Exception propagation path ────────────────────────────────────────────────
 
     [Fact]
-    public async Task EnrichAsync_InfraThrows_ReturnsNullAndDoesNotPropagateException()
+    public async Task EnrichAsync_InfraThrows_PropagatesException()
     {
-        // ARRANGE: infra throws an unexpected exception
+        // ARRANGE: infra throws a transient exception (DB timeout, provider failure, etc.)
         var identity = MakeIdentity("dotnet");
         var project = MakeProject();
 
@@ -429,11 +429,21 @@ public sealed class AssignmentEnricherTests
 
         var enricher = new AssignmentEnricher(infra, profileStoreMock.Object, Serilog.Log.Logger);
 
-        // ACT: must not throw
-        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
-
-        // ASSERT: exception is swallowed, returns null (degraded-but-safe fallback)
-        result.Should().BeNull("exceptions from infra must be caught and result in null, not a crash");
+        // ACT + ASSERT: exception propagates so the caller can return 503.
+        // The old behavior (swallow + return null → degraded 200) is intentionally removed.
+        var act = () => enricher.EnrichAsync(identity, project, CancellationToken.None);
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*DB connection timeout*",
+                "transient exceptions must propagate from EnrichAsync so GetAssignment can return 503");
+        // TODO: [WARNING] This test only exercises path: profile resolution succeeds → infra throws.
+        // There is no test for the path where LoadAgentProfilesAsync itself throws. Under the new
+        // behavior, that exception also propagates (catch-all re-throws), but no test confirms this.
+        // Add a test with profileStoreMock throwing from LoadAgentProfilesAsync to ensure a future
+        // refactor that adds a separate try/catch around profile loading does not silently regress.
+        // TODO: [WARNING] InvalidOperationException is used as the "transient exception" type here,
+        // but the same type is thrown by EnrichRequestAsync for permanent failures (no-profile-matched).
+        // Use a more discriminating type (e.g., TimeoutException) to make the test's intent clearer and
+        // guard against future type-based routing logic that might treat InvalidOperationException as permanent.
     }
 
     [Fact]

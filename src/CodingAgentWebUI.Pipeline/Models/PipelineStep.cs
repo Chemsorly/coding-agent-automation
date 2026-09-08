@@ -41,5 +41,12 @@ public enum PipelineStep
     GeneratingSubIssues = 26,
     CreatingIssues = 27,
     PostingSummary = 28,
-    RunningEnvironmentSetup = 29
+    RunningEnvironmentSetup = 29,
+
+    /// <summary>
+    /// Terminal-like step: PR was conflicted with main during CI wait.
+    /// Pipeline restarted automatically via <c>agent:next</c> label swap.
+    /// No human action required — re-dispatched run will rebase and re-enter CI.
+    /// </summary>
+    ConflictRestart = 30
 }

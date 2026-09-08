@@ -38,7 +38,8 @@ public class ChatJobHandlerTests : IDisposable
             Serilog.ILogger? logger = null,
             Func<Task>? signalAgentReady = null,
             bool isOpenCodeProvider = false,
-            bool isChatMode = false)
+            bool isChatMode = false,
+            TimeSpan? chatGracePeriod = null)
     {
         var mockLogger = logger ?? new Mock<Serilog.ILogger>().Object;
         var mockOrchestrator = orchestrator ?? new Mock<KiroCliLib.Core.IKiroCliOrchestrator>().Object;
@@ -59,7 +60,13 @@ public class ChatJobHandlerTests : IDisposable
             SignalAgentReady: signalAgentReady ?? (() => Task.CompletedTask),
             IsOpenCodeProvider: isOpenCodeProvider,
             IsChatMode: isChatMode,
-            Logger: mockLogger));
+            Logger: mockLogger)
+        {
+            // Defaults to the production 10s. Only "times out when the chat task hangs" tests pass a
+            // small value; "waits for the chat task" tests keep the default so the handler stays in
+            // its wait when they assert on it.
+            ChatTaskCompletionGracePeriod = chatGracePeriod ?? TimeSpan.FromSeconds(10)
+        });
 
         return (handler, slotManager, lifecycle);
     }
@@ -422,7 +429,8 @@ public class ChatJobHandlerTests : IDisposable
     [Fact]
     public async Task HandleCancelChatAsync_TaskHangs_TimesOutWithWarning()
     {
-        var (handler, slotManager, _) = CreateHandler();
+        // 50ms grace (injected) so the hanging-task timeout fires quickly instead of the real 10s.
+        var (handler, slotManager, _) = CreateHandler(chatGracePeriod: TimeSpan.FromMilliseconds(50));
         var neverCompletes = new TaskCompletionSource();
         var chatCts = new CancellationTokenSource();
 
@@ -431,11 +439,9 @@ public class ChatJobHandlerTests : IDisposable
         SetPrivateField(slotManager, "_chatCts", chatCts);
 
         var cancelTask = handler.HandleCancelChatAsync("hang-sess");
-        // TODO: This test uses a 10-second real wall-clock timeout (with a 15s outer guard), making it slow in CI.
-        // Consider injecting the timeout duration as a parameter or using a test-controlled clock so the timeout
-        // can be triggered synchronously. Additionally, this test does not assert that a warning was logged or
-        // that the CTS was cancelled — a regression that removed the wait entirely would still pass.
-        var completed = await Task.WhenAny(cancelTask, Task.Delay(15000));
+        // TODO: This test does not assert that a warning was logged or that the CTS was cancelled — a
+        // regression that removed the wait entirely would still pass.
+        var completed = await Task.WhenAny(cancelTask, Task.Delay(5000));
         completed.Should().Be(cancelTask, "cancel handler must time out and complete even when task hangs");
     }
 

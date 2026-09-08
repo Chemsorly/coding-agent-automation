@@ -41,6 +41,7 @@ public static class SerilogOtlpExtensions
             options.ResourceAttributes = new Dictionary<string, object>
             {
                 ["service.name"] = serviceName,
+                ["service.version"] = Environment.GetEnvironmentVariable("SERVICE_VERSION") ?? "local",
                 ["deployment.environment"] = environmentName
             };
 

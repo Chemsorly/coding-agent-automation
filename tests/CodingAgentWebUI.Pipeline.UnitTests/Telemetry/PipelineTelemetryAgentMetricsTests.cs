@@ -1,107 +1,76 @@
-using System.Collections.Concurrent;
-using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Telemetry;
+using CodingAgentWebUI.TestUtilities;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
 /// <summary>
 /// Unit tests verifying agent worker metric instruments emit correct tags.
-/// Uses a warm-up pattern for each instrument to ensure MeterListener observes
-/// static instruments that were created before the listener started (eliminates
-/// race condition where InstrumentPublished doesn't fire for pre-existing instruments).
+/// Uses <see cref="TestMeterFactory"/> and <see cref="MetricCollector{T}"/> for isolation —
+/// each test operates on instruments created from an isolated factory, removing the need for
+/// <c>[Collection("Metrics")]</c> serialization.
 /// </summary>
-[Collection("Metrics")]
 public class PipelineTelemetryAgentMetricsTests : IDisposable
 {
-    private readonly MeterListener _listener = new();
-    // ConcurrentBag is used instead of List to avoid data races: the MeterListener
-    // callback fires on the calling thread (which may be a parallel test's thread),
-    // so the collection must be thread-safe. Each test replaces the field reference
-    // to "clear" it rather than calling a non-atomic clear on a shared instance.
-    private ConcurrentBag<(string InstrumentName, KeyValuePair<string, object?>[] Tags)> _measurements = [];
+    private readonly TestMeterFactory _factory = new();
+    private readonly System.Diagnostics.Metrics.Meter _meter;
+    private readonly System.Diagnostics.Metrics.Counter<long> _agentJobsReceived;
+    private readonly System.Diagnostics.Metrics.Counter<long> _agentJobsRejected;
+    private readonly System.Diagnostics.Metrics.Counter<long> _agentHeartbeatFailures;
+    private readonly System.Diagnostics.Metrics.Counter<long> _agentReconnections;
 
     public PipelineTelemetryAgentMetricsTests()
     {
-        _listener.InstrumentPublished = (instrument, listener) =>
-        {
-            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
-                listener.EnableMeasurementEvents(instrument);
-        };
-
-        _listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, state) =>
-        {
-            _measurements.Add((instrument.Name, tags.ToArray()));
-        });
-
-        _listener.Start();
-
-        // Warm up: force the listener to observe all static instruments by emitting
-        // a measurement on each. This eliminates the MeterListener race condition where
-        // InstrumentPublished may not fire for instruments created before Start().
-        PipelineTelemetry.AgentJobsReceived.Add(0);
-        PipelineTelemetry.AgentJobsRejected.Add(0);
-        PipelineTelemetry.AgentHeartbeatFailures.Add(0);
-        PipelineTelemetry.AgentReconnections.Add(0);
-
-        // Verify warm-up succeeded — instruments were observed
-        if (_measurements.Count == 0)
-            throw new InvalidOperationException(
-                "MeterListener warm-up failed: no instruments observed. " +
-                "If counter names changed in PipelineTelemetry, update this warm-up block.");
-
-        // Reset after warm-up. Replacing the field rather than calling Clear() avoids a race
-        // where a concurrent MeterListener callback (from a parallel test on another thread)
-        // is mid-Add when Clear() executes. The lambda closure captures `this` and evaluates
-        // `this._measurements` on each invocation, so field reassignment is visible to future
-        // callback invocations immediately.
-        _measurements = [];
+        _meter = _factory.Create(new System.Diagnostics.Metrics.MeterOptions(PipelineTelemetry.SourceName));
+        _agentJobsReceived = _meter.CreateCounter<long>("agent.jobs.received", "{job}", "Jobs received by agent workers");
+        _agentJobsRejected = _meter.CreateCounter<long>("agent.jobs.rejected", "{job}", "Jobs rejected by agent workers");
+        _agentHeartbeatFailures = _meter.CreateCounter<long>("agent.heartbeat.failures", "{failure}", "Agent heartbeat failures");
+        _agentReconnections = _meter.CreateCounter<long>("agent.reconnections", "{reconnection}", "Agent reconnection events");
     }
 
-    public void Dispose() => _listener.Dispose();
+    public void Dispose() => _factory.Dispose();
 
     [Fact]
     public void AgentJobsReceived_Add_EmitsCounter()
     {
-        _measurements = [];
+        using var collector = new MetricCollector<long>(_factory, PipelineTelemetry.SourceName, "agent.jobs.received");
 
-        PipelineTelemetry.AgentJobsReceived.Add(1);
+        _agentJobsReceived.Add(1);
 
-        _measurements.Should().Contain(m => m.InstrumentName == "agent.jobs.received");
+        collector.GetMeasurementSnapshot().Should().ContainSingle(m => m.Value == 1);
     }
 
     [Fact]
     public void AgentJobsRejected_Add_IncludesReasonTag()
     {
-        _measurements = [];
+        using var collector = new MetricCollector<long>(_factory, PipelineTelemetry.SourceName, "agent.jobs.rejected");
 
-        PipelineTelemetry.AgentJobsRejected.Add(1,
-            new KeyValuePair<string, object?>("reason", PipelineTelemetry.AgentRejectionReasons.Busy));
+        _agentJobsRejected.Add(1, new KeyValuePair<string, object?>("reason", PipelineTelemetry.AgentRejectionReasons.Busy));
 
-        var entries = _measurements.Where(m => m.InstrumentName == "agent.jobs.rejected").ToList();
-        entries.Should().NotBeEmpty();
-        entries.Should().Contain(e =>
-            e.Tags.Contains(new KeyValuePair<string, object?>("reason", "busy")));
+        var snapshot = collector.GetMeasurementSnapshot();
+        snapshot.Should().ContainSingle(m =>
+            m.Value == 1 && m.Tags.Contains(new KeyValuePair<string, object?>("reason", "busy")));
     }
 
     [Fact]
     public void AgentHeartbeatFailures_Add_EmitsCounter()
     {
-        _measurements = [];
+        using var collector = new MetricCollector<long>(_factory, PipelineTelemetry.SourceName, "agent.heartbeat.failures");
 
-        PipelineTelemetry.AgentHeartbeatFailures.Add(1);
+        _agentHeartbeatFailures.Add(1);
 
-        _measurements.Should().Contain(m => m.InstrumentName == "agent.heartbeat.failures");
+        collector.GetMeasurementSnapshot().Should().ContainSingle(m => m.Value == 1);
     }
 
     [Fact]
     public void AgentReconnections_Add_EmitsCounter()
     {
-        _measurements = [];
+        using var collector = new MetricCollector<long>(_factory, PipelineTelemetry.SourceName, "agent.reconnections");
 
-        PipelineTelemetry.AgentReconnections.Add(1);
+        _agentReconnections.Add(1);
 
-        _measurements.Should().Contain(m => m.InstrumentName == "agent.reconnections");
+        collector.GetMeasurementSnapshot().Should().ContainSingle(m => m.Value == 1);
     }
 
     [Fact]

@@ -20,7 +20,6 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 /// 2. Renaming <see cref="PipelineTelemetry.SourceName"/> without updating the agent Program.cs.
 /// 3. Accidentally creating new quality gate instruments on a different meter.
 /// </summary>
-[Collection("Metrics")]
 public sealed class QualityGateMetricsMeterRegistrationTests : IDisposable
 {
     private readonly MeterListener _listener = new();
@@ -50,6 +49,12 @@ public sealed class QualityGateMetricsMeterRegistrationTests : IDisposable
         PipelineTelemetry.QualityGateDuration.Record(0.0);
         PipelineTelemetry.ExternalCiDuration.Record(0.0);
         PipelineTelemetry.PostPrCiDuration.Record(0.0);
+        // Warm-up new instruments (issue #2367)
+        PipelineTelemetry.QgcProcessTimeouts.Add(0);
+        PipelineTelemetry.QgcProcessDuration.Record(0.0);
+        PipelineTelemetry.StallWarnings.Add(0);
+        PipelineTelemetry.StallKills.Add(0);
+        PipelineTelemetry.StallProcessDeaths.Add(0);
 
         _observed.Clear();
     }
@@ -187,6 +192,40 @@ public sealed class QualityGateMetricsMeterRegistrationTests : IDisposable
             "which Prometheus/Grafana Cloud silently drops for histograms and counters. " +
             "Cumulative is required for quality_gate_retries_total and quality_gate_evaluations_total " +
             "to appear as monotonically increasing counters in Grafana.");
+    }
+
+    /// <summary>
+    /// New stall/timeout instruments from issue #2367 must also be on PipelineTelemetry.SourceName.
+    /// </summary>
+    [Fact]
+    public void NewQgcStallInstruments_AreOnPipelineTelemetryMeter()
+    {
+        PipelineTelemetry.QgcProcessTimeouts.Add(1);
+        PipelineTelemetry.QgcProcessDuration.Record(1.0);
+        PipelineTelemetry.StallWarnings.Add(1);
+        PipelineTelemetry.StallKills.Add(1);
+        PipelineTelemetry.StallProcessDeaths.Add(1);
+
+        var instrumentNames = _observed.Select(o => o.InstrumentName).Distinct().ToList();
+        instrumentNames.Should().Contain("quality_gate.process.timeout",
+            "quality_gate.process.timeout must be on PipelineTelemetry meter");
+        instrumentNames.Should().Contain("quality_gate.process.duration",
+            "quality_gate.process.duration must be on PipelineTelemetry meter");
+        instrumentNames.Should().Contain("quality_gate.stall.warnings",
+            "quality_gate.stall.warnings must be on PipelineTelemetry meter");
+        instrumentNames.Should().Contain("quality_gate.stall.kills",
+            "quality_gate.stall.kills must be on PipelineTelemetry meter");
+        instrumentNames.Should().Contain("quality_gate.stall.process_deaths",
+            "quality_gate.stall.process_deaths must be on PipelineTelemetry meter");
+
+        var allOnPipelineMeter = _observed
+            .Where(o => o.InstrumentName.StartsWith("quality_gate.process.") ||
+                        o.InstrumentName.StartsWith("quality_gate.stall."))
+            .All(o => o.MeterName == PipelineTelemetry.SourceName);
+
+        allOnPipelineMeter.Should().BeTrue(
+            "all new QGC stall/timeout instruments must be defined on the PipelineTelemetry meter " +
+            "so AddMeter(PipelineTelemetry.SourceName) in the agent's Program.cs includes them");
     }
 
     private static string FindSourceFile(string relativePath)

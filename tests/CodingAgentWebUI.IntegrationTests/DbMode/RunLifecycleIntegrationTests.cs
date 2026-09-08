@@ -652,6 +652,12 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
         _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
             It.Is<PipelineRun>(r => r.RunId == runId.ToString()),
             It.IsAny<CancellationToken>()), Times.Once);
+
+        // TODO: Add _mockLabelService.Verify for the agent:done swap here. CompleteRunAsync now performs a
+        // best-effort label swap as a crash-window fallback (issue #2224). The parallel unit test
+        // CompleteRunAsync_RemovesRun_PersistsHistory_MarksIssueComplete was updated, but this integration
+        // counterpart was not. Without the assertion, an accidental removal of the label-swap code in
+        // CompleteRunAsync would not be caught at the integration-test level.
     }
 
     #endregion

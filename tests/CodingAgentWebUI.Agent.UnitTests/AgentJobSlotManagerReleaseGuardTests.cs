@@ -26,6 +26,11 @@ public class AgentJobSlotManagerReleaseGuardTests
 
         // Act: spawn many concurrent release attempts
         const int concurrency = 50;
+        // Each barrier participant blocks a thread in SignalAndWait, so the pool must be able to
+        // supply all `concurrency` threads at once; without this the barrier stalls for seconds while
+        // the pool grows one thread at a time (observed ~10s). Raising the minimum is benign.
+        ThreadPool.GetMinThreads(out var minWorker, out var minIo);
+        ThreadPool.SetMinThreads(Math.Max(minWorker, concurrency + 4), minIo);
         var barrier = new Barrier(concurrency);
         var tasks = Enumerable.Range(0, concurrency).Select(_ => Task.Run(async () =>
         {

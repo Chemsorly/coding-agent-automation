@@ -73,6 +73,9 @@ ARG BUILD_IMAGE_TAG=local
 ARG BUILD_REPOSITORY_URL=
 RUN echo "{\"commitSha\":\"${BUILD_COMMIT_SHA}\",\"branch\":\"${BUILD_BRANCH}\",\"buildTimestamp\":\"${BUILD_TIMESTAMP}\",\"runId\":\"${BUILD_RUN_ID}\",\"runNumber\":\"${BUILD_RUN_NUMBER}\",\"imageTag\":\"${BUILD_IMAGE_TAG}\",\"repositoryUrl\":\"${BUILD_REPOSITORY_URL}\"}" > build-info.json
 
+# Expose git SHA as SERVICE_VERSION for OTEL service.version resource attribute
+ENV SERVICE_VERSION=${BUILD_COMMIT_SHA}
+
 HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
     CMD curl -f http://localhost:8080/healthz || exit 1
 

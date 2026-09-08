@@ -65,7 +65,7 @@ public sealed class DispatchLoop
         IReadOnlyList<PendingWorkItemDto> pending;
         try
         {
-            pending = await _workItemClient.GetPendingAsync(maxResults: 50, ct);
+            pending = await _workItemClient.GetPendingAsync(maxResults: 50, ct: ct);
         }
         catch (Exception ex)
         {
@@ -154,6 +154,20 @@ public sealed class DispatchLoop
             return;
         }
 
+        // TimeoutSeconds guard: all rows should have a positive value since migration #2405
+        // back-filled any legacy zero rows to 1800. A zero or negative value here indicates
+        // either a pre-migration row that was not yet updated, or a bug in the enqueue path.
+        // Dispatching with TimeoutSeconds <= 0 would produce a K8s activeDeadlineSeconds of
+        // ~60s (just the grace period), killing the pod almost immediately — skip instead.
+        if (item.TimeoutSeconds <= 0)
+        {
+            Log.Warning(
+                "DispatchLoop: WorkItem {Id} has TimeoutSeconds={Timeout} (expected > 0); skipping dispatch. " +
+                "Run migration #2405 to back-fill zero rows or investigate the enqueue path.",
+                item.Id, item.TimeoutSeconds);
+            return;
+        }
+
         // Eligibility gate: verify the upstream issue is still open and has no ineligible labels.
         // Fires before ClaimAsync — read-only check precedes any mutation.
         // On failure (network error, missing config): fail open — skip without cancelling.
@@ -221,6 +235,8 @@ public sealed class DispatchLoop
                     // Do NOT call SafeRequeueAsync — the item is already Pending and must remain there.
                     // Calling RequeueAsync increments RetryCount on every starvation cycle, corrupting the
                     // field (issue #2129). Simply return; the next dispatch cycle will retry.
+                    WorkDistributionTelemetry.PvcPoolExhaustions.Add(1,
+                        new KeyValuePair<string, object?>("pool", "kiro"));
                     return;
                 }
 
@@ -235,7 +251,7 @@ public sealed class DispatchLoop
                 // To fix, perform the claim before acquiring the lock; if Job creation then fails,
                 // issue a compensating unclaim call to release the item. Alternatively, narrow the
                 // critical section to SelectAvailablePvcAsync + CreateJobAsync only.
-                claimed = await TryClaimWorkItemAsync(item.Id, jobName, ct);
+                claimed = await TryClaimWorkItemAsync(item.Id, jobName, ct, kiroPvcName: pvcName);
                 if (claimed is null) return;
 
                 // Build and create K8s Job
@@ -248,9 +264,7 @@ public sealed class DispatchLoop
                 {
                     WorkItemId = item.Id,
                     AgentSelector = selector,
-                    TimeoutSeconds = item.TimeoutSeconds > 0
-                        ? item.TimeoutSeconds
-                        : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
+                    TimeoutSeconds = item.TimeoutSeconds,
                     JobName = jobName,
                     ClaimedPvc = pvcName,
                     OrchestratorUrl = _options.OrchestratorUrl,
@@ -285,9 +299,7 @@ public sealed class DispatchLoop
             {
                 WorkItemId = item.Id,
                 AgentSelector = selector,
-                TimeoutSeconds = item.TimeoutSeconds > 0
-                    ? item.TimeoutSeconds
-                    : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
+                TimeoutSeconds = item.TimeoutSeconds,
                 JobName = jobName,
                 ClaimedPvc = pvcName,
                 OrchestratorUrl = _options.OrchestratorUrl,
@@ -315,12 +327,20 @@ public sealed class DispatchLoop
         }
 
         // Record dispatch metrics after successful Job creation
+        var now = DateTimeOffset.UtcNow;
         WorkDistributionTelemetry.RecordDispatchLatency(
-            dispatchedAt: DateTimeOffset.UtcNow,
+            dispatchedAt: now,
             originalEnqueuedAt: null,
             createdAt: item.CreatedAt,
             agentSelector: item.AgentSelector);
         WorkDistributionTelemetry.DispatcherPollCount.Add(1);
+        // TODO [WARNING]: ToDefaultRunType() throws UnreachableException for any unrecognised WorkItemTaskType.
+        // If a new enum member is added without updating the mapping, this call will throw and abort the
+        // post-dispatch metric block (the K8s job already exists at this point). Consider wrapping in
+        // try/catch to degrade gracefully and avoid leaving the dispatch in a partially-recorded state.
+        PipelineTelemetry.QueueWaitTime.Record(
+            (now - item.CreatedAt).TotalSeconds,
+            PipelineTelemetry.RunTypeTag(item.TaskType.ToDefaultRunType()));
     }
 
     /// <summary>
@@ -328,13 +348,19 @@ public sealed class DispatchLoop
     /// caller should skip this item (contention or deletion).
     /// </summary>
     private async Task<WorkItemClaimResponse?> TryClaimWorkItemAsync(
-        Guid workItemId, string jobName, CancellationToken ct)
+        Guid workItemId, string jobName, CancellationToken ct, string? kiroPvcName = null)
     {
         try
         {
             var claimed = await _workItemClient.ClaimAsync(
                 workItemId,
-                new ClaimWorkItemRequest { AssignedAgentId = jobName, K8sJobName = jobName, DispatchedAt = DateTimeOffset.UtcNow },
+                new ClaimWorkItemRequest
+                {
+                    AssignedAgentId = jobName,
+                    K8sJobName = jobName,
+                    DispatchedAt = DateTimeOffset.UtcNow,
+                    KiroPvcName = kiroPvcName
+                },
                 ct);
 
             if (claimed is null)
@@ -477,32 +503,20 @@ public sealed class DispatchLoop
     }
 
     /// <summary>
-    /// Returns <c>true</c> when the issue has no ineligible agent labels (per AC #2).
-    /// Checks for the four terminal/error labels explicitly named in the acceptance criteria.
+    /// Returns <c>true</c> when the issue has no ineligible agent labels.
+    /// Uses <see cref="AgentLabels.DispatchIneligibleLabels"/> as the single canonical source of truth.
     /// Absence of <c>agent:next</c> alone is NOT checked — the issue could legitimately have
     /// <c>agent:in-progress</c> (already dispatched by another WorkItem), which is not grounds
     /// for cancellation.
     /// </summary>
     private static bool IsIssueEligible(IssueDetail issue, out string reason)
     {
-        // Cancel only on the four ineligible labels named in AC #2.
-        ReadOnlySpan<string> ineligibleLabels =
-        [
-            AgentLabels.Error,           // "agent:error"
-            AgentLabels.NeedsRefinement, // "agent:needs-refinement"
-            AgentLabels.WontDo,          // "agent:wont-do"
-            AgentLabels.Cancelled        // "agent:cancelled"
-        ];
-
         foreach (var label in issue.Labels)
         {
-            foreach (var ineligible in ineligibleLabels)
+            if (AgentLabels.DispatchIneligibleLabels.Contains(label))
             {
-                if (string.Equals(label, ineligible, StringComparison.OrdinalIgnoreCase))
-                {
-                    reason = $"Issue has ineligible label: {label}";
-                    return false;
-                }
+                reason = $"Issue has ineligible label: {label}";
+                return false;
             }
         }
 

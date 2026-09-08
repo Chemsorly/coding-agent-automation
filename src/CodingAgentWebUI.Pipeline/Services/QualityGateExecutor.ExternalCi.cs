@@ -53,7 +53,6 @@ public partial class QualityGateExecutor
         var callbacks = context.Callbacks;
 
         if (!report.Compilation.Passed || !report.Tests.Passed
-            || !(report.SecurityScan?.Passed ?? true)
             || context.PipelineProvider == null)
             return report;
 
@@ -76,9 +75,39 @@ public partial class QualityGateExecutor
             var (ciPassed, ciStatus, ciLogPaths) = await PollAndHandleInfraRetryAsync(context, commitSha, config, callbacks, ct);
 
             // TODO: Duration includes infrastructure retry wait times — consider recording per-attempt duration for better histogram granularity
-            PipelineTelemetry.ExternalCiDuration.Record(
+            _externalCiDuration.Record(
                 ciPollStopwatch.Elapsed.TotalSeconds,
                 PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
+
+            // Conflict restart: PR is conflicted with main — re-queue as agent:next without creating a draft PR.
+            // run.CurrentStep and run.FinalLabel are set here so PostCompletionBookkeepingAsync picks them up.
+            // FinalizeDraftPrAsync, CollectFailureFeedbackAsync, and any further CI work are intentionally skipped.
+            if (ciStatus.State == PipelineRunState.ConflictRestart)
+            {
+                run.FinalLabel = AgentLabels.Next;
+                run.FailureReason = "PR conflicted with main — restarting pipeline";
+                run.CurrentStep = PipelineStep.ConflictRestart;
+                callbacks.EmitOutputLine("🔄 PR conflicted with main — re-queuing as agent:next for rework...");
+                callbacks.TransitionTo(PipelineStep.ConflictRestart);
+                // TODO [WARNING] (#2359 DotNetSpecialist): run.MarkCompleted() is not called here,
+                // unlike other terminal exits (e.g. Cancelled in ProceedToQualityGatesAsync and
+                // draft-PR/completed paths in PullRequestFinalizationService).
+                // run.CompletedAtOffset therefore stays null until BuildCompletionPayload defaults
+                // it to DateTimeOffset.UtcNow. Consumers that read run.CompletedAtOffset directly
+                // between this return and payload build will observe null for a terminal-like run.
+                // Fix: call run.MarkCompleted() here for consistency with other terminal paths.
+                return new QualityGateReport
+                {
+                    Compilation = report.Compilation,
+                    Tests = report.Tests,
+                    ExternalCi = new GateResult
+                    {
+                        GateName = "External CI",
+                        Passed = false,
+                        Details = "Conflict restart — PR conflicted with main; re-dispatched as agent:next"
+                    }
+                };
+            }
 
             ciGate = new GateResult
             {
@@ -97,7 +126,8 @@ public partial class QualityGateExecutor
         {
             ciGate = new GateResult
             {
-                GateName = "External CI", Passed = false,
+                GateName = "External CI",
+                Passed = false,
                 Details = $"External CI timed out after {config.ExternalCiTimeout}"
             };
         }
@@ -107,7 +137,8 @@ public partial class QualityGateExecutor
             _logger.Warning(ex, "Pipeline {RunId} external CI check failed, treating as gate failure", run.RunId);
             ciGate = new GateResult
             {
-                GateName = "External CI", Passed = false,
+                GateName = "External CI",
+                Passed = false,
                 Details = $"External CI error: {ex.Message}"
             };
         }
@@ -116,7 +147,6 @@ public partial class QualityGateExecutor
         {
             Compilation = report.Compilation,
             Tests = report.Tests,
-            SecurityScan = report.SecurityScan,
             ExternalCi = ciGate
         };
     }
@@ -204,6 +234,11 @@ public partial class QualityGateExecutor
         var ciPassed = ciStatus.State == PipelineRunState.Passed;
         IReadOnlyDictionary<long, string>? ciLogPaths = null;
 
+        // Conflict restart: PR is conflicted (dirty) with main — propagate immediately.
+        // No log writing, no branch-moved loop, no infra-retry.
+        if (ciStatus.State == PipelineRunState.ConflictRestart)
+            return (false, ciStatus, null);
+
         // Branch-moved cancellation: when CI is Cancelled and the branch HEAD has moved to a new
         // commit (e.g. a teammate push, a bot merge-from-main, or the pipeline's own retry commit
         // triggering GitHub's cancel-in-progress concurrency rule), re-enter CI polling on the new
@@ -241,6 +276,11 @@ public partial class QualityGateExecutor
 
             pollSha = currentHead;
             ciStatus = await PollCiWithNotStartedRetryAsync(context, pollSha, config, callbacks, pollCt);
+
+            // Conflict restart propagates from branch-moved re-poll too
+            if (ciStatus.State == PipelineRunState.ConflictRestart)
+                return (false, ciStatus, null);
+
             ciPassed = ciStatus.State == PipelineRunState.Passed;
         }
         // TODO [WARNING]: The two exit conditions from the branch-moved loop are handled identically:
@@ -305,6 +345,15 @@ public partial class QualityGateExecutor
             run.RunId, run.InfrastructureRetryCount, config.MaxInfrastructureRetries);
         callbacks.EmitOutputLine($"⚠️ CI infrastructure failure — auto-retrying ({run.InfrastructureRetryCount}/{config.MaxInfrastructureRetries})...");
 
+        // TODO [WARNING] (#2359 DotNetSpecialist): The empty-commit push below precedes
+        // PollCiWithNotStartedRetryAsync, which means if PollCiWithNotStartedRetryAsync detects
+        // a Conflicted PR on the infra-retry path, one unnecessary empty commit has already been
+        // sent to the conflicted branch. The ConflictRestart status still propagates correctly
+        // (returned by PollCiWithNotStartedRetryAsync and threaded back through
+        // PollAndHandleInfraRetryAsync → AppendExternalCiIfNeededAsync), but the "no empty commit
+        // pushed when ConflictRestart is returned" invariant holds only for the primary
+        // (non-infra-retry) code path, not here. To fix: call CheckForMergeConflictAsync before
+        // the CommitAllAsync/PushBranchAsync below, mirroring the primary path.
         await context.RepoProvider.CommitAllAsync(run.WorkspacePath!,
             $"chore: re-trigger CI after infrastructure failure ({run.InfrastructureRetryCount})",
             config.BlacklistedPaths, allowEmpty: true, ct,
@@ -343,9 +392,15 @@ public partial class QualityGateExecutor
     /// <summary>
     /// Polls CI with automatic retry when CI never starts (GitHub Actions sometimes doesn't trigger).
     /// First waits up to <see cref="PipelineConfiguration.CiNotStartedTimeout"/> for any runs to appear.
-    /// If no runs appear, creates an empty commit and re-pushes to trigger CI, repeating up to
+    /// If no runs appear, performs a branch-wide CI check (SHA=null) to detect runs that already passed
+    /// on a prior commit — if found, returns immediately without creating a re-trigger commit.
+    /// Otherwise creates an empty commit and re-pushes to trigger CI, repeating up to
     /// <see cref="PipelineConfiguration.CiNotStartedMaxRetries"/> times.
-    /// Once runs are detected (or retries exhausted), delegates to the full WaitForCompletionAsync.
+    /// Before each empty-commit push (and before the exhaustion failure), checks PR mergeability.
+    /// If <see cref="PrMergeabilityStatus.Conflicted"/>, returns <see cref="PipelineRunState.ConflictRestart"/>
+    /// immediately without pushing any commit.
+    /// When retries are exhausted, sets <see cref="PipelineRun.FailureReason"/> and returns a
+    /// deterministic <see cref="PipelineRunState.Failed"/> status without blocking on a full timeout.
     /// </summary>
     private async Task<PipelineRunStatus> PollCiWithNotStartedRetryAsync(
         QualityGateContext context,
@@ -375,14 +430,33 @@ public partial class QualityGateExecutor
                     run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
             }
 
-            // CI never started within the short timeout
+            // CI never started within the short timeout — check PR mergeability before taking any action.
+            // If the branch is conflicted (dirty), GitHub will not schedule CI regardless of how many
+            // empty commits are pushed. Return ConflictRestart immediately to avoid exhausting the retry budget.
+            var conflictCheckResult = await CheckForMergeConflictAsync(context, callbacks, ct);
+            if (conflictCheckResult is not null)
+                return conflictCheckResult;
+
             if (attempt >= maxRetries)
             {
-                _logger.Error("Pipeline {RunId} CI never started after {MaxRetries} re-push retries. " +
-                              "Falling back to full timeout wait.", run.RunId, maxRetries);
-                callbacks.EmitOutputLine($"⚠️ CI never started after {maxRetries} retries — waiting with full timeout as last resort...");
-                return await pipelineProvider.WaitForCompletionAsync(
-                    run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
+                // Deterministic failure — do NOT fall through to WaitForCompletionAsync.
+                // The re-trigger SHA also has no CI runs; blocking for ExternalCiTimeout here
+                // just wastes time before the run reaches FinalizeDraftPrAsync.
+                var msg = $"CI never started after {maxRetries} retries";
+                // TODO: run.FailureReason uses simple assignment here. This is correct today because
+                // AppendExternalCiIfNeededAsync exits early if any prior gate failed, so FailureReason
+                // is always null at this point. However, if ExecuteInfraRetryAsync sets FailureReason
+                // on a prior infra-retry pass and then re-enters PollCiWithNotStartedRetryAsync, this
+                // assignment will silently overwrite the infra-retry reason. Consider using ??= for
+                // consistency with the ??= guard in PullRequestFinalizationService. (#2317)
+                run.FailureReason = msg;
+                _logger.Error("Pipeline {RunId} {Message} — failing run", run.RunId, msg);
+                callbacks.EmitOutputLine($"❌ {msg} — failing run");
+                return new PipelineRunStatus
+                {
+                    State = PipelineRunState.Failed,
+                    Jobs = Array.Empty<PipelineJobResult>()
+                };
             }
 
             _logger.Warning(
@@ -391,13 +465,41 @@ public partial class QualityGateExecutor
             callbacks.EmitOutputLine(
                 $"⚠️ CI never started (attempt {attempt + 1}/{maxRetries}) — re-pushing to trigger GitHub Actions...");
 
-            // Final check before re-pushing — avoid racing with GitHub's delayed trigger
+            // Final check before re-pushing — avoid racing with GitHub's delayed trigger for the current SHA
             var lastCheck = await pipelineProvider.GetRunStatusAsync(run.BranchName!, pollSha, ct);
             if (lastCheck.State != PipelineRunState.Pending || lastCheck.Jobs.Count > 0)
             {
                 _logger.Information("Pipeline {RunId} CI appeared just before re-push (race avoided), proceeding to full wait", run.RunId);
                 return await pipelineProvider.WaitForCompletionAsync(
                     run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
+            }
+
+            // Branch-wide check: detect if CI is already running or passed on a prior SHA of this branch.
+            // Placed after the SHA-specific last-check guard so that a delayed trigger for the
+            // current SHA still takes the more precise SHA-specific completion-wait path.
+            var branchStatus = await pipelineProvider.GetRunStatusAsync(run.BranchName!, commitSha: null, ct);
+            if (branchStatus?.State == PipelineRunState.Passed)
+            {
+                _logger.Information(
+                    "Pipeline {RunId} CI already passed on a prior SHA on branch {Branch} — skipping re-trigger",
+                    run.RunId, run.BranchName);
+                callbacks.EmitOutputLine("✅ CI already passed on this branch — skipping re-trigger");
+                // TODO: branchStatus.Jobs reflects the prior-SHA run's job results, not the current HEAD's.
+                // A SHA-lineage guard would eliminate this stale-data risk. (#2317)
+                return branchStatus;
+            }
+
+            if (branchStatus?.State == PipelineRunState.Running)
+            {
+                // CI is actively running on a prior SHA — do NOT push a re-trigger commit.
+                // Pushing while CI is in-progress would hit GitHub's cancel-in-progress concurrency
+                // rule and kill the active run, causing a self-inflicted failure. Wait for it instead.
+                _logger.Information(
+                    "Pipeline {RunId} CI already running on branch {Branch} — waiting for completion instead of re-triggering",
+                    run.RunId, run.BranchName);
+                callbacks.EmitOutputLine("⏳ CI already running on this branch — waiting for completion...");
+                return await pipelineProvider.WaitForCompletionAsync(
+                    run.BranchName!, commitSha: null, config.ExternalCiTimeout, ct);
             }
 
             // Create empty commit and re-push
@@ -413,9 +515,62 @@ public partial class QualityGateExecutor
             catch (Exception shaEx) { _logger.Debug(shaEx, "Pipeline {RunId} could not read HEAD after re-push", run.RunId); }
         }
 
-        // Should not reach here, but satisfy the compiler
-        return await pipelineProvider.WaitForCompletionAsync(
-            run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
+        // Should not reach here — the attempt >= maxRetries branch always returns.
+        // Return a deterministic failure rather than an open-ended WaitForCompletionAsync call.
+        return new PipelineRunStatus { State = PipelineRunState.Failed, Jobs = Array.Empty<PipelineJobResult>() };
+    }
+
+    /// <summary>
+    /// Checks whether the PR associated with the current run is conflicted with the base branch.
+    /// Returns a <see cref="PipelineRunStatus"/> with <see cref="PipelineRunState.ConflictRestart"/>
+    /// if the PR is <see cref="PrMergeabilityStatus.Conflicted"/>, or <c>null</c> if the check
+    /// was skipped or returned a non-conflicted status.
+    /// </summary>
+    /// <remarks>
+    /// Skips the check (returns null) when:
+    /// <list type="bullet">
+    ///   <item><c>run.PullRequestNumber</c> is null — no PR yet (e.g. this is an infra retry before PR creation)</item>
+    ///   <item><see cref="PrMergeabilityStatus.Unknown"/> — GitHub hasn't computed mergeability yet; fall through to normal re-trigger</item>
+    ///   <item>Any other non-Conflicted status (Behind, Blocked, UpToDate) — fall through to normal re-trigger</item>
+    /// </list>
+    /// </remarks>
+    private async Task<PipelineRunStatus?> CheckForMergeConflictAsync(
+        QualityGateContext context,
+        IPipelineCallbacks callbacks,
+        CancellationToken ct)
+    {
+        var run = context.Run;
+
+        if (run.PullRequestNumber is null
+            || !int.TryParse(run.PullRequestNumber, out var prNum))
+        {
+            _logger.Debug("Pipeline {RunId} skipping mergeability check — PullRequestNumber is null or non-numeric", run.RunId);
+            return null;
+        }
+
+        PrMergeabilityStatus mergeability;
+        try
+        {
+            mergeability = await context.RepoProvider.IsPullRequestBehindBaseAsync(prNum, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // Non-fatal: if the mergeability check fails (e.g. network error), log and fall through to normal re-trigger.
+            _logger.Debug(ex, "Pipeline {RunId} mergeability check failed for PR #{PrNum}, falling through to normal re-trigger", run.RunId, prNum);
+            return null;
+        }
+
+        if (mergeability == PrMergeabilityStatus.Conflicted)
+        {
+            _logger.Warning("Pipeline {RunId} PR #{PrNum} is conflicted (dirty) — signalling conflict restart", run.RunId, prNum);
+            callbacks.EmitOutputLine("⚠️ PR has merge conflicts with main — restarting pipeline from beginning...");
+            return new PipelineRunStatus { State = PipelineRunState.ConflictRestart, Jobs = Array.Empty<PipelineJobResult>() };
+        }
+
+        // Unknown, Blocked, Behind, UpToDate — log at Debug and fall through to normal re-trigger
+        _logger.Debug("Pipeline {RunId} PR #{PrNum} mergeability is {Status} — continuing with normal re-trigger", run.RunId, prNum, mergeability);
+        return null;
     }
 
     /// <summary>

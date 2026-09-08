@@ -45,7 +45,7 @@ internal sealed partial class DispatchScheduler
                         IssueProviderId = template.IssueProviderId,
                         RepoProviderId = template.RepoProviderId,
                         BrainProviderId = template.BrainProviderId,
-                        InitiatedBy = "loop"
+                        InitiatedBy = InitiatedByConstants.LoopReview
                     };
                     // TODO: Add a test where templateProjectLookup is missing an entry for a pollable template
                     // to guard against regression (KeyNotFoundException) and validate the fallback behavior.

@@ -29,7 +29,7 @@
     <PackageVersion Include="Microsoft.Extensions.Resilience" Version="10.9.0" />
     <PackageVersion Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.22.0" />
     <PackageVersion Include="NetVips" Version="3.2.0" />
-    <PackageVersion Include="NGitLab" Version="12.1.0" />
+    <PackageVersion Include="NGitLab" Version="12.2.0" />
     <PackageVersion Include="Octokit" Version="14.0.0" />
     <PackageVersion Include="OpenTelemetry.Api" Version="1.18.0" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.18.0" />
@@ -64,19 +64,20 @@
     <!-- Pin AngleSharp to 1.5.2 to resolve GHSA-pgww-w46g-26qg (moderate severity
          vulnerability in 1.4.0, fixed in 1.5.0). AngleSharp is a transitive dependency
          of bunit; pinning via CentralPackageTransitivePinningEnabled. -->
-    <PackageVersion Include="AngleSharp" Version="1.7.2" />
+    <PackageVersion Include="AngleSharp" Version="1.8.0" />
     <PackageVersion Include="AwesomeAssertions" Version="9.6.0" />
     <PackageVersion Include="bunit" Version="2.9.0" />
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <PackageVersion Include="FsCheck" Version="3.4.0" />
     <PackageVersion Include="FsCheck.Xunit" Version="3.4.0" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Diagnostics.Testing" Version="10.9.0" />
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.9.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
     <PackageVersion Include="Microsoft.Playwright" Version="1.62.0" />
     <PackageVersion Include="Moq" Version="4.20.72" />
-    <PackageVersion Include="NGitLab.Mock" Version="12.1.0" />
-    <PackageVersion Include="Scriban.Signed" Version="7.2.6" />
+    <PackageVersion Include="NGitLab.Mock" Version="12.2.0" />
+    <PackageVersion Include="Scriban.Signed" Version="7.4.0" />
     <PackageVersion Include="WireMock.Net" Version="2.15.0" />
     <PackageVersion Include="NetArchTest.Rules" Version="1.3.2" />
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.14.0" />

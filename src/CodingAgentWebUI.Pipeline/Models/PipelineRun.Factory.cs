@@ -44,6 +44,7 @@ public sealed partial class PipelineRun
             RunId = p.RunId,
             IssueIdentifier = p.IssueIdentifier,
             IssueTitle = p.IssueTitle,
+            IssueUrl = p.IssueUrl,
             IssueProviderConfigId = p.IssueProviderConfigId,
             RepoProviderConfigId = p.RepoProviderConfigId,
             StartedAt = now.UtcDateTime,

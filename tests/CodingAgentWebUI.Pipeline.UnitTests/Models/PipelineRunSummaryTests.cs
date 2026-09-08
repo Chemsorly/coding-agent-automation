@@ -9,7 +9,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 public class PipelineRunSummaryTests
 {
     [Fact]
-    public void IsRework_WhenLinkedPullRequestSet_ReturnsTrue()
+    public void RunMode_WhenLinkedPullRequestSet_IsRework()
     {
         var run = new PipelineRun
         {
@@ -19,6 +19,7 @@ public class PipelineRunSummaryTests
             IssueProviderConfigId = "ip",
             RepoProviderConfigId = "rp",
             StartedAt = DateTime.UtcNow,
+            RunMode = RunMode.Rework,
             LinkedPullRequest = new LinkedPullRequest
             {
                 Number = 7,
@@ -30,11 +31,73 @@ public class PipelineRunSummaryTests
 
         var summary = run.ToSummary();
 
-        summary.IsRework.Should().BeTrue();
+        summary.RunMode.Should().Be(RunMode.Rework);
     }
 
     [Fact]
-    public void IsRework_WhenLinkedPullRequestNull_ReturnsFalse()
+    public void ToSummary_FlattensQualityGateOutcomes_FromLatestReport()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "r1",
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            LatestQualityReport = new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = true },
+                Tests = new GateResult { GateName = "Tests", Passed = false }
+            }
+        };
+
+        var summary = run.ToSummary();
+
+        summary.QualityGateOutcomes.Should().NotBeNull();
+        summary.QualityGateOutcomes!.Should().Contain(g => g.GateName == "Compilation" && g.Passed);
+        summary.QualityGateOutcomes!.Should().Contain(g => g.GateName == "Tests" && !g.Passed);
+    }
+
+    [Fact]
+    public void ToSummary_NoQualityReport_LeavesGateOutcomesNull()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "r1",
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow
+        };
+
+        run.ToSummary().QualityGateOutcomes.Should().BeNull();
+    }
+
+    [Fact]
+    public void ToSummary_CapturesBrainUsageFields()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "r1",
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            BrainContextLoaded = true,
+            BrainKnowledgeFileCount = 7
+        };
+
+        var summary = run.ToSummary();
+
+        summary.BrainContextLoaded.Should().BeTrue();
+        summary.BrainKnowledgeFileCount.Should().Be(7);
+    }
+
+    [Fact]
+    public void RunMode_WhenNoLinkedPullRequest_IsNew()
     {
         var run = new PipelineRun
         {
@@ -48,7 +111,7 @@ public class PipelineRunSummaryTests
 
         var summary = run.ToSummary();
 
-        summary.IsRework.Should().BeFalse();
+        summary.RunMode.Should().Be(RunMode.New);
     }
 
     [Fact]

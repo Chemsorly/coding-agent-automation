@@ -29,6 +29,7 @@ public sealed class ChatJobHandler
     private readonly Func<Task> _signalAgentReady;
     private readonly bool _isOpenCodeProvider;
     private readonly bool _isChatMode;
+    private readonly TimeSpan _chatTaskCompletionGracePeriod;
     private readonly Serilog.ILogger _logger;
 
     public ChatJobHandler(ChatJobHandlerDependencies deps)
@@ -50,6 +51,7 @@ public sealed class ChatJobHandler
         _signalAgentReady = deps.SignalAgentReady;
         _isOpenCodeProvider = deps.IsOpenCodeProvider;
         _isChatMode = deps.IsChatMode;
+        _chatTaskCompletionGracePeriod = deps.ChatTaskCompletionGracePeriod;
         _logger = deps.Logger;
     }
 
@@ -299,7 +301,7 @@ public sealed class ChatJobHandler
             // StopApplication() / _signalAgentReady() calls below and leaving the agent in an inconsistent state.
             // Consider wrapping the Task.WhenAny block with a try/catch(OperationCanceledException) that
             // falls through to the lifecycle completion calls.
-            var completed = await Task.WhenAny(chatTask, Task.Delay(TimeSpan.FromSeconds(10), _hostApplicationLifetime.ApplicationStopping));
+            var completed = await Task.WhenAny(chatTask, Task.Delay(_chatTaskCompletionGracePeriod, _hostApplicationLifetime.ApplicationStopping));
             if (completed != chatTask)
                 _logger.Warning("Chat task did not complete within timeout after cancellation for session {SessionId}", sessionId);
         }

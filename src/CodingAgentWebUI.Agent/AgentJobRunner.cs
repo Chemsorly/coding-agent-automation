@@ -52,8 +52,12 @@ public static class AgentJobRunner
             {
                 FinalStep = PipelineStep.Cancelled,
                 CompletedAt = DateTimeOffset.UtcNow,
-                IsRework = req.Assignment.LinkedPullRequest is not null,
-                FinalLabel = req.CancelledLabel
+                // RunMode: DetectReworkStep has not run at this point (exception fired before or during
+                // step execution setup). LinkedPullRequest from the assignment is the best available signal.
+                // RunMode.Retry (draft-only) is not detectable here; assignment carries no draft-PR marker.
+                RunMode = req.Assignment.LinkedPullRequest is not null ? RunMode.Rework : RunMode.New,
+                FinalLabel = req.CancelledLabel,
+                HarnessVersion = Environment.GetEnvironmentVariable("SERVICE_VERSION")
             };
         }
         catch (Exception ex)
@@ -63,7 +67,9 @@ public static class AgentJobRunner
                 FinalStep = PipelineStep.Failed,
                 FailureReason = ex.Message,
                 CompletedAt = DateTimeOffset.UtcNow,
-                IsRework = req.Assignment.LinkedPullRequest is not null
+                // RunMode: same reasoning as OperationCanceledException path above.
+                RunMode = req.Assignment.LinkedPullRequest is not null ? RunMode.Rework : RunMode.New,
+                HarnessVersion = Environment.GetEnvironmentVariable("SERVICE_VERSION")
             };
         }
     }

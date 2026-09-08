@@ -919,11 +919,15 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         await svc.StartLoopAsync();
 
-        // 100ms + 200ms + 300ms(capped) + 300ms(capped) = ~900ms for 4 calls; wait 2s for CI headroom
-        await Task.Delay(2000);
+        // Wait deterministically until enough poll cycles have run rather than sleeping a fixed 2s:
+        // each failing cycle increments callCount and the backoff cap keeps cycles ~300ms apart, so
+        // ~5 calls arrive within ~1s. The deadline is only a safety net.
+        var backoffDeadline = DateTime.UtcNow.AddSeconds(5);
+        while (callCount < 5 && DateTime.UtcNow < backoffDeadline)
+            await Task.Delay(20);
 
         svc.StopLoop();
-        await Task.Delay(200);
+        await Task.Delay(50);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
@@ -1007,8 +1011,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         // In multi-template mode, circuit breaker trips when ALL templates have failures >= threshold
         // Wait for both IsCircuitBroken AND StatusMessage to stabilize (ARM weak memory ordering
-        // can cause the test thread to observe IsCircuitBroken=true before StatusMessage is updated)
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        // can cause the test thread to observe IsCircuitBroken=true before StatusMessage is updated).
+        // 15-second deadline guards against CI runner load spikes where loop iterations run slower.
+        var deadline = DateTime.UtcNow.AddSeconds(15);
         while ((!svc.IsCircuitBroken || !svc.StatusMessage.Contains("paused", StringComparison.OrdinalIgnoreCase))
                && DateTime.UtcNow < deadline)
             await Task.Delay(50);
@@ -1017,7 +1022,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         Assert.Contains("paused", svc.StatusMessage, StringComparison.OrdinalIgnoreCase);
 
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(5);
+        deadline = DateTime.UtcNow.AddSeconds(15);
         while (svc.IsLoopActive && DateTime.UtcNow < deadline)
             await Task.Delay(50);
         cts.Cancel();
@@ -1068,8 +1073,12 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         svc.ResumeLoop();
         Assert.False(svc.IsCircuitBroken);
 
-        // Wait for successful poll after resume
-        deadline = DateTime.UtcNow.AddSeconds(5);
+        // Wait for successful poll after resume. Use a longer deadline here than the
+        // circuit-breaker-trip wait: after ResumeLoop(), the loop must complete a full
+        // SnapshotCycleConfigAsync (several mock store calls) before reaching ListOpenIssuesAsync
+        // for the 4th time. Under parallel test load this can take significantly longer than
+        // a simple state-flag transition.
+        deadline = DateTime.UtcNow.AddSeconds(15);
         while (callCount < 4 && DateTime.UtcNow < deadline)
             await Task.Delay(50);
 
@@ -1533,7 +1542,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -1580,7 +1589,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.Is<string>(id => id == sharedRepoId),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>()),
             Times.Once,
             "ExecuteAsync must be called exactly once per cycle for a shared repo — dedup guard prevents double-invocation");
@@ -1669,7 +1678,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var svc = CreateServiceWithHousekeeping(housekeepingMock.Object);
@@ -1686,7 +1695,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -1698,7 +1707,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var svc = CreateServiceWithHousekeeping(housekeepingMock.Object);
@@ -1716,7 +1725,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -1732,7 +1741,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
@@ -1755,7 +1764,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -1768,11 +1777,11 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, int, bool, int, CancellationToken>(
-                (_, _, _, _, _, limit, _, _, _) => capturedLimit = limit)
+                IReadOnlyList<PullRequestSummary>, int, bool, int, int, CancellationToken>(
+                (_, _, _, _, _, limit, _, _, _, _) => capturedLimit = limit)
             .Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
@@ -1804,11 +1813,11 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, int, bool, int, CancellationToken>(
-                (_, _, _, _, _, limit, _, _, _) => capturedLimit = limit)
+                IReadOnlyList<PullRequestSummary>, int, bool, int, int, CancellationToken>(
+                (_, _, _, _, _, limit, _, _, _, _) => capturedLimit = limit)
             .Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
@@ -1841,11 +1850,11 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, int, bool, int, CancellationToken>(
-                (_, _, _, _, _, limit, _, _, _) => capturedLimit = limit)
+                IReadOnlyList<PullRequestSummary>, int, bool, int, int, CancellationToken>(
+                (_, _, _, _, _, limit, _, _, _, _) => capturedLimit = limit)
             .Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
@@ -1884,11 +1893,11 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, int, bool, int, CancellationToken>(
-                (_, _, _, _, donePrs, _, _, _, _) => capturedDonePrs = donePrs)
+                IReadOnlyList<PullRequestSummary>, int, bool, int, int, CancellationToken>(
+                (_, _, _, _, donePrs, _, _, _, _, _) => capturedDonePrs = donePrs)
             .Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
@@ -1914,7 +1923,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>()), Times.Once);
         Assert.NotNull(capturedDonePrs);
         Assert.Empty(capturedDonePrs!);
@@ -1994,11 +2003,11 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, int, bool, int, CancellationToken>(
-                (_, _, _, _, donePrs, _, _, _, _) => capturedDonePrs = donePrs)
+                IReadOnlyList<PullRequestSummary>, int, bool, int, int, CancellationToken>(
+                (_, _, _, _, donePrs, _, _, _, _, _) => capturedDonePrs = donePrs)
             .Returns(Task.CompletedTask);
 
         _loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
@@ -2038,7 +2047,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>()), Times.Once);
 
         Assert.NotNull(capturedDonePrs);

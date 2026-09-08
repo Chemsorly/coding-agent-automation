@@ -3,7 +3,8 @@ using Microsoft.Playwright;
 namespace CodingAgentWebUI.E2ETests.PageObjects;
 
 /// <summary>
-/// Page object for the /consolidation page.
+/// Page object for the consolidation section, now embedded in the Pipelines page (/pipelines)
+/// after the legacy shell was retired (the standalone /consolidation route redirects here).
 /// Encapsulates navigation and interactions with consolidation template cards,
 /// harness suggestions section, run history table, and trigger buttons.
 /// </summary>
@@ -18,17 +19,22 @@ public sealed class ConsolidationPage
         _baseUrl = baseUrl;
     }
 
-    /// <summary>Navigates to the /consolidation page and waits for it to render.</summary>
+    /// <summary>
+    /// Navigates to the Pipelines page — where the consolidation section is embedded — and waits
+    /// for it to render. (The old /consolidation route still redirects here.)
+    /// </summary>
     public async Task NavigateAsync()
     {
-        await _page.GotoAsync($"{_baseUrl}/consolidation");
+        await _page.GotoAsync($"{_baseUrl}/pipelines");
 
-        // Wait for the page header to render
+        // Wait for the Pipelines header, then for the embedded consolidation section to attach
+        // (its own header is hidden by the cockpit theme, so wait for attachment, not visibility).
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
+        await _page.WaitForSelectorAsync(
+            ".consolidation-page", new() { Timeout = 15_000, State = WaitForSelectorState.Attached });
 
-        // Allow time for the Blazor Server circuit to connect and data to load.
-        // The consolidation page loads data in OnInitializedAsync which requires
-        // the SignalR circuit to be established first.
+        // Allow time for the Blazor Server circuit to connect and the section to load its data.
+        // Consolidation loads data in OnInitializedAsync, which requires the SignalR circuit first.
         await _page.WaitForTimeoutAsync(4000);
     }
 

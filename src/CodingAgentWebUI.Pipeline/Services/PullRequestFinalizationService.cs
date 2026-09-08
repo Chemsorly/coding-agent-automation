@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services.Prompts;
@@ -15,18 +16,41 @@ namespace CodingAgentWebUI.Pipeline.Services;
 public sealed class PullRequestFinalizationService
 {
     private readonly Serilog.ILogger _logger;
+    private readonly Counter<long> _brainSyncSkipped;
+    private readonly Histogram<double> _stepDuration;
+    private readonly Counter<long> _stepCount;
     private const string PipelineRunIdTag = "pipeline.run_id";
 
-    public PullRequestFinalizationService(Serilog.ILogger logger)
+    public PullRequestFinalizationService(Serilog.ILogger logger, IMeterFactory? meterFactory = null)
     {
         ArgumentNullException.ThrowIfNull(logger);
         _logger = logger;
+
+        if (meterFactory is not null)
+        {
+            var meter = meterFactory.Create(new MeterOptions(PipelineTelemetry.SourceName));
+            _brainSyncSkipped = meter.CreateCounter<long>("brain.sync.skipped", "{sync}", "Runs where post-run brain sync was skipped (tagged by reason)");
+            _stepDuration = meter.CreateHistogram<double>("pipeline.step.duration", "s", "Duration of individual pipeline steps",
+                advice: new InstrumentAdvice<double>
+                {
+                    HistogramBucketBoundaries = [5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600]
+                });
+            _stepCount = meter.CreateCounter<long>("pipeline.step.count", "{step}", "Pipeline step execution count");
+        }
+        else
+        {
+            _brainSyncSkipped = PipelineTelemetry.BrainSyncSkipped;
+            _stepDuration = PipelineTelemetry.StepDuration;
+            _stepCount = PipelineTelemetry.StepCount;
+        }
     }
 
     /// <summary>
     /// Runs the full PR creation and post-PR finalization flow: transition → create PR → post-PR sequence → set final state.
     /// Encapsulates the complete lifecycle from "ready to create PR" through to "run completed/failed".
     /// Sets CompletedAt, CurrentStep, FinalLabel, and (on failure) FailureReason on the run.
+    /// Emits <c>pipeline.step.duration{step_name="CreatePullRequest"}</c> covering only the PR creation
+    /// portion (up to but not including <see cref="RunPostPrSequenceAsync"/>).
     /// </summary>
     // TODO: Validate non-nullable parameters (run, report, prOrchestrator, repoProvider, agentProvider, config, feedbackService, emitOutputLine, transitionCallback) with ArgumentNullException.ThrowIfNull for fail-fast behavior on public API surface.
     public async Task RunFullPrCreationAsync(
@@ -55,6 +79,11 @@ public sealed class PullRequestFinalizationService
         activity?.SetTag("pipeline.pr.is_draft", isDraft);
         PipelineTelemetry.SetProjectTags(activity, run.ProjectId, run.ProjectName);
 
+        // Tracks only the PR creation portion — stopped before RunPostPrSequenceAsync runs.
+        var sw = Stopwatch.StartNew();
+        var finalStep = PipelineStep.Completed;
+        var prCreationSucceeded = false;
+
         try
         {
             // NOTE: QualityGateExecutor already transitions to PreparingForPullRequest
@@ -80,13 +109,42 @@ public sealed class PullRequestFinalizationService
                 return;
             }
 
-            var finalStep = isDraft ? PipelineStep.Failed : PipelineStep.Completed;
+            finalStep = isDraft ? PipelineStep.Failed : PipelineStep.Completed;
             if (isDraft)
             {
-                run.FailureReason = "Quality gates failed after max retries; draft PR created.";
+                // Preserve a more specific failure reason if already set (e.g., "CI never started after N retries").
+                // Fall back to the generic draft message for all other exhaustion paths.
+                run.FailureReason ??= "Quality gates failed after max retries; draft PR created.";
             }
             // Label swap (agent:done / agent:error) is handled by the orchestrator in ReportJobCompleted.
 
+            prCreationSucceeded = true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            _logger.Error(ex, "Pipeline {RunId} PR creation failed", run.RunId);
+            throw;
+        }
+        finally
+        {
+            sw.Stop();
+            var tags = PipelineTelemetry.BuildStepTags("CreatePullRequest", run);
+            // TODO: This finally block fires on OperationCanceledException as well as on the null-PR
+            // bail-out path (prUrl is null). On cancellation the elapsed time is partial and
+            // prCreationSucceeded=false, so the metric misrepresents the step as having run to
+            // completion. On the null-PR path no PR was actually created, yet pipeline.step.count
+            // is incremented. Consider guarding with a cancelled/skipped flag to suppress
+            // misleading observations on these paths.
+            _stepDuration.Record(sw.Elapsed.TotalSeconds, tags);
+            _stepCount.Add(1, tags);
+        }
+
+        if (!prCreationSucceeded)
+            return;
+
+        try
+        {
             await RunPostPrSequenceAsync(
                 new PostPrSequenceRequest
                 {
@@ -103,16 +161,24 @@ public sealed class PullRequestFinalizationService
                     TransitionCallback = transitionCallback
                 },
                 ct);
-
+        }
+        finally
+        {
+            // Always set terminal state regardless of whether RunPostPrSequenceAsync threw
+            // (including OperationCanceledException from brain sync or reflection steps).
+            // A run that reached PR creation must always exit with CompletedAt set so that
+            // DatabaseMaintenanceService retention sweeps can clean it up and the Active Runs
+            // panel does not accumulate ghost records with null CompletedAt.
             run.MarkCompleted();
             run.CurrentStep = finalStep;
+            // TODO: FinalLabel is set unconditionally here even when RunPostPrSequenceAsync threw and the
+            // OCE propagates out of RunFullPrCreationAsync. On the OCE path the caller (orchestrator)
+            // may apply its own label-swap via ReportJobCompleted, potentially conflicting with this
+            // unconditional assignment. The draft-path OCE case (FinalLabel = AgentLabels.Error) is also
+            // untested — a regression that incorrectly sets Done instead of Error on a cancelled draft run
+            // would not be caught. Consider whether FinalLabel should be conditioned on whether the finally
+            // is executing normally vs. due to an exception, or document the expected orchestrator behaviour.
             run.FinalLabel = isDraft ? AgentLabels.Error : AgentLabels.Done;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            _logger.Error(ex, "Pipeline {RunId} PR creation failed", run.RunId);
-            throw;
         }
     }
 
@@ -168,7 +234,7 @@ public sealed class PullRequestFinalizationService
                 : brainProvider is null ? "no_provider"
                 : brainSync is null ? "no_sync_service"
                 : "read_only";
-            PipelineTelemetry.BrainSyncSkipped.Add(1,
+            _brainSyncSkipped.Add(1,
                 new KeyValuePair<string, object?>("reason", skipReason));
             // TODO [WARNING]: The five log arguments (RunId, isDraft, brainProvider!=null, brainSync!=null, BrainReadOnly)
             // resolve to Information(string, params object[]) because Serilog's ILogger has generic overloads only up to
@@ -182,18 +248,20 @@ public sealed class PullRequestFinalizationService
         // No step transition for feedback — intentionally matches existing behavior
         if (!isDraft)
         {
-            await CollectFeedbackAsync(run, agentProvider, feedbackService, historyService, emitOutputLine, ct);
+            await CollectFeedbackAsync(run, agentProvider, feedbackService, historyService, emitOutputLine, ct, config);
         }
     }
 
     /// <summary>
     /// Generates an agent-written PR description and updates the PR body.
     /// Does not throw on failure — logs a warning and returns.
+    /// Emits <c>pipeline.step.duration{step_name="GeneratePrDescription"}</c> unconditionally (including on failure).
     /// </summary>
     public async Task GeneratePrDescriptionAsync(
         PipelineRun run, IAgentProvider agentProvider, IRepositoryProvider repoProvider,
         PipelineConfiguration config, Action<string> emitOutputLine, CancellationToken ct)
     {
+        var sw = Stopwatch.StartNew();
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("GeneratePrDescription");
         activity?.SetTag(PipelineRunIdTag, run.RunId);
 
@@ -258,17 +326,26 @@ public sealed class PullRequestFinalizationService
             activity?.AddException(ex);
             _logger.Warning(ex, "Pipeline {RunId} PR description generation failed, continuing", run.RunId);
         }
+        finally
+        {
+            sw.Stop();
+            var tags = PipelineTelemetry.BuildStepTags("GeneratePrDescription", run);
+            _stepDuration.Record(sw.Elapsed.TotalSeconds, tags);
+            _stepCount.Add(1, tags);
+        }
     }
 
     /// <summary>
     /// Executes the reflection step: builds a reflection prompt and asks the agent to review
     /// the run and enrich .brain/ knowledge. Accumulates token usage on the run.
     /// Does not throw on failure — logs a warning and returns.
+    /// Emits <c>pipeline.step.duration{step_name="Reflection"}</c> unconditionally (including on failure).
     /// </summary>
     public async Task RunReflectionAsync(
         PipelineRun run, IAgentProvider agentProvider, PipelineConfiguration config,
         Action<string> emitOutputLine, CancellationToken ct)
     {
+        var sw = Stopwatch.StartNew();
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("Reflection");
         activity?.SetTag(PipelineRunIdTag, run.RunId);
 
@@ -299,16 +376,25 @@ public sealed class PullRequestFinalizationService
             activity?.AddException(ex);
             _logger.Warning(ex, "Pipeline {RunId} reflection step failed, continuing with brain sync", run.RunId);
         }
+        finally
+        {
+            sw.Stop();
+            var tags = PipelineTelemetry.BuildStepTags("Reflection", run);
+            _stepDuration.Record(sw.Elapsed.TotalSeconds, tags);
+            _stepCount.Add(1, tags);
+        }
     }
 
     /// <summary>
     /// Syncs the brain repository after the run. Delegates to brainSync.SyncPostRunAsync.
     /// Does not throw on failure — logs a warning and sets run.BrainUpdatesPushed = false.
+    /// Emits <c>pipeline.step.duration{step_name="BrainSyncPostRun"}</c> unconditionally (including on failure).
     /// </summary>
     public async Task SyncBrainPostRunAsync(
         PipelineRun run, IBrainSyncService brainSync, IRepositoryProvider brainProvider,
         PipelineConfiguration config, Action<string> emitOutputLine, CancellationToken ct)
     {
+        var sw = Stopwatch.StartNew();
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("BrainSyncPostRun");
         activity?.SetTag(PipelineRunIdTag, run.RunId);
 
@@ -323,16 +409,30 @@ public sealed class PullRequestFinalizationService
             _logger.Warning(ex, "Pipeline {RunId} brain post-run sync failed", run.RunId);
             run.BrainUpdatesPushed = false;
         }
+        finally
+        {
+            sw.Stop();
+            var tags = PipelineTelemetry.BuildStepTags("BrainSyncPostRun", run);
+            _stepDuration.Record(sw.Elapsed.TotalSeconds, tags);
+            _stepCount.Add(1, tags);
+        }
     }
 
     /// <summary>
     /// Collects structured feedback from the agent about the run.
     /// On failure, creates a fallback feedback record via feedbackService.
+    /// Emits <c>pipeline.step.duration{step_name="FeedbackCollection"}</c> unconditionally (including on failure).
     /// </summary>
+    // TODO: The optional `config` parameter creates an asymmetry with QualityGateExecutor.RetryLoop, which always
+    // reads from context.Config. Any future call site that omits config will silently fall back to the 60s constant
+    // rather than the operator-configured value, bypassing project-level overrides. Consider making config required
+    // or moving this method to a context-based signature to match the failure path. (Warning from review #2225)
     public async Task CollectFeedbackAsync(
         PipelineRun run, IAgentProvider agentProvider, FeedbackService feedbackService,
-        IPipelineRunHistoryService? historyService, Action<string> emitOutputLine, CancellationToken ct)
+        IPipelineRunHistoryService? historyService, Action<string> emitOutputLine, CancellationToken ct,
+        PipelineConfiguration? config = null)
     {
+        var sw = Stopwatch.StartNew();
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("FeedbackCollection");
         activity?.SetTag(PipelineRunIdTag, run.RunId);
 
@@ -350,7 +450,7 @@ public sealed class PullRequestFinalizationService
                 {
                     Prompt = feedbackPrompt,
                     WorkspacePath = run.WorkspacePath!,
-                    Timeout = TimeSpan.FromSeconds(FeedbackConstraints.FailureFeedbackTimeoutSeconds),
+                    Timeout = TimeSpan.FromSeconds(config?.FeedbackTimeoutSeconds ?? FeedbackConstraints.FailureFeedbackTimeoutSeconds),
                     UseResume = true
                 },
                 ct,
@@ -366,6 +466,13 @@ public sealed class PullRequestFinalizationService
             _logger.Warning(ex, "Pipeline {RunId} feedback collection failed, using fallback", run.RunId);
             run.Feedback = feedbackService.CreateFallbackFeedback(FeedbackOutcome.Success,
                 $"Feedback collection failed: {ex.Message}", DateTime.UtcNow);
+        }
+        finally
+        {
+            sw.Stop();
+            var tags = PipelineTelemetry.BuildStepTags("FeedbackCollection", run);
+            _stepDuration.Record(sw.Elapsed.TotalSeconds, tags);
+            _stepCount.Add(1, tags);
         }
     }
 

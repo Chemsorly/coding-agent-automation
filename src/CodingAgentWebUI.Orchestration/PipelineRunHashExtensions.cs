@@ -69,6 +69,7 @@ public static class PipelineRunHashExtensions
 
             // Nullable strings
             F("issueTitle",                 run.IssueTitle ?? ""),
+            F("issueUrl",                   run.IssueUrl ?? ""),
             F("agentId",                    run.AgentId ?? ""),
             F("branchName",                 run.BranchName ?? ""),
             F("failureReason",              run.FailureReason ?? ""),
@@ -177,7 +178,7 @@ public static class PipelineRunHashExtensions
             ReviewPrDescription = NullIfEmpty(d.GetValueOrDefault("reviewPrDescription")),
             ReviewPrAuthor = NullIfEmpty(d.GetValueOrDefault("reviewPrAuthor")),
             DecompositionSource = NullIfEmpty(d.GetValueOrDefault("decompositionSource")),
-            InitiatedBy = d.GetValueOrDefault("initiatedBy") ?? "manual",
+            InitiatedBy = d.GetValueOrDefault("initiatedBy") ?? InitiatedByConstants.Manual,
             RunType = runType,
         };
 
@@ -205,6 +206,7 @@ public static class PipelineRunHashExtensions
         // Nullable strings
         run.BranchName = NullIfEmpty(d.GetValueOrDefault("branchName"));
         run.FailureReason = NullIfEmpty(d.GetValueOrDefault("failureReason"));
+        run.IssueUrl = NullIfEmpty(d.GetValueOrDefault("issueUrl"));
         run.PullRequestUrl = NullIfEmpty(d.GetValueOrDefault("pullRequestUrl"));
         run.PullRequestBody = NullIfEmpty(d.GetValueOrDefault("pullRequestBody"));
         run.PullRequestNumber = NullIfEmpty(d.GetValueOrDefault("pullRequestNumber"));

@@ -2,8 +2,10 @@ using AwesomeAssertions;
 using CodingAgentWebUI.JobController.Dispatch;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using k8s.Models;
 using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 
 namespace CodingAgentWebUI.JobController.UnitTests.Dispatch;
 
@@ -94,7 +96,7 @@ public sealed class DispatchLoopTests
             .ReturnsAsync(new[] { DefaultProviderConfig });
     }
 
-    private static PendingWorkItemDto MakePending(string agentSelector = "dotnet10,opencode", int timeoutSeconds = 0) =>
+    private static PendingWorkItemDto MakePending(string agentSelector = "dotnet10,opencode", int timeoutSeconds = 1800) =>
         new()
         {
             Id = ItemId,
@@ -580,12 +582,36 @@ public sealed class DispatchLoopTests
     }
 
     [Fact]
-    public async Task WhenItemTimeoutIsZero_K8sJob_ActiveDeadlineSeconds_UsesDefaultAgentTimeout()
+    public async Task WhenItemTimeoutIsZero_DispatchIsSkipped_NoK8sJobCreated()
     {
-        // item.TimeoutSeconds == 0 (not set) → falls back to PipelineConstants.DefaultAgentTimeout (30 min = 1800s)
-        // activeDeadlineSeconds == 1800 + 60 == 1860
+        // After migration #2405, TimeoutSeconds=0 rows should not exist in production
+        // (back-filled to 1800 by the migration). If a zero-timeout row somehow reaches
+        // dispatch (e.g., migration not yet applied, bug in enqueue path), dispatching it
+        // would produce a K8s activeDeadlineSeconds of ~60s — killing the pod almost instantly.
+        // The guard added in DispatchLoop.ProcessItemAsync skips such items with a warning log.
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending(timeoutSeconds: 0)]);
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // No K8s job should be created — the item is skipped by the TimeoutSeconds <= 0 guard.
+        _k8sClient.Verify(
+            c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        // No claim should be attempted either — the guard fires before any mutation.
+        _workItemClient.Verify(
+            c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task WhenItemHasDefaultTimeout_K8sJob_ActiveDeadlineSeconds_UsesDefaultAgentTimeout()
+    {
+        // Post-migration: rows that had TimeoutSeconds=0 were back-filled to 1800 (30 min default).
+        // Verify that a row with TimeoutSeconds=1800 produces activeDeadlineSeconds = 1800 + 60 = 1860.
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending(timeoutSeconds: 1800)]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
 
@@ -598,8 +624,14 @@ public sealed class DispatchLoopTests
         await loop.RunOneCycleAsync(CancellationToken.None);
 
         capturedJob.Should().NotBeNull();
-        // DefaultAgentTimeout = 30 min = 1800s; JobSpecBuilder adds 60s grace period → 1860
-        capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(1860L); // 1800 + 60
+        // TimeoutSeconds=1800 (the back-filled value); JobSpecBuilder adds 60s grace → 1800 + 60 = 1860
+        // TODO [WARNING]: Input and expected value are both hardcoded to 1800/1860. If DefaultAgentTimeout
+        // changes from 30 min, the test still passes because the magic input round-trips through
+        // JobSpecBuilder unchanged. Drive both values from PipelineConstants.DefaultAgentTimeout so a
+        // regression is caught: timeoutSeconds: (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds
+        // and expected: (long)PipelineConstants.DefaultAgentTimeout.TotalSeconds + 60.
+        // (TestQualityReviewer review [WARNING] @ DispatchLoopTests.cs:617)
+        capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(1860L);
     }
 
     // ─── Concurrency map: completed jobs within retention window ─────────────
@@ -916,19 +948,37 @@ public sealed class DispatchLoopTests
 
     // ─── Eligibility gate — ineligible labels (AC #2) ─────────────────────────
 
-    // TODO: Consolidate into a single [Theory]/[InlineData] and add ErrorMessage assertions
-    // that verify the specific label name is included in the cancellation reason.
-
-    /// <summary>AC #2: issue has agent:error — must cancel.</summary>
-    [Fact]
-    public async Task WhenIssueHasIneligibleLabel_Error_ShouldCancelWorkItem()
+    /// <summary>
+    /// AC #2: WorkItem whose issue has any ineligible label must be cancelled, not dispatched.
+    /// Covers all members of <see cref="AgentLabels.DispatchIneligibleLabels"/>:
+    /// agent:error, agent:needs-refinement, agent:wont-do, agent:cancelled, agent:done.
+    /// </summary>
+    [Theory]
+    [InlineData(nameof(AgentLabels.Error))]
+    [InlineData(nameof(AgentLabels.NeedsRefinement))]
+    [InlineData(nameof(AgentLabels.WontDo))]
+    [InlineData(nameof(AgentLabels.Cancelled))]
+    [InlineData(nameof(AgentLabels.Done))]
+    public async Task WhenIssueHasIneligibleLabel_ShouldCancelWorkItem(string labelPropertyName)
     {
+        var label = labelPropertyName switch
+        {
+            nameof(AgentLabels.Error) => AgentLabels.Error,
+            nameof(AgentLabels.NeedsRefinement) => AgentLabels.NeedsRefinement,
+            nameof(AgentLabels.WontDo) => AgentLabels.WontDo,
+            nameof(AgentLabels.Cancelled) => AgentLabels.Cancelled,
+            nameof(AgentLabels.Done) => AgentLabels.Done,
+            _ => throw new ArgumentOutOfRangeException(nameof(labelPropertyName))
+        };
+
         _issueProvider
             .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
-                Identifier = "1", Title = "Test", Description = "",
-                Labels = new[] { AgentLabels.Error }
+                Identifier = "1",
+                Title = "Test",
+                Description = "",
+                Labels = new[] { label }
             });
 
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
@@ -945,16 +995,23 @@ public sealed class DispatchLoopTests
         _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    /// <summary>AC #2: issue has agent:needs-refinement — must cancel.</summary>
+    // ─── Eligibility gate — agent:done blocks dispatch (regression) ─────────
+
+    /// <summary>
+    /// Regression: agent:done was previously absent from the ineligible set, allowing a completed
+    /// issue to be re-dispatched. Verify that a WorkItem for an agent:done issue is cancelled.
+    /// </summary>
     [Fact]
-    public async Task WhenIssueHasIneligibleLabel_NeedsRefinement_ShouldCancelWorkItem()
+    public async Task WhenIssueHasDoneLabel_ShouldCancelWorkItem_NotDispatch()
     {
         _issueProvider
             .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
-                Identifier = "1", Title = "Test", Description = "",
-                Labels = new[] { AgentLabels.NeedsRefinement }
+                Identifier = "1",
+                Title = "Test",
+                Description = "",
+                Labels = new[] { AgentLabels.Done }
             });
 
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
@@ -963,64 +1020,17 @@ public sealed class DispatchLoopTests
         var loop = CreateLoop();
         await loop.RunOneCycleAsync(CancellationToken.None);
 
+        // WorkItem must be cancelled
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
             It.Is<WorkItemStatusUpdate>(u => u.Status == nameof(WorkItemStatus.Cancelled)),
             It.IsAny<CancellationToken>()),
             Times.Once);
-        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
 
-    /// <summary>AC #2: issue has agent:wont-do — must cancel.</summary>
-    [Fact]
-    public async Task WhenIssueHasIneligibleLabel_WontDo_ShouldCancelWorkItem()
-    {
-        _issueProvider
-            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail
-            {
-                Identifier = "1", Title = "Test", Description = "",
-                Labels = new[] { AgentLabels.WontDo }
-            });
-
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakePending()]);
-
-        var loop = CreateLoop();
-        await loop.RunOneCycleAsync(CancellationToken.None);
-
-        _workItemClient.Verify(c => c.PostStatusAsync(
-            ItemId,
-            It.Is<WorkItemStatusUpdate>(u => u.Status == nameof(WorkItemStatus.Cancelled)),
-            It.IsAny<CancellationToken>()),
-            Times.Once);
-        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    /// <summary>AC #2: issue has agent:cancelled — must cancel.</summary>
-    [Fact]
-    public async Task WhenIssueHasIneligibleLabel_Cancelled_ShouldCancelWorkItem()
-    {
-        _issueProvider
-            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail
-            {
-                Identifier = "1", Title = "Test", Description = "",
-                Labels = new[] { AgentLabels.Cancelled }
-            });
-
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakePending()]);
-
-        var loop = CreateLoop();
-        await loop.RunOneCycleAsync(CancellationToken.None);
-
-        _workItemClient.Verify(c => c.PostStatusAsync(
-            ItemId,
-            It.Is<WorkItemStatusUpdate>(u => u.Status == nameof(WorkItemStatus.Cancelled)),
-            It.IsAny<CancellationToken>()),
-            Times.Once);
-        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        // K8s Job must NOT be created
+        _k8sClient.Verify(c => c.CreateJobAsync(
+            It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     // ─── Eligibility gate — regression: open issue dispatches normally (AC #3) ─
@@ -1107,15 +1117,25 @@ public sealed class DispatchLoopTests
 
         var item1 = new PendingWorkItemDto
         {
-            Id = id1, IssueIdentifier = "1", IssueProviderConfigId = "gh-1",
-            TaskType = WorkItemTaskType.Implementation, CreatedAt = DateTimeOffset.UtcNow,
-            AgentSelector = "dotnet10,opencode", RetryCount = 0, TimeoutSeconds = 0
+            Id = id1,
+            IssueIdentifier = "1",
+            IssueProviderConfigId = "gh-1",
+            TaskType = WorkItemTaskType.Implementation,
+            CreatedAt = DateTimeOffset.UtcNow,
+            AgentSelector = "dotnet10,opencode",
+            RetryCount = 0,
+            TimeoutSeconds = 1800
         };
         var item2 = new PendingWorkItemDto
         {
-            Id = id2, IssueIdentifier = "1", IssueProviderConfigId = "gh-1",
-            TaskType = WorkItemTaskType.Implementation, CreatedAt = DateTimeOffset.UtcNow,
-            AgentSelector = "dotnet10,opencode", RetryCount = 0, TimeoutSeconds = 0
+            Id = id2,
+            IssueIdentifier = "1",
+            IssueProviderConfigId = "gh-1",
+            TaskType = WorkItemTaskType.Implementation,
+            CreatedAt = DateTimeOffset.UtcNow,
+            AgentSelector = "dotnet10,opencode",
+            RetryCount = 0,
+            TimeoutSeconds = 1800
         };
 
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
@@ -1271,6 +1291,83 @@ public sealed class DispatchLoopTests
         _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ─── Metric / telemetry tests ─────────────────────────────────────────────
+    // These tests create a local MeterListener per test method (not a class-level field),
+    // so each listener is active only for the duration of its owning test method.
+    // Assertions use Contain-style checks, which tolerate stray cross-test recordings
+    // that may land in the bag from parallel tests on the same process-wide meter.
+    // A MetricsTestCollection ("Metrics") now exists in this assembly; if snapshot-delta
+    // assertions are ever needed here, extract these methods into a dedicated class and
+    // add [Collection("Metrics")] to that class.
+
+    [Fact]
+    public async Task WhenPvcPoolExhausted_ShouldIncrementPvcPoolExhaustionsCounter()
+    {
+        // Arrange — kiro template, single PVC already mounted by a live job
+        const string kiroYaml = """
+            - labels: dotnet10,kiro
+              image: chemsorly/coding-agent:kiro-dotnet10
+              providerType: kiro
+              maxConcurrent: 0
+            """;
+        var kiroStore = JobTemplateStore.LoadFromYaml(kiroYaml);
+        var oneVcOptions = new DispatchServiceOptions
+        {
+            Namespace = "test-ns",
+            RateLimitPerSecond = 100,
+            KiroPvcPool = ["kiro-pvc-0"]
+        };
+
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending("dotnet10,kiro")]);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList
+            {
+                Items = [MakeJobWithPvc("existing-job", "kiro-pvc-0")]
+            });
+
+        var loop = new DispatchLoop(
+            _workItemClient.Object, _configClient.Object, _k8sClient.Object,
+            kiroStore, oneVcOptions, _pvcSelectLock, _providerFactory.Object);
+
+        // Wire up MeterListener to capture Counter<long> measurements from WorkDistribution meter
+        var recordings = new ConcurrentBag<(string InstrumentName, long Value, string? Pool)>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName)
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
+        {
+            string? pool = null;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "pool") { pool = tag.Value?.ToString(); break; }
+            }
+            recordings.Add((instrument.Name, measurement, pool));
+        });
+        // TODO [WARNING]: listener.Start() MUST remain before RunOneCycleAsync. Start() triggers a
+        // retroactive InstrumentPublished callback for already-existing static instruments on
+        // WorkDistributionTelemetry.Meter, enabling measurement capture. Moving Start() after the
+        // await would miss all measurements and the assertion would silently pass vacuously.
+        listener.Start();
+
+        // Act
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // Assert — at least one PvcPoolExhaustions recording with value=1, pool=kiro
+        recordings.Should().Contain(
+            r => r.InstrumentName == "workdistribution.pvc_pool_exhaustions"
+                 && r.Value == 1L
+                 && r.Pool == "kiro",
+            "PvcPoolExhaustions must be incremented by 1 with pool=kiro when no PVC is available");
+        // TODO [WARNING]: Consider also asserting _k8sClient.Verify(c => c.CreateJobAsync(...), Times.Never)
+        // to ensure the early-return actually stopped dispatch. Without it, a future regression that removes
+        // the early-return would still pass this test if the counter fires before execution continues.
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     private static V1Job MakeJobWithPvc(string jobName, string pvcName) =>
@@ -1296,4 +1393,180 @@ public sealed class DispatchLoopTests
             },
             Status = new V1JobStatus { Active = 1 }
         };
+}
+
+// ─── Metric / telemetry tests ─────────────────────────────────────────────────
+// These tests use MeterListener directly (IDisposable).
+// The static PipelineTelemetry.Meter is process-wide, so concurrent tests may fire
+// QueueWaitTime.Record(...) while a listener is active. [Collection("Metrics")] serializes
+// execution against other test classes that listen on the same static meters, preventing
+// stray recordings from contaminating snapshot-delta or Contain-style assertions.
+
+[Collection("Metrics")]
+public sealed class DispatchLoopMetricTests : IDisposable
+{
+    private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
+    private readonly Mock<IPipelineApiConfigClient> _configClient = new();
+    private readonly Mock<IKubernetesJobClient> _k8sClient = new();
+    private readonly PvcSelectLock _pvcSelectLock = new();
+    private readonly Mock<IProviderFactory> _providerFactory = new();
+    private readonly Mock<IIssueProvider> _issueProvider = new();
+
+    private readonly JobTemplateStore _templateStore;
+    private readonly DispatchServiceOptions _options;
+
+    private readonly MeterListener _listener = new();
+    private readonly ConcurrentBag<(string InstrumentName, double Value, string? RunType)> _recordings = [];
+
+    private static readonly Guid MetricItemId = Guid.NewGuid();
+
+    private static readonly ProviderConfig MetricProviderConfig = new()
+    {
+        Id = "gh-metrics",
+        Kind = ProviderKind.Issue,
+        ProviderType = "GitHub",
+        DisplayName = "Metrics Test GitHub"
+    };
+
+    public DispatchLoopMetricTests()
+    {
+        _options = new DispatchServiceOptions
+        {
+            Namespace = "test-ns",
+            PollIntervalSeconds = 1,
+            RateLimitPerSecond = 100,
+            ChatPodConnectTimeoutSeconds = 120
+        };
+
+        const string yaml = """
+            - labels: dotnet10,opencode
+              image: chemsorly/coding-agent:opencode-dotnet10
+              providerType: opencode
+              maxConcurrent: 0
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+            """;
+        _templateStore = JobTemplateStore.LoadFromYaml(yaml);
+
+        // Default: no active K8s jobs
+        _k8sClient.Setup(c => c.ListJobsAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [] });
+
+        // Default: eligible issue (open, has agent:next)
+        _issueProvider
+            .Setup(p => p.IsIssueClosedAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _issueProvider
+            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "1",
+                Title = "Test issue",
+                Description = "",
+                Labels = new[] { AgentLabels.Next }
+            });
+        _issueProvider
+            .Setup(p => p.DisposeAsync())
+            .Returns(ValueTask.CompletedTask);
+
+        _providerFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(_issueProvider.Object);
+
+        _configClient
+            .Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { MetricProviderConfig });
+
+        // Listen on PipelineTelemetry.Meter ("CodingAgent.Pipeline") — QueueWaitTime is defined there.
+        _listener.InstrumentPublished = (instrument, listener) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
+                listener.EnableMeasurementEvents(instrument);
+        };
+
+        _listener.SetMeasurementEventCallback<double>((instrument, measurement, tags, _) =>
+        {
+            string? runType = null;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "run_type") { runType = tag.Value?.ToString(); break; }
+            }
+            _recordings.Add((instrument.Name, measurement, runType));
+        });
+
+        _listener.Start();
+    }
+
+    public void Dispose() => _listener.Dispose();
+
+    private DispatchLoop CreateLoop() =>
+        new(_workItemClient.Object, _configClient.Object, _k8sClient.Object,
+            _templateStore, _options, _pvcSelectLock, _providerFactory.Object);
+
+    // ─── AC: QueueWaitTime.Record() fires on successful dispatch ─────────────
+    // TODO [WARNING]: No test covers the negative path where TryCreateK8sJobAsync fails
+    // (created = false; return). A regression that moves QueueWaitTime.Record() above the
+    // early-return guard would go undetected. Add a companion test that stubs the K8s client
+    // to fail job creation and asserts that no "dispatch.queue.wait_time" recording appears.
+
+    /// <summary>
+    /// AC: QueueWaitTime.Record() is called with the correct wait duration and run_type tag
+    /// when a WorkItem is successfully dispatched.
+    ///
+    /// CreatedAt is set 30 seconds in the past so the recorded value is ~30 s. The upper bound
+    /// guards against a year-scale value that would result if the implementation accidentally
+    /// used UtcNow for both endpoints.
+    /// </summary>
+    [Fact]
+    public async Task WhenDispatchSucceeds_RecordsQueueWaitTime_WithCorrectRunTypeTag()
+    {
+        // Arrange
+        var createdAt = DateTimeOffset.UtcNow.AddSeconds(-30);
+        var item = new PendingWorkItemDto
+        {
+            Id = MetricItemId,
+            IssueIdentifier = "owner/repo#1",
+            IssueProviderConfigId = "gh-metrics",
+            TaskType = WorkItemTaskType.Implementation,
+            CreatedAt = createdAt,
+            AgentSelector = "dotnet10,opencode",
+            RetryCount = 0,
+            TimeoutSeconds = 1800
+        };
+
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+        _workItemClient.Setup(c => c.ClaimAsync(MetricItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkItemClaimResponse
+            {
+                WorkItemId = MetricItemId,
+                RunId = "run-metric",
+                PayloadJson = "{}",
+                OrchestratorUrl = "http://orchestrator:5000"
+            });
+        _workItemClient.Setup(c => c.PostLabelSwapAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _configClient.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var loop = CreateLoop();
+
+        // Act
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // Assert — a QueueWaitTime recording was captured for this dispatch
+        // TODO [WARNING]: The lower bound (25.0) does not verify that item.CreatedAt specifically
+        // was used as the start time. A regression substituting a different field (e.g., one 90 s
+        // in the past) would produce a value still within [25, 120) and pass. Tightening the range
+        // to e.g. >= 28.0 && < 40.0 would catch start-time substitution errors on non-loaded runners.
+        _recordings.Should().Contain(
+            r => r.InstrumentName == "dispatch.queue.wait_time"
+                 && r.Value >= 25.0    // tolerates up to 5s clock jitter below 30s nominal wait
+                 && r.Value < 120.0    // guards against year-scale value from mis-implementation
+                 && r.RunType == "implementation",
+            "QueueWaitTime must record the elapsed seconds from CreatedAt to dispatch with run_type='implementation'");
+    }
 }

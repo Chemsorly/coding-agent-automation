@@ -2117,7 +2117,11 @@ public class PipelineOrchestrationServiceTests : IDisposable
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Contain("Analysis failed after 2 attempt(s)");
         run.CompletedAt.Should().NotBeNull();
-        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:needs-refinement", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        // TODO [WARNING]: The label is asserted as a string literal "agent:needs-refinement" rather than
+        // AgentLabels.NeedsRefinement. A future rename of the constant that changes its string value would leave
+        // this assertion silently wrong. Use AgentLabels.NeedsRefinement instead (see AgentPhaseExecutorAnalysisTests
+        // for the consistent pattern).
     }
 
     [Fact]
@@ -3144,7 +3148,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             });
 
         _mockRepoProvider.Setup(p => p.UpdatePullRequestAsync(
-                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
     }
 
@@ -3214,7 +3218,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         _mockRepoProvider.Verify(p => p.UpdatePullRequestAsync(
-            42, It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
+            42, It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -3340,7 +3344,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         SetupReworkMocks();
 
         _mockRepoProvider.Setup(p => p.UpdatePullRequestAsync(
-                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("PR not found"));
 
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);

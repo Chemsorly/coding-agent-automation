@@ -1,9 +1,14 @@
+using CodingAgentWebUI.Api.Dispatch;
 using CodingAgentWebUI.Hub;
+using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 
 namespace CodingAgentWebUI.Api;
 
@@ -35,7 +40,29 @@ public static class AgentEndpoints
             .RequireAuthorization(ApiAuthPolicies.Operator);
 
         group.MapGet("/", GetAllAgents);
+        group.MapGet("/credential-pool", GetCredentialPool);
         group.MapPost("/{agentId}/chat-prompt", SendChatPrompt);
+    }
+
+    // ── GET /api/agents/credential-pool ──────────────────────────────────────
+
+    /// <summary>
+    /// GET /api/agents/credential-pool
+    /// Returns the Kiro credential (PVC) pool snapshot for the Fleet screen: configured slots,
+    /// how many are free, and how many are claimed by active work. Total 0 = pooling not configured.
+    /// </summary>
+    internal static async Task<Ok<CredentialPoolStatus>> GetCredentialPool(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        IConfiguration configuration,
+        CancellationToken ct)
+    {
+        var pool = DispatchServiceOptionsFactory.Create(configuration).KiroPvcPool;
+        if (pool.Count == 0)
+            return TypedResults.Ok(new CredentialPoolStatus(0, 0, 0));   // pooling not configured
+
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var availability = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, pool, ct);
+        return TypedResults.Ok(new CredentialPoolStatus(pool.Count, availability.AvailablePvcs.Count, availability.ClaimedCount));
     }
 
     // ── GET /api/agents ────────────────────────────────────────────────────
@@ -43,19 +70,46 @@ public static class AgentEndpoints
     /// <summary>
     /// GET /api/agents
     /// Returns every agent currently in the registry, regardless of status
-    /// (Idle, Busy and Disconnected entries are all included — the UI renders all three).
+    /// (Idle, Busy and Disconnected entries are all included — the UI renders all three),
+    /// enriched with issue/run/PR context from the active run service.
     /// Always 200; an empty registry returns an empty array.
     /// </summary>
     /// <remarks>
-    /// <see cref="AgentEntry"/> is returned as-is rather than through a projection DTO.
-    /// It is the exact type <see cref="IAgentRegistryService.GetAllAgents"/> hands back, so a
-    /// consumer implementing that interface over HTTP can rebuild its snapshot without a lossy
-    /// mapping layer. Its one non-serializable member, <c>SyncRoot</c>, is already
-    /// <c>[JsonIgnore]</c>d on the model.
+    /// <para>
+    /// Returns <see cref="AgentEntryDto"/> rather than <see cref="AgentEntry"/> directly.
+    /// The original rationale for returning <see cref="AgentEntry"/> as-is (no projection DTO)
+    /// no longer holds: the new enrichment fields (<c>ActiveIssueUrl</c>, <c>ActiveRunId</c>,
+    /// <c>ActivePullRequestUrl</c>, etc.) are not properties of <see cref="AgentEntry"/> and
+    /// require a join with <see cref="IOrchestratorRunService"/>, making a DTO projection the
+    /// only correct approach.
+    /// </para>
+    /// <para>
+    /// Active runs are fetched in a single <see cref="IOrchestratorRunService.GetActiveRuns"/>
+    /// call and indexed by <c>RunId</c> to avoid N+1 lookups in Redis-backed deployments.
+    /// When an agent's <c>ActiveJobId</c> maps to a run not currently in the service (e.g. run
+    /// completed between registry read and enrichment), all enrichment fields for that agent
+    /// are null — consistent with the requirement "Links must only render when data is present".
+    /// </para>
     /// </remarks>
-    internal static Ok<IReadOnlyList<AgentEntry>> GetAllAgents(IAgentRegistryService registry)
+    internal static Ok<IReadOnlyList<AgentEntryDto>> GetAllAgents(
+        IAgentRegistryService registry,
+        IOrchestratorRunService runService)
     {
-        return TypedResults.Ok(registry.GetAllAgents());
+        // Single round-trip to get all active runs, then O(1) per-agent lookup.
+        var activeRuns = runService.GetActiveRuns()
+            .ToDictionary(r => r.RunId, r => r, StringComparer.OrdinalIgnoreCase);
+
+        var dtos = registry.GetAllAgents()
+            .Select(entry =>
+            {
+                PipelineRun? run = null;
+                if (!string.IsNullOrEmpty(entry.ActiveJobId))
+                    activeRuns.TryGetValue(entry.ActiveJobId, out run);
+                return AgentEntryDto.From(entry, run);
+            })
+            .ToArray();
+
+        return TypedResults.Ok<IReadOnlyList<AgentEntryDto>>(dtos);
     }
 
     // ── POST /api/agents/{agentId}/chat-prompt ─────────────────────────────

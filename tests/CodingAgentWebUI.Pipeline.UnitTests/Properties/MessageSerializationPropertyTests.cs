@@ -78,7 +78,7 @@ public class MessageSerializationPropertyTests
         int retryCount,
         int filesChanged,
         bool brainUpdatesPushed,
-        bool isRework)
+        RunMode runMode)
     {
         var original = new JobCompletionPayload
         {
@@ -94,7 +94,7 @@ public class MessageSerializationPropertyTests
             LinesRemoved = 50,
             BrainUpdatesPushed = brainUpdatesPushed,
             AnalysisRecommendation = AnalysisGateResult.Ready,
-            IsRework = isRework,
+            RunMode = runMode,
             AnalysisConcerns = new[] { "concern1" },
             AnalysisBlockingIssues = new List<string>(),
             BlacklistedFilesDetected = new[] { ".agent/test" },
@@ -117,7 +117,7 @@ public class MessageSerializationPropertyTests
         deserialized.CompletedAt.Should().BeCloseTo(original.CompletedAt, TimeSpan.FromSeconds(1));
         deserialized.FilesChangedCount.Should().Be(original.FilesChangedCount);
         deserialized.BrainUpdatesPushed.Should().Be(original.BrainUpdatesPushed);
-        deserialized.IsRework.Should().Be(original.IsRework);
+        deserialized.RunMode.Should().Be(original.RunMode);
         deserialized.AnalysisConcerns.Should().BeEquivalentTo(original.AnalysisConcerns);
         deserialized.BlacklistedFilesDetected.Should().BeEquivalentTo(original.BlacklistedFilesDetected);
         deserialized.CodeReviewAgentsRun.Should().BeEquivalentTo(original.CodeReviewAgentsRun);

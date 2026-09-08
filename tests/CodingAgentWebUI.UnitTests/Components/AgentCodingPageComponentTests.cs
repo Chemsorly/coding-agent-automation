@@ -144,6 +144,7 @@ public class AgentCodingPageComponentTests : BunitContext
         Services.AddScoped<IEpicDrawerService, EpicDrawerService>();
         Services.AddScoped<AgentCodingPageService>();
         Services.AddScoped<NotificationService>();
+        Services.AddEmbeddedConsolidationDeps();
     }
 
     private void SetupDefaults()
@@ -204,7 +205,7 @@ public class AgentCodingPageComponentTests : BunitContext
     {
         var component = Render<AgentCoding>();
 
-        Assert.Contains("Agent Coding", component.Markup);
+        Assert.Contains("Pipelines", component.Markup);
         Assert.NotNull(component.Find("h1"));
     }
 
@@ -388,7 +389,7 @@ public class AgentCodingPageComponentTests : BunitContext
         // Dispose should not throw
         component.Dispose();
         Assert.True(component.IsDisposed);
-        Assert.Contains("Agent Coding", markupBeforeDispose);
+        Assert.Contains("Pipelines", markupBeforeDispose);
     }
 
     [Fact]
