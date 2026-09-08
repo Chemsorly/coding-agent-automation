@@ -168,39 +168,16 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         var hasQualityGateOutput = !(report.QgcResults.Any(r => r.Tests?.IsInfrastructureFailure == true)
             || report.Tests?.IsInfrastructureFailure == true);
 
-        var sb = new System.Text.StringBuilder();
-        sb.AppendLine($"Quality gates failed (attempt {attempt}/{maxRetries}):");
-        sb.AppendLine($"- Compilation: {(report.Compilation.Passed ? GateStatusPassed : GateStatusFailed)} ({report.Compilation.Details})");
-        sb.AppendLine($"- Tests: {(report.Tests?.Passed == true ? GateStatusPassed : GateStatusFailed)} ({report.Tests?.Details})");
-        if (report.SecurityScan != null)
-            sb.AppendLine($"- Security: {(report.SecurityScan.Passed ? GateStatusPassed : GateStatusFailed)} ({report.SecurityScan.Details})");
-        if (report.ExternalCi != null)
-            sb.AppendLine($"- External CI: {(report.ExternalCi.Passed ? GateStatusPassed : GateStatusFailed)} ({report.ExternalCi.Details})");
-        sb.AppendLine();
-        if (hasQualityGateOutput)
-        {
-            sb.AppendLine($"Diagnostic output has been written to `{AgentWorkspacePaths.QualityGatesOutputDirectory}/`.");
-            sb.AppendLine("List the files there and read the relevant ones.");
-        }
-        else
-        {
-            sb.AppendLine("No diagnostic output files were produced — the test process likely terminated abnormally before writing output.");
-            sb.AppendLine($"Check `{AgentWorkspacePaths.FullDiffFilePath}` for your changes and run the failing test command directly to diagnose.");
-        }
+        // Delegate to the bool overload to avoid duplicating the prompt body; then append history.
+        var basePrompt = BuildQualityGateRetryPrompt(report, attempt, maxRetries, hasQualityGateOutput);
 
-        // Append prior-attempt history when there is more than one entry. On the first retry
-        // there is exactly one entry (enqueued just before this call), so the guard `Count > 1`
-        // correctly suppresses the section on attempt 1.
-        // Append prior-attempt history; delegated to keep complexity within Sonar S3776 threshold.
+        if (priorRetryErrors is not { Count: > 1 })
+            return basePrompt;
+
+        // History section: insert before the "Before fixing, reflect:" block so the agent
+        // sees prior failures before being asked to diagnose.
+        var sb = new System.Text.StringBuilder(basePrompt);
         AppendPriorRetryHistory(sb, priorRetryErrors, attempt);
-
-        sb.AppendLine();
-        sb.AppendLine("Before fixing, reflect:");
-        sb.AppendLine("1. **What specific code change caused this failure?** (identify the exact lines)");
-        sb.AppendLine("2. **Why did you make that change?** (what was the intent)");
-        sb.AppendLine("3. **What is the minimal fix** that addresses the failure without reverting the intended behavior?");
-        sb.AppendLine();
-        sb.Append("Apply the targeted fix, then verify by running the failing command again.");
         return sb.ToString();
     }
 
@@ -214,7 +191,6 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         System.Text.StringBuilder sb, IReadOnlyList<string>? priorRetryErrors, int attempt)
     {
         if (priorRetryErrors is not { Count: > 1 }) return;
-
         sb.AppendLine();
         sb.AppendLine("**Prior attempt failures** (most recent last):");
         var recentErrors = priorRetryErrors.TakeLast(5).ToList();
