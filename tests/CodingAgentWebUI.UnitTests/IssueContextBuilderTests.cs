@@ -243,6 +243,48 @@ public class IssueContextBuilderTests
     }
 
     [Fact]
+    public async Task BuildIssueContextAsync_PreservesIssueUrl_ThroughImageExtraction()
+    {
+        // Regression test: the image-extraction path reconstructs a new IssueDetail object.
+        // Verify that IssueDetail.Url from the provider is NOT dropped during that reconstruction.
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "42",
+                Title = "Test Issue",
+                Description = "No images here.",
+                Labels = Array.Empty<string>(),
+                Url = "https://github.com/owner/repo/issues/42"
+            });
+        mockIssueProvider
+            .Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>());
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var issueConfig = new ProviderConfig
+        {
+            Id = "issue-url-test",
+            Kind = ProviderKind.Issue,
+            ProviderType = "GitHub",
+            DisplayName = "Test"
+        };
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("issue-url-test", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issueConfig);
+
+        var infra = CreateInfrastructure();
+        var result = await infra.BuildIssueContextAsync("42", "issue-url-test", CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.IssueDetail.Url.Should().Be("https://github.com/owner/repo/issues/42",
+            "IssueDetail.Url must be preserved through the image-extraction reconstruction in BuildIssueContextAsync");
+    }
+
+    [Fact]
     public async Task BuildIssueContextAsync_ExtractsImagesFromBodyAndComments()
     {
         var issueDescription = "See the error below:\n\n![screenshot](https://github.com/user-attachments/assets/abc123.png)\n\nPlease fix this.";
