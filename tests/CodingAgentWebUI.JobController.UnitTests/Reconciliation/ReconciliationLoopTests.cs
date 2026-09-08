@@ -604,6 +604,15 @@ public sealed class ReconciliationLoopTests
 
 // ─── Error / exception paths ──────────────────────────────────────────────────
 
+// TODO [WARNING]: [Collection("Metrics")] was removed from this class. If any test in
+// ReconciliationLoopErrorTests calls a code path that emits measurements on the static
+// PipelineTelemetry or WorkDistributionTelemetry meters, those recordings can bleed into
+// ReconciliationLoopMetricTests (which uses [Collection("Metrics")] with a static MeterListener),
+// causing spurious snapshot-delta failures (delta of 2 instead of expected 1). Before removing
+// this TODO, confirm that no method called by tests in this class ultimately calls
+// PipelineTelemetry.JobsFailed.Add or WorkDistributionTelemetry instruments.
+// If they do, re-add [Collection("Metrics")] to this class.
+// (TestQualityReviewer review [WARNING] @ ReconciliationLoopTests.cs:604)
 public sealed class ReconciliationLoopErrorTests
 {
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
@@ -1396,6 +1405,14 @@ public sealed class ReconciliationLoopErrorTests
 }
 
 // ─── Metric / telemetry tests ─────────────────────────────────────────────────
+// TODO [WARNING]: Three tests covering the GetJobPhase counter-fallback guard were deleted:
+//   - ReconcileOnce_RetryingJob_FailedCounterWithActiveCounter_IsNotTreatedAsFailed
+//   - ReconcileOnce_TerminalFailedJob_FailedCounterWithNoActive_IsTreatedAsFailed
+//   - ReconcileOnce_JobWithNullStatus_IsNotTreatedAsFailed
+// These covered the "Failed > 0 && (Active ?? 0) == 0" guard that prevents premature failure
+// of retrying jobs — a documented data-corruption risk. If the guard is still present in
+// production code (ReconciliationLoop), re-add these regression tests to prevent silent removal.
+// (TestQualityReviewer review [WARNING] @ ReconciliationLoopTests.cs:1396)
 // These tests use MeterListener directly and are placed in the "Metrics" collection
 // (see MetricsCollection.cs) so that they run serially with respect to any other
 // test class in this assembly that emits measurements on the same static meters.
