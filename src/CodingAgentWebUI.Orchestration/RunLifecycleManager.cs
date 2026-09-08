@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -18,7 +17,6 @@ namespace CodingAgentWebUI.Orchestration;
 /// - Agent registry (IAgentRegistryService)
 /// - Labels (ILabelService)
 /// - History (IPipelineRunHistoryService)
-/// - Dedup tracker (JobDeduplicationGuardService)
 /// </summary>
 public sealed class RunLifecycleManager : IRunLifecycleManager
 {
@@ -38,7 +36,6 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         ArgumentNullException.ThrowIfNull(deps.HistoryService);
         ArgumentNullException.ThrowIfNull(deps.Registry);
         ArgumentNullException.ThrowIfNull(deps.LabelService);
-        ArgumentNullException.ThrowIfNull(deps.Dispatcher);
         ArgumentNullException.ThrowIfNull(deps.Logger);
 
         _runService = deps.RunService;

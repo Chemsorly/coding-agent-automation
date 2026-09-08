@@ -90,12 +90,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         _connectionLifecycle.OnFetchModels += _chatJobHandler.HandleFetchModelsAsync;
         _connectionLifecycle.OnAssignConsolidationJob += _consolidationJobHandler.HandleAssignConsolidationJobAsync;
 
-        // OnAssignJob only in non-chat mode — chat pods must not receive work-item jobs
-        if (!isChatMode)
-        {
-            _connectionLifecycle.OnAssignJob += HandleAssignJobAsync;
-        }
-
         if (isChatMode)
         {
             var chatSessionId = Environment.GetEnvironmentVariable(AgentDefaults.EnvChatSessionId) ?? "";
@@ -138,36 +132,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         {
             await ShutdownAsync();
         }
-    }
-
-    private async Task HandleAssignJobAsync(JobAssignmentMessage message)
-    {
-        PipelineTelemetry.AgentJobsReceived.Add(1);
-
-        using var receiveActivity = PipelineTelemetry.ActivitySource.StartActivity(
-            "Agent.ReceiveJob",
-            ActivityKind.Server,
-            PipelineTelemetry.ExtractTraceContext(message.TraceContext));
-        receiveActivity?.SetTag("job_id", message.JobId);
-        receiveActivity?.SetTag("run_type", "implementation");
-
-        if (!_slotManager.TryAcquireJobSlot(message.JobId, out var busyWith))
-        {
-            await RejectJobBusyAsync(message.JobId, busyWith, receiveActivity);
-            return;
-        }
-
-        _logger.Information("Accepted job {JobId} for issue {IssueIdentifier}",
-            message.JobId, message.IssueIdentifier);
-
-        _slotManager.SetActiveJobAssignment(message, message.RunType);
-
-        if (!await SendJobAcceptedAsync(message.JobId, receiveActivity))
-            return;
-
-        var jobToken = _slotManager.JobCancellationToken!.Value;
-        var activeTask = Task.Run(async () => await RunJobTaskAsync(message, jobToken), CancellationToken.None);
-        _slotManager.SetActiveJobTask(activeTask);
     }
 
     private async Task RejectJobBusyAsync(string jobId, string? busyWith, Activity? activity)

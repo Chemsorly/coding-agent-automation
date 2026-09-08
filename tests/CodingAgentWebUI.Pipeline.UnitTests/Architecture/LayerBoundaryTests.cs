@@ -253,7 +253,6 @@ public partial class LayerBoundaryTests
         {
             "AgentEntry.cs",                        // declares SyncRoot
             "AgentRegistryService.cs",              // Register(), UpdateHeartbeat(), TransitionStatus()
-            "AgentReservationService.cs",           // SelectAgent() — renamed from JobDeduplicationGuardService
             "RunLifecycleManager.cs",               // ActiveJobId mutation on assignment/completion
             "AgentOrphanRecoveryService.cs",        // check-and-set ActiveJobId on reconnect; Spec 046 partial migration
             "AgentEndpoints.cs",                    // sets ActiveChatSessionId on chat-resume; Spec 046 partial migration

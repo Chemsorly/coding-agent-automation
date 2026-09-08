@@ -13,7 +13,6 @@ namespace CodingAgentWebUI.Pipeline.Services;
 public sealed class ConsolidationService : IConsolidationService, IConsolidationRunTracker
 {
     private readonly ILogger _logger;
-    private readonly IConsolidationDispatchService? _dispatcher;
     private readonly IConsolidationRunStore _runStore;
     private readonly IHarnessSuggestionStore _harnessSuggestionStore;
     private readonly IConsolidationWorkspaceManager _workspaceManager;
@@ -49,7 +48,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         _logger = deps.Logger;
         _runStore = deps.RunStore;
         _harnessSuggestionStore = deps.HarnessSuggestionStore;
-        _dispatcher = deps.Dispatcher;
         _workspaceManager = deps.WorkspaceManager ?? new ConsolidationWorkspaceManager(deps.Logger, deps.Config);
         _feedbackCache = deps.FeedbackCache ?? new ConsolidationFeedbackCache(deps.Logger, deps.RunStore, deps.RunHistoryService);
         _templateResolver = new ConsolidationTemplateResolver(deps.ProjectStore);
@@ -160,62 +158,25 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     /// <summary>
     /// Dispatches a consolidation run to an idle agent. Handles queued/failed/exception outcomes.
     /// </summary>
-    private async Task<DispatchOutcome> DispatchRunAsync(
+    private Task<DispatchOutcome> DispatchRunAsync(
         ConsolidationRun run,
         (ConsolidationRunType, string?) key,
         ConsolidationRunType type,
         string templateName,
         CancellationToken ct)
     {
-        if (_dispatcher is null)
-            return DispatchOutcome.NoDispatcher;
-
-        try
-        {
-            var feedbackDataJson = type == ConsolidationRunType.HarnessSuggestions
-                ? _feedbackCache.GetFeedbackDataForRun(run.RunId)
-                : null;
-            var workspacePath = _workspaceManager.GetWorkspacePath(run.RunId);
-
-            var result = await _dispatcher.TryDispatchAsync(
-                run, type, string.IsNullOrEmpty(run.TemplateId) ? (TemplateId?)null : (TemplateId)run.TemplateId, feedbackDataJson, workspacePath, ct);
-
-            if (result == ConsolidationDispatchResult.Queued)
-            {
-                run.Status = ConsolidationRunStatus.Queued;
-                await PersistRunAsync(run, ct);
-                // Cache-only clear: the run remains active (in _runningRuns and in the DB as Queued).
-                // Full rollback is not appropriate here — the dispatcher will pick it up when an
-                // agent becomes available. The feedback data is no longer needed in memory since
-                // the payload was already serialized and handed to the dispatcher queue.
-                _feedbackCache.ClearFeedbackDataForRun(run.RunId);
-                _logger.Information(
-                    "Consolidation run {RunId} queued: {Type} for {TemplateName} — waiting for idle agent",
-                    run.RunId, type, templateName);
-                OnChange?.Invoke();
-                return DispatchOutcome.Queued;
-            }
-
-            if (result == ConsolidationDispatchResult.Failed)
-            {
-                _logger.Warning("Consolidation run {RunId} dispatch failed for {Type}/{TemplateName}", run.RunId, type, templateName);
-                await RollbackRunAsync(key, run.RunId);
-                return DispatchOutcome.Failed;
-            }
-
-            // Cache-only clear: dispatch succeeded — the run is live and will be tracked via
-            // SignalR/UpdateRunAsync. The feedback payload was consumed by the dispatcher;
-            // no rollback of _runningRuns or the persisted record is needed.
-            _feedbackCache.ClearFeedbackDataForRun(run.RunId);
-            return DispatchOutcome.Success;
-        }
-        catch (Exception)
-        {
-            // Exception is propagated to the caller (TriggerAsync); logging here would cause
-            // duplicate log entries. Cleanup is done before rethrowing.
-            await RollbackRunAsync(key, run.RunId);
-            throw;
-        }
+        // SignalR agent-pool dispatch was removed (issue #2325). K8s mode dispatches via
+        // IWorkDistributor (the WorkItem queue) — that path is handled by the K8s Job controller,
+        // not by ConsolidationService. This method is retained as a no-op so callers compile.
+        // TODO: [WARNING] Returning NoDispatcher causes TriggerAsync to treat this as success
+        // (logs "created", fires OnChange, returns the run). The run is persisted and added to
+        // _runningRuns, which will block subsequent TriggerAsync calls for the same (type,
+        // templateId) key for the process lifetime. If TriggerAsync is ever called in K8s mode,
+        // the run will be silently wedged. Either remove this method and its call site entirely
+        // (replacing with a direct comment that K8s dispatch is external), or return
+        // DispatchOutcome.Failed so the caller rolls back _runningRuns and returns null.
+        // Tracked by review findings for issue #2325.
+        return Task.FromResult(DispatchOutcome.NoDispatcher);
     }
 
     /// <inheritdoc />
@@ -313,9 +274,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
 
             var key = (run.Type, run.TemplateId);
             _runningRuns.TryRemove(key, out _);
-
-            if (_dispatcher is not null)
-                await _dispatcher.NotifyRunCancelledAsync(runId, ct);
 
             _logger.Information("Consolidation run {RunId} cancelled", runId.Value);
             OnChange?.Invoke();

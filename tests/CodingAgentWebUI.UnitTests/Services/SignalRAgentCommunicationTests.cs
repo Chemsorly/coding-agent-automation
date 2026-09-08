@@ -1,12 +1,8 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.Health;
-using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.SignalR;
 using Moq;
 
@@ -35,17 +31,6 @@ public class SignalRAgentCommunicationTests
     }
 
     [Fact]
-    public async Task AssignJobAsync_DelegatesToHubContext()
-    {
-        var job = CreateTestJob();
-
-        await _comm.AssignJobAsync("conn-1", job, CancellationToken.None);
-
-        _mockClients.Verify(c => c.Client("conn-1"), Times.Once);
-        _mockClient.Verify(c => c.AssignJob(job), Times.Once);
-    }
-
-    [Fact]
     public async Task RequestFetchModelsAsync_DelegatesToHubContext()
     {
         var request = new FetchModelsRequest { RequestId = "req-1" };
@@ -54,15 +39,6 @@ public class SignalRAgentCommunicationTests
 
         _mockClients.Verify(c => c.Client("conn-1"), Times.Once);
         _mockClient.Verify(c => c.RequestFetchModels(request), Times.Once);
-    }
-
-    [Fact]
-    public async Task ForceDisconnectAsync_DelegatesToHubContext()
-    {
-        await _comm.ForceDisconnectAsync("conn-1", CancellationToken.None);
-
-        _mockClients.Verify(c => c.Client("conn-1"), Times.Once);
-        _mockClient.Verify(c => c.ForceDisconnect(), Times.Once);
     }
 
     [Fact]
@@ -80,24 +56,6 @@ public class SignalRAgentCommunicationTests
         var act = () => new SignalRAgentCommunication(null!);
 
         act.Should().Throw<ArgumentNullException>();
-    }
-
-    [Fact]
-    public async Task AssignJobAsync_NullConnectionId_ThrowsArgumentNullException()
-    {
-        var job = CreateTestJob();
-
-        var act = () => _comm.AssignJobAsync(null!, job, CancellationToken.None);
-
-        await act.Should().ThrowAsync<ArgumentNullException>();
-    }
-
-    [Fact]
-    public async Task AssignJobAsync_NullJob_ThrowsArgumentNullException()
-    {
-        var act = () => _comm.AssignJobAsync("conn-1", null!, CancellationToken.None);
-
-        await act.Should().ThrowAsync<ArgumentNullException>();
     }
 
     [Fact]
@@ -159,38 +117,7 @@ public class SignalRAgentCommunicationTests
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
 
-    private static JobAssignmentMessage CreateTestJob() => new()
-    {
-        JobId = "job-1",
-        IssueIdentifier = "42",
-        IssueDetail = new IssueDetail { Identifier = "42", Title = "Test", Description = "", Labels = [] },
-        ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
-        IssueComments = [],
-        RepoProviderConfigId = "rp",
-        AgentProviderConfigId = "ap",
-        ProviderConfigs = [],
-        PipelineConfiguration = new PipelineConfiguration(),
-        InitiatedBy = "test",
-        QualityGateConfigs = []
-    };
-
-    private static ConsolidationJobMessage CreateTestConsolidationJob() => new()
-    {
-        JobId = "consolidation-job-1",
-        Type = ConsolidationRunType.BrainConsolidation,
-        ProviderConfigs = [],
-        PipelineConfiguration = new PipelineConfiguration()
-    };
-
-    // ── Null guards for ForceDisconnectAsync and RequestFetchModelsAsync ───
-
-    [Fact]
-    public async Task ForceDisconnectAsync_NullConnectionId_ThrowsArgumentNullException()
-    {
-        var act = () => _comm.ForceDisconnectAsync(null!, CancellationToken.None);
-
-        await act.Should().ThrowAsync<ArgumentNullException>();
-    }
+    // ── Null guards for RequestFetchModelsAsync ───────────────────────────
 
     [Fact]
     public async Task RequestFetchModelsAsync_NullConnectionId_ThrowsArgumentNullException()
@@ -209,4 +136,12 @@ public class SignalRAgentCommunicationTests
 
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
+
+    private static ConsolidationJobMessage CreateTestConsolidationJob() => new()
+    {
+        JobId = "consolidation-job-1",
+        Type = ConsolidationRunType.BrainConsolidation,
+        ProviderConfigs = [],
+        PipelineConfiguration = new PipelineConfiguration()
+    };
 }

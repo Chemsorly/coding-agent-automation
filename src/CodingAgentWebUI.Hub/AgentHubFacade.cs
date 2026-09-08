@@ -1,7 +1,6 @@
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -35,7 +34,6 @@ public sealed class AgentHubFacade : IAgentHubFacade
         ArgumentNullException.ThrowIfNull(deps);
         ArgumentNullException.ThrowIfNull(deps.Registry);
         ArgumentNullException.ThrowIfNull(deps.RunService);
-        ArgumentNullException.ThrowIfNull(deps.Dispatcher);
         ArgumentNullException.ThrowIfNull(deps.HistoryService);
         ArgumentNullException.ThrowIfNull(deps.ConfigStore);
         ArgumentNullException.ThrowIfNull(deps.ProviderFactory);

@@ -803,10 +803,7 @@ public sealed class AgentHubGateKestrelFactory : WebApplicationFactory<Program>
 
             services.RemoveAll<Pipeline.Interfaces.IQualityGateValidator>();
             services.AddSingleton(new Mock<Pipeline.Interfaces.IQualityGateValidator>().Object);
-
-            services.RemoveAll<Pipeline.Interfaces.IConsolidationDispatchService>();
-            services.AddSingleton<Pipeline.Interfaces.IConsolidationDispatchService>(
-                new GateNoOpConsolidationDispatchService());
+            // IConsolidationDispatchService was removed in issue #2325 — no stub needed.
 
             // Register a no-op IKubernetesJobClient so DispatchLifecycleService can be
             // constructed at startup without a real K8s cluster.
@@ -882,17 +879,4 @@ public sealed class AgentHubGateKestrelFactory : WebApplicationFactory<Program>
     {
         public Task ProbeAsync(CancellationToken ct) => Task.CompletedTask;
     }
-}
-
-// ── No-op stubs ─────────────────────────────────────────────────────────────
-
-file sealed class GateNoOpConsolidationDispatchService : CodingAgentWebUI.Pipeline.Interfaces.IConsolidationDispatchService
-{
-    public Task<CodingAgentWebUI.Pipeline.Interfaces.ConsolidationDispatchResult> TryDispatchAsync(Pipeline.Models.ConsolidationRun r, Pipeline.Models.ConsolidationRunType t,
-        Pipeline.Models.TemplateId? tid, string? f, string w, CancellationToken ct)
-        => Task.FromResult(CodingAgentWebUI.Pipeline.Interfaces.ConsolidationDispatchResult.Failed);
-    public Task<bool> TryDispatchToAgentAsync(Pipeline.Models.RunId r, Pipeline.Models.ConsolidationRunType t, Pipeline.Models.TemplateId? tid,
-        string w, Pipeline.Models.AgentId a, CancellationToken ct)
-        => Task.FromResult(false);
-    public Task NotifyRunCancelledAsync(Pipeline.Models.RunId r, CancellationToken ct) => Task.CompletedTask;
 }

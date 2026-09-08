@@ -43,11 +43,6 @@ public sealed class HubConnectionManager : IHubConnectionManager
     private readonly Serilog.ILogger _logger;
 
     /// <summary>
-    /// Fired when the orchestrator assigns a job to this agent.
-    /// </summary>
-    public event Func<JobAssignmentMessage, Task>? OnAssignJob;
-
-    /// <summary>
     /// Fired when the orchestrator requests cancellation of the current job.
     /// </summary>
     public event Func<string, Task>? OnCancelJob;
@@ -181,21 +176,12 @@ public sealed class HubConnectionManager : IHubConnectionManager
     /// <summary>Registers all client-side handlers for Orchestrator → Agent messages.</summary>
     private void RegisterClientHandlers()
     {
-        _connection.On<JobAssignmentMessage>("AssignJob", HandleAssignJobAsync);
         _connection.On<JobId>("CancelJob", HandleCancelJobAsync);
         _connection.On<ChatPromptMessage>("AssignChatPrompt", HandleAssignChatPromptAsync);
         _connection.On<string>("CancelChat", HandleCancelChatAsync);
         _connection.On<FetchModelsRequest>("RequestFetchModels", HandleRequestFetchModelsAsync);
         _connection.On<string, ConsolidationJobMessage>("AssignConsolidationJob", HandleAssignConsolidationJobAsync);
         _connection.On("ForceDisconnect", HandleForceDisconnectAsync);
-    }
-
-    private async Task HandleAssignJobAsync(JobAssignmentMessage message)
-    {
-        _logger.Information("Received job assignment {JobId} for issue {IssueIdentifier}",
-            message.JobId, message.IssueIdentifier);
-        if (OnAssignJob is not null)
-            await OnAssignJob(message);
     }
 
     private async Task HandleCancelJobAsync(JobId jobId)

@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using AwesomeAssertions;
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -33,7 +32,6 @@ public class OrchestratorExecutePipelineSpanTests : IDisposable
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
     private readonly OrchestratorRunService _runService;
     private readonly AgentRegistryService _registry;
-    private readonly AgentReservationService _dispatcher;
     private readonly RunLifecycleManager _sut;
 
     public OrchestratorExecutePipelineSpanTests()
@@ -51,14 +49,12 @@ public class OrchestratorExecutePipelineSpanTests : IDisposable
 
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _registry = new AgentRegistryService(_mockLogger.Object);
-        _dispatcher = new AgentReservationService(_registry, _mockLogger.Object);
 
         _sut = new RunLifecycleManager(new RunLifecycleManagerDependencies(
             _runService,
             _mockHistoryService.Object,
             _registry,
             _mockLabelService.Object,
-            _dispatcher,
             _mockLogger.Object));
     }
 

@@ -121,10 +121,7 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
             services.RemoveAll<IQualityGateValidator>();
             services.AddSingleton(new Mock<IQualityGateValidator>().Object);
 
-            // Replace IConsolidationDispatchService with a no-op stub (production registration
-            // requires Kubernetes/hub infra that's not available in tests)
-            services.RemoveAll<IConsolidationDispatchService>();
-            services.AddSingleton<IConsolidationDispatchService>(new NoOpConsolidationDispatchService());
+            // IConsolidationDispatchService was removed in issue #2325 — no stub needed.
 
             // Replace ILeaderElectionService with a mock that is always the leader.
             // The real implementation needs K8s Lease — unavailable in test env.
@@ -224,17 +221,6 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
     private sealed class NoOpDatabaseProbe : IDatabaseProbe
     {
         public Task ProbeAsync(CancellationToken ct) => Task.CompletedTask;
-    }
-
-    private sealed class NoOpConsolidationDispatchService : IConsolidationDispatchService
-    {
-        public Task<ConsolidationDispatchResult> TryDispatchAsync(ConsolidationRun r, ConsolidationRunType t,
-            TemplateId? tid, string? f, string w, CancellationToken ct)
-            => Task.FromResult(ConsolidationDispatchResult.Failed);
-        public Task<bool> TryDispatchToAgentAsync(RunId r, ConsolidationRunType t, TemplateId? tid,
-            string w, AgentId a, CancellationToken ct)
-            => Task.FromResult(false);
-        public Task NotifyRunCancelledAsync(RunId r, CancellationToken ct) => Task.CompletedTask;
     }
 
     /// <summary>

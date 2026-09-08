@@ -204,19 +204,6 @@ public static class ApiServiceCollectionExtensions
             return sp.GetRequiredService<OrchestratorRunService>();
         });
 
-        // ── AgentReservationService (renamed from JobDeduplicationGuardService) ────────
-        services.AddSingleton<AgentReservationService>(sp =>
-        {
-            var mux = sp.GetService<StackExchange.Redis.IConnectionMultiplexer>();
-            CodingAgentWebUI.Orchestration.Redis.IRedisStore? store = mux is not null
-                ? new CodingAgentWebUI.Orchestration.Redis.RedisStore(mux.GetDatabase())
-                : null;
-            return new AgentReservationService(sp.GetRequiredService<IAgentRegistryService>(), Log.Logger, store);
-        });
-        // Backward-compat: JobDeduplicationGuardService resolves to AgentReservationService
-        services.AddSingleton<JobDeduplicationGuardService>(sp =>
-            new JobDeduplicationGuardService(sp.GetRequiredService<IAgentRegistryService>(), Log.Logger));
-
         // ── ITokenVendingService ─────────────────────────────────────────────
         services.AddHttpClient("TokenVending")
             .AddStandardResilienceHandler();
@@ -282,7 +269,6 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<IPipelineRunHistoryService>(),
                 sp.GetRequiredService<IAgentRegistryService>(),
                 sp.GetRequiredService<ILabelService>(),
-                sp.GetRequiredService<AgentReservationService>(),
                 Log.Logger,
                 sp.GetService<IJobCleanupStrategy>(),
                 sp.GetRequiredService<IWorkItemFallbackTransitionService>())));
