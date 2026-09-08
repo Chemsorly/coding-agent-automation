@@ -160,7 +160,9 @@ public class PromptConstructionPropertyTests
 
         var issue = new IssueDetail
         {
-            Identifier = "1", Title = "Test", Description = "Desc",
+            Identifier = "1",
+            Title = "Test",
+            Description = "Desc",
             Labels = Array.Empty<string>()
         };
         var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
@@ -189,7 +191,9 @@ public class PromptConstructionPropertyTests
 
         var issue = new IssueDetail
         {
-            Identifier = "1", Title = "Test", Description = "Desc",
+            Identifier = "1",
+            Title = "Test",
+            Description = "Desc",
             Labels = Array.Empty<string>()
         };
         var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
@@ -211,7 +215,9 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
-            Identifier = "42", Title = "Add caching layer", Description = "We need Redis caching",
+            Identifier = "42",
+            Title = "Add caching layer",
+            Description = "We need Redis caching",
             Labels = Array.Empty<string>()
         };
         var parsed = new ParsedIssue
@@ -239,7 +245,9 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
-            Identifier = "42", Title = "Add caching layer", Description = "We need Redis caching",
+            Identifier = "42",
+            Title = "Add caching layer",
+            Description = "We need Redis caching",
             Labels = Array.Empty<string>()
         };
         var parsed = new ParsedIssue
@@ -265,7 +273,9 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
-            Identifier = "1", Title = "Test", Description = "Desc",
+            Identifier = "1",
+            Title = "Test",
+            Description = "Desc",
             Labels = Array.Empty<string>()
         };
         var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
@@ -314,7 +324,9 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
-            Identifier = "1", Title = "Test", Description = "Desc",
+            Identifier = "1",
+            Title = "Test",
+            Description = "Desc",
             Labels = Array.Empty<string>()
         };
         var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
@@ -335,7 +347,9 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
-            Identifier = "1", Title = "Test", Description = "Desc",
+            Identifier = "1",
+            Title = "Test",
+            Description = "Desc",
             Labels = Array.Empty<string>()
         };
         var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
@@ -376,7 +390,9 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
-            Identifier = "1", Title = "Test", Description = "Desc",
+            Identifier = "1",
+            Title = "Test",
+            Description = "Desc",
             Labels = Array.Empty<string>()
         };
         var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
@@ -396,7 +412,9 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
-            Identifier = "1", Title = "Test", Description = "Desc",
+            Identifier = "1",
+            Title = "Test",
+            Description = "Desc",
             Labels = Array.Empty<string>()
         };
         var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
@@ -456,6 +474,14 @@ public class PromptConstructionPropertyTests
 
     // --- BuildQualityGateRetryPrompt tests ---
 
+    // TODO [WARNING]: The two tests below (BuildQualityGateRetryPrompt_IncludesAllGatesWithStatus and
+    // BuildQualityGateRetryPrompt_OmitsNullOptionalGates) hardcode hasQualityGateOutput: true. Neither
+    // test exercises the hasQualityGateOutput=false branch. If the false branch introduces a regression
+    // (e.g. truncates "Before fixing, reflect:" or omits gate status lines), these property-style tests
+    // will not catch it. At least one of the two tests should drive both branches, or a separate property
+    // test for the false branch (asserting the "terminated abnormally" sentence and full-diff reference)
+    // should be added.
+    // See review finding: TestQualityReviewer WARNING — PromptConstructionPropertyTests.cs
     [Fact]
     public void BuildQualityGateRetryPrompt_IncludesAllGatesWithStatus()
     {
@@ -465,7 +491,7 @@ public class PromptConstructionPropertyTests
             Tests = new GateResult { GateName = "Tests", Passed = true, Details = "Tests passed: 42 passed, 0 failed, 0 skipped" }
         };
 
-        var prompt = QualityGateExecutor.BuildQualityGateRetryPrompt(report, 1, 3);
+        var prompt = QualityGateExecutor.BuildQualityGateRetryPrompt(report, 1, 3, hasQualityGateOutput: true);
 
         prompt.Should().Contain("Quality gates failed (attempt 1/3):");
         prompt.Should().Contain("- Compilation: FAILED");
@@ -483,7 +509,7 @@ public class PromptConstructionPropertyTests
             Tests = new GateResult { GateName = "Tests", Passed = false, Details = "Tests failed: 10 passed, 2 failed, 0 skipped." }
         };
 
-        var prompt = QualityGateExecutor.BuildQualityGateRetryPrompt(report, 2, 3);
+        var prompt = QualityGateExecutor.BuildQualityGateRetryPrompt(report, 2, 3, hasQualityGateOutput: true);
 
         prompt.Should().Contain("- Compilation: PASSED");
         prompt.Should().Contain("- Tests: FAILED");
@@ -617,7 +643,9 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
-            Identifier = "42", Title = "Add caching", Description = "Desc",
+            Identifier = "42",
+            Title = "Add caching",
+            Description = "Desc",
             Labels = Array.Empty<string>()
         };
         var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = new[] { "Cache hit > 90%" }.ToList().AsReadOnly() };
@@ -636,7 +664,9 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
-            Identifier = "1", Title = "Test", Description = "Desc",
+            Identifier = "1",
+            Title = "Test",
+            Description = "Desc",
             Labels = Array.Empty<string>()
         };
         var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
@@ -654,7 +684,9 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
-            Identifier = "1", Title = "Test", Description = "Desc",
+            Identifier = "1",
+            Title = "Test",
+            Description = "Desc",
             Labels = Array.Empty<string>()
         };
         var parsed = new ParsedIssue { RequirementsSection = "Desc", AcceptanceCriteria = Array.Empty<string>() };
