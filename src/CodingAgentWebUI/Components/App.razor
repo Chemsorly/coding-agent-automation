@@ -12,15 +12,6 @@
         // reverse-proxy deployments). Defaults to "./" which works for non-proxied root deployments.
         // Must end with "/" for the browser's base-href resolution to work correctly.
         var rawBasePath = Configuration["WebUI:BasePath"] ?? "./";
-        // TODO: If WebUI:BasePath is set to an empty string (""), the normalisation below produces
-        // "/" (root-absolute), which is equivalent to the old broken behaviour under a Rancher proxy.
-        // An empty string should be treated as "./" (same as the Helm default) to avoid silent
-        // misconfiguration. Consider guarding: if (string.IsNullOrEmpty(rawBasePath)) rawBasePath = "./";
-        // TODO: WebUI:BasePath is rendered into the HTML <base href> attribute without format
-        // validation. A misconfigured value (e.g. containing HTML-special characters, or a
-        // scheme like "javascript:") would produce malformed HTML or break all relative URL
-        // resolution. Consider validating that the value matches [A-Za-z0-9/_.-]+ before use
-        // and rejecting/logging unexpected formats at startup.
         // Normalise: ensure it ends with "/" so browser relative-href resolution works.
         var basePath = rawBasePath.EndsWith('/') ? rawBasePath : rawBasePath + "/";
     }
