@@ -146,7 +146,6 @@ public sealed class FleetViewTests : E2ETestBase
         var runId = await SeedAndDispatchAsync(agent, "Fleet PR Template", "2337-pr");
 
         // Simulate the agent reporting a PR URL via step transition metadata.
-        var assignment = new { JobId = runId }; // runId == jobId in this flow
         await agent.ReportStepAsync(runId,
             PipelineStep.CreatingPullRequest,
             new Dictionary<string, string>
