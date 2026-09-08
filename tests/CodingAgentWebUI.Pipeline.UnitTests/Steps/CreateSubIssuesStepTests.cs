@@ -347,34 +347,35 @@ public class CreateSubIssuesStepTests : IDisposable
             .ReturnsAsync(new CreatedIssueResult { Identifier = "900", Url = "https://github.com/test/900" });
 
         long createdCount = 0;
-        var counting = false;
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, meterListener) =>
         {
             if (instrument.Meter.Name == PipelineTelemetry.SourceName)
                 meterListener.EnableMeasurementEvents(instrument);
         };
-        // Gate: only accumulate measurements emitted during ExecuteAsync to avoid parallel-test
-        // inflation. The global MeterListener would otherwise count events from other tests running
-        // concurrently in the same process, making the delta non-deterministic.
         listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
         {
-            if (counting && instrument.Name == "pipeline.decomposition.sub_issues.created")
+            if (instrument.Name == "pipeline.decomposition.sub_issues.created")
                 Interlocked.Add(ref createdCount, measurement);
         });
         listener.Start();
+
+        // Capture baseline after Start() so only events received while the listener is active
+        // are counted. Any measurements fired before Start() are not delivered to this listener.
+        var baseline = Interlocked.Read(ref createdCount);
 
         var run = CreateRun();
         var context = BuildContext(run);
         var step = new CreateSubIssuesStep();
 
-        counting = true;
         await step.ExecuteAsync(context, CancellationToken.None);
-        counting = false;
 
-        // TODO: Re-add the failure message to the assertion so failures produce actionable output
-        // ("exactly one sub_issues.created measurement must be emitted for a single successful
-        // creation") rather than a generic "Expected 0 to be 1". See review warning (issue #2255).
-        Interlocked.Read(ref createdCount).Should().Be(1);
+        // Dispose the listener immediately after ExecuteAsync returns to stop receiving events
+        // from any concurrent tests that fire the same counter, preventing the delta from being
+        // inflated by parallel test activity.
+        listener.Dispose();
+
+        var delta = Interlocked.Read(ref createdCount) - baseline;
+        delta.Should().Be(1);
     }
 }

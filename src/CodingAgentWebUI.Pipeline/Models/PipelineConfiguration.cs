@@ -569,6 +569,20 @@ public sealed record PipelineConfiguration
     [Key(73)]
     public int HousekeepingBranchCleanupIntervalMinutes { get; init; } = 60;
 
+    /// <summary>
+    /// Minimum time in minutes between consecutive branch-update triggers for the same PR.
+    /// Prevents a single PR from monopolising the update slot when CI takes longer than one
+    /// poll cycle. Default: 25 (comfortably exceeds a typical ~20-min CI run).
+    /// </summary>
+    // TODO: Key(82) is placed here between Key(73) and Key(74) in source order but is numerically
+    // the highest key in this record (Keys 74–81 appear later in the file). MessagePack resolves
+    // by key number not source order so serialisation is correct, but the out-of-sequence placement
+    // is a maintenance hazard — future contributors may miss it when auditing the key sequence.
+    // Consider relocating this property after Key(81) at the bottom of the record to restore
+    // sequential source order.
+    [Key(82)]
+    public int HousekeepingTriggerCooldownMinutes { get; init; } = 25;
+
     // ── Consolidation dispatch settings ──────────────────────────────────────
 
     /// <summary>

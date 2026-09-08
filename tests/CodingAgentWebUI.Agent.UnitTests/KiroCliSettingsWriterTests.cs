@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AwesomeAssertions;
-using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.Agent.UnitTests;
 
@@ -178,5 +178,45 @@ public class KiroCliSettingsWriterTests : IDisposable
         // Must not throw
         var act = () => JsonDocument.Parse(json);
         act.Should().NotThrow("output must be valid JSON");
+    }
+
+    // ─── Extended effort values (xhigh, max) → written correctly ─────────────
+
+    [Fact]
+    public async Task ApplyAsync_WithXHighEffort_WritesXHighToCliJson()
+    {
+        await KiroCliSettingsWriter.ApplyAsync(
+            "claude-opus-4.8", "xhigh", CancellationToken.None,
+            settingsPathOverride: _cliJsonPath);
+
+        File.Exists(_cliJsonPath).Should().BeTrue("cli.json must be created for xhigh effort");
+
+        var json = await File.ReadAllTextAsync(_cliJsonPath);
+        var root = JsonNode.Parse(json)!.AsObject();
+
+        root["chat.defaultModel"]!.GetValue<string>().Should().Be("claude-opus-4.8");
+
+        var effortValue = root["chat.modelDefaults"]!["claude-opus-4.8"]!["output_config"]!["effort"]!
+            .GetValue<string>();
+        effortValue.Should().Be("xhigh");
+    }
+
+    [Fact]
+    public async Task ApplyAsync_WithMaxEffort_WritesMaxToCliJson()
+    {
+        await KiroCliSettingsWriter.ApplyAsync(
+            "claude-opus-4.8", "max", CancellationToken.None,
+            settingsPathOverride: _cliJsonPath);
+
+        File.Exists(_cliJsonPath).Should().BeTrue("cli.json must be created for max effort");
+
+        var json = await File.ReadAllTextAsync(_cliJsonPath);
+        var root = JsonNode.Parse(json)!.AsObject();
+
+        root["chat.defaultModel"]!.GetValue<string>().Should().Be("claude-opus-4.8");
+
+        var effortValue = root["chat.modelDefaults"]!["claude-opus-4.8"]!["output_config"]!["effort"]!
+            .GetValue<string>();
+        effortValue.Should().Be("max");
     }
 }

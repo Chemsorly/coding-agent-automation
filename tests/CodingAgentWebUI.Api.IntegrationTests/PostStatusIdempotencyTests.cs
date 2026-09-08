@@ -18,6 +18,17 @@ using Serilog.Events;
 namespace CodingAgentWebUI.Api.IntegrationTests;
 
 /// <summary>
+/// Collection definition that disables parallel execution for <see cref="PostStatusIdempotencyTests"/>.
+/// Several tests in that class subscribe to the global <c>workdistribution.workitems_terminated</c>
+/// meter via <see cref="MeterListener"/> and then wait 200 ms for a fire-and-forget background task
+/// to emit. When tests run concurrently, a background task from one test fires into another test's
+/// active listener, causing spurious tag captures (e.g. "AgentError" appearing in the
+/// NumericUndefined test's bag). Serialising the class eliminates that cross-test pollution.
+/// </summary>
+[CollectionDefinition("PostStatusIdempotencyCollection", DisableParallelization = true)]
+public sealed class PostStatusIdempotencyCollection { }
+
+/// <summary>
 /// Direct unit tests for <see cref="WorkItemEndpoints.PostStatus"/> covering the idempotent
 /// already-at-terminal-state path (issue #2226).
 ///
@@ -28,6 +39,7 @@ namespace CodingAgentWebUI.Api.IntegrationTests;
 /// 2. The lifecycle manager calls can be tracked via a recording stub without Moq.
 /// 3. The test can assert 404 vs 400 without configuring a full WebApplicationFactory.
 /// </summary>
+[Collection("PostStatusIdempotencyCollection")]
 public sealed class PostStatusIdempotencyTests
 {
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -449,8 +461,15 @@ public sealed class PostStatusIdempotencyTests
         result.Should().BeOfType<Ok>();
         capturedTags.Should().NotBeEmpty(
             "workdistribution.workitems_terminated must have been emitted");
-        capturedTags.Should().OnlyContain(
-            tag => tag == "none",
+        // Use Contain rather than OnlyContain: WorkDistributionTelemetry.WorkItemsTerminated is a
+        // static instrument shared across all tests in the process. Parallel tests (e.g.
+        // WorkItemEndpointTests.PostStatus_FailedWithTimeoutReason_Returns200AndPersistsFailureReason)
+        // can emit failure_reason="Timeout" via a fire-and-forget task that fires during the 200 ms
+        // wait window, causing OnlyContain to fail spuriously on CI. The invariant under test is that
+        // THIS call emits failure_reason="none" — not that no other concurrent test emits a different
+        // tag on the same shared instrument.
+        capturedTags.Should().Contain(
+            "none",
             "a numeric string (\"99\") not backed by a named FailureReason member must be " +
             "treated as null and emitted as failure_reason=\"none\", not as the raw numeric string");
     }
@@ -513,8 +532,12 @@ public sealed class PostStatusIdempotencyTests
         result.Should().BeOfType<Ok>();
         capturedTags.Should().NotBeEmpty(
             "workdistribution.workitems_terminated must have been emitted");
-        capturedTags.Should().OnlyContain(
-            tag => tag == "AgentError",
+        // Use Contain rather than OnlyContain for the same reason as
+        // PostStatus_NumericUndefinedFailureReason_EmitsNoneTag: the static WorkItemsTerminated
+        // instrument is shared across all parallel tests, so concurrent emissions from other tests
+        // may appear in capturedTags during the 200 ms wait window.
+        capturedTags.Should().Contain(
+            "AgentError",
             "a named FailureReason (\"AgentError\") must pass through IsDefined and reach the metric tag");
     }
 

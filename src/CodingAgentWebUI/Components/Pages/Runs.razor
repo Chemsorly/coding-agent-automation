@@ -525,7 +525,9 @@
         return new MarkupString($"<span class=\"sort-indicator\">{arrow}</span>");
     }
 
-    private void OpenRun(string runId) => Nav.NavigateTo($"/runs/{runId}");
+    // NavigationManager.NavigateTo with a bare relative path resolves against BaseUri (the app
+    // root), not the current page URL — this is the correct Blazor Server behaviour.
+    private void OpenRun(string runId) => Nav.NavigateTo($"runs/{runId}");
 
     private static string Truncate(string? s, int n)
         => string.IsNullOrEmpty(s) ? "" : (s.Length > n ? s[..n] + "…" : s);

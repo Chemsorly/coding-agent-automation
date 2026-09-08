@@ -33,6 +33,8 @@ public interface IHousekeepingService
     /// <param name="effectiveConcurrencyLimit">Max in-flight updates for this repo. Clamped to ≥ 1.</param>
     /// <param name="branchCleanupEnabled">Whether to run stale branch cleanup this cycle.</param>
     /// <param name="cleanupIntervalMinutes">Minimum minutes between cleanup passes. 0 = every tick.</param>
+    /// <param name="triggerCooldownMinutes">Minimum minutes between consecutive branch-update triggers
+    /// for the same PR. Clamped to ≥ 1. Sourced from <see cref="PipelineConfiguration.HousekeepingTriggerCooldownMinutes"/>.</param>
     /// <param name="ct">Cancellation token for the mergeability checks. The update HTTP calls
     /// use <see cref="CancellationToken.None"/> internally so they complete independently.</param>
     Task ExecuteAsync(
@@ -44,5 +46,6 @@ public interface IHousekeepingService
         int effectiveConcurrencyLimit,
         bool branchCleanupEnabled,
         int cleanupIntervalMinutes,
+        int triggerCooldownMinutes,
         CancellationToken ct);
 }

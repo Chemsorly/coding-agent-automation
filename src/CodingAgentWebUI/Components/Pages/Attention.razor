@@ -222,7 +222,9 @@
         }
     }
 
-    private void OpenRun(string runId) => Nav.NavigateTo($"/runs/{runId}");
+    // NavigationManager.NavigateTo with a bare relative path resolves against BaseUri (the app
+    // root), not the current page URL — this is the correct Blazor Server behaviour.
+    private void OpenRun(string runId) => Nav.NavigateTo($"runs/{runId}");
 
     public async ValueTask DisposeAsync()
     {
