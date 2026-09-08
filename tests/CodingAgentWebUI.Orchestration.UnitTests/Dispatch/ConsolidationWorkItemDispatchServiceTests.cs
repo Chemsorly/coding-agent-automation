@@ -22,6 +22,12 @@ namespace CodingAgentWebUI.Orchestration.UnitTests.Dispatch;
 /// Covers: lifecycle (leader-wait, poll-loop, leadership loss), CascadeFailureAsync paths,
 /// non-fatal exception handling, constructor paths.
 /// </summary>
+// TODO [WARNING] (issue #2323): The happy-path dispatch cycle (eligible item → K8s Job created
+// → ConsolidationRun Queued → Running) is not directly asserted here. If TransitionToRunningAsync
+// were accidentally removed or skipped, no surviving test in this file would catch it.
+// Add a test that verifies TransitionToRunningAsync is called once on a successful dispatch cycle.
+// See ConsolidationWorkItemDispatchServiceDispatchLoopTests.PollAndDispatchConsolidation_EligibleItem_DispatchesJobAndTransitionsToDispatched
+// for the dispatch path and ConsolidationWorkItemDispatchServiceDispatchLoopTests for the related WARNING.
 public class ConsolidationWorkItemDispatchServiceTests
 {
     // ── Lifecycle tests ──────────────────────────────────────────────────

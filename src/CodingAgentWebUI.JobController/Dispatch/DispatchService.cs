@@ -3,5 +3,6 @@
 // KubernetesWorkDistributor now calls POST /api/work-items/dispatch directly,
 // which atomically creates the K8s Job and transitions the WorkItem to Dispatched
 // without passing through the Pending queue.
-// ConsolidationDispatchService (for consolidation work items) remains in place.
+// ConsolidationDispatchService (for consolidation work items) was removed in issue #2323
+// for the same reason — it was already a no-op in production.
 namespace CodingAgentWebUI.JobController.Dispatch;

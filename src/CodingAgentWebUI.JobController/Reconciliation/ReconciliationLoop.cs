@@ -530,19 +530,19 @@ public sealed class ReconciliationLoop
         // retry pod after each failed attempt). The "Failed" condition type is only set once all
         // retries are exhausted. Returning JobPhaseFailed while Active > 0 would prematurely mark
         // a running work item as failed and cancel the live K8s Job (data-corruption under the
-        // default backoffLimit >= 1). This guard matches the equivalent check already present in
-        // DispatchLoopHelpers.IsJobTerminal, making the two counter-fallback paths behaviorally
-        // identical.
-        // TODO [WARNING]: The counter-fallback paths in GetJobPhase and IsJobTerminal are now
-        // aligned, but the condition-path branches differ subtly: GetJobPhase issues two separate
+        // default backoffLimit >= 1). This guard matches the equivalent counter-fallback check
+        // that was previously in DispatchLoopHelpers.IsJobTerminal (deleted in issue #2323).
+        // TODO [WARNING]: DispatchLoopHelpers.IsJobTerminal was deleted in #2323. The stale
+        // cross-reference to it above has been updated to a past-tense note. The counter-fallback
+        // logic in this method and the deleted IsJobTerminal were aligned at deletion time, but
+        // the condition-path branches differed subtly: GetJobPhase issues two separate
         // conditions.Any(...) calls (one for "Complete", one for "Failed"), while IsJobTerminal
-        // combines both into a single conditions.Any(c => (c.Type == "Complete" || c.Type ==
+        // combined both into a single conditions.Any(c => (c.Type == "Complete" || c.Type ==
         // "Failed") && c.Status == "True"). The observable difference is short-circuit order when
         // both condition types are simultaneously True — a state Kubernetes does not produce in
-        // normal operation, so this is not a data-corruption risk. However, the updated XML doc on
-        // IsJobTerminal claims "the same phase-detection logic" which is technically inaccurate for
-        // the condition path. If the condition-path branches are ever unified, the XML doc should
-        // be updated to reflect true parity.
+        // normal operation, so this is not a data-corruption risk. If a future dispatch helper
+        // with similar terminal-detection logic is introduced, ensure it has its own unit tests
+        // rather than relying on this method as a reference.
         if (job.Status?.Failed > 0 && (job.Status?.Active ?? 0) == 0) return JobPhaseFailed;
         return "Active";
     }
