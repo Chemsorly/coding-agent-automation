@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
 using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.E2ETests.Fakes;
+using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
+using Microsoft.EntityFrameworkCore;
 
 namespace CodingAgentWebUI.E2ETests.Infrastructure;
 
@@ -36,6 +38,7 @@ public sealed class FakeJobController : IAsyncDisposable
     private readonly IPipelineApiWorkItemClient _workItems;
     private readonly AgentRegistryService _registry;
     private readonly InMemoryConfigurationStore _configStore;
+    private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _loop;
 
@@ -45,11 +48,13 @@ public sealed class FakeJobController : IAsyncDisposable
     public FakeJobController(
         IPipelineApiWorkItemClient workItems,
         AgentRegistryService registry,
-        InMemoryConfigurationStore configStore)
+        InMemoryConfigurationStore configStore,
+        IDbContextFactory<PipelineDbContext> dbFactory)
     {
         _workItems = workItems;
         _registry = registry;
         _configStore = configStore;
+        _dbFactory = dbFactory;
         _loop = Task.Run(() => PollAsync(_cts.Token));
     }
 
@@ -151,6 +156,26 @@ public sealed class FakeJobController : IAsyncDisposable
             // iterations don't also try to bootstrap the same item.
             if (!_inFlight.TryAdd(item.Id, agent.AgentId.Value)) continue;
             ClaimedWorkItemIds.Add(item.Id);
+
+            // Set AssignedAgentId directly on the WorkItem so AuthorizeAgentForWorkItemAsync
+            // allows the agent's derived-key request to GET /assignment.
+            // In the old Pending→Claim path this was done by ClaimWorkItem; the new synchronous
+            // dispatch path skips Claim, so the assignment endpoint would otherwise 403 the agent.
+            try
+            {
+                await using var db = await _dbFactory.CreateDbContextAsync(ct);
+                var entity = await db.WorkItems.FindAsync([item.Id], ct);
+                if (entity is not null && string.IsNullOrEmpty(entity.AssignedAgentId))
+                {
+                    entity.AssignedAgentId = agent.AgentId.Value;
+                    await db.SaveChangesAsync(ct);
+                }
+            }
+            catch
+            {
+                // Best-effort — if the write fails, StartAssignedWorkItemAsync will get a 403
+                // and silently return; the job controller will retry on the next poll.
+            }
 
             if (FakeAgentClient.TryGetConnected(agent.AgentId.Value, out var fakeAgent))
                 await fakeAgent.StartAssignedWorkItemAsync(item.Id, ct);
