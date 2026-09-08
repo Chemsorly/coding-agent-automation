@@ -42,7 +42,7 @@
                 <span style="font-size: 12.5px; color: var(--text-muted);">@LoopSubtitle</span>
             </div>
         </div>
-        <a href="/pipelines" class="cockpit-pager-btn" style="text-decoration: none;">Manage <Icon Name="chevrons-right" Size="14" /></a>
+        <a href="pipelines" class="cockpit-pager-btn" style="text-decoration: none;">Manage <Icon Name="chevrons-right" Size="14" /></a>
     </div>
 
     <!-- stat strip -->
@@ -57,17 +57,17 @@
     @if (_attnNeedsRefinement + _attnFailed + _attnPlans > 0)
     {
         <div class="cockpit-card">
-            <div class="cockpit-card-header"><h2>Needs attention</h2><a href="/attention" style="font-size: 12.5px; font-weight: 600;">View all →</a></div>
+            <div class="cockpit-card-header"><h2>Needs attention</h2><a href="attention" style="font-size: 12.5px; font-weight: 600;">View all →</a></div>
             <div style="display: grid; grid-template-columns: repeat(3, 1fr);">
-                <a href="/attention" style="display: flex; align-items: center; gap: 11px; padding: 14px 18px; border-right: 1px solid var(--hairline); text-decoration: none; color: inherit;">
+                <a href="attention" style="display: flex; align-items: center; gap: 11px; padding: 14px 18px; border-right: 1px solid var(--hairline); text-decoration: none; color: inherit;">
                     <span style="width: 34px; height: 34px; border-radius: 9px; background: var(--warning-bg); color: var(--warning); display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><Icon Name="alert-triangle" Size="17" /></span>
                     <div><div style="font-size: 18px; font-weight: 800;">@_attnNeedsRefinement</div><div style="font-size: 12px; color: var(--text-muted);">Needs refinement</div></div>
                 </a>
-                <a href="/attention" style="display: flex; align-items: center; gap: 11px; padding: 14px 18px; border-right: 1px solid var(--hairline); text-decoration: none; color: inherit;">
+                <a href="attention" style="display: flex; align-items: center; gap: 11px; padding: 14px 18px; border-right: 1px solid var(--hairline); text-decoration: none; color: inherit;">
                     <span style="width: 34px; height: 34px; border-radius: 9px; background: var(--error-bg); color: var(--error); display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><Icon Name="x-circle" Size="17" /></span>
                     <div><div style="font-size: 18px; font-weight: 800;">@_attnFailed</div><div style="font-size: 12px; color: var(--text-muted);">Failed runs</div></div>
                 </a>
-                <a href="/attention" style="display: flex; align-items: center; gap: 11px; padding: 14px 18px; text-decoration: none; color: inherit;">
+                <a href="attention" style="display: flex; align-items: center; gap: 11px; padding: 14px 18px; text-decoration: none; color: inherit;">
                     <span style="width: 34px; height: 34px; border-radius: 9px; background: var(--bg-active); color: var(--accent); display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><Icon Name="puzzle" Size="17" /></span>
                     <div><div style="font-size: 18px; font-weight: 800;">@_attnPlans</div><div style="font-size: 12px; color: var(--text-muted);">Plans to approve</div></div>
                 </a>
@@ -100,7 +100,7 @@
 
         <!-- recent activity -->
         <div class="cockpit-card">
-            <div class="cockpit-card-header"><h2>Recent activity</h2><a href="/runs" style="font-size: 12.5px; font-weight: 600;">All runs →</a></div>
+            <div class="cockpit-card-header"><h2>Recent activity</h2><a href="runs" style="font-size: 12.5px; font-weight: 600;">All runs →</a></div>
             @if (_recentRuns.Count == 0)
             {
                 <div class="cockpit-empty" style="padding: 24px;">No completed runs yet.</div>
@@ -229,7 +229,13 @@
     private static bool IsActive(PipelineRunSummary r)
         => r.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled;
 
-    private void OpenRun(string runId) => Nav.NavigateTo($"/runs/{runId}");
+    // TODO: NavigationManager.NavigateTo with a bare relative path (no leading "/") resolves
+    // against NavigationManager.BaseUri, NOT the current page URL. This is correct as long as
+    // BaseUri always ends with "/" (which Blazor guarantees for the app root). If that invariant
+    // ever breaks, "runs/{runId}" from this page could produce an incorrect URL. The tests in
+    // BasepathNavigationTests do not cover this NavigateTo call (only rendered href attributes
+    // are checked). Consider adding a NavigateTo-interception test to lock in the correct resolution.
+    private void OpenRun(string runId) => Nav.NavigateTo($"runs/{runId}");
 
     // ── loop hero (read-only) ───────────────────────────────────────────────
     private string LoopTitle => LoopService.IsSchedulerUnreachable ? "Scheduler unavailable"

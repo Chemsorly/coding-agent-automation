@@ -222,7 +222,13 @@
         }
     }
 
-    private void OpenRun(string runId) => Nav.NavigateTo($"/runs/{runId}");
+    // TODO: NavigationManager.NavigateTo with a bare relative path (no leading "/") resolves
+    // against NavigationManager.BaseUri, NOT the current page URL. This is correct as long as
+    // BaseUri always ends with "/" (which Blazor guarantees for the app root). If that invariant
+    // ever breaks, "runs/{runId}" from this page could produce an incorrect URL. The tests in
+    // BasepathNavigationTests do not cover this NavigateTo call (only rendered href attributes
+    // are checked). Consider adding a NavigateTo-interception test to lock in the correct resolution.
+    private void OpenRun(string runId) => Nav.NavigateTo($"runs/{runId}");
 
     public async ValueTask DisposeAsync()
     {

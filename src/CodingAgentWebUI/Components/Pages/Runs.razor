@@ -525,7 +525,15 @@
         return new MarkupString($"<span class=\"sort-indicator\">{arrow}</span>");
     }
 
-    private void OpenRun(string runId) => Nav.NavigateTo($"/runs/{runId}");
+    // TODO: NavigationManager.NavigateTo with a bare relative path (no leading "/") resolves
+    // against NavigationManager.BaseUri, NOT the current page URL. When called from the /runs
+    // page, a naive resolution against the *current URL* (not BaseUri) would produce
+    // "runs/runs/{runId}" — a double-segment path. Blazor Server's NavigationManager correctly
+    // uses BaseUri as the resolution anchor, avoiding this, but the assumption is implicit and
+    // the tests in BasepathNavigationTests do not cover this NavigateTo call. Consider adding
+    // a NavigateTo-interception test specifically for the Runs component to lock in the correct
+    // behaviour and catch any future regression.
+    private void OpenRun(string runId) => Nav.NavigateTo($"runs/{runId}");
 
     private static string Truncate(string? s, int n)
         => string.IsNullOrEmpty(s) ? "" : (s.Length > n ? s[..n] + "…" : s);
