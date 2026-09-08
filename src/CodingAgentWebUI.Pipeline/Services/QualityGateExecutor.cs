@@ -113,8 +113,6 @@ public partial class QualityGateExecutor : IQualityGateExecutor
             errors.Add($"Compilation: {report.Compilation.Details}");
         if (!report.Tests.Passed)
             errors.Add($"Tests: {report.Tests.Details}");
-        if (report.SecurityScan is { Passed: false })
-            errors.Add($"Security: {report.SecurityScan.Details}");
         if (report.ExternalCi is { Passed: false })
             errors.Add($"External CI: {report.ExternalCi.Details}");
         return string.Join(Environment.NewLine, errors);
@@ -130,8 +128,6 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         sb.AppendLine($"Quality gates failed (attempt {attempt}/{maxRetries}):");
         sb.AppendLine($"- Compilation: {(report.Compilation.Passed ? "PASSED" : "FAILED")} ({report.Compilation.Details})");
         sb.AppendLine($"- Tests: {(report.Tests.Passed ? "PASSED" : "FAILED")} ({report.Tests.Details})");
-        if (report.SecurityScan != null)
-            sb.AppendLine($"- Security: {(report.SecurityScan.Passed ? "PASSED" : "FAILED")} ({report.SecurityScan.Details})");
         if (report.ExternalCi != null)
             sb.AppendLine($"- External CI: {(report.ExternalCi.Passed ? "PASSED" : "FAILED")} ({report.ExternalCi.Details})");
 

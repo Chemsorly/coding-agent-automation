@@ -804,21 +804,6 @@
             @if (qr.Tests.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Tests
             <span class="qg-sub">@(qr.Tests.TestsPassed ?? 0) passed, @(qr.Tests.TestsFailed ?? 0) failed</span>
         </div>
-        @RenderSecurityLine(qr)
-    };
-
-    private static RenderFragment RenderSecurityLine(QualityGateReport qr) => __builder =>
-    {
-        @if (qr.SecurityScan is { } sec)
-        {
-            <div class="qg-line @(sec.Passed ? "qg-pass" : "qg-fail")">
-                @if (sec.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Security
-            </div>
-        }
-        else
-        {
-            <div class="qg-line qg-skip">— Security</div>
-        }
     };
 
     private static RenderFragment RenderExternalCiLine(QualityGateReport qr) => __builder =>

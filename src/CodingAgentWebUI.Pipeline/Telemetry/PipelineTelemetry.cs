@@ -192,6 +192,9 @@ public static class PipelineTelemetry
     {
         public const string Compilation = "compilation";
         public const string Tests = "tests";
+        // TODO: Security constant is dead code — the only call site (EmitGateEvaluation for SecurityScan)
+        // was removed when QualityGateReport.SecurityScan was tombstoned (Key(4) retired, issue #2400).
+        // Remove or tombstone this constant when cleaning up telemetry dead code.
         public const string Security = "security";
         public const string ExternalCi = "external_ci";
     }

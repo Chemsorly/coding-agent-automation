@@ -101,13 +101,6 @@ public class QualityGateValidator : IQualityGateValidator
     /// Runs compilation, tests, and coverage for a single QGC.
     /// Returns the result record and whether processing should stop (i.e., a gate failed).
     /// </summary>
-    /// <remarks>
-    /// <c>SecurityScan</c> is always set to <c>null</c> in the returned <see cref="QgcExecutionResult"/>.
-    /// No local security scanner is invoked by this method. The <c>SecurityScan</c> gate result is only
-    /// populated when an external CI pipeline provides it via <see cref="QualityGateReport.ExternalCi"/>
-    /// processing in <see cref="QualityGateExecutor"/>. Any documentation or dashboard that implies a
-    /// local security scan runs during quality gate validation is incorrect.
-    /// </remarks>
     private async Task<(QgcExecutionResult Result, bool ShouldStop)> RunSingleQgcAsync(
         string workspacePath, QualityGateConfiguration qgc, CancellationToken ct)
     {
@@ -120,8 +113,7 @@ public class QualityGateValidator : IQualityGateValidator
                 QgcId = qgc.Id,
                 DisplayName = qgc.DisplayName,
                 Compilation = compilationResult,
-                Tests = null,
-                SecurityScan = null
+                Tests = null
             }, true);
         }
 
@@ -134,8 +126,7 @@ public class QualityGateValidator : IQualityGateValidator
                 QgcId = qgc.Id,
                 DisplayName = qgc.DisplayName,
                 Compilation = compilationResult,
-                Tests = testsResult,
-                SecurityScan = null
+                Tests = testsResult
             }, true);
         }
 
@@ -144,8 +135,7 @@ public class QualityGateValidator : IQualityGateValidator
             QgcId = qgc.Id,
             DisplayName = qgc.DisplayName,
             Compilation = compilationResult,
-            Tests = testsResult,
-            SecurityScan = null
+            Tests = testsResult
         }, false);
     }
 
@@ -190,7 +180,6 @@ public class QualityGateValidator : IQualityGateValidator
         {
             Compilation = aggregateCompilation,
             Tests = aggregateTests,
-            SecurityScan = null,
             QgcResults = qgcResults
         };
     }

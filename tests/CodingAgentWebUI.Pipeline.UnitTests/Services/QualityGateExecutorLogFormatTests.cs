@@ -15,7 +15,7 @@ public class QualityGateExecutorLogFormatTests
     [Fact]
     public void FormatGateLogValue_Passed_ReturnsTrue()
     {
-        var gate = new GateResult { GateName = "SecurityScan", Passed = true };
+        var gate = new GateResult { GateName = "Compilation", Passed = true };
         QualityGateExecutor.FormatGateLogValue(gate).Should().Be("True");
     }
 

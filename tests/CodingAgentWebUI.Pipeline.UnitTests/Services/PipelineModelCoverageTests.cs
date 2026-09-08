@@ -89,19 +89,8 @@ public class PipelineModelCoverageTests
         result.Should().StartWith("feature/auto-42");
     }
 
-    [Fact]
-    public void FormatQualityGateSummary_WithSecurityOnly_IncludesSecurityStatus()
-    {
-        var report = new QualityGateReport
-        {
-            Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
-            Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" },
-            SecurityScan = new GateResult { GateName = "Security", Passed = false, Details = "1 vulnerability" }
-        };
-        var summary = PipelineFormatting.FormatQualityGateSummary(report);
-        summary.Should().Contain("Compilation");
-        summary.Should().Contain("Security");
-    }
+    // Deleted (behavior removed): FormatQualityGateSummary_WithSecurityOnly_IncludesSecurityStatus —
+    // SecurityScan property was retired from QualityGateReport (Key(4) tombstoned).
 
     // Deleted (behavior removed): FormatQualityGateSummary_WithCoverageAndSecurity_IncludesAll —
     // Coverage property was retired from QualityGateReport (Key(1) tombstoned).

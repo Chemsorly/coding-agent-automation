@@ -53,7 +53,6 @@ public partial class QualityGateExecutor
         var callbacks = context.Callbacks;
 
         if (!report.Compilation.Passed || !report.Tests.Passed
-            || !(report.SecurityScan?.Passed ?? true)
             || context.PipelineProvider == null)
             return report;
 
@@ -101,7 +100,6 @@ public partial class QualityGateExecutor
                 {
                     Compilation = report.Compilation,
                     Tests = report.Tests,
-                    SecurityScan = report.SecurityScan,
                     ExternalCi = new GateResult
                     {
                         GateName = "External CI",
@@ -149,7 +147,6 @@ public partial class QualityGateExecutor
         {
             Compilation = report.Compilation,
             Tests = report.Tests,
-            SecurityScan = report.SecurityScan,
             ExternalCi = ciGate
         };
     }

@@ -309,20 +309,20 @@ public class AgentHubTests
         {
             Compilation = new GateResult { GateName = "Compilation", Passed = true },
             Tests = new GateResult { GateName = "Tests", Passed = true },
-            SecurityScan = new GateResult { GateName = "Security", Passed = true }
+            ExternalCi = new GateResult { GateName = "ExternalCi", Passed = true }
         };
 
         report.AllPassed.Should().BeTrue();
     }
 
     [Fact]
-    public void QualityGateReport_AllPassed_WithSecurityFailing_ReturnsFalse()
+    public void QualityGateReport_AllPassed_WithExternalCiFailing_ReturnsFalse()
     {
         var report = new QualityGateReport
         {
             Compilation = new GateResult { GateName = "Compilation", Passed = true },
             Tests = new GateResult { GateName = "Tests", Passed = true },
-            SecurityScan = new GateResult { GateName = "Security", Passed = false }
+            ExternalCi = new GateResult { GateName = "ExternalCi", Passed = false }
         };
 
         report.AllPassed.Should().BeFalse();
