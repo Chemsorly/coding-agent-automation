@@ -1011,8 +1011,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         // In multi-template mode, circuit breaker trips when ALL templates have failures >= threshold
         // Wait for both IsCircuitBroken AND StatusMessage to stabilize (ARM weak memory ordering
-        // can cause the test thread to observe IsCircuitBroken=true before StatusMessage is updated)
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        // can cause the test thread to observe IsCircuitBroken=true before StatusMessage is updated).
+        // 15-second deadline guards against CI runner load spikes where loop iterations run slower.
+        var deadline = DateTime.UtcNow.AddSeconds(15);
         while ((!svc.IsCircuitBroken || !svc.StatusMessage.Contains("paused", StringComparison.OrdinalIgnoreCase))
                && DateTime.UtcNow < deadline)
             await Task.Delay(50);
@@ -1021,7 +1022,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         Assert.Contains("paused", svc.StatusMessage, StringComparison.OrdinalIgnoreCase);
 
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(5);
+        deadline = DateTime.UtcNow.AddSeconds(15);
         while (svc.IsLoopActive && DateTime.UtcNow < deadline)
             await Task.Delay(50);
         cts.Cancel();

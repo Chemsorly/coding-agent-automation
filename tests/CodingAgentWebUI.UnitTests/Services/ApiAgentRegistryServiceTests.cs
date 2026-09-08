@@ -45,8 +45,9 @@ public sealed class ApiAgentRegistryServiceTests
     {
         var clock = new FakeTimeProvider(Origin);
         var client = new Mock<IPipelineApiAgentClient>();
+        // GetAgentsAsync now returns IReadOnlyList<AgentEntryDto>; wrap each AgentEntry via AgentEntryDto.From.
         client.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
-              .ReturnsAsync(agents.ToList());
+              .ReturnsAsync(agents.Select(a => AgentEntryDto.From(a, null)).ToList().AsReadOnly());
 
         var registry = new ApiAgentRegistryService(client.Object, clock, new Mock<ILogger>().Object);
         return (registry, client, clock);
@@ -188,7 +189,7 @@ public sealed class ApiAgentRegistryServiceTests
         var clock = new FakeTimeProvider(Origin);
         var client = new Mock<IPipelineApiAgentClient>();
         client.SetupSequence(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
-              .ReturnsAsync(new List<AgentEntry> { Agent("a1") })
+              .ReturnsAsync(new List<AgentEntryDto> { AgentEntryDto.From(Agent("a1"), null) }.AsReadOnly())
               .ThrowsAsync(new HttpRequestException("api down"));
 
         var registry = new ApiAgentRegistryService(client.Object, clock, new Mock<ILogger>().Object);
@@ -213,8 +214,8 @@ public sealed class ApiAgentRegistryServiceTests
         var clock = new FakeTimeProvider(Origin);
         var client = new Mock<IPipelineApiAgentClient>();
         client.SetupSequence(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
-              .ReturnsAsync(new List<AgentEntry> { Agent("a1"), Agent("a2") })
-              .ReturnsAsync(new List<AgentEntry> { Agent("a2") });
+              .ReturnsAsync(new List<AgentEntryDto> { AgentEntryDto.From(Agent("a1"), null), AgentEntryDto.From(Agent("a2"), null) }.AsReadOnly())
+              .ReturnsAsync(new List<AgentEntryDto> { AgentEntryDto.From(Agent("a2"), null) }.AsReadOnly());
 
         var registry = new ApiAgentRegistryService(client.Object, clock, new Mock<ILogger>().Object);
 

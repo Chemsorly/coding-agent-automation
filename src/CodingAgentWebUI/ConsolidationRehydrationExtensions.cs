@@ -34,18 +34,18 @@ internal static class ConsolidationRehydrationExtensions
         // return empty and the skip guard would never fire.
         var consolidationService = app.Services.GetRequiredService<IConsolidationService>();
         var apiAgentClient = app.Services.GetRequiredService<IPipelineApiAgentClient>();
-        IReadOnlyList<AgentEntry> liveAgents;
+        IReadOnlyList<AgentEntryDto> liveAgentDtos;
         try
         {
-            liveAgents = await apiAgentClient.GetAgentsAsync(CancellationToken.None);
+            liveAgentDtos = await apiAgentClient.GetAgentsAsync(CancellationToken.None);
         }
         catch
         {
             // If the API is unreachable (e.g. cold start), treat all running runs as orphaned.
-            liveAgents = [];
+            liveAgentDtos = [];
         }
         var activeAgentJobIds = new HashSet<string>(
-            liveAgents.Where(a => a.ActiveJobId != null).Select(a => a.ActiveJobId!),
+            liveAgentDtos.Where(a => a.ActiveJobId != null).Select(a => a.ActiveJobId!),
             StringComparer.OrdinalIgnoreCase);
         await consolidationService.CleanupOrphanedRunsAsync(activeAgentJobIds, CancellationToken.None);
 

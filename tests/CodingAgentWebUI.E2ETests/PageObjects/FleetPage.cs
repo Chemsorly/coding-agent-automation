@@ -78,6 +78,85 @@ public sealed class FleetPage
         }");
     }
 
+    /// <summary>
+    /// Returns true if a stat tile with the given label text is present on the Fleet page.
+    /// Use to verify removed tiles (e.g. "Busy", "Idle", "Utilization") are absent.
+    /// </summary>
+    public async Task<bool> IsStatTilePresentAsync(string labelText)
+    {
+        return await _page.EvaluateAsync<bool>(@"(labelText) => {
+            const stats = document.querySelectorAll('.cockpit-stat');
+            for (const s of stats) {
+                const label = s.querySelector('.cockpit-stat-l');
+                if (label && label.textContent.trim() === labelText) return true;
+            }
+            return false;
+        }", labelText);
+    }
+
+    /// <summary>
+    /// Returns the href of the issue link chip in the "Active work" cell for the given agent,
+    /// or null if no issue link is present.
+    /// </summary>
+    public async Task<string?> GetActiveIssueLinkAsync(string agentId)
+    {
+        return await _page.EvaluateAsync<string?>(@"(agentId) => {
+            const rows = document.querySelectorAll('.monitoring-table tbody tr');
+            for (const row of rows) {
+                const mono = row.querySelector('.monitoring-mono');
+                if (mono && mono.textContent.trim() === agentId) {
+                    const cell = row.querySelector('.fleet-work-cell');
+                    if (!cell) return null;
+                    const issueLink = cell.querySelector('a[title^=""Open issue""]');
+                    return issueLink ? issueLink.getAttribute('href') : null;
+                }
+            }
+            return null;
+        }", agentId);
+    }
+
+    /// <summary>
+    /// Returns the href of the run link in the "Active work" cell for the given agent,
+    /// or null if no run link is present.
+    /// </summary>
+    public async Task<string?> GetActiveRunLinkAsync(string agentId)
+    {
+        return await _page.EvaluateAsync<string?>(@"(agentId) => {
+            const rows = document.querySelectorAll('.monitoring-table tbody tr');
+            for (const row of rows) {
+                const mono = row.querySelector('.monitoring-mono');
+                if (mono && mono.textContent.trim() === agentId) {
+                    const cell = row.querySelector('.fleet-work-cell');
+                    if (!cell) return null;
+                    const runLink = cell.querySelector('a[title=""Open pipeline run""]');
+                    return runLink ? runLink.getAttribute('href') : null;
+                }
+            }
+            return null;
+        }", agentId);
+    }
+
+    /// <summary>
+    /// Returns the href of the PR link in the "Active work" cell for the given agent,
+    /// or null if no PR link is present.
+    /// </summary>
+    public async Task<string?> GetActivePrLinkAsync(string agentId)
+    {
+        return await _page.EvaluateAsync<string?>(@"(agentId) => {
+            const rows = document.querySelectorAll('.monitoring-table tbody tr');
+            for (const row of rows) {
+                const mono = row.querySelector('.monitoring-mono');
+                if (mono && mono.textContent.trim() === agentId) {
+                    const cell = row.querySelector('.fleet-work-cell');
+                    if (!cell) return null;
+                    const prLink = cell.querySelector('a[title=""Open pull request""]');
+                    return prLink ? prLink.getAttribute('href') : null;
+                }
+            }
+            return null;
+        }", agentId);
+    }
+
     /// <summary>Polls until the agent shows the expected status, or the timeout elapses.</summary>
     public async Task WaitForAgentStatusAsync(string agentId, string expectedStatus, int timeoutMs = 15_000)
     {

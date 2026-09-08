@@ -440,6 +440,10 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                 case "CodeReviewAgentsRun":
                     run.CodeReviewAgentsRun = value.Split('\x1F', StringSplitOptions.RemoveEmptyEntries);
                     break;
+                case "PullRequestUrl":
+                    if (!string.IsNullOrEmpty(value))
+                        run.PullRequestUrl = value;
+                    break;
             }
         }
 
