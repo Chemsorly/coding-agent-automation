@@ -336,19 +336,38 @@ public static class WorkItemEndpoints
     // concrete class with an in-memory DB. Consider adding TransitionDetailedAsync to an interface
     // (e.g. IWorkItemTransitionService or a new IWorkItemTransitionDetailedService) so PostStatus can
     // be tested with pure mocks and to allow future DI substitution.
-    internal static async Task<IResult> PostStatus(
+    internal static Task<IResult> PostStatus(
         Guid id,
         WorkItemStatusRequest request,
         WorkItemTransitionService transitionService,
         IOrchestratorRunService runService,
         IRunLifecycleManager runLifecycleManager,
         IDbContextFactory<PipelineDbContext>? dbFactory = null,
-        CancellationToken ct = default,
-        // Test seam: when non-null, the telemetry task is awaited synchronously so tests can
-        // assert metric side-effects without Task.Delay races. In production this is always null
-        // and the fire-and-forget path is used. The route registration lambda does not pass this
-        // parameter, so the default (null) applies for all real HTTP requests.
-        Func<Guid, WorkItemStatusRequest, IDbContextFactory<PipelineDbContext>?, CancellationToken, Task>? telemetryFunc = null)
+        CancellationToken ct = default)
+        => PostStatusCore(id, request, transitionService, runService, runLifecycleManager, dbFactory, ct, awaitTelemetry: false);
+
+    // Overload used by tests to await telemetry synchronously, eliminating Task.Delay races.
+    // CancellationToken is last per CA1068; bool is after it only in this internal overload.
+    internal static Task<IResult> PostStatus(
+        Guid id,
+        WorkItemStatusRequest request,
+        WorkItemTransitionService transitionService,
+        IOrchestratorRunService runService,
+        IRunLifecycleManager runLifecycleManager,
+        IDbContextFactory<PipelineDbContext>? dbFactory,
+        CancellationToken ct,
+        bool awaitTelemetry)
+        => PostStatusCore(id, request, transitionService, runService, runLifecycleManager, dbFactory, ct, awaitTelemetry);
+
+    private static async Task<IResult> PostStatusCore(
+        Guid id,
+        WorkItemStatusRequest request,
+        WorkItemTransitionService transitionService,
+        IOrchestratorRunService runService,
+        IRunLifecycleManager runLifecycleManager,
+        IDbContextFactory<PipelineDbContext>? dbFactory,
+        CancellationToken ct,
+        bool awaitTelemetry)
     {
         var transitionResult = await transitionService.TransitionDetailedAsync(
             id, request.Status,
@@ -391,20 +410,20 @@ public static class WorkItemEndpoints
             }
 
             // Emit telemetry for terminal transitions.
-            // Production path: fire-and-forget so the enrichment DB read does not block the
-            // agent's 200 response and a slow/failed read does not surface as a 500.
-            // Test path: when telemetryFunc is provided the task is awaited, eliminating the
+            // Production path (awaitTelemetry=false): fire-and-forget so the enrichment DB read
+            // does not block the agent's 200 response and a slow/failed read does not surface as a 500.
+            // Test path (awaitTelemetry=true): task is awaited before returning, eliminating the
             // Task.Delay race that made telemetry-asserting tests flaky on loaded CI hosts.
             // CancellationToken.None is intentional: this task outlives the HTTP request lifetime;
             // using the request-scoped ct would cause spurious OperationCanceledException warnings
             // when ASP.NET Core cancels the token as soon as the response is sent.
             if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
             {
-                var emitTask = (telemetryFunc ?? EmitTerminalStatusTelemetryAsync)(id, request, dbFactory, CancellationToken.None);
-                if (telemetryFunc is not null)
+                var emitTask = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, CancellationToken.None);
+                if (awaitTelemetry)
                     await emitTask;
                 else
-                    _ = emitTask; // fire-and-forget in production
+                    _ = emitTask;
             }
         }
 
@@ -1219,7 +1238,7 @@ public static class WorkItemEndpoints
             entity.CompletedAt = DateTimeOffset.UtcNow;
     }
 
-    internal static async Task EmitTerminalStatusTelemetryAsync(
+    private static async Task EmitTerminalStatusTelemetryAsync(
         Guid id,
         WorkItemStatusRequest request,
         IDbContextFactory<PipelineDbContext>? dbFactory,

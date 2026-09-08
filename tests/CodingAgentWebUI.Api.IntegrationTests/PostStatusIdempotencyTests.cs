@@ -291,12 +291,12 @@ public sealed class PostStatusIdempotencyTests
         var runService = new Mock<IOrchestratorRunService>().Object;
         var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
 
-        // Act — pass EmitTerminalStatusTelemetryAsync as telemetryFunc so PostStatus awaits it
+        // Act — pass awaitTelemetry: true so PostStatus awaits EmitTerminalStatusTelemetryAsync
         // before returning. This eliminates the Task.Delay(200) race: the metric is recorded
         // synchronously (from the test's perspective) before the assertion runs.
         var result = await WorkItemEndpoints.PostStatus(
             item.Id, request, transitionService, runService, lifecycleManager, dbFactory,
-            telemetryFunc: WorkItemEndpoints.EmitTerminalStatusTelemetryAsync);
+            ct: default, awaitTelemetry: true);
 
         // Assert
         result.Should().BeOfType<Ok>();
@@ -450,12 +450,12 @@ public sealed class PostStatusIdempotencyTests
                 It.IsAny<FailureReason?>()))
             .ReturnsAsync((PipelineRun?)null);
 
-        // Act — pass EmitTerminalStatusTelemetryAsync as telemetryFunc so PostStatus awaits it.
+        // Act — pass awaitTelemetry: true so PostStatus awaits EmitTerminalStatusTelemetryAsync.
         // This eliminates the Task.Delay(200) race and the cross-test meter-listener leakage
         // that caused {"Timeout"} to appear instead of {"none"} on loaded CI hosts.
         var result = await WorkItemEndpoints.PostStatus(
             item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory,
-            telemetryFunc: WorkItemEndpoints.EmitTerminalStatusTelemetryAsync);
+            ct: default, awaitTelemetry: true);
 
         // Assert
         result.Should().BeOfType<Ok>();
@@ -523,10 +523,10 @@ public sealed class PostStatusIdempotencyTests
                 It.IsAny<FailureReason?>()))
             .ReturnsAsync((PipelineRun?)null);
 
-        // Act — pass EmitTerminalStatusTelemetryAsync as telemetryFunc so PostStatus awaits it.
+        // Act — pass awaitTelemetry: true so PostStatus awaits EmitTerminalStatusTelemetryAsync.
         var result = await WorkItemEndpoints.PostStatus(
             item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory,
-            telemetryFunc: WorkItemEndpoints.EmitTerminalStatusTelemetryAsync);
+            ct: default, awaitTelemetry: true);
 
         // Assert
         result.Should().BeOfType<Ok>();
