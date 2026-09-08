@@ -416,6 +416,84 @@ public sealed class SynchronousDispatchEndpointTests
             .ToListAsync();
         dispatched.Should().HaveCount(1, "exactly one WorkItem must be in Dispatched state");
     }
+
+    // ── Coverage: K8s failure → !dispatched → 503 with orphan cleanup ────────
+
+    /// <summary>
+    /// When the K8s job creation throws, <c>ExecuteDispatchLifecycleAsync</c> transitions
+    /// the item to Failed internally (via <c>FailWorkItemAsync</c> in <c>CreateK8sJobAsync</c>)
+    /// and returns without calling <c>onDispatchSuccess</c>.
+    /// The endpoint must return 503 and the WorkItem must be in a terminal state (not Dispatched).
+    /// </summary>
+    [Fact]
+    public async Task DispatchWorkItem_WhenK8sJobCreationFails_Returns503_AndCleansUpWorkItem()
+    {
+        // Arrange: K8s client throws on CreateJobAsync to simulate K8s API failure
+        var dbFactory = CreateDbFactory();
+        var runService = CreateRunService();
+        var templateStore = CreateTemplateStore(maxConcurrent: 5);
+
+        var k8sMock = new Mock<IKubernetesJobClient>();
+        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("K8s API unavailable"));
+
+        var lifecycle = CreateLifecycleService(k8sMock.Object);
+        var request = MakeRequest(WorkItemTaskType.Implementation, "kiro,dotnet");
+
+        // Act
+        var result = await WorkItemEndpoints.DispatchWorkItem(
+            request, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
+
+        // Assert: 503 returned
+        var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
+        statusResult.Should().NotBeNull("K8s failure must return 503");
+        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+
+        // WorkItem must not remain in Dispatched state — it was cleaned up to Failed
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.AsNoTracking()
+            .FirstOrDefaultAsync(w => w.IssueIdentifier == request.IssueIdentifier.Value);
+        item.Should().NotBeNull("WorkItem was created before K8s call");
+        item!.Status.Should().NotBe(WorkItemStatus.Dispatched,
+            "an orphaned Dispatched WorkItem must be cleaned up when K8s job creation fails");
+    }
+
+    // ── Coverage: non-kiro template (no PVC gate) happy path ────────────────
+
+    /// <summary>
+    /// Non-kiro templates (providerType != "kiro") skip the PVC availability check.
+    /// The endpoint must dispatch successfully without requiring a PVC.
+    /// </summary>
+    [Fact]
+    public async Task DispatchWorkItem_NonKiroTemplate_SkipsPvcGate_Returns200()
+    {
+        // Arrange: non-kiro template — providerType is not "kiro"
+        var dbFactory = CreateDbFactory();
+        var runService = CreateRunService();
+        var templateStore = CreateTemplateStore(labels: "opencode,python", maxConcurrent: 5, providerType: "opencode");
+
+        var k8sMock = new Mock<IKubernetesJobClient>();
+        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        // Non-kiro lifecycle — no PVC pool needed
+        var lifecycle = CreateLifecycleService(k8sMock.Object, pvcPool: []);
+        var request = MakeRequest(WorkItemTaskType.Implementation, "opencode,python");
+
+        // Act
+        var result = await WorkItemEndpoints.DispatchWorkItem(
+            request, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
+
+        // Assert: 200 OK — PVC gate was skipped for non-kiro template
+        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
+        okResult.Should().NotBeNull("non-kiro dispatch must succeed without a PVC");
+
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.AsNoTracking()
+            .FirstOrDefaultAsync(w => w.IssueIdentifier == request.IssueIdentifier.Value);
+        item.Should().NotBeNull();
+        item!.Status.Should().Be(WorkItemStatus.Dispatched,
+            "non-kiro WorkItem must be Dispatched on success");
+    }
 }
 
 /// <summary>
