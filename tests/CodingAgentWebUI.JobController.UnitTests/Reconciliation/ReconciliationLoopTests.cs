@@ -13,6 +13,16 @@ namespace CodingAgentWebUI.JobController.UnitTests.Reconciliation;
 /// Unit tests for ReconciliationLoop — the K8s Job watch and timeout enforcement logic.
 /// Tests are written before implementation (TDD: Task 12b).
 /// </summary>
+/// <remarks>
+/// Placed in the "Metrics" collection to serialize execution with
+/// <see cref="ReconciliationLoopMetricTests"/> and <see cref="ReconciliationLoopErrorTests"/>.
+/// Tests here call <c>ReconcileOnceAsync</c> with terminal K8s jobs, which flows through
+/// <c>HandleJobCompletedAsync → WorkDistributionTelemetry.LogTerminalStatus →
+/// PipelineTelemetry.JobsFailed.Add()</c>. Without serialization, those emissions bleed
+/// into the snapshot-delta assertions in <see cref="ReconciliationLoopMetricTests"/> and
+/// cause a spurious "delta of 2 instead of 1" failure.
+/// </remarks>
+[Collection("Metrics")]
 public sealed class ReconciliationLoopTests
 {
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
