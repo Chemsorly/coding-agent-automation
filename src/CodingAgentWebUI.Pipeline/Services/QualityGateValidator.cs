@@ -271,7 +271,7 @@ public class QualityGateValidator : IQualityGateValidator
         Activity? Activity);
 
     /// <summary>Thrown by <see cref="RunQgcProcessAsync"/> when the process exceeds its timeout.</summary>
-    internal sealed class QgcProcessTimedOutException(int timeoutSeconds, Exception inner)
+    public sealed class QgcProcessTimedOutException(int timeoutSeconds, Exception inner)
         : Exception($"Process timed out after {timeoutSeconds}s", inner)
     {
         public int TimeoutSeconds { get; } = timeoutSeconds;
