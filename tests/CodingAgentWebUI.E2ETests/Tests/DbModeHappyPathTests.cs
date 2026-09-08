@@ -121,8 +121,14 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
     }
 
     [Fact]
-    public async Task DbMode_NoAgentAvailable_WorkItemQueuedAsPending_DrainedWhenAgentConnects()
+    public async Task DbMode_NoAgentAvailable_WorkItemDispatchedImmediately_AgentPicksUpOnConnect()
     {
+        // With the synchronous dispatch path (issue #2322), no WorkItem is ever written as
+        // Pending on the live dispatch path. The endpoint creates the K8s Job and writes the
+        // WorkItem as Dispatched immediately, regardless of whether a FakeAgentClient is
+        // already connected. FakeJobController picks up Dispatched items and calls
+        // StartAssignedWorkItemAsync once a matching agent registers.
+
         // Arrange: seed data but do NOT connect agent yet
         await SeedTestDataAsync("44", "Pending issue");
 
@@ -131,18 +137,18 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
         Assert.True(result.Success, $"Distribution failed: {result.ErrorMessage}");
         var workItemId = Guid.Parse(result.WorkItemId!);
 
-        // Assert: WorkItem is Pending (no agent available)
-        var pending = await WaitForWorkItemStatusAsync(
-            workItemId, WorkItemStatus.Pending, TimeSpan.FromSeconds(10));
-        Assert.Equal(WorkItemStatus.Pending, pending.Status);
-        Assert.Null(pending.DispatchedAt); // Reset to null when moved to Pending
+        // Assert: WorkItem is Dispatched immediately (synchronous dispatch — no Pending state)
+        var dispatched = await WaitForWorkItemStatusAsync(
+            workItemId, WorkItemStatus.Dispatched, TimeSpan.FromSeconds(10));
+        Assert.Equal(WorkItemStatus.Dispatched, dispatched.Status);
+        Assert.NotNull(dispatched.DispatchedAt);
 
-        // NOW connect a FakeAgentClient
+        // NOW connect a FakeAgentClient — FakeJobController will bootstrap the assignment
         await using var agent = new FakeAgentClient("db-agent-drain", "db-e2e");
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
-        // Wait for PendingWorkItemDrainService to pick up the pending item
-        // (drain interval is 5 seconds by default, but also wakes on agent signal)
+        // FakeJobController polls for Dispatched items (250ms interval) and calls
+        // StartAssignedWorkItemAsync on the matching agent once it registers.
         var assignment = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
         Assert.Equal("44", assignment.IssueIdentifier);
 

@@ -92,9 +92,8 @@ public sealed class FakeJobController : IAsyncDisposable
     {
         await ReconcileOnceAsync(ct);
 
+        // ── Legacy path: Pending items (consolidation still uses this) ────────────────────
         var pending = await _workItems.GetPendingAsync(50, ct: ct);
-        if (pending.Count == 0) return;
-
         foreach (var item in pending)
         {
             var agent = FindIdleAgentFor(item.AgentSelector);
@@ -129,6 +128,29 @@ public sealed class FakeJobController : IAsyncDisposable
             {
                 // Swallowed deliberately — see above.
             }
+
+            if (FakeAgentClient.TryGetConnected(agent.AgentId.Value, out var fakeAgent))
+                await fakeAgent.StartAssignedWorkItemAsync(item.Id, ct);
+        }
+
+        // ── Synchronous-dispatch path: Dispatched items (issue #2322) ─────────────────────
+        // The new POST /api/work-items/dispatch endpoint writes WorkItems directly as Dispatched
+        // without going through Pending, so the Pending poll above never sees them.
+        // Poll GetActiveAsync with a large negative olderThanSeconds so the cutoff is far in the
+        // future, matching all active items regardless of when they were dispatched.
+        var active = await _workItems.GetActiveAsync(olderThanSeconds: -3600, ct: ct);
+        foreach (var item in active)
+        {
+            if (item.Status != WorkItemStatus.Dispatched) continue;
+            if (_inFlight.ContainsKey(item.Id)) continue; // already being handled
+
+            var agent = FindIdleAgentFor(item.AgentSelector);
+            if (agent is null) continue;
+
+            // Track in-flight before calling StartAssignedWorkItemAsync so concurrent poll
+            // iterations don't also try to bootstrap the same item.
+            if (!_inFlight.TryAdd(item.Id, agent.AgentId.Value)) continue;
+            ClaimedWorkItemIds.Add(item.Id);
 
             if (FakeAgentClient.TryGetConnected(agent.AgentId.Value, out var fakeAgent))
                 await fakeAgent.StartAssignedWorkItemAsync(item.Id, ct);

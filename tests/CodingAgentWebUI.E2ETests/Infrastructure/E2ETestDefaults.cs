@@ -141,6 +141,90 @@ internal static class E2ETestDefaults
               imagePullPolicy: "Always"
               providerType: "opencode"
               maxConcurrent: 5
+            # ── Test-only selectors ─────────────────────────────────────────────────
+            # The synchronous dispatch endpoint (POST /api/work-items/dispatch, issue #2322)
+            # requires a matching JobTemplate or it returns 409 before any WorkItem is written.
+            # Each test class that seeds its own AgentProfile uses a unique MatchLabels value
+            # (e.g. "db-e2e", "edge-e2e") to isolate its dispatches from other parallel tests.
+            # These labels don't correspond to real images; providerType "opencode" is used so
+            # no PVC availability check fires (only kiro agents require a PVC).
+            # The empty-labels entry covers consolidation dispatches where no required labels
+            # are configured (AgentSelectorKey.From([]) == "").
+            - labels: ""
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "conflict-e2e"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "db-e2e"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "e2e"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "edge-e2e"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "integrity-e2e"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "race-e2e"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "special-label"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "unhappy-e2e"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "backend"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "busy-test"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "disabled-test"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "dotnet-special"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "fifo-sel"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            - labels: "frontend"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
             """));
     }
 
