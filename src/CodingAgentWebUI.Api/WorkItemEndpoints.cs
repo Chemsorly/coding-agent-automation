@@ -944,7 +944,38 @@ public static class WorkItemEndpoints
             active = active.Where(w => w.ProjectId == scopeProjectId);
 
         var items = await active
-            .Select(w => new ActiveWorkItemDto
+            .Select(w => new
+            {
+                w.Id,
+                w.Status,
+                w.DispatchedAt,
+                w.AgentSelector,
+                w.IssueIdentifier,
+                w.K8sJobName,
+                w.TimeoutSeconds,
+                w.Payload
+            })
+            .ToListAsync(ct);
+
+        // Phase 2: in-memory deserialization to extract IssueTitle from Payload.
+        // Same defensive pattern as GetPendingWorkItems — a malformed or absent payload
+        // produces a null IssueTitle rather than a 500.
+        var dtos = items.Select(w =>
+        {
+            string? issueTitle = null;
+            if (w.Payload is not null)
+            {
+                try
+                {
+                    var req = JsonSerializer.Deserialize<JobDistributionRequest>(w.Payload, PipelineJsonOptions.Lenient);
+                    issueTitle = req?.IssueDetail?.Title;
+                }
+                catch (JsonException)
+                {
+                    // Corrupt or legacy payload — leave IssueTitle null.
+                }
+            }
+            return new ActiveWorkItemDto
             {
                 Id = w.Id,
                 Status = w.Status,
@@ -952,27 +983,32 @@ public static class WorkItemEndpoints
                 AgentSelector = w.AgentSelector,
                 IssueIdentifier = w.IssueIdentifier,
                 K8sJobName = w.K8sJobName,
-                TimeoutSeconds = w.TimeoutSeconds
-            })
-            .ToListAsync(ct);
+                TimeoutSeconds = w.TimeoutSeconds,
+                IssueTitle = issueTitle
+            };
+        // TODO [WARNING]: ct is available and used in the SQL phase (ToListAsync(ct)) but is not
+        // propagated to this in-memory LINQ loop. Under normal payload sizes this is harmless because
+        // the deserialization is synchronous and fast. If payload sizes grow significantly, consider
+        // adding a cancellation check (ct.ThrowIfCancellationRequested()) inside the loop body.
+        }).ToList();
 
         // Enrich with live pipeline step from the in-memory run service when available.
         // runService may be null in test scenarios that construct the handler directly without DI.
         if (runService is not null)
         {
-            for (var i = 0; i < items.Count; i++)
+            for (var i = 0; i < dtos.Count; i++)
             {
                 // TODO: The explicit cast (RunId) calls ArgumentException.ThrowIfNullOrEmpty internally.
                 // Guid.ToString() is always non-null/non-empty, so this is safe in practice, but if
                 // ActiveWorkItemDto.Id ever becomes nullable (Guid?) the cast would throw instead of
-                // skipping enrichment. Consider using new RunId(items[i].Id.ToString()) for clarity.
-                var liveRun = runService.GetRun((RunId)items[i].Id.ToString());
+                // skipping enrichment. Consider using new RunId(dtos[i].Id.ToString()) for clarity.
+                var liveRun = runService.GetRun((RunId)dtos[i].Id.ToString());
                 if (liveRun is not null)
-                    items[i] = items[i] with { CurrentStep = liveRun.CurrentStep };
+                    dtos[i] = dtos[i] with { CurrentStep = liveRun.CurrentStep };
             }
         }
 
-        return TypedResults.Ok((IReadOnlyList<ActiveWorkItemDto>)items);
+        return TypedResults.Ok((IReadOnlyList<ActiveWorkItemDto>)dtos);
     }
 
     // ── POST /{id}/label-swap ─────────────────────────────────────────────
