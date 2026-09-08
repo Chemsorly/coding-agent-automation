@@ -355,7 +355,9 @@ public class PipelineIntegrationTests : IntegrationTestBase
         File.WriteAllText(Path.Combine(RunsDir, $"{expiredRunId}.json"),
             System.Text.Json.JsonSerializer.Serialize(new PipelineRunSummary
             {
-                RunId = expiredRunId, IssueIdentifier = "1", IssueTitle = "Expired run",
+                RunId = expiredRunId,
+                IssueIdentifier = "1",
+                IssueTitle = "Expired run",
                 FinalStep = PipelineStep.Failed,
                 StartedAt = DateTime.UtcNow.AddDays(-30),
                 CompletedAt = DateTime.UtcNow.AddDays(-30)
@@ -364,7 +366,9 @@ public class PipelineIntegrationTests : IntegrationTestBase
         File.WriteAllText(Path.Combine(RunsDir, $"{recentRunId}.json"),
             System.Text.Json.JsonSerializer.Serialize(new PipelineRunSummary
             {
-                RunId = recentRunId, IssueIdentifier = "2", IssueTitle = "Recent run",
+                RunId = recentRunId,
+                IssueIdentifier = "2",
+                IssueTitle = "Recent run",
                 FinalStep = PipelineStep.Failed,
                 StartedAt = DateTime.UtcNow.AddDays(-1),
                 CompletedAt = DateTime.UtcNow.AddDays(-1)
