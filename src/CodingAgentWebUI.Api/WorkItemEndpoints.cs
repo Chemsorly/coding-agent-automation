@@ -336,38 +336,24 @@ public static class WorkItemEndpoints
     // concrete class with an in-memory DB. Consider adding TransitionDetailedAsync to an interface
     // (e.g. IWorkItemTransitionService or a new IWorkItemTransitionDetailedService) so PostStatus can
     // be tested with pure mocks and to allow future DI substitution.
-    internal static Task<IResult> PostStatus(
+    internal static async Task<IResult> PostStatus(
         Guid id,
         WorkItemStatusRequest request,
         WorkItemTransitionService transitionService,
         IOrchestratorRunService runService,
         IRunLifecycleManager runLifecycleManager,
         IDbContextFactory<PipelineDbContext>? dbFactory = null,
-        CancellationToken ct = default)
-        => PostStatusCore(id, request, transitionService, runService, runLifecycleManager, dbFactory, ct, awaitTelemetry: false);
-
-    // Overload used by tests to await telemetry synchronously, eliminating Task.Delay races.
-    // CancellationToken is last per CA1068; bool is after it only in this internal overload.
-    internal static Task<IResult> PostStatus(
-        Guid id,
-        WorkItemStatusRequest request,
-        WorkItemTransitionService transitionService,
-        IOrchestratorRunService runService,
-        IRunLifecycleManager runLifecycleManager,
-        IDbContextFactory<PipelineDbContext>? dbFactory,
-        CancellationToken ct,
-        bool awaitTelemetry)
-        => PostStatusCore(id, request, transitionService, runService, runLifecycleManager, dbFactory, ct, awaitTelemetry);
-
-    private static async Task<IResult> PostStatusCore(
-        Guid id,
-        WorkItemStatusRequest request,
-        WorkItemTransitionService transitionService,
-        IOrchestratorRunService runService,
-        IRunLifecycleManager runLifecycleManager,
-        IDbContextFactory<PipelineDbContext>? dbFactory,
-        CancellationToken ct,
-        bool awaitTelemetry)
+        CancellationToken ct = default,
+        // Test seam only: when true, the telemetry task is awaited before returning so tests can
+        // assert metric side-effects deterministically. In production the route lambda never passes
+        // this parameter, so it defaults to false and the fire-and-forget path is unchanged.
+        // Suppression: CA1068 (ct not last) and S107 (>7 params) are acceptable here because
+        // this is an internal method with a test-only parameter appended after the conventional
+        // CancellationToken position. Moving the bool before ct would break naming conventions;
+        // splitting into an overload doubles the S107 surface area. The bool is never passed by
+        // production callers.
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1068", Justification = "Test seam bool appended after ct intentionally")]
+        bool awaitTelemetry = false)
     {
         var transitionResult = await transitionService.TransitionDetailedAsync(
             id, request.Status,
