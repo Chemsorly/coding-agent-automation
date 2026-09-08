@@ -5,6 +5,49 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Models;
 
 public class PipelineConfigurationValidationTests
 {
+    // ── AgentTimeout ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public void AgentTimeout_RejectsZero()
+    {
+        var act = () => new PipelineConfiguration { AgentTimeout = TimeSpan.Zero };
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName("AgentTimeout");
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(-30)]
+    [InlineData(-1800)]
+    public void AgentTimeout_RejectsNegativeDurations(int seconds)
+    {
+        var act = () => new PipelineConfiguration { AgentTimeout = TimeSpan.FromSeconds(seconds) };
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName("AgentTimeout");
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(60)]
+    [InlineData(1800)]
+    [InlineData(7200)]
+    public void AgentTimeout_AcceptsPositiveDurations(int seconds)
+    {
+        var ts = TimeSpan.FromSeconds(seconds);
+        var config = new PipelineConfiguration { AgentTimeout = ts };
+        config.AgentTimeout.Should().Be(ts);
+    }
+
+    [Fact]
+    public void AgentTimeout_DefaultIsPositive()
+    {
+        var config = new PipelineConfiguration();
+        config.AgentTimeout.Should().BeGreaterThan(TimeSpan.Zero);
+        config.AgentTimeout.Should().Be(PipelineConstants.DefaultAgentTimeout);
+    }
+
+    // ── ClosedLoopMaxConsecutivePollFailures ───────────────────────────────────
+
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]

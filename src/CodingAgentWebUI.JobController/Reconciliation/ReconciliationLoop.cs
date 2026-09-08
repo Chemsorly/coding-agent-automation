@@ -129,9 +129,12 @@ public sealed class ReconciliationLoop
     /// <summary>
     /// Enforces the session timeout: marks Running items that have exceeded their per-item
     /// <see cref="ActiveWorkItemDto.TimeoutSeconds"/> as Failed.
-    /// Items without a stored timeout (zero) fall back to the global default
-    /// (<see cref="PipelineConstants.DefaultAgentTimeout"/>).
+    /// All rows are guaranteed to have a positive <see cref="ActiveWorkItemDto.TimeoutSeconds"/>
+    /// post migration BackfillZeroTimeoutSeconds (#2405); no zero-sentinel fallback is needed.
     /// </summary>
+    // TODO: Update this XML doc comment if the no-zero guarantee ever changes — the old text
+    // ("Items without a stored timeout (zero) fall back to the global default") contradicts the
+    // current implementation which passes item.TimeoutSeconds directly (zero-sentinel removed in #2405).
     public async Task EnforceTimeoutsAsync(CancellationToken ct)
     {
         // Use the canary minimum as the query threshold so that items with short per-project
@@ -153,8 +156,6 @@ public sealed class ReconciliationLoop
             return;
         }
 
-        var globalDefaultSeconds = (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds;
-
         foreach (var item in timedOut)
         {
             if (ct.IsCancellationRequested) break;
@@ -162,16 +163,10 @@ public sealed class ReconciliationLoop
             // Only time out Running items here; Dispatched items are handled by EnforceDispatchedTimeoutAsync
             if (item.Status != WorkItemStatus.Running) continue;
 
-            // Resolve the effective timeout for this item.
-            // TimeoutSeconds == 0 means the value was not stored (pre-dates this field) — fall back
-            // to the global PipelineConfiguration.AgentTimeout default for backward compatibility.
-            // TODO: The zero sentinel is not enforced at the entity/DTO layer — it is indistinguishable
-            // from an explicitly set value of 0. Consider adding a DB constraint or a positive-value
-            // check at the enqueue endpoint (WorkItemEndpoints) so that TimeoutSeconds > 0 is always
-            // guaranteed for new rows, narrowing this fallback to truly legacy data only.
-            var effectiveTimeoutSeconds = item.TimeoutSeconds > 0
-                ? item.TimeoutSeconds
-                : globalDefaultSeconds;
+            // TimeoutSeconds is guaranteed > 0 for all rows post migration #2405.
+            // The back-fill migration (BackfillZeroTimeoutSeconds) set legacy zero rows to the default
+            // before this code was deployed, so no sentinel handling is needed here.
+            var effectiveTimeoutSeconds = item.TimeoutSeconds;
 
             // Compute execution age from DispatchedAt. If DispatchedAt is null (items dispatched before
             // the field was added), fall back to effectiveTimeoutSeconds — safe to enforce.

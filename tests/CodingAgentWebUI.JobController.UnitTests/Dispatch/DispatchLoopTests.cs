@@ -582,12 +582,13 @@ public sealed class DispatchLoopTests
     }
 
     [Fact]
-    public async Task WhenItemTimeoutIsZero_K8sJob_ActiveDeadlineSeconds_UsesDefaultAgentTimeout()
+    public async Task WhenItemTimeoutIsDefaultBackfillValue_K8sJob_ActiveDeadlineSeconds_UsesItemTimeout()
     {
-        // item.TimeoutSeconds == 0 (not set) → falls back to PipelineConstants.DefaultAgentTimeout (30 min = 1800s)
-        // activeDeadlineSeconds == 1800 + 60 == 1860
+        // After migration BackfillZeroTimeoutSeconds, all formerly-zero rows have TimeoutSeconds = 1800.
+        // The dispatch loop no longer contains a zero-sentinel fallback — it passes item.TimeoutSeconds
+        // directly to JobSpecBuilder.  1800s + 60s grace period → 1860s.
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakePending(timeoutSeconds: 0)]);
+            .ReturnsAsync([MakePending(timeoutSeconds: 1800)]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
 
@@ -600,8 +601,8 @@ public sealed class DispatchLoopTests
         await loop.RunOneCycleAsync(CancellationToken.None);
 
         capturedJob.Should().NotBeNull();
-        // DefaultAgentTimeout = 30 min = 1800s; JobSpecBuilder adds 60s grace period → 1860
-        capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(1860L); // 1800 + 60
+        // 1800s (default timeout, now stored in DB) + 60s JobSpecBuilder grace period = 1860
+        capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(1860L);
     }
 
     // ─── Concurrency map: completed jobs within retention window ─────────────

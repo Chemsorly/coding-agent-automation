@@ -74,9 +74,32 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         PipelineConfiguration result;
         if (entity?.Configuration is not null)
         {
-            result = JsonSerializer.Deserialize<PipelineConfiguration>(
-                entity.Configuration, JsonOptions)
-                ?? new PipelineConfiguration();
+            try
+            {
+                result = JsonSerializer.Deserialize<PipelineConfiguration>(
+                    entity.Configuration, JsonOptions)
+                    ?? new PipelineConfiguration();
+            }
+            // TODO: Simplify exception filter to `catch (JsonException ex)` — the second arm
+            // (ArgumentOutOfRangeException) and third arm (JsonException { InnerException: ArgumentOutOfRangeException })
+            // are both dead code. System.Text.Json wraps init-setter exceptions inside a JsonException,
+            // so the first arm always fires; the standalone ArgumentOutOfRangeException arm never matches
+            // a deserialization call, and the third arm is a strict subset of the first.
+            // See review finding [WARNING] (Correctness + DotNetSpecialist) — #2405.
+            catch (Exception ex) when (ex is JsonException or ArgumentOutOfRangeException
+                                            or (JsonException { InnerException: ArgumentOutOfRangeException }))
+            {
+                // A stored PipelineConfiguration row may contain a value that now fails the stricter
+                // init-setter validation added in issue #2405 (e.g. AgentTimeout = 00:00:00 from a
+                // hand-edited or legacy config). Throwing here would break all config reads at startup.
+                // Fall back to defaults and log a warning so the operator knows the stored config is
+                // invalid and should be corrected via the Settings UI.
+                Logger.Warning(
+                    ex,
+                    "Stored PipelineConfiguration contains an invalid value and cannot be deserialized — falling back to default configuration. {ErrorMessage}",
+                    ex.Message);
+                result = new PipelineConfiguration();
+            }
         }
         else
         {
@@ -136,11 +159,33 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             PipelineConfiguration current;
             if (entity?.Configuration is not null)
             {
-                var deserialized = JsonSerializer.Deserialize<PipelineConfiguration>(
-                    entity.Configuration, JsonOptions);
-                if (deserialized is null)
-                    throw new InvalidOperationException(
-                        "Pipeline configuration row exists but contains invalid JSON.");
+                PipelineConfiguration? deserialized;
+                try
+                {
+                    deserialized = JsonSerializer.Deserialize<PipelineConfiguration>(
+                        entity.Configuration, JsonOptions);
+                    if (deserialized is null)
+                        throw new InvalidOperationException(
+                            "Pipeline configuration row exists but contains invalid JSON.");
+                }
+                catch (Exception ex) when (ex is JsonException or ArgumentOutOfRangeException
+                                                or (JsonException { InnerException: ArgumentOutOfRangeException }))
+                {
+                    // TODO: Simplify exception filter to `catch (JsonException ex)` — same redundant
+                    // dead arms as LoadPipelineConfigAsync (see TODO above). The ArgumentOutOfRangeException
+                    // arm and JsonException { InnerException: ArgumentOutOfRangeException } arm are both
+                    // unreachable; System.Text.Json always wraps setter exceptions in JsonException.
+                    // See review finding [WARNING] (Correctness + DotNetSpecialist) — #2405.
+                    // Same defensive fallback as LoadPipelineConfigAsync: a stored config with an
+                    // invalid value (e.g. AgentTimeout = 00:00:00) must not block UpdatePipelineConfigAsync.
+                    // The transform is applied on top of defaults; the result is then validated and
+                    // saved — correcting the stored value.
+                    Logger.Warning(
+                        ex,
+                        "Stored PipelineConfiguration contains an invalid value during UpdatePipelineConfigAsync — applying transform over default configuration. {ErrorMessage}",
+                        ex.Message);
+                    deserialized = new PipelineConfiguration();
+                }
                 current = deserialized;
             }
             else

@@ -459,12 +459,21 @@ public static class WorkItemEndpoints
             Status = WorkItemStatus.Pending,
             Payload = payloadJson,
             AgentSelector = request.AgentSelector ?? "",
-            // TODO: Add a positive-value guard here: if request.TimeoutSeconds <= 0, substitute
-            // (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds. This prevents a legacy or
-            // misconfigured caller from storing a zero (the DB column default) and relying on the
-            // dispatch-path fallback in BuildJobContext. See review finding [WARNING] — zero sentinel
-            // ambiguity in ReconciliationLoop and DispatchLoop.
-            TimeoutSeconds = request.TimeoutSeconds,
+            // Guard against a caller sending TimeoutSeconds <= 0 (e.g. an old client or a
+            // misconfigured dispatch). The dispatch loops no longer contain a zero-sentinel
+            // fallback (removed in issue #2405), so a zero stored here would produce a K8s
+            // Job with activeDeadlineSeconds ≈ 60 (just the grace buffer) and cause an
+            // immediate false-timeout in ReconciliationLoop. Substitute the default so the
+            // invariant enforced by the BackfillZeroTimeoutSeconds migration is preserved on
+            // every new row.
+            // TODO: Negative values (e.g. TimeoutSeconds = -1) are silently substituted with the
+            // default and the caller receives a 200 OK with no indication the input was invalid.
+            // Consider logging a warning here or returning a 400 Bad Request for explicitly negative
+            // values, which are never legitimate and likely indicate a caller bug rather than a
+            // legacy-client zero. See review finding [WARNING] (DotNetSpecialist) — #2405.
+            TimeoutSeconds = request.TimeoutSeconds > 0
+                ? request.TimeoutSeconds
+                : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
             ProjectId = request.ProjectId,
             CreatedAt = DateTimeOffset.UtcNow,
             PriorityWeight = InitiatedByConstants.IsManual(request.InitiatedBy) ? 100 : 0,

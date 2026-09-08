@@ -113,7 +113,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
         var original = new PipelineConfiguration
         {
             WorkspaceBaseDirectory = WorkspaceBase,
-            AgentTimeout = TimeSpan.Zero,
+            AgentTimeout = TimeSpan.FromSeconds(1), // minimum valid positive value
             ExternalCiTimeout = TimeSpan.FromMilliseconds(1),
             ExternalCiPollInterval = TimeSpan.FromHours(2) + TimeSpan.FromMinutes(30) + TimeSpan.FromSeconds(15),
             StallWarningInterval = TimeSpan.FromDays(1),
@@ -124,7 +124,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
         await ConfigStore.SavePipelineConfigAsync(original, CancellationToken.None);
         var loaded = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
 
-        loaded.AgentTimeout.Should().Be(TimeSpan.Zero);
+        loaded.AgentTimeout.Should().Be(TimeSpan.FromSeconds(1));
         loaded.ExternalCiTimeout.Should().Be(TimeSpan.FromMilliseconds(1));
         loaded.ExternalCiPollInterval.Should().Be(TimeSpan.FromHours(2) + TimeSpan.FromMinutes(30) + TimeSpan.FromSeconds(15));
         loaded.StallWarningInterval.Should().Be(TimeSpan.FromDays(1));

@@ -205,28 +205,28 @@ public sealed class ReconciliationLoopTests
     }
 
     [Fact]
-    public async Task WhenTimeoutSecondsIsZero_FallsBackToGlobalDefault()
+    public async Task WhenTimeoutSecondsIsDefault1800_AndItemHasRunOver1800s_ShouldTimeout()
     {
         var jobName = JobNameFor(ItemId);
-        // TimeoutSeconds = 0 means field was not stored (pre-dates this feature).
-        // Fall back to PipelineConstants.DefaultAgentTimeout (30 min = 1800s).
-        // Item has been running for 1801s — must be timed out via fallback.
-        // TODO: Replace magic number 1800 with (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds
-        // so a change to DefaultAgentTimeout causes this test to fail rather than silently pass.
-        // See review finding [WARNING] — TestQualityReviewer @ ReconciliationLoopTests.cs:187.
-        const int globalDefaultSeconds = 1800;
-        var legacyItem = new ActiveWorkItemDto
+        // Post-migration, formerly-zero rows have TimeoutSeconds = 1800 (PipelineConstants.DefaultAgentTimeout).
+        // The zero-sentinel fallback has been removed (issue #2405). TimeoutSeconds is used directly.
+        // Item has been running for 1801s — must be timed out.
+        // TODO: Replace magic literal with (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds so a
+        // change to DefaultAgentTimeout causes this test to fail rather than silently pass with a stale
+        // constant. See review finding [WARNING] (TestQualityReviewer) — #2405.
+        const int timeoutSeconds = (int)(30 * 60); // 1800 = PipelineConstants.DefaultAgentTimeout.TotalSeconds
+        var item = new ActiveWorkItemDto
         {
             Id = ItemId,
             Status = WorkItemStatus.Running,
-            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(globalDefaultSeconds + 1)),
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(timeoutSeconds + 1)),
             AgentSelector = "dotnet10,opencode",
             IssueIdentifier = "owner/repo#1",
-            TimeoutSeconds = 0 // legacy: field not stored
+            TimeoutSeconds = timeoutSeconds
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([legacyItem]);
+            .ReturnsAsync([item]);
 
         var loop = CreateLoop();
         await loop.EnforceTimeoutsAsync(CancellationToken.None);

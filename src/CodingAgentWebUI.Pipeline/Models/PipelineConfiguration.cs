@@ -24,7 +24,14 @@ public sealed record PipelineConfiguration
 
     [Key(4)]
     [ProjectOverridable(Order = 3)]
-    public TimeSpan AgentTimeout { get; init; } = PipelineConstants.DefaultAgentTimeout;
+    public TimeSpan AgentTimeout
+    {
+        get => _agentTimeout;
+        init => _agentTimeout = value > TimeSpan.Zero
+            ? value
+            : throw new ArgumentOutOfRangeException(nameof(AgentTimeout), value, "AgentTimeout must be a positive duration. A zero or negative value would produce a K8s pod with no effective deadline.");
+    }
+    private readonly TimeSpan _agentTimeout = PipelineConstants.DefaultAgentTimeout;
 
     /// <summary>
     /// How long the agent can be silent (no output) before the stall monitor logs a warning.
