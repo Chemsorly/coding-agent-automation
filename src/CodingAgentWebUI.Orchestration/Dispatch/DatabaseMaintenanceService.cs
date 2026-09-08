@@ -400,6 +400,16 @@ public class DatabaseMaintenanceService
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            // TODO: This swallows OperationCanceledException rather than re-throwing it, which is
+            // inconsistent with every other sweep method in this class (e.g. CleanupStaleWorkItemsAsync,
+            // SweepPipelineRunRetentionAsync) that all re-throw OCE and rely on RunSweepAsync to
+            // propagate cancellation up to RunRetentionSweepAsync so that subsequent sweeps stop.
+            // By swallowing OCE here, a cancellation that arrives during this sweep does not halt
+            // the remaining sweeps — they continue running against an already-cancelled token.
+            // The unit test (ReconcileOrphanedPipelineRuns_Cancellation_DoesNotThrow) validates this
+            // swallowing behaviour but does not verify the downstream effect on sweep sequencing.
+            // Consider re-throwing here (removing this catch block) so that RunSweepAsync propagates
+            // cancellation consistently with all other sweeps.
             return 0;
         }
         catch (Exception ex)

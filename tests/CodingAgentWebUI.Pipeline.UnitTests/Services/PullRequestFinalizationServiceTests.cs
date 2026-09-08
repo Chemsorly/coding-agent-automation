@@ -1211,6 +1211,13 @@ public class PullRequestFinalizationServiceTests
         // try-finally block. If the PR creation mock setup were accidentally removed, the test would
         // fail or exercise a different code path (prCreationSucceeded=false, early return). Consider
         // adding an explicit assertion or comment that confirms PR creation succeeded as a precondition.
+        // TODO: CompletedAtOffset (the non-obsolete timezone-safe property) is asserted here, which is
+        // the preferred property. The acceptance criterion specifies CompletedAt != null; MarkCompleted()
+        // sets both atomically, so this assertion covers the requirement. If CompletedAtOffset were ever
+        // decoupled from CompletedAt, this assertion would need to be updated to also check run.CompletedAt.
+        // TODO: Only the IsDraft=false path is tested here. The IsDraft=true + OCE path — where FinalLabel
+        // should be AgentLabels.Error — is untested. A regression that incorrectly sets Done instead of
+        // Error for a cancelled draft run would not be caught by this test.
         run.CompletedAtOffset.Should().NotBeNull(
             "run.MarkCompleted() must execute in the finally block even when RunPostPrSequenceAsync throws OCE");
         run.CurrentStep.Should().Be(PipelineStep.Completed,

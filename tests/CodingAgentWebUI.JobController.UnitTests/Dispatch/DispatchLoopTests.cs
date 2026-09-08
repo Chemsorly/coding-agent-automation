@@ -920,20 +920,15 @@ public sealed class DispatchLoopTests
 
     /// <summary>
     /// AC #2: WorkItem whose issue has any ineligible label must be cancelled, not dispatched.
-    /// Covers: agent:error, agent:needs-refinement, agent:wont-do, agent:cancelled.
+    /// Covers all members of <see cref="AgentLabels.DispatchIneligibleLabels"/>:
+    /// agent:error, agent:needs-refinement, agent:wont-do, agent:cancelled, agent:done.
     /// </summary>
-    // TODO: AgentLabels.Done was previously covered by this theory and by a dedicated regression test
-    // (WhenIssueHasDoneLabel_ShouldCancelWorkItem_NotDispatch). Both were removed in the issue #2316
-    // implementation, but no corresponding production code change removed Done from
-    // AgentLabels.DispatchIneligibleLabels. If Done remains in the ineligible set, re-dispatch of
-    // completed issues is unguarded in tests. Verify whether Done was intentionally removed from
-    // DispatchIneligibleLabels; if not, restore the [InlineData(nameof(AgentLabels.Done))] case and
-    // the dedicated regression test.
     [Theory]
     [InlineData(nameof(AgentLabels.Error))]
     [InlineData(nameof(AgentLabels.NeedsRefinement))]
     [InlineData(nameof(AgentLabels.WontDo))]
     [InlineData(nameof(AgentLabels.Cancelled))]
+    [InlineData(nameof(AgentLabels.Done))]
     public async Task WhenIssueHasIneligibleLabel_ShouldCancelWorkItem(string labelPropertyName)
     {
         var label = labelPropertyName switch
@@ -942,6 +937,7 @@ public sealed class DispatchLoopTests
             nameof(AgentLabels.NeedsRefinement) => AgentLabels.NeedsRefinement,
             nameof(AgentLabels.WontDo) => AgentLabels.WontDo,
             nameof(AgentLabels.Cancelled) => AgentLabels.Cancelled,
+            nameof(AgentLabels.Done) => AgentLabels.Done,
             _ => throw new ArgumentOutOfRangeException(nameof(labelPropertyName))
         };
 
@@ -965,6 +961,42 @@ public sealed class DispatchLoopTests
             It.IsAny<CancellationToken>()),
             Times.Once);
         _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ─── Eligibility gate — agent:done blocks dispatch (regression) ─────────
+
+    /// <summary>
+    /// Regression: agent:done was previously absent from the ineligible set, allowing a completed
+    /// issue to be re-dispatched. Verify that a WorkItem for an agent:done issue is cancelled.
+    /// </summary>
+    [Fact]
+    public async Task WhenIssueHasDoneLabel_ShouldCancelWorkItem_NotDispatch()
+    {
+        _issueProvider
+            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "1", Title = "Test", Description = "",
+                Labels = new[] { AgentLabels.Done }
+            });
+
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending()]);
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // WorkItem must be cancelled
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == nameof(WorkItemStatus.Cancelled)),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // K8s Job must NOT be created
+        _k8sClient.Verify(c => c.CreateJobAsync(
+            It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     // ─── Eligibility gate — regression: open issue dispatches normally (AC #3) ─
