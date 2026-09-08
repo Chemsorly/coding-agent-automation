@@ -26,6 +26,10 @@ public partial class QualityGateExecutor : IQualityGateExecutor
     private readonly Histogram<double> _stepDuration;
     private readonly Counter<long> _stepCount;
     private readonly Histogram<double> _externalCiDuration;
+    private readonly Counter<long> _stallWarnings;
+    private readonly Counter<long> _stallKills;
+    private readonly Counter<long> _stallProcessDeaths;
+    private readonly StallMonitorMetrics _stallMetrics;
 
     public QualityGateExecutor(
         IQualityGateValidator qualityGateValidator,
@@ -60,7 +64,15 @@ public partial class QualityGateExecutor : IQualityGateExecutor
             _stepDuration = meter.CreateHistogram<double>("pipeline.step.duration", "s", "Duration of individual pipeline steps",
                 advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600] });
             _stepCount = meter.CreateCounter<long>("pipeline.step.count", "{step}", "Pipeline step execution count");
-            _externalCiDuration = meter.CreateHistogram<double>("quality_gate.external_ci.duration", "s", "Time waiting for external CI");
+            _externalCiDuration = meter.CreateHistogram<double>(
+                "quality_gate.external_ci.duration", "s", "Time waiting for external CI",
+                advice: new InstrumentAdvice<double>
+                {
+                    HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600]
+                });
+            _stallWarnings = meter.CreateCounter<long>("quality_gate.stall.warnings", "{warning}", "Agent stall silence warnings by phase");
+            _stallKills = meter.CreateCounter<long>("quality_gate.stall.kills", "{kill}", "Agent stall kill events by phase");
+            _stallProcessDeaths = meter.CreateCounter<long>("quality_gate.stall.process_deaths", "{process_death}", "Agent stall process death events by phase");
         }
         else
         {
@@ -71,7 +83,12 @@ public partial class QualityGateExecutor : IQualityGateExecutor
             _stepDuration = PipelineTelemetry.StepDuration;
             _stepCount = PipelineTelemetry.StepCount;
             _externalCiDuration = PipelineTelemetry.ExternalCiDuration;
+            _stallWarnings = PipelineTelemetry.StallWarnings;
+            _stallKills = PipelineTelemetry.StallKills;
+            _stallProcessDeaths = PipelineTelemetry.StallProcessDeaths;
         }
+
+        _stallMetrics = new StallMonitorMetrics(_stallWarnings, _stallKills, _stallProcessDeaths);
     }
 
     private const string GateStatusPassed = "PASSED";
@@ -79,6 +96,18 @@ public partial class QualityGateExecutor : IQualityGateExecutor
 
     internal static string FormatGateLogValue(GateResult? gate) =>
         gate is null ? "N/A" : gate.Passed.ToString();
+
+    /// <summary>
+    /// Builds a <see cref="TagList"/> for quality gate retry metrics, including run_type, project context,
+    /// and an <c>outcome</c> tag distinguishing the type of retry (<c>transient</c>, <c>auth_abort</c>,
+    /// <c>session_restart</c>, <c>retry</c>).
+    /// </summary>
+    private static System.Diagnostics.TagList BuildRetryTags(PipelineRun run, string outcome)
+    {
+        var tags = PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName);
+        tags.Add(new KeyValuePair<string, object?>("outcome", outcome));
+        return tags;
+    }
 
     private static string BuildQualityGateErrorSummary(QualityGateReport report)
     {
@@ -88,17 +117,20 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         // NOTE [WARNING]: report.Tests is accessed without a null-conditional here. A QGC configured
         // with only a BuildCommand and no TestCommand produces a QualityGateReport where Tests is null,
         // causing a NullReferenceException before BuildQualityGateRetryPrompt is even reached.
-        // Fix: guard with `if (report.Tests is { Passed: false })` consistent with SecurityScan/ExternalCi.
-        // See review finding: DotNetSpecialist WARNING — QualityGateExecutor.cs:80
+        // Fix: guard with `if (report.Tests is { Passed: false })` consistent with ExternalCi.
         if (!report.Tests.Passed)
             errors.Add($"Tests: {report.Tests.Details}");
-        if (report.SecurityScan is { Passed: false })
-            errors.Add($"Security: {report.SecurityScan.Details}");
         if (report.ExternalCi is { Passed: false })
             errors.Add($"External CI: {report.ExternalCi.Details}");
         return string.Join(Environment.NewLine, errors);
     }
 
+    /// <summary>
+    /// Builds the quality gate retry prompt with conditional diagnostic output section.
+    /// When <paramref name="hasQualityGateOutput"/> is true, directs the agent to read files
+    /// in the quality-gates output directory. When false, indicates no files were produced
+    /// (likely an infra failure) and directs the agent to the full-diff file instead.
+    /// </summary>
     internal static string BuildQualityGateRetryPrompt(QualityGateReport report, int attempt, int maxRetries, bool hasQualityGateOutput)
     {
         var sb = new System.Text.StringBuilder();
@@ -106,12 +138,8 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         sb.AppendLine($"- Compilation: {(report.Compilation.Passed ? GateStatusPassed : GateStatusFailed)} ({report.Compilation.Details})");
         // NOTE [WARNING]: report.Tests is dereferenced without a null-conditional. A QGC configured
         // with only a BuildCommand and no TestCommand produces a report where Tests is null, causing
-        // a NullReferenceException here. The priorRetryErrors overload correctly uses report.Tests?.Passed
-        // and report.Tests?.Details. Apply the same null-conditional pattern here for consistency.
-        // See review finding: DotNetSpecialist WARNING — QualityGateExecutor.cs:100
+        // a NullReferenceException here. Apply null-conditional pattern for consistency with ExternalCi.
         sb.AppendLine($"- Tests: {(report.Tests.Passed ? GateStatusPassed : GateStatusFailed)} ({report.Tests.Details})");
-        if (report.SecurityScan != null)
-            sb.AppendLine($"- Security: {(report.SecurityScan.Passed ? GateStatusPassed : GateStatusFailed)} ({report.SecurityScan.Details})");
         if (report.ExternalCi != null)
             sb.AppendLine($"- External CI: {(report.ExternalCi.Passed ? GateStatusPassed : GateStatusFailed)} ({report.ExternalCi.Details})");
         sb.AppendLine();
@@ -164,7 +192,6 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         // where no QGC configures a test gate). The null-conditional guards below prevent a NRE, but
         // the resulting prompt would render "- Tests: FAILED ()" which is misleading. A test with
         // a report where Tests is null should be added to verify graceful handling.
-        // See review finding: TestQualityReviewer WARNING — QualityGateExecutor.cs
         var hasQualityGateOutput = !(report.QgcResults.Any(r => r.Tests?.IsInfrastructureFailure == true)
             || report.Tests?.IsInfrastructureFailure == true);
 

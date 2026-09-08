@@ -885,34 +885,39 @@ public class QualityGateValidatorInfraKillTests
     }
 
     /// <summary>
-    /// AC: exitCode=1, stdout="Failed: 1 test", stderr="" → GateResult.Details uses count format,
-    /// no "infrastructure" mention. Represents a genuine test failure.
+    /// AC: exitCode=1, non-zero test counts parsed from stdout → GateResult.Details uses count
+    /// format, no "infrastructure" mention. Represents a genuine test failure where
+    /// ParseTestCountsFromStdout can extract non-zero counts (failed > 0), which is the primary
+    /// suppression mechanism for the infra-kill heuristic.
+    /// Uses the per-assembly format "Passed:  0, Failed:   1, Skipped:   0" which is recognised
+    /// by StdoutTestResultParser, ensuring ResolveTestCounts returns non-zero counts and the
+    /// heuristic fires (or not) based on counts rather than stdout non-emptiness alone.
     /// </summary>
-    // TODO: [WARNING] This test exercises the "non-empty stdout suppresses heuristic" path, NOT the
-    // "non-zero count suppresses heuristic" path. The stdout string "Failed: 1 test" is not in a
-    // format recognized by ParseTestCountsFromStdout, so ResolveTestCounts returns (0, 0, 0). The
-    // heuristic is correctly suppressed because stdout is non-empty, but the resulting Details string
-    // is "Tests failed: 0 passed, 0 failed, 0 skipped." — not a count-based format with meaningful
-    // values. The test asserts Details.Contains("failed") which is satisfied for the wrong reason.
-    // Consider adding a companion test that uses stdout content parseable into a non-zero failure
-    // count (or a TRX fixture) to fully anchor the AC "non-zero counts → count-based format".
     [Fact]
     public async Task RealFailure_ExitCode1_StdoutHasTestCount_DetailsUsesCountFormat()
     {
         var tempWorkspace = CreateTempWorkspace();
         try
         {
-            var validator = new InfraKillSimulatingValidator(exitCode: 1, stdout: "Failed: 1 test", stderr: "");
+            // Use a stdout format recognised by ParseTestCountsFromStdout so that
+            // ResolveTestCounts returns failed=1 (not zero), ensuring the infra-kill heuristic
+            // is suppressed by the non-zero count condition, not merely by stdout non-emptiness.
+            var validator = new InfraKillSimulatingValidator(exitCode: 1, stdout: "Passed:  0, Failed:   1, Skipped:   0", stderr: "");
             var report = await validator.ValidateAsync(tempWorkspace, [DotnetTestQgc()], CancellationToken.None);
 
             var testsResult = report.QgcResults[0].Tests!;
             testsResult.Passed.Should().BeFalse();
-            testsResult.Details.Should().Contain("passed");
-            testsResult.Details.Should().Contain("failed");
+            // Count-based format: must contain the actual non-zero failure count
+            testsResult.Details.Should().Contain("1 failed");
+            testsResult.Details.Should().Contain("0 passed");
             testsResult.Details.Should().NotContain("infrastructure");
-            // [CRITICAL fix] Use BeNull() not NotBe(true): the contract on GateResult.IsInfrastructureFailure
-            // is null=unknown/not-applicable for non-infra paths. NotBe(true) would also pass for false,
-            // which would violate the documented null contract without being caught.
+            // TODO [WARNING]: IsInfrastructureFailure.Should().BeNull() locks in the null-not-false
+            // contract (production code uses `isInfraFailure ? true : null`, never `false`). This is
+            // stricter than the acceptance criterion which only requires no "infrastructure" mention.
+            // If the contract changes (e.g. to emit `false` for confirmed non-infra paths), this
+            // assertion will fail without explanation. Consider adding a comment linking to the
+            // IsInfrastructureFailure XML doc comment that defines the null=unknown/not-applicable contract.
+            // See review finding: TestQualityReviewer WARNING — QualityGateValidatorTests.cs
             testsResult.IsInfrastructureFailure.Should().BeNull();
         }
         finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }

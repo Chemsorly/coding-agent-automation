@@ -178,6 +178,16 @@ public class QualityGateValidator : IQualityGateValidator
             TestsPassed = totalTestsPassed,
             TestsFailed = totalTestsFailed,
             TestsSkipped = totalTestsSkipped,
+            // TODO [WARNING]: IsInfrastructureFailure is populated from firstFailingQgc?.Tests?.IsInfrastructureFailure,
+            // where firstFailingQgc is the first QGC whose overall Passed==false. If the first failing QGC has a
+            // compilation failure but no test command (Tests==null), the null-conditional resolves to null even when
+            // a later QGC has an infra-kill Tests result. The retry-loop call site compensates by also checking
+            // report.QgcResults.Any(r => r.Tests?.IsInfrastructureFailure == true), so the retry prompt is
+            // correct — but the aggregate Tests.IsInfrastructureFailure field itself is misleading to any consumer
+            // that reads it directly (e.g. history recording, future callers). Fix: align BuildAggregateReport
+            // to use Any() over QgcResults, matching the retry-loop derivation:
+            //   IsInfrastructureFailure = qgcResults.Any(r => r.Tests?.IsInfrastructureFailure == true) ? true : null
+            // See review finding: Correctness WARNING — QualityGateValidator.cs BuildAggregateReport
             IsInfrastructureFailure = firstFailingQgc?.Tests?.IsInfrastructureFailure
         };
 
@@ -271,6 +281,12 @@ public class QualityGateValidator : IQualityGateValidator
         Activity? Activity);
 
     /// <summary>Thrown by <see cref="RunQgcProcessAsync"/> when the process exceeds its timeout.</summary>
+    // TODO [WARNING]: This class was changed from private to public. It is an internal implementation
+    // detail of QualityGateValidator and is not referenced outside the file. Exposing it as public
+    // widens the API surface unnecessarily and may encourage callers in other assemblies to catch it
+    // by type, creating coupling to an internal timeout protocol. Consider reverting to internal (with
+    // InternalsVisibleTo for tests) rather than public.
+    // See review finding: DotNetSpecialist WARNING — QualityGateValidator.cs QgcProcessTimedOutException
     public sealed class QgcProcessTimedOutException(int timeoutSeconds, Exception inner)
         : Exception($"Process timed out after {timeoutSeconds}s", inner)
     {

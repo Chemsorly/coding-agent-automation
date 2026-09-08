@@ -474,6 +474,14 @@ public class PromptConstructionPropertyTests
 
     // --- BuildQualityGateRetryPrompt tests ---
 
+    // TODO [WARNING]: The two tests below (BuildQualityGateRetryPrompt_IncludesAllGatesWithStatus and
+    // BuildQualityGateRetryPrompt_OmitsNullOptionalGates) hardcode hasQualityGateOutput: true. Neither
+    // test exercises the hasQualityGateOutput=false branch. If the false branch introduces a regression
+    // (e.g. truncates "Before fixing, reflect:" or omits gate status lines), these property-style tests
+    // will not catch it. At least one of the two tests should drive both branches, or a separate property
+    // test for the false branch (asserting the "terminated abnormally" sentence and full-diff reference)
+    // should be added.
+    // See review finding: TestQualityReviewer WARNING — PromptConstructionPropertyTests.cs
     [Fact]
     public void BuildQualityGateRetryPrompt_IncludesAllGatesWithStatus()
     {

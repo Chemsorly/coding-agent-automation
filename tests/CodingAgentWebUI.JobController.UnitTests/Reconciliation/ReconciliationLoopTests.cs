@@ -1609,6 +1609,11 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
     {
         // Arrange
         var id = Guid.NewGuid();
+        // TODO [WARNING]: Replace magic number 1800 with (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds
+        // so a change to DefaultAgentTimeout causes this test to fail rather than silently pass with a stale
+        // expected value. The sibling test ReconcileOnce_LegacyItemWithoutTimeoutSeconds_TimesOutViaDefaultFallback
+        // was already fixed to use the constant reference.
+        // See review finding: TestQualityReviewer WARNING — ReconciliationLoopTests.cs:1609
         const int itemTimeoutSeconds = 1800; // global default
         var item = new ActiveWorkItemDto
         {
