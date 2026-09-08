@@ -38,6 +38,17 @@ public sealed class AgentRegistrySyncServiceTests
         LastHeartbeatAt = Origin
     };
 
+    private static AgentEntryDto AgentDto(string id) => AgentEntryDto.From(new AgentEntry
+    {
+        AgentId = new AgentId(id),
+        ConnectionId = $"conn-{id}",
+        Hostname = $"host-{id}",
+        Labels = new List<string> { "dotnet" },
+        Status = AgentStatus.Idle,
+        RegisteredAt = Origin,
+        LastHeartbeatAt = Origin
+    }, run: null);
+
     [Fact]
     public async Task Poller_PopulatesTheRegistryOnItsFirstTick()
     {
@@ -48,7 +59,7 @@ public sealed class AgentRegistrySyncServiceTests
               .Returns(() =>
               {
                   calls.Release();
-                  return Task.FromResult<IReadOnlyList<AgentEntry>>(new List<AgentEntry> { Agent("a1") });
+                  return Task.FromResult<IReadOnlyList<AgentEntryDto>>(new List<AgentEntryDto> { AgentDto("a1") });
               });
 
         var registry = new ApiAgentRegistryService(client.Object, clock, new Mock<ILogger>().Object);
@@ -83,7 +94,7 @@ public sealed class AgentRegistrySyncServiceTests
               .Returns(() =>
               {
                   calls.Release();
-                  return Task.FromResult<IReadOnlyList<AgentEntry>>(new List<AgentEntry> { Agent("a1") });
+                  return Task.FromResult<IReadOnlyList<AgentEntryDto>>(new List<AgentEntryDto> { AgentDto("a1") });
               });
 
         var registry = new ApiAgentRegistryService(client.Object, clock, new Mock<ILogger>().Object);
@@ -127,8 +138,8 @@ public sealed class AgentRegistrySyncServiceTests
                   var n = Interlocked.Increment(ref attempt);
                   calls.Release();
                   return n == 1
-                      ? Task.FromException<IReadOnlyList<AgentEntry>>(new HttpRequestException("api down"))
-                      : Task.FromResult<IReadOnlyList<AgentEntry>>(new List<AgentEntry> { Agent("a1") });
+                      ? Task.FromException<IReadOnlyList<AgentEntryDto>>(new HttpRequestException("api down"))
+                      : Task.FromResult<IReadOnlyList<AgentEntryDto>>(new List<AgentEntryDto> { AgentDto("a1") });
               });
 
         var registry = new ApiAgentRegistryService(client.Object, clock, new Mock<ILogger>().Object);
@@ -166,7 +177,7 @@ public sealed class AgentRegistrySyncServiceTests
               .Returns(() =>
               {
                   calls.Release();
-                  return Task.FromResult<IReadOnlyList<AgentEntry>>(new List<AgentEntry>());
+                  return Task.FromResult<IReadOnlyList<AgentEntryDto>>(new List<AgentEntryDto>());
               });
 
         var registry = new ApiAgentRegistryService(client.Object, clock, new Mock<ILogger>().Object);

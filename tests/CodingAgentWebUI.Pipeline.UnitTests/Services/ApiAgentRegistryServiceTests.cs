@@ -29,6 +29,10 @@ public sealed class ApiAgentRegistryServiceTests
             Status = status
         };
 
+    // Produces an AgentEntryDto from a minimal AgentEntry (no run enrichment).
+    private static AgentEntryDto MakeDto(string id = "agent-1", AgentStatus status = AgentStatus.Idle) =>
+        AgentEntryDto.From(MakeEntry(id, status), run: null);
+
     private ApiAgentRegistryService Create(TimeProvider? clock = null) =>
         new(_client.Object, clock ?? TimeProvider.System, _logger.Object);
 
@@ -106,7 +110,7 @@ public sealed class ApiAgentRegistryServiceTests
     {
         var agent = MakeEntry("a1");
         _client.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentEntry> { agent } as IReadOnlyList<AgentEntry>);
+            .ReturnsAsync(new List<AgentEntryDto> { AgentEntryDto.From(agent, null) } as IReadOnlyList<AgentEntryDto>);
 
         var clock = new FakeTimeProvider();
         var svc = Create(clock);
@@ -119,12 +123,12 @@ public sealed class ApiAgentRegistryServiceTests
     public async Task GetIdleAgents_FiltersToIdle()
     {
         _client.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentEntry>
+            .ReturnsAsync(new List<AgentEntryDto>
             {
-                MakeEntry("a1", AgentStatus.Idle),
-                MakeEntry("a2", AgentStatus.Busy),
-                MakeEntry("a3", AgentStatus.Idle)
-            } as IReadOnlyList<AgentEntry>);
+                MakeDto("a1", AgentStatus.Idle),
+                MakeDto("a2", AgentStatus.Busy),
+                MakeDto("a3", AgentStatus.Idle)
+            } as IReadOnlyList<AgentEntryDto>);
 
         var svc = Create();
         await svc.RefreshAsync();
@@ -136,12 +140,12 @@ public sealed class ApiAgentRegistryServiceTests
     public async Task GetBusyAgentCount_CountsBusy()
     {
         _client.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentEntry>
+            .ReturnsAsync(new List<AgentEntryDto>
             {
-                MakeEntry("a1", AgentStatus.Busy),
-                MakeEntry("a2", AgentStatus.Busy),
-                MakeEntry("a3", AgentStatus.Idle)
-            } as IReadOnlyList<AgentEntry>);
+                MakeDto("a1", AgentStatus.Busy),
+                MakeDto("a2", AgentStatus.Busy),
+                MakeDto("a3", AgentStatus.Idle)
+            } as IReadOnlyList<AgentEntryDto>);
 
         var svc = Create();
         await svc.RefreshAsync();
@@ -154,7 +158,7 @@ public sealed class ApiAgentRegistryServiceTests
     {
         var agent = MakeEntry("a1");
         _client.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentEntry> { agent } as IReadOnlyList<AgentEntry>);
+            .ReturnsAsync(new List<AgentEntryDto> { AgentEntryDto.From(agent, null) } as IReadOnlyList<AgentEntryDto>);
 
         var svc = Create();
         await svc.RefreshAsync();
@@ -168,7 +172,7 @@ public sealed class ApiAgentRegistryServiceTests
     public async Task GetByAgentId_NotFound_ReturnsNull()
     {
         _client.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentEntry> { MakeEntry("a1") } as IReadOnlyList<AgentEntry>);
+            .ReturnsAsync(new List<AgentEntryDto> { MakeDto("a1") } as IReadOnlyList<AgentEntryDto>);
 
         var svc = Create();
         await svc.RefreshAsync();
@@ -181,7 +185,7 @@ public sealed class ApiAgentRegistryServiceTests
     {
         var agent = MakeEntry("a1");
         _client.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentEntry> { agent } as IReadOnlyList<AgentEntry>);
+            .ReturnsAsync(new List<AgentEntryDto> { AgentEntryDto.From(agent, null) } as IReadOnlyList<AgentEntryDto>);
 
         var svc = Create();
         await svc.RefreshAsync();
@@ -194,7 +198,7 @@ public sealed class ApiAgentRegistryServiceTests
     public async Task LastRefreshedAt_AfterRefresh_IsSet()
     {
         _client.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentEntry>() as IReadOnlyList<AgentEntry>);
+            .ReturnsAsync(Array.Empty<AgentEntryDto>() as IReadOnlyList<AgentEntryDto>);
 
         var svc = Create();
         await svc.RefreshAsync();
@@ -209,7 +213,7 @@ public sealed class ApiAgentRegistryServiceTests
     {
         var agent = MakeEntry("a1");
         _client.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentEntry> { agent } as IReadOnlyList<AgentEntry>);
+            .ReturnsAsync(new List<AgentEntryDto> { AgentEntryDto.From(agent, null) } as IReadOnlyList<AgentEntryDto>);
 
         var clock = new FakeTimeProvider();
         var svc = Create(clock);
@@ -227,7 +231,7 @@ public sealed class ApiAgentRegistryServiceTests
     {
         var agent = MakeEntry("a1");
         _client.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentEntry> { agent } as IReadOnlyList<AgentEntry>);
+            .ReturnsAsync(new List<AgentEntryDto> { AgentEntryDto.From(agent, null) } as IReadOnlyList<AgentEntryDto>);
 
         var clock = new FakeTimeProvider();
         var svc = Create(clock);
@@ -244,8 +248,8 @@ public sealed class ApiAgentRegistryServiceTests
     {
         // First refresh: 1 agent
         _client.SetupSequence(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentEntry> { MakeEntry("a1") } as IReadOnlyList<AgentEntry>)
-            .ReturnsAsync(new List<AgentEntry> { MakeEntry("a1"), MakeEntry("a2") } as IReadOnlyList<AgentEntry>);
+            .ReturnsAsync(new List<AgentEntryDto> { MakeDto("a1") } as IReadOnlyList<AgentEntryDto>)
+            .ReturnsAsync(new List<AgentEntryDto> { MakeDto("a1"), MakeDto("a2") } as IReadOnlyList<AgentEntryDto>);
 
         var svc = Create();
         await svc.RefreshAsync();

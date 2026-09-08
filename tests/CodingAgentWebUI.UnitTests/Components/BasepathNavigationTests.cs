@@ -105,7 +105,7 @@ public class BasepathNavigationTests : BunitContext
 
         var mockAgents = new Mock<IPipelineApiAgentClient>();
         mockAgents.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AgentEntry>());
+            .ReturnsAsync(new List<AgentEntryDto>());
 
         var mockWorkItems = new Mock<IPipelineApiWorkItemClient>();
         mockWorkItems.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))

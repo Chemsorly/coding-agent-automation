@@ -68,7 +68,7 @@ public sealed class AgentRegistrySyncServiceTests
     {
         var client = new Mock<IPipelineApiAgentClient>();
         client.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentEntry>() as IReadOnlyList<AgentEntry>);
+            .ReturnsAsync(Array.Empty<AgentEntryDto>() as IReadOnlyList<AgentEntryDto>);
 
         var clock = new FakeTimeProvider();
         var registry = CreateRegistry(client, clock);

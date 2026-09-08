@@ -56,16 +56,17 @@ public class PipelineRunHashExtensionsPropertyTests
     public void ToHashEntries_FromHash_PreservesNullableStrings()
     {
         var run = MakeMinimalRun();
-        run.BranchName     = "feature/test-branch";
-        run.AgentId        = "agent-xyz";
-        run.ModelName      = "claude-sonnet-4";
-        run.FailureReason  = "timeout";
+        run.BranchName = "feature/test-branch";
+        run.AgentId = "agent-xyz";
+        run.ModelName = "claude-sonnet-4";
+        run.FailureReason = "timeout";
+        run.IssueUrl = "https://github.com/org/repo/issues/42";
         run.PullRequestUrl = "https://github.com/org/repo/pull/99";
         run.RepositoryName = "org/repo";
-        run.WorkspacePath  = "/tmp/ws/test-run";
-        run.ProjectId      = "proj-abc";
-        run.ProjectName    = "My Project";
-        run.FinalLabel     = "agent:done";
+        run.WorkspacePath = "/tmp/ws/test-run";
+        run.ProjectId = "proj-abc";
+        run.ProjectName = "My Project";
+        run.FinalLabel = "agent:done";
 
         var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
 
@@ -73,12 +74,45 @@ public class PipelineRunHashExtensionsPropertyTests
         restored.AgentId.Should().Be(run.AgentId);
         restored.ModelName.Should().Be(run.ModelName);
         restored.FailureReason.Should().Be(run.FailureReason);
+        restored.IssueUrl.Should().Be(run.IssueUrl);
         restored.PullRequestUrl.Should().Be(run.PullRequestUrl);
         restored.RepositoryName.Should().Be(run.RepositoryName);
         restored.WorkspacePath.Should().Be(run.WorkspacePath);
         restored.ProjectId.Should().Be(run.ProjectId);
         restored.ProjectName.Should().Be(run.ProjectName);
         restored.FinalLabel.Should().Be(run.FinalLabel);
+    }
+
+    /// <summary>
+    /// Regression test: IssueUrl must survive the Redis hash round-trip.
+    /// In distributed deployments DistributedRunService.GetRun() reconstructs runs from
+    /// the hash — if IssueUrl is absent from the hash it silently returns null and the
+    /// Fleet issue-link chip never renders.
+    /// </summary>
+    [Fact]
+    public void IssueUrl_SurvivesRoundTrip()
+    {
+        var run = MakeMinimalRun();
+        run.IssueUrl = "https://github.com/org/repo/issues/123";
+
+        var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
+
+        restored.IssueUrl.Should().Be("https://github.com/org/repo/issues/123",
+            "IssueUrl must be serialised to the Redis hash so DistributedRunService.GetRun() returns it correctly");
+    }
+
+    /// <summary>
+    /// When IssueUrl is null it must survive as null (not as an empty string).
+    /// </summary>
+    [Fact]
+    public void IssueUrl_Null_SurvivesAsNull()
+    {
+        var run = MakeMinimalRun();
+        run.IssueUrl = null;
+
+        var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
+
+        restored.IssueUrl.Should().BeNull("null IssueUrl must round-trip as null via NullIfEmpty");
     }
 
     // ── Integer counters ──────────────────────────────────────────────────────
@@ -88,12 +122,12 @@ public class PipelineRunHashExtensionsPropertyTests
     {
         var run = MakeMinimalRun();
         run.FilesChangedCount = 17;
-        run.LinesAdded        = 342;
-        run.LinesRemoved      = 89;
-        run.RetryCount        = 2;
+        run.LinesAdded = 342;
+        run.LinesRemoved = 89;
+        run.RetryCount = 2;
         run.InfrastructureRetryCount = 1;
-        run.InlineCommentsPosted     = 5;
-        run.OpenIssuesDownloaded     = 30;
+        run.InlineCommentsPosted = 5;
+        run.OpenIssuesDownloaded = 30;
         run.SetCodeReviewCounts(critical: 3, warning: 7, suggestion: 12);
 
         var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
@@ -116,17 +150,17 @@ public class PipelineRunHashExtensionsPropertyTests
     public void ToHashEntries_FromHash_PreservesLongsDecimalsBooleans()
     {
         var run = MakeMinimalRun();
-        run.TotalTokens       = 123_456_789L;
-        run.CacheReadTokens   = 50_000L;
-        run.CacheWriteTokens  = 25_000L;
-        run.TotalCost         = 1.2345m;
-        run.BrainContextLoaded    = true;
-        run.BrainUpdatesPushed    = true;
-        run.IsDraftPr             = true;
-        run.AnalysisSkipped       = false;
-        run.MergeForceResolved    = true;
+        run.TotalTokens = 123_456_789L;
+        run.CacheReadTokens = 50_000L;
+        run.CacheWriteTokens = 25_000L;
+        run.TotalCost = 1.2345m;
+        run.BrainContextLoaded = true;
+        run.BrainUpdatesPushed = true;
+        run.IsDraftPr = true;
+        run.AnalysisSkipped = false;
+        run.MergeForceResolved = true;
         run.InlineCommentsDegraded = true;
-        run.BaselineHealthPassed  = true;
+        run.BaselineHealthPassed = true;
 
         var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
 
@@ -226,24 +260,25 @@ public class PipelineRunHashExtensionsPropertyTests
     public void ToHashEntries_FromHash_FullyPopulatedRun_PreservesAllAssertedFields()
     {
         var run = MakeMinimalRun("run-full");
-        run.BranchName                     = "feature/full-roundtrip";
-        run.AgentId                        = "agent-full";
-        run.ModelName                      = "gpt-4o";
-        run.PullRequestUrl                 = "https://github.com/org/repo/pull/1";
-        run.PullRequestBody                = "PR body text";
-        run.PullRequestNumber              = "1";
-        run.FilesChangedCount              = 42;
-        run.LinesAdded                     = 1000;
-        run.LinesRemoved                   = 200;
-        run.TotalTokens                    = 500_000L;
-        run.TotalCost                      = 3.14m;
-        run.BrainContextLoaded             = true;
-        run.IsDraftPr                      = false;
-        run.CurrentStep                    = PipelineStep.Completed;
-        run.HighWaterMark                  = PipelineStep.Completed;
+        run.BranchName = "feature/full-roundtrip";
+        run.AgentId = "agent-full";
+        run.ModelName = "gpt-4o";
+        run.IssueUrl = "https://github.com/org/repo/issues/1";
+        run.PullRequestUrl = "https://github.com/org/repo/pull/1";
+        run.PullRequestBody = "PR body text";
+        run.PullRequestNumber = "1";
+        run.FilesChangedCount = 42;
+        run.LinesAdded = 1000;
+        run.LinesRemoved = 200;
+        run.TotalTokens = 500_000L;
+        run.TotalCost = 3.14m;
+        run.BrainContextLoaded = true;
+        run.IsDraftPr = false;
+        run.CurrentStep = PipelineStep.Completed;
+        run.HighWaterMark = PipelineStep.Completed;
         run.SetCodeReviewCounts(1, 2, 3);
-        run.IssueLabels                    = ["bug", "enhancement"];
-        run.CodeReviewAgentsRun            = ["agent-1", "agent-2"];
+        run.IssueLabels = ["bug", "enhancement"];
+        run.CodeReviewAgentsRun = ["agent-1", "agent-2"];
 
         var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
 
@@ -252,6 +287,7 @@ public class PipelineRunHashExtensionsPropertyTests
         restored.BranchName.Should().Be("feature/full-roundtrip");
         restored.AgentId.Should().Be("agent-full");
         restored.ModelName.Should().Be("gpt-4o");
+        restored.IssueUrl.Should().Be("https://github.com/org/repo/issues/1");
         restored.PullRequestUrl.Should().Be("https://github.com/org/repo/pull/1");
         restored.FilesChangedCount.Should().Be(42);
         restored.LinesAdded.Should().Be(1000);
