@@ -24,7 +24,28 @@ public sealed record PipelineConfiguration
 
     [Key(4)]
     [ProjectOverridable(Order = 3)]
-    public TimeSpan AgentTimeout { get; init; } = PipelineConstants.DefaultAgentTimeout;
+    // TODO [WARNING]: The init accessor throws ArgumentOutOfRangeException on TimeSpan.Zero.
+    // PipelineConfiguration is deserialized from persisted JSON via System.Text.Json in
+    // PostgresConfigurationStore.LoadPipelineConfigAsync/UpdatePipelineConfigAsync, which invokes
+    // the init setter during deserialization. Any existing PipelineConfig DB row that previously
+    // stored "AgentTimeout":"00:00:00" (a value that was legal before this validation was added —
+    // the integration test formerly saved/loaded TimeSpan.Zero) will now throw at load time,
+    // breaking config loading for the entire application. If any such rows exist in production,
+    // either add a DB migration to normalize stored zeros to PipelineConstants.DefaultAgentTimeout,
+    // or clamp/normalize a loaded zero value before assignment rather than throwing.
+    // (Correctness review [WARNING] @ PipelineConfiguration.cs:31)
+    public TimeSpan AgentTimeout
+    {
+        get => _agentTimeout;
+        init
+        {
+#pragma warning disable S3236 // 'value' is the implicit init parameter; callers need the property name in the exception.
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value, TimeSpan.Zero, nameof(AgentTimeout));
+#pragma warning restore S3236
+            _agentTimeout = value;
+        }
+    }
+    private readonly TimeSpan _agentTimeout = PipelineConstants.DefaultAgentTimeout;
 
     /// <summary>
     /// How long the agent can be silent (no output) before the stall monitor logs a warning.

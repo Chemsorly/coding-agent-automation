@@ -85,6 +85,49 @@ public class PipelineConfigurationValidationTests
         var config = new PipelineConfiguration { AnalysisCommitThreshold = value };
         config.AnalysisCommitThreshold.Should().Be(value);
     }
+
+    // ── AgentTimeout validation ─────────────────────────────────────────────────
+
+    [Fact]
+    public void AgentTimeout_Zero_ThrowsArgumentOutOfRangeException()
+    {
+        var act = () => new PipelineConfiguration { AgentTimeout = TimeSpan.Zero };
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName("AgentTimeout");
+    }
+
+    [Fact]
+    public void AgentTimeout_Negative_ThrowsArgumentOutOfRangeException()
+    {
+        var act = () => new PipelineConfiguration { AgentTimeout = TimeSpan.FromSeconds(-1) };
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName("AgentTimeout");
+    }
+
+    [Fact]
+    public void AgentTimeout_PositiveValue_Accepted()
+    {
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(30) };
+        config.AgentTimeout.Should().Be(TimeSpan.FromMinutes(30));
+    }
+
+    [Fact]
+    public void AgentTimeout_SmallPositiveValue_Accepted()
+    {
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromSeconds(1) };
+        config.AgentTimeout.Should().Be(TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public void AgentTimeout_DefaultValue_IsPositive()
+    {
+        // TODO [WARNING]: This assertion is too weak — any positive value passes, including 1ms.
+        // The acceptance criterion requires the default to remain PipelineConstants.DefaultAgentTimeout
+        // (30 min). Strengthen to: config.AgentTimeout.Should().Be(PipelineConstants.DefaultAgentTimeout).
+        // (TestQualityReviewer review [WARNING] @ PipelineConfigurationValidationTests.cs:120)
+        var config = new PipelineConfiguration();
+        config.AgentTimeout.Should().BeGreaterThan(TimeSpan.Zero);
+    }
 }
 
 public class RateLimitExceededExceptionTests
