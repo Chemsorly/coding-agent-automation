@@ -161,7 +161,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
     {
         var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
         mockApiClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((JobDistributionRequest req, CancellationToken _) =>
             {
                 // Simulate the API honoring request.RunId

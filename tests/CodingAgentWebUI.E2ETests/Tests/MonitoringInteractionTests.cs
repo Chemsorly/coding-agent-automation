@@ -100,12 +100,16 @@ public sealed class MonitoringInteractionTests : E2ETestBase
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
         var runRow = Page.Locator(".cockpit-run-row").Filter(new() { HasTextString = "#71" });
         await runRow.First.WaitForAsync(new() { Timeout = 15_000 });
-        await runRow.First.ClickAsync();
 
-        // Assert: we land on the run detail page and it shows the issue.
-        // Use WaitUntilState.Commit (not the default Load) because Blazor's Nav.NavigateTo fires a
-        // history.pushState — a SPA URL change — that never raises a network-level "load" event.
-        await Page.WaitForURLAsync($"**/runs/{runId}", new() { Timeout = 15_000, WaitUntil = WaitUntilState.Commit });
+        // Start the URL-wait task BEFORE the click so no history.pushState event is missed.
+        // Blazor's Nav.NavigateTo fires a history.pushState (not a network "load" event) —
+        // starting WaitForURLAsync after ClickAsync creates a race where the SPA navigation
+        // can fire and complete before the listener is attached, causing a 15s timeout.
+        var navTask = Page.WaitForURLAsync($"**/runs/{runId}",
+            new() { WaitUntil = WaitUntilState.Commit, Timeout = 15_000 });
+        await runRow.First.ClickAsync();
+        await navTask;
+
         // Wait for the run content to render — RunPage.razor does an async API call in
         // OnParametersSetAsync before populating the page body. WaitForURLAsync with Commit only
         // waits for the SPA navigation push, not for Blazor to finish rendering.

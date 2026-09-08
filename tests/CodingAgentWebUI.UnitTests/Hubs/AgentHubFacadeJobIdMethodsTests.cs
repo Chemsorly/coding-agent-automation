@@ -169,7 +169,9 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
     [Fact]
     public async Task RequeueWorkItemAsync_ValidItem_TransitionsToPending()
     {
-        var id = await SeedWorkItem(WorkItemStatus.Dispatched);
+        // The requeue path transitions Failed→Pending (recovery path).
+        // Dispatched→Pending was removed (the DispatchLoop that needed it is gone).
+        var id = await SeedWorkItem(WorkItemStatus.Failed);
 
         await _facade.RequeueWorkItemAsync(id.ToString(), CancellationToken.None);
 

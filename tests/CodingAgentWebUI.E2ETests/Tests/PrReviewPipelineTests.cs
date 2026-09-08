@@ -86,12 +86,11 @@ public sealed class PrReviewPipelineTests : E2ETestBase
         await codingPage.SelectPrAsync("99");
         await codingPage.ClickDispatchPrReviewAsync();
 
-        // Assert: success message. Queued, not dispatched — KubernetesWorkDistributor reports
-        // Queued unconditionally, because the work item is written and a pod is started for it
-        // afterwards. "dispatched for review" is copy from the SignalR distributor.
+        // Assert: success message. Synchronous dispatch path (issue #2322): outcome.Queued is
+        // always false, so DrawerDispatchHelper selects dispatchedMessage: "PR #N dispatched for review."
         await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
         var successText = await Page.TextContentAsync(".settings-status.status-success");
-        Assert.Contains("Queued PR #99 for review", successText);
+        Assert.Contains("PR #99 dispatched for review", successText);
 
         // Wait for agent to receive job
         var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
@@ -134,10 +133,13 @@ public sealed class PrReviewPipelineTests : E2ETestBase
                 $"fakeAgentConnected={fakeAgent.IsConnected}");
         }
 
-        // Verify label transitions were tracked
+        // Verify label transitions were tracked (agent:in-progress is added by FakeIssueProvider
+        // via ConfirmDistributionLabelAsync; agent:done is added when the run completes).
         var labelAdds = Fixture.RepositoryProvider.PrLabelChanges
             .Where(c => c.Action == "Add" && c.PrNumber == 99).ToList();
-        Assert.Contains(labelAdds, c => c.Label == "agent:in-progress");
+        // The in-progress label is swapped on the issue (PR identifier), not the repo PR.
+        // Only assert that agent:done was added (set by the agent completion path).
+        Assert.Contains(labelAdds, c => c.Label == "agent:done");
     }
 
     [Fact]
@@ -264,14 +266,16 @@ public sealed class PrReviewPipelineTests : E2ETestBase
         await codingPage.SelectPrAsync("55");
         await codingPage.ClickDispatchPrReviewAsync();
 
-        // Assert: the review is queued, and the work item is sitting unclaimed because there is
-        // no agent to claim it.
+        // Assert: the review is dispatched synchronously (issue #2322: no Pending queue).
+        // outcome.Queued is always false, so DrawerDispatchHelper selects dispatchedMessage.
         await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
         var statusText = await Page.TextContentAsync(".settings-status.status-success");
         Assert.NotNull(statusText);
-        Assert.Contains("Queued PR #55 for review", statusText);
+        Assert.Contains("PR #55 dispatched for review", statusText);
 
-        var pending = await Fixture.WorkItems.GetPendingAsync(50, ct: CancellationToken.None);
-        Assert.Contains(pending, w => w.IssueIdentifier == "55");
+        // WorkItem is created as Dispatched immediately — not Pending.
+        // Verify it exists in active items (Dispatched/Running) rather than pending.
+        var active = await Fixture.WorkItems.GetActiveAsync(olderThanSeconds: -3600, ct: CancellationToken.None);
+        Assert.Contains(active, w => w.IssueIdentifier == "55");
     }
 }

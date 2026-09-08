@@ -453,10 +453,11 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             return new DispatchOutcome(false, false, result.ErrorMessage);
         }
 
-        if (!result.Queued)
-            await ConfirmDistributionLabelAsync(request, ct);
+        // Synchronous dispatch path: every successful distribution is immediately Dispatched
+        // (no Pending queue). The label swap to agent:in-progress is always unconditional.
+        await ConfirmDistributionLabelAsync(request, ct);
 
-        return new DispatchOutcome(true, result.Queued, null);
+        return new DispatchOutcome(true, false, null);
     }
 
     /// <inheritdoc />

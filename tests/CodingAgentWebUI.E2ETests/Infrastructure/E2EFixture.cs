@@ -149,7 +149,8 @@ public sealed class E2EFixture : IAsyncLifetime
         _jobController = new FakeJobController(
             Factory.Services.GetRequiredService<IPipelineApiWorkItemClient>(),
             _apiFactory.AgentRegistry,
-            Factory.ConfigStore);
+            Factory.ConfigStore,
+            DbContextFactory);
 
         return Task.CompletedTask;
     }

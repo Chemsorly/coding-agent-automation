@@ -402,17 +402,18 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
             () => registry.GetByAgentId("lifecycle-busy")?.Status == AgentStatus.Busy,
             TimeSpan.FromSeconds(5));
 
-        // Act: dispatch second job — should go to Pending (no idle agent)
+        // Act: dispatch second job — synchronous dispatch path (issue #2322):
+        // item is created as Dispatched immediately regardless of agent status
         var r2 = await DispatchIssueAsync("3041");
         Assert.True(r2.Success);
-        Assert.True(r2.Queued, "Second job should be queued — agent is busy");
+        Assert.False(r2.Queued, "Synchronous dispatch: item is Dispatched immediately, never Pending");
 
-        // Verify WorkItem is Pending
+        // Verify WorkItem is Dispatched (not Pending)
         var workItemId2 = Guid.Parse(r2.WorkItemId!);
-        var pending = await WaitForWorkItemStatusAsync(workItemId2, WorkItemStatus.Pending, TimeSpan.FromSeconds(5));
-        Assert.Equal(WorkItemStatus.Pending, pending.Status);
+        var dispatched = await WaitForWorkItemStatusAsync(workItemId2, WorkItemStatus.Dispatched, TimeSpan.FromSeconds(5));
+        Assert.Equal(WorkItemStatus.Dispatched, dispatched.Status);
 
-        // Complete first job → agent becomes Idle → drain picks up second job
+        // Complete first job → agent becomes Idle → FakeJobController assigns second item
         await agent.AcceptAndCompleteJobAsync(job1.JobId);
         agent.ResetJobAssigned();
 

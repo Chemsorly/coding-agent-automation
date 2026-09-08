@@ -5,6 +5,7 @@ using AwesomeAssertions;
 using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
@@ -806,6 +807,11 @@ public sealed class AgentHubGateKestrelFactory : WebApplicationFactory<Program>
             services.RemoveAll<Pipeline.Interfaces.IConsolidationDispatchService>();
             services.AddSingleton<Pipeline.Interfaces.IConsolidationDispatchService>(
                 new GateNoOpConsolidationDispatchService());
+
+            // Register a no-op IKubernetesJobClient so DispatchLifecycleService can be
+            // constructed at startup without a real K8s cluster.
+            services.RemoveAll<IKubernetesJobClient>();
+            services.AddSingleton(new Mock<IKubernetesJobClient>().Object);
         });
     }
 

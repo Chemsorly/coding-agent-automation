@@ -84,7 +84,8 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
     [Fact]
     public async Task FullLifecycle_Dispatch_AgentAccepts_Completes_AllStatesConsistent()
     {
-        // Arrange: Create WorkItem (Pending) → transition to Dispatched
+        // Arrange: Create WorkItem directly as Dispatched (new synchronous dispatch path;
+        // Pending→Dispatched was removed in issue #2322)
         var runId = Guid.NewGuid();
         await using (var db = await _dbFactory.CreateDbContextAsync())
         {
@@ -93,14 +94,13 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
                 Id = runId,
                 IssueIdentifier = "owner/repo#1",
                 IssueProviderConfigId = "ip-1",
-                Status = WorkItemStatus.Pending,
+                Status = WorkItemStatus.Dispatched,
+                DispatchedAt = DateTimeOffset.UtcNow,
                 CreatedAt = DateTimeOffset.UtcNow,
                 TaskType = WorkItemTaskType.Implementation
             });
             await db.SaveChangesAsync();
         }
-
-        await _transitionService.TransitionAsync(runId, WorkItemStatus.Dispatched, ct: CancellationToken.None);
 
         // Create PipelineRun in-memory (simulating dispatch path)
         var pipelineRun = new PipelineRun
@@ -390,7 +390,11 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
     [Fact]
     public async Task OrchestratorRestart_PendingWorkItem_DrainRecreatesRun_AgentGetsJob()
     {
-        // Arrange: WorkItem in Pending with full payload, OrchestratorRunService EMPTY
+        // Arrange: WorkItem in Pending with full payload (recovery/requeue scenario),
+        // OrchestratorRunService EMPTY (simulating orchestrator restart).
+        // Note: After issue #2322, Pending items arise from recovery (Failed/Cancelled→Pending requeue),
+        // not from live dispatch. This test verifies that a Pending item is still queryable and
+        // that the dispatch lifecycle can be triggered for it.
         var runId = Guid.NewGuid();
         var payload = JsonSerializer.Serialize(new JobDistributionRequest
         {
@@ -438,7 +442,9 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         pendingWorkItems.Should().HaveCount(1);
         pendingWorkItems[0].IssueIdentifier.Should().Be("owner/repo#6");
 
-        // Simulate creating the run from drain
+        // Simulate re-dispatch: DispatchLifecycleService directly sets Status=Dispatched
+        // (bypasses IsValidTransition — this is the designed behavior after issue #2322).
+        // Directly update the entity to simulate the lifecycle service's behavior.
         var restoredRun = new PipelineRun
         {
             RunId = runId.ToString(),
@@ -449,7 +455,16 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
             StartedAt = DateTime.UtcNow
         };
         _runService.AddRun(restoredRun);
-        await _transitionService.TransitionAsync(runId, WorkItemStatus.Dispatched, ct: CancellationToken.None);
+
+        // Directly update to Dispatched (simulating DispatchLifecycleService.ExecuteDispatchLifecycleAsync
+        // which directly sets workItem.Status = Dispatched without going through IsValidTransition)
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            var entity = await db.WorkItems.FindAsync(runId);
+            entity!.Status = WorkItemStatus.Dispatched;
+            entity.DispatchedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
 
         // Assert: run exists, WorkItem is Dispatched
         _runService.GetRun(runId.ToString()).Should().NotBeNull();

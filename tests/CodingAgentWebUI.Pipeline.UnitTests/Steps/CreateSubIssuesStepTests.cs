@@ -14,6 +14,12 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Steps;
 /// Tests timeout enforcement, retry behavior, cap enforcement, and partial failure handling.
 /// Feature: 027-epic-decomposition-pipeline, Requirements: 4.6, 4.12, 10.3, 10.4
 /// </summary>
+// Added to [Collection("Metrics")] because ExecuteAsync_SuccessfulCreation_IncrementsSubIssuesCreatedCounter
+// uses a MeterListener against the static PipelineTelemetry.SubIssuesCreated counter. Without
+// serialization, other test classes that also emit on the same static meter can bleed into this
+// class's MeterListener callback, causing snapshot-delta assertions to see inflated counts (delta=2
+// instead of 1). The "Metrics" collection serializes all metric-listener tests process-wide.
+[Collection("Metrics")]
 public class CreateSubIssuesStepTests : IDisposable
 {
     private readonly Mock<IPipelineCallbacks> _callbacks = new();

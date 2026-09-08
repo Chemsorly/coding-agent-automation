@@ -68,10 +68,8 @@ public sealed class ConfidenceGateTests : E2ETestBase
             new() { Timeout = 10_000 });
         var successText = await Page.TextContentAsync(".settings-status.status-success");
         // Kubernetes dispatch always queues: KubernetesWorkDistributor.DistributeAsync returns
-        // Queued=true unconditionally, because the work item is inserted as Pending and the Job
-        // Controller starts a pod for it afterwards. The "Dispatched" banner belonged to the
-        // deleted SignalR mode, where dispatch pushed straight to a connected agent.
-        Assert.Contains("Queued #42", successText);
+        // Synchronous dispatch path (issue #2322): always returns "✅ Dispatched #N".
+        Assert.Contains("Dispatched #42", successText);
 
         // Wait for the agent to receive the job assignment
         var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
@@ -160,10 +158,8 @@ public sealed class ConfidenceGateTests : E2ETestBase
             new() { Timeout = 10_000 });
         var successText = await Page.TextContentAsync(".settings-status.status-success");
         // Kubernetes dispatch always queues: KubernetesWorkDistributor.DistributeAsync returns
-        // Queued=true unconditionally, because the work item is inserted as Pending and the Job
-        // Controller starts a pod for it afterwards. The "Dispatched" banner belonged to the
-        // deleted SignalR mode, where dispatch pushed straight to a connected agent.
-        Assert.Contains("Queued #42", successText);
+        // Synchronous dispatch path (issue #2322): always returns "✅ Dispatched #N".
+        Assert.Contains("Dispatched #42", successText);
 
         // Wait for the agent to receive the job assignment
         var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
