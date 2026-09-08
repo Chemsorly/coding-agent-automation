@@ -11,9 +11,11 @@
         // Base path for the <base href> tag. Configurable via WebUI__BasePath (e.g. for Rancher
         // reverse-proxy deployments). Defaults to "./" which works for non-proxied root deployments.
         // Must end with "/" for the browser's base-href resolution to work correctly.
-        var rawBasePath = Configuration["WebUI:BasePath"] ?? "./";
+        const string defaultBasePath = "./";
+        const string trailingSlash = "/";
+        var rawBasePath = Configuration["WebUI:BasePath"] ?? defaultBasePath;
         // Normalise: ensure it ends with "/" so browser relative-href resolution works.
-        var basePath = rawBasePath.EndsWith('/') ? rawBasePath : rawBasePath + "/";
+        var basePath = rawBasePath.EndsWith(trailingSlash) ? rawBasePath : rawBasePath + trailingSlash;
     }
     <base href="@basePath" />
     @{
