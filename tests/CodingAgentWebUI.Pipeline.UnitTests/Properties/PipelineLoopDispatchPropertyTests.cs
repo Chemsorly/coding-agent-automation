@@ -52,7 +52,9 @@ public class PipelineLoopDispatchPropertyTests
                         {
                             new() { Identifier = $"issue-from-{cfg.Id}", Title = "Test", Labels = new[] { "agent:next" }, CreatedAt = DateTime.UtcNow }
                         },
-                        Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                        Page = 1,
+                        PageSize = PipelineConstants.DefaultPageSize,
+                        HasMore = false
                     });
                 return mock.Object;
             });
@@ -136,7 +138,9 @@ public class PipelineLoopDispatchPropertyTests
                 var mock = new Mock<IIssueProvider>();
                 var issues = Enumerable.Range(0, issuesPerTemplate).Select(j => new IssueSummary
                 {
-                    Identifier = $"{cfg.Id}-issue-{j}", Title = "Test", Labels = new[] { "agent:next" },
+                    Identifier = $"{cfg.Id}-issue-{j}",
+                    Title = "Test",
+                    Labels = new[] { "agent:next" },
                     CreatedAt = DateTime.UtcNow.AddMinutes(-j)
                 }).ToList();
                 mock.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
@@ -278,7 +282,8 @@ public class PipelineLoopDispatchPropertyTests
         var templateCount = Math.Min(templateCountRaw.Get, 5);
         var templates = Enumerable.Range(0, templateCount).Select(i => new PipelineJobTemplate
         {
-            Id = $"t-{i}", Name = $"Template {i}",
+            Id = $"t-{i}",
+            Name = $"Template {i}",
             IssueProviderId = $"ip-invalid-{i}",
             RepoProviderId = $"rp-invalid-{i}",
             Enabled = true
@@ -492,7 +497,9 @@ public class PipelineLoopDispatchPropertyTests
                         {
                             new() { Identifier = "1", Title = "Test", Labels = new[] { "agent:next" }, CreatedAt = DateTime.UtcNow }
                         },
-                        Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                        Page = 1,
+                        PageSize = PipelineConstants.DefaultPageSize,
+                        HasMore = false
                     });
                 return mock.Object;
             });
@@ -536,12 +543,18 @@ public class PipelineLoopDispatchPropertyTests
         mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates.Select(t => new ProviderConfig
             {
-                Id = t.IssueProviderId, Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test"
+                Id = t.IssueProviderId,
+                Kind = ProviderKind.Issue,
+                ProviderType = "GitHub",
+                DisplayName = "Test"
             }).DistinctBy(c => c.Id).ToList());
         mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates.Select(t => new ProviderConfig
             {
-                Id = t.RepoProviderId, Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Test"
+                Id = t.RepoProviderId,
+                Kind = ProviderKind.Repository,
+                ProviderType = "GitHub",
+                DisplayName = "Test"
             }).DistinctBy(c => c.Id).ToList());
     }
 

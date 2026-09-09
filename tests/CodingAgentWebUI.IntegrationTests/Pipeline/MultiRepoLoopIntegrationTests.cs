@@ -82,7 +82,9 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
                 {
                     new() { Identifier = "101", Title = "Healthy Issue", Labels = new[] { "agent:next" } }
                 },
-                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                Page = 1,
+                PageSize = PipelineConstants.DefaultPageSize,
+                HasMore = false
             });
 
         var failingProvider = new Mock<IIssueProvider>();

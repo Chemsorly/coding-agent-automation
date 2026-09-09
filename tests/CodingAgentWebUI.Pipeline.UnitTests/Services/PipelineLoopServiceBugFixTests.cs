@@ -106,7 +106,10 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
-                Items = new List<IssueSummary>(), Page = 1, PageSize = 50, HasMore = false
+                Items = new List<IssueSummary>(),
+                Page = 1,
+                PageSize = 50,
+                HasMore = false
             });
         var mockRepoProvider = new Mock<IRepositoryProvider>();
         _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
@@ -824,8 +827,12 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         // reaches housekeepingService.ExecuteAsync (past all its own early-return guards).
         var template = new PipelineJobTemplate
         {
-            Id = "t-hk", Name = "HK", IssueProviderId = "ip-1", RepoProviderId = "rp-hk",
-            Enabled = true, HousekeepingEnabled = true
+            Id = "t-hk",
+            Name = "HK",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-hk",
+            Enabled = true,
+            HousekeepingEnabled = true
         };
 
         // Seed the provider cache so RunHousekeepingAsync doesn't exit at "provider not in cache"

@@ -212,14 +212,19 @@ public class PipelineLoopFairDispatchPropertyTests
                 var mock = new Mock<IIssueProvider>();
                 var issues = Enumerable.Range(0, input.IssuesPerTemplate).Select(j => new IssueSummary
                 {
-                    Identifier = $"{cfg.Id}-issue-{j}", Title = "Test", Labels = new[] { "agent:next" },
+                    Identifier = $"{cfg.Id}-issue-{j}",
+                    Title = "Test",
+                    Labels = new[] { "agent:next" },
                     CreatedAt = DateTime.UtcNow.AddMinutes(-j)
                 }).ToList();
                 mock.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
                         It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
                     .ReturnsAsync(new PagedResult<IssueSummary>
                     {
-                        Items = issues, Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                        Items = issues,
+                        Page = 1,
+                        PageSize = PipelineConstants.DefaultPageSize,
+                        HasMore = false
                     });
                 return mock.Object;
             });
@@ -390,12 +395,18 @@ public class PipelineLoopFairDispatchPropertyTests
         mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates.Select(t => new ProviderConfig
             {
-                Id = t.IssueProviderId, Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test"
+                Id = t.IssueProviderId,
+                Kind = ProviderKind.Issue,
+                ProviderType = "GitHub",
+                DisplayName = "Test"
             }).DistinctBy(c => c.Id).ToList());
         mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates.Select(t => new ProviderConfig
             {
-                Id = t.RepoProviderId, Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Test"
+                Id = t.RepoProviderId,
+                Kind = ProviderKind.Repository,
+                ProviderType = "GitHub",
+                DisplayName = "Test"
             }).DistinctBy(c => c.Id).ToList());
     }
 

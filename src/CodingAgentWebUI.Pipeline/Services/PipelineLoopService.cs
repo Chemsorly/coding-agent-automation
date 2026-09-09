@@ -275,7 +275,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-        // K8s mode: wait for leadership before entering the activation-wait loop.
+            // K8s mode: wait for leadership before entering the activation-wait loop.
             // _leaderGate is null when leader election is not configured (test environments)
             // → this inner loop is skipped and the loop runs unconditionally.
             while (!stoppingToken.IsCancellationRequested && (_leaderGate is { IsLeader: false }))
