@@ -76,10 +76,10 @@ URL that agent pods use to reach the Pipeline API (injected as ORCHESTRATOR_URL)
 Every process that builds an agent Job spec must resolve this identically:
   - the Job Controller (work-item pods, via DispatchLoop)
   - the Pipeline API (consolidation and model-fetch pods, via DispatchLifecycleService)
-  - the orchestrator/monolith (chat pods, via ChatJobDispatcher)
+  - the web service (chat pods, via ChatJobDispatcher)
 
 The API is the sole host of /hubs/agent and /api/work-items/* from Spec 044 onward, so this
-must never resolve to the orchestrator Service — agent pods pointed there fail to connect to
+must never resolve to the web Service — agent pods pointed there fail to connect to
 the hub and cannot fetch their assignment.
 */}}
 {{- define "coding-agent-automation.agentOrchestratorUrl" -}}
@@ -93,7 +93,7 @@ the hub and cannot fetch their assignment.
 {{- end }}
 
 {{/*
-Base URL that in-cluster components (orchestrator, Job Controller) use to reach the
+Base URL that in-cluster components (web, Job Controller) use to reach the
 Pipeline API over HTTP. Honours api.baseUrl so an externally deployed API
 (api.enabled=false) is reachable, and otherwise derives the in-cluster Service URL.
 */}}
@@ -147,7 +147,7 @@ Usage (inside an env: list, indented to 12):
 {{- end }}
 
 {{/*
-WorkDistribution env vars shared by api, jobcontroller, and orchestrator.
+WorkDistribution env vars shared by api, jobcontroller, and web.
 Renders all WorkDistribution__* keys as env list items.
 
 Usage (inside an env: list, indented to 12):
@@ -189,7 +189,7 @@ Usage (inside an env: list, indented to 12):
 {{- end }}
 
 {{/*
-WorkDistribution ConfigMap data block for orchestrator-env-configmap.
+WorkDistribution ConfigMap data block for web-env-configmap.
 Same values as workDistributionEnv but rendered as flat key: value pairs
 (no env list wrapper) for use in ConfigMap .data.
 Namespace is a literal release namespace here since fieldRef is not available in ConfigMaps.

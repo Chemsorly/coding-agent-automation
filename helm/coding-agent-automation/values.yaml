@@ -9,13 +9,15 @@ fullnameOverride: ""
 image:
   pullPolicy: IfNotPresent
 
-# ── Orchestrator ─────────────────────────────────────────────────────────────
+# ── Web ──────────────────────────────────────────────────────────────────────
+# (Legacy alias: an `orchestrator:` block is still honored if present — its keys
+#  override these `web:` defaults. Prefer `web:` in new values files.)
 
-orchestrator:
+web:
   image:
     repository: chemsorly/coding-agent
-    # Tag for the orchestrator image. On release, CI overwrites this to semver.
-    tag: coding-agent-webui
+    # Tag for the web image. On release, CI overwrites this to semver.
+    tag: coding-agent-web
   replicas: 2
   # Additional annotations on the Deployment metadata (e.g., reloader.stakater.com/auto: "true")
   annotations: {}
@@ -81,13 +83,13 @@ orchestrator:
     #    hosts:
     #      - coding-agent.example.com
   env:
-    # Startup delay was previously needed to give the monolith hub time to rehydrate active runs
+    # Startup delay was previously needed to give the web hub time to rehydrate active runs
     # before dispatching. After Spec 044, the API owns IOrchestratorRunService and rehydrates on
-    # its own startup; the orchestrator no longer dispatches directly. Set to 0 (Spec 044 Req 7.2).
+    # its own startup; the web service no longer dispatches directly. Set to 0 (Spec 044 Req 7.2).
     pipelineLoopStartupDelaySeconds: 0
     # Seconds to wait after marking /readyz as 503 before proceeding with shutdown.
     readinessDrainDelaySeconds: 15
-    # Log level for the orchestrator application
+    # Log level for the web application
     logLevel: Information
     # Grafana Faro collector URL for frontend RUM monitoring.
     # Get this from Grafana Cloud → Frontend Observability → your app → Web SDK Config.
@@ -104,7 +106,7 @@ orchestrator:
 # ── Secrets ──────────────────────────────────────────────────────────────────
 
 secrets:
-  # REQUIRED: API key for agent-orchestrator authentication.
+  # REQUIRED: API key for agent authentication.
   # Plain string value. Chart fails if empty and no existingSecret is set.
   agentApiKey: ""
 
@@ -127,20 +129,21 @@ existingSecret: ""
 otel:
   endpoint: ""
   protocol: grpc
-  # OTEL_SERVICE_NAME for the orchestrator (Blazor UI process). API, JobController and Scheduler have
+  # OTEL_SERVICE_NAME for the web component (Blazor UI process). API, JobController and Scheduler have
   # their own service names set in their deployment templates.
-  orchestratorServiceName: coding-agent-orchestrator
+  # (Legacy alias: orchestratorServiceName is still honored if set — see web-env-configmap.yaml.)
+  webServiceName: coding-agent-web
   # OTEL_SERVICE_NAME for the API process.
-  # Defaults to "coding-agent-orchestrator" so the API's ExecutePipeline spans appear
+  # Defaults to "coding-agent-web" so the API's ExecutePipeline spans appear
   # under the same service name that the Grafana "Recent Pipeline Traces" panel queries
-  # (rootServiceName="coding-agent-orchestrator"). Override to "coding-agent-api" if you
-  # need to distinguish API spans from orchestrator (Blazor UI) spans in Tempo.
+  # (rootServiceName="coding-agent-web"). Override to "coding-agent-api" if you
+  # need to distinguish API spans from web (Blazor UI) spans in Tempo.
   # TODO: This default collapses the API process and the Blazor UI process into the same
   # service.name in Tempo, making it impossible to distinguish API-origin spans from
-  # orchestrator spans. Consider changing the default to "coding-agent-api" and updating
-  # the Grafana panel query to rootServiceName=~"coding-agent-orchestrator|coding-agent-api".
+  # web spans. Consider changing the default to "coding-agent-api" and updating
+  # the Grafana panel query to rootServiceName=~"coding-agent-web|coding-agent-api".
   # See review warning (issue #2255).
-  apiServiceName: coding-agent-orchestrator
+  apiServiceName: coding-agent-web
   resourceAttributes: ""
 
 # ── ServiceAccount ───────────────────────────────────────────────────────────
@@ -171,10 +174,10 @@ database:
   # Npgsql SSL mode: Disable, Prefer, Require, VerifyCA, VerifyFull.
   # Defaults to Require in production if not set. Use "Disable" for in-cluster Postgres without TLS.
   sslMode: ""
-  # Apply EF Core migrations on orchestrator startup.
+  # Apply EF Core migrations on web startup.
   # true  — apply automatically on startup (safe for single-replica; avoid concurrent upgrades)
   # false — startup aborts when migrations are pending (blue/green — run them manually via
-  #         `kubectl exec deployment/<name>-orchestrator -- dotnet CodingAgentWebUI.dll migrate`)
+  #         `kubectl exec deployment/<name>-web -- dotnet CodingAgent.Web.dll migrate`)
   migrateOnStartup: true
 
 # ── Work Distribution ────────────────────────────────────────────────────────
@@ -277,7 +280,7 @@ monitoring:
 
 api:
   # The Pipeline API is required. It is the sole owner of the database and the only host of
-  # /hubs/agent and /api/work-items/*, so agent pods, the Job Controller and the orchestrator
+  # /hubs/agent and /api/work-items/*, so agent pods, the Job Controller and the web service
   # all depend on it. Set this to false only when an API is deployed out of band, in which case
   # api.baseUrl must point at it (the chart fails at render time otherwise).
   enabled: true
@@ -303,12 +306,12 @@ api:
   # key (WorkDistribution__OrchestratorUrl) — changing it re-points both shapes simultaneously
   # (Spec 044 Req C2.1 option a). Default derives from release name and api.service.port.
   serviceUrl: ""
-  # Spec 045 Req 6.4/6.5: API base URL and hub URL for the orchestrator (monolith) to connect
+  # Spec 045 Req 6.4/6.5: API base URL and hub URL for the web service to connect
   # to the Pipeline API for config loading (IPipelineApiConfigClient) and live streaming
   # (IAgentHubConnection). When empty, the chart computes the default in-cluster URL from
   # the release name, namespace, and api.service.port. Override for external or custom routing.
   # REQUIRED when api.enabled is false. When empty and api.enabled is false, the chart
-  # fails at render time — the orchestrator would otherwise compute an in-cluster URL
+  # fails at render time — the web service would otherwise compute an in-cluster URL
   # (http://{fullname}-api.{namespace}.svc.cluster.local:{port}) pointing to a service
   # that does not exist, causing silent runtime failures on the first HTTP call.
   # Set to the URL of the externally deployed Pipeline API (e.g. http://api.example.com:8080).
@@ -330,7 +333,7 @@ api:
 
 jobController:
   # The Job Controller owns the dispatch and reconciliation loops. Nothing else runs them —
-  # the orchestrator's copies were removed — so with this off no work item is ever dispatched
+  # the web service's copies were removed — so with this off no work item is ever dispatched
   # and the queue silently grows. Disable only when running the controller out of band.
   enabled: true
   image:
@@ -378,7 +381,7 @@ scheduler:
   service:
     type: ClusterIP
     port: 8080
-  # URL the orchestrator uses to reach the Scheduler's loop control endpoints.
+  # URL the web service uses to reach the Scheduler's loop control endpoints.
   # Empty (default) = computed in-cluster: http://{fullname}-scheduler.{namespace}.svc.cluster.local:{port}
   # Set when scheduler.enabled is false or the Scheduler is reachable via a non-default address.
   baseUrl: ""

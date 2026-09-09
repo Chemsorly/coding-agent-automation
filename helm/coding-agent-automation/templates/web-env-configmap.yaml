@@ -1,19 +1,21 @@
+{{- /* Web component values, with back-compat: legacy `orchestrator.*` overrides win over `web.*` defaults. */ -}}
+{{- $web := mergeOverwrite (deepCopy .Values.web) (.Values.orchestrator | default dict) -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "coding-agent-automation.fullname" . }}-orchestrator-env
+  name: {{ include "coding-agent-automation.fullname" . }}-web-env
   labels:
     {{- include "coding-agent-automation.labels" . | nindent 4 }}
 data:
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.otel.endpoint | quote }}
   OTEL_EXPORTER_OTLP_PROTOCOL: {{ .Values.otel.protocol | quote }}
-  OTEL_SERVICE_NAME: {{ .Values.otel.orchestratorServiceName | quote }}
+  OTEL_SERVICE_NAME: {{ .Values.otel.webServiceName | default .Values.otel.orchestratorServiceName | default "coding-agent-web" | quote }}
   OTEL_RESOURCE_ATTRIBUTES: {{ .Values.otel.resourceAttributes | quote }}
-  PIPELINE_LOOP_STARTUP_DELAY_SECONDS: {{ .Values.orchestrator.env.pipelineLoopStartupDelaySeconds | quote }}
-  READINESS_DRAIN_DELAY_SECONDS: {{ .Values.orchestrator.env.readinessDrainDelaySeconds | quote }}
-  LOG_LEVEL: {{ .Values.orchestrator.env.logLevel | quote }}
-  Faro__CollectorUrl: {{ .Values.orchestrator.env.faroCollectorUrl | quote }}
-  WebUI__BasePath: {{ .Values.orchestrator.env.basePath | default "./" | quote }}
+  PIPELINE_LOOP_STARTUP_DELAY_SECONDS: {{ $web.env.pipelineLoopStartupDelaySeconds | quote }}
+  READINESS_DRAIN_DELAY_SECONDS: {{ $web.env.readinessDrainDelaySeconds | quote }}
+  LOG_LEVEL: {{ $web.env.logLevel | quote }}
+  Faro__CollectorUrl: {{ $web.env.faroCollectorUrl | quote }}
+  WebUI__BasePath: {{ $web.env.basePath | default "./" | quote }}
   # LeaderElection__Namespace is injected as a direct env var (fieldRef) in the deployment —
   # it cannot be set here in a ConfigMap as fieldRef is not available in ConfigMap data.
   # WorkDistribution env vars — used by ChatJobDispatcher and KubernetesJobCleanup.

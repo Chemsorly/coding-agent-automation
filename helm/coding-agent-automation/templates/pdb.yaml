@@ -1,17 +1,19 @@
-{{- if gt (int .Values.orchestrator.replicas) 1 }}
+{{- /* Web component values, with back-compat: legacy `orchestrator.*` overrides win over `web.*` defaults. */ -}}
+{{- $web := mergeOverwrite (deepCopy .Values.web) (.Values.orchestrator | default dict) -}}
+{{- if gt (int $web.replicas) 1 }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ include "coding-agent-automation.fullname" . }}-orchestrator
+  name: {{ include "coding-agent-automation.fullname" . }}-web
   labels:
     {{- include "coding-agent-automation.labels" . | nindent 4 }}
-    app.kubernetes.io/component: orchestrator
+    app.kubernetes.io/component: web
 spec:
   minAvailable: 1
   selector:
     matchLabels:
       {{- include "coding-agent-automation.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: orchestrator
+      app.kubernetes.io/component: web
 {{- end }}
 {{- if and .Values.api.enabled (gt (int .Values.api.replicas) 1) }}
 ---

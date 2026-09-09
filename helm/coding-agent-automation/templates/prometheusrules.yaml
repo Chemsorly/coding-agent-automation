@@ -40,20 +40,20 @@ spec:
             summary: "Dispatch latency is high"
             description: "P99 dispatch latency exceeds 60 seconds for {{ "{{ $labels.instance }}" }}."
 
-        # Alert when orchestrator DB is unreachable
+        # Alert when web DB is unreachable
         # Uses the app-exported readiness state. When DatabaseReadinessMonitor detects
         # DB is down, /readyz goes 503 and the kube-state-metrics probe reports unhealthy.
-        - alert: OrchestratorDatabaseUnreachable
+        - alert: WebDatabaseUnreachable
           expr: |
-            kube_pod_status_ready{pod=~".*orchestrator.*", condition="true"} == 0
+            kube_pod_status_ready{pod=~".*-web-.*", condition="true"} == 0
             and
-            kube_pod_status_phase{pod=~".*orchestrator.*", phase="Running"} == 1
+            kube_pod_status_phase{pod=~".*-web-.*", phase="Running"} == 1
           for: 2m
           labels:
             severity: critical
           annotations:
-            summary: "Orchestrator not ready (likely database unreachable)"
-            description: "Orchestrator pod is Running but not Ready for over 2 minutes. Check database connectivity."
+            summary: "Web not ready (likely database unreachable)"
+            description: "Web pod is Running but not Ready for over 2 minutes. Check database connectivity."
 
         # Alert when too many work items are failing.
         # Metric: workdistribution_workitems_terminated (correct — unchanged).
@@ -130,7 +130,7 @@ spec:
 
 {{- if .Values.api.enabled }}
         # Alert when the API pod is Running but not Ready.
-        # Separate from OrchestratorDatabaseUnreachable — the API's most likely cause during
+        # Separate from WebDatabaseUnreachable — the API's most likely cause during
         # upgrades is pending migrations (Req 9.5b), which is expected and self-resolving.
         - alert: PipelineApiNotReady
           expr: |

@@ -125,7 +125,7 @@ spec:
             # Without these the factory returns empty OrchestratorUrl / ServiceAccount, and
             # JobSpecBuilder emits a Job spec the K8s admission webhook rejects.
             # ORCHESTRATOR_URL handed to the consolidation and model-fetch agent pods dispatched
-            # from this process. Must be the Pipeline API, not the orchestrator.
+            # from this process. Must be the Pipeline API, not the web service.
             {{- include "coding-agent-automation.workDistributionEnv" . | nindent 12 }}
           volumeMounts:
             - name: job-templates

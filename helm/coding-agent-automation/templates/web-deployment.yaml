@@ -1,49 +1,51 @@
 {{- include "coding-agent-automation.deprecations" . }}
+{{- /* Web component values, with back-compat: legacy `orchestrator.*` overrides win over `web.*` defaults. Prefer `web.*` in new values. */ -}}
+{{- $web := mergeOverwrite (deepCopy .Values.web) (.Values.orchestrator | default dict) -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "coding-agent-automation.fullname" . }}-orchestrator
+  name: {{ include "coding-agent-automation.fullname" . }}-web
   labels:
     {{- include "coding-agent-automation.labels" . | nindent 4 }}
-    app.kubernetes.io/component: orchestrator
-  {{- with .Values.orchestrator.annotations }}
+    app.kubernetes.io/component: web
+  {{- with $web.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  replicas: {{ .Values.orchestrator.replicas }}
+  replicas: {{ $web.replicas }}
   strategy:
-    type: {{ .Values.orchestrator.strategy.type }}
-    {{- if eq .Values.orchestrator.strategy.type "RollingUpdate" }}
+    type: {{ $web.strategy.type }}
+    {{- if eq $web.strategy.type "RollingUpdate" }}
     rollingUpdate:
-      maxUnavailable: {{ .Values.orchestrator.strategy.rollingUpdate.maxUnavailable }}
-      maxSurge: {{ .Values.orchestrator.strategy.rollingUpdate.maxSurge }}
+      maxUnavailable: {{ $web.strategy.rollingUpdate.maxUnavailable }}
+      maxSurge: {{ $web.strategy.rollingUpdate.maxSurge }}
     {{- end }}
   selector:
     matchLabels:
       {{- include "coding-agent-automation.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: orchestrator
+      app.kubernetes.io/component: web
   template:
     metadata:
       labels:
         {{- include "coding-agent-automation.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: orchestrator
+        app.kubernetes.io/component: web
     spec:
       serviceAccountName: {{ include "coding-agent-automation.serviceAccountName" . }}
       automountServiceAccountToken: true
-      terminationGracePeriodSeconds: {{ .Values.orchestrator.terminationGracePeriodSeconds }}
-      {{- with .Values.orchestrator.podSecurityContext }}
+      terminationGracePeriodSeconds: {{ $web.terminationGracePeriodSeconds }}
+      {{- with $web.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.orchestrator.nodeSelector }}
+      {{- with $web.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if .Values.orchestrator.affinity }}
+      {{- if $web.affinity }}
       affinity:
-        {{- toYaml .Values.orchestrator.affinity | nindent 8 }}
-      {{- else if gt (int .Values.orchestrator.replicas) 1 }}
+        {{- toYaml $web.affinity | nindent 8 }}
+      {{- else if gt (int $web.replicas) 1 }}
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -52,24 +54,24 @@ spec:
                 labelSelector:
                   matchLabels:
                     {{- include "coding-agent-automation.selectorLabels" . | nindent 20 }}
-                    app.kubernetes.io/component: orchestrator
+                    app.kubernetes.io/component: web
                 topologyKey: kubernetes.io/hostname
       {{- end }}
-      {{- with .Values.orchestrator.tolerations }}
+      {{- with $web.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.orchestrator.initContainers }}
+      {{- with $web.initContainers }}
       initContainers:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
-        - name: orchestrator
-          image: "{{ .Values.orchestrator.image.repository }}:{{ .Values.orchestrator.image.tag }}"
+        - name: web
+          image: "{{ $web.image.repository }}:{{ $web.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
-              containerPort: {{ .Values.orchestrator.service.port }}
+              containerPort: {{ $web.service.port }}
               protocol: TCP
           lifecycle:
             preStop:
@@ -77,41 +79,41 @@ spec:
                 command: ["/bin/sh", "-c", "sleep 5"]
           startupProbe:
             httpGet:
-              path: {{ .Values.orchestrator.probes.startup.path }}
-              port: {{ .Values.orchestrator.probes.startup.port }}
-            periodSeconds: {{ .Values.orchestrator.probes.startup.periodSeconds }}
-            failureThreshold: {{ .Values.orchestrator.probes.startup.failureThreshold }}
+              path: {{ $web.probes.startup.path }}
+              port: {{ $web.probes.startup.port }}
+            periodSeconds: {{ $web.probes.startup.periodSeconds }}
+            failureThreshold: {{ $web.probes.startup.failureThreshold }}
           livenessProbe:
             httpGet:
-              path: {{ .Values.orchestrator.probes.liveness.path }}
-              port: {{ .Values.orchestrator.probes.liveness.port }}
-            initialDelaySeconds: {{ .Values.orchestrator.probes.liveness.initialDelaySeconds }}
-            periodSeconds: {{ .Values.orchestrator.probes.liveness.periodSeconds }}
-            timeoutSeconds: {{ .Values.orchestrator.probes.liveness.timeoutSeconds }}
-            failureThreshold: {{ .Values.orchestrator.probes.liveness.failureThreshold }}
+              path: {{ $web.probes.liveness.path }}
+              port: {{ $web.probes.liveness.port }}
+            initialDelaySeconds: {{ $web.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ $web.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ $web.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ $web.probes.liveness.failureThreshold }}
           readinessProbe:
             httpGet:
-              path: {{ .Values.orchestrator.probes.readiness.path }}
-              port: {{ .Values.orchestrator.probes.readiness.port }}
-            initialDelaySeconds: {{ .Values.orchestrator.probes.readiness.initialDelaySeconds }}
-            periodSeconds: {{ .Values.orchestrator.probes.readiness.periodSeconds }}
-            timeoutSeconds: {{ .Values.orchestrator.probes.readiness.timeoutSeconds }}
-            failureThreshold: {{ .Values.orchestrator.probes.readiness.failureThreshold }}
+              path: {{ $web.probes.readiness.path }}
+              port: {{ $web.probes.readiness.port }}
+            initialDelaySeconds: {{ $web.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ $web.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ $web.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ $web.probes.readiness.failureThreshold }}
           resources:
-            {{- toYaml .Values.orchestrator.resources | nindent 12 }}
+            {{- toYaml $web.resources | nindent 12 }}
           envFrom:
             - configMapRef:
-                name: {{ include "coding-agent-automation.fullname" . }}-orchestrator-env
+                name: {{ include "coding-agent-automation.fullname" . }}-web-env
           env:
             {{- include "coding-agent-automation.secretEnv" . | nindent 12 }}
             # KubernetesWorkDistributor and KubernetesJobCleanup have been migrated to
             # IPipelineApiWorkItemClient. IPipelineRunHistoryService, IConsolidationRunStore,
             # IHarnessSuggestionStore, and IWorkItemFallbackTransitionService are all API-backed
-            # as of arch-audit 2026-08-22 (T8 complete). The orchestrator no longer holds a
+            # as of arch-audit 2026-08-22 (T8 complete). The web no longer holds a
             # Postgres connection. Database env vars removed.
             {{- include "coding-agent-automation.signalrEnv" . | nindent 12 }}
             # Pipeline API connection — required by IPipelineApiConfigClient and IAgentHubConnection.
-            # Spec 045 Req 6.4: orchestrator must know API base URL and hub URL.
+            # Spec 045 Req 6.4: web must know API base URL and hub URL.
             - name: PipelineApi__BaseUrl
               value: {{ include "coding-agent-automation.apiBaseUrl" . | quote }}
             - name: PipelineApi__HubUrl
@@ -132,7 +134,7 @@ spec:
             # Leader election lease name — release-scoped to prevent collision when multiple
             # Helm releases share a namespace (Req 6.3/6.7). Overridable via values.yaml.
             - name: LeaderElection__PipelineLoopLeaseName
-              value: {{ include "coding-agent-automation.leaseName" (dict "override" .Values.orchestrator.leaderElection.pipelineLoopLeaseName "suffix" "pipeline-loop-lock" "root" .) }}
+              value: {{ include "coding-agent-automation.leaseName" (dict "override" $web.leaderElection.pipelineLoopLeaseName "suffix" "pipeline-loop-lock" "root" .) }}
             - name: LeaderElection__Namespace
               valueFrom:
                 fieldRef:
