@@ -144,39 +144,13 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             return null;
         }
 
-        var outcome = await DispatchRunAsync(run, key, type, templateName, ct);
-        if (outcome == DispatchOutcome.Queued)
-            return run;
-        if (outcome == DispatchOutcome.Failed)
-            return null;
-
+        // SignalR agent-pool dispatch was removed (issue #2325). In K8s mode, consolidation
+        // runs are dispatched externally by the K8s Job Controller via IWorkDistributor /
+        // the WorkItem queue. ConsolidationService is responsible only for persisting the run
+        // and tracking it in _runningRuns; the Job Controller picks it up asynchronously.
         _logger.Information("Consolidation run {RunId} created: {Type} for {TemplateName}", run.RunId, type, templateName);
         OnChange?.Invoke();
         return run;
-    }
-
-    /// <summary>
-    /// Dispatches a consolidation run to an idle agent. Handles queued/failed/exception outcomes.
-    /// </summary>
-    private Task<DispatchOutcome> DispatchRunAsync(
-        ConsolidationRun run,
-        (ConsolidationRunType, string?) key,
-        ConsolidationRunType type,
-        string templateName,
-        CancellationToken ct)
-    {
-        // SignalR agent-pool dispatch was removed (issue #2325). K8s mode dispatches via
-        // IWorkDistributor (the WorkItem queue) — that path is handled by the K8s Job controller,
-        // not by ConsolidationService. This method is retained as a no-op so callers compile.
-        // TODO: [WARNING] Returning NoDispatcher causes TriggerAsync to treat this as success
-        // (logs "created", fires OnChange, returns the run). The run is persisted and added to
-        // _runningRuns, which will block subsequent TriggerAsync calls for the same (type,
-        // templateId) key for the process lifetime. If TriggerAsync is ever called in K8s mode,
-        // the run will be silently wedged. Either remove this method and its call site entirely
-        // (replacing with a direct comment that K8s dispatch is external), or return
-        // DispatchOutcome.Failed so the caller rolls back _runningRuns and returns null.
-        // Tracked by review findings for issue #2325.
-        return Task.FromResult(DispatchOutcome.NoDispatcher);
     }
 
     /// <inheritdoc />
@@ -404,8 +378,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             _logger.Warning(ex, "Failed to delete persisted consolidation run {RunId}", runId);
         }
     }
-
-    private enum DispatchOutcome { Success, Queued, Failed, NoDispatcher }
 
     private static bool IsTerminalStatus(ConsolidationRunStatus status) =>
         status is ConsolidationRunStatus.Succeeded

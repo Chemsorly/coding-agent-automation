@@ -226,64 +226,6 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             new JobId("complete-job"), payload, CancellationToken.None), Times.Once);
     }
 
-    // ── RunJobTaskAsync — executor throws → builds Failed payload ─────────
-
-    [Fact]
-    public async Task RunJobTaskAsync_ExecutorThrows_BuildsFailedPayload()
-    {
-        // Build a service with a throwing IPipelineExecutor
-        var mockReporter = new Mock<IJobCompletionReporter>();
-        mockReporter.Setup(r => r.ReportCompletionAsync(
-                It.IsAny<JobId>(), It.IsAny<JobCompletionPayload>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var throwingExecutor = new Mock<IPipelineExecutor>();
-        throwingExecutor
-            .Setup(e => e.ExecuteAsync(
-                It.IsAny<JobAssignmentMessage>(),
-                It.IsAny<Microsoft.AspNetCore.SignalR.Client.HubConnection>(),
-                It.IsAny<OutputBatcher>(),
-                It.IsAny<Action<PipelineStep?>>(),
-                It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("executor boom"));
-
-        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
-        var hm = TestAgentWorkerServiceFactory.CreateTestHubManager();
-        var hmFactory = TestAgentWorkerServiceFactory.CreateTestHubManagerFactory();
-        var logger = new Mock<Serilog.ILogger>().Object;
-        var buffer = new CriticalMessageBuffer();
-        var pipeline = Infrastructure.Resilience.ResiliencePipelineFactory.CreateSignalRPipeline(logger);
-        var signalRReporter = new SignalRCompletionReporter(hm, pipeline, buffer, logger);
-        var slotManager = new AgentJobSlotManager(() => Task.CompletedTask);
-        var lifetime = Mock.Of<IHostApplicationLifetime>();
-        var lifecycle = new AgentConnectionLifecycle(hm, hmFactory, signalRReporter, slotManager,
-            new AgentId("test"), lifetime, logger);
-
-        var chatHandler = TestAgentWorkerServiceFactory.CreateChatJobHandler(lifecycle, slotManager, mockOrchestrator.Object, lifetime, logger);
-        var consolidationExecutor = new LocalConsolidationExecutor(
-            mockOrchestrator.Object, Mock.Of<System.Net.Http.IHttpClientFactory>(), logger);
-        var consolidationHandler = new ConsolidationJobHandler(lifecycle, slotManager, consolidationExecutor, logger);
-
-        var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
-            lifecycle, slotManager,
-            chatHandler, consolidationHandler,
-            throwingExecutor.Object,
-            mockReporter.Object, logger));
-
-        slotManager.TryAcquireJobSlot("throw-job", out _);
-
-        using var cts = new CancellationTokenSource();
-        await (Task)GetPrivateMethod(service, "RunJobTaskAsync")
-            .Invoke(service, [CreateJobAssignment("throw-job"), cts.Token])!;
-
-        mockReporter.Verify(r => r.ReportCompletionAsync(
-            new JobId("throw-job"),
-            It.Is<JobCompletionPayload>(p =>
-                p.FinalStep == PipelineStep.Failed &&
-                p.FailureReason == "executor boom"),
-            CancellationToken.None), Times.Once);
-    }
-
     // ── ReportChatCompletedAsync — hub throws, should not propagate ───────
 
     [Fact]

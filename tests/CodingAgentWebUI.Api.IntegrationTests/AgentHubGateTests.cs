@@ -649,7 +649,8 @@ public sealed class AgentHubGateTests
             await connection.InvokeAsync("SubscribeToRun", jobId);
 
             // Then unsubscribe — must not throw
-            await connection.InvokeAsync("UnsubscribeFromRun", jobId);
+            Func<Task> act = () => connection.InvokeAsync("UnsubscribeFromRun", jobId);
+            await act.Should().NotThrowAsync("UnsubscribeFromRun must succeed for a subscribed GUID");
         }
         finally
         {
