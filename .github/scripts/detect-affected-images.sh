@@ -18,14 +18,17 @@ set -euo pipefail
 MAP="${MAP:-.github/docker-image-projects.json}"
 BUILD_ALL="${BUILD_ALL:-false}"
 
-# Changed files (newline-separated on stdin) → JSON array of non-empty paths.
-changed_json="$(jq -R -s 'split("\n") | map(select(length > 0))')"
-
-result="$(jq -c \
-  --argjson changed "$changed_json" \
+# Changed files arrive newline-separated on stdin. They are read straight from stdin
+# (jq -R -s) rather than interpolated into an argument: a large changeset — e.g. a
+# repo-wide rename — would overflow ARG_MAX if passed via `--argjson`, so jq would
+# fail to exec ("Argument list too long", exit 126). The mapping is loaded from a file
+# with --slurpfile for the same reason.
+result="$(jq -c -R -s \
+  --slurpfile mapfile "$MAP" \
   --argjson buildAll "$BUILD_ALL" \
   '
-  . as $map
+  (split("\n") | map(select(length > 0))) as $changed
+  | ($mapfile[0]) as $map
   # changed src project names: the <Name> in src/<Name>/...
   | ($changed | map(select(startswith("src/")) | ltrimstr("src/") | split("/")[0]) | unique) as $cp
   # a global trigger changed?
@@ -41,7 +44,7 @@ result="$(jq -c \
   | { images_json: ($sel | map({dockerfile, tag})),
       push_json:   ($sel | map({tag})),
       any:         ($sel | length > 0) }
-  ' "$MAP")"
+  ')"
 
 images_json="$(jq -c '.images_json' <<<"$result")"
 push_json="$(jq -c '.push_json' <<<"$result")"
