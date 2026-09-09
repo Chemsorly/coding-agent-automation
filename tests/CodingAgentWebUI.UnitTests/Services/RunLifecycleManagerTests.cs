@@ -1,7 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -24,21 +23,18 @@ public sealed class RunLifecycleManagerTests
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
     private readonly AgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
-    private readonly AgentReservationService _dispatcher;
     private readonly RunLifecycleManager _sut;
 
     public RunLifecycleManagerTests()
     {
         _registry = new AgentRegistryService(_mockLogger.Object);
         _runService = new OrchestratorRunService(_mockLogger.Object);
-        _dispatcher = new AgentReservationService(_registry, _mockLogger.Object);
 
         _sut = new RunLifecycleManager(new RunLifecycleManagerDependencies(
             _runService,
             _mockHistoryService.Object,
             _registry,
             _mockLabelService.Object,
-            _dispatcher,
             _mockLogger.Object)); // Legacy mode — no DB
     }
 
@@ -586,21 +582,18 @@ public sealed class RunLifecycleManagerResilienceTests
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
     private readonly AgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
-    private readonly AgentReservationService _dispatcher;
     private readonly RunLifecycleManager _sut;
 
     public RunLifecycleManagerResilienceTests()
     {
         _registry = new AgentRegistryService(_mockLogger.Object);
         _runService = new OrchestratorRunService(_mockLogger.Object);
-        _dispatcher = new AgentReservationService(_registry, _mockLogger.Object);
 
         _sut = new RunLifecycleManager(new RunLifecycleManagerDependencies(
             _runService,
             _mockHistoryService.Object,
             _registry,
             _mockLabelService.Object,
-            _dispatcher,
             _mockLogger.Object));
     }
 
@@ -693,14 +686,12 @@ public sealed class RunLifecycleManagerJobCleanupTests
     private readonly Mock<IJobCleanupStrategy> _mockJobCleanup = new();
     private readonly AgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
-    private readonly AgentReservationService _dispatcher;
     private readonly RunLifecycleManager _sut;
 
     public RunLifecycleManagerJobCleanupTests()
     {
         _registry = new AgentRegistryService(_mockLogger.Object);
         _runService = new OrchestratorRunService(_mockLogger.Object);
-        _dispatcher = new AgentReservationService(_registry, _mockLogger.Object);
 
         _mockJobCleanup
             .Setup(c => c.TryDeleteJobForRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
@@ -711,7 +702,6 @@ public sealed class RunLifecycleManagerJobCleanupTests
             _mockHistoryService.Object,
             _registry,
             _mockLabelService.Object,
-            _dispatcher,
             _mockLogger.Object,
             JobCleanup: _mockJobCleanup.Object));
     }
@@ -793,14 +783,12 @@ public sealed class RunLifecycleManagerErrorPathTests
     private readonly Mock<IWorkItemFallbackTransitionService> _mockFallbackTransition = new();
     private readonly AgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
-    private readonly AgentReservationService _dispatcher;
     private readonly RunLifecycleManager _sut;
 
     public RunLifecycleManagerErrorPathTests()
     {
         _registry = new AgentRegistryService(_mockLogger.Object);
         _runService = new OrchestratorRunService(_mockLogger.Object);
-        _dispatcher = new AgentReservationService(_registry, _mockLogger.Object);
 
         _mockJobCleanup
             .Setup(c => c.TryDeleteJobForRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
@@ -817,7 +805,6 @@ public sealed class RunLifecycleManagerErrorPathTests
             _mockHistoryService.Object,
             _registry,
             _mockLabelService.Object,
-            _dispatcher,
             _mockLogger.Object,
             JobCleanup: _mockJobCleanup.Object,
             WorkItemFallbackTransition: _mockFallbackTransition.Object));

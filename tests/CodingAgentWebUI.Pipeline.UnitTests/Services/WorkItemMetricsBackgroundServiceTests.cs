@@ -16,6 +16,16 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 /// Unit tests for WorkItemMetricsBackgroundService.
 /// Validates: correct gauge reporting, empty-before-first-tick, cancellation, error recovery.
 /// </summary>
+/// <remarks>
+/// Placed in the "Metrics" xUnit collection to serialize execution with other test classes
+/// that use <see cref="System.Diagnostics.Metrics.MeterListener"/> against the static
+/// <c>WorkDistributionTelemetry.workdistribution.workitems_by_status</c> observable gauge.
+/// The static <c>_workItemsByStatusCallback</c> in <c>WorkDistributionTelemetry</c> is a
+/// process-wide singleton; concurrent test instances that call
+/// <c>RegisterWorkItemsByStatusCallback</c> overwrite each other, causing measurements to
+/// disappear from listeners owned by other test instances (spurious "found 0" failures).
+/// </remarks>
+[Collection("Metrics")]
 public class WorkItemMetricsBackgroundServiceTests : IDisposable
 {
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;

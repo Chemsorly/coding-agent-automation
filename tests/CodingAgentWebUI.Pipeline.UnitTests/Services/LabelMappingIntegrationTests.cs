@@ -1,8 +1,4 @@
 using AwesomeAssertions;
-using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.Health;
-using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
@@ -19,40 +15,6 @@ public class LabelMappingIntegrationTests
 {
     private readonly ProfileResolver _profileResolver = new();
     private readonly QualityGateResolver _qgcResolver = new();
-
-    #region Scenario 1: Basic .NET repo flow
-
-    [Fact]
-    public void BasicDotNetRepo_AgentWithMatchingLabels_IsSelected()
-    {
-        // Arrange: Repo has labels ["kiro", "dotnet", "dotnet10"]
-        var requiredLabels = new List<string> { "kiro", "dotnet", "dotnet10" };
-        var dispatcher = CreateDispatcherWithAgents(
-            CreateAgent("agent-dotnet", ["kiro", "dotnet", "dotnet10"]),
-            CreateAgent("agent-python", ["kiro", "python", "python312"]));
-
-        // Act
-        var selected = dispatcher.SelectAgent(requiredLabels);
-
-        // Assert: Agent with superset labels is selected
-        selected.Should().NotBeNull();
-        selected!.AgentId.Value.Should().Be("agent-dotnet");
-    }
-
-    [Fact]
-    public void BasicDotNetRepo_AgentWithNonMatchingLabels_IsNotSelected()
-    {
-        // Arrange: Repo has labels ["kiro", "dotnet", "dotnet10"], only python agent available
-        var requiredLabels = new List<string> { "kiro", "dotnet", "dotnet10" };
-        var dispatcher = CreateDispatcherWithAgents(
-            CreateAgent("agent-python", ["kiro", "python", "python312"]));
-
-        // Act
-        var selected = dispatcher.SelectAgent(requiredLabels);
-
-        // Assert: Python agent does NOT match dotnet labels
-        selected.Should().BeNull();
-    }
 
     [Fact]
     public void BasicDotNetRepo_ProfileWithMatchingLabels_Resolves()
@@ -109,25 +71,6 @@ public class LabelMappingIntegrationTests
         resolved.Should().BeEmpty();
     }
 
-    #endregion
-
-    #region Scenario 2: Polyglot repo
-
-    [Fact]
-    public void PolyglotRepo_AgentWithAllLabels_IsSelected()
-    {
-        // Arrange: Repo has labels ["kiro", "dotnet", "python"]
-        var requiredLabels = new List<string> { "kiro", "dotnet", "python" };
-        var dispatcher = CreateDispatcherWithAgents(
-            CreateAgent("agent-polyglot", ["kiro", "dotnet", "python", "dotnet10", "python312"]));
-
-        // Act
-        var selected = dispatcher.SelectAgent(requiredLabels);
-
-        // Assert
-        selected.Should().NotBeNull();
-        selected!.AgentId.Value.Should().Be("agent-polyglot");
-    }
 
     [Fact]
     public void PolyglotRepo_BothStackQgcs_AreIncluded()
@@ -151,7 +94,6 @@ public class LabelMappingIntegrationTests
         resolved.Select(q => q.Id).Should().NotContain("qgc-java");
     }
 
-    #endregion
 
     #region Scenario 3: Global fallback QGC
 
@@ -243,47 +185,6 @@ public class LabelMappingIntegrationTests
     #endregion
 
     #region Scenario 5: Disabled agent skipped
-
-    [Fact]
-    public void DisabledAgent_SkippedEvenThoughLabelsMatch()
-    {
-        // Arrange: Disabled agent matches labels, enabled agent also matches
-        var requiredLabels = new List<string> { "kiro", "dotnet" };
-        var disabledAgent = CreateAgent("agent-disabled", ["kiro", "dotnet", "dotnet10"]);
-        disabledAgent.Disabled = true;
-        var enabledAgent = CreateAgent("agent-enabled", ["kiro", "dotnet", "dotnet10"]);
-
-        var dispatcher = CreateDispatcherWithAgents(disabledAgent, enabledAgent);
-
-        // Act
-        var selected = dispatcher.SelectAgent(requiredLabels);
-
-        // Assert: Disabled agent skipped, enabled agent selected
-        selected.Should().NotBeNull();
-        selected!.AgentId.Value.Should().Be("agent-enabled");
-    }
-
-    [Fact]
-    public void DisabledAgent_OnlyCompatibleAgent_ReturnsNull()
-    {
-        // Arrange: Only agent that matches is disabled
-        var requiredLabels = new List<string> { "kiro", "dotnet" };
-        var disabledAgent = CreateAgent("agent-disabled", ["kiro", "dotnet", "dotnet10"]);
-        disabledAgent.Disabled = true;
-
-        var dispatcher = CreateDispatcherWithAgents(disabledAgent);
-
-        // Act
-        var selected = dispatcher.SelectAgent(requiredLabels);
-
-        // Assert: No agent available
-        selected.Should().BeNull();
-    }
-
-    #endregion
-
-    #region Scenario 6: No profile matches → dispatch fails
-
     [Fact]
     public void NoProfileMatches_ReturnsNull()
     {
@@ -343,7 +244,7 @@ public class LabelMappingIntegrationTests
         var pipelineConfig = new PipelineConfiguration();
 
         // Act
-        var labels = JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, pipelineConfig);
+        var labels = LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
 
         // Assert
         labels.Should().HaveCount(3);
@@ -373,7 +274,7 @@ public class LabelMappingIntegrationTests
         };
 
         // Act
-        var resolved = JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, pipelineConfig);
+        var resolved = LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
 
         // Assert: Falls back to pipeline default
         resolved.Should().BeEquivalentTo(new[] { "kiro", "dotnet" });
@@ -392,7 +293,7 @@ public class LabelMappingIntegrationTests
         var pipelineConfig = new PipelineConfiguration();
 
         // Act
-        var resolved = JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, pipelineConfig);
+        var resolved = LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
 
         // Assert: Empty — any agent matches
         resolved.Should().BeEmpty();
@@ -449,24 +350,6 @@ public class LabelMappingIntegrationTests
 
     #endregion
 
-    #region Scenario 10: Case insensitivity
-
-    [Fact]
-    public void CaseInsensitivity_AgentSelection_MatchesRegardlessOfCase()
-    {
-        // Arrange: Repo labels with mixed case
-        var requiredLabels = new List<string> { "Kiro", "DotNet" };
-        var dispatcher = CreateDispatcherWithAgents(
-            CreateAgent("agent-dotnet", ["kiro", "dotnet", "dotnet10"]));
-
-        // Act
-        var selected = dispatcher.SelectAgent(requiredLabels);
-
-        // Assert: Case-insensitive match succeeds
-        selected.Should().NotBeNull();
-        selected!.AgentId.Value.Should().Be("agent-dotnet");
-    }
-
     [Fact]
     public void CaseInsensitivity_ProfileResolution_MatchesRegardlessOfCase()
     {
@@ -503,106 +386,25 @@ public class LabelMappingIntegrationTests
         resolved[0].Id.Should().Be("qgc-dotnet");
     }
 
-    [Fact]
-    public void CaseInsensitivity_FullFlow_AllSystemsMatchCorrectly()
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    private static AgentProfile CreateProfile(string id, string name, string[] labels) => new()
     {
-        // Arrange: Mixed case throughout the entire flow
-        var repoLabels = new List<string> { "Kiro", "DotNet" };
-        var agentLabels = new List<string> { "kiro", "dotnet", "dotnet10" };
-
-        // Agent selection
-        var dispatcher = CreateDispatcherWithAgents(
-            CreateAgent("agent-dotnet", agentLabels));
-        var selectedAgent = dispatcher.SelectAgent(repoLabels);
-
-        // Profile resolution
-        var profiles = new List<AgentProfile>
-        {
-            CreateProfile("profile-dotnet", "DotNet", ["KIRO", "DOTNET"])
-        };
-        var resolvedProfile = _profileResolver.Resolve(profiles, agentLabels);
-
-        // QGC resolution
-        var qgcs = new List<QualityGateConfiguration>
-        {
-            CreateQgc("qgc-dotnet", "DotNet QGC", ["dotnet"])
-        };
-        var resolvedQgcs = _qgcResolver.Resolve(qgcs, repoLabels);
-
-        // Assert: All three systems match correctly despite mixed case
-        selectedAgent.Should().NotBeNull();
-        resolvedProfile.Should().NotBeNull();
-        resolvedQgcs.Should().HaveCount(1);
-    }
-
-    #endregion
-
-    #region Helpers
-
-    private static AgentEntry CreateAgent(string agentId, IReadOnlyList<string> labels)
-    {
-        return new AgentEntry
-        {
-            AgentId = agentId,
-            ConnectionId = $"conn-{agentId}",
-            Hostname = "test-host",
-            Labels = labels,
-            Status = AgentStatus.Idle,
-            RegisteredAt = DateTimeOffset.UtcNow.AddMinutes(-10),
-            LastHeartbeatAt = DateTimeOffset.UtcNow
-        };
-    }
-
-    private static AgentProfile CreateProfile(string id, string displayName, IReadOnlyList<string> matchLabels)
-    {
-        return new AgentProfile
-        {
-            Id = id,
-            DisplayName = displayName,
-            MatchLabels = matchLabels,
-            AgentProviderConfigId = $"ap-{id}",
-            Enabled = true,
-            Priority = 0
-        };
-    }
+        Id = id,
+        DisplayName = name,
+        AgentProviderConfigId = "ap",
+        MatchLabels = labels,
+        Enabled = true
+    };
 
     private static QualityGateConfiguration CreateQgc(
-        string id, string displayName, IReadOnlyList<string> matchLabels, int executionOrder = 0)
+        string id, string displayName, string[] matchLabels, int executionOrder = 0) => new()
     {
-        return new QualityGateConfiguration
-        {
-            Id = id,
-            DisplayName = displayName,
-            MatchLabels = matchLabels,
-            CompilationCommand = "dotnet",
-            CompilationArguments = ["build"],
-            TestCommand = "dotnet",
-            TestArguments = ["test"],
-            Enabled = true,
-            ExecutionOrder = executionOrder
-        };
-    }
-
-    private static JobDeduplicationGuardService CreateDispatcherWithAgents(params AgentEntry[] agents)
-    {
-        var mockLogger = new Mock<ILogger>();
-        var registry = new AgentRegistryService(mockLogger.Object);
-
-        // Register agents via the registry
-        foreach (var agent in agents)
-        {
-            var registrationMsg = new AgentRegistrationMessage
-            {
-                AgentId = agent.AgentId,
-                Hostname = agent.Hostname,
-                Labels = agent.Labels
-            };
-            var entry = registry.Register(registrationMsg, agent.ConnectionId);
-            entry.Disabled = agent.Disabled;
-        }
-
-        return new JobDeduplicationGuardService(registry, mockLogger.Object);
-    }
-
-    #endregion
+        Id = id,
+        DisplayName = displayName,
+        MatchLabels = matchLabels.ToList(),
+        TestArguments = ["test"],
+        Enabled = true,
+        ExecutionOrder = executionOrder
+    };
 }

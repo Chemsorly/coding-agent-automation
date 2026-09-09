@@ -3,7 +3,6 @@ using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -32,7 +31,6 @@ public sealed class RunLifecycleManagerDbTransitionTests
     private readonly WorkItemTransitionService _transitionService;
     private readonly OrchestratorRunService _runService;
     private readonly AgentRegistryService _registry;
-    private readonly AgentReservationService _dispatcher;
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService;
     private readonly Mock<ILabelService> _mockLabelService;
     private readonly Mock<ILogger> _mockLogger;
@@ -58,14 +56,12 @@ public sealed class RunLifecycleManagerDbTransitionTests
 
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _registry = new AgentRegistryService(_mockLogger.Object);
-        _dispatcher = new AgentReservationService(_registry, _mockLogger.Object);
 
         _sut = new RunLifecycleManager(new RunLifecycleManagerDependencies(
             _runService,
             _mockHistoryService.Object,
             _registry,
             _mockLabelService.Object,
-            _dispatcher,
             _mockLogger.Object,
             WorkItemFallbackTransition: fallbackService));
     }

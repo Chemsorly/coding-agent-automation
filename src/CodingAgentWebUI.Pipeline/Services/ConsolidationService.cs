@@ -13,7 +13,6 @@ namespace CodingAgentWebUI.Pipeline.Services;
 public sealed class ConsolidationService : IConsolidationService, IConsolidationRunTracker
 {
     private readonly ILogger _logger;
-    private readonly IConsolidationDispatchService? _dispatcher;
     private readonly IConsolidationRunStore _runStore;
     private readonly IHarnessSuggestionStore _harnessSuggestionStore;
     private readonly IConsolidationWorkspaceManager _workspaceManager;
@@ -49,7 +48,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         _logger = deps.Logger;
         _runStore = deps.RunStore;
         _harnessSuggestionStore = deps.HarnessSuggestionStore;
-        _dispatcher = deps.Dispatcher;
         _workspaceManager = deps.WorkspaceManager ?? new ConsolidationWorkspaceManager(deps.Logger, deps.Config);
         _feedbackCache = deps.FeedbackCache ?? new ConsolidationFeedbackCache(deps.Logger, deps.RunStore, deps.RunHistoryService);
         _templateResolver = new ConsolidationTemplateResolver(deps.ProjectStore);
@@ -146,76 +144,13 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             return null;
         }
 
-        var outcome = await DispatchRunAsync(run, key, type, templateName, ct);
-        if (outcome == DispatchOutcome.Queued)
-            return run;
-        if (outcome == DispatchOutcome.Failed)
-            return null;
-
+        // SignalR agent-pool dispatch was removed (issue #2325). In K8s mode, consolidation
+        // runs are dispatched externally by the K8s Job Controller via IWorkDistributor /
+        // the WorkItem queue. ConsolidationService is responsible only for persisting the run
+        // and tracking it in _runningRuns; the Job Controller picks it up asynchronously.
         _logger.Information("Consolidation run {RunId} created: {Type} for {TemplateName}", run.RunId, type, templateName);
         OnChange?.Invoke();
         return run;
-    }
-
-    /// <summary>
-    /// Dispatches a consolidation run to an idle agent. Handles queued/failed/exception outcomes.
-    /// </summary>
-    private async Task<DispatchOutcome> DispatchRunAsync(
-        ConsolidationRun run,
-        (ConsolidationRunType, string?) key,
-        ConsolidationRunType type,
-        string templateName,
-        CancellationToken ct)
-    {
-        if (_dispatcher is null)
-            return DispatchOutcome.NoDispatcher;
-
-        try
-        {
-            var feedbackDataJson = type == ConsolidationRunType.HarnessSuggestions
-                ? _feedbackCache.GetFeedbackDataForRun(run.RunId)
-                : null;
-            var workspacePath = _workspaceManager.GetWorkspacePath(run.RunId);
-
-            var result = await _dispatcher.TryDispatchAsync(
-                run, type, string.IsNullOrEmpty(run.TemplateId) ? (TemplateId?)null : (TemplateId)run.TemplateId, feedbackDataJson, workspacePath, ct);
-
-            if (result == ConsolidationDispatchResult.Queued)
-            {
-                run.Status = ConsolidationRunStatus.Queued;
-                await PersistRunAsync(run, ct);
-                // Cache-only clear: the run remains active (in _runningRuns and in the DB as Queued).
-                // Full rollback is not appropriate here — the dispatcher will pick it up when an
-                // agent becomes available. The feedback data is no longer needed in memory since
-                // the payload was already serialized and handed to the dispatcher queue.
-                _feedbackCache.ClearFeedbackDataForRun(run.RunId);
-                _logger.Information(
-                    "Consolidation run {RunId} queued: {Type} for {TemplateName} — waiting for idle agent",
-                    run.RunId, type, templateName);
-                OnChange?.Invoke();
-                return DispatchOutcome.Queued;
-            }
-
-            if (result == ConsolidationDispatchResult.Failed)
-            {
-                _logger.Warning("Consolidation run {RunId} dispatch failed for {Type}/{TemplateName}", run.RunId, type, templateName);
-                await RollbackRunAsync(key, run.RunId);
-                return DispatchOutcome.Failed;
-            }
-
-            // Cache-only clear: dispatch succeeded — the run is live and will be tracked via
-            // SignalR/UpdateRunAsync. The feedback payload was consumed by the dispatcher;
-            // no rollback of _runningRuns or the persisted record is needed.
-            _feedbackCache.ClearFeedbackDataForRun(run.RunId);
-            return DispatchOutcome.Success;
-        }
-        catch (Exception)
-        {
-            // Exception is propagated to the caller (TriggerAsync); logging here would cause
-            // duplicate log entries. Cleanup is done before rethrowing.
-            await RollbackRunAsync(key, run.RunId);
-            throw;
-        }
     }
 
     /// <inheritdoc />
@@ -313,9 +248,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
 
             var key = (run.Type, run.TemplateId);
             _runningRuns.TryRemove(key, out _);
-
-            if (_dispatcher is not null)
-                await _dispatcher.NotifyRunCancelledAsync(runId, ct);
 
             _logger.Information("Consolidation run {RunId} cancelled", runId.Value);
             OnChange?.Invoke();
@@ -447,8 +379,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         }
     }
 
-    private enum DispatchOutcome { Success, Queued, Failed, NoDispatcher }
-
     private static bool IsTerminalStatus(ConsolidationRunStatus status) =>
         status is ConsolidationRunStatus.Succeeded
             or ConsolidationRunStatus.Failed
@@ -466,7 +396,10 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         TemplateId = templateIdValue,
         TemplateName = templateName,
         StartedAtUtc = DateTimeOffset.UtcNow,
-        Status = ConsolidationRunStatus.Running,
+        // New runs start as Queued — the K8s Job Controller transitions to Running on dispatch.
+        // In the old SignalR path, runs were created as Running because an agent was immediately
+        // assigned; in K8s mode the pod hasn't started yet so Queued is the correct initial state.
+        Status = ConsolidationRunStatus.Queued,
         AutoDispatch = autoDispatch,
         ProjectName = projectName,
         // Capture trace context at trigger time (inside the HTTP request span).

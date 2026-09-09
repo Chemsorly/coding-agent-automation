@@ -126,19 +126,23 @@ public class AgentStallMonitorTests
             });
 
         var tcs = new TaskCompletionSource<AgentResult>();
+        var killCalled = new TaskCompletionSource<bool>();
         _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns(tcs.Task);
-        _mockAgent.Setup(a => a.KillAsync()).Returns(Task.CompletedTask);
+        // Signal via killCalled so the test can wait until KillAsync has actually been invoked
+        // before completing the task — prevents the race where tcs.SetResult unblocks the agent
+        // before the monitor calls KillAsync (ChatHistory is enqueued just before KillAsync).
+        _mockAgent.Setup(a => a.KillAsync())
+            .Callback(() => killCalled.TrySetResult(true))
+            .Returns(Task.CompletedTask);
 
         var task = AgentStallMonitor.ExecuteWithMonitoringAsync(
             _mockAgent.Object,
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
             _run, config, "Stuck agent", null, _mockLogger.Object, CancellationToken.None);
 
-        // Wait for the monitor to kill the agent before completing the agent call
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (_run.ChatHistory.IsEmpty && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        // Wait for KillAsync to be invoked before completing the agent task
+        await killCalled.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;

@@ -1,7 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -19,7 +18,6 @@ public sealed class AgentHubFacadeTests
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly AgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
-    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly Mock<IPipelineRunHistoryService> _mockHistory = new();
     private readonly Mock<IConfigurationStore> _mockConfigStore = new();
     private readonly Mock<IProviderFactory> _mockProviderFactory = new();
@@ -30,12 +28,10 @@ public sealed class AgentHubFacadeTests
     {
         _registry = new AgentRegistryService(_mockLogger.Object);
         _runService = new OrchestratorRunService(_mockLogger.Object);
-        _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
 
         _facade = new AgentHubFacade(new AgentHubFacadeDependencies(
             _registry,
             _runService,
-            _dispatcher,
             _mockHistory.Object,
             _mockConfigStore.Object,
             _mockProviderFactory.Object,
@@ -47,42 +43,35 @@ public sealed class AgentHubFacadeTests
     [Fact]
     public void Ctor_NullRegistry_Throws()
     {
-        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(null!, _runService, _dispatcher, _mockHistory.Object, _mockConfigStore.Object, _mockProviderFactory.Object, _facadeLogger));
+        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(null!, _runService, _mockHistory.Object, _mockConfigStore.Object, _mockProviderFactory.Object, _facadeLogger));
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullRunService_Throws()
     {
-        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, null!, _dispatcher, _mockHistory.Object, _mockConfigStore.Object, _mockProviderFactory.Object, _facadeLogger));
-        act.Should().Throw<ArgumentNullException>();
-    }
-
-    [Fact]
-    public void Ctor_NullDispatcher_Throws()
-    {
-        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, _runService, null!, _mockHistory.Object, _mockConfigStore.Object, _mockProviderFactory.Object, _facadeLogger));
+        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, null!, _mockHistory.Object, _mockConfigStore.Object, _mockProviderFactory.Object, _facadeLogger));
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullHistoryService_Throws()
     {
-        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, _runService, _dispatcher, null!, _mockConfigStore.Object, _mockProviderFactory.Object, _facadeLogger));
+        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, _runService, null!, _mockConfigStore.Object, _mockProviderFactory.Object, _facadeLogger));
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullConfigStore_Throws()
     {
-        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, _runService, _dispatcher, _mockHistory.Object, null!, _mockProviderFactory.Object, _facadeLogger));
+        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, _runService, _mockHistory.Object, null!, _mockProviderFactory.Object, _facadeLogger));
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullProviderFactory_Throws()
     {
-        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, _runService, _dispatcher, _mockHistory.Object, _mockConfigStore.Object, null!, _facadeLogger));
+        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, _runService, _mockHistory.Object, _mockConfigStore.Object, null!, _facadeLogger));
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -239,7 +228,6 @@ public sealed class AgentHubFacadeTests
         var facadeWithProjectStore = new AgentHubFacade(new AgentHubFacadeDependencies(
             _registry,
             _runService,
-            _dispatcher,
             _mockHistory.Object,
             _mockConfigStore.Object,
             _mockProviderFactory.Object,

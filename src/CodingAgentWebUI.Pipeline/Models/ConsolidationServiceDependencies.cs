@@ -13,6 +13,5 @@ public sealed record ConsolidationServiceDependencies(
     IPipelineRunHistoryService RunHistoryService,
     IConsolidationRunStore RunStore,
     IHarnessSuggestionStore HarnessSuggestionStore,
-    IConsolidationDispatchService? Dispatcher = null,
     IConsolidationWorkspaceManager? WorkspaceManager = null,
     IConsolidationFeedbackCache? FeedbackCache = null);

@@ -147,10 +147,10 @@ public sealed class ConsolidationServiceEvictionTests : IDisposable
         // Act: second trigger for same (type, templateId)
         var second = await sut.TriggerAsync(RunType, TemplateId, CancellationToken.None);
 
-        // Assert: eviction path allowed the new run through
+        // Assert: eviction path allowed the new run through (starts as Queued in K8s mode)
         second.Should().NotBeNull(
             "stale Succeeded entry must be evicted so the new run is accepted");
-        second!.Status.Should().Be(ConsolidationRunStatus.Running);
+        second!.Status.Should().Be(ConsolidationRunStatus.Queued);
     }
 
     [Fact]

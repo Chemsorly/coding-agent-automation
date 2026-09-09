@@ -93,7 +93,6 @@ public interface IAgentHubUiClient
 /// </summary>
 public interface IAgentHubClient
 {
-    Task AssignJob(JobAssignmentMessage message);
     Task CancelJob(JobId jobId);
     Task AssignChatPrompt(ChatPromptMessage message);
     Task CancelChat(string sessionId);

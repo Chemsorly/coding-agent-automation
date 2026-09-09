@@ -74,7 +74,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
     private ResettablePipelineOrchestrationService? _orchestration;
     private AgentRegistryService? _registry;
     private OrchestratorRunService? _runService;
-    private JobDeduplicationGuardService? _dispatcher;
 
     /// <summary>Exposes the agent registry for test assertions and wait helpers.</summary>
     public AgentRegistryService AgentRegistry => _registry ?? throw new InvalidOperationException("Not initialized");
@@ -270,11 +269,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         RemoveService<IOrchestratorRunService>(services);
         services.AddSingleton(_runService);
         services.AddSingleton<IOrchestratorRunService>(_runService);
-
-        // JobDeduplicationGuardService — sealed; no mutable state to reset since the in-memory queue was removed
-        _dispatcher = new JobDeduplicationGuardService(_registry, Serilog.Log.Logger);
-        RemoveService<JobDeduplicationGuardService>(services);
-        services.AddSingleton(_dispatcher);
 
         // PipelineOrchestrationService → ResettablePipelineOrchestrationService
         var lifecycle = new PipelineRunLifecycleService(HistoryService, _runService, Serilog.Log.Logger);

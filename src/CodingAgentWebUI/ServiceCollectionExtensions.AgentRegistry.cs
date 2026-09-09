@@ -1,5 +1,4 @@
 using CodingAgentWebUI.Api.Client;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Services;
@@ -10,7 +9,7 @@ namespace CodingAgentWebUI;
 public static partial class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers agent registry and job deduplication guard services.
+    /// Registers agent registry services.
     ///
     /// <para>
     /// <b>Two registries, deliberately.</b> Since Spec 044 the Pipeline API process owns agent
@@ -26,9 +25,8 @@ public static partial class ServiceCollectionExtensions
     ///
     /// <para>
     /// The local <see cref="AgentRegistryService"/> singleton stays registered under its concrete
-    /// type because <c>ConsolidationDispatchService</c>, <c>ModelFetchService</c>,
-    /// <c>AgentChat.razor</c> and <c>RunLifecycleManagerDependencies</c> resolve it directly, and
-    /// because it is the instance the E2E factories swap for a resettable one.
+    /// type because <c>ModelFetchService</c>, <c>AgentChat.razor</c> resolve it directly,
+    /// and because it is the instance the E2E factories swap for a resettable one.
     /// </para>
     /// </summary>
     private static void RegisterAgentRegistry(IServiceCollection services)
@@ -48,16 +46,6 @@ public static partial class ServiceCollectionExtensions
         services.AddHostedService(sp => new AgentRegistrySyncService(
             sp.GetRequiredService<ApiAgentRegistryService>(),
             sp.GetRequiredService<TimeProvider>(),
-            Log.Logger));
-
-        // Pinned to the LOCAL registry, not IAgentRegistryService. SelectAgent reserves an agent by
-        // flipping it to Busy under the same lock that chose it; against a read-only API-backed replica
-        // that reservation evaporates and two callers can be handed the same agent.
-        services.AddSingleton<AgentReservationService>(sp => new AgentReservationService(
-            sp.GetRequiredService<AgentRegistryService>(),
-            Log.Logger));
-        services.AddSingleton(sp => new JobDeduplicationGuardService(
-            sp.GetRequiredService<AgentRegistryService>(),
             Log.Logger));
     }
 }

@@ -307,11 +307,7 @@ internal sealed class ApiKestrelFactory : WebApplicationFactory<Program>
 
             services.RemoveAll<Pipeline.Interfaces.IQualityGateValidator>();
             services.AddSingleton(new Mock<Pipeline.Interfaces.IQualityGateValidator>().Object);
-
-            // Replace stubs for dead Legacy dispatch dependencies
-            services.RemoveAll<Pipeline.Interfaces.IConsolidationDispatchService>();
-            services.AddSingleton<Pipeline.Interfaces.IConsolidationDispatchService>(
-                new KestrelNoOpConsolidationDispatchService());
+            // IConsolidationDispatchService was removed in issue #2325 — no stub needed.
         });
     }
 
@@ -455,16 +451,4 @@ internal sealed class MissingAgentApiKeyFactory : WebApplicationFactory<Program>
         }
         base.Dispose(disposing);
     }
-}
-
-// Stub implementations for Legacy dispatch dependencies (dead after Spec 041)
-file sealed class KestrelNoOpConsolidationDispatchService : CodingAgentWebUI.Pipeline.Interfaces.IConsolidationDispatchService
-{
-    public Task<CodingAgentWebUI.Pipeline.Interfaces.ConsolidationDispatchResult> TryDispatchAsync(CodingAgentWebUI.Pipeline.Models.ConsolidationRun r, CodingAgentWebUI.Pipeline.Models.ConsolidationRunType t,
-        CodingAgentWebUI.Pipeline.Models.TemplateId? tid, string? f, string w, CancellationToken ct)
-        => Task.FromResult(CodingAgentWebUI.Pipeline.Interfaces.ConsolidationDispatchResult.Failed);
-    public Task<bool> TryDispatchToAgentAsync(CodingAgentWebUI.Pipeline.Models.RunId r, CodingAgentWebUI.Pipeline.Models.ConsolidationRunType t, CodingAgentWebUI.Pipeline.Models.TemplateId? tid,
-        string w, CodingAgentWebUI.Pipeline.Models.AgentId a, CancellationToken ct)
-        => Task.FromResult(false);
-    public Task NotifyRunCancelledAsync(CodingAgentWebUI.Pipeline.Models.RunId r, CancellationToken ct) => Task.CompletedTask;
 }

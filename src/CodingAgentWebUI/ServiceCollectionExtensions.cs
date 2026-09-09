@@ -2,7 +2,6 @@ using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure.GitLab;
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -103,22 +102,6 @@ public static partial class ServiceCollectionExtensions
                 sp.GetRequiredService<IConsolidationRunStore>(),
                 sp.GetRequiredService<IPipelineRunHistoryService>()));
 
-        services.AddSingleton<IConsolidationDispatchService>(sp => new ConsolidationDispatchService(
-            new ConsolidationDispatchDependencies(
-                sp.GetRequiredService<IAgentRegistryService>(),
-                sp.GetRequiredService<AgentReservationService>(),
-                sp.GetRequiredService<IAgentCommunication>(),
-                sp.GetRequiredService<IConfigurationStore>(),
-                sp.GetRequiredService<IProjectStore>(),
-                sp.GetRequiredService<ITokenVendingService>(),
-                pipelineConfig,
-                sp.GetRequiredService<IWorkDistributor>(),
-                sp.GetRequiredService<IPipelineRunHistoryService>(),
-                Log.Logger,
-                sp.GetRequiredService<IConsolidationRunStore>()),
-            sp.GetRequiredService<IConsolidationJobPreparationService>(),
-            new Lazy<IConsolidationRunTracker>(() => sp.GetRequiredService<IConsolidationRunTracker>())));
-
         services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
             new Pipeline.Models.ConsolidationServiceDependencies(
                 Log.Logger,
@@ -127,7 +110,6 @@ public static partial class ServiceCollectionExtensions
                 sp.GetRequiredService<IPipelineRunHistoryService>(),
                 sp.GetRequiredService<IConsolidationRunStore>(),
                 sp.GetRequiredService<IHarnessSuggestionStore>(),
-                sp.GetRequiredService<IConsolidationDispatchService>(),
                 sp.GetRequiredService<IConsolidationWorkspaceManager>(),
                 sp.GetRequiredService<IConsolidationFeedbackCache>())));
 
