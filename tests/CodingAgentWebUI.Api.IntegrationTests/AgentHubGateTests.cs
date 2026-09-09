@@ -5,6 +5,7 @@ using AwesomeAssertions;
 using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
@@ -648,7 +649,8 @@ public sealed class AgentHubGateTests
             await connection.InvokeAsync("SubscribeToRun", jobId);
 
             // Then unsubscribe — must not throw
-            await connection.InvokeAsync("UnsubscribeFromRun", jobId);
+            Func<Task> act = () => connection.InvokeAsync("UnsubscribeFromRun", jobId);
+            await act.Should().NotThrowAsync("UnsubscribeFromRun must succeed for a subscribed GUID");
         }
         finally
         {
@@ -802,10 +804,12 @@ public sealed class AgentHubGateKestrelFactory : WebApplicationFactory<Program>
 
             services.RemoveAll<Pipeline.Interfaces.IQualityGateValidator>();
             services.AddSingleton(new Mock<Pipeline.Interfaces.IQualityGateValidator>().Object);
+            // IConsolidationDispatchService was removed in issue #2325 — no stub needed.
 
-            services.RemoveAll<Pipeline.Interfaces.IConsolidationDispatchService>();
-            services.AddSingleton<Pipeline.Interfaces.IConsolidationDispatchService>(
-                new GateNoOpConsolidationDispatchService());
+            // Register a no-op IKubernetesJobClient so DispatchLifecycleService can be
+            // constructed at startup without a real K8s cluster.
+            services.RemoveAll<IKubernetesJobClient>();
+            services.AddSingleton(new Mock<IKubernetesJobClient>().Object);
         });
     }
 
@@ -876,17 +880,4 @@ public sealed class AgentHubGateKestrelFactory : WebApplicationFactory<Program>
     {
         public Task ProbeAsync(CancellationToken ct) => Task.CompletedTask;
     }
-}
-
-// ── No-op stubs ─────────────────────────────────────────────────────────────
-
-file sealed class GateNoOpConsolidationDispatchService : CodingAgentWebUI.Pipeline.Interfaces.IConsolidationDispatchService
-{
-    public Task<CodingAgentWebUI.Pipeline.Interfaces.ConsolidationDispatchResult> TryDispatchAsync(Pipeline.Models.ConsolidationRun r, Pipeline.Models.ConsolidationRunType t,
-        Pipeline.Models.TemplateId? tid, string? f, string w, CancellationToken ct)
-        => Task.FromResult(CodingAgentWebUI.Pipeline.Interfaces.ConsolidationDispatchResult.Failed);
-    public Task<bool> TryDispatchToAgentAsync(Pipeline.Models.RunId r, Pipeline.Models.ConsolidationRunType t, Pipeline.Models.TemplateId? tid,
-        string w, Pipeline.Models.AgentId a, CancellationToken ct)
-        => Task.FromResult(false);
-    public Task NotifyRunCancelledAsync(Pipeline.Models.RunId r, CancellationToken ct) => Task.CompletedTask;
 }

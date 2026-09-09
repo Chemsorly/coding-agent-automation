@@ -1,124 +1,16 @@
 using Bunit;
-using CodingAgentWebUI.Api.Client;
-using CodingAgentWebUI.Components.Pages;
-using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.Registry;
-using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Components.Shared;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Services;
-using CodingAgentWebUI.TestUtilities;
-using Microsoft.AspNetCore.SignalR.Client;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Time.Testing;
-using Microsoft.JSInterop;
-using Moq;
-using Serilog;
 
 namespace CodingAgentWebUI.UnitTests.Components;
 
 /// <summary>
-/// bUnit component tests for the Feedback section in the run detail modal.
+/// bUnit component tests for <see cref="FeedbackSection" />.
 /// Validates Requirements 5.1, 5.2, 5.3, 5.4.
+/// FeedbackSection has no DI dependencies — tests mount it directly.
 /// </summary>
 public class FeedbackSectionComponentTests : BunitContext
 {
-    private void RegisterDefaults(IReadOnlyList<PipelineRunSummary>? history = null)
-    {
-        // Spec 045: IPipelineApiConfigClient replaces IConfigurationStore
-        var mockConfigClient = new Mock<IPipelineApiConfigClient>();
-        mockConfigClient.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration());
-        mockConfigClient.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
-        mockConfigClient.Setup(c => c.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
-        mockConfigClient.Setup(c => c.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<ProviderConfig>());
-
-        var mockLogger = new Mock<ILogger>();
-        var mockFactory = new Mock<IProviderFactory>();
-        var mockValidator = new Mock<IQualityGateValidator>();
-
-        var registry = new AgentRegistryService(mockLogger.Object);
-
-        Services.AddSingleton(registry);
-        Services.AddSingleton<IAgentRegistryService>(registry);
-        Services.AddSingleton(new JobDeduplicationGuardService(registry, mockLogger.Object));
-        Services.AddSingleton<IPipelineApiConfigClient>(mockConfigClient.Object);
-        // IConfigurationStore is still needed by HistoryRunDetailModal (not yet migrated to API client).
-        var mockStore = new Mock<IConfigurationStore>();
-        mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration());
-        mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
-        mockStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
-        mockStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<ProviderConfig>());
-        Services.AddSingleton<IConfigurationStore>(mockStore.Object);
-        Services.AddSingleton(new Mock<IJSRuntime>().Object);
-        Services.AddSingleton(Mock.Of<ILabelService>());
-        Services.AddSingleton(Mock.Of<IConsolidationService>(s =>
-            s.GetRunHistoryAsync(It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ConsolidationRun>>(Array.Empty<ConsolidationRun>())));
-        Services.AddSingleton(Mock.Of<IWorkDistributor>());
-        Services.AddSingleton<IPendingWorkQuery>(Mock.Of<IPendingWorkQuery>(q =>
-            q.GetPendingJobsAsync(It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<PendingJob>>(Array.Empty<PendingJob>())));
-
-        Services.AddSingleton<TimeProvider>(new FakeTimeProvider());
-
-        // Spec 045: IAgentHubConnection and IPipelineApiRunHistoryClient now injected by AgentMonitoring.
-        // Registered as Singleton (not Scoped) to prevent DI from calling Dispose() on the mock proxy
-        // which only implements IAsyncDisposable — the Scoped lifetime would cause bunit to fail on teardown.
-        var mockHubConnection = new Mock<IAgentHubConnection>();
-        mockHubConnection.SetupGet(h => h.State).Returns(HubConnectionState.Disconnected);
-        mockHubConnection.Setup(h => h.DisposeAsync()).Returns(ValueTask.CompletedTask);
-        mockHubConnection.Setup(h => h.On<string, IReadOnlyList<string>>(It.IsAny<string>(), It.IsAny<Action<string, IReadOnlyList<string>>>()))
-            .Returns(Mock.Of<IDisposable>());
-        mockHubConnection.Setup(h => h.On<string, PipelineStep, DateTimeOffset>(It.IsAny<string>(), It.IsAny<Action<string, PipelineStep, DateTimeOffset>>()))
-            .Returns(Mock.Of<IDisposable>());
-        mockHubConnection.Setup(h => h.On<string, JobCompletionPayload>(It.IsAny<string>(), It.IsAny<Action<string, JobCompletionPayload>>()))
-            .Returns(Mock.Of<IDisposable>());
-        Services.AddSingleton<IAgentHubConnection>(mockHubConnection.Object);
-
-        var mockRunHistoryClient = new Mock<IPipelineApiRunHistoryClient>();
-        mockRunHistoryClient.Setup(c => c.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((PipelineRunSummary?)null);
-        var runHistoryItems = history ?? Array.Empty<PipelineRunSummary>();
-        mockRunHistoryClient.Setup(c => c.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = runHistoryItems, Page = 1, PageSize = 1000, HasMore = false });
-        Services.AddSingleton<IPipelineApiRunHistoryClient>(mockRunHistoryClient.Object);
-        Services.AddSingleton<IPipelineApiWorkItemClient>(new Mock<IPipelineApiWorkItemClient>().Object);
-
-        // Register AgentMonitoringPageServiceDependencies so DI can auto-construct AgentMonitoringPageService.
-        // Spec 045: IActiveRunQueryService removed — active runs derived from IPipelineApiRunHistoryClient.
-        Services.AddScoped(sp => new AgentMonitoringPageServiceDependencies(
-            sp.GetRequiredService<IAgentRegistryService>(),
-            sp.GetRequiredService<JobDeduplicationGuardService>(),
-            sp.GetRequiredService<IPipelineApiConfigClient>(),
-            sp.GetRequiredService<IConsolidationService>(),
-            sp.GetRequiredService<IPendingWorkQuery>(),
-            sp.GetRequiredService<IWorkDistributor>(),
-            sp.GetRequiredService<IPipelineApiRunHistoryClient>(),
-            sp.GetRequiredService<IPipelineApiWorkItemClient>()));
-
-        // Page service — resolved via DI with all dependencies above
-        Services.AddScoped<AgentMonitoringPageService>();
-    }
-
-    private static PipelineRunSummary CreateSummaryWithFeedback(RunFeedback? feedback)
-    {
-        return new PipelineRunSummary
-        {
-            RunId = "test-run-1",
-            IssueIdentifier = "99",
-            IssueTitle = "Test Issue",
-            FinalStep = PipelineStep.Completed,
-            StartedAt = DateTime.UtcNow.AddMinutes(-30),
-            CompletedAt = DateTime.UtcNow,
-            Feedback = feedback
-        };
-    }
-
     private static RunFeedback CreateFullFeedback()
     {
         return new RunFeedback
@@ -150,18 +42,10 @@ public class FeedbackSectionComponentTests : BunitContext
     [Fact]
     public void FeedbackSection_Renders_WhenFeedbackIsNonNull()
     {
-        var history = new List<PipelineRunSummary> { CreateSummaryWithFeedback(CreateFullFeedback()) };
-        RegisterDefaults(history);
-        var cut = Render<AgentMonitoring>();
+        var cut = Render<FeedbackSection>(p => p.Add(x => x.Feedback, CreateFullFeedback()));
 
-        // Click the row to open the history modal
-        cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
-
-        cut.WaitForAssertion(() =>
-        {
-            var feedbackSections = cut.FindAll(".feedback-section");
-            Assert.NotEmpty(feedbackSections);
-        });
+        var feedbackSections = cut.FindAll(".feedback-section");
+        Assert.NotEmpty(feedbackSections);
     }
 
     /// <summary>
@@ -170,12 +54,10 @@ public class FeedbackSectionComponentTests : BunitContext
     [Fact]
     public void FeedbackSection_Hidden_WhenFeedbackIsNull()
     {
-        var history = new List<PipelineRunSummary> { CreateSummaryWithFeedback(null) };
-        RegisterDefaults(history);
-        var cut = Render<AgentMonitoring>();
-
-        // Click the row to open the history modal
-        cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
+        // TODO: Use explicit cast `(RunFeedback?)null` to guarantee null is forwarded rather than
+        // relying on the compiler to infer it. Without the cast, if Feedback is non-nullable,
+        // the null may be silently treated as a no-op and the component could receive a default value.
+        var cut = Render<FeedbackSection>(p => p.Add(x => x.Feedback, null));
 
         var feedbackSections = cut.FindAll(".feedback-section");
         Assert.Empty(feedbackSections);
@@ -187,11 +69,7 @@ public class FeedbackSectionComponentTests : BunitContext
     [Fact]
     public void HarnessFeedback_DisplaysCategoryBadge()
     {
-        var history = new List<PipelineRunSummary> { CreateSummaryWithFeedback(CreateFullFeedback()) };
-        RegisterDefaults(history);
-        var cut = Render<AgentMonitoring>();
-
-        cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
+        var cut = Render<FeedbackSection>(p => p.Add(x => x.Feedback, CreateFullFeedback()));
 
         var badge = cut.Find(".feedback-category-badge");
         Assert.Contains("mcp tool timeout", badge.TextContent);
@@ -203,11 +81,7 @@ public class FeedbackSectionComponentTests : BunitContext
     [Fact]
     public void HarnessFeedback_DisplaysStuckReason()
     {
-        var history = new List<PipelineRunSummary> { CreateSummaryWithFeedback(CreateFullFeedback()) };
-        RegisterDefaults(history);
-        var cut = Render<AgentMonitoring>();
-
-        cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
+        var cut = Render<FeedbackSection>(p => p.Add(x => x.Feedback, CreateFullFeedback()));
 
         var stuckReason = cut.Find(".feedback-stuck-reason");
         Assert.Contains("The MCP server was unreachable after 3 retries", stuckReason.TextContent);
@@ -219,24 +93,19 @@ public class FeedbackSectionComponentTests : BunitContext
     [Fact]
     public void HarnessFeedback_ListsRenderAsBulletPoints()
     {
-        var history = new List<PipelineRunSummary> { CreateSummaryWithFeedback(CreateFullFeedback()) };
-        RegisterDefaults(history);
-        var cut = Render<AgentMonitoring>();
+        var cut = Render<FeedbackSection>(p => p.Add(x => x.Feedback, CreateFullFeedback()));
 
-        cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
+        var listSections = cut.FindAll(".feedback-list-section");
+        // TODO: Use Assert.Equal(4, listSections.Count) instead of >= 4 to pin the exact count
+        // and catch regressions that add duplicate or unexpected list sections.
+        Assert.True(listSections.Count >= 4, "Expected at least 4 list sections (MissingContext, MissingCapabilities, PromptIssues, Suggestions)");
 
-        cut.WaitForAssertion(() =>
+        // Verify each list section contains ul > li elements
+        foreach (var section in listSections)
         {
-            var listSections = cut.FindAll(".feedback-list-section");
-            Assert.True(listSections.Count >= 4, "Expected at least 4 list sections (MissingContext, MissingCapabilities, PromptIssues, Suggestions)");
-
-            // Verify each list section contains ul > li elements
-            foreach (var section in listSections)
-            {
-                var listItems = section.QuerySelectorAll("ul li");
-                Assert.NotEmpty(listItems);
-            }
-        });
+            var listItems = section.QuerySelectorAll("ul li");
+            Assert.NotEmpty(listItems);
+        }
     }
 
     /// <summary>
@@ -245,12 +114,11 @@ public class FeedbackSectionComponentTests : BunitContext
     [Fact]
     public void HarnessFeedback_DisplaysMissingContextItems()
     {
-        var history = new List<PipelineRunSummary> { CreateSummaryWithFeedback(CreateFullFeedback()) };
-        RegisterDefaults(history);
-        var cut = Render<AgentMonitoring>();
+        var cut = Render<FeedbackSection>(p => p.Add(x => x.Feedback, CreateFullFeedback()));
 
-        cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
-
+        // TODO: Scope assertions to the specific list section element (e.g. cut.Find(".feedback-list-section"))
+        // rather than cut.Markup to prevent false passes if the text appears in an unrelated element
+        // (tooltip, title attribute, or a different list section).
         var markup = cut.Markup;
         Assert.Contains("src/Config.cs", markup);
         Assert.Contains("docs/setup.md", markup);
@@ -262,11 +130,7 @@ public class FeedbackSectionComponentTests : BunitContext
     [Fact]
     public void HarnessFeedback_DisplaysMissingCapabilitiesItems()
     {
-        var history = new List<PipelineRunSummary> { CreateSummaryWithFeedback(CreateFullFeedback()) };
-        RegisterDefaults(history);
-        var cut = Render<AgentMonitoring>();
-
-        cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
+        var cut = Render<FeedbackSection>(p => p.Add(x => x.Feedback, CreateFullFeedback()));
 
         var markup = cut.Markup;
         Assert.Contains("database access", markup);
@@ -279,6 +143,11 @@ public class FeedbackSectionComponentTests : BunitContext
     [Fact]
     public void IssueFeedback_Hidden_WhenIssueIsNull()
     {
+        // TODO: This test uses FeedbackOutcome.Success for the Harness feedback. If the component
+        // conditionally suppresses Harness rendering for Success outcomes, the single-subsection
+        // assertion would give a misleading failure. Consider using CreateFullFeedback() with
+        // Issue = null (Failure outcome) to remove this ambiguity, or add a comment explaining
+        // why Success is intentional here.
         var feedbackWithoutIssue = new RunFeedback
         {
             Outcome = FeedbackOutcome.Success,
@@ -290,22 +159,15 @@ public class FeedbackSectionComponentTests : BunitContext
             },
             Issue = null
         };
-        var history = new List<PipelineRunSummary> { CreateSummaryWithFeedback(feedbackWithoutIssue) };
-        RegisterDefaults(history);
-        var cut = Render<AgentMonitoring>();
+        var cut = Render<FeedbackSection>(p => p.Add(x => x.Feedback, feedbackWithoutIssue));
 
-        cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
+        // Feedback section should exist
+        Assert.NotEmpty(cut.FindAll(".feedback-section"));
 
-        cut.WaitForAssertion(() =>
-        {
-            // Feedback section should exist
-            Assert.NotEmpty(cut.FindAll(".feedback-section"));
-
-            // But only one subsection (Harness), not two
-            var subsections = cut.FindAll(".feedback-subsection");
-            Assert.Single(subsections);
-            Assert.Contains("Harness Feedback", subsections[0].TextContent);
-        });
+        // But only one subsection (Harness), not two
+        var subsections = cut.FindAll(".feedback-subsection");
+        Assert.Single(subsections);
+        Assert.Contains("Harness Feedback", subsections[0].TextContent);
     }
 
     /// <summary>
@@ -314,11 +176,7 @@ public class FeedbackSectionComponentTests : BunitContext
     [Fact]
     public void IssueFeedback_DisplaysDescription()
     {
-        var history = new List<PipelineRunSummary> { CreateSummaryWithFeedback(CreateFullFeedback()) };
-        RegisterDefaults(history);
-        var cut = Render<AgentMonitoring>();
-
-        cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
+        var cut = Render<FeedbackSection>(p => p.Add(x => x.Feedback, CreateFullFeedback()));
 
         var description = cut.Find(".feedback-description");
         Assert.Contains("The referenced UserService class does not exist", description.TextContent);
@@ -330,11 +188,7 @@ public class FeedbackSectionComponentTests : BunitContext
     [Fact]
     public void IssueFeedback_DisplaysAffectedFilesAsList()
     {
-        var history = new List<PipelineRunSummary> { CreateSummaryWithFeedback(CreateFullFeedback()) };
-        RegisterDefaults(history);
-        var cut = Render<AgentMonitoring>();
-
-        cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
+        var cut = Render<FeedbackSection>(p => p.Add(x => x.Feedback, CreateFullFeedback()));
 
         var markup = cut.Markup;
         Assert.Contains("src/Services/UserService.cs", markup);
@@ -347,11 +201,7 @@ public class FeedbackSectionComponentTests : BunitContext
     [Fact]
     public void IssueFeedback_DisplaysHumanActionNeeded()
     {
-        var history = new List<PipelineRunSummary> { CreateSummaryWithFeedback(CreateFullFeedback()) };
-        RegisterDefaults(history);
-        var cut = Render<AgentMonitoring>();
-
-        cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
+        var cut = Render<FeedbackSection>(p => p.Add(x => x.Feedback, CreateFullFeedback()));
 
         var actionNeeded = cut.Find(".feedback-action-needed");
         Assert.Contains("Create the UserService class or update the issue", actionNeeded.TextContent);
@@ -363,19 +213,15 @@ public class FeedbackSectionComponentTests : BunitContext
     [Fact]
     public void IssueFeedback_DisplaysCategoryBadge()
     {
-        var history = new List<PipelineRunSummary> { CreateSummaryWithFeedback(CreateFullFeedback()) };
-        RegisterDefaults(history);
-        var cut = Render<AgentMonitoring>();
+        var cut = Render<FeedbackSection>(p => p.Add(x => x.Feedback, CreateFullFeedback()));
 
-        cut.InvokeAsync(() => cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click());
-
-        cut.WaitForAssertion(() =>
-        {
-            var badges = cut.FindAll(".feedback-category-badge");
-            // Should have two badges: one for harness, one for issue
-            Assert.Equal(2, badges.Count);
-            Assert.Contains("missing component", badges[1].TextContent);
-        });
+        var badges = cut.FindAll(".feedback-category-badge");
+        // Should have two badges: one for harness, one for issue
+        Assert.Equal(2, badges.Count);
+        // TODO: Replace positional index `badges[1]` with a scoped selector that finds the badge
+        // within the Issue subsection specifically. If the component renders Issue before Harness,
+        // badges[1] would be the wrong badge and the assertion would silently pass or fail incorrectly.
+        Assert.Contains("missing component", badges[1].TextContent);
     }
 
     /// <summary>
@@ -395,21 +241,14 @@ public class FeedbackSectionComponentTests : BunitContext
             },
             Issue = null
         };
-        var history = new List<PipelineRunSummary> { CreateSummaryWithFeedback(minimalFeedback) };
-        RegisterDefaults(history);
-        var cut = Render<AgentMonitoring>();
+        var cut = Render<FeedbackSection>(p => p.Add(x => x.Feedback, minimalFeedback));
 
-        cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
+        // Feedback section exists
+        Assert.NotEmpty(cut.FindAll(".feedback-section"));
 
-        cut.WaitForAssertion(() =>
-        {
-            // Feedback section exists
-            Assert.NotEmpty(cut.FindAll(".feedback-section"));
-
-            // No list sections rendered (all lists are empty)
-            var listSections = cut.FindAll(".feedback-list-section");
-            Assert.Empty(listSections);
-        });
+        // No list sections rendered (all lists are empty)
+        var listSections = cut.FindAll(".feedback-list-section");
+        Assert.Empty(listSections);
     }
 
     /// <summary>
@@ -429,12 +268,8 @@ public class FeedbackSectionComponentTests : BunitContext
             },
             Issue = null
         };
-        var history = new List<PipelineRunSummary> { CreateSummaryWithFeedback(feedbackNoStuck) };
-        RegisterDefaults(history);
-        var cut = Render<AgentMonitoring>();
+        var cut = Render<FeedbackSection>(p => p.Add(x => x.Feedback, feedbackNoStuck));
 
-        cut.Find(".monitoring-table:last-of-type tbody tr.monitoring-row-clickable").Click();
-
-        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".feedback-stuck-reason")));
+        Assert.Empty(cut.FindAll(".feedback-stuck-reason"));
     }
 }

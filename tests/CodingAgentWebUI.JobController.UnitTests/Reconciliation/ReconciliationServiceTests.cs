@@ -257,8 +257,19 @@ public sealed class ReconciliationServiceTests
         using var stopCts = new CancellationTokenSource();
         var executeTask = RunExecuteForDuration(svc, stopCts.Token);
 
-        // Wait for the first cycle to start (give it a moment)
-        await Task.Delay(50);
+        // Wait until the first cycle has fully completed (all 3 ListJobsAsync calls are in).
+        // Polling is deterministic and CI-load-safe; a fixed Task.Delay(50) was insufficient
+        // on loaded machines because the service task may not have been scheduled in time.
+        var waitDeadline = DateTime.UtcNow.AddSeconds(10);
+        while (_k8sClient.Invocations.Count(i => i.Method.Name == nameof(IKubernetesJobClient.ListJobsAsync)) < 3
+               && DateTime.UtcNow < waitDeadline)
+        {
+            await Task.Delay(10, CancellationToken.None);
+        }
+
+        // Capture the per-cycle baseline dynamically so the upper bound does not depend on
+        // a hardcoded assumption about how many ListJobsAsync calls each cycle makes.
+        var callsAfterCycleOne = _k8sClient.Invocations.Count(i => i.Method.Name == nameof(IKubernetesJobClient.ListJobsAsync));
 
         // Fire 5 concurrent signals — all should collapse into at most 1 wake
         svc.RequestImmediateCycle();
@@ -275,23 +286,16 @@ public sealed class ReconciliationServiceTests
 
         // Each OnPollCycleAsync calls ListJobsAsync exactly 3 times (ReconcileOnce +
         // CleanupOrphans + EnforceDispatchedTimeout). With a near-infinite poll interval
-        // (30,000s), only natural start + triggered wake should fire in the test window.
-        // - Minimum: 1 natural cycle = 3 calls, plus at least 1 triggered = at least 6 calls
-        // - Maximum: 3 cycles × 3 calls = 9 (generous allowance for timing variation)
+        // (30,000s), only the natural start cycle + one triggered cycle should fire.
+        // - Minimum: callsAfterCycleOne + 1 triggered cycle worth of calls
+        // - Maximum: callsAfterCycleOne + 2 × callsAfterCycleOne (generous timing slack)
         // The key invariant: 5 signals must not produce 5 extra cycles (which would be ≥ 18 calls)
         var calls = _k8sClient.Invocations.Count(i => i.Method.Name == nameof(IKubernetesJobClient.ListJobsAsync));
-        calls.Should().BeGreaterThanOrEqualTo(3, "at least one complete cycle must have fired");
-        // TODO: [WARNING] The upper bound of 9 (3 cycles × 3 ListJobsAsync calls) is derived from
-        // an assumed internal implementation detail. If ReconciliationLoop is refactored to call
-        // ListJobsAsync more times per cycle, this bound will be violated even with correct idempotency.
-        // Also, the 50ms delay before firing signals may not guarantee the first cycle has started on
-        // a loaded CI machine — signals could be drained on leadership entry rather than triggering a
-        // wake, causing calls < 3 even with correct behaviour. Consider waiting for the first cycle to
-        // complete (e.g., wait until calls >= 3) before firing signals, and measure the per-cycle
-        // baseline dynamically rather than hardcoding 3.
-        calls.Should().BeLessThanOrEqualTo(9,
+        calls.Should().BeGreaterThanOrEqualTo(callsAfterCycleOne + 1,
+            "at least one triggered cycle must have fired after the signals");
+        calls.Should().BeLessThanOrEqualTo(callsAfterCycleOne * 3,
             "5 signals must collapse into at most 1 extra cycle (semaphore maxCount: 1); " +
-            "at most 3 full cycles × 3 ListJobsAsync calls each = 9 total");
+            "at most 2 full cycles beyond baseline = 3× per-cycle call count");
     }
 
     /// <summary>

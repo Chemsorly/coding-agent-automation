@@ -395,6 +395,14 @@
 .cockpit-stat-v { font-size: 26px; font-weight: 800; line-height: 1; letter-spacing: -.02em; }
 .cockpit-chip { display: inline-flex; align-items: center; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px; color: var(--text-muted); background: var(--surface-alt); margin: 0 3px 3px 0; }
 
+/* Compact time-window selector inside a stat label */
+.time-window-select {
+    display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--accent); background: transparent;
+    border: none; border-bottom: 1px solid var(--accent); padding: 0 2px;
+    cursor: pointer; appearance: auto; vertical-align: middle; line-height: 1;
+}
+
 .cockpit-run-row {
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
     padding: 12px 18px; border-bottom: 1px solid var(--hairline); cursor: pointer;
@@ -407,6 +415,67 @@
 .cockpit .run-type-consolidation { color: #6D28D9; background: var(--bg-active-alt); }
 [data-theme="dark"] .cockpit .run-type-consolidation { color: #C3A6F5; }
 .cockpit .monitoring-row-clickable { cursor: pointer; }
+
+/* ---- Runs page: sort headers + column filters (issue #2328) ---------------- */
+/* Sortable th button — resets button styling, inherits header uppercase look. */
+.cockpit .monitoring-table thead th .sort-header {
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+    text-transform: inherit;
+    letter-spacing: inherit;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    white-space: nowrap;
+}
+.cockpit .monitoring-table thead th .sort-header:hover { color: var(--text); }
+
+/* Active sort column: slightly highlighted th. */
+.cockpit .monitoring-table thead th.sort-active { color: var(--nav-active-fg); }
+
+/* Sort direction arrow. */
+.cockpit .sort-indicator { font-size: 0.8em; opacity: 0.75; }
+
+/* Column filter select — compact, inline below the sort button. */
+.cockpit .monitoring-table thead th .column-filter {
+    display: block;
+    margin-top: 3px;
+    width: 100%;
+    font-size: 0.72rem;
+    padding: 1px 4px;
+    border: 1px solid var(--ctl-border);
+    border-radius: 4px;
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    /* overflow-hidden on th would clip the dropdown; keep overflow: visible on th.th-has-hint pattern */
+}
+.cockpit .monitoring-table thead th:has(.column-filter) { overflow: visible; vertical-align: top; }
+
+/* Links cell: prevent row click propagation visually; flex layout for icon links. */
+.cockpit .runs-links-cell { display: flex; align-items: center; gap: 5px; overflow: visible; white-space: nowrap; }
+.cockpit .runs-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.76rem;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 5px;
+    text-decoration: none;
+    background: var(--surface-alt);
+    color: var(--accent);
+    border: 1px solid var(--border);
+    white-space: nowrap;
+}
+.cockpit .runs-link:hover { background: var(--bg-active); color: var(--nav-active-fg); }
+.cockpit .runs-link-pr { color: var(--success); }
+.cockpit .runs-link-pr:hover { background: var(--success-bg); color: var(--success); }
 
 /* ---- Settings re-shell (scoped tweaks so it sits cleanly in the new frame) -- */
 .cockpit .settings-page { padding: 0; height: auto; }
@@ -422,3 +491,25 @@
 .cockpit .agent-main { padding-left: 8px; padding-right: 8px; }
 /* Consolidation is folded into Pipelines as a section — hide its own page heading. */
 .cockpit .consolidation-header { display: none; }
+
+/* ---- RefreshBar — consistent refresh control (issue #2339) ---------------- */
+.refresh-bar {
+    display: flex; align-items: center; gap: 10px; align-self: center; flex-shrink: 0;
+}
+.refresh-bar-label {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 34px; padding: 0 10px 0 13px;
+    border: 1px solid var(--ctl-border); border-radius: 9px; background: var(--surface);
+    font-size: 12.5px; font-weight: 600; color: var(--text-muted); cursor: default;
+}
+.refresh-bar-interval-label {
+    font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--text-faint); white-space: nowrap;
+}
+/* The interval <select> reuses .time-window-select but without the forced uppercase/letter-spacing
+   so the "Off" option reads naturally in sentence case. */
+.refresh-bar-select {
+    text-transform: none !important; letter-spacing: normal !important;
+    font-size: 12px !important; font-weight: 600; color: var(--text) !important;
+    border-bottom-color: var(--ctl-border) !important;
+}

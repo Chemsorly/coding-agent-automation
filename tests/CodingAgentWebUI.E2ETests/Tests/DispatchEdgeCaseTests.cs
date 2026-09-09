@@ -66,17 +66,16 @@ public sealed class DispatchEdgeCaseTests : E2ETestBase
         await codingPage.SelectIssueAsync("50");
         await codingPage.ClickStartPipelineAsync();
 
-        // Assert: the operator is told the work is queued, not that it was refused.
+        // Assert: dispatch succeeds synchronously (issue #2322 — no Pending queue).
         await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
 
         var statusText = await Page.TextContentAsync(".settings-status.status-success");
         Assert.NotNull(statusText);
-        Assert.Contains("Queued", statusText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Dispatched", statusText, StringComparison.OrdinalIgnoreCase);
 
-        // And the work item really is waiting for a pod: nothing has claimed it, because nothing
-        // is connected. This is the half of the assertion the old error-banner check never made.
-        var pending = await Fixture.WorkItems.GetPendingAsync(50, ct: CancellationToken.None);
-        Assert.Contains(pending, w => w.IssueIdentifier == "50");
+        // WorkItem is created as Dispatched immediately — verify it exists in active items.
+        var active = await Fixture.WorkItems.GetActiveAsync(olderThanSeconds: -3600, ct: CancellationToken.None);
+        Assert.Contains(active, w => w.IssueIdentifier == "50");
     }
 
     [Fact]

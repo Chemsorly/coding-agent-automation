@@ -90,7 +90,8 @@ public class PipelineLoopPropertyTests
         var config = new PipelineConfiguration
         {
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            WorkspaceBaseDirectory = Path.GetTempPath(),
+            ClosedLoopAutoStart = true,
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -141,7 +142,8 @@ public class PipelineLoopPropertyTests
         var config = new PipelineConfiguration
         {
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            WorkspaceBaseDirectory = Path.GetTempPath(),
+            ClosedLoopAutoStart = true,
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -208,7 +210,8 @@ public class PipelineLoopPropertyTests
         var config = new PipelineConfiguration
         {
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            WorkspaceBaseDirectory = Path.GetTempPath(),
+            ClosedLoopAutoStart = true,
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -278,7 +281,8 @@ public class PipelineLoopPropertyTests
         var config = new PipelineConfiguration
         {
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            WorkspaceBaseDirectory = Path.GetTempPath(),
+            ClosedLoopAutoStart = true,
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -349,12 +353,18 @@ public class PipelineLoopPropertyTests
         mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates.Select(t => new ProviderConfig
             {
-                Id = t.IssueProviderId, Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test"
+                Id = t.IssueProviderId,
+                Kind = ProviderKind.Issue,
+                ProviderType = "GitHub",
+                DisplayName = "Test"
             }).DistinctBy(c => c.Id).ToList());
         mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates.Select(t => new ProviderConfig
             {
-                Id = t.RepoProviderId, Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Test"
+                Id = t.RepoProviderId,
+                Kind = ProviderKind.Repository,
+                ProviderType = "GitHub",
+                DisplayName = "Test"
             }).DistinctBy(c => c.Id).ToList());
     }
 

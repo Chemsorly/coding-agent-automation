@@ -93,6 +93,13 @@ orchestrator:
     # Get this from Grafana Cloud → Frontend Observability → your app → Web SDK Config.
     # Leave empty to disable Faro (no CDN load, no data sent).
     faroCollectorUrl: ""
+    # Base path for the Blazor web UI. Set this when the app is served under a non-root path by a
+    # reverse proxy (e.g. Rancher: "/k8s/clusters/c-xxxxx/proxy/").
+    # Must end with "/" (a trailing slash is appended automatically if missing).
+    # Defaults to "./" which works for standard root-path deployments.
+    # This value is injected as the <base href> in the HTML shell so the browser resolves all
+    # relative asset and navigation URLs correctly under the proxy prefix.
+    basePath: "./"
 
 # ── Secrets ──────────────────────────────────────────────────────────────────
 
@@ -120,9 +127,20 @@ existingSecret: ""
 otel:
   endpoint: ""
   protocol: grpc
-  # OTEL_SERVICE_NAME for the orchestrator only. API, JobController and Scheduler have
-  # their own fixed service names (coding-agent-api, etc.) set in their deployment templates.
+  # OTEL_SERVICE_NAME for the orchestrator (Blazor UI process). API, JobController and Scheduler have
+  # their own service names set in their deployment templates.
   orchestratorServiceName: coding-agent-orchestrator
+  # OTEL_SERVICE_NAME for the API process.
+  # Defaults to "coding-agent-orchestrator" so the API's ExecutePipeline spans appear
+  # under the same service name that the Grafana "Recent Pipeline Traces" panel queries
+  # (rootServiceName="coding-agent-orchestrator"). Override to "coding-agent-api" if you
+  # need to distinguish API spans from orchestrator (Blazor UI) spans in Tempo.
+  # TODO: This default collapses the API process and the Blazor UI process into the same
+  # service.name in Tempo, making it impossible to distinguish API-origin spans from
+  # orchestrator spans. Consider changing the default to "coding-agent-api" and updating
+  # the Grafana panel query to rootServiceName=~"coding-agent-orchestrator|coding-agent-api".
+  # See review warning (issue #2255).
+  apiServiceName: coding-agent-orchestrator
   resourceAttributes: ""
 
 # ── ServiceAccount ───────────────────────────────────────────────────────────

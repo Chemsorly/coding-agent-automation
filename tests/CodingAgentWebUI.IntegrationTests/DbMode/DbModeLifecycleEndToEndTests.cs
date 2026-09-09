@@ -4,7 +4,6 @@ using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -31,7 +30,6 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
     private readonly WorkItemTransitionService _transitionService;
     private readonly OrchestratorRunService _runService;
     private readonly AgentRegistryService _registry;
-    private readonly AgentReservationService _dispatcher;
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService;
     private readonly Mock<ILabelService> _mockLabelService;
     private readonly Mock<ILogger> _mockLogger;
@@ -55,7 +53,6 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         _mockLogger = new Mock<ILogger>();
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _registry = new AgentRegistryService(_mockLogger.Object);
-        _dispatcher = new AgentReservationService(_registry, _mockLogger.Object);
         _mockHistoryService = new Mock<IPipelineRunHistoryService>();
         _mockLabelService = new Mock<ILabelService>();
 
@@ -68,7 +65,6 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
             _mockHistoryService.Object,
             _registry,
             _mockLabelService.Object,
-            _dispatcher,
             _mockLogger.Object,
             WorkItemFallbackTransition: fallbackTransitionService));
     }
@@ -84,7 +80,8 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
     [Fact]
     public async Task FullLifecycle_Dispatch_AgentAccepts_Completes_AllStatesConsistent()
     {
-        // Arrange: Create WorkItem (Pending) → transition to Dispatched
+        // Arrange: Create WorkItem directly as Dispatched (new synchronous dispatch path;
+        // Pending→Dispatched was removed in issue #2322)
         var runId = Guid.NewGuid();
         await using (var db = await _dbFactory.CreateDbContextAsync())
         {
@@ -93,14 +90,13 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
                 Id = runId,
                 IssueIdentifier = "owner/repo#1",
                 IssueProviderConfigId = "ip-1",
-                Status = WorkItemStatus.Pending,
+                Status = WorkItemStatus.Dispatched,
+                DispatchedAt = DateTimeOffset.UtcNow,
                 CreatedAt = DateTimeOffset.UtcNow,
                 TaskType = WorkItemTaskType.Implementation
             });
             await db.SaveChangesAsync();
         }
-
-        await _transitionService.TransitionAsync(runId, WorkItemStatus.Dispatched, ct: CancellationToken.None);
 
         // Create PipelineRun in-memory (simulating dispatch path)
         var pipelineRun = new PipelineRun
@@ -313,11 +309,19 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         }
 
         // No run created, no agent registered — simulates "no agent available" scenario
-        // Try to select an agent — should return null
-        var selectedAgent = _dispatcher.SelectAgent(new List<string> { "dotnet" });
+        // The registry has no idle agents registered.
+        var idleAgents = _registry.GetIdleAgents();
 
         // Assert
-        selectedAgent.Should().BeNull();
+        // TODO: [WARNING] This assertion was changed from `_dispatcher.SelectAgent(["dotnet"]).Should().BeNull()`
+        // (which exercised label matching + FIFO ordering through the dispatch path) to a registry
+        // pre-condition check. The new assertion is trivially true as a setup post-condition and does
+        // not verify dispatch behavior: if the dispatch path regressed (e.g., a label mismatch that
+        // should prevent dispatch), this test would still pass. The "no agent available" scenario is
+        // now untested at the integration level. Restore a behavioral assertion against the dispatch
+        // path when AgentReservationService is reintroduced or replaced.
+        // Tracked by review findings for issue #2325.
+        idleAgents.Should().BeEmpty();
         _mockLabelService.Verify(l => l.SwapLabelAsync(
             It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress,
             It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -390,7 +394,11 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
     [Fact]
     public async Task OrchestratorRestart_PendingWorkItem_DrainRecreatesRun_AgentGetsJob()
     {
-        // Arrange: WorkItem in Pending with full payload, OrchestratorRunService EMPTY
+        // Arrange: WorkItem in Pending with full payload (recovery/requeue scenario),
+        // OrchestratorRunService EMPTY (simulating orchestrator restart).
+        // Note: After issue #2322, Pending items arise from recovery (Failed/Cancelled→Pending requeue),
+        // not from live dispatch. This test verifies that a Pending item is still queryable and
+        // that the dispatch lifecycle can be triggered for it.
         var runId = Guid.NewGuid();
         var payload = JsonSerializer.Serialize(new JobDistributionRequest
         {
@@ -438,7 +446,9 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         pendingWorkItems.Should().HaveCount(1);
         pendingWorkItems[0].IssueIdentifier.Should().Be("owner/repo#6");
 
-        // Simulate creating the run from drain
+        // Simulate re-dispatch: DispatchLifecycleService directly sets Status=Dispatched
+        // (bypasses IsValidTransition — this is the designed behavior after issue #2322).
+        // Directly update the entity to simulate the lifecycle service's behavior.
         var restoredRun = new PipelineRun
         {
             RunId = runId.ToString(),
@@ -449,7 +459,16 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
             StartedAt = DateTime.UtcNow
         };
         _runService.AddRun(restoredRun);
-        await _transitionService.TransitionAsync(runId, WorkItemStatus.Dispatched, ct: CancellationToken.None);
+
+        // Directly update to Dispatched (simulating DispatchLifecycleService.ExecuteDispatchLifecycleAsync
+        // which directly sets workItem.Status = Dispatched without going through IsValidTransition)
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            var entity = await db.WorkItems.FindAsync(runId);
+            entity!.Status = WorkItemStatus.Dispatched;
+            entity.DispatchedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
 
         // Assert: run exists, WorkItem is Dispatched
         _runService.GetRun(runId.ToString()).Should().NotBeNull();

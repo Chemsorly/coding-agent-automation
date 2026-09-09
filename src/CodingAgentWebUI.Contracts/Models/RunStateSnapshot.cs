@@ -139,4 +139,13 @@ public sealed record RunStateSnapshot
 
     [Key(40)]
     public string? BrainProviderConfigId { get; init; }
+
+    /// <summary>
+    /// Chat history entries accumulated during the run.
+    /// Carried in the snapshot so a UI subscriber connecting mid-run receives the full
+    /// conversation context without needing a separate REST endpoint.
+    /// Incremental entries arrive via <c>OnChatEntry</c> hub events after the snapshot.
+    /// </summary>
+    [Key(41)]
+    public IReadOnlyList<ChatEntry> ChatHistory { get; init; } = Array.Empty<ChatEntry>();
 }

@@ -196,7 +196,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                     new() { Identifier = "2", Title = "Newer", Labels = new[] { "agent:next" }, CreatedAt = new DateTime(2026, 1, 2) },
                     new() { Identifier = "1", Title = "Older", Labels = new[] { "agent:next" }, CreatedAt = new DateTime(2026, 1, 1) }
                 },
-                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                Page = 1,
+                PageSize = PipelineConstants.DefaultPageSize,
+                HasMore = false
             });
 
         // Track which issues are started (will fail since we don't have full provider setup, but we can check order)
@@ -246,7 +248,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                     new() { Identifier = "1", Title = "Errored", Labels = new[] { "agent:next", "agent:error" }, CreatedAt = new DateTime(2026, 1, 1) },
                     new() { Identifier = "2", Title = "Also Errored", Labels = new[] { "agent:next", "agent:error" }, CreatedAt = new DateTime(2026, 1, 2) }
                 },
-                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                Page = 1,
+                PageSize = PipelineConstants.DefaultPageSize,
+                HasMore = false
             });
 
         var svc = CreateService();
@@ -281,7 +285,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                     new() { Identifier = "1", Title = "Errored", Labels = new[] { "agent:next", "agent:error" }, CreatedAt = new DateTime(2026, 1, 1) },
                     new() { Identifier = "2", Title = "Needs Refinement", Labels = new[] { "agent:next", "agent:needs-refinement" }, CreatedAt = new DateTime(2026, 1, 2) }
                 },
-                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                Page = 1,
+                PageSize = PipelineConstants.DefaultPageSize,
+                HasMore = false
             });
 
         var svc = CreateService();
@@ -315,7 +321,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                     new() { Identifier = "1", Title = "Needs Refinement 1", Labels = new[] { "agent:next", "agent:needs-refinement" }, CreatedAt = new DateTime(2026, 1, 1) },
                     new() { Identifier = "2", Title = "Needs Refinement 2", Labels = new[] { "agent:next", "agent:needs-refinement" }, CreatedAt = new DateTime(2026, 1, 2) }
                 },
-                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                Page = 1,
+                PageSize = PipelineConstants.DefaultPageSize,
+                HasMore = false
             });
 
         var svc = CreateService();
@@ -349,7 +357,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                     new() { Identifier = "1", Title = "Errored", Labels = new[] { "agent:next", "agent:error" }, CreatedAt = new DateTime(2026, 1, 1) },
                     new() { Identifier = "2", Title = "Needs Refinement", Labels = new[] { "agent:next", "agent:needs-refinement" }, CreatedAt = new DateTime(2026, 1, 2) }
                 },
-                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                Page = 1,
+                PageSize = PipelineConstants.DefaultPageSize,
+                HasMore = false
             });
 
         var svc = CreateService();
@@ -386,7 +396,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                     {
                         new() { Identifier = $"p{page}", Title = $"Issue page {page}", Labels = new[] { "agent:next" }, CreatedAt = DateTime.UtcNow }
                     },
-                    Page = page, PageSize = PipelineConstants.DefaultPageSize, HasMore = true // Always more pages
+                    Page = page,
+                    PageSize = PipelineConstants.DefaultPageSize,
+                    HasMore = true // Always more pages
                 });
             });
 
@@ -395,7 +407,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
-                ClosedLoopMaxPagesToFetch = 3
+                ClosedLoopMaxPagesToFetch = 3,
+                ClosedLoopAutoStart = true
             });
 
         var svc = CreateService();
@@ -428,7 +441,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = new List<IssueSummary>(),
-                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                Page = 1,
+                PageSize = PipelineConstants.DefaultPageSize,
+                HasMore = false
             });
 
         var svc = CreateService();
@@ -500,7 +515,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 return Task.FromResult(new PagedResult<IssueSummary>
                 {
                     Items = new List<IssueSummary>(),
-                    Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                    Page = 1,
+                    PageSize = PipelineConstants.DefaultPageSize,
+                    HasMore = false
                 });
             });
 
@@ -511,7 +528,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
                 ClosedLoopMaxConsecutivePollFailures = 5,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(2)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(2),
+                ClosedLoopAutoStart = true
             });
 
         var svc = CreateService();
@@ -545,14 +563,17 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = new List<IssueSummary>(),
-                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                Page = 1,
+                PageSize = PipelineConstants.DefaultPageSize,
+                HasMore = false
             });
 
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                ClosedLoopPollInterval = TimeSpan.FromSeconds(60)
+                ClosedLoopPollInterval = TimeSpan.FromSeconds(60),
+                ClosedLoopAutoStart = true
             });
 
         var svc = CreateService();
@@ -596,7 +617,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
-                ClosedLoopMaxRunsPerCycle = 1
+                ClosedLoopMaxRunsPerCycle = 1,
+                ClosedLoopAutoStart = true
             });
 
         var attemptedIssues = new List<string>();
@@ -609,7 +631,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                     new() { Identifier = "1", Title = "First", Labels = new[] { "agent:next" }, CreatedAt = new DateTime(2026, 1, 1) },
                     new() { Identifier = "2", Title = "Second", Labels = new[] { "agent:next" }, CreatedAt = new DateTime(2026, 1, 2) }
                 },
-                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                Page = 1,
+                PageSize = PipelineConstants.DefaultPageSize,
+                HasMore = false
             });
 
         var mockDistributor = new Mock<IWorkDistributor>();
@@ -653,7 +677,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                     new() { Identifier = "already-active", Title = "Active Issue", Labels = new[] { "agent:next" }, CreatedAt = new DateTime(2026, 1, 1) },
                     new() { Identifier = "new-issue", Title = "New Issue", Labels = new[] { "agent:next" }, CreatedAt = new DateTime(2026, 1, 2) }
                 },
-                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                Page = 1,
+                PageSize = PipelineConstants.DefaultPageSize,
+                HasMore = false
             });
 
         var dispatchedRequests = new List<JobDistributionRequest>();
@@ -704,7 +730,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                     new() { Identifier = "issue-1", Title = "First", Labels = new[] { "agent:next" }, CreatedAt = new DateTime(2026, 1, 1) },
                     new() { Identifier = "issue-2", Title = "Second", Labels = new[] { "agent:next" }, CreatedAt = new DateTime(2026, 1, 2) }
                 },
-                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                Page = 1,
+                PageSize = PipelineConstants.DefaultPageSize,
+                HasMore = false
             });
 
         var dispatchedIdentifiers = new List<string>();
@@ -751,7 +779,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 {
                     new() { Identifier = "issue-x", Title = "Issue X", Labels = new[] { "agent:next" }, CreatedAt = new DateTime(2026, 1, 1) }
                 },
-                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                Page = 1,
+                PageSize = PipelineConstants.DefaultPageSize,
+                HasMore = false
             });
 
         var mockDistributor = new Mock<IWorkDistributor>();
@@ -790,9 +820,13 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     {
         var run = new PipelineRun
         {
-            RunId = "test", IssueIdentifier = "1", IssueTitle = "Test",
-            IssueProviderConfigId = "ip", RepoProviderConfigId = "rp",
-            StartedAt = DateTime.UtcNow, CurrentStep = PipelineStep.Created
+            RunId = "test",
+            IssueIdentifier = "1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            CurrentStep = PipelineStep.Created
         };
         Assert.Equal("manual", run.InitiatedBy);
     }
@@ -802,9 +836,13 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     {
         var run = new PipelineRun
         {
-            RunId = "test", IssueIdentifier = "1", IssueTitle = "Test",
-            IssueProviderConfigId = "ip", RepoProviderConfigId = "rp",
-            StartedAt = DateTime.UtcNow, CurrentStep = PipelineStep.Completed,
+            RunId = "test",
+            IssueIdentifier = "1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            CurrentStep = PipelineStep.Completed,
             InitiatedBy = "loop"
         };
         var summary = run.ToSummary();
@@ -817,7 +855,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         var now = DateTime.UtcNow;
         var summary = new IssueSummary
         {
-            Identifier = "1", Title = "Test", Labels = Array.Empty<string>(),
+            Identifier = "1",
+            Title = "Test",
+            Labels = Array.Empty<string>(),
             CreatedAt = now
         };
         Assert.Equal(now, summary.CreatedAt);
@@ -866,7 +906,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
                 ClosedLoopMaxConsecutivePollFailures = 10, // High threshold so circuit breaker doesn't trip
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(10)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(10),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -910,7 +951,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
                 ClosedLoopMaxConsecutivePollFailures = 20,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(300)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(300),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -952,7 +994,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 return Task.FromResult(new PagedResult<IssueSummary>
                 {
                     Items = new List<IssueSummary>(),
-                    Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                    Page = 1,
+                    PageSize = PipelineConstants.DefaultPageSize,
+                    HasMore = false
                 });
             });
 
@@ -962,7 +1006,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
                 ClosedLoopMaxConsecutivePollFailures = 10,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(5)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(5),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -1000,7 +1045,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
                 ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -1011,8 +1057,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         // In multi-template mode, circuit breaker trips when ALL templates have failures >= threshold
         // Wait for both IsCircuitBroken AND StatusMessage to stabilize (ARM weak memory ordering
-        // can cause the test thread to observe IsCircuitBroken=true before StatusMessage is updated)
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        // can cause the test thread to observe IsCircuitBroken=true before StatusMessage is updated).
+        // 15-second deadline guards against CI runner load spikes where loop iterations run slower.
+        var deadline = DateTime.UtcNow.AddSeconds(15);
         while ((!svc.IsCircuitBroken || !svc.StatusMessage.Contains("paused", StringComparison.OrdinalIgnoreCase))
                && DateTime.UtcNow < deadline)
             await Task.Delay(50);
@@ -1021,7 +1068,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         Assert.Contains("paused", svc.StatusMessage, StringComparison.OrdinalIgnoreCase);
 
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(5);
+        deadline = DateTime.UtcNow.AddSeconds(15);
         while (svc.IsLoopActive && DateTime.UtcNow < deadline)
             await Task.Delay(50);
         cts.Cancel();
@@ -1043,7 +1090,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 return Task.FromResult(new PagedResult<IssueSummary>
                 {
                     Items = new List<IssueSummary>(),
-                    Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                    Page = 1,
+                    PageSize = PipelineConstants.DefaultPageSize,
+                    HasMore = false
                 });
             });
 
@@ -1053,7 +1102,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
                 ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -1072,8 +1122,12 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         svc.ResumeLoop();
         Assert.False(svc.IsCircuitBroken);
 
-        // Wait for successful poll after resume
-        deadline = DateTime.UtcNow.AddSeconds(5);
+        // Wait for successful poll after resume. Use a longer deadline here than the
+        // circuit-breaker-trip wait: after ResumeLoop(), the loop must complete a full
+        // SnapshotCycleConfigAsync (several mock store calls) before reaching ListOpenIssuesAsync
+        // for the 4th time. Under parallel test load this can take significantly longer than
+        // a simple state-flag transition.
+        deadline = DateTime.UtcNow.AddSeconds(15);
         while (callCount < 4 && DateTime.UtcNow < deadline)
             await Task.Delay(50);
 
@@ -1101,7 +1155,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
                 ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -1143,7 +1198,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 return Task.FromResult(new PagedResult<IssueSummary>
                 {
                     Items = new List<IssueSummary>(),
-                    Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                    Page = 1,
+                    PageSize = PipelineConstants.DefaultPageSize,
+                    HasMore = false
                 });
             });
 
@@ -1155,6 +1212,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 ClosedLoopMaxConsecutivePollFailures = 3,
                 ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(100),
                 ClosedLoopCircuitBreakerCooldown = TimeSpan.FromSeconds(1),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -1205,7 +1263,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 return Task.FromResult(new PagedResult<IssueSummary>
                 {
                     Items = new List<IssueSummary>(),
-                    Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                    Page = 1,
+                    PageSize = PipelineConstants.DefaultPageSize,
+                    HasMore = false
                 });
             });
 
@@ -1215,7 +1275,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
                 ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(5)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(5),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -1255,7 +1316,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 return Task.FromResult(new PagedResult<IssueSummary>
                 {
                     Items = new List<IssueSummary>(),
-                    Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                    Page = 1,
+                    PageSize = PipelineConstants.DefaultPageSize,
+                    HasMore = false
                 });
             });
 
@@ -1265,7 +1328,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
                 ClosedLoopMaxConsecutivePollFailures = 5,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(2)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(2),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -1304,7 +1368,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
                 ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -1344,7 +1409,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
                 ClosedLoopMaxConsecutivePollFailures = 2,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -1527,7 +1593,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             .ReturnsAsync(new PagedResult<PullRequestSummary>
             {
                 Items = new List<PullRequestSummary>().AsReadOnly(),
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
             });
         _mockFactory.Setup(f => f.CreateRepositoryProvider(It.Is<ProviderConfig>(c => c.Id == sharedRepoId)))
                     .Returns(mockRepoProvider.Object);
@@ -1537,7 +1605,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -1584,7 +1652,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.Is<string>(id => id == sharedRepoId),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>()),
             Times.Once,
             "ExecuteAsync must be called exactly once per cycle for a shared repo — dedup guard prevents double-invocation");
@@ -1655,8 +1723,12 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         var svc = CreateServiceWithHousekeeping(housekeepingService: null);
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-hk",
-            Enabled = true, HousekeepingEnabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-hk",
+            Enabled = true,
+            HousekeepingEnabled = true
         };
         var snapshot = BuildSnapshot([template]);
 
@@ -1673,14 +1745,18 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var svc = CreateServiceWithHousekeeping(housekeepingMock.Object);
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-hk",
-            Enabled = true, HousekeepingEnabled = false  // disabled
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-hk",
+            Enabled = true,
+            HousekeepingEnabled = false  // disabled
         };
         var snapshot = BuildSnapshot([template]);
 
@@ -1690,7 +1766,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -1702,15 +1778,19 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var svc = CreateServiceWithHousekeeping(housekeepingMock.Object);
         // Do NOT seed RepoProviders — simulate cache miss
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-missing",
-            Enabled = true, HousekeepingEnabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-missing",
+            Enabled = true,
+            HousekeepingEnabled = true
         };
         var snapshot = BuildSnapshot([template]);
 
@@ -1720,7 +1800,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -1736,7 +1816,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
@@ -1748,8 +1828,12 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-hk",
-            Enabled = true, HousekeepingEnabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-hk",
+            Enabled = true,
+            HousekeepingEnabled = true
         };
         var snapshot = BuildSnapshot([template]);
 
@@ -1759,7 +1843,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -1772,11 +1856,11 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, int, bool, int, CancellationToken>(
-                (_, _, _, _, _, limit, _, _, _) => capturedLimit = limit)
+                IReadOnlyList<PullRequestSummary>, int, bool, int, int, CancellationToken>(
+                (_, _, _, _, _, limit, _, _, _, _) => capturedLimit = limit)
             .Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
@@ -1788,8 +1872,12 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-hk",
-            Enabled = true, HousekeepingEnabled = true,
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-hk",
+            Enabled = true,
+            HousekeepingEnabled = true,
             HousekeepingConcurrencyLimit = 5  // template value takes precedence
         };
         var snapshot = BuildSnapshot([template]);
@@ -1808,11 +1896,11 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, int, bool, int, CancellationToken>(
-                (_, _, _, _, _, limit, _, _, _) => capturedLimit = limit)
+                IReadOnlyList<PullRequestSummary>, int, bool, int, int, CancellationToken>(
+                (_, _, _, _, _, limit, _, _, _, _) => capturedLimit = limit)
             .Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
@@ -1824,8 +1912,12 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-hk",
-            Enabled = true, HousekeepingEnabled = true,
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-hk",
+            Enabled = true,
+            HousekeepingEnabled = true,
             HousekeepingConcurrencyLimit = null  // falls back to config
         };
         var config = TestPipelineConfig.Default() with { HousekeepingConcurrencyLimit = 3 };
@@ -1845,11 +1937,11 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, int, bool, int, CancellationToken>(
-                (_, _, _, _, _, limit, _, _, _) => capturedLimit = limit)
+                IReadOnlyList<PullRequestSummary>, int, bool, int, int, CancellationToken>(
+                (_, _, _, _, _, limit, _, _, _, _) => capturedLimit = limit)
             .Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
@@ -1861,8 +1953,12 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-hk",
-            Enabled = true, HousekeepingEnabled = true,
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-hk",
+            Enabled = true,
+            HousekeepingEnabled = true,
             HousekeepingConcurrencyLimit = 0  // both template and config at 0 → clamped to 1
         };
         var config = TestPipelineConfig.Default() with { HousekeepingConcurrencyLimit = 0 };
@@ -1888,11 +1984,11 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, int, bool, int, CancellationToken>(
-                (_, _, _, _, donePrs, _, _, _, _) => capturedDonePrs = donePrs)
+                IReadOnlyList<PullRequestSummary>, int, bool, int, int, CancellationToken>(
+                (_, _, _, _, donePrs, _, _, _, _, _) => capturedDonePrs = donePrs)
             .Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
@@ -1904,8 +2000,12 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-hk",
-            Enabled = true, HousekeepingEnabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-hk",
+            Enabled = true,
+            HousekeepingEnabled = true
         };
         var snapshot = BuildSnapshot([template]);
         // agentDonePrQueues is empty — template ID not present
@@ -1918,7 +2018,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>()), Times.Once);
         Assert.NotNull(capturedDonePrs);
         Assert.Empty(capturedDonePrs!);
@@ -1942,8 +2042,12 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         var tpl = new PipelineJobTemplate
         {
-            Id = "tmpl-hk", Name = "HK Template", IssueProviderId = "ip-1",
-            RepoProviderId = repoId, Enabled = true, HousekeepingEnabled = true
+            Id = "tmpl-hk",
+            Name = "HK Template",
+            IssueProviderId = "ip-1",
+            RepoProviderId = repoId,
+            Enabled = true,
+            HousekeepingEnabled = true
         };
 
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
@@ -1978,7 +2082,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                         TargetBranch = "main", Url = "https://example.com/pr/42", IsDraft = false
                     }
                 }.AsReadOnly(),
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
             });
         _mockFactory.Setup(f => f.CreateRepositoryProvider(It.Is<ProviderConfig>(c => c.Id == repoId)))
             .Returns(mockRepoProvider.Object);
@@ -1989,7 +2095,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = new List<IssueSummary>(),
-                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+                Page = 1,
+                PageSize = PipelineConstants.DefaultPageSize,
+                HasMore = false
             });
 
         IReadOnlyList<PullRequestSummary>? capturedDonePrs = null;
@@ -1998,11 +2106,11 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, int, bool, int, CancellationToken>(
-                (_, _, _, _, donePrs, _, _, _, _) => capturedDonePrs = donePrs)
+                IReadOnlyList<PullRequestSummary>, int, bool, int, int, CancellationToken>(
+                (_, _, _, _, donePrs, _, _, _, _, _) => capturedDonePrs = donePrs)
             .Returns(Task.CompletedTask);
 
         _loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
@@ -2042,7 +2150,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>()), Times.Once);
 
         Assert.NotNull(capturedDonePrs);

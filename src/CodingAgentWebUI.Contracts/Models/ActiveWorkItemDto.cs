@@ -26,4 +26,19 @@ public sealed record ActiveWorkItemDto
     /// to <c>PipelineConstants.DefaultAgentTimeout</c>.
     /// </summary>
     public int TimeoutSeconds { get; init; }
+
+    /// <summary>
+    /// The pipeline step the agent is currently executing, populated from the in-memory
+    /// <see cref="IOrchestratorRunService"/> when a live run is tracked for this work item.
+    /// Null when the item was just dispatched and no run has been registered yet, or when the
+    /// API process has restarted (in-memory state lost) and the Redis-backed path is not in use.
+    /// </summary>
+    public PipelineStep? CurrentStep { get; init; }
+
+    /// <summary>
+    /// Issue title extracted from <c>JobDistributionRequest.IssueDetail.Title</c> in the Payload.
+    /// Null when payload is absent, has no IssueDetail, or payload is malformed.
+    /// Populated by the API for display purposes only — not used by the Job Controller.
+    /// </summary>
+    public string? IssueTitle { get; init; }
 }

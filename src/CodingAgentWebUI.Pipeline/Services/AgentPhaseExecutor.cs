@@ -19,11 +19,13 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
     private readonly Serilog.ILogger _logger;
     private readonly Counter<long> _analysisGateOutcomes;
     private readonly Counter<long> _reviewSkipped;
+    private readonly IMeterFactory? _meterFactory;
 
     public AgentPhaseExecutor(Serilog.ILogger logger, IMeterFactory? meterFactory = null)
     {
         ArgumentNullException.ThrowIfNull(logger);
         _logger = logger;
+        _meterFactory = meterFactory;
 
         if (meterFactory is not null)
         {
@@ -116,7 +118,8 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
                     EnvironmentVariables = request.EnvironmentVariables
                 },
                 request.Run, request.Config, request.Description, callbacks.NotifyChange, request.Logger, ct,
-                line => callbacks.EmitOutputLine(line));
+                line => callbacks.EmitOutputLine(line),
+                stallMetrics: request.StallMetrics);
 
             request.Run.AccumulateTokenUsage(agentResult, phase: request.Phase);
 
@@ -175,7 +178,8 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
                 EnvironmentVariables = request.EnvironmentVariables
             },
             request.Run, request.Config, request.Description, request.OnChange, request.Logger, ct,
-            request.OnOutputLine);
+            request.OnOutputLine,
+            stallMetrics: request.StallMetrics);
 
         request.Run.AccumulateTokenUsage(agentResult, phase: request.Phase);
         return agentResult;

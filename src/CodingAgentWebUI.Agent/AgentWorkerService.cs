@@ -90,12 +90,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         _connectionLifecycle.OnFetchModels += _chatJobHandler.HandleFetchModelsAsync;
         _connectionLifecycle.OnAssignConsolidationJob += _consolidationJobHandler.HandleAssignConsolidationJobAsync;
 
-        // OnAssignJob only in non-chat mode — chat pods must not receive work-item jobs
-        if (!isChatMode)
-        {
-            _connectionLifecycle.OnAssignJob += HandleAssignJobAsync;
-        }
-
         if (isChatMode)
         {
             var chatSessionId = Environment.GetEnvironmentVariable(AgentDefaults.EnvChatSessionId) ?? "";
@@ -128,125 +122,11 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         {
             // Expected during shutdown
         }
-        // TODO: [WARNING] The previous catch (Exception ex) block that logged "Agent worker service encountered
-        // a fatal error" and re-threw was removed. Unexpected exceptions from ConnectAndRunAsync (e.g.
-        // InvalidOperationException on misconfigured hub URL) now propagate silently to the BackgroundService
-        // infrastructure, losing the agent-specific structured log entry. Consider re-adding a general
-        // catch-log-rethrow here, or confirm that the host's BackgroundService exception logging is sufficient
-        // for production diagnostics.
+        // Unexpected exceptions from ConnectAndRunAsync propagate to the BackgroundService
+        // infrastructure, which logs them via IHostedService exception handling.
         finally
         {
             await ShutdownAsync();
-        }
-    }
-
-    private async Task HandleAssignJobAsync(JobAssignmentMessage message)
-    {
-        PipelineTelemetry.AgentJobsReceived.Add(1);
-
-        using var receiveActivity = PipelineTelemetry.ActivitySource.StartActivity(
-            "Agent.ReceiveJob",
-            ActivityKind.Server,
-            PipelineTelemetry.ExtractTraceContext(message.TraceContext));
-        receiveActivity?.SetTag("job_id", message.JobId);
-        receiveActivity?.SetTag("run_type", "implementation");
-
-        if (!_slotManager.TryAcquireJobSlot(message.JobId, out var busyWith))
-        {
-            await RejectJobBusyAsync(message.JobId, busyWith, receiveActivity);
-            return;
-        }
-
-        _logger.Information("Accepted job {JobId} for issue {IssueIdentifier}",
-            message.JobId, message.IssueIdentifier);
-
-        _slotManager.SetActiveJobAssignment(message, message.RunType);
-
-        if (!await SendJobAcceptedAsync(message.JobId, receiveActivity))
-            return;
-
-        var jobToken = _slotManager.JobCancellationToken!.Value;
-        var activeTask = Task.Run(async () => await RunJobTaskAsync(message, jobToken), CancellationToken.None);
-        _slotManager.SetActiveJobTask(activeTask);
-    }
-
-    private async Task RejectJobBusyAsync(string jobId, string? busyWith, Activity? activity)
-    {
-        PipelineTelemetry.AgentJobsRejected.Add(1,
-            new KeyValuePair<string, object?>("reason", PipelineTelemetry.AgentRejectionReasons.Busy));
-        _logger.Warning("Rejecting job {JobId} — agent is busy with {ActiveJobId}", jobId, busyWith);
-        try
-        {
-            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.JobRejected, jobId, "Agent is busy", CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.AddException(ex);
-            _logger.Warning(ex, "Failed to notify orchestrator of job rejection {JobId}", jobId);
-        }
-    }
-
-    private async Task<bool> SendJobAcceptedAsync(string jobId, Activity? activity)
-    {
-        try
-        {
-            await _signalRPipeline.ExecuteAsync(async token =>
-                await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.JobAccepted, jobId, token),
-                // Fire-and-forget: job assignment event handler has no ambient token; acceptance must be sent
-                CancellationToken.None);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.AddException(ex);
-            _logger.Error(ex, "Failed to send JobAccepted for {JobId}", jobId);
-            _slotManager.ForceReleaseJobSlot();
-            return false;
-        }
-    }
-
-    private async Task RunJobTaskAsync(JobAssignmentMessage message, CancellationToken jobToken)
-    {
-        await using var outputBatcher = new OutputBatcher();
-        outputBatcher.OnFlush += async lines =>
-        {
-            try
-            {
-                await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportOutputLines, message.JobId, lines,
-                    CancellationToken.None); // intentional: fire-and-forget flush callback; no ambient token available
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Failed to send output lines batch");
-            }
-        };
-
-        JobCompletionPayload? completion = null;
-        try
-        {
-            completion = await AgentJobRunner.ExecuteAsync(
-                _executor, message, _connectionLifecycle.Connection, outputBatcher,
-                step => _slotManager.SetCurrentStep(step),
-                cancelledLabel: AgentLabels.Cancelled, ct: jobToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Pipeline execution failed for job {JobId}", message.JobId);
-            completion = new JobCompletionPayload
-            {
-                FinalStep = PipelineStep.Failed,
-                FailureReason = ex.Message,
-                CompletedAt = DateTimeOffset.UtcNow,
-                // RunMode: outer catch fires before or during executor setup; DetectReworkStep has not run.
-                // LinkedPullRequest from the assignment is the best available signal.
-                RunMode = message.LinkedPullRequest is not null ? RunMode.Rework : RunMode.New
-            };
-        }
-        finally
-        {
-            await FinalizeJobAsync(message.JobId, completion);
         }
     }
 

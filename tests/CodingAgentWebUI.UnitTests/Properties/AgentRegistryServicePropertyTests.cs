@@ -2,7 +2,6 @@ using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Xunit;
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
@@ -120,36 +119,6 @@ public class AgentRegistryServicePropertyTests
 
     /// <summary>
     /// Property 8: Agent Selection FIFO Ordering
-    /// For any set of idle agents with matching labels, selected agent has earliest
-    /// LastJobCompletedAt (or RegisteredAt).
-    /// **Validates: Requirements 4.1, 4.2**
-    /// </summary>
-    [Property(MaxTest = 20)]
-    public void SelectAgent_PicksOldestIdleAgent(PositiveInt agentCount)
-    {
-        var count = Math.Min(agentCount.Get, 10);
-        var registry = CreateRegistry();
-        var dispatcher = new JobDeduplicationGuardService(registry, new Mock<ILogger>().Object);
-
-        // Register agents with staggered LastJobCompletedAt
-        for (var i = 0; i < count; i++)
-        {
-            var entry = RegisterAgent(registry, $"agent-{i}", $"conn-{i}");
-            entry.LastJobCompletedAt = DateTimeOffset.UtcNow.AddMinutes(-count + i);
-        }
-
-        var selected = dispatcher.SelectAgent(new[] { "kiro", "dotnet" });
-
-        selected.Should().NotBeNull();
-        selected!.AgentId.Value.Should().Be("agent-0"); // Oldest LastJobCompletedAt
-        selected.Status.Should().Be(AgentStatus.Busy); // SelectAgent atomically reserves by transitioning to Busy
-    }
-
-    /// <summary>
-    /// Property 10: Job Acceptance State Transition
-    /// Transitioning to Busy sets status and ActiveJobId.
-    /// **Validates: Requirements 4.5**
-    /// </summary>
     [Property(MaxTest = 20)]
     public void JobAcceptance_TransitionsToBusy(NonEmptyString agentId, NonEmptyString jobId)
     {

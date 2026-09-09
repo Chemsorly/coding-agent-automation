@@ -1,11 +1,8 @@
 using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Xunit;
-using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.Health;
-using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
@@ -13,6 +10,18 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 /// <summary>
 /// Property-based tests for label routing fallback resolution and agent matching.
 /// </summary>
+/// <remarks>
+/// TODO: [WARNING] Two property tests that validated <c>LabelMatchHelper.IsLabelMatch</c>
+/// were deleted in issue #2325 alongside <c>AgentReservationService</c>:
+///   - AgentMatches_WhenLabelsAreSupersetOfRequired
+///   - AgentDoesNotMatch_WhenMissingRequiredLabel
+/// <c>LabelMatchHelper.IsLabelMatch</c> is still live code (used by <c>AgentRegistryService</c>
+/// for profile resolution). Its case-sensitivity and subset-logic invariants are no longer
+/// covered by property-based tests — only fixed-input scenario tests in
+/// <c>LabelMappingIntegrationTests.cs</c> remain. Add replacement property tests directly
+/// against <c>LabelMatchHelper.IsLabelMatch</c>.
+/// Tracked by review findings for issue #2325.
+/// </remarks>
 public class LabelRoutingFallbackPropertyTests
 {
     /// <summary>
@@ -40,7 +49,7 @@ public class LabelRoutingFallbackPropertyTests
             DefaultRequiredAgentLabels = "fallback-label"
         };
 
-        var resolved = JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, pipelineConfig);
+        var resolved = LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
 
         resolved.Should().Contain(l1);
         resolved.Should().Contain(l2);
@@ -70,7 +79,7 @@ public class LabelRoutingFallbackPropertyTests
             DefaultRequiredAgentLabels = label
         };
 
-        var resolved = JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, pipelineConfig);
+        var resolved = LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
 
         resolved.Should().Contain(label);
     }
@@ -91,64 +100,9 @@ public class LabelRoutingFallbackPropertyTests
 
         var pipelineConfig = new PipelineConfiguration();
 
-        var resolved = JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, pipelineConfig);
+        var resolved = LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
 
         resolved.Should().BeEmpty();
     }
 
-    /// <summary>
-    /// Property 23 (continued): Agent matches iff its labels are a superset of resolved required labels.
-    /// **Validates: Requirements 19.3**
-    /// </summary>
-    [Property(MaxTest = 20)]
-    public void AgentMatches_WhenLabelsAreSupersetOfRequired(NonEmptyString[] extraLabels)
-    {
-        var requiredLabels = new[] { "kiro", "dotnet" };
-        var agentLabels = requiredLabels
-            .Concat(extraLabels.Select(l => l.Get))
-            .ToList();
-
-        var registry = new AgentRegistryService(new Moq.Mock<Serilog.ILogger>().Object);
-        var dispatcher = new JobDeduplicationGuardService(registry, new Moq.Mock<Serilog.ILogger>().Object);
-
-        registry.Register(new AgentRegistrationMessage
-        {
-            AgentId = "agent-1",
-            Hostname = "host1",
-            Labels = agentLabels
-        }, "conn-1");
-
-        var selected = dispatcher.SelectAgent(requiredLabels);
-        selected.Should().NotBeNull();
-        selected!.AgentId.Value.Should().Be("agent-1");
-    }
-
-    /// <summary>
-    /// Property 23 (continued): Agent does NOT match when it's missing a required label.
-    /// **Validates: Requirements 19.3**
-    /// </summary>
-    [Property(MaxTest = 20)]
-    public void AgentDoesNotMatch_WhenMissingRequiredLabel(NonEmptyString missingLabel)
-    {
-        var missing = missingLabel.Get.Replace(",", "").Trim();
-        if (string.IsNullOrEmpty(missing)) return;
-        // Ensure the missing label is not already in the agent's labels
-        if (missing == "kiro") return;
-
-        var requiredLabels = new[] { "kiro", missing };
-        var agentLabels = new[] { "kiro" }; // Missing the second required label
-
-        var registry = new AgentRegistryService(new Moq.Mock<Serilog.ILogger>().Object);
-        var dispatcher = new JobDeduplicationGuardService(registry, new Moq.Mock<Serilog.ILogger>().Object);
-
-        registry.Register(new AgentRegistrationMessage
-        {
-            AgentId = "agent-1",
-            Hostname = "host1",
-            Labels = agentLabels
-        }, "conn-1");
-
-        var selected = dispatcher.SelectAgent(requiredLabels);
-        selected.Should().BeNull();
-    }
 }

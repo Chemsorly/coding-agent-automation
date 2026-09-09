@@ -8,7 +8,9 @@ The pipeline performs automated code review on pull requests using the same mult
 2. The pipeline picks up the PR on the next poll cycle
 3. The agent clones the repo, checks out the PR branch, and runs multi-agent code review
 4. Review findings are posted as a PR review comment
-5. The label transitions: `agent:next` → `agent:in-progress` → `agent:done` (or `agent:error`)
+5. The label transitions: `agent:next` → `agent:in-progress` → `agent:done` (or `agent:error` on failure)
+
+Draft PRs are included in review dispatch (a warning is shown in the UI). To re-review after changes, remove `agent:done` and re-add `agent:next`.
 
 ## Workflow
 
@@ -18,6 +20,14 @@ Label PR with agent:next → Pipeline picks up PR → Clone → Checkout PR bran
 ```
 
 Draft PRs are included in review dispatch (a warning is shown in the UI). To re-review after changes, remove `agent:done` and re-add `agent:next`.
+
+### Rework Path and Draft PR Conversion
+
+When a PR was created as a draft (e.g., after quality gate exhaustion) and a rework run completes successfully, the pipeline calls `UpdatePullRequestAsync` with `markReady: true` to convert the draft PR to ready-for-review automatically. No manual intervention is needed for this promotion.
+
+### `agent:needs-refinement` on Implementation PRs
+
+If you add `agent:next` for review on a PR whose linked issue carries `agent:needs-refinement`, the review pipeline runs normally. The `agent:needs-refinement` label on the issue does not block PR review dispatch — it only blocks re-dispatching the issue for implementation.
 
 ## Inline Review Comments
 
@@ -87,7 +97,7 @@ The pipeline runs an acceptance criteria compliance check in parallel with code 
 |---------|------|---------|-------------|
 | `acceptanceCriteriaEnabled` | bool | `true` | Enable/disable the compliance check |
 
-The AC step runs only on the first review iteration. Results are not re-evaluated after fixes — the quality gates (build + tests) validate correctness on subsequent iterations.
+The AC check runs on every review iteration. Non-compliant criteria are re-injected as `[CRITICAL]` findings into the fix prompt, and the compliance table in the PR body reflects the updated code state after each pass.
 
 ### Output Format
 

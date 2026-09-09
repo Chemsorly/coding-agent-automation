@@ -40,6 +40,12 @@ internal sealed class DispatchLifecycleService : IDisposable
     }
 
     /// <summary>
+    /// Returns the configured Kiro PVC pool. Used by <c>POST /api/work-items/dispatch</c> to
+    /// check PVC availability before creating the WorkItem.
+    /// </summary>
+    public IReadOnlyList<string> GetPvcPool() => _options.KiroPvcPool;
+
+    /// <summary>
     /// Queries the database for claimed PVCs, excludes inflight claims, and returns available PVCs
     /// from the given pool. Used by both DispatchService and ConsolidationWorkItemDispatchService.
     /// </summary>
@@ -112,7 +118,7 @@ internal sealed class DispatchLifecycleService : IDisposable
         try
         {
             workItem = await db.WorkItems.FindAsync([item.Id], ct);
-            if (workItem is null || workItem.Status != WorkItemStatus.Pending)
+            if (workItem is null || workItem.Status != ctx.ExpectedInitialStatus)
             {
                 // Item was modified by another process
                 ReleaseClaimedPvc(claimedPvc, availablePvcs);
@@ -165,7 +171,7 @@ internal sealed class DispatchLifecycleService : IDisposable
 
         // Update to Dispatched — clear change tracker first to get fresh state
         // (avoids stale entity if another service modified the item during K8s API call)
-        var (shouldContinue, reloadedWorkItem) = await HandleOrphanedJobIfRaceDetectedAsync(db, item.Id, jobName, claimedPvc, availablePvcs, logPrefix, ct);
+        var (shouldContinue, reloadedWorkItem) = await HandleOrphanedJobIfRaceDetectedAsync(db, item.Id, jobName, claimedPvc, availablePvcs, logPrefix, ctx.ExpectedInitialStatus, ct);
         if (!shouldContinue)
             return;
 
@@ -408,7 +414,7 @@ internal sealed class DispatchLifecycleService : IDisposable
 
     /// <summary>
     /// Clears the change tracker, re-fetches the WorkItem, and checks for race conditions.
-    /// If the WorkItem is no longer Pending, releases the PVC and deletes the orphaned K8s Job.
+    /// If the WorkItem is no longer in <paramref name="expectedStatus"/>, releases the PVC and deletes the orphaned K8s Job.
     /// Returns (true, reloadedWorkItem) if the caller should continue, or (false, null) if the caller
     /// should return early due to a detected race condition.
     /// </summary>
@@ -419,11 +425,12 @@ internal sealed class DispatchLifecycleService : IDisposable
         string? claimedPvc,
         List<string> availablePvcs,
         string logPrefix,
+        WorkItemStatus expectedStatus,
         CancellationToken ct)
     {
         db.ChangeTracker.Clear();
         var workItem = await db.WorkItems.FindAsync([workItemId], ct);
-        if (workItem is null || workItem.Status != WorkItemStatus.Pending)
+        if (workItem is null || workItem.Status != expectedStatus)
         {
             // Race condition: another process transitioned the work item while we were creating the K8s Job.
             if (claimedPvc is not null)
@@ -432,7 +439,7 @@ internal sealed class DispatchLifecycleService : IDisposable
             try
             {
                 await _kubeClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
-                Log.Information("DispatchLifecycleService: deleted orphaned K8s Job {JobName} — {LogPrefix}WorkItem {WorkItemId} no longer Pending", jobName, logPrefix, workItemId);
+                Log.Information("DispatchLifecycleService: deleted orphaned K8s Job {JobName} — {LogPrefix}WorkItem {WorkItemId} no longer in expected status {ExpectedStatus}", jobName, logPrefix, workItemId, expectedStatus);
             }
             catch (Exception ex)
             {

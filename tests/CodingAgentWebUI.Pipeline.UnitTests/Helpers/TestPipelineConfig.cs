@@ -63,6 +63,8 @@ public static class TestPipelineConfig
         DbRetentionSweepInterval = TimeSpan.FromHours(24),
         CiCancelledMoveMaxRetries = PipelineConstants.DefaultCiCancelledMoveMaxRetries,
         FeedbackTimeoutSeconds = 60,
+        HousekeepingTriggerCooldownMinutes = 25,
+        ClosedLoopAutoStart = true,
     };
 
     /// <summary>
@@ -117,5 +119,7 @@ public static class TestPipelineConfig
         DbRetentionSweepInterval = TimeSpan.FromHours(24),
         CiCancelledMoveMaxRetries = PipelineConstants.DefaultCiCancelledMoveMaxRetries,
         FeedbackTimeoutSeconds = 60,
+        HousekeepingTriggerCooldownMinutes = 25,
+        ClosedLoopAutoStart = true,
     };
 }

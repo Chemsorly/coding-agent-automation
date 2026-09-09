@@ -417,10 +417,20 @@ public static class ConfigEndpoints
         CancellationToken ct)
     {
         var value = await store.GetAsync(key, ct);
-        if (value is null)
-            return TypedResults.NotFound();
-
-        return TypedResults.Ok(new { key, value });
+        // Return 200 with null for unset keys rather than 404, because "not yet set" is
+        // a normal state (e.g. first_run_banner_dismissed on first load). Returning 404
+        // causes UseSerilogRequestLogging to emit a Warning on every page load, and the
+        // typed client already maps the result to string? — returning null directly removes
+        // the noise without losing any information.
+        // Also fixes a latent bug: the previous Ok(new { key, value }) object wrapper was
+        // incompatible with ReadFromJsonAsync<string> in the typed client.
+        //
+        // NOTE: TypedResults.Ok<string?>(null) and Results.Json(null) both produce an empty
+        // body in ASP.NET Core rather than the JSON literal "null". Use Results.Content to
+        // write the body explicitly so the typed client's null/empty guard and the integration
+        // test wire-format assertion both work correctly.
+        var body = value is null ? "null" : System.Text.Json.JsonSerializer.Serialize(value, PipelineJsonOptions.Default);
+        return Results.Content(body, "application/json");
     }
 
     internal static async Task<IResult> SetKeyValue(

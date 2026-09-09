@@ -211,25 +211,27 @@ public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase
     // ═══════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task Race_QueueOrdering_JobsDispatchedInFIFOOrder()
+    public async Task Race_QueueOrdering_AllItemsDispatchedImmediately_AgentsReceiveTheirJobs()
     {
         // Arrange: seed 3 issues and dispatch them in order WITHOUT agents
         await SeedIssueAndProfileAsync("2010", "FIFO first");
         await SeedIssueAndProfileAsync("2011", "FIFO second");
         await SeedIssueAndProfileAsync("2012", "FIFO third");
 
-        // Dispatch in strict order — all go to Pending
+        // Dispatch in strict order — synchronous path (issue #2322): all created as Dispatched
+        // immediately. End-to-end priority ordering is enforced by the Scheduler before this
+        // point; this test only verifies that dispatched items reach connected agents.
         var r1 = await DispatchIssueAsync("2010");
         await Task.Delay(50); // Small delay to ensure CreatedAt ordering in DB
         var r2 = await DispatchIssueAsync("2011");
         await Task.Delay(50);
         var r3 = await DispatchIssueAsync("2012");
 
-        Assert.True(r1.Success && r1.Queued);
-        Assert.True(r2.Success && r2.Queued);
-        Assert.True(r3.Success && r3.Queued);
+        Assert.True(r1.Success && !r1.Queued);
+        Assert.True(r2.Success && !r2.Queued);
+        Assert.True(r3.Success && !r3.Queued);
 
-        // Connect 2 agents simultaneously — drain service distributes
+        // Connect 2 agents simultaneously — FakeJobController distributes 2 of the 3 items
         await using var agent1 = new FakeAgentClient("race-fifo-1", "race-e2e");
         await using var agent2 = new FakeAgentClient("race-fifo-2", "race-e2e");
         await agent1.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -239,18 +241,20 @@ public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase
         var job1 = await agent1.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
         var job2 = await agent2.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
 
-        // Assert: the first two issues dispatched (2010 and 2011) are the ones delivered
-        // (FIFO by CreatedAt). The third (2012) remains Pending.
+        // Assert: two distinct items were delivered to the two agents; one remains Dispatched.
+        // FakeJobController distributes items to available agents in poll order —
+        // not guaranteed to be strictly FIFO by DispatchedAt in all cases.
         var deliveredIssues = new HashSet<string> { job1.IssueIdentifier, job2.IssueIdentifier };
-        Assert.Contains("2010", deliveredIssues);
-        Assert.Contains("2011", deliveredIssues);
+        Assert.Equal(2, deliveredIssues.Count); // 2 distinct issues delivered
 
-        // Third issue should still be Pending
+        var remainingIssue = new[] { "2010", "2011", "2012" }.First(i => !deliveredIssues.Contains(i));
+
+        // Third issue should be Dispatched (K8s Job created, waiting for an agent)
         await using var db = Fixture.DbContextFactory.CreateDbContext();
         var thirdItem = await db.WorkItems.AsNoTracking()
-            .FirstOrDefaultAsync(w => w.IssueIdentifier == "2012");
+            .FirstOrDefaultAsync(w => w.IssueIdentifier == remainingIssue);
         Assert.NotNull(thirdItem);
-        Assert.Equal(WorkItemStatus.Pending, thirdItem.Status);
+        Assert.Equal(WorkItemStatus.Dispatched, thirdItem.Status);
     }
 
     // ═══════════════════════════════════════════════════════════════════════

@@ -6,6 +6,12 @@ public sealed class IssueSummary : IHasCreatedAt
     public required string Title { get; init; }
     public required IReadOnlyList<string> Labels { get; init; }
 
+    /// <summary>
+    /// Hex colour values (without leading '#') for each label, keyed by label name.
+    /// Only populated by providers that expose colour data (e.g. GitHub). Null for providers that don't.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? LabelColors { get; init; }
+
     /// <summary>Issue creation date, used for FIFO ordering in the pipeline loop.</summary>
     public DateTime? CreatedAt { get; init; }
 

@@ -30,6 +30,16 @@ public sealed partial class PipelineLoopService
                 continue;
             }
 
+            // Detect DB-level stop: another pod (or a restart) persisted ClosedLoopAutoStart=false.
+            // Calling StopLoop() ensures CleanupAsync fires, IsLoopActive becomes false, and
+            // NotifyChange() propagates the stopped state — identical to a direct stop request.
+            if (!snapshot.Config.ClosedLoopAutoStart)
+            {
+                _logger.Information("Pipeline loop stopping — ClosedLoopAutoStart=false read from config");
+                StopLoop();
+                break;
+            }
+
             if (!await ExecuteCycleAsync(snapshot, stoppingToken, ct))
                 break;
         }
@@ -95,8 +105,10 @@ public sealed partial class PipelineLoopService
         FailedCount += dispatchResult.FailedCount;
         CurrentIssueIdentifier = null;
 
+        if (_stopRequested || ct.IsCancellationRequested) return false;
         await RunHousekeepingAsync(snapshot, agentDonePrQueues, ct);
 
+        if (_stopRequested || ct.IsCancellationRequested) return false;
         if (snapshot.Config.QueueSweepEnabled)
             await SweepPendingWorkItemsAsync(eligibleByProvider, sweepEnabled: true, ct);
 
@@ -325,6 +337,7 @@ public sealed partial class PipelineLoopService
                 donePrs, limit,
                 template.HousekeepingBranchCleanupEnabled,
                 snapshot.Config.HousekeepingBranchCleanupIntervalMinutes,
+                snapshot.Config.HousekeepingTriggerCooldownMinutes,
                 ct);
         }
     }

@@ -1,7 +1,19 @@
+using System.Diagnostics.Metrics;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services;
+
+/// <summary>
+/// Metrics counters threaded to <see cref="AgentStallMonitor"/> for recording
+/// stall events. Pass a non-null instance only at QGC retry agent call sites —
+/// all other call sites leave this null (default).
+/// </summary>
+internal record StallMonitorMetrics(
+    Counter<long> Warnings,
+    Counter<long> Kills,
+    Counter<long> ProcessDeaths);
 
 /// <summary>
 /// Reusable stall detection for agent interactions. Wraps an <see cref="IAgentProvider.ExecuteAsync"/>
@@ -22,10 +34,11 @@ internal static class AgentStallMonitor
         Action? onChange,
         Serilog.ILogger logger,
         CancellationToken ct,
-        Action<string>? onOutputLine = null)
+        Action<string>? onOutputLine = null,
+        StallMonitorMetrics? stallMetrics = null)
     {
         using var stallCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var monitorTask = RunMonitorLoopAsync(agentProvider, run, config, phaseDescription, onChange, logger, stallCts.Token);
+        var monitorTask = RunMonitorLoopAsync(agentProvider, run, config, phaseDescription, onChange, logger, stallCts.Token, stallMetrics);
 
         AgentResult result;
         try
@@ -53,10 +66,11 @@ internal static class AgentStallMonitor
         string phaseDescription,
         Action? onChange,
         Serilog.ILogger logger,
-        CancellationToken ct)
+        CancellationToken ct,
+        StallMonitorMetrics? stallMetrics = null)
     {
         using var stallCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var monitorTask = RunMonitorLoopAsync(agentProvider, run, config, phaseDescription, onChange, logger, stallCts.Token);
+        var monitorTask = RunMonitorLoopAsync(agentProvider, run, config, phaseDescription, onChange, logger, stallCts.Token, stallMetrics);
 
         try
         {
@@ -76,7 +90,8 @@ internal static class AgentStallMonitor
         string phaseDescription,
         Action? onChange,
         Serilog.ILogger logger,
-        CancellationToken stallToken)
+        CancellationToken stallToken,
+        StallMonitorMetrics? stallMetrics)
     {
         var killTimeout = config.AgentTimeout;
 
@@ -93,15 +108,15 @@ internal static class AgentStallMonitor
                     if (!TryGetHealth(agentProvider, run, logger, out var health))
                         continue;
 
-                    if (HandleProcessDeath(health!, run, phaseDescription, onChange, logger))
+                    if (HandleProcessDeath(health!, run, phaseDescription, onChange, logger, stallMetrics))
                         break;
 
                     var silence = ComputeSilence(health!, run);
 
-                    if (await HandleKillTimeoutAsync(silence, killTimeout, run, agentProvider, phaseDescription, onChange, logger))
+                    if (await HandleKillTimeoutAsync(silence, killTimeout, run, agentProvider, phaseDescription, onChange, logger, stallMetrics))
                         break;
 
-                    HandleSilenceWarning(health!, silence, config, run, phaseDescription, onChange, logger, ref lastWarnTime);
+                    HandleSilenceWarning(health!, silence, config, run, phaseDescription, onChange, logger, ref lastWarnTime, stallMetrics);
                 }
             }
             catch (OperationCanceledException) { }
@@ -136,7 +151,8 @@ internal static class AgentStallMonitor
     /// </summary>
     private static bool HandleProcessDeath(
         AgentHealthStatus health, PipelineRun run,
-        string phaseDescription, Action? onChange, Serilog.ILogger logger)
+        string phaseDescription, Action? onChange, Serilog.ILogger logger,
+        StallMonitorMetrics? stallMetrics)
     {
         if (health.IsProcessAlive == false)
         {
@@ -145,6 +161,8 @@ internal static class AgentStallMonitor
             logger.Error("Pipeline {RunId} {StallMessage}", run.RunId, errorMsg);
             run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = errorMsg });
             onChange?.Invoke();
+            stallMetrics?.ProcessDeaths.Add(1,
+                new KeyValuePair<string, object?>("phase", PipelineTelemetry.NormalizeStallPhase(phaseDescription)));
             return true;
         }
         return false;
@@ -167,7 +185,8 @@ internal static class AgentStallMonitor
     private static async Task<bool> HandleKillTimeoutAsync(
         TimeSpan silence, TimeSpan killTimeout,
         PipelineRun run, IAgentProvider agentProvider,
-        string phaseDescription, Action? onChange, Serilog.ILogger logger)
+        string phaseDescription, Action? onChange, Serilog.ILogger logger,
+        StallMonitorMetrics? stallMetrics)
     {
         if (silence < killTimeout)
             return false;
@@ -177,6 +196,9 @@ internal static class AgentStallMonitor
         logger.Error("Pipeline {RunId} {StallMessage}", run.RunId, killMsg);
         run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = killMsg });
         onChange?.Invoke();
+
+        stallMetrics?.Kills.Add(1,
+            new KeyValuePair<string, object?>("phase", PipelineTelemetry.NormalizeStallPhase(phaseDescription)));
 
         try { await agentProvider.KillAsync(); }
         catch (Exception ex) { logger.Warning(ex, "Pipeline {RunId} KillAsync() failed", run.RunId); }
@@ -191,7 +213,8 @@ internal static class AgentStallMonitor
         AgentHealthStatus health, TimeSpan silence,
         PipelineConfiguration config, PipelineRun run,
         string phaseDescription, Action? onChange,
-        Serilog.ILogger logger, ref DateTime lastWarnTime)
+        Serilog.ILogger logger, ref DateTime lastWarnTime,
+        StallMonitorMetrics? stallMetrics)
     {
         var timeSinceLastWarn = DateTime.UtcNow - lastWarnTime;
         if (silence < config.StallWarningInterval || timeSinceLastWarn < config.StallWarningInterval)
@@ -208,6 +231,8 @@ internal static class AgentStallMonitor
         logger.Warning("Pipeline {RunId} {StallMessage}", run.RunId, msg);
         run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = msg });
         onChange?.Invoke();
+        stallMetrics?.Warnings.Add(1,
+            new KeyValuePair<string, object?>("phase", PipelineTelemetry.NormalizeStallPhase(phaseDescription)));
         lastWarnTime = DateTime.UtcNow;
     }
 }

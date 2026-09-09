@@ -1,6 +1,5 @@
 using CodingAgentWebUI.E2ETests.Fakes;
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.TestUtilities;
@@ -79,9 +78,6 @@ public sealed class MultiReplicaE2EFixture : IAsyncLifetime
 
     public IOrchestratorRunService RunService1 => Replica1.Services.GetRequiredService<IOrchestratorRunService>();
     public IOrchestratorRunService RunService2 => Replica2.Services.GetRequiredService<IOrchestratorRunService>();
-
-    public AgentReservationService ReservationService1 => Replica1.Services.GetRequiredService<AgentReservationService>();
-    public AgentReservationService ReservationService2 => Replica2.Services.GetRequiredService<AgentReservationService>();
 
     public Task InitializeAsync()
     {

@@ -13,6 +13,9 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Steps;
 /// and verifies labels are applied regardless of routing path.
 /// Feature: 029-pipeline-projects, Requirements: 7.3, 7.4, 7.5, 7.6
 /// </summary>
+// Moved to [Collection("Metrics")] (from "CreateSubIssues") to serialise with
+// CreateSubIssuesStepTests, which now also uses [Collection("Metrics")].
+[Collection("Metrics")]
 public class CreateSubIssuesStepRoutingTests : IDisposable
 {
     private readonly Mock<IPipelineCallbacks> _callbacks = new();

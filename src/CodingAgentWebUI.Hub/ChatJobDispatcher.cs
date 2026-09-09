@@ -247,7 +247,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
         if (!string.IsNullOrEmpty(effort) && !effort.Equals("auto", StringComparison.OrdinalIgnoreCase))
         {
-            if (ValidEffortValues.Contains(effort))
+            if (KiroCliSettingsWriter.ValidEffortValues.Contains(effort))
                 container.Env.Add(new V1EnvVar { Name = AgentDefaults.EnvChatEffort, Value = effort });
             else
                 _logger.Warning("ChatJobDispatcher: invalid effort value rejected: {Effort}", effort);
@@ -962,9 +962,6 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     /// </summary>
     internal Task? TryGetWatcherTask(string agentId)
         => _activeWatchers.TryGetValue(agentId, out var entry) ? entry.WatcherTask : null;
-
-    private static readonly HashSet<string> ValidEffortValues =
-        new(["high", "medium", "low"], StringComparer.OrdinalIgnoreCase);
 
     [System.Text.RegularExpressions.GeneratedRegex(@"^[a-zA-Z0-9._\-]{1,63}$")]
     private static partial System.Text.RegularExpressions.Regex K8sLabelValuePattern();

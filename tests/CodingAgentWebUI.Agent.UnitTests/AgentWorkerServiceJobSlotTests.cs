@@ -84,22 +84,6 @@ public class AgentWorkerServiceJobSlotTests
     // ── Rejection Notification ───────────────────────────────────────────
 
     [Fact]
-    public async Task HandleAssignJob_WhenBusy_RejectionPathCompletes()
-    {
-        var service = CreateService();
-        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"existing-job");
-        SetPrivateField(GetSlotManager(service), "_isBusy", true);
-
-        var message = CreateTestJobAssignment("rejected-job");
-        var handler = GetPrivateMethod(service, "HandleAssignJobAsync");
-        var task = (Task)handler.Invoke(service, [message])!;
-        await task;
-
-        // Handler completes without throwing; active job unchanged
-        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().Be((JobId)"existing-job");
-    }
-
-    [Fact]
     public async Task HandleAssignConsolidationJob_WhenBusy_RejectionPathCompletes()
     {
         var service = CreateService();
@@ -151,30 +135,6 @@ public class AgentWorkerServiceJobSlotTests
         var activeJobId = GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId");
         activeJobId.Should().NotBeNull();
         activeJobId!.Value.Value.Should().BeOneOf("race-job-1", "race-job-2");
-    }
-
-    [Fact]
-    public async Task ConcurrentAssignJob_HandlersComplete_ExactlyOneAcquiresSlot()
-    {
-        // Both handlers run to completion (one acquires, one rejects).
-        // The winner's slot is then cleared by the JobAccepted failure on the disconnected hub.
-        // We verify the mutual exclusion invariant held during acquisition.
-        var service = CreateService();
-        var handler = GetPrivateMethod(service, "HandleAssignJobAsync");
-
-        var msg1 = CreateTestJobAssignment("race-a");
-        var msg2 = CreateTestJobAssignment("race-b");
-
-        var task1 = Task.Run(() => (Task)handler.Invoke(service, [msg1])!);
-        var task2 = Task.Run(() => (Task)handler.Invoke(service, [msg2])!);
-
-        // Both handlers should complete without throwing
-        await Task.WhenAll(task1, task2);
-
-        // After both complete (with disconnected hub), the winning handler
-        // clears _activeJobId on JobAccepted failure. The invariant is that
-        // no double-execution occurred — verify via IsBusy being false (both done).
-        service.IsBusy.Should().BeFalse("both handlers completed; winner cleared on JobAccepted failure");
     }
 
     // ── Heartbeat Lifecycle ──────────────────────────────────────────────

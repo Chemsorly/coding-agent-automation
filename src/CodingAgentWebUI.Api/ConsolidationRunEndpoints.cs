@@ -22,10 +22,11 @@ public static class ConsolidationRunEndpoints
         group.MapPut("/{runId:guid}", Save);
         group.MapDelete("/{runId:guid}", Delete);
 
-        // Called by the Job Controller's ConsolidationDispatchLoop to transition run status
-        // (Queued→Running on dispatch success, any→Failed on dispatch failure).
-        // Delegates to IConsolidationService so cache invalidation, OnChange events, and
-        // workspace management are handled correctly.
+        // Previously called by the Job Controller's ConsolidationDispatchLoop to transition run
+        // status (Queued→Running on dispatch success, any→Failed on dispatch failure).
+        // ConsolidationDispatchLoop was removed in issue #2323; this endpoint is retained as
+        // part of the API surface. Delegates to IConsolidationService so cache invalidation,
+        // OnChange events, and workspace management are handled correctly.
         group.MapPost("/{runId:guid}/transition", TransitionStatus);
     }
 

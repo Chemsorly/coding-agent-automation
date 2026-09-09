@@ -518,4 +518,53 @@ public sealed class PipelineApiWorkItemClientTests : IDisposable
         // malformed. Add a test that inspects the recorded request body to confirm it contains
         // {"priorityWeight": <value>} so regressions in payload serialisation are caught.
     }
+
+    // ── DispatchAsync ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task DispatchAsync_Success_ReturnsWorkItemId()
+    {
+        var expectedId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath("/api/work-items/dispatch").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(expectedId)));
+
+        var result = await _sut.DispatchAsync(new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier("owner/repo#1"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "kiro,dotnet",
+            TimeoutSeconds = 3600,
+            RunId = Guid.NewGuid().ToString()
+        });
+
+        result.Should().Be(expectedId, "DispatchAsync must return the WorkItemId from the response body");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_ServerError_ThrowsHttpRequestException()
+    {
+        _server.Given(Request.Create().WithPath("/api/work-items/dispatch").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(503));
+
+        var act = () => _sut.DispatchAsync(new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier("owner/repo#1"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "kiro,dotnet",
+            TimeoutSeconds = 3600,
+            RunId = Guid.NewGuid().ToString()
+        });
+
+        await act.Should().ThrowAsync<HttpRequestException>(
+            "503 from the dispatch endpoint must propagate as HttpRequestException via EnsureSuccessStatusCode");
+    }
 }

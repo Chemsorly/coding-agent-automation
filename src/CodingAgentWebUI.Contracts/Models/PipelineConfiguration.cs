@@ -23,7 +23,28 @@ public sealed record PipelineConfiguration
 
     [Key(4)]
     [ProjectOverridable(Order = 3)]
-    public TimeSpan AgentTimeout { get; init; } = PipelineConstants.DefaultAgentTimeout;
+    // TODO [WARNING]: The init accessor throws ArgumentOutOfRangeException on TimeSpan.Zero.
+    // PipelineConfiguration is deserialized from persisted JSON via System.Text.Json in
+    // PostgresConfigurationStore.LoadPipelineConfigAsync/UpdatePipelineConfigAsync, which invokes
+    // the init setter during deserialization. Any existing PipelineConfig DB row that previously
+    // stored "AgentTimeout":"00:00:00" (a value that was legal before this validation was added —
+    // the integration test formerly saved/loaded TimeSpan.Zero) will now throw at load time,
+    // breaking config loading for the entire application. If any such rows exist in production,
+    // either add a DB migration to normalize stored zeros to PipelineConstants.DefaultAgentTimeout,
+    // or clamp/normalize a loaded zero value before assignment rather than throwing.
+    // (Correctness review [WARNING] @ PipelineConfiguration.cs:31)
+    public TimeSpan AgentTimeout
+    {
+        get => _agentTimeout;
+        init
+        {
+#pragma warning disable S3236 // 'value' is the implicit init parameter; callers need the property name in the exception.
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value, TimeSpan.Zero, nameof(AgentTimeout));
+#pragma warning restore S3236
+            _agentTimeout = value;
+        }
+    }
+    private readonly TimeSpan _agentTimeout = PipelineConstants.DefaultAgentTimeout;
 
     /// <summary>
     /// How long the agent can be silent (no output) before the stall monitor logs a warning.
@@ -567,6 +588,20 @@ public sealed record PipelineConfiguration
     /// </summary>
     [Key(73)]
     public int HousekeepingBranchCleanupIntervalMinutes { get; init; } = 60;
+
+    /// <summary>
+    /// Minimum time in minutes between consecutive branch-update triggers for the same PR.
+    /// Prevents a single PR from monopolising the update slot when CI takes longer than one
+    /// poll cycle. Default: 25 (comfortably exceeds a typical ~20-min CI run).
+    /// </summary>
+    // TODO: Key(82) is placed here between Key(73) and Key(74) in source order but is numerically
+    // the highest key in this record (Keys 74–81 appear later in the file). MessagePack resolves
+    // by key number not source order so serialisation is correct, but the out-of-sequence placement
+    // is a maintenance hazard — future contributors may miss it when auditing the key sequence.
+    // Consider relocating this property after Key(81) at the bottom of the record to restore
+    // sequential source order.
+    [Key(82)]
+    public int HousekeepingTriggerCooldownMinutes { get; init; } = 25;
 
     // ── Consolidation dispatch settings ──────────────────────────────────────
 

@@ -21,7 +21,6 @@ internal sealed class FakeHubConnectionManager : IHubConnectionManager
     // Events (wired by WireEventHandlers)
     // CS0067 suppressed: events are wired via += in WireEventHandlers; the compiler cannot see external subscribers
 #pragma warning disable CS0067
-    public event Func<JobAssignmentMessage, Task>? OnAssignJob;
     public event Func<string, Task>? OnCancelJob;
     public event Func<ChatPromptMessage, Task>? OnAssignChatPrompt;
     public event Func<string, Task>? OnCancelChat;

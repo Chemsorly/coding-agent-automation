@@ -15,7 +15,6 @@
     Data: IPipelineApiWorkItemClient.GetPendingAsync (queued) + GetActiveAsync (in-flight).
     Browsing the provider's issue backlog with dependency-based readiness + dispatch is the
     dispatch-drawer flow (Pipelines → Browse Issues) — linked, not duplicated here.
-    Per-issue PriorityWeight is intentionally absent (no backend field).
 *@
 
 <PageTitle>Work - Coding Agent</PageTitle>
@@ -26,12 +25,19 @@
             <h1>Work</h1>
             <span class="cockpit-page-sub">Queued and in-flight work items</span>
         </div>
-        <a href="/pipelines" class="cockpit-pager-btn" style="text-decoration: none;">
-            <Icon Name="search" Size="14" /> Browse &amp; dispatch
-        </a>
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <RefreshBar OnRefresh="RefreshQuietAsync" />
+            <a href="pipelines" class="cockpit-pager-btn" style="text-decoration: none;">
+                <Icon Name="search" Size="14" /> Browse &amp; dispatch
+            </a>
+        </div>
     </div>
 
-    <AutoRefresh IntervalSeconds="10" OnTick="RefreshQuietAsync" />
+    @* TODO: [WARNING] Work shows queue depth and in-flight counts that change on job dispatch/completion.
+       The run-scoped hub events (OnStepTransition, OnRunCompleted) are not wired here because the hub
+       sends them only to run-specific groups (run-{jobId}), and subscribing per-run on a list page is
+       impractical. A global "queue changed" broadcast event on the hub would enable push-based refresh.
+       Until then, the RefreshBar auto-refresh polling is the only mechanism for background updates. *@
 
     @if (_loading)
     {
@@ -44,8 +50,38 @@
     else
     {
         <div class="cockpit-stat-strip">
-            <div class="cockpit-stat"><span class="cockpit-stat-l">In flight</span><span class="cockpit-stat-v">@_active.Count</span></div>
-            <div class="cockpit-stat"><span class="cockpit-stat-l">Queued</span><span class="cockpit-stat-v">@_pending.Count</span></div>
+            <div class="cockpit-stat">
+                <span class="cockpit-stat-l">In flight</span>
+                <span class="cockpit-stat-v">@_active.Count</span>
+                @if (_active.Count > 0)
+                {
+                    @* TODO: [WARNING] If ALL active items have DispatchedAt == null (pre-dates the field),
+                       this secondary line is silently omitted even when _active.Count > 0,
+                       meaning the "at least one additional data point" criterion is not met. *@
+                    var oldestActive = _active.Where(a => a.DispatchedAt.HasValue).MinBy(a => a.DispatchedAt);
+                    @if (oldestActive?.DispatchedAt is { } dispAt)
+                    {
+                        <span style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Longest running: @Ago(dispAt)</span>
+                    }
+                }
+            </div>
+            <div class="cockpit-stat">
+                <span class="cockpit-stat-l">Queued</span>
+                <span class="cockpit-stat-v">@_pending.Count</span>
+                @if (_pending.Count > 0)
+                {
+                    <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px;">
+                        @foreach (var (label, count) in GetTypeBreakdown(_pending.Select(p => p.TaskType)))
+                        {
+                            <span class="cockpit-chip">@label <strong style="color: var(--text);">@count</strong></span>
+                        }
+                    </div>
+                    @if (_pending.MinBy(p => p.CreatedAt) is { } oldest)
+                    {
+                        <span style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Oldest: @Ago(oldest.CreatedAt)</span>
+                    }
+                }
+            </div>
         </div>
 
         <!-- in flight -->
@@ -59,20 +95,40 @@
             {
                 <div class="monitoring-table-wrap">
                     <table class="monitoring-table">
-                        <thead><tr><th>Issue</th><th>Status</th><th>Agent selector</th><th>Dispatched</th><th></th></tr></thead>
+                        <thead><tr><th>Issue</th><th>Status</th><th>Step</th><th>Agent selector</th><th>Dispatched</th><th></th></tr></thead>
                         <tbody>
                             @foreach (var a in _active)
                             {
-                                <tr>
-                                    <td class="monitoring-mono">#@a.IssueIdentifier</td>
+                                <tr class="monitoring-row-clickable" @onclick="() => OpenRun(a.Id)">
+                                    <td>
+                                        <span class="monitoring-mono" style="font-weight: 600;">#@a.IssueIdentifier</span>
+                                        @if (!string.IsNullOrEmpty(a.IssueTitle))
+                                        {
+                                            @(" ")<!-- space between number and title, matching Queue/ProviderBacklog pattern -->
+                                            <span style="color: var(--text-muted);">@Truncate(a.IssueTitle, 60)</span>
+                                        }
+                                    </td>
                                     <td><span class="cockpit-chip" style="color: @StatusColor(a.Status);">@a.Status</span></td>
+                                    <td>
+                                        @if (a.CurrentStep is not null)
+                                        {
+                                            <span class="monitoring-step monitoring-step-@a.CurrentStep.Value.ToString().ToLowerInvariant()">
+                                                @a.CurrentStep.Value.ToDisplayName()
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <span class="monitoring-muted">—</span>
+                                        }
+                                    </td>
                                     <td class="monitoring-mono monitoring-muted">@a.AgentSelector</td>
                                     <td>@(a.DispatchedAt is null ? "—" : Ago(a.DispatchedAt.Value))</td>
                                     <td style="text-align: right;">
                                         <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
                                                 disabled="@_cancelling.Contains(a.Id)"
                                                 title="Cancel this in-flight run"
-                                                @onclick="() => CancelWorkItemAsync(a.Id)">
+                                                @onclick="() => CancelWorkItemAsync(a.Id)"
+                                                @onclick:stopPropagation="true">
                                             @(_cancelling.Contains(a.Id) ? "Cancelling…" : "Cancel")
                                         </button>
                                     </td>
@@ -93,9 +149,13 @@
             }
             else
             {
+                @if (_priorityError is not null)
+                {
+                    <div style="color: var(--error); padding: 8px 16px; font-size: 13px;">@_priorityError</div>
+                }
                 <div class="monitoring-table-wrap">
                     <table class="monitoring-table">
-                        <thead><tr><th>Issue</th><th>Type</th><th>Project</th><th>Initiated by</th><th>Retries</th><th>Age</th><th></th></tr></thead>
+                        <thead><tr><th>Issue</th><th>Type</th><th>Project</th><th>Initiated by</th><th>Retries</th><th>Age</th><th>Priority</th><th></th></tr></thead>
                         <tbody>
                             @foreach (var p in _pending)
                             {
@@ -109,6 +169,18 @@
                                     <td>@(string.IsNullOrEmpty(p.InitiatedBy) ? "—" : p.InitiatedBy)</td>
                                     <td>@(p.RetryCount > 0 ? p.RetryCount.ToString() : "—")</td>
                                     <td title="@p.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")">@Ago(p.CreatedAt)</td>
+                                    <td>
+                                        <input type="number"
+                                               class="priority-input"
+                                               min="0"
+                                               max="1000"
+                                               value="@p.PriorityWeight"
+                                               title="Edit priority (0–1000)"
+                                               @onchange="async e => {
+                                                   if (int.TryParse(e.Value?.ToString(), out var w) && w >= 0 && w <= 1000)
+                                                       await SetPriorityAsync(p.Id, w);
+                                               }" />
+                                    </td>
                                     <td style="text-align: right;">
                                         <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
                                                 disabled="@_cancelling.Contains(p.Id)"
@@ -143,7 +215,7 @@
             {
                 <div class="monitoring-table-wrap">
                     <table class="monitoring-table">
-                        <thead><tr><th>Issue</th><th>Readiness</th><th></th></tr></thead>
+                        <thead><tr><th>Issue</th><th>Labels</th><th>Readiness</th><th></th></tr></thead>
                         <tbody>
                             @foreach (var b in _backlog)
                             {
@@ -151,6 +223,21 @@
                                     <td>
                                         <span class="monitoring-mono" style="font-weight: 600;">#@b.Identifier</span>
                                         <span style="color: var(--text-muted);">@Truncate(b.Title, 60)</span>
+                                    </td>
+                                    <td>
+                                        @if (b.Labels is { Count: > 0 })
+                                        {
+                                            <div style="display: flex; flex-wrap: wrap; gap: 3px;">
+                                                @foreach (var label in b.Labels.Take(5))
+                                                {
+                                                    <span class="sidebar-label @UiFormatters.GetLabelClass(label)" style="@GetLabelStyle(label, b.LabelColors)">@label</span>
+                                                }
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <span style="color: var(--text-faint);">—</span>
+                                        }
                                     </td>
                                     <td>
                                         @if (b.IsReady)
@@ -184,6 +271,9 @@
     private IReadOnlyList<ActiveWorkItemDto> _active = [];
     private bool _loading = true;
     private string? _error;
+    // _priorityError is shared across all rows; a per-row model would be cleaner but this matches
+    // the single-error pattern used elsewhere on this page.
+    private string? _priorityError;
 
     // WorkItem ids with an in-flight cancel request — disables the row's button until it settles.
     private readonly HashSet<Guid> _cancelling = new();
@@ -270,6 +360,27 @@
         }
     }
 
+    // Sets the dispatch priority weight for a pending WorkItem.
+    // On success, clears any prior error and refreshes to show the authoritative server value.
+    // On failure, records the error and refreshes to revert the DOM input to the server value.
+    // Revert is best-effort: if RefreshQuietAsync itself fails, _pending stays stale until
+    // the next auto-refresh tick (same trade-off as the rest of Work.razor).
+    private async Task SetPriorityAsync(Guid id, int weight)
+    {
+        try
+        {
+            await WorkItems.SetPriorityAsync(id, weight, _cts.Token);
+            _priorityError = null;
+            await RefreshQuietAsync();
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _priorityError = $"Priority update failed: {ex.Message}";
+            await RefreshQuietAsync();
+        }
+    }
+
     // Quiet tick refresh — no spinner, keep stale data on a transient error.
     private async Task RefreshQuietAsync()
     {
@@ -291,6 +402,14 @@
         _ => "var(--text-muted)"
     };
 
+    // WorkItem.Id == run id. NavigationManager.NavigateTo with a relative path resolves against
+    // BaseUri, which is correct Blazor Server behaviour.
+    // TODO: [WARNING] Acceptance criterion "Clicking an active run row on the Overview page opens the run
+    // detail / pipeline sidebar" was not changed by this PR. Overview.razor already had @onclick on its
+    // active-run rows (cockpit-run-row → OpenRun) prior to this diff. If the criterion was genuinely
+    // broken at time of filing, the root cause was not identified here and may still be present.
+    private void OpenRun(Guid id) => Nav.NavigateTo($"runs/{id}");
+
     private static string Truncate(string? s, int n)
         => string.IsNullOrEmpty(s) ? "" : (s.Length > n ? s[..n] + "…" : s);
 
@@ -301,6 +420,44 @@
         if (d.TotalMinutes < 60) return $"{(int)d.TotalMinutes}m ago";
         if (d.TotalHours < 24) return $"{(int)d.TotalHours}h ago";
         return $"{(int)d.TotalDays}d ago";
+    }
+
+    /// <summary>Returns a short label + count for each distinct task type, ordered by count descending.</summary>
+    private static IEnumerable<(string Label, int Count)> GetTypeBreakdown(IEnumerable<WorkItemTaskType> types)
+        => types
+            .GroupBy(t => t)
+            .OrderByDescending(g => g.Count())
+            .Select(g => (Label: g.Key switch
+            {
+                WorkItemTaskType.Review => "Review",
+                WorkItemTaskType.Decomposition => "Decomp",
+                WorkItemTaskType.Consolidation => "Consol",
+                _ => "Impl"
+            }, Count: g.Count()));
+
+    /// <summary>
+    /// Returns an inline style string for a label chip using the provider hex colour when available,
+    /// falling back to empty string (CSS class styling applies instead).
+    /// </summary>
+    private static string GetLabelStyle(string labelName, IReadOnlyDictionary<string, string>? colors)
+    {
+        if (colors is null || !colors.TryGetValue(labelName, out var hex) || string.IsNullOrEmpty(hex))
+            return string.Empty;
+
+        // GitHub hex colours are 6-digit without '#'. Use as background with auto-contrast text.
+        // Compute perceived luminance to pick white or dark text.
+        if (hex.Length == 6
+            && byte.TryParse(hex.AsSpan(0, 2), System.Globalization.NumberStyles.HexNumber, null, out var r)
+            && byte.TryParse(hex.AsSpan(2, 2), System.Globalization.NumberStyles.HexNumber, null, out var g)
+            && byte.TryParse(hex.AsSpan(4, 2), System.Globalization.NumberStyles.HexNumber, null, out var b))
+        {
+            // Perceived luminance (ITU-R BT.709)
+            var luminance = 0.2126 * r / 255.0 + 0.7152 * g / 255.0 + 0.0722 * b / 255.0;
+            var textColor = luminance > 0.5 ? "#1a1a1a" : "#ffffff";
+            return $"background: #{hex}; color: {textColor}; border-color: #{hex};";
+        }
+
+        return string.Empty;
     }
 
     public async ValueTask DisposeAsync()

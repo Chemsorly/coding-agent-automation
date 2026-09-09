@@ -128,7 +128,7 @@ public class StepMetricsTests : IDisposable
         listener.Start();
 
         var run = CreateRun(projectId: "null-result-test");
-        run.AccumulateTokenUsage(null);
+        run.AccumulateTokenUsage((AgentResult?)null);
         listener.Dispose();
 
         counters.Should().NotContain("agent.tokens.used");

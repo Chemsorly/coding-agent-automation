@@ -3,7 +3,6 @@ using Moq;
 using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -105,7 +104,6 @@ public class DispatchFeedbackComponentTests : BunitContext
         var registry = new AgentRegistryService(mockLogger.Object);
         Services.AddSingleton(registry);
         Services.AddSingleton<IAgentRegistryService>(registry);
-        Services.AddSingleton(new JobDeduplicationGuardService(registry, mockLogger.Object));
         Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
         Services.AddSingleton<IWorkDistributor>(_mockWorkDistributor.Object);
         Services.AddSingleton<IDependencyChecker>(new DependencyChecker(mockLogger.Object));

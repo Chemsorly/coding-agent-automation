@@ -103,19 +103,11 @@ public static partial class PipelineFormatting
     /// Checks whether a file path matches any of the blacklisted path prefixes.
     /// Matching is prefix-based, case-insensitive, and normalizes backslashes to forward slashes.
     /// </summary>
+    // Delegates to the shared Infrastructure.Common implementation so Infrastructure.Providers can
+    // use the same logic without referencing Pipeline (Spec 048 Phase 1 kept Providers Pipeline-free).
+    // Kept here so existing PipelineFormatting.IsPathBlacklisted callers/tests stay unchanged.
     public static bool IsPathBlacklisted(string filePath, IReadOnlyList<string> blacklistedPrefixes)
-    {
-        if (blacklistedPrefixes.Count == 0) return false;
-        var normalized = filePath.Replace('\\', '/');
-        foreach (var prefix in blacklistedPrefixes)
-        {
-            var normalizedPrefix = prefix.Replace('\\', '/').TrimEnd('/');
-            if (normalized.StartsWith(normalizedPrefix + "/", StringComparison.OrdinalIgnoreCase)
-                || normalized.Equals(normalizedPrefix, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-        return false;
-    }
+        => PathBlacklist.IsPathBlacklisted(filePath, blacklistedPrefixes);
 
     private static void AppendComplianceSection(StringBuilder sb, AcceptanceCriteriaReport? report)
     {
@@ -207,8 +199,6 @@ public static partial class PipelineFormatting
             FormatTestGateSummary(report.Tests)
         };
 
-        if (report.SecurityScan is not null)
-            parts.Add($"Security {(report.SecurityScan.Passed ? "✅" : "❌")}");
         if (report.ExternalCi is not null)
             parts.Add($"External CI {(report.ExternalCi.Passed ? "✅" : "❌")}");
 

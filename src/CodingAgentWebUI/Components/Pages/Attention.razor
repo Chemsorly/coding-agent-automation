@@ -26,7 +26,14 @@
             <h1>Attention</h1>
             <span class="cockpit-page-sub">@(_loading ? "…" : $"{_sections.Sum(s => s.Rows.Count)}") item(s) that may need a human — acted on in the issue tracker</span>
         </div>
+        <RefreshBar OnRefresh="RefreshAsync" IsLoading="@_loading" />
     </div>
+
+    @* TODO: [WARNING] Attention shows needs-refinement, failed runs, and decomposition plans — data that
+       changes on OnRunCompleted events. The run-scoped hub events are not wired here because they are
+       sent only to run-specific groups, making per-run subscription on a list page impractical.
+       A global "any run completed" broadcast event on the hub would enable push-based refresh.
+       Until then, the RefreshBar auto-refresh polling is the only mechanism for background updates. *@
 
     @if (_loading)
     {
@@ -147,6 +154,19 @@
         catch (ObjectDisposedException) { }
     }
 
+    // Reload both sections — used by the RefreshBar OnRefresh callback.
+    // TODO: [WARNING] This method calls LoadAsync(), which sets _loading = true and shows the full
+    // "Loading…" card, causing a visible flicker on every auto-refresh tick. The established convention
+    // for background auto-refresh (see Overview/Runs/Work) is to use a "quiet" refetch that keeps the
+    // existing content visible and only replaces it when new data arrives. Fix: extract a quiet variant
+    // (analogous to RefreshQuietAsync on Runs) that does not toggle _loading, and wire the RefreshBar
+    // OnRefresh to that quiet path instead.
+    private async Task RefreshAsync()
+    {
+        await LoadAsync();
+        await LoadBlockedIssuesAsync();
+    }
+
     private async Task LoadBlockedIssuesAsync()
     {
         _blockedLoading = true;
@@ -202,7 +222,9 @@
         }
     }
 
-    private void OpenRun(string runId) => Nav.NavigateTo($"/runs/{runId}");
+    // NavigationManager.NavigateTo with a bare relative path resolves against BaseUri (the app
+    // root), not the current page URL — this is the correct Blazor Server behaviour.
+    private void OpenRun(string runId) => Nav.NavigateTo($"runs/{runId}");
 
     public async ValueTask DisposeAsync()
     {

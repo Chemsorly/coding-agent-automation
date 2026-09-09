@@ -223,17 +223,17 @@ public class WorkDistributorAdditionalTests
     }
 
     [Fact]
-    public async Task Kubernetes_AfterDistribute_GetJobStatus_ReturnsPending()
+    public async Task Kubernetes_AfterDistribute_GetJobStatus_ReturnsDispatched()
     {
-        // DistributeAsync creates the WorkItem via the API in Pending state; the Job Controller's
-        // dispatch loop is what later moves it to Dispatched/Running.
+        // Synchronous dispatch path: DistributeAsync calls POST /api/work-items/dispatch
+        // which atomically creates the WorkItem as Dispatched (K8s Job already running).
         var sut = CreateKubernetes();
         var request = CreateMinimalRequest();
 
         var result = await sut.DistributeAsync(request, CancellationToken.None);
 
         var status = await sut.GetJobStatusAsync(result.WorkItemId!, CancellationToken.None);
-        status.Should().Be(JobDistributionStatus.Pending);
+        status.Should().Be(JobDistributionStatus.Dispatched);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -271,7 +271,8 @@ file static class ApiWorkItemClientFake
         var created = new List<(Guid Id, JobDistributionRequest Request)>();
         var mock = new Mock<IPipelineApiWorkItemClient>();
 
-        mock.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+        // DispatchAsync — the new synchronous dispatch endpoint. Creates the item as Dispatched.
+        mock.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((JobDistributionRequest request, CancellationToken _) =>
             {
                 var id = Guid.NewGuid();
@@ -279,10 +280,10 @@ file static class ApiWorkItemClientFake
                 return id;
             });
 
-        // POST /api/work-items creates the item in Pending; nothing here dispatches it further.
+        // After synchronous dispatch, the item is Dispatched (not Pending).
         mock.Setup(c => c.GetStatusAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((Guid id, CancellationToken _) =>
-                created.Any(w => w.Id == id) ? WorkItemStatus.Pending : null);
+                created.Any(w => w.Id == id) ? WorkItemStatus.Dispatched : null);
 
         mock.Setup(c => c.IsIssueDistributedAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string issueIdentifier, string providerConfigId, CancellationToken _) =>

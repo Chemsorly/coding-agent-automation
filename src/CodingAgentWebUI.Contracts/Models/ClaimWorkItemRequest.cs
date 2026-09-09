@@ -18,4 +18,12 @@ public sealed record ClaimWorkItemRequest
     /// name (which differs between the API path and job-controller path).
     /// </summary>
     public string? K8sJobName { get; init; }
+
+    /// <summary>
+    /// The Kiro credential PVC name claimed for this work item, when the dispatching agent
+    /// is of type kiro. Written to <c>WorkItems.ClaimedPvcName</c> at claim time so that
+    /// <c>GET /api/agents/credential-pool</c> can compute accurate PVC availability by
+    /// querying the database rather than K8s Jobs. Null for non-kiro agents.
+    /// </summary>
+    public string? KiroPvcName { get; init; }
 }

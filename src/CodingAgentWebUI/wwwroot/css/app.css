@@ -507,6 +507,7 @@ select option { background: var(--surface); color: var(--text); }
 .step-badge.step-completed { background: var(--bg-success); color: var(--success); }
 .step-badge.step-failed { background: var(--bg-error); color: var(--error); }
 .step-badge.step-cancelled { background: var(--bg-warning); color: var(--warning); }
+.step-badge.step-restart { background: var(--bg-info); color: var(--accent-light); }
 .step-badge.step-generatingcode, .step-badge.step-cloningrepository, .step-badge.step-creatingbranch { background: var(--bg-info); color: var(--accent-light); }
 .step-badge.step-runningqualitygates { background: var(--bg-warning); color: var(--warning); }
 
@@ -651,6 +652,8 @@ select option { background: var(--surface); color: var(--text); }
 .step-card-cancelled .step-card-name { color: var(--text-muted); font-style: italic; }
 .step-card-revisited { background: #2a2a1a; border-left-color: var(--warning); }
 .step-card-revisited .step-card-name { color: var(--warning); }
+.step-card-restart { background: var(--bg-info); border-left-color: var(--accent-light); }
+.step-card-restart .step-card-name { color: var(--accent-light); }
 
 /* Quality Gate details in sidebar */
 .qg-header-pass { font-weight: 600; color: var(--success); margin-bottom: 4px; }
@@ -776,6 +779,27 @@ select option { background: var(--surface); color: var(--text); }
 
 .btn-cancel-small { padding: 3px 10px; font-size: 0.75rem; border: 1px solid var(--error); color: var(--error); }
 .btn-cancel-small:hover { background: var(--error); color: white; }
+
+/* Priority column number input */
+.priority-input {
+    width: 64px;
+    padding: 2px 6px;
+    font-size: 0.82rem;
+    font-family: inherit;
+    background: var(--surface-alt);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius, 4px);
+    text-align: right;
+    -moz-appearance: textfield;
+}
+.priority-input::-webkit-outer-spin-button,
+.priority-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.priority-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: var(--bg-hover, var(--surface-alt));
+}
 
 /* Agent Detail Panel & Profile/QGC badges */
 .badge-default { background: #1e6b3a; color: #a8e6cf; font-size: 0.65rem; padding: 1px 5px; border-radius: 3px; margin-left: 6px; font-weight: 600; text-transform: uppercase; }

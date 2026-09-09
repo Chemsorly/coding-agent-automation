@@ -4,7 +4,6 @@ using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -43,10 +42,9 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
         var mockLogger = new Mock<ILogger>();
         var registry = new AgentRegistryService(mockLogger.Object);
         var runService = new OrchestratorRunService(mockLogger.Object);
-        var dispatcher = new JobDeduplicationGuardService(registry, mockLogger.Object);
 
         _facade = new AgentHubFacade(new AgentHubFacadeDependencies(
-            registry, runService, dispatcher,
+            registry, runService,
             Mock.Of<IPipelineRunHistoryService>(),
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
@@ -88,10 +86,9 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
         var mockLogger = new Mock<ILogger>();
         var registry = new AgentRegistryService(mockLogger.Object);
         var runService = new OrchestratorRunService(mockLogger.Object);
-        var dispatcher = new JobDeduplicationGuardService(registry, mockLogger.Object);
 
         var facadeWithout = new AgentHubFacade(new AgentHubFacadeDependencies(
-            registry, runService, dispatcher,
+            registry, runService,
             Mock.Of<IPipelineRunHistoryService>(), Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(), NullLogger<AgentHubFacadeDependencies>.Instance));
 
@@ -146,10 +143,9 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
         var mockLogger = new Mock<ILogger>();
         var registry = new AgentRegistryService(mockLogger.Object);
         var runService = new OrchestratorRunService(mockLogger.Object);
-        var dispatcher = new JobDeduplicationGuardService(registry, mockLogger.Object);
 
         var facadeWithout = new AgentHubFacade(new AgentHubFacadeDependencies(
-            registry, runService, dispatcher,
+            registry, runService,
             Mock.Of<IPipelineRunHistoryService>(), Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(), NullLogger<AgentHubFacadeDependencies>.Instance));
 
@@ -168,7 +164,9 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
     [Fact]
     public async Task RequeueWorkItemAsync_ValidItem_TransitionsToPending()
     {
-        var id = await SeedWorkItem(WorkItemStatus.Dispatched);
+        // The requeue path transitions Failed→Pending (recovery path).
+        // Dispatched→Pending was removed (the DispatchLoop that needed it is gone).
+        var id = await SeedWorkItem(WorkItemStatus.Failed);
 
         await _facade.RequeueWorkItemAsync(id.ToString(), CancellationToken.None);
 
@@ -185,10 +183,9 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
         var mockLogger = new Mock<ILogger>();
         var registry = new AgentRegistryService(mockLogger.Object);
         var runService = new OrchestratorRunService(mockLogger.Object);
-        var dispatcher = new JobDeduplicationGuardService(registry, mockLogger.Object);
 
         var facadeWithout = new AgentHubFacade(new AgentHubFacadeDependencies(
-            registry, runService, dispatcher,
+            registry, runService,
             Mock.Of<IPipelineRunHistoryService>(), Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(), NullLogger<AgentHubFacadeDependencies>.Instance));
 
@@ -245,10 +242,9 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
         var mockLogger = new Mock<ILogger>();
         var registry = new AgentRegistryService(mockLogger.Object);
         var runService = new OrchestratorRunService(mockLogger.Object);
-        var dispatcher = new JobDeduplicationGuardService(registry, mockLogger.Object);
 
         var facadeWithout = new AgentHubFacade(new AgentHubFacadeDependencies(
-            registry, runService, dispatcher,
+            registry, runService,
             Mock.Of<IPipelineRunHistoryService>(), Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(), NullLogger<AgentHubFacadeDependencies>.Instance));
 
@@ -314,10 +310,9 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
         var mockLogger = new Mock<ILogger>();
         var registry = new AgentRegistryService(mockLogger.Object);
         var runService = new OrchestratorRunService(mockLogger.Object);
-        var dispatcher = new JobDeduplicationGuardService(registry, mockLogger.Object);
 
         var facadeWithout = new AgentHubFacade(new AgentHubFacadeDependencies(
-            registry, runService, dispatcher,
+            registry, runService,
             Mock.Of<IPipelineRunHistoryService>(), Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(), NullLogger<AgentHubFacadeDependencies>.Instance));
 

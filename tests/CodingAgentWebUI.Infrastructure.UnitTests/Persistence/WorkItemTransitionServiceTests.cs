@@ -17,6 +17,9 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 public class WorkItemTransitionServiceTests
 {
     [Theory]
+    // Pending→Dispatched and Dispatched→Pending are kept in the state machine for the consolidation
+    // dispatch path (ClaimWorkItem endpoint). The regular live dispatch path no longer creates Pending
+    // items (issue #2322), but the transitions remain valid for the consolidation path.
     [InlineData(WorkItemStatus.Pending, WorkItemStatus.Dispatched, true)]
     [InlineData(WorkItemStatus.Pending, WorkItemStatus.Cancelled, true)]
     [InlineData(WorkItemStatus.Pending, WorkItemStatus.Running, false)]
