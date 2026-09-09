@@ -84,10 +84,10 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
     [Fact]
     public async Task UpdateRunAsync_AfterTrigger_UpdatesStatusViaStore()
     {
-        // Arrange: trigger creates and persists a run
+        // Arrange: trigger creates and persists a run (starts as Queued in K8s mode)
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
-        run!.Status.Should().Be(ConsolidationRunStatus.Running);
+        run!.Status.Should().Be(ConsolidationRunStatus.Queued);
 
         // Act: simulate agent completion callback
         await _sut.UpdateRunAsync(run.RunId, ConsolidationRunStatus.Succeeded, "Completed", CancellationToken.None, totalTokens: 1500);
@@ -283,9 +283,14 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
     [Fact]
     public async Task CleanupOrphanedRunsAsync_MarksRunningAsFailed_ViaStore()
     {
-        // Arrange: create a run (status = Running)
+        // Arrange: create a run and manually transition it to Running (simulating the K8s Job
+        // Controller dispatch — TriggerAsync creates Queued, the Job Controller transitions to Running)
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
+
+        // Simulate Job Controller transitioning Queued → Running
+        run!.Status = ConsolidationRunStatus.Running;
+        await _store.SaveRunAsync(run, CancellationToken.None);
 
         // Act: simulate restart — new service instance calls cleanup
         var sut2 = new ConsolidationService(

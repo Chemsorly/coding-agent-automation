@@ -99,9 +99,11 @@ public sealed class ConsolidationServiceTests : IDisposable
     #region TriggerAsync — creates run and persists
 
     [Fact]
-    public async Task TriggerAsync_ValidTemplate_CreatesRunWithRunningStatus()
+    public async Task TriggerAsync_ValidTemplate_CreatesRunWithQueuedStatus()
     {
         // Validates: Requirement 3.1
+        // In K8s mode, newly created runs start as Queued — the K8s Job Controller
+        // transitions them to Running when the pod is dispatched.
         var sut = CreateSut();
         var before = DateTimeOffset.UtcNow;
 
@@ -109,7 +111,7 @@ public sealed class ConsolidationServiceTests : IDisposable
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
 
         run.Should().NotBeNull();
-        run!.Status.Should().Be(ConsolidationRunStatus.Running);
+        run!.Status.Should().Be(ConsolidationRunStatus.Queued);
         run.Type.Should().Be(ConsolidationRunType.BrainConsolidation);
         run.TemplateId.Should().Be("tmpl-1");
         run.TemplateName.Should().Be("DotNet Repo");

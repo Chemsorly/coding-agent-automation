@@ -396,7 +396,10 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         TemplateId = templateIdValue,
         TemplateName = templateName,
         StartedAtUtc = DateTimeOffset.UtcNow,
-        Status = ConsolidationRunStatus.Running,
+        // New runs start as Queued — the K8s Job Controller transitions to Running on dispatch.
+        // In the old SignalR path, runs were created as Running because an agent was immediately
+        // assigned; in K8s mode the pod hasn't started yet so Queued is the correct initial state.
+        Status = ConsolidationRunStatus.Queued,
         AutoDispatch = autoDispatch,
         ProjectName = projectName,
         // Capture trace context at trigger time (inside the HTTP request span).
