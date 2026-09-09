@@ -110,7 +110,7 @@ public class DataProtectionRegistrationTests
     }
 
     [Fact]
-    public void WhenFactoryProvided_ApplicationName_IsCodingAgentWebui()
+    public void WhenFactoryProvided_ApplicationName_IsCodingAgentWeb()
     {
         // SetApplicationName isolates the key ring per app — prevents key sharing accidents
         // with other apps pointing at the same Redis instance.

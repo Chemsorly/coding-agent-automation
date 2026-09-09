@@ -155,7 +155,7 @@ public partial class LayerBoundaryTests
             catch { continue; }
             foreach (var r in asm.GetReferencedAssemblies())
             {
-                if (r.Name is null || !r.Name.StartsWith("CodingAgent.Web", StringComparison.Ordinal)) continue;
+                if (r.Name is null || !r.Name.StartsWith("CodingAgent", StringComparison.Ordinal)) continue;
                 if (r.Name == "CodingAgent.Infrastructure.Persistence")
                     offenders.Add($"{asm.GetName().Name} -> {r.Name}");
                 if (seen.Add(r.Name))
@@ -194,7 +194,7 @@ public partial class LayerBoundaryTests
             catch { continue; }
             foreach (var r in asm.GetReferencedAssemblies())
             {
-                if (r.Name is null || !r.Name.StartsWith("CodingAgent.Web", StringComparison.Ordinal)) continue;
+                if (r.Name is null || !r.Name.StartsWith("CodingAgent", StringComparison.Ordinal)) continue;
                 if (r.Name == "CodingAgent.Pipeline")
                     offenders.Add($"{asm.GetName().Name} -> {r.Name}");
                 if (seen.Add(r.Name))
@@ -238,7 +238,7 @@ public partial class LayerBoundaryTests
         var result = Types.InAssembly(PipelineAssembly)
             .ShouldNot()
             .HaveDependencyOnAny(
-                "CodingAgent.AgentGateways",
+                "CodingAgent.AgentGateway",
                 "CodingAgent.Web.Services",
                 "CodingAgent.Web.Components",
                 "CodingAgent.Web.Models")
@@ -281,7 +281,7 @@ public partial class LayerBoundaryTests
             var result = Types.InAssembly(assembly)
                 .ShouldNot()
                 .HaveDependencyOnAny(
-                    "CodingAgent.AgentGateways",
+                    "CodingAgent.AgentGateway",
                     "CodingAgent.Web.Services",
                     "CodingAgent.Web.Components",
                     "CodingAgent.Web.Models")

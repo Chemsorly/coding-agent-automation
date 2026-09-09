@@ -10,7 +10,7 @@ namespace CodingAgent.Web.UnitTests.Services;
 /// Unit tests for the consolidation dispatch flow — verifying that
 /// <c>ReportConsolidationComplete</c> correctly updates run status,
 /// persists harness suggestions, and increments the badge count.
-/// Since <see cref="CodingAgent.AgentGateways.AgentHub"/> depends on sealed/complex services
+/// Since <see cref="CodingAgent.AgentGateway.AgentHub"/> depends on sealed/complex services
 /// that cannot be easily mocked in isolation, these tests validate the dispatch logic
 /// through the service layer contracts.
 /// Validates: Requirements 3.1, 3.2, 3.5, 8.1, 10.1

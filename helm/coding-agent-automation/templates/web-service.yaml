@@ -1,5 +1,5 @@
 {{- /* Web component values, with back-compat: legacy `orchestrator.*` overrides win over `web.*` defaults. */ -}}
-{{- $web := mergeOverwrite (deepCopy .Values.web) (.Values.orchestrator | default dict) -}}
+{{- $web := mergeOverwrite (deepCopy (.Values.web | default dict)) (.Values.orchestrator | default dict) -}}
 apiVersion: v1
 kind: Service
 metadata:

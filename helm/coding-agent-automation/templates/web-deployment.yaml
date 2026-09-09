@@ -1,6 +1,6 @@
 {{- include "coding-agent-automation.deprecations" . }}
 {{- /* Web component values, with back-compat: legacy `orchestrator.*` overrides win over `web.*` defaults. Prefer `web.*` in new values. */ -}}
-{{- $web := mergeOverwrite (deepCopy .Values.web) (.Values.orchestrator | default dict) -}}
+{{- $web := mergeOverwrite (deepCopy (.Values.web | default dict)) (.Values.orchestrator | default dict) -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
