@@ -3,7 +3,9 @@ using CodingAgentWebUI.JobController.Dispatch;
 using CodingAgentWebUI.JobController.Reconciliation;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Telemetry;
+using CodingAgentWebUI.TestUtilities;
 using k8s.Models;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 
@@ -72,13 +74,11 @@ public sealed class ReconciliationLoopTests
             ItemId,
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Succeeded"),
             It.IsAny<CancellationToken>()), Times.Once);
-        // TODO [WARNING]: The `_k8sClient.Verify(c => c.DeleteJobAsync(...), Times.Never)` assertion
-        // was removed from this test. That assertion verified the behavioural invariant that
-        // reconciliation of a succeeded job must NOT proactively delete the job (K8s TTL or
-        // CleanupOrphans handles deletion). Without it, a future regression where ReconcileOnceAsync
-        // begins calling DeleteJobAsync on success paths will not be caught here.
-        // Restore: _k8sClient.Verify(c => c.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        // (TestQualityReviewer review [WARNING] @ ReconciliationLoopTests.cs:62)
+
+        // Succeeded job reconciliation must not proactively delete the job —
+        // K8s TTL or CleanupOrphans handles that separately.
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ─── K8s Failed event ────────────────────────────────────────────────────
@@ -99,13 +99,11 @@ public sealed class ReconciliationLoopTests
             ItemId,
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "AgentError"),
             It.IsAny<CancellationToken>()), Times.Once);
-        // TODO [WARNING]: The `_k8sClient.Verify(c => c.DeleteJobAsync(...), Times.Never)` assertion
-        // was removed from this test. That assertion verified the behavioural invariant that
-        // reconciliation of a failed job must NOT proactively delete the job (only timeout enforcement
-        // deletes jobs). Without it, a future regression where ReconcileOnceAsync begins calling
-        // DeleteJobAsync on failure paths will not be caught here.
-        // Restore: _k8sClient.Verify(c => c.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        // (TestQualityReviewer review [WARNING] @ ReconciliationLoopTests.cs:82)
+
+        // Failed job reconciliation must not proactively delete the job —
+        // only timeout enforcement deletes jobs.
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ─── Timeout enforcement ──────────────────────────────────────────────────
@@ -141,14 +139,14 @@ public sealed class ReconciliationLoopTests
             It.IsAny<CancellationToken>()), Times.Once);
 
         _k8sClient.Verify(c => c.DeleteJobAsync(jobName, _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
-        // TODO: Add Verify that GetActiveAsync was called exactly once with the canary threshold (60)
-        // to guard against a regression where EnforceTimeoutsAsync passes a wrong argument and the
-        // mock returns empty — in that case the PostStatusAsync Times.Once assertion would fail, but
-        // the root cause (wrong query argument) would be obscured. A dedicated Verify closes the gap.
-        // Note: the mock setup above already uses It.Is<int>(n => n == 60) so a wrong argument would
-        // cause the mock to return empty and PostStatusAsync would not be called, making the
-        // Times.Once assertion fail — but adding an explicit Verify makes the intent unambiguous.
-        // (TestQualityReviewer review [WARNING] @ ReconciliationLoopTests.cs:89)
+
+        // Verify GetActiveAsync was called with the canary threshold (60s) — closes the gap where
+        // a wrong argument causes the mock to return empty and PostStatusAsync never fires, making
+        // this test a false green that masks the root cause.
+        _workItemClient.Verify(c => c.GetActiveAsync(
+            It.Is<int>(n => n == 60),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -208,44 +206,46 @@ public sealed class ReconciliationLoopTests
             It.IsAny<Guid>(),
             It.IsAny<WorkItemStatusUpdate>(),
             It.IsAny<CancellationToken>()), Times.Never);
-        // TODO: Add a Verify that GetActiveAsync was called with the canary threshold (60) to
-        // confirm the query threshold hasn't regressed. Currently uses It.IsAny<int>() because
-        // the mock must return the item regardless; a separate Verify call would close the gap.
-        // See review finding [WARNING] — TestQualityReviewer @ ReconciliationLoopTests.cs:152.
+
+        // Verify GetActiveAsync was called with the canary threshold — confirms the query was issued
+        // rather than being silently skipped (a wrong threshold would still return empty and
+        // PostStatusAsync Times.Never would pass, masking the regression).
+        _workItemClient.Verify(c => c.GetActiveAsync(
+            It.Is<int>(n => n > 0),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task WhenTimeoutSecondsIsZero_TimeoutIsEnforcedAtZero()
+    public async Task WhenTimeoutSecondsIsZero_FallsBackToGlobalDefault()
     {
         var jobName = JobNameFor(ItemId);
-        // After migration #2405, TimeoutSeconds=0 rows no longer exist in production
-        // (back-filled to 1800 by the migration). The zero-sentinel fallback has been removed.
-        // This test documents post-migration behavior: TimeoutSeconds=0 is used as-is,
-        // so any item with TimeoutSeconds=0 that has been running for > 0s will be timed out.
-        const int itemTimeoutSeconds = 0;
-        // TODO [WARNING]: canaryMinAgeSeconds duplicates the internal ReconciliationLoop.TimeoutCanaryMinAgeSeconds
-        // constant (60). If that constant changes in production, this test may silently stop covering
-        // the canary guard interaction. Source this value from the production constant instead of
-        // duplicating it here. (TestQualityReviewer review [WARNING] @ ReconciliationLoopTests.cs:228)
-        const int canaryMinAgeSeconds = 60; // ReconciliationLoop.TimeoutCanaryMinAgeSeconds
+        // TimeoutSeconds = 0 means field was not stored (pre-dates this feature).
+        // Fall back to PipelineConstants.DefaultAgentTimeout (30 min = 1800s).
+        // Item has been running for 1801s — must be timed out via fallback.
+        var globalDefaultSeconds = (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds;
         var legacyItem = new ActiveWorkItemDto
         {
             Id = ItemId,
             Status = WorkItemStatus.Running,
-            // Running for 61s — exceeds TimeoutSeconds=0 and the canary minimum (60s).
-            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(canaryMinAgeSeconds + 1)),
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(globalDefaultSeconds + 1)),
             AgentSelector = "dotnet10,opencode",
             IssueIdentifier = "owner/repo#1",
-            TimeoutSeconds = itemTimeoutSeconds
+            TimeoutSeconds = 0 // legacy: field not stored
         };
 
+        // TODO [WARNING]: The mock setup uses It.IsAny<int>() for the GetActiveAsync canary threshold.
+        // If EnforceTimeoutsAsync passes a wrong canary threshold, the mock still returns legacyItem
+        // and PostStatusAsync fires, making this test a false-green that masks the wrong argument.
+        // Add a Verify call (analogous to WhenExecutionAgeExceedsTimeout_TimesOutAndDeletesJob) to
+        // confirm GetActiveAsync was called with the correct canary threshold value (60s).
+        // See review finding: TestQualityReviewer WARNING — ReconciliationLoopTests.cs:~230
         _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([legacyItem]);
 
         var loop = CreateLoop();
         await loop.EnforceTimeoutsAsync(CancellationToken.None);
 
-        // executionAge (61s) >= effectiveTimeoutSeconds (0) → should time out
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
@@ -253,13 +253,6 @@ public sealed class ReconciliationLoopTests
 
         _k8sClient.Verify(c => c.DeleteJobAsync(jobName, _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
     }
-
-    // TODO [WARNING]: Add a negative case for `WhenTimeoutSecondsIsZero_TimeoutIsEnforcedAtZero`:
-    // an item with TimeoutSeconds=0 running for < canary minimum (e.g. 30s) should NOT be marked
-    // Failed. Currently the canary guard interaction with a zero-timeout is only tested for the
-    // age-exceeds-minimum path; the below-minimum path (item should be left alone) is not covered.
-    // This would complete coverage of the canary guard + zero-timeout combination.
-    // (TestQualityReviewer review [WARNING] @ ReconciliationLoopTests.cs:205)
 
     // ─── Short-circuit Dispatched sweep ──────────────────────────────────────
 
@@ -478,13 +471,10 @@ public sealed class ReconciliationLoopTests
             ItemId,
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Succeeded"),
             It.IsAny<CancellationToken>()), Times.Once);
-        // TODO [WARNING]: The `_k8sClient.Verify(c => c.DeleteJobAsync(...), Times.Never)` assertion
-        // was removed from this test. That assertion verified that reconciliation of a succeeded job
-        // does not proactively delete it (K8s TTL or CleanupOrphans handles that). Without it, a
-        // future regression where ReconcileOnceAsync begins calling DeleteJobAsync on success paths
-        // will not be caught here.
-        // Restore: _k8sClient.Verify(c => c.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        // (TestQualityReviewer review [WARNING] @ ReconciliationLoopTests.cs:442)
+
+        // No job deletion — reconciliation of a succeeded job must not proactively delete it.
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -626,13 +616,6 @@ public sealed class ReconciliationLoopTests
 
 // ─── Error / exception paths ──────────────────────────────────────────────────
 
-// [Collection("Metrics")] is required here: several tests call ReconcileOnceAsync or
-// EnforceDispatchedTimeoutAsync with failed/timed-out jobs, which flows through
-// HandleJobCompletedAsync → WorkDistributionTelemetry.LogTerminalStatus →
-// PipelineTelemetry.JobsFailed.Add(). Without serialisation against
-// ReconciliationLoopMetricTests, those emissions bleed into snapshot-delta
-// assertions and produce a spurious "delta of 2 instead of 1" failure.
-[Collection("Metrics")]
 public sealed class ReconciliationLoopErrorTests
 {
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
@@ -1425,36 +1408,41 @@ public sealed class ReconciliationLoopErrorTests
 }
 
 // ─── Metric / telemetry tests ─────────────────────────────────────────────────
-// TODO [WARNING]: Three tests covering the GetJobPhase counter-fallback guard were deleted:
+// These tests use MeterListener directly (IDisposable).
+// The static WorkDistributionTelemetry.Meter and PipelineTelemetry.Meter are process-wide.
+// ReconciliationLoop tests now use TestMeterFactory for isolated instrument capture.
+// LogTerminalStatus tests still use MeterListener against static meters since that method
+// calls static PipelineTelemetry/WorkDistributionTelemetry instruments directly.
+// TODO: [Collection("Metrics")] was removed from ReconciliationLoopMetricTests. DispatchLoopMetricTests
+// (in Dispatch/DispatchLoopTests.cs) still uses [Collection("Metrics")] with a static MeterListener.
+// If these classes run in parallel, PipelineTelemetry emissions from DispatchLoopMetricTests can
+// bleed into this class's shared _pipelineCounters bag, causing intermittent failures. Verify that
+// the scoped MeterListener gate in LogTerminalStatus_Failed is sufficient, or re-add
+// [Collection("Metrics")] to prevent cross-contamination. See review warning (issue #2255).
+
+// TODO: Three tests covering the GetJobPhase counter-fallback guard were deleted:
 //   - ReconcileOnce_RetryingJob_FailedCounterWithActiveCounter_IsNotTreatedAsFailed
 //   - ReconcileOnce_TerminalFailedJob_FailedCounterWithNoActive_IsTreatedAsFailed
 //   - ReconcileOnce_JobWithNullStatus_IsNotTreatedAsFailed
-// These covered the "Failed > 0 && (Active ?? 0) == 0" guard that prevents premature failure
-// of retrying jobs — a documented data-corruption risk. If the guard is still present in
-// production code (ReconciliationLoop), re-add these regression tests to prevent silent removal.
-// (TestQualityReviewer review [WARNING] @ ReconciliationLoopTests.cs:1396)
-// These tests use MeterListener directly and are placed in the "Metrics" collection
-// (see MetricsCollection.cs) so that they run serially with respect to any other
-// test class in this assembly that emits measurements on the same static meters.
-// The static WorkDistributionTelemetry.Meter and PipelineTelemetry.Meter are process-wide,
-// so without this collection a concurrently running test (e.g. ReconciliationLoopTests)
-// can emit pipeline.jobs.failed while this listener is active, causing a delta of 2
-// instead of the expected 1.
+// These covered the "Failed > 0 && (Active ?? 0) == 0" guard that prevents premature failure of
+// retrying jobs — a documented data-corruption risk. If the guard is still in production code,
+// re-add these regression tests to prevent silent removal. See review warning (issue #2255).
 
-[Collection("Metrics")]
 public sealed class ReconciliationLoopMetricTests : IDisposable
 {
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
     private readonly Mock<IKubernetesJobClient> _k8sClient = new();
     private readonly DispatchServiceOptions _options;
 
+    private readonly TestMeterFactory _workDistFactory = new();
+    private readonly TestMeterFactory _pipelineFactory = new();
+
     private readonly MeterListener _listener = new();
 
-    // WorkDistribution meter recordings: (InstrumentName, DoubleValue, LongValue, AgentSelector)
+    // WorkDistribution meter recordings (for LogTerminalStatus static calls): (InstrumentName, DoubleValue, LongValue, AgentSelector)
     private readonly ConcurrentBag<(string InstrumentName, double DoubleValue, long LongValue, string? AgentSelector)> _recordings = [];
 
-    // Pipeline meter recordings — separate bags for counters and histograms to avoid
-    // needing a union type. Tags are captured as a materialized list for assertion.
+    // Pipeline meter recordings — for LogTerminalStatus static calls
     private readonly ConcurrentBag<(string InstrumentName, long Value, List<KeyValuePair<string, object?>> Tags)> _pipelineCounters = [];
     private readonly ConcurrentBag<(string InstrumentName, double Value, List<KeyValuePair<string, object?>> Tags)> _pipelineHistograms = [];
 
@@ -1475,7 +1463,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
         _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
-        // Enable all instruments on both the WorkDistribution and Pipeline meters
+        // Enable static meters for LogTerminalStatus tests
         _listener.InstrumentPublished = (instrument, listener) =>
         {
             if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName ||
@@ -1483,7 +1471,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
                 listener.EnableMeasurementEvents(instrument);
         };
 
-        // Capture Histogram<double> recordings — routed by meter name
+        // Capture Histogram<double> recordings
         _listener.SetMeasurementEventCallback<double>((instrument, measurement, tags, _) =>
         {
             if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName)
@@ -1503,7 +1491,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
             }
         });
 
-        // Capture Counter<long> recordings — routed by meter name
+        // Capture Counter<long> recordings
         _listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
         {
             if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName)
@@ -1526,10 +1514,17 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
         _listener.Start();
     }
 
-    public void Dispose() => _listener.Dispose();
+    public void Dispose()
+    {
+        _listener.Dispose();
+        _workDistFactory.Dispose();
+        _pipelineFactory.Dispose();
+    }
 
     private ReconciliationLoop CreateLoop() =>
-        new(_workItemClient.Object, _k8sClient.Object, _options);
+        new(_workItemClient.Object, _k8sClient.Object, _options,
+            pipelineMeterFactory: _pipelineFactory,
+            workDistMeterFactory: _workDistFactory);
 
     // ─── AC: DispatchedAt = UtcNow - 30s → enforcement skipped, canary incremented ──
 
@@ -1551,6 +1546,9 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
                 It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([item]);
 
+        using var canaryCollector = new MetricCollector<long>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_canary_violations");
+        using var ageCollector = new MetricCollector<double>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_execution_age_seconds");
+
         // Act
         var loop = CreateLoop();
         await loop.EnforceTimeoutsAsync(CancellationToken.None);
@@ -1562,22 +1560,13 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
 
         // Assert — canary counter incremented with correct tag
-        _recordings.Should().Contain(
-            r => r.InstrumentName == "workdistribution.timeout_canary_violations"
-                 && r.LongValue == 1L
-                 && r.AgentSelector == "test",
+        canaryCollector.GetMeasurementSnapshot().Should().Contain(
+            m => m.Value == 1L && m.Tags.Contains(new KeyValuePair<string, object?>("agent_selector", "test")),
             "timeout_canary_violations must be incremented by 1 with agent_selector=test");
 
-        // Assert — execution age histogram recorded (≈ 30s; window tolerates clock jitter)
-        // TODO: The lower bound >= 25.0 gives only a 5s tolerance against wall-clock jitter between
-        // UtcNow.AddSeconds(-30) in Arrange and the UtcNow call inside EnforceTimeoutsAsync. On a
-        // heavily loaded CI agent with >5s thread preemption this assertion could fail spuriously.
-        // Consider lowering the bound (e.g. >= 20.0) or using a time-frozen anchor to eliminate the
-        // flakiness surface. (Correctness review warning)
-        _recordings.Should().Contain(
-            r => r.InstrumentName == "workdistribution.timeout_execution_age_seconds"
-                 && r.DoubleValue >= 25.0 && r.DoubleValue < 60.0
-                 && r.AgentSelector == "test",
+        // Assert — execution age histogram recorded (≈ 30s)
+        ageCollector.GetMeasurementSnapshot().Should().Contain(
+            m => m.Value >= 25.0 && m.Value < 60.0 && m.Tags.Contains(new KeyValuePair<string, object?>("agent_selector", "test")),
             "timeout_execution_age_seconds must record ≈ 30s for a 30s-old work item");
     }
 
@@ -1606,10 +1595,8 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        // Snapshot canary count before act to tolerate stray recordings from parallel tests
-        var canaryCountBefore = _recordings.Count(
-            r => r.InstrumentName == "workdistribution.timeout_canary_violations"
-                 && r.AgentSelector == "test");
+        using var canaryCollector = new MetricCollector<long>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_canary_violations");
+        using var ageCollector = new MetricCollector<double>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_execution_age_seconds");
 
         // Act
         var loop = CreateLoop();
@@ -1621,22 +1608,13 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
             It.IsAny<CancellationToken>()), Times.Once);
 
-        // Assert — canary counter NOT incremented (snapshot delta)
-        var canaryCountAfter = _recordings.Count(
-            r => r.InstrumentName == "workdistribution.timeout_canary_violations"
-                 && r.AgentSelector == "test");
-        canaryCountAfter.Should().Be(canaryCountBefore,
+        // Assert — canary counter NOT incremented
+        canaryCollector.GetMeasurementSnapshot().Should().BeEmpty(
             "timeout_canary_violations must not be incremented when execution age >= 60s");
 
         // Assert — execution age histogram recorded (≈ 7200s)
-        // TODO: This Contain assertion does not verify the recording happened exactly once for this
-        // item. If a future refactor moves or duplicates the Record(...) call, this would still pass.
-        // Consider adding a count assertion (e.g. count of matching entries == 1 via snapshot-delta)
-        // to confirm the item was recorded exactly once before enforcement. (TestQuality review warning)
-        _recordings.Should().Contain(
-            r => r.InstrumentName == "workdistribution.timeout_execution_age_seconds"
-                 && r.DoubleValue >= 3600.0
-                 && r.AgentSelector == "test",
+        ageCollector.GetMeasurementSnapshot().Should().Contain(
+            m => m.Value >= 3600.0 && m.Tags.Contains(new KeyValuePair<string, object?>("agent_selector", "test")),
             "timeout_execution_age_seconds must record ≈ 7200s");
     }
 
@@ -1647,10 +1625,11 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
     {
         // Arrange
         var id = Guid.NewGuid();
-        // TODO: Replace magic number 1800 with (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds
-        // so a change to DefaultAgentTimeout causes this test to fail rather than silently pass
-        // with an item age and expected value both derived from the same stale literal.
-        // (TestQualityReviewer review [WARNING] @ ReconciliationLoopMetricTests.cs:1411)
+        // TODO [WARNING]: Replace magic number 1800 with (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds
+        // so a change to DefaultAgentTimeout causes this test to fail rather than silently pass with a stale
+        // expected value. The sibling test ReconcileOnce_LegacyItemWithoutTimeoutSeconds_TimesOutViaDefaultFallback
+        // was already fixed to use the constant reference.
+        // See review finding: TestQualityReviewer WARNING — ReconciliationLoopTests.cs:1609
         const int itemTimeoutSeconds = 1800; // global default
         var item = new ActiveWorkItemDto
         {
@@ -1671,10 +1650,8 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        // Snapshot canary count before act
-        var canaryCountBefore = _recordings.Count(
-            r => r.InstrumentName == "workdistribution.timeout_canary_violations"
-                 && r.AgentSelector == "test");
+        using var canaryCollector = new MetricCollector<long>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_canary_violations");
+        using var ageCollector = new MetricCollector<double>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_execution_age_seconds");
 
         // Act
         var loop = CreateLoop();
@@ -1686,22 +1663,14 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
             It.IsAny<CancellationToken>()), Times.Once);
 
-        // Assert — canary counter NOT incremented (snapshot delta)
-        var canaryCountAfter = _recordings.Count(
-            r => r.InstrumentName == "workdistribution.timeout_canary_violations"
-                 && r.AgentSelector == "test");
-        canaryCountAfter.Should().Be(canaryCountBefore,
+        // Assert — canary counter NOT incremented
+        canaryCollector.GetMeasurementSnapshot().Should().BeEmpty(
             "timeout_canary_violations must not be incremented when DispatchedAt is null (falls back to full timeout age)");
 
-        // Assert — execution age histogram recorded with exact fallback value (1800.0 = global default, not clock-based)
-        // TODO: This Contain assertion does not bound the number of matching recordings. Using
-        // Should().ContainSingle(...) would make the intent explicit and catch loop-iteration bugs
-        // where Record(...) is called multiple times for the same item. (TestQuality review warning)
-        _recordings.Should().Contain(
-            r => r.InstrumentName == "workdistribution.timeout_execution_age_seconds"
-                 && r.DoubleValue == (double)itemTimeoutSeconds
-                 && r.AgentSelector == "test",
-            $"timeout_execution_age_seconds must record exactly {itemTimeoutSeconds}s for null DispatchedAt (falls back to effective timeout)");
+        // Assert — execution age histogram recorded with exact fallback value
+        ageCollector.GetMeasurementSnapshot().Should().Contain(
+            m => m.Value == (double)itemTimeoutSeconds && m.Tags.Contains(new KeyValuePair<string, object?>("agent_selector", "test")),
+            $"timeout_execution_age_seconds must record exactly {itemTimeoutSeconds}s for null DispatchedAt");
     }
 
     // ─── pipeline.jobs.* emission tests (Issue #2256) ────────────────────────────
@@ -1761,13 +1730,11 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
     [Fact]
     public void LogTerminalStatus_Failed_EmitsPipelineJobsFailed_WithSnakeCaseTag()
     {
-        // TODO [WARNING]: the before-snapshot is unfiltered (counts all pipeline.jobs.failed recordings)
-        // to tolerate stray recordings from other tests in the collection. This means the delta
-        // assertion (failedCountAfter - failedCountBefore == 1) does not verify tag values on the
-        // new recording. The tag-specific assertion below (failure_reason == "timeout") covers the
-        // tag contract, but it checks any existing recording rather than specifically the one just
-        // emitted. If tag verification needs to be tightened, capture a filtered before-snapshot for
-        // the after-delta while keeping the unfiltered snapshot for the count-delta.
+        // Use the class-level _pipelineCounters bag with a before/after delta to count emissions.
+        // A scoped MeterListener subscribing to the static PipelineTelemetry meter would pick up
+        // emissions from other test assemblies running in parallel in the same process on CI,
+        // causing spurious double-counts. The delta approach is immune to pre-existing recordings
+        // and is consistent with the pattern used by other tests in this class.
         var failedCountBefore = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
 
         WorkDistributionTelemetry.LogTerminalStatus(

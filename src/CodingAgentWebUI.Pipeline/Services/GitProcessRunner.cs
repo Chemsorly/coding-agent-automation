@@ -2,7 +2,7 @@ using System.Diagnostics;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
-// TODO: GitProcessRunner.RunAsync is now public and accepts arbitrary git arguments.
+// NOTE: GitProcessRunner.RunAsync is public and accepts arbitrary git arguments.
 // Callers must not interpolate user-controlled strings into the arguments parameter
 // without validation. If used in less-trusted contexts, add input sanitization.
 /// <summary>
@@ -31,6 +31,8 @@ public static class GitProcessRunner
         process.StartInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
         process.StartInfo.Environment["GIT_PAGER"] = "";
 
+        ct.ThrowIfCancellationRequested();
+
         process.Start();
 
         var outputTask = process.StandardOutput.ReadToEndAsync(ct);
@@ -45,9 +47,9 @@ public static class GitProcessRunner
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            try { process.Kill(entireProcessTree: true); } catch { }
-            try { await outputTask; } catch { }
-            try { await errorTask; } catch { }
+            try { process.Kill(entireProcessTree: true); } catch (Exception) { /* Intentional: best-effort kill; process may have already exited. */ }
+            try { await outputTask; } catch (Exception) { /* Intentional: output is discarded after timeout; partial reads are acceptable. */ }
+            try { await errorTask; } catch (Exception) { /* Intentional: error output is discarded after timeout; partial reads are acceptable. */ }
             throw new TimeoutException($"git {arguments} timed out after 30 seconds");
         }
 

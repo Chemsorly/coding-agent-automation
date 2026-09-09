@@ -28,4 +28,12 @@ public sealed class GateResult
 
     [Key(8)]
     public int? TestsSkipped { get; init; }
+
+    /// <summary>
+    /// Indicates a probable infrastructure failure (OOM, container kill, pipe drain timeout)
+    /// rather than a code-level test failure. Null means unknown/not applicable.
+    /// Only set for the Tests gate.
+    /// </summary>
+    [Key(9)]
+    public bool? IsInfrastructureFailure { get; init; }
 }
