@@ -12,7 +12,7 @@ After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pip
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  Orchestrator  (CodingAgentWebUI)                                           │
+│  Orchestrator  (CodingAgent.Web)                                           │
 │  ─────────────                                                              │
 │  Blazor Server UI                                                           │
 │  Polls /loop/status on Scheduler for UI state                               │
@@ -25,7 +25,7 @@ After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pip
          │  REST calls (HTTP) + SignalR hub subscribe (IAgentHubConnection)
          ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  Pipeline API  (CodingAgentWebUI.Api)                                       │
+│  Pipeline API  (CodingAgent.Api)                                       │
 │  ──────────────                                                             │
 │  AgentHub  — real-time hub for agent pods and Blazor circuits               │
 │  AgentRegistryService  ─┐                                                  │
@@ -40,8 +40,8 @@ After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pip
          │  POST /api/work-items (claim)   ▲ hub: ReportOutputLines etc.
          ▼                                 │
 ┌──────────────────────┐     ┌─────────────────────────────────────────────┐
-│  Job Controller      │     │  Agent Pod (CodingAgentWebUI.Agent)          │
-│  (CodingAgentWebUI.  │     │  ─────────────                              │
+│  Job Controller      │     │  Agent Pod (CodingAgent.Agent)          │
+│  (CodingAgent.Web.  │     │  ─────────────                              │
 │   JobController)     │     │  Ephemeral K8s Job                          │
 │  ─────────────────── │     │  caa-agent-{11 hex} (impl/review/decomp)   │
 │  K8s Job dispatch    │     │  caa-cons-{12 hex}  (consolidation)         │
@@ -51,7 +51,7 @@ After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pip
 └──────────────────────┘     └─────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  Scheduler  (CodingAgentWebUI.Scheduler)                                    │
+│  Scheduler  (CodingAgent.Scheduler)                                    │
 │  ─────────────                                                              │
 │  PipelineLoopService  — dispatches impl/review/decomp runs                  │
 │  OrphanedLabelRecoveryService                                               │
@@ -65,7 +65,7 @@ After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pip
 
 ### Where the Locking-Critical Singletons Live
 
-The **authoritative** instances of the services described in this document run in the **Pipeline API** process (`CodingAgentWebUI.Api`). The Orchestrator registers read-model replicas of `AgentRegistryService` and `OrchestratorRunService` — backed by `DistributedAgentRegistryService` / `DistributedRunService` when Redis is configured, keeping the Blazor UI in sync without direct DB access. `AgentReservationService` (with `_selectionLock`) is also registered in the Orchestrator but dispatch decisions that actually reserve agents go through the API path.
+The **authoritative** instances of the services described in this document run in the **Pipeline API** process (`CodingAgent.Api`). The Orchestrator registers read-model replicas of `AgentRegistryService` and `OrchestratorRunService` — backed by `DistributedAgentRegistryService` / `DistributedRunService` when Redis is configured, keeping the Blazor UI in sync without direct DB access. `AgentReservationService` (with `_selectionLock`) is also registered in the Orchestrator but dispatch decisions that actually reserve agents go through the API path.
 
 The Job Controller and Agent pods do **not** hold these singletons. This is important: the guarantee that `_selectionLock` and `AgentEntry.SyncRoot` prevent races on the authoritative dispatch path holds only because all authoritative instances are in the same Pipeline API process.
 
@@ -79,8 +79,8 @@ coordination (e.g., Postgres advisory locks, Redis `SETNX`) would be required.
 
 ## JobDeduplicationGuardService / AgentReservationService
 
-**File:** `src/CodingAgentWebUI.Orchestration/Dispatch/AgentReservationService.cs`
-**Authoritative instance hosted in:** `CodingAgentWebUI.Api` (Pipeline API) — all actual dispatch decisions go through this process. The Orchestrator also registers a local `AgentReservationService` instance for its own routing lookups, but it does not participate in the authoritative agent-reservation path.
+**File:** `src/CodingAgent.Orchestration/Dispatch/AgentReservationService.cs`
+**Authoritative instance hosted in:** `CodingAgent.Api` (Pipeline API) — all actual dispatch decisions go through this process. The Orchestrator also registers a local `AgentReservationService` instance for its own routing lookups, but it does not participate in the authoritative agent-reservation path.
 
 > **Rename note (Spec 046):** `JobDeduplicationGuardService` was renamed to `AgentReservationService` (Spec 046). Both classes are defined in `AgentReservationService.cs`. All new code should reference `AgentReservationService` directly; `JobDeduplicationGuardService` is the legacy wrapper and IS marked `[Obsolete("Use AgentReservationService instead. Renamed in Spec 046.")]`.
 
@@ -114,8 +114,8 @@ These use `ConcurrentDictionary` atomic APIs and do NOT acquire any lock:
 
 ## AgentRegistryService
 
-**File:** `src/CodingAgentWebUI.Orchestration/Registry/AgentRegistryService.cs`
-**Hosted in:** `CodingAgentWebUI.Api`
+**File:** `src/CodingAgent.Orchestration/Registry/AgentRegistryService.cs`
+**Hosted in:** `CodingAgent.Api`
 
 ### Data structures
 
@@ -126,7 +126,7 @@ These use `ConcurrentDictionary` atomic APIs and do NOT acquire any lock:
 
 ### Per-entry locking via `SyncRoot`
 
-Each `AgentEntry` (defined in `src/CodingAgentWebUI.Pipeline/Models/AgentEntry.cs`) has:
+Each `AgentEntry` (defined in `src/CodingAgent.Pipeline/Models/AgentEntry.cs`) has:
 
 ```csharp
 public object SyncRoot => _syncRoot;

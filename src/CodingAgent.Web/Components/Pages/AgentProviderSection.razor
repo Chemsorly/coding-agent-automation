@@ -1,0 +1,433 @@
+@using CodingAgent.Api.Client
+@using CodingAgent.Pipeline
+@using CodingAgent.Pipeline.Models
+@using CodingAgent.Orchestration
+@using CodingAgent.Web.Services
+@implements IAsyncDisposable
+
+<section class="settings-section">
+    <h2>Agent Provider Configs (referenced by Agent Profiles)</h2>
+    <p class="section-description">These configurations define how agents execute. They are linked from Agent Profiles — each profile references one provider config to determine the executable path, timeout, and model settings for matched agents.</p>
+    <div class="provider-list">
+        @foreach (var p in Providers)
+        {
+            <div class="provider-card">
+                <div class="provider-info">
+                    <strong>@p.DisplayName</strong>
+                    <span class="provider-type">@p.ProviderType</span>
+                    <span class="provider-detail">@p.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath, "") · @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Timeout, "30"))min · model: @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto")) · effort: @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Effort, "auto"))</span>
+                </div>
+                <div class="provider-actions">
+                    <button class="btn-edit" @onclick="() => EditProvider(p)">Edit</button>
+                    <button class="btn-delete" @onclick="() => { _deletingProviderId = p.Id; _showDeleteConfirm = true; }">Delete</button>
+                </div>
+            </div>
+        }
+    </div>
+
+    @if (_showDeleteConfirm && _deletingProviderId != null)
+    {
+        <div class="agent-detail-confirm" style="margin-top: 12px;">
+            <p>Delete this agent provider?</p>
+            <div class="confirm-buttons">
+                <button class="btn-delete" @onclick="ConfirmDeleteAsync">Delete</button>
+                <button class="btn-cancel" @onclick="() => { _showDeleteConfirm = false; _deletingProviderId = null; }">Cancel</button>
+            </div>
+        </div>
+    }
+
+    @if (_showForm)
+    {
+        <div class="provider-form-row">
+            <div class="provider-form">
+                <h3>@(_editingProvider != null ? "Edit" : "Add") Agent Provider</h3>
+                <div class="form-group">
+                    <label>Provider Type</label>
+                    <select @bind="_form.ProviderType">
+                        <option value="KiroCli">KiroCli</option>
+                        <option value="OpenCode">OpenCode</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Display Name</label>
+                    <input type="text" @bind="_form.DisplayName" placeholder="@(_form.ProviderType == "OpenCode" ? "OpenCode Agent" : "Kiro CLI Agent")" />
+                </div>
+                @if (_form.ProviderType == "KiroCli")
+                {
+                    <div class="form-group">
+                        <label>Executable Path</label>
+                        <input type="text" @bind="_form.ExecutablePath" placeholder="/root/.local/bin/kiro-cli" /> @* TODO(#1775): Clarify if this placeholder should reference AgentDefaults.KiroCliPath (/home/ubuntu/...) or remain /root/... for a different container context *@
+                    </div>
+                }
+                else
+                {
+                    <div class="form-group">
+                        <label>Base URL</label>
+                        <input type="text" @bind="_form.BaseUrl" placeholder="@AgentDefaults.OpenCodeBaseUrl" />
+                    </div>
+                }
+                <div class="form-group">
+                    <label>Timeout (minutes)</label>
+                    <input type="number" @bind="_form.TimeoutMinutes" min="1" />
+                </div>
+                @if (_form.ProviderType == "KiroCli")
+                {
+                    <div class="form-group">
+                        <label>Agent Name</label>
+                        <input type="text" @bind="_form.AgentName" placeholder="default" />
+                    </div>
+                }
+                <div class="form-group">
+                    <label>Model</label>
+                    <div class="input-with-action">
+                        @if (_form.ProviderType == "KiroCli" && _availableModels.Count > 0)
+                        {
+                            <select @bind="_form.Model">
+                                <option value="auto">auto — Use CLI default (1.0x)</option>
+                                @foreach (var m in _availableModels.Where(m => !m.ModelId.Equals("auto", StringComparison.OrdinalIgnoreCase)))
+                                {
+                                    <option value="@m.ModelId">@m.ModelId — @m.Description (@(m.RateMultiplier)x)</option>
+                                }
+                            </select>
+                        }
+                        else
+                        {
+                            <input type="text" @bind="_form.Model" placeholder="@(_form.ProviderType == "OpenCode" ? "azure-foundry/Kimi-2.6" : "auto")" />
+                        }
+                        @if (_form.ProviderType == "KiroCli")
+                        {
+                            @if (_loadingModels)
+                            {
+                                @* #2: Cancel button during active fetch *@
+                                <button class="btn-edit" disabled>
+                                    @_fetchPhase (@_fetchElapsedSeconds s…)
+                                </button>
+                                <button class="btn-cancel" @onclick="CancelFetch" style="margin-left: 4px;">
+                                    Cancel
+                                </button>
+                            }
+                            else
+                            {
+                                <button class="btn-edit" @onclick="FetchModels">
+                                    Fetch Models
+                                </button>
+                            }
+                        }
+                    </div>
+                    @* #7: Inline PVC hint — API-side model fetch handles PVC selection *@
+                    <span class="form-hint">
+                        @if (_form.ProviderType == "OpenCode")
+                        {
+                            @:Enter model in <code>provider/model</code> format (e.g. <code>anthropic/claude-sonnet-4-20250514</code>, <code>azure-foundry/Kimi-2.6</code>). Use <code>opencode models</code> in the container to list available models.
+                        }
+                        else if (IsKubernetesMode)
+                        {
+                            @:Click "Fetch Models" to dispatch a short-lived Kubernetes Job (~@(_modelFetchTimeoutSeconds)s) that queries available models from the Kiro service. Requires a credential PVC in <code>WorkDistribution:KiroPvcPool</code>. Or enter a model name manually.
+                        }
+                        else
+                        {
+                            @:Select a model or leave as "auto" for default. Click "Fetch Models" to query available models from the CLI.
+                        }
+                    </span>
+                </div>
+                @if (_form.ProviderType == "KiroCli")
+                {
+                    <div class="form-group">
+                        <label>Effort</label>
+                        <select @bind="_form.Effort">
+                            <option value="auto">auto — Use CLI default</option>
+                            <option value="low">low — Fast, concise responses</option>
+                            <option value="medium">medium — Balanced reasoning</option>
+                            <option value="high">high — Thorough analysis</option>
+                            <option value="xhigh">xhigh — Extended reasoning</option>
+                            <option value="max">max — Maximum depth</option>
+                        </select>
+                        <span class="form-hint">Controls how much reasoning the model applies. Higher effort = deeper analysis but slower and more expensive.</span>
+                    </div>
+                }
+                @if (IsKubernetesMode && _form.ProviderType == "KiroCli")
+                {
+                    <div class="form-group">
+                        <label>Fetch Models Timeout (seconds)</label>
+                        <input type="number" @bind="_modelFetchTimeoutSeconds" min="30" max="600" />
+                        <span class="form-hint">How long to wait for the model-fetch job to complete. Increase on slow setups where image pulls or pod scheduling take longer. Default: 120s.</span>
+                    </div>
+                }
+                <div class="form-buttons">
+                    <button class="btn-save" @onclick="SaveProvider">Save</button>
+                    <button class="btn-cancel" @onclick="() => _showForm = false">Cancel</button>
+                </div>
+            </div>
+            <div class="provider-help">
+                @if (_form.ProviderType == "KiroCli")
+                {
+                    <h4><Icon Name="bot" /> Kiro CLI Setup</h4>
+                    <p>The agent provider runs the Kiro CLI to generate code. Kiro CLI must be installed and authenticated separately.</p>
+                    <p class="help-heading">Prerequisites:</p>
+                    <ul>
+                        <li>Install Kiro CLI — it's bundled with the Docker image, or install manually</li>
+                        <li>Run <code>kiro-cli login</code> once to authenticate (device code flow)</li>
+                    </ul>
+                    <p class="help-heading">Fields:</p>
+                    <ul>
+                        <li><strong>Executable Path</strong> — full path to the kiro-cli binary (e.g. <code>/home/ubuntu/.local/bin/kiro-cli</code>)</li>
+                        <li><strong>Timeout</strong> — max minutes per agent invocation before it's killed</li>
+                        <li><strong>Agent Name</strong> — leave as <code>default</code> unless you have a custom agent configured</li>
+                        <li><strong>Model</strong> — the LLM model to use. <code>auto</code> uses the CLI default. Click "Fetch Models" to see available options with cost multipliers</li>
+                    </ul>
+                    <p class="help-tip">💡 Auth tokens are stored in <code>~/.local/share/kiro-cli/</code> and persist across runs when using a Docker volume.</p>
+                }
+                else
+                {
+                    <h4>🌐 OpenCode Setup</h4>
+                    <p>The agent provider communicates with an OpenCode server via HTTP API. OpenCode runs as a sidecar within the agent container.</p>
+                    <p class="help-heading">Fields:</p>
+                    <ul>
+                        <li><strong>Base URL</strong> — the OpenCode server URL (default: <code>http://127.0.0.1:4096</code>, container-internal)</li>
+                        <li><strong>Timeout</strong> — max minutes per agent invocation before it's aborted</li>
+                        <li><strong>Model</strong> — in <code>provider/model</code> format (e.g. <code>anthropic/claude-sonnet-4-20250514</code>, <code>azure-foundry/Kimi-2.6</code>)</li>
+                    </ul>
+                    <p class="help-heading">Configuration:</p>
+                    <ul>
+                        <li>Set <code>OPENCODE_CONFIG_CONTENT</code> env var with provider JSON config</li>
+                        <li>Or mount config to <code>~/.config/opencode/opencode.json</code></li>
+                        <li>LLM API keys: <code>ANTHROPIC_API_KEY</code>, <code>OPENAI_API_KEY</code>, or <code>OPENROUTER_API_KEY</code></li>
+                    </ul>
+                    <p class="help-tip">💡 The OpenCode server password is auto-generated per container run — no manual auth needed.</p>
+                }
+            </div>
+        </div>
+    }
+    else
+    {
+        <button class="btn-add" @onclick="ShowAddForm">+ Add Agent Provider</button>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public List<ProviderConfig> Providers { get; set; } = new();
+    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
+    [Parameter] public EventCallback<string> OnDelete { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+    // ModelFetchService and ModelFetchJobService removed (Spec 045 Req 7a.3):
+    // model fetching now routes through ConfigClient.GetModelsAsync (GET /api/config/models).
+    /// <summary>When true, Fetch Models uses the API's model-fetch endpoint (K8s Job dispatch).</summary>
+    [Parameter] public bool IsKubernetesMode { get; set; }
+
+    private CancellationTokenSource _cts = new();
+    private bool _showForm;
+    private bool _showDeleteConfirm;
+    private string? _deletingProviderId;
+    private ProviderConfig? _editingProvider;
+    private AgentProviderForm _form = new();
+    private List<AgentModelInfo> _availableModels = new();
+    private bool _loadingModels;
+
+    // #8: Phase label and elapsed counter shown while fetching
+    private string _fetchPhase = "Fetching";
+    private int _fetchElapsedSeconds;
+    private System.Threading.Timer? _elapsedTimer;
+
+    // k8s model-fetch timeout (seconds) — configurable in UI, stored in PipelineConfiguration
+    private int _modelFetchTimeoutSeconds = 120;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (IsKubernetesMode)
+        {
+            var config = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
+            _modelFetchTimeoutSeconds = config.ModelFetchTimeoutSeconds;
+        }
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        var id = _deletingProviderId!;
+        _showDeleteConfirm = false;
+        _deletingProviderId = null;
+        try
+        {
+            await OnDelete.InvokeAsync(id);
+        }
+        catch (OperationCanceledException) { /* user navigation — swallow */ }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to delete: {ex.Message}", true));
+        }
+    }
+
+    private void ShowAddForm()
+    {
+        _editingProvider = null;
+        _form = new AgentProviderForm();
+        _availableModels.Clear();
+        _showForm = true;
+    }
+
+    private void EditProvider(ProviderConfig p)
+    {
+        _editingProvider = p;
+        _form = new AgentProviderForm
+        {
+            ProviderType = p.ProviderType,
+            DisplayName = p.DisplayName,
+            ExecutablePath = p.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath, ""),
+            BaseUrl = p.Settings.GetValueOrDefault(ProviderSettingKeys.BaseUrl, AgentDefaults.OpenCodeBaseUrl),
+            TimeoutMinutes = int.TryParse(p.Settings.GetValueOrDefault(ProviderSettingKeys.Timeout, "30"), out var t) ? t : 30,
+            AgentName = p.Settings.GetValueOrDefault(ProviderSettingKeys.AgentName, ""),
+            Model = p.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto"),
+            Effort = p.Settings.GetValueOrDefault(ProviderSettingKeys.Effort, "auto")
+        };
+        _availableModels.Clear();
+        _showForm = true;
+    }
+
+    private async Task SaveProvider()
+    {
+        if (string.IsNullOrWhiteSpace(_form.DisplayName))
+        {
+            await OnShowStatus.InvokeAsync(("Display Name is required.", true));
+            return;
+        }
+
+        var model = string.IsNullOrWhiteSpace(_form.Model) ? "auto" : _form.Model.Trim();
+        if (!model.Equals("auto", StringComparison.OrdinalIgnoreCase)
+            && !System.Text.RegularExpressions.Regex.IsMatch(model, @"^[a-zA-Z0-9._\-/]+$", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(1)))
+        {
+            await OnShowStatus.InvokeAsync(("Model name contains invalid characters. Only letters, numbers, dots, hyphens, underscores, and slashes are allowed.", true));
+            return;
+        }
+
+        var settings = new Dictionary<string, string>
+        {
+            [ProviderSettingKeys.Timeout] = _form.TimeoutMinutes.ToString(),
+            [ProviderSettingKeys.Model] = model
+        };
+
+        if (_form.ProviderType == "KiroCli")
+        {
+            settings[ProviderSettingKeys.ExecutablePath] = _form.ExecutablePath;
+            settings[ProviderSettingKeys.AgentName] = _form.AgentName;
+            var effort = string.IsNullOrWhiteSpace(_form.Effort) ? "auto" : _form.Effort.Trim();
+            settings[ProviderSettingKeys.Effort] = effort;
+        }
+        else
+        {
+            settings[ProviderSettingKeys.BaseUrl] = string.IsNullOrWhiteSpace(_form.BaseUrl) ? AgentDefaults.OpenCodeBaseUrl : _form.BaseUrl.Trim();
+        }
+
+        var config = new ProviderConfig
+        {
+            Id = _editingProvider?.Id ?? Guid.NewGuid().ToString(),
+            Kind = ProviderKind.Agent,
+            ProviderType = _form.ProviderType,
+            DisplayName = _form.DisplayName,
+            Settings = settings
+        };
+
+        try
+        {
+            await ConfigClient.SaveProviderConfigAsync(config, _cts.Token);
+
+            // Save k8s model-fetch timeout when in k8s mode (global setting, not per-provider)
+            if (IsKubernetesMode)
+            {
+                await ConfigClient.UpdatePipelineConfigAsync(
+                    current => current with { ModelFetchTimeoutSeconds = _modelFetchTimeoutSeconds },
+                    _cts.Token);
+            }
+
+            _showForm = false;
+            await OnSaved.InvokeAsync();
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+
+    private async Task FetchModels()
+    {
+        // #8: Reset elapsed counter and start timer
+        _fetchPhase = "Creating job…";
+        _fetchElapsedSeconds = 0;
+        _loadingModels = true;
+        StateHasChanged();
+
+        _elapsedTimer = new System.Threading.Timer(_ =>
+            InvokeAsync(() => { _fetchElapsedSeconds++; StateHasChanged(); }),
+            null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+
+        // #8: Progress sink — not available via HTTP, but phase will update on result
+        try
+        {
+            // Spec 045 Req 7a.3: delegate to GET /api/config/models (Option A passthrough).
+            // The API endpoint dispatches a one-shot K8s Job and returns results via the hub.
+            var (models, error) = await ConfigClient.GetModelsAsync(_cts.Token);
+
+            if (error is not null)
+            {
+                await OnShowStatus.InvokeAsync((error, true));
+                return;
+            }
+
+            _availableModels = models.ToList();
+
+            // #3: Warn instead of silently resetting the model when it's not in the fetched list
+            if (_form.Model != "auto" && models.Count > 0 && !models.Any(m => m.ModelId == _form.Model))
+            {
+                await OnShowStatus.InvokeAsync((
+                    $"Your configured model '{_form.Model}' was not found in the fetched list — " +
+                    "it may be unavailable on this subscription. Select from the list or keep it manually.",
+                    true));
+                // Leave _form.Model unchanged; the operator typed it deliberately
+            }
+            else
+            {
+                await OnShowStatus.InvokeAsync(($"{models.Count} model(s) loaded.", false));
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to fetch models: {ex.Message}", true));
+        }
+        finally
+        {
+            // #1: Always reached — no stuck _loadingModels
+            _loadingModels = false;
+            if (_elapsedTimer is not null) { await _elapsedTimer.DisposeAsync(); _elapsedTimer = null; }
+        }
+    }
+
+    // #2: Cancel the in-flight fetch and reset _cts so subsequent saves still work
+    private async Task CancelFetch()
+    {
+        await _cts.CancelAsync();
+        _cts.Dispose();
+        _cts = new CancellationTokenSource();
+        _loadingModels = false;
+        if (_elapsedTimer is not null) { await _elapsedTimer.DisposeAsync(); _elapsedTimer = null; }
+    }
+
+    private class AgentProviderForm
+    {
+        public string ProviderType { get; set; } = "KiroCli";
+        public string DisplayName { get; set; } = "";
+        public string ExecutablePath { get; set; } = AgentDefaults.KiroCliPath;
+        public string BaseUrl { get; set; } = AgentDefaults.OpenCodeBaseUrl;
+        public int TimeoutMinutes { get; set; } = 30;
+        public string AgentName { get; set; } = "default";
+        public string Model { get; set; } = "auto";
+        public string Effort { get; set; } = "auto";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_elapsedTimer is not null) { await _elapsedTimer.DisposeAsync(); _elapsedTimer = null; }
+        await _cts.CancelAsync();
+        _cts.Dispose();
+    }
+}

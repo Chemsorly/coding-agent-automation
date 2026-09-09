@@ -81,13 +81,13 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore
-        run: dotnet restore tests/CodingAgentWebUI.Infrastructure.IntegrationTests/CodingAgentWebUI.Infrastructure.IntegrationTests.csproj --verbosity quiet
+        run: dotnet restore tests/CodingAgent.Infrastructure.IntegrationTests/CodingAgent.Infrastructure.IntegrationTests.csproj --verbosity quiet
 
       - name: Build
-        run: dotnet build tests/CodingAgentWebUI.Infrastructure.IntegrationTests/ --no-restore --configuration Release --verbosity quiet
+        run: dotnet build tests/CodingAgent.Infrastructure.IntegrationTests/ --no-restore --configuration Release --verbosity quiet
 
       - name: Run migration integrity tests
-        run: dotnet test tests/CodingAgentWebUI.Infrastructure.IntegrationTests/ --no-build --configuration Release --verbosity quiet --logger trx --logger "console;verbosity=minimal" --results-directory TestResults --filter "Category=Integration" --collect:"XPlat Code Coverage"
+        run: dotnet test tests/CodingAgent.Infrastructure.IntegrationTests/ --no-build --configuration Release --verbosity quiet --logger trx --logger "console;verbosity=minimal" --results-directory TestResults --filter "Category=Integration" --collect:"XPlat Code Coverage"
 
       - name: Generate coverage report
         uses: danielpalme/ReportGenerator-GitHub-Action@d3ebf1f760f7d8ab92cc44d9bcfee7ad73722a31 # v5.5.11
@@ -217,7 +217,7 @@ jobs:
           mkdir -p "${XDG_RUNTIME_DIR}/containers"
           echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"auth\":\"${AUTH}\"}}}" > "${XDG_RUNTIME_DIR}/containers/auth.json"
 
-          # Build args for build-info (only relevant for webui, ignored by other Dockerfiles)
+          # Build args for build-info (only relevant for web, ignored by other Dockerfiles)
           BUILD_ARGS=""
           BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_COMMIT_SHA=${{ github.sha }}"
           BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_BRANCH=${{ github.ref_name }}"
@@ -358,7 +358,7 @@ jobs:
           sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" "${CHART_DIR}/Chart.yaml"
 
           # Update all image tags in values.yaml to version-suffixed (Dependabot-compatible semver)
-          sed -i "s/tag: coding-agent-webui$/tag: coding-agent-webui-${VERSION}/" "${CHART_DIR}/values.yaml"
+          sed -i "s/tag: coding-agent-web$/tag: coding-agent-web-${VERSION}/" "${CHART_DIR}/values.yaml"
           sed -i "s/tag: coding-agent-kiro-dotnet10$/tag: coding-agent-kiro-dotnet10-${VERSION}/" "${CHART_DIR}/values.yaml"
           sed -i "s/tag: coding-agent-kiro-python312$/tag: coding-agent-kiro-python312-${VERSION}/" "${CHART_DIR}/values.yaml"
           sed -i "s/tag: coding-agent-kiro-java21$/tag: coding-agent-kiro-java21-${VERSION}/" "${CHART_DIR}/values.yaml"

@@ -1,5 +1,5 @@
 # =============================================================================
-# CodingAgentWebUI Job Controller Dockerfile
+# CodingAgent.Web Job Controller Dockerfile
 # Runs the Job Controller service on port 8080.
 # No Kiro CLI, Node.js, uv, or SDK in the runtime layer.
 # =============================================================================
@@ -15,16 +15,16 @@ WORKDIR /src
 # Copy only the project files needed for the Job Controller and its dependencies (not test projects)
 COPY Directory.Build.props ./
 COPY Directory.Packages.props ./
-COPY src/CodingAgentWebUI.Pipeline/CodingAgentWebUI.Pipeline.csproj src/CodingAgentWebUI.Pipeline/
-COPY src/CodingAgentWebUI.Pipeline.CodeReview/CodingAgentWebUI.Pipeline.CodeReview.csproj src/CodingAgentWebUI.Pipeline.CodeReview/
-COPY src/CodingAgentWebUI.Api.Client/CodingAgentWebUI.Api.Client.csproj src/CodingAgentWebUI.Api.Client/
-COPY src/CodingAgentWebUI.Kubernetes/CodingAgentWebUI.Kubernetes.csproj src/CodingAgentWebUI.Kubernetes/
-COPY src/CodingAgentWebUI.JobController/CodingAgentWebUI.JobController.csproj src/CodingAgentWebUI.JobController/
-RUN dotnet restore src/CodingAgentWebUI.JobController/CodingAgentWebUI.JobController.csproj -a $TARGETARCH
+COPY src/CodingAgent.Pipeline/CodingAgent.Pipeline.csproj src/CodingAgent.Pipeline/
+COPY src/CodingAgent.Pipeline.CodeReview/CodingAgent.Pipeline.CodeReview.csproj src/CodingAgent.Pipeline.CodeReview/
+COPY src/CodingAgent.Api.Client/CodingAgent.Api.Client.csproj src/CodingAgent.Api.Client/
+COPY src/CodingAgent.Kubernetes/CodingAgent.Kubernetes.csproj src/CodingAgent.Kubernetes/
+COPY src/CodingAgent.JobController/CodingAgent.JobController.csproj src/CodingAgent.JobController/
+RUN dotnet restore src/CodingAgent.JobController/CodingAgent.JobController.csproj -a $TARGETARCH
 
 # Copy everything else and publish
 COPY . .
-RUN dotnet publish src/CodingAgentWebUI.JobController/CodingAgentWebUI.JobController.csproj \
+RUN dotnet publish src/CodingAgent.JobController/CodingAgent.JobController.csproj \
     -c Release \
     -a $TARGETARCH \
     --self-contained false \
@@ -79,4 +79,4 @@ ENV SERVICE_VERSION=${BUILD_COMMIT_SHA}
 HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
     CMD curl -f http://localhost:8080/healthz || exit 1
 
-ENTRYPOINT ["dotnet", "CodingAgentWebUI.JobController.dll"]
+ENTRYPOINT ["dotnet", "CodingAgent.JobController.dll"]

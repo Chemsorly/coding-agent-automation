@@ -156,7 +156,7 @@ The Job Controller-side recordings are not affected by any of the above.
 
 ### Work Distribution Metrics
 
-The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetry.cs` (in the `CodingAgentWebUI.Pipeline` assembly, namespace `CodingAgentWebUI.Pipeline.Telemetry`). Instruments are fed by `DispatchService` and `ReconciliationService` in the Job Controller, and by `WorkItemMetricsBackgroundService` in the Pipeline API (`workitems_by_status` gauge only).
+The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetry.cs` (in the `CodingAgent.Pipeline` assembly, namespace `CodingAgent.Pipeline.Telemetry`). Instruments are fed by `DispatchService` and `ReconciliationService` in the Job Controller, and by `WorkItemMetricsBackgroundService` in the Pipeline API (`workitems_by_status` gauge only).
 
 | Metric | Type | Unit | Tags | Description |
 |--------|------|------|------|-------------|
@@ -277,7 +277,7 @@ Agent pods emit telemetry with `service.name` derived from the agent image and l
 
 | `service.name` | Component | Port |
 |----------------|-----------|------|
-| `coding-agent-orchestrator` | Orchestrator | — |
+| `coding-agent-web` | Web service | — |
 | `coding-agent-api` | REST/WebSocket API | Port 8080 |
 | `coding-agent-jobcontroller` | Job Controller | Port 8080 |
 | `coding-agent-scheduler` | Scheduler | Port 8080 |
@@ -321,7 +321,7 @@ Expected output after dispatching a job:
 
 When connected to a backend (Grafana Tempo, Jaeger, etc.), search for traces with:
 
-- Service: `coding-agent-orchestrator` or `coding-agent-worker`
+- Service: `coding-agent-web` or `coding-agent-worker`
 - Operation: `ExecutePipeline`
 
 Expected span hierarchy for an implementation run:

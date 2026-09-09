@@ -177,7 +177,7 @@ public class FileSystemMonitorTests
     /// <summary>
     /// Property: Grouping file changes by type produces groups where every item
     /// has matching type, and union of all groups equals original list.
-    /// Migrated from CodingAgentWebUI.IntegrationTests.
+    /// Migrated from CodingAgent.Web.IntegrationTests.
     /// </summary>
     [Property(MaxTest = 20, Arbitrary = new[] { typeof(Generators) })]
     public void GroupByType_PreservesAllItems_WithCorrectTypes(List<FileChange> fileChanges)

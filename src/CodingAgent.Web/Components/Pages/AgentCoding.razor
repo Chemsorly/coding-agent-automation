@@ -1,0 +1,240 @@
+@page "/agent-coding"
+@page "/pipelines"
+@layout CockpitLayout
+@implements IDisposable
+@using CodingAgent.Pipeline.Models
+@using CodingAgent.Orchestration
+@using CodingAgent.Orchestration.Dispatch
+@using CodingAgent.Orchestration.Registry
+@using CodingAgent.Web.Services
+
+<PageTitle>Pipelines - Coding Agent</PageTitle>
+
+<div class="agent-coding-page">
+    <header class="agent-header">
+        <h1>Pipelines</h1>
+    </header>
+
+    @* ═══ Overlay toast stack ═══ *@
+    <div class="agent-toast-stack">
+        @if (LoopService.IsLoopActive && !_hideLoopToast)
+        {
+            <div class="agent-summary-bar loop-status-bar">
+                @if (_stopPending)
+                {
+                    <span class="loop-status-text">
+                        <span class="loop-stop-spinner"></span>Stopping…
+                    </span>
+                }
+                else
+                {
+                    <span class="loop-status-text">@LoopService.StatusMessage</span>
+                }
+                <button class="btn-cancel loop-stop-btn" @onclick="StopLoop" disabled="@_stopPending">⏹ Stop Loop</button>
+            </div>
+        }
+
+        @if (LoopService.IsCircuitBroken)
+        {
+            <div class="agent-summary-bar" style="background: var(--bg-error); color: var(--error); border-color: var(--error);">
+                @LoopService.StatusMessage
+                <span style="margin-left: 1rem;">
+                    <button class="btn-save" @onclick="ResumeLoop" style="margin-right: 0.5rem;">Resume</button>
+                    <button class="btn-cancel" @onclick="StopLoop" disabled="@_stopPending">Stop</button>
+                </span>
+            </div>
+        }
+
+        @* TODO(#1775): Migrate _successMessage/_errorMessage to <InlineStatus> component for inline feedback (issue #876 requirement) *@
+        @if (!string.IsNullOrEmpty(_successMessage))
+        {
+            <div class="settings-status status-success">@_successMessage</div>
+        }
+
+        @if (!string.IsNullOrEmpty(_errorMessage))
+        {
+            <div class="settings-status status-error">
+                <span class="toast-message">@_errorMessage</span>
+                <button class="agent-summary-dismiss" @onclick="DismissError" title="Dismiss">✕</button>
+            </div>
+        }
+
+        @{
+            // Spec 044 (degraded mode): IOrchestratorRunService removed from monolith.
+            // Active run count unavailable — will be restored in Spec 045 via API hub streaming.
+            var agentRuns = System.Array.Empty<CodingAgent.Pipeline.Interfaces.ActiveRunSummary>();
+            var agentCount = Registry.GetAllAgents().Count;
+            // Queue depth now lives in IPendingWorkQuery (WorkItems table), not the in-memory guard.
+            // Not injected here — the agent summary below only gates on it being non-zero.
+            var queueLength = 0;
+            var implRunCount = 0;
+            var reviewRunCount = 0;
+        }
+        @if (_showAgentSummary && (agentRuns.Length > 0 || queueLength > 0))
+        {
+            <div class="agent-summary-bar">
+                <span>
+                    <Icon Name="bot" Size="16" /> @agentCount agent(s) registered ·
+                    @agentRuns.Length agent run(s) active
+                    @if (implRunCount > 0 && reviewRunCount > 0)
+                    {
+                        <text> (🔨@implRunCount impl · </text><Icon Name="search" Size="16" /><text>@reviewRunCount review)</text>
+                    }
+                    else if (reviewRunCount > 0)
+                    {
+                        <text> (</text><Icon Name="search" Size="16" /><text>@reviewRunCount review)</text>
+                    }
+                    @if (queueLength > 0)
+                    {
+                        <text> · @queueLength job(s) queued</text>
+                    }
+                    · <a href="work" style="color: var(--accent-light);">View work →</a>
+                </span>
+                <button class="agent-summary-dismiss" @onclick="DismissAgentSummary" title="Dismiss">✕</button>
+            </div>
+        }
+    </div>
+
+    <div class="agent-content-layout">
+        <div class="agent-main">
+            <OnboardingChecklist
+                HasIssueProvider="@(_issueProviders.Count > 0)"
+                HasRepoProvider="@(_repoProviders.Count > 0)"
+                HasProject="@(_projects.Count > 0)"
+                HasTemplate="@(_templates.Count > 0)"
+                HasAgent="@(Registry.GetAllAgents().Count > 0)"
+                IsLoopActive="LoopService.IsLoopActive"
+                OnAddTemplate="ShowAddForm" />
+
+            <TemplateTableSection Templates="_templates" Projects="_projects"
+                IssueProviders="_issueProviders" RepoProviders="_repoProviders"
+                BrainProviders="_brainProviders" PipelineProviders="_pipelineProviders"
+                IsLoopActive="LoopService.IsLoopActive" RecentlyToggled="_recentlyToggled"
+                TemplateStatuses="LoopService.TemplateStatuses"
+                QualityGateConfigs="_qualityGateConfigs" ReviewerConfigs="_reviewerConfigs"
+                AgentProfiles="_agentProfiles" PipelineConfig="_pipelineConfig"
+                ShowAddForm="_showAddForm" AddForm="_addForm" FormError="@_formError"
+                ShowDeleteConfirm="_showDeleteConfirm" DeletingTemplate="_deletingTemplate"
+                OnToggleEnabled="ToggleTemplateEnabled" OnToggleImplementation="ToggleImplementationEnabled"
+                OnToggleReview="ToggleReviewEnabled" OnToggleDecomposition="ToggleDecompositionEnabled"
+                OnToggleHousekeeping="ToggleHousekeepingEnabled"
+                OnToggleBranchCleanup="ToggleBranchCleanupEnabled"
+                OnConfirmRemove="ConfirmRemoveTemplate" OnMoveTemplate="MoveTemplateToProject"
+                OnShowAddForm="ShowAddForm" OnAddTemplate="AddTemplate"
+                OnCancelAdd="CancelAddForm" OnRemoveTemplate="RemoveTemplate" OnCancelDelete="CancelDelete" />
+
+            <!-- ═══ Loop Controls ═══ -->
+            <section class="settings-section" style="margin: 0 20px 16px;">
+                <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                    @if (!LoopService.IsLoopActive)
+                    {
+                        <button class="btn-save" @onclick="StartLoop" disabled="@(!CanStartLoop)" title="@(!CanStartLoop ? StartLoopDisabledReason : null)"><Icon Name="play" Size="16" /> Start Loop</button>
+                    }
+                    else
+                    {
+                        <button class="btn-cancel" @onclick="StopLoop" disabled="@_stopPending">⏹ Stop Loop</button>
+                    }
+                    @if (LoopService.IsLoopActive)
+                    {
+                        <span class="monitoring-muted" style="font-size: 0.82rem;">
+                            Polling template @(LoopService.CurrentCycleTemplateIndex + 1) of @LoopService.CurrentCycleTemplateCount
+                            · Processed: @LoopService.ProcessedCount · Failed: @LoopService.FailedCount
+                        </span>
+                    }
+                </div>
+                @if (LoopService.ValidationErrors.Count > 0)
+                {
+                    <div class="settings-status status-error" style="margin-top: 8px;">
+                        <strong>Validation errors:</strong>
+                        <ul style="margin: 4px 0 0 16px; padding: 0;">
+                            @foreach (var err in LoopService.ValidationErrors)
+                            {
+                                <li>@err</li>
+                            }
+                        </ul>
+                    </div>
+                }
+            </section>
+
+            <!-- ═══ Manual Dispatch ═══ -->
+            <section class="settings-section" style="margin: 0 20px 16px;">
+                <h2>Manual Dispatch</h2>
+                <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                    <select value="@_manualDispatchTemplateId" @onchange="OnTemplateChanged" class="dispatch-template-select" data-testid="template-select">
+                        <option value="">-- Select Template --</option>
+                        @foreach (var t in _templates.Where(t => t.Enabled))
+                        {
+                            <option value="@t.Id">@t.Name</option>
+                        }
+                    </select>
+                    <button class="btn-save" @onclick="OpenEpicDrawer" disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))" title="@(string.IsNullOrEmpty(_manualDispatchTemplateId) ? "Select a pipeline template to browse epics" : null)" data-testid="browse-epics-btn" style="background: #7057ff;">Browse Epics</button>
+                    <button class="btn-save" @onclick="OpenDrawer" disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))" title="@(string.IsNullOrEmpty(_manualDispatchTemplateId) ? "Select a pipeline template to browse issues" : null)" data-testid="browse-issues-btn">Browse Issues</button>
+                    <button class="btn-save" @onclick="OpenPrDrawer" disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))" title="@(string.IsNullOrEmpty(_manualDispatchTemplateId) ? "Select a pipeline template to browse pull requests" : null)" data-testid="browse-prs-btn" style="background: var(--accent-secondary, #6366f1);">Browse Pull Requests</button>
+                </div>
+            </section>
+
+            <!-- ═══ Consolidation triggers + harness suggestions (folded in from the Consolidation page) ═══ -->
+            <Consolidation />
+        </div>
+    </div>
+    <UndoSnackbar @ref="_undoSnackbar" />
+</div>
+
+<!-- Dispatch Drawers -->
+<IssueDispatchDrawer IsOpen="_drawerOpen" Template="_drawerTemplate"
+    Issues="_drawerIssues" IsLoading="_drawerLoading" HasMore="_drawerHasMore" Page="_drawerPage"
+    IsDispatching="_drawerDispatching" IsBeingProcessed="@(id => IsIssueActive(id, _drawerTemplate?.IssueProviderId ?? ""))"
+    Readiness="_drawerReadiness"
+    AvailableLabels="_drawerLabels" SelectedLabels="_drawerSelectedLabels"
+    OnToggleLabel="DrawerToggleLabel" OnClearLabels="DrawerClearLabels"
+    OnClose="CloseDrawer" OnNextPage="DrawerNextPage" OnPrevPage="DrawerPrevPage" OnDispatch="DispatchFromDrawer">
+    <HeaderPrefix>
+        <nav class="dispatch-drawer-tabs" role="tablist" aria-label="Panel type">
+            <button class="dispatch-drawer-tab active" role="tab" aria-selected="true">Issues</button>
+            @if (ActiveDrawerTemplate?.ReviewEnabled == true)
+            {
+                <button class="dispatch-drawer-tab" role="tab" aria-selected="false" @onclick="SwitchToPrDrawer">Pull Requests</button>
+            }
+            @if (ActiveDrawerTemplate?.DecompositionEnabled == true)
+            {
+                <button class="dispatch-drawer-tab" role="tab" aria-selected="false" @onclick="SwitchToEpicDrawer">Epics</button>
+            }
+        </nav>
+    </HeaderPrefix>
+</IssueDispatchDrawer>
+
+<PrDispatchDrawer IsOpen="_prDrawerOpen" Template="_prDrawerTemplate"
+    PullRequests="_prDrawerPrs" IsLoading="_prDrawerLoading" HasMore="_prDrawerHasMore" Page="_prDrawerPage"
+    IsDispatching="_prDrawerDispatching" IsBeingProcessed="@(id => IsIssueActive(id, _prDrawerTemplate?.IssueProviderId ?? ""))"
+    AvailableLabels="_prDrawerLabels" SelectedLabels="_prDrawerSelectedLabels"
+    OnToggleLabel="PrDrawerToggleLabel" OnClearLabels="PrDrawerClearLabels"
+    OnClose="ClosePrDrawer" OnNextPage="PrDrawerNextPage" OnPrevPage="PrDrawerPrevPage" OnDispatch="DispatchPrReviewFromDrawer">
+    <HeaderPrefix>
+        <nav class="dispatch-drawer-tabs" role="tablist" aria-label="Panel type">
+            <button class="dispatch-drawer-tab" role="tab" aria-selected="false" @onclick="SwitchToIssueDrawer">Issues</button>
+            <button class="dispatch-drawer-tab active" role="tab" aria-selected="true">Pull Requests</button>
+            @if (ActiveDrawerTemplate?.DecompositionEnabled == true)
+            {
+                <button class="dispatch-drawer-tab" role="tab" aria-selected="false" @onclick="SwitchToEpicDrawer">Epics</button>
+            }
+        </nav>
+    </HeaderPrefix>
+</PrDispatchDrawer>
+
+<EpicDispatchDrawer IsOpen="_epicDrawerOpen" Template="_epicDrawerTemplate"
+    Issues="_epicDrawerIssues" IsLoading="_epicDrawerLoading" HasMore="_epicDrawerHasMore" Page="_epicDrawerPage"
+    IsDispatching="_epicDrawerDispatching" IsBeingProcessed="@(id => IsIssueActive(id, _epicDrawerTemplate?.IssueProviderId ?? ""))"
+    AvailableLabels="_epicDrawerLabels" SelectedLabels="_epicDrawerSelectedLabels"
+    OnToggleLabel="EpicDrawerToggleLabel" OnClearLabels="EpicDrawerClearLabels"
+    OnClose="CloseEpicDrawer" OnNextPage="EpicDrawerNextPage" OnPrevPage="EpicDrawerPrevPage" OnDispatch="DispatchDecompositionFromDrawer">
+    <HeaderPrefix>
+        <nav class="dispatch-drawer-tabs" role="tablist" aria-label="Panel type">
+            <button class="dispatch-drawer-tab" role="tab" aria-selected="false" @onclick="SwitchToIssueDrawer">Issues</button>
+            @if (ActiveDrawerTemplate?.ReviewEnabled == true)
+            {
+                <button class="dispatch-drawer-tab" role="tab" aria-selected="false" @onclick="SwitchToPrDrawer">Pull Requests</button>
+            }
+            <button class="dispatch-drawer-tab active" role="tab" aria-selected="true">Epics</button>
+        </nav>
+    </HeaderPrefix>
+</EpicDispatchDrawer>

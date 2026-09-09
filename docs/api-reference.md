@@ -1,6 +1,6 @@
 # HTTP API Reference
 
-The Pipeline API (`CodingAgentWebUI.Api`, port **8080**) exposes HTTP API endpoints for programmatic access to work item management, configuration, run history, and health probes.
+The Pipeline API (`CodingAgent.Api`, port **8080**) exposes HTTP API endpoints for programmatic access to work item management, configuration, run history, and health probes.
 
 ## Availability
 

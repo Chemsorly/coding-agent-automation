@@ -1,0 +1,92 @@
+using Serilog;
+using Serilog.Sinks.OpenTelemetry;
+
+namespace CodingAgent.Infrastructure.Telemetry;
+
+/// <summary>
+/// Extension methods for configuring the Serilog OTLP sink conditionally.
+/// The sink is only added when <c>OTEL_EXPORTER_OTLP_ENDPOINT</c> is set.
+/// </summary>
+public static class SerilogOtlpExtensions
+{
+    /// <summary>
+    /// Conditionally adds the OpenTelemetry OTLP sink if <c>OTEL_EXPORTER_OTLP_ENDPOINT</c> is configured.
+    /// </summary>
+    /// <param name="loggerConfiguration">The Serilog logger configuration.</param>
+    /// <param name="serviceName">The service name (must match the OTel SDK resource config).</param>
+    /// <param name="environmentName">
+    /// The deployment environment name. If null, reads from <c>ASPNETCORE_ENVIRONMENT</c>
+    /// or <c>DOTNET_ENVIRONMENT</c> env vars, defaulting to "Production".
+    /// </param>
+    public static LoggerConfiguration WriteToOtlpIfConfigured(
+        this LoggerConfiguration loggerConfiguration,
+        string serviceName,
+        string? environmentName = null)
+    {
+        ArgumentNullException.ThrowIfNull(loggerConfiguration);
+        ArgumentNullException.ThrowIfNull(serviceName);
+        var endpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
+        if (string.IsNullOrWhiteSpace(endpoint))
+            return loggerConfiguration;
+
+        environmentName ??= Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
+                         ?? Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
+                         ?? "Production";
+
+        // ignoreEnvironment: true because we read OTEL env vars ourselves with URL-decoding and validation
+        return loggerConfiguration.WriteTo.OpenTelemetry(options =>
+        {
+            options.Endpoint = endpoint;
+            options.Protocol = ParseOtlpProtocol();
+            options.ResourceAttributes = new Dictionary<string, object>
+            {
+                ["service.name"] = serviceName,
+                ["service.version"] = Environment.GetEnvironmentVariable("SERVICE_VERSION") ?? "local",
+                ["deployment.environment"] = environmentName
+            };
+
+            ApplyOtlpHeaders(options);
+        }, ignoreEnvironment: true);
+    }
+
+    private static OtlpProtocol ParseOtlpProtocol()
+    {
+        var protocol = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_PROTOCOL");
+        if (!string.IsNullOrEmpty(protocol)
+            && !string.Equals(protocol, "http/protobuf", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(protocol, "grpc", StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Warning("Unrecognized OTEL_EXPORTER_OTLP_PROTOCOL value '{Protocol}', falling back to gRPC. Expected 'http/protobuf' or 'grpc'", protocol);
+        }
+        return string.Equals(protocol, "http/protobuf", StringComparison.OrdinalIgnoreCase)
+            ? OtlpProtocol.HttpProtobuf
+            : OtlpProtocol.Grpc;
+    }
+
+    private static void ApplyOtlpHeaders(OpenTelemetrySinkOptions options)
+    {
+        var headers = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_HEADERS");
+        if (string.IsNullOrWhiteSpace(headers))
+            return;
+
+        foreach (var pair in headers.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var separatorIndex = pair.IndexOf('=');
+            if (separatorIndex <= 0)
+            {
+                Log.Warning("OTEL_EXPORTER_OTLP_HEADERS contains invalid entry '{Entry}' (missing '=' separator), skipping", pair);
+                continue;
+            }
+
+            var key = Uri.UnescapeDataString(pair[..separatorIndex].Trim());
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                Log.Warning("OTEL_EXPORTER_OTLP_HEADERS contains entry with empty key, skipping");
+                continue;
+            }
+
+            var value = Uri.UnescapeDataString(pair[(separatorIndex + 1)..]);
+            options.Headers[key] = value;
+        }
+    }
+}

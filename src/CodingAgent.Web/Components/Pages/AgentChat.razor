@@ -1,0 +1,655 @@
+@page "/agent-chat"
+@layout CockpitLayout
+@implements IAsyncDisposable
+@using CodingAgent.Pipeline
+@using CodingAgent.Pipeline.Interfaces
+@using CodingAgent.Pipeline.Models
+@using CodingAgent.Pipeline.Services
+@using CodingAgent.Orchestration
+@using CodingAgent.Orchestration.Dispatch
+@using CodingAgent.Kubernetes
+@using CodingAgent.Orchestration.Health
+@using CodingAgent.Web.Services
+@using CodingAgent.Api.Client
+@using Microsoft.Extensions.Configuration
+@using Microsoft.AspNetCore.SignalR.Client
+@using Serilog
+@inject IConfigurationStore ConfigStore
+@inject PipelineRunLifecycleService PipelineLifecycle
+@inject IPipelineApiAgentClient AgentClient
+@inject IJSRuntime JS
+@inject IChatJobDispatcher ChatDispatcher
+@inject JobTemplateStore? TemplateStore
+@inject IConfiguration Configuration
+@inject IAgentHubConnection HubConnection
+@inject IChatPromptBuilder ChatPromptBuilder
+
+<PageTitle>Agent Chat - Coding Agent</PageTitle>
+
+<div class="agent-monitoring-page">
+    <header class="agent-header">
+        <h1>Agent Chat</h1>
+    </header>
+
+    <section class="settings-section" style="margin: 16px 20px;">
+        @if (!_isChatActive)
+        {
+            <!-- K8s mode: Job Template selection + pod launch -->
+            <div class="chat-setup">
+                <h2><Icon Name="message-circle" Size="20" /> Interactive Chat</h2>
+                <p class="chat-description">Select an agent type to launch a dedicated chat pod.</p>
+
+                <div class="chat-agent-select">
+                    <label for="template-select">Job Template:</label>
+                    <select id="template-select" @bind="_selectedTemplateLabels" @bind:after="OnTemplateSelected" class="chat-select">
+                        <option value="">— Select agent type —</option>
+                        @foreach (var t in _templates)
+                        {
+                            <option value="@t.Labels">@t.Labels</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="chat-agent-select">
+                    <label for="project-select-k8s">Project (optional):</label>
+                    <select id="project-select-k8s" @bind="_selectedProjectId" @bind:after="OnProjectSelected" class="chat-select"
+                            disabled="@_isChatActive">
+                        <option value="">— No project —</option>
+                        @foreach (var p in _projects)
+                        {
+                            <option value="@p.Id">@p.Name</option>
+                        }
+                    </select>
+                </div>
+
+                @if (_launching)
+                {
+                    <div class="agent-detail-warning">
+                        <Icon Name="loader" Size="16" /> Launching chat pod... (@_launchElapsedSeconds s / @_options_connectTimeout s)
+                    </div>
+                }
+
+                @if (_launchError is not null)
+                {
+                    <div class="agent-detail-warning"><Icon Name="alert-triangle" Size="16" /> @_launchError</div>
+                }
+
+                <button class="btn-start-chat" @onclick="LaunchChatPod"
+                        disabled="@(string.IsNullOrEmpty(_selectedTemplateLabels) || _launching)">
+                    <Icon Name="rocket" Size="16" /> Launch Chat Pod
+                </button>
+            </div>
+        }
+        else
+        {
+            <!-- Chat Window (shared by both modes) -->
+            <div class="chat-window">
+                <div class="chat-header-bar">
+                    <span class="chat-agent-info">Chatting with <strong>@_selectedAgentId</strong> · model: <strong>@_resolvedModel</strong></span>
+                    <button class="btn-end-chat" @onclick="EndChat">✕ End Chat</button>
+                </div>
+
+                <div class="chat-messages" @ref="_messagesContainer">
+                    @foreach (var msg in _messages)
+                    {
+                        <div class="chat-message chat-message-@msg.Role.ToString().ToLowerInvariant()">
+                            <div class="chat-message-header">
+                                <span class="chat-role"><Icon Name="@GetRoleIconName(msg.Role)" Size="16" /> @msg.Role</span>
+                                <span class="chat-timestamp">@msg.Timestamp.ToLocalTime().ToString("HH:mm:ss")</span>
+                            </div>
+                            <div class="chat-message-content">
+                                <pre>@msg.Content</pre>
+                            </div>
+                        </div>
+                    }
+                    @if (_isWaitingForResponse)
+                    {
+                        <div class="chat-message chat-message-agent">
+                            <div class="chat-message-header">
+                                <span class="chat-role"><Icon Name="bot" Size="16" /> Agent</span>
+                            </div>
+                            <div class="chat-message-content chat-streaming">
+                                <pre>@(_streamingContent.Length > 0 ? _streamingContent.ToString() : "⏳ Thinking...")</pre>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <div class="chat-input-area">
+                    <textarea @bind="_currentPrompt" @bind:event="oninput"
+                              @onkeydown="HandleKeyDown"
+                              placeholder="Type your prompt... (Enter to send, Shift+Enter for newline)"
+                              disabled="@_isWaitingForResponse"
+                              class="chat-input" rows="2"></textarea>
+                    <button class="btn-send" @onclick="SendPrompt"
+                            disabled="@(_isWaitingForResponse || string.IsNullOrWhiteSpace(_currentPrompt))">
+                        Send
+                    </button>
+                </div>
+            </div>
+        }
+    </section>
+</div>
+
+@code {
+    // ── Shared state ─────────────────────────────────────────────────────────
+    private string _selectedAgentId = "";
+    private bool _isChatActive;
+    private bool _isWaitingForResponse;
+    private string _currentPrompt = "";
+    private string? _activeSessionId;
+    private bool _isFirstPrompt = true;
+    private AgentProfile? _resolvedProfile;
+    private string _resolvedMcpConfigPath = "/home/ubuntu/.kiro/settings/mcp.json";
+    private string _resolvedModel = "auto";
+
+    // Per-chat-window stable ID (generated once in StartChat, included in every prompt)
+    private string _chatWindowId = "";
+
+    // ── Hub event subscriptions ──────────────────────────────────────────────
+    private IDisposable? _chatResponseSub;
+    private IDisposable? _chatCompletedSub;
+
+    // ── Project context (optional) ───────────────────────────────────────────
+    private IReadOnlyList<PipelineProject> _projects = [];
+    private string _selectedProjectId = "";  // empty = no project selected
+    private PipelineProject? _selectedProject;
+
+    private readonly List<ChatMessage> _messages = new();
+    private readonly System.Text.StringBuilder _streamingContent = new();
+    private ElementReference _messagesContainer;
+
+    // ── K8s-mode state ───────────────────────────────────────────────────────
+    private IReadOnlyCollection<JobTemplate> _templates = [];
+    private string _selectedTemplateLabels = "";
+    private bool _launching;
+    private string? _launchError;
+    private int _launchElapsedSeconds;
+    private CancellationTokenSource? _cts;
+    private System.Threading.Timer? _elapsedTimer;
+    // Sends a keepalive to the API every ~30s while the chat window is open so the server
+    // knows the circuit is still live and doesn't idle-kill the pod.
+    private System.Threading.Timer? _keepaliveTimer;
+
+    // Connect-timeout shown in the counter — read from config in OnInitialized.
+    private int _options_connectTimeout = 120;
+
+    protected override void OnInitialized()
+    {
+        PipelineLifecycle.OnChange += HandleStateChange;
+
+        _options_connectTimeout = Configuration.GetValue<int>(
+            "WorkDistribution:Dispatch:ChatPodConnectTimeoutSeconds", 120);
+
+        _templates = TemplateStore?.GetAllTemplates() ?? [];
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Load available projects for the optional project context dropdown.
+        // Runs after OnInitialized so the synchronous setup (agents, templates) completes first.
+        _projects = await ConfigStore.LoadProjectsAsync(CancellationToken.None);
+
+        // Hub connection is NOT started here intentionally.
+        // OnInitializedAsync runs during Blazor prerender (before the interactive circuit exists),
+        // so calling StartAsync here would produce a 404. The hub is started in StartChat() instead,
+        // which is invoked only from user action (after LaunchChatPod succeeds), post-circuit.
+        // See RunPage.razor for the same pattern (hub start in OnAfterRenderAsync/firstRender).
+    }
+
+    // OnChatResponse: accumulate streaming lines into _streamingContent.
+    private void HandleChatResponseReceived(string sessionId, IReadOnlyList<string> lines)
+    {
+        if (sessionId != _activeSessionId) return;
+        InvokeAsync(() =>
+        {
+            foreach (var line in lines)
+            {
+                if (_streamingContent.Length > 0) _streamingContent.AppendLine();
+                _streamingContent.Append(line);
+            }
+            StateHasChanged();
+            _ = ScrollToBottom();
+        });
+    }
+
+    // OnChatCompleted: finalise the message, release the waiting state.
+    private void HandleChatCompleted(string sessionId, int exitCode, string? error)
+    {
+        if (sessionId != _activeSessionId) return;
+        InvokeAsync(() =>
+        {
+            var content = _streamingContent.ToString();
+            if (!string.IsNullOrWhiteSpace(content))
+            {
+                _messages.Add(new ChatMessage
+                {
+                    Role = ChatRole.Agent,
+                    Content = content,
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+            if (!string.IsNullOrEmpty(error))
+            {
+                _messages.Add(new ChatMessage
+                {
+                    Role = ChatRole.System,
+                    Content = $"⚠️ {error} (exit code: {exitCode})",
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+            _streamingContent.Clear();
+            _isWaitingForResponse = false;
+            // Do NOT clear _activeSessionId here — the chat session is still active and
+            // waiting for the next prompt. Clearing it would prevent EndChat/DisposeAsync
+            // from unsubscribing from the correct hub group. It is only cleared in EndChat.
+            StateHasChanged();
+            _ = ScrollToBottom();
+        });
+    }
+
+    // ── Project selection handler (shared by both modes) ─────────────────────
+
+    private void OnProjectSelected()
+    {
+        _selectedProject = string.IsNullOrEmpty(_selectedProjectId)
+            ? null
+            : _projects.FirstOrDefault(p => p.Id == _selectedProjectId);
+    }
+
+    // ── K8s-mode: template selection handler ─────────────────────────────────
+
+    private async Task OnTemplateSelected()
+    {
+        if (string.IsNullOrEmpty(_selectedTemplateLabels)) return;
+
+        // Resolve AgentProfile + ProviderConfig to pre-populate _resolvedModel for header display
+        try
+        {
+            var profiles = await ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
+            var labels = _selectedTemplateLabels.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var resolver = new ProfileResolver();
+            _resolvedProfile = resolver.Resolve(profiles, labels);
+
+            if (_resolvedProfile is not null)
+            {
+                var agentConfig = await ConfigStore.GetProviderConfigByIdAsync(
+                    _resolvedProfile.AgentProviderConfigId, ProviderKind.Agent, CancellationToken.None);
+                _resolvedModel = agentConfig?.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto") ?? "auto";
+            }
+            else
+            {
+                _resolvedModel = "auto";
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "AgentChat: failed to resolve profile for template {Labels}", _selectedTemplateLabels);
+            _resolvedModel = "auto";
+        }
+
+        StateHasChanged();
+    }
+
+    // ── K8s-mode: launch chat pod ─────────────────────────────────────────────
+
+    private async Task LaunchChatPod()
+    {
+        if (string.IsNullOrEmpty(_selectedTemplateLabels) || _launching) return;
+
+        _cts = new CancellationTokenSource();
+        _launching = true;
+        _launchError = null;
+        _launchElapsedSeconds = 0;
+
+        _elapsedTimer = new System.Threading.Timer(_ =>
+        {
+            InvokeAsync(() =>
+            {
+                _launchElapsedSeconds++;
+                StateHasChanged();
+            });
+        }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+
+        try
+        {
+            await ResolvePodLaunchProfileAsync();
+
+            var agentId = await ChatDispatcher.DispatchChatPodAsync(
+                _selectedTemplateLabels, _resolvedPodModel, _resolvedPodEffort, _cts.Token);
+
+            _selectedAgentId = agentId;
+            await StartChat();
+        }
+        catch (Exception ex)
+        {
+            var classified = ClassifyLaunchError(ex);
+            _launchError = classified ?? $"Launch failed: {ex.Message}";
+            if (classified is null)
+                Log.Warning(ex, "AgentChat: unexpected error launching chat pod");
+        }
+        finally
+        {
+            _launching = false;
+            if (_elapsedTimer is not null) { await _elapsedTimer.DisposeAsync(); _elapsedTimer = null; }
+            StateHasChanged();
+        }
+    }
+
+    // Transient fields set by ResolvePodLaunchProfileAsync for use in LaunchChatPod
+    private string? _resolvedPodModel;
+    private string? _resolvedPodEffort;
+
+    private async Task ResolvePodLaunchProfileAsync()
+    {
+        _resolvedPodModel = null;
+        _resolvedPodEffort = null;
+        // Reset to safe default so stale state from a previous session never leaks into this one.
+        // Mirrors the _resolvedPodModel = null / _resolvedPodEffort = null pattern above.
+        _resolvedMcpConfigPath = "/home/ubuntu/.kiro/settings/mcp.json";
+
+        var profiles = await ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
+        var labelParts = _selectedTemplateLabels.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var resolver = new ProfileResolver();
+        _resolvedProfile = resolver.Resolve(profiles, labelParts);
+
+        if (_resolvedProfile is not null)
+        {
+            var agentConfig = await ConfigStore.GetProviderConfigByIdAsync(
+                _resolvedProfile.AgentProviderConfigId, ProviderKind.Agent, CancellationToken.None);
+
+            _resolvedPodModel = agentConfig?.Settings.GetValueOrDefault(ProviderSettingKeys.Model);
+            _resolvedPodEffort = agentConfig?.Settings.GetValueOrDefault(ProviderSettingKeys.Effort);
+            _resolvedModel = _resolvedPodModel ?? "auto";
+
+            if (agentConfig?.Settings.TryGetValue(ProviderSettingKeys.McpConfigPath, out var path) == true
+                && !string.IsNullOrWhiteSpace(path))
+            {
+                _resolvedMcpConfigPath = path;
+            }
+            else
+            {
+                // Derive the default MCP config path from the provider type.
+                // ToLowerInvariant() is load-bearing: ProviderConfig.ProviderType is stored as
+                // "OpenCode" (PascalCase) by the UI, so normalisation is required for the match.
+                // This mirrors OpenCodeAgentProvider.McpConfigPath / KiroCliAgentProvider.McpConfigPath
+                // which WriteMcpConfigStep already uses correctly in the pipeline job path.
+                // TODO: If agentConfig is non-null but ProviderType is null or empty, the switch
+                // silently falls back to the Kiro default path. This can mask a misconfiguration for
+                // an OpenCode agent (pod launches, MCP servers are silently unavailable). Consider
+                // logging a warning or surfacing a UI error when ProviderType is null/empty and
+                // agentConfig is non-null, so the user is alerted to the missing configuration.
+                _resolvedMcpConfigPath = agentConfig?.ProviderType?.ToLowerInvariant() switch
+                {
+                    "opencode" => "/home/ubuntu/.opencode/mcp.json",
+                    _ => "/home/ubuntu/.kiro/settings/mcp.json"
+                };
+            }
+        }
+        // If _resolvedProfile is null: _resolvedMcpConfigPath was already reset to the
+        // Kiro default above, so no further action is needed.
+    }
+
+    private string? ClassifyLaunchError(Exception ex) => ex switch
+    {
+        OperationCanceledException when _cts?.IsCancellationRequested == true => "Launch cancelled.",
+        NoPvcAvailableException => "No agent credentials available. Try again later.",
+        ChatPodTimeoutException tEx => $"Pod did not connect within {tEx.TimeoutSeconds}s. Check cluster logs.",
+        InvalidOperationException iEx when iEx.Message.Contains("not the leader")
+            => "The server is currently unavailable for chat dispatch. Please try again.",
+        _ => null // caller logs unexpected
+    };
+
+    // ── StartChat (K8s mode) ──────────────────────────────────────────────────
+
+    private async Task StartChat()
+    {
+        // _selectedAgentId is always set by LaunchChatPod before this is called —
+        // the guard that was here was a SignalR-era remnant and is unreachable.
+
+        // Generate a stable chat window ID for this session
+        _chatWindowId = Guid.NewGuid().ToString();
+
+        _isChatActive = true;
+        _isFirstPrompt = true;
+        _messages.Clear();
+        _streamingContent.Clear();
+
+        // Start hub and register push handlers now — after the interactive circuit exists
+        // and a chat pod is live. Starting here (from a user action) avoids the 404 that
+        // occurs when StartAsync is called during OnInitializedAsync (prerender).
+        // Handlers are registered before StartAsync so no events are missed during connection.
+        _chatResponseSub?.Dispose();
+        _chatCompletedSub?.Dispose();
+        _chatResponseSub = HubConnection.On<string, IReadOnlyList<string>>(
+            HubMethodNames.OnChatResponse, HandleChatResponseReceived);
+        _chatCompletedSub = HubConnection.On<string, int, string?>(
+            HubMethodNames.OnChatCompleted, HandleChatCompleted);
+
+        if (HubConnection.State == HubConnectionState.Disconnected)
+        {
+            // TODO [WARNING]: Use _cts.Token instead of CancellationToken.None so that if the user
+            // navigates away while StartAsync is in-flight, DisposeAsync cancelling _cts will also
+            // interrupt the hub connection attempt. CancellationToken.None means the in-flight call
+            // will not be cancelled on component teardown.
+            try { await HubConnection.StartAsync(CancellationToken.None); }
+            catch (Exception ex)
+            {
+                // TODO [WARNING]: On StartAsync failure the catch block swallows the exception but
+                // _chatResponseSub and _chatCompletedSub remain pointing to freshly-registered handlers
+                // on a hub that never connected. If the hub later reconnects via its own reconnect logic,
+                // those stale handlers will fire against an unexpected session. Dispose and null both
+                // subscription fields here so the component is in a clean state after a failed StartAsync.
+                Log.Warning(ex, "AgentChat: hub connection start failed — responses will not stream");
+            }
+        }
+
+        // Start sending keepalive heartbeats to the API so the server knows the chat window
+        // is still open. Interval is 30s — well within the 90s default idle timeout.
+        // The timer captures _selectedAgentId by value at creation time; if the field ever
+        // changes (it doesn't in the current flow) the timer would send to the old agent,
+        // which is harmless (server no-ops unknown agentIds).
+        var agentIdForKeepalive = _selectedAgentId;
+        _keepaliveTimer = new System.Threading.Timer(_ =>
+        {
+            if (!string.IsNullOrEmpty(agentIdForKeepalive))
+                ChatDispatcher.SendClientKeepalive(agentIdForKeepalive);
+        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    // ── SendPrompt ────────────────────────────────────────────────────────────
+
+    private async Task SendPrompt()
+    {
+        if (string.IsNullOrWhiteSpace(_currentPrompt) || _isWaitingForResponse) return;
+
+        var prompt = _currentPrompt.Trim();
+        _currentPrompt = "";
+
+        _messages.Add(new ChatMessage { Role = ChatRole.User, Content = prompt, Timestamp = DateTime.UtcNow });
+        _isWaitingForResponse = true;
+        _streamingContent.Clear();
+
+        try
+        {
+            await UnsubscribePreviousSessionAsync();
+            _activeSessionId = Guid.NewGuid().ToString();
+            await SubscribeAndSendPromptAsync(prompt);
+            _isFirstPrompt = false;
+        }
+        catch (Exception ex)
+        {
+            await UnsubscribeCurrentSessionOnErrorAsync();
+            _activeSessionId = null;
+            _messages.Add(new ChatMessage
+            {
+                Role = ChatRole.System,
+                Content = $"❌ Failed to send prompt: {ex.Message}",
+                Timestamp = DateTime.UtcNow
+            });
+            _isWaitingForResponse = false;
+        }
+
+        await ScrollToBottom();
+    }
+
+    private async Task UnsubscribePreviousSessionAsync()
+    {
+        // Leave the previous session's hub group before opening a new one to prevent duplicate events.
+        if (string.IsNullOrEmpty(_activeSessionId) || HubConnection.State != HubConnectionState.Connected) return;
+        try { await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromChatSession, _activeSessionId, CancellationToken.None); }
+        catch (Exception ex) { Log.Warning(ex, "AgentChat: failed to unsubscribe previous session {SessionId}", _activeSessionId); }
+    }
+
+    private async Task SubscribeAndSendPromptAsync(string prompt)
+    {
+        // Agent existence validated server-side; 404/409 surfaces as HttpRequestException.
+        var message = ChatPromptBuilder.Build(new ChatPromptParameters(
+            SessionId: _activeSessionId ?? throw new InvalidOperationException("_activeSessionId must be set before calling SubscribeAndSendPromptAsync"),
+            Prompt: prompt,
+            IsFirstPrompt: _isFirstPrompt,
+            ChatWindowId: _chatWindowId,
+            ResolvedProfile: _resolvedProfile,
+            SelectedProject: _selectedProject,
+            ResolvedMcpConfigPath: _resolvedMcpConfigPath
+        ));
+
+        if (HubConnection.State == HubConnectionState.Connected)
+            await HubConnection.InvokeAsync(HubMethodNames.SubscribeToChatSession, _activeSessionId, CancellationToken.None);
+
+        await AgentClient.AssignChatPromptAsync(_selectedAgentId, message, CancellationToken.None);
+    }
+
+    private async Task UnsubscribeCurrentSessionOnErrorAsync()
+    {
+        // Prompt never reached the agent — no OnChatResponse/OnChatCompleted will fire for this session.
+        if (string.IsNullOrEmpty(_activeSessionId) || HubConnection.State != HubConnectionState.Connected) return;
+        try { await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromChatSession, _activeSessionId, CancellationToken.None); }
+        catch (Exception unsubEx) { Log.Warning(unsubEx, "AgentChat: failed to unsubscribe after send failure for session {SessionId}", _activeSessionId); }
+    }
+
+    // ── Response handlers ─────────────────────────────────────────────────────
+
+    private void HandleStateChange()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    // ── EndChat ───────────────────────────────────────────────────────────────
+
+    private async Task EndChat()
+    {
+        // Set inactive first to prevent concurrent DisposeAsync double-terminate
+        _isChatActive = false;
+
+        // Stop keepalive timer — pod is about to be terminated
+        if (_keepaliveTimer is not null) { await _keepaliveTimer.DisposeAsync(); _keepaliveTimer = null; }
+
+        // Unsubscribe from the hub group for the current session before terminating
+        if (!string.IsNullOrEmpty(_activeSessionId) && HubConnection.State == HubConnectionState.Connected)
+        {
+            try { await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromChatSession, _activeSessionId, CancellationToken.None); }
+            catch (Exception ex) { Log.Warning(ex, "AgentChat: hub UnsubscribeFromChatSession failed"); }
+        }
+
+        await EndChatK8sModeAsync();
+
+        _isWaitingForResponse = false;
+        _activeSessionId = null;
+        _messages.Clear();
+        _streamingContent.Clear();
+        _isFirstPrompt = true;
+    }
+
+    private async Task EndChatK8sModeAsync()
+    {
+        // Terminate the chat pod
+        if (!string.IsNullOrEmpty(_selectedAgentId))
+        {
+            try
+            {
+                await ChatDispatcher.TerminateChatSessionAsync(_selectedAgentId, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "AgentChat: TerminateChatSessionAsync failed for agent {AgentId}", _selectedAgentId);
+            }
+        }
+    }
+
+    // ── Keyboard + scroll helpers ─────────────────────────────────────────────
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            await SendPrompt();
+        }
+    }
+
+    private async Task ScrollToBottom()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("eval", "document.querySelector('.chat-messages')?.scrollTo(0, document.querySelector('.chat-messages')?.scrollHeight)");
+        }
+        catch (Exception ex) { Log.Debug(ex, "Failed to scroll chat to bottom"); }
+    }
+
+    private static string GetRoleIconName(ChatRole role) => role switch
+    {
+        ChatRole.User => "user",
+        ChatRole.Agent => "bot",
+        ChatRole.System => "settings",
+        _ => "circle"
+    };
+
+    // ── IAsyncDisposable ──────────────────────────────────────────────────────
+
+    public async ValueTask DisposeAsync()
+    {
+        PipelineLifecycle.OnChange -= HandleStateChange;
+
+        _chatResponseSub?.Dispose();
+        _chatCompletedSub?.Dispose();
+
+        if (_elapsedTimer is not null) { await _elapsedTimer.DisposeAsync(); _elapsedTimer = null; }
+        if (_keepaliveTimer is not null) { await _keepaliveTimer.DisposeAsync(); _keepaliveTimer = null; }
+        if (_cts is not null)
+            await _cts.CancelAsync();
+        _cts?.Dispose();
+
+        // Unsubscribe from the active session group if still active
+        if (!string.IsNullOrEmpty(_activeSessionId) && HubConnection.State == HubConnectionState.Connected)
+        {
+            try { await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromChatSession, _activeSessionId, CancellationToken.None); }
+            catch (Exception ex) { Log.Debug(ex, "AgentChat: hub UnsubscribeFromChatSession failed on dispose"); }
+        }
+        _activeSessionId = null; // prevent stale OnChatCompleted callbacks from passing the session-ID guard
+
+        if (_isChatActive && !string.IsNullOrEmpty(_selectedAgentId))
+        {
+            await DisposeK8sChatAsync();
+        }
+    }
+
+    private async Task DisposeK8sChatAsync()
+    {
+        // K8s mode: terminate the pod regardless of _isWaitingForResponse
+        try
+        {
+            await ChatDispatcher.TerminateChatSessionAsync(_selectedAgentId, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "AgentChat: TerminateChatSessionAsync failed on dispose for agent {AgentId}", _selectedAgentId);
+        }
+    }
+
+    private sealed class ChatMessage
+    {
+        public required ChatRole Role { get; init; }
+        public required string Content { get; init; }
+        public required DateTime Timestamp { get; init; }
+    }
+}

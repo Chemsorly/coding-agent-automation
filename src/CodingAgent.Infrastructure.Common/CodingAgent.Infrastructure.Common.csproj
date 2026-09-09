@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!-- Shared cross-cutting infrastructure (telemetry, leader election, secret masking, Serilog OTLP).
+       Consumers reach internal helpers (e.g. ActivityTags) via these entries — mirrors Pipeline's set. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="CodingAgent.Pipeline" />
+    <InternalsVisibleTo Include="CodingAgent.Pipeline.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgent.Web.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgent.Orchestration.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgent.Infrastructure.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgent.Agent.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgent.Web.IntegrationTests" />
+    <InternalsVisibleTo Include="CodingAgent.Web.TestUtilities" />
+    <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" />
+    <PackageReference Include="Microsoft.Extensions.Resilience" />
+    <PackageReference Include="OpenTelemetry.Api" />
+    <PackageReference Include="Serilog" />
+    <PackageReference Include="Serilog.Sinks.OpenTelemetry" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Infrastructure.Common references Contracts (shared enums/types) but NEVER Pipeline. -->
+    <ProjectReference Include="..\CodingAgent.Contracts\CodingAgent.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

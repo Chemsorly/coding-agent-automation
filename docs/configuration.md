@@ -302,7 +302,7 @@ The maintenance service is triggered by the Scheduler via `POST /api/scheduler/m
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector endpoint (e.g., `https://otlp-gateway.grafana.net/otlp`) |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP protocol: `grpc` (default) or `http/protobuf` |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Authentication headers for OTLP endpoint (e.g., `Authorization=Basic xxx`) |
-| `OTEL_SERVICE_NAME` | Service name for telemetry (set per process — `coding-agent-orchestrator`, `coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`). For the Orchestrator, configure via `otel.orchestratorServiceName` in `values.yaml`. Other processes use fixed names set in their own deployment templates. |
+| `OTEL_SERVICE_NAME` | Service name for telemetry (set per process — `coding-agent-web`, `coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`). For the web service, configure via `otel.webServiceName` in `values.yaml` (legacy alias `otel.orchestratorServiceName` still honored). Other processes use fixed names set in their own deployment templates. |
 | `OTEL_RESOURCE_ATTRIBUTES` | Additional resource attributes (e.g., `deployment.environment=production`) |
 
 ### Agent Containers

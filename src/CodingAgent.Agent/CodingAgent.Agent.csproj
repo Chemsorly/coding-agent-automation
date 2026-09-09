@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- MsgPack003: Suppress for existing types referenced by MessagePack DTOs via ContractlessStandardResolver.
+         MsgPack017: Init properties with default initializers are intentional. -->
+    <NoWarn>$(NoWarn);MsgPack003;MsgPack017</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CodingAgent.Agent.UnitTests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.MessagePack" />
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" />
+    <PackageReference Include="Microsoft.Extensions.Resilience" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Serilog.Enrichers.Span" />
+    <PackageReference Include="Serilog.Formatting.Compact" />
+    <PackageReference Include="Serilog.Sinks.OpenTelemetry" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CodingAgent.Pipeline\CodingAgent.Pipeline.csproj" />
+    <ProjectReference Include="..\CodingAgent.Infrastructure.Providers\CodingAgent.Infrastructure.Providers.csproj" />
+    <ProjectReference Include="..\KiroCliLib\KiroCliLib.csproj" />
+    <ProjectReference Include="..\CodingAgent.Agent.KiroCli\CodingAgent.Agent.KiroCli.csproj" />
+    <ProjectReference Include="..\CodingAgent.Agent.OpenCode\CodingAgent.Agent.OpenCode.csproj" />
+  </ItemGroup>
+
+</Project>

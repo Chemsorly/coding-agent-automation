@@ -1,5 +1,5 @@
 # =============================================================================
-# CodingAgentWebUI API Dockerfile
+# CodingAgent.Web API Dockerfile
 # Runs the REST/WebSocket API service on port 8080.
 # No Kiro CLI, Node.js, uv, or SDK in the runtime layer.
 # =============================================================================
@@ -16,20 +16,20 @@ WORKDIR /src
 COPY Directory.Build.props ./
 COPY Directory.Packages.props ./
 COPY src/KiroCliLib/KiroCliLib.csproj src/KiroCliLib/
-COPY src/CodingAgentWebUI.Pipeline/CodingAgentWebUI.Pipeline.csproj src/CodingAgentWebUI.Pipeline/
-COPY src/CodingAgentWebUI.Pipeline.CodeReview/CodingAgentWebUI.Pipeline.CodeReview.csproj src/CodingAgentWebUI.Pipeline.CodeReview/
-COPY src/CodingAgentWebUI.Infrastructure.Persistence/CodingAgentWebUI.Infrastructure.Persistence.csproj src/CodingAgentWebUI.Infrastructure.Persistence/
-COPY src/CodingAgentWebUI.Infrastructure.Providers/CodingAgentWebUI.Infrastructure.Providers.csproj src/CodingAgentWebUI.Infrastructure.Providers/
-COPY src/CodingAgentWebUI.Orchestration/CodingAgentWebUI.Orchestration.csproj src/CodingAgentWebUI.Orchestration/
-COPY src/CodingAgentWebUI.Kubernetes/CodingAgentWebUI.Kubernetes.csproj src/CodingAgentWebUI.Kubernetes/
-COPY src/CodingAgentWebUI.Api.Client/CodingAgentWebUI.Api.Client.csproj src/CodingAgentWebUI.Api.Client/
-COPY src/CodingAgentWebUI.Hub/CodingAgentWebUI.Hub.csproj src/CodingAgentWebUI.Hub/
-COPY src/CodingAgentWebUI.Api/CodingAgentWebUI.Api.csproj src/CodingAgentWebUI.Api/
-RUN dotnet restore src/CodingAgentWebUI.Api/CodingAgentWebUI.Api.csproj -a $TARGETARCH
+COPY src/CodingAgent.Pipeline/CodingAgent.Pipeline.csproj src/CodingAgent.Pipeline/
+COPY src/CodingAgent.Pipeline.CodeReview/CodingAgent.Pipeline.CodeReview.csproj src/CodingAgent.Pipeline.CodeReview/
+COPY src/CodingAgent.Infrastructure.Persistence/CodingAgent.Infrastructure.Persistence.csproj src/CodingAgent.Infrastructure.Persistence/
+COPY src/CodingAgent.Infrastructure.Providers/CodingAgent.Infrastructure.Providers.csproj src/CodingAgent.Infrastructure.Providers/
+COPY src/CodingAgent.Orchestration/CodingAgent.Orchestration.csproj src/CodingAgent.Orchestration/
+COPY src/CodingAgent.Kubernetes/CodingAgent.Kubernetes.csproj src/CodingAgent.Kubernetes/
+COPY src/CodingAgent.Api.Client/CodingAgent.Api.Client.csproj src/CodingAgent.Api.Client/
+COPY src/CodingAgent.AgentGateway/CodingAgent.AgentGateway.csproj src/CodingAgent.AgentGateway/
+COPY src/CodingAgent.Api/CodingAgent.Api.csproj src/CodingAgent.Api/
+RUN dotnet restore src/CodingAgent.Api/CodingAgent.Api.csproj -a $TARGETARCH
 
 # Copy everything else and publish
 COPY . .
-RUN dotnet publish src/CodingAgentWebUI.Api/CodingAgentWebUI.Api.csproj \
+RUN dotnet publish src/CodingAgent.Api/CodingAgent.Api.csproj \
     -c Release \
     -a $TARGETARCH \
     --self-contained false \
@@ -83,4 +83,4 @@ ENV SERVICE_VERSION=${BUILD_COMMIT_SHA}
 HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
     CMD curl -f http://localhost:8080/healthz || exit 1
 
-ENTRYPOINT ["dotnet", "CodingAgentWebUI.Api.dll"]
+ENTRYPOINT ["dotnet", "CodingAgent.Api.dll"]

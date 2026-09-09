@@ -1,0 +1,284 @@
+@using CodingAgent.Pipeline
+@using CodingAgent.Api.Client
+@using CodingAgent.Pipeline.Interfaces
+@using CodingAgent.Pipeline.Models
+
+@if (_showConfigureLabelsModal)
+{
+    <div class="modal-overlay" @onclick="DismissConfigureLabelsModal" @onkeydown="HandleConfigureLabelsKeyDown">
+        <div class="modal-card" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-labelledby="configure-labels-title">
+            <h3 id="configure-labels-title">Repository Setup</h3>
+            <p class="modal-description">
+                Looks like this repository hasn't been set up for the coding agent yet. Should I configure it for you?
+                <span class="form-hint-icon" aria-hidden="true" title="This will create the following labels in your GitHub repository: agent:next, agent:in-progress, agent:error, and agent:needs-refinement. These labels are used by the pipeline to track issue status during automated coding runs.">?</span>
+            </p>
+            @if (!string.IsNullOrEmpty(_configureLabelsStatus))
+            {
+                <div class="settings-status @(_configureLabelsIsError ? "status-error" : "status-success")">@_configureLabelsStatus</div>
+            }
+            <div class="form-buttons">
+                <button class="btn-save" @onclick="ConfirmConfigureLabels" disabled="@_configureLabelsWorking">
+                    @(_configureLabelsWorking ? "Configuring..." : "Yes, configure")
+                </button>
+                <button class="btn-cancel" @onclick="DismissConfigureLabelsModal">Skip</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_showRelatedProvidersModal)
+{
+    <div class="modal-overlay" @onclick="DismissRelatedProvidersModal" @onkeydown="HandleModalKeyDown">
+        <div class="modal-card" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-labelledby="related-providers-title">
+            <h3 id="related-providers-title">Create Related Providers</h3>
+            <p class="modal-description">
+                The same credentials can be used for other provider types.
+                Select which providers to create for <strong>@(_relatedModalProviderType == "GitLab" ? $"project {_relatedModalOwner}" : $"{_relatedModalOwner}/{_relatedModalRepo}")</strong>:
+            </p>
+            <p class="modal-hint">Note: providers are created using the already-validated credentials. Verify that your @(_relatedModalProviderType == "GitLab" ? "access token" : "GitHub App") has the required permissions for each provider type.</p>
+            @foreach (var item in _relatedModalItems)
+            {
+                <div class="form-group form-checkbox">
+                    <label>
+                        <input type="checkbox" @bind="item.Selected" />
+                        @item.Kind Provider
+                    </label>
+                </div>
+                @if (item.Kind == ProviderKind.Repository && item.Selected)
+                {
+                    <div class="form-group config-sub-fields">
+                        <label>Base Branch</label>
+                        <input type="text" @bind="_relatedModalBaseBranch" placeholder="main" />
+                    </div>
+                }
+            }
+            @if (!string.IsNullOrEmpty(_relatedModalStatus))
+            {
+                <div class="settings-status @(_relatedModalIsError ? "status-error" : "status-success")">@_relatedModalStatus</div>
+            }
+            <div class="form-buttons">
+                <button class="btn-save" @onclick="ConfirmRelatedProviders" disabled="@(_relatedModalSaving || !_relatedModalItems.Any(i => i.Selected))">
+                    @(_relatedModalSaving ? "Saving..." : "Create Selected")
+                </button>
+                <button class="btn-cancel" @onclick="DismissRelatedProvidersModal">Skip</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public IProviderFactory ProviderFactory { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
+    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
+    [Parameter] public List<ProviderConfig> IssueProviders { get; set; } = new();
+    [Parameter] public List<ProviderConfig> RepoProviders { get; set; } = new();
+    [Parameter] public List<ProviderConfig> PipelineProviders { get; set; } = new();
+    [Parameter] public EventCallback OnLabelsConfigured { get; set; }
+    [Parameter] public EventCallback OnProvidersCreated { get; set; }
+
+    // Configure Labels modal state
+    private bool _showConfigureLabelsModal;
+    private bool _configureLabelsWorking;
+    private string? _configureLabelsStatus;
+    private bool _configureLabelsIsError;
+    private ProviderConfig? _configureLabelsProviderConfig;
+
+    // Related Providers modal state
+    private bool _showRelatedProvidersModal;
+    private string _relatedModalProviderType = "GitHub";
+    private string _relatedModalOwner = "";
+    private string _relatedModalRepo = "";
+    private string _relatedModalBaseBranch = "main";
+    private List<RelatedProviderItem> _relatedModalItems = new();
+    private Dictionary<string, string> _relatedModalSharedSettings = new();
+    private string? _relatedModalStatus;
+    private bool _relatedModalIsError;
+    private bool _relatedModalSaving;
+
+    private static readonly string[] SharedGitHubSettingKeys = [ProviderSettingKeys.ApiUrl, ProviderSettingKeys.ClientId, ProviderSettingKeys.InstallationId, ProviderSettingKeys.PrivateKeyBase64, ProviderSettingKeys.Owner, ProviderSettingKeys.Repo];
+    private static readonly string[] SharedGitLabSettingKeys = [ProviderSettingKeys.ApiUrl, ProviderSettingKeys.AccessToken, ProviderSettingKeys.ProjectId];
+
+    public void ShowConfigureLabels(ProviderConfig config)
+    {
+        _configureLabelsProviderConfig = config;
+        _configureLabelsStatus = null;
+        _configureLabelsIsError = false;
+        _configureLabelsWorking = false;
+        _showConfigureLabelsModal = true;
+        StateHasChanged();
+    }
+
+    public void ShowRelatedProviders(ProviderConfig savedConfig)
+    {
+        if (savedConfig.ProviderType != "GitHub" && savedConfig.ProviderType != "GitLab") return;
+
+        _relatedModalProviderType = savedConfig.ProviderType;
+        var sourceKind = savedConfig.Kind;
+        var targetKinds = new[] { ProviderKind.Issue, ProviderKind.Repository, ProviderKind.Pipeline }
+            .Where(k => k != sourceKind).ToList();
+
+        _relatedModalOwner = savedConfig.ProviderType == "GitLab"
+            ? savedConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId, "")
+            : savedConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Owner, "");
+        _relatedModalRepo = savedConfig.ProviderType == "GitLab"
+            ? ""
+            : savedConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Repo, "");
+        _relatedModalBaseBranch = "main";
+
+        var sharedKeys = savedConfig.ProviderType == "GitLab" ? SharedGitLabSettingKeys : SharedGitHubSettingKeys;
+        _relatedModalSharedSettings = sharedKeys
+            .Where(k => savedConfig.Settings.ContainsKey(k))
+            .ToDictionary(k => k, k => savedConfig.Settings[k]);
+        _relatedModalStatus = null;
+        _relatedModalIsError = false;
+        _relatedModalSaving = false;
+
+        _relatedModalItems = new();
+        foreach (var kind in targetKinds)
+        {
+            var existingList = kind switch
+            {
+                ProviderKind.Issue => IssueProviders,
+                ProviderKind.Repository => RepoProviders,
+                ProviderKind.Pipeline => PipelineProviders,
+                _ => new List<ProviderConfig>()
+            };
+
+            var alreadyExists = ProviderAlreadyExists(savedConfig, existingList);
+
+            if (!alreadyExists)
+                _relatedModalItems.Add(new RelatedProviderItem { Kind = kind, Selected = true });
+        }
+
+        if (_relatedModalItems.Count == 0) return;
+        _showRelatedProvidersModal = true;
+        StateHasChanged();
+    }
+
+    private bool ProviderAlreadyExists(ProviderConfig savedConfig, List<ProviderConfig> existingList)
+    {
+        if (savedConfig.ProviderType == "GitLab")
+        {
+            var projectId = savedConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId, "");
+            return existingList.Any(p =>
+                p.ProviderType == "GitLab"
+                && p.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId, "") == projectId);
+        }
+        return existingList.Any(p =>
+            p.ProviderType == "GitHub"
+            && p.Settings.GetValueOrDefault(ProviderSettingKeys.Owner, "") == _relatedModalOwner
+            && p.Settings.GetValueOrDefault(ProviderSettingKeys.Repo, "") == _relatedModalRepo);
+    }
+
+    private void DismissConfigureLabelsModal()
+    {
+        _showConfigureLabelsModal = false;
+        if (_configureLabelsProviderConfig is not null)
+            ShowRelatedProviders(_configureLabelsProviderConfig);
+    }
+    private void HandleConfigureLabelsKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") DismissConfigureLabelsModal();
+    }
+
+    private async Task ConfirmConfigureLabels()
+    {
+        if (_configureLabelsProviderConfig is null) return;
+
+        _configureLabelsWorking = true;
+        _configureLabelsStatus = null;
+        StateHasChanged();
+
+        try
+        {
+            await using var provider = ProviderFactory.CreateIssueProvider(_configureLabelsProviderConfig);
+            var success = await provider.EnsureAgentLabelsAsync(CancellationToken.None);
+            _configureLabelsStatus = success
+                ? "Agent labels configured successfully."
+                : "Some labels could not be created. Check app permissions.";
+            _configureLabelsIsError = !success;
+
+            StateHasChanged();
+
+            if (success)
+            {
+                await Task.Delay(1200);
+                _showConfigureLabelsModal = false;
+                await OnLabelsConfigured.InvokeAsync();
+                ShowRelatedProviders(_configureLabelsProviderConfig);
+            }
+        }
+        catch (Exception ex)
+        {
+            _configureLabelsStatus = $"Failed to configure labels: {ex.Message}";
+            _configureLabelsIsError = true;
+        }
+        finally
+        {
+            _configureLabelsWorking = false;
+            StateHasChanged();
+        }
+    }
+
+    private void DismissRelatedProvidersModal()
+    {
+        _showRelatedProvidersModal = false;
+    }
+
+    private void HandleModalKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") DismissRelatedProvidersModal();
+    }
+
+    private async Task ConfirmRelatedProviders()
+    {
+        _relatedModalSaving = true;
+        _relatedModalStatus = null;
+        StateHasChanged();
+
+        try
+        {
+            var created = 0;
+            foreach (var item in _relatedModalItems.Where(i => i.Selected).ToList())
+            {
+                var settings = new Dictionary<string, string>(_relatedModalSharedSettings);
+                if (item.Kind == ProviderKind.Repository)
+                    settings[ProviderSettingKeys.BaseBranch] = string.IsNullOrWhiteSpace(_relatedModalBaseBranch) ? ProviderSettingKeys.DefaultBaseBranch : _relatedModalBaseBranch;
+
+                var displayName = _relatedModalProviderType == "GitLab"
+                    ? $"GitLab Project {_relatedModalOwner} - {item.Kind}"
+                    : $"{_relatedModalOwner}/{_relatedModalRepo} - {item.Kind}";
+
+                var config = new ProviderConfig
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    Kind = item.Kind,
+                    ProviderType = _relatedModalProviderType,
+                    DisplayName = displayName,
+                    Settings = settings
+                };
+
+                await ConfigClient.SaveProviderConfigAsync(config, CancellationToken.None);
+                item.Selected = false;
+                created++;
+            }
+
+            _showRelatedProvidersModal = false;
+            await OnProvidersCreated.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            _relatedModalStatus = $"Failed: {ex.Message}";
+            _relatedModalIsError = true;
+        }
+        finally
+        {
+            _relatedModalSaving = false;
+        }
+    }
+
+    private class RelatedProviderItem
+    {
+        public ProviderKind Kind { get; set; }
+        public bool Selected { get; set; }
+    }
+}

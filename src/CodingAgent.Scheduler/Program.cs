@@ -1,0 +1,129 @@
+using CodingAgent.Api.Client;
+using CodingAgent.Infrastructure.Telemetry;
+using CodingAgent.Pipeline.Services;
+using CodingAgent.Scheduler;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using Serilog;
+using Serilog.Enrichers.Span;
+
+// Bootstrap logger: captures log output before UseSerilog takes over
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .WriteTo.Console(
+        outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] {Message:lj}{NewLine}{Exception}",
+        theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
+    .CreateBootstrapLogger();
+
+var builder = WebApplication.CreateBuilder(args);
+
+// ── Startup identity log ──────────────────────────────────────────────────
+var version = Environment.GetEnvironmentVariable("SERVICE_VERSION") ?? "local";
+var serviceName = builder.Configuration.GetValue<string>("OTEL_SERVICE_NAME") ?? "coding-agent-scheduler";
+Log.Information("Scheduler starting: ServiceName={ServiceName} Version={Version}", serviceName, version);
+
+// ── Fast-fail: Pipeline API URL required ─────────────────────────────────
+var pipelineApiBaseUrl = builder.Configuration.GetValue<string>("PipelineApi__BaseUrl")
+    ?? builder.Configuration.GetValue<string>("PipelineApi:BaseUrl");
+if (string.IsNullOrEmpty(pipelineApiBaseUrl))
+{
+    Log.Fatal("PipelineApi__BaseUrl is not configured. The Scheduler requires the Pipeline API. Exiting.");
+    return;
+}
+
+// ── Fast-fail: agent API key required ────────────────────────────────────
+var agentApiKey = builder.Configuration.GetValue<string>("AGENT_API_KEY")
+    ?? builder.Configuration.GetValue<string>("AgentApiKey");
+if (string.IsNullOrEmpty(agentApiKey))
+{
+    Log.Fatal("AGENT_API_KEY is not configured. Exiting.");
+    return;
+}
+
+// ── Configure JSON serialization ─────────────────────────────────────────
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+    options.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+});
+
+// ── Host shutdown timeout ─────────────────────────────────────────────────
+builder.Services.Configure<HostOptions>(opts =>
+{
+    opts.ShutdownTimeout = TimeSpan.FromSeconds(60);
+    opts.ServicesStartConcurrently = false; // ordered startup
+});
+
+// Validate DI on build — catches missing registrations before the service starts
+builder.Host.UseDefaultServiceProvider(opts =>
+{
+    opts.ValidateOnBuild = true;
+    opts.ValidateScopes = true;
+});
+
+// ── Service registrations ─────────────────────────────────────────────────
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSchedulerServices(pipelineApiBaseUrl, agentApiKey, builder.Configuration);
+
+// ── Serilog ───────────────────────────────────────────────────────────────
+var schedulerLogLevel = CodingAgent.Infrastructure.Telemetry.LogLevelParser.Parse(
+    Environment.GetEnvironmentVariable("LOG_LEVEL"),
+    Serilog.Events.LogEventLevel.Information);
+
+builder.Host.UseSerilog((ctx, lc) =>
+{
+    lc
+        .MinimumLevel.Is(schedulerLogLevel)
+        .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+        // Suppress Polly internal telemetry (StrategyExecuting/Executed fire at Debug on every call)
+        .MinimumLevel.Override("Polly", Serilog.Events.LogEventLevel.Warning)
+        // Suppress per-request HttpClient trace logs (OTLP/trace exports fire at Debug on every call)
+        .MinimumLevel.Override("System.Net.Http.HttpClient", Serilog.Events.LogEventLevel.Warning)
+        // Suppress HttpClientFactory handler lifecycle logging (cleanup cycle every ~10s)
+        .MinimumLevel.Override("Microsoft.Extensions.Http", Serilog.Events.LogEventLevel.Warning)
+        // Suppress OpenTelemetry SDK internal logs (chatty at Debug — export errors still pass at Warning+)
+        .MinimumLevel.Override("OpenTelemetry", Serilog.Events.LogEventLevel.Warning)
+        .Enrich.FromLogContext()
+        .Enrich.WithSpan()
+        .WriteTo.Console(
+            outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] {Message:lj}{NewLine}{Exception}",
+            theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
+        .WriteToOtlpIfConfigured("coding-agent-scheduler", ctx.HostingEnvironment.EnvironmentName);
+});
+
+// ── Port 8080 ─────────────────────────────────────────────────────────────
+builder.WebHost.UseUrls("http://+:8080"); // NOSONAR S1075
+
+// ── OpenTelemetry ─────────────────────────────────────────────────────────
+var otelServiceName = builder.Configuration.GetValue<string>("OTEL_SERVICE_NAME") ?? "coding-agent-scheduler";
+
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(r => r.AddService(
+        serviceName: otelServiceName,
+        serviceVersion: version))
+    .WithTracing(t => t.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation()
+        .AddOtlpExporter())
+    .WithMetrics(m => m.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation()
+        .AddMeter(CodingAgent.Pipeline.Telemetry.WorkDistributionTelemetry.MeterName)
+        .AddMeter(CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName)
+        // Prometheus requires Cumulative temporality; the OTLP exporter defaults to Delta for
+        // histograms and counters, which Grafana Cloud silently drops.
+        .AddOtlpExporter((_, readerOptions) =>
+            readerOptions.TemporalityPreference = MetricReaderTemporalityPreference.Cumulative));
+
+var app = builder.Build();
+
+// ── Health probes ─────────────────────────────────────────────────────────
+// /healthz — startup/liveness, /readyz — readiness, /health — Dockerfile HEALTHCHECK compat.
+// Endpoint lambdas live in SchedulerHealthEndpoints so tests can call the same method
+// instead of re-declaring inline copies (which would test routing, not production code).
+app.MapSchedulerHealthEndpoints();
+
+// ── Loop control endpoints ────────────────────────────────────────────────
+app.MapSchedulerLoopEndpoints();
+
+// ── Auto-start pipeline loop if configured ────────────────────────────────
+await app.AutoStartSchedulerLoopAsync();
+
+await app.RunAsync();

@@ -1,0 +1,137 @@
+using CodingAgent.Api.Client;
+using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Models;
+using Microsoft.Extensions.Logging;
+
+namespace CodingAgent.Orchestration.Dispatch;
+
+/// <summary>
+/// Kubernetes work distributor. All operations are backed by the Pipeline API
+/// (<see cref="IPipelineApiWorkItemClient"/>). No direct database access.
+/// </summary>
+/// <remarks>
+/// <see cref="DistributeAsync"/> calls the synchronous <c>POST /api/work-items/dispatch</c>
+/// endpoint, which atomically performs PVC selection, K8s Job creation, and <c>Dispatched</c>
+/// state write in the API. On 409/503 (no capacity), the distributor returns
+/// <c>Success=false</c> so the caller can revert the GitHub label to <c>agent:next</c>
+/// and the Scheduler re-queues the issue on the next poll cycle.
+/// <para>
+/// Cancel, status-query, and dedup operations route through the same API client.
+/// This class no longer inherits <c>DbWorkDistributorBase</c> — all DB coupling is removed.
+/// </para>
+/// </remarks>
+public sealed class KubernetesWorkDistributor : IWorkDistributor
+{
+    private readonly IPipelineApiWorkItemClient _apiClient;
+    private readonly ILogger<KubernetesWorkDistributor> _logger;
+
+    public KubernetesWorkDistributor(
+        IPipelineApiWorkItemClient apiClient,
+        ILogger<KubernetesWorkDistributor> logger)
+    {
+        ArgumentNullException.ThrowIfNull(apiClient);
+        ArgumentNullException.ThrowIfNull(logger);
+        _apiClient = apiClient;
+        _logger = logger;
+    }
+
+    /// <inheritdoc />
+    public async Task<DistributionResult> DistributeAsync(JobDistributionRequest request, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        try
+        {
+            var workItemId = await _apiClient.DispatchAsync(request, ct);
+            _logger.LogInformation(
+                "WorkItem {WorkItemId} dispatched synchronously via Pipeline API for issue {IssueIdentifier}",
+                workItemId, request.IssueIdentifier);
+            // Queued=false: the item is already Dispatched (K8s Job running), not in the Pending queue.
+            return new DistributionResult(true, workItemId.ToString(), null, Queued: false);
+        }
+        catch (HttpRequestException ex) when (
+            ex.StatusCode == System.Net.HttpStatusCode.Conflict ||
+            ex.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
+        {
+            // 409 = concurrency limit or issue ineligible; 503 = no PVC or K8s failure.
+            // These are expected "no capacity" responses. Return failure so the orchestrator
+            // reverts the label back to agent:next and re-queues on the next Scheduler cycle.
+            _logger.LogInformation(
+                "Dispatch endpoint returned {StatusCode} for issue {IssueIdentifier} — no capacity, will revert label",
+                ex.StatusCode, request.IssueIdentifier);
+            return new DistributionResult(false, null, $"No capacity ({ex.StatusCode}): {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to dispatch WorkItem via Pipeline API for issue {IssueIdentifier}",
+                request.IssueIdentifier);
+            return new DistributionResult(false, null, ex.Message);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> CancelJobAsync(JobId jobId, CancellationToken ct)
+    {
+        if (!Guid.TryParse(jobId.Value, out var workItemId))
+            return false;
+
+        try
+        {
+            await _apiClient.PostStatusAsync(workItemId, new WorkItemStatusUpdate
+            {
+                Status = "Cancelled",
+                ErrorMessage = "Cancelled by orchestrator"
+            }, ct);
+            return true;
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.BadRequest)
+        {
+            // Invalid transition (e.g. already terminal) — treat as not-found/no-op
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to cancel WorkItem {WorkItemId} via Pipeline API", workItemId);
+            return false;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<JobDistributionStatus> GetJobStatusAsync(JobId jobId, CancellationToken ct)
+    {
+        if (!Guid.TryParse(jobId.Value, out var workItemId))
+            return JobDistributionStatus.Unknown;
+
+        var status = await _apiClient.GetStatusAsync(workItemId, ct);
+        return status is null ? JobDistributionStatus.Unknown : MapStatus(status.Value);
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> IsIssueDistributedAsync(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId, CancellationToken ct)
+    {
+        return await _apiClient.IsIssueDistributedAsync(
+            issueIdentifier.Value,
+            issueProviderConfigId.Value,
+            ct);
+    }
+
+    /// <inheritdoc />
+    public async Task<HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct)
+    {
+        var pairs = await _apiClient.GetActiveIdentifiersAsync(ct);
+        return pairs
+            .Select(p => ((IssueIdentifier)p.IssueIdentifier, (ProviderConfigId)p.IssueProviderConfigId))
+            .ToHashSet();
+    }
+
+    private static JobDistributionStatus MapStatus(WorkItemStatus status) => status switch
+    {
+        WorkItemStatus.Pending => JobDistributionStatus.Pending,
+        WorkItemStatus.Dispatched => JobDistributionStatus.Dispatched,
+        WorkItemStatus.Running => JobDistributionStatus.Running,
+        WorkItemStatus.Succeeded => JobDistributionStatus.Succeeded,
+        WorkItemStatus.Failed => JobDistributionStatus.Failed,
+        WorkItemStatus.Cancelled => JobDistributionStatus.Cancelled,
+        _ => JobDistributionStatus.Unknown
+    };
+}

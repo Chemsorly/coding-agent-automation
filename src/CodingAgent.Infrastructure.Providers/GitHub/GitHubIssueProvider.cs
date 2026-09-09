@@ -1,0 +1,393 @@
+using Octokit;
+using Serilog;
+using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Models;
+using PipelineIssueComment = CodingAgent.Pipeline.Models.IssueComment;
+
+namespace CodingAgent.Infrastructure.GitHub;
+
+/// <summary>
+/// Fetches issues from GitHub using the Octokit.NET library.
+/// Supports both static token authentication (backward compatible) and
+/// dynamic token provider delegate (for GitHub App auth).
+/// </summary>
+public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
+{
+    public IssueProviderType ProviderType => IssueProviderType.GitHub;
+
+    /// <summary>
+    /// Creates a provider with a static token (backward compatible).
+    /// </summary>
+    public GitHubIssueProvider(GitHubConnectionInfo connection, string token)
+        : base(connection, token) { }
+
+    /// <summary>
+    /// Creates a provider with a token provider delegate (for GitHub App auth).
+    /// The delegate is called before each API call to obtain a fresh token.
+    /// </summary>
+    public GitHubIssueProvider(GitHubConnectionInfo connection, Func<CancellationToken, Task<string>> tokenProvider)
+        : base(connection, tokenProvider) { }
+
+    /// <summary>
+    /// Internal constructor for testing with a mock IGitHubClient.
+    /// </summary>
+    internal GitHubIssueProvider(GitHubConnectionInfo connection, IGitHubClient client)
+        : base(connection, client) { }
+
+    public async Task<IssueDetail> GetIssueAsync(IssueIdentifier identifier, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
+        var issueNumber = ParseIssueIdentifier(identifier);
+
+        var issue = await ExecuteWithResilienceAsync(
+            client => client.Issue.Get(Owner, Repo, issueNumber),
+            "GetIssue", ct);
+        return MapToIssueDetail(issue);
+    }
+
+    public async Task<PagedResult<IssueSummary>> ListOpenIssuesAsync(int page, int pageSize,
+        IReadOnlyList<string>? labels, CancellationToken ct)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, 100);
+
+        var request = new RepositoryIssueRequest
+        {
+            State = ItemStateFilter.Open
+        };
+
+        if (labels is { Count: > 0 })
+        {
+            foreach (var label in labels)
+                request.Labels.Add(label);
+        }
+
+        var apiOptions = new ApiOptions
+        {
+            PageSize = pageSize + 1, // fetch one extra to detect HasMore
+            StartPage = page,
+            PageCount = 1
+        };
+
+        var issues = await ExecuteWithResilienceAsync(
+            client => client.Issue.GetAllForRepository(Owner, Repo, request, apiOptions),
+            "ListOpenIssues", ct);
+
+        var hasMore = issues.Count > pageSize;
+
+        var items = issues
+            .Where(i => i.PullRequest == null)
+            .Select(MapToIssueSummary)
+            .Take(pageSize)
+            .ToList();
+
+        return new PagedResult<IssueSummary>
+        {
+            Items = items.AsReadOnly(),
+            Page = page,
+            PageSize = pageSize,
+            HasMore = hasMore
+        };
+    }
+
+    public Task<PagedResult<IssueSummary>> ListOpenIssuesAsync(int page, int pageSize, CancellationToken ct)
+        => ListOpenIssuesAsync(page, pageSize, labels: null, ct);
+
+    public async Task<PagedResult<IssueSummary>> ListClosedIssuesAsync(int page, int pageSize,
+        IReadOnlyList<string>? labels, DateTime? since, CancellationToken ct)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, 100);
+
+        var request = new RepositoryIssueRequest
+        {
+            State = ItemStateFilter.Closed,
+            Since = since?.ToUniversalTime()
+        };
+
+        if (labels is { Count: > 0 })
+        {
+            foreach (var label in labels)
+                request.Labels.Add(label);
+        }
+
+        var apiOptions = new ApiOptions
+        {
+            PageSize = pageSize + 1,
+            StartPage = page,
+            PageCount = 1
+        };
+
+        var issues = await ExecuteWithResilienceAsync(
+            client => client.Issue.GetAllForRepository(Owner, Repo, request, apiOptions),
+            "ListClosedIssues", ct);
+
+        var hasMore = issues.Count > pageSize;
+
+        var items = issues
+            .Where(i => i.PullRequest == null)
+            .Select(MapToIssueSummary)
+            .Take(pageSize)
+            .ToList();
+
+        return new PagedResult<IssueSummary>
+        {
+            Items = items.AsReadOnly(),
+            Page = page,
+            PageSize = pageSize,
+            HasMore = hasMore
+        };
+    }
+
+    private static IssueDetail MapToIssueDetail(Issue issue)
+    {
+        return new IssueDetail
+        {
+            Identifier = issue.Number.ToString(),
+            Title = issue.Title ?? string.Empty,
+            Description = issue.Body ?? string.Empty,
+            Labels = issue.Labels?.Select(l => l.Name).ToList().AsReadOnly()
+                ?? (IReadOnlyList<string>)Array.Empty<string>(),
+            Url = issue.HtmlUrl
+        };
+    }
+
+    public async Task<string?> PostCommentAsync(IssueIdentifier identifier, string body, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
+        ArgumentNullException.ThrowIfNull(body);
+        var issueNumber = ParseIssueIdentifier(identifier);
+
+        var comment = await ExecuteWithResilienceAsync(
+            client => client.Issue.Comment.Create(Owner, Repo, issueNumber, body),
+            "PostComment", ct);
+        return comment?.HtmlUrl?.ToString();
+    }
+
+    public async Task UpdateCommentAsync(IssueIdentifier issueIdentifier, string commentId, string body, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
+        ArgumentNullException.ThrowIfNull(commentId);
+        ArgumentNullException.ThrowIfNull(body);
+        ParseIssueIdentifier(issueIdentifier);
+
+        if (!int.TryParse(commentId, out var commentIdParsed))
+        {
+            Log.Warning("Invalid comment identifier '{CommentId}' — expected numeric comment ID", commentId);
+            throw new ArgumentException($"Invalid comment identifier: '{commentId}'. Expected a numeric comment ID.", nameof(commentId));
+        }
+
+        await ExecuteWithResilienceAsync(
+            client => client.Issue.Comment.Update(Owner, Repo, commentIdParsed, body),
+            "UpdateComment", ct);
+    }
+
+    public async Task<IReadOnlyList<PipelineIssueComment>> ListCommentsAsync(IssueIdentifier identifier, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
+        var issueNumber = ParseIssueIdentifier(identifier);
+
+        var comments = await ExecuteWithResilienceAsync(
+            client => client.Issue.Comment.GetAllForIssue(Owner, Repo, issueNumber,
+                new ApiOptions { PageSize = PipelineConstants.DefaultPageSize, PageCount = PipelineConstants.MaxCommentPages }),
+            "ListComments", ct);
+
+        return comments
+            .Select(c => new PipelineIssueComment
+            {
+                Id = c.Id.ToString(),
+                Body = c.Body ?? string.Empty,
+                Author = c.User?.Login ?? string.Empty,
+                CreatedAt = c.CreatedAt.UtcDateTime
+            })
+            .ToList()
+            .AsReadOnly();
+    }
+
+    /// <inheritdoc />
+    public async Task AddLabelsAsync(IssueIdentifier identifier, IReadOnlyList<string> labels, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
+        ArgumentNullException.ThrowIfNull(labels);
+        var issueNumber = ParseIssueIdentifier(identifier);
+
+        await ExecuteWithResilienceAsync(
+            client => client.Issue.Labels.AddToIssue(Owner, Repo, issueNumber, labels.ToArray()),
+            "AddLabels", ct);
+    }
+
+    /// <inheritdoc />
+    public async Task RemoveLabelAsync(IssueIdentifier identifier, string label, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
+        ArgumentNullException.ThrowIfNull(label);
+        var issueNumber = ParseIssueIdentifier(identifier);
+
+        try
+        {
+            await ExecuteWithResilienceAsync(
+                async client => { await client.Issue.Labels.RemoveFromIssue(Owner, Repo, issueNumber, label); return true; },
+                "RemoveLabel", ct);
+        }
+        catch (NotFoundException)
+        {
+            // Label not present on issue — no-op
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<string>> ListRepositoryLabelsAsync(CancellationToken ct)
+    {
+        var repoLabels = await ExecuteWithResilienceAsync(
+            client => client.Issue.Labels.GetAllForRepository(Owner, Repo),
+            "ListRepositoryLabels", ct);
+        return repoLabels.Select(l => l.Name).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> HasAgentLabelsAsync(CancellationToken ct)
+    {
+        var repoLabels = await ExecuteWithResilienceAsync(
+            client => client.Issue.Labels.GetAllForRepository(Owner, Repo),
+            "HasAgentLabels", ct);
+        var repoLabelNames = repoLabels.Select(l => l.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return AgentLabels.All.All(name => repoLabelNames.Contains(name));
+    }
+
+    /// <inheritdoc />
+    public override async Task ValidateAsync(CancellationToken ct)
+    {
+        try
+        {
+            await base.ValidateAsync(ct);
+        }
+        catch (GitHubAuthException ex) when (ex.ErrorKind == GitHubAuthErrorKind.PrivateKeyDecodeFailure)
+        {
+            Log.Error(ex, "Invalid private key: could not decode from base64 for {Owner}/{Repo}", Owner, Repo);
+            throw new InvalidOperationException("Invalid private key: could not decode from base64", ex);
+        }
+        catch (GitHubAuthException ex) when (ex.ErrorKind == GitHubAuthErrorKind.TokenExchangeFailure)
+        {
+            Log.Error(ex, "Authentication failed during token exchange for {Owner}/{Repo}: {Reason}", Owner, Repo, ex.InnerException?.Message ?? ex.Message);
+            throw new InvalidOperationException($"Authentication failed: {ex.InnerException?.Message ?? ex.Message}", ex);
+        }
+        catch (AuthorizationException ex)
+        {
+            Log.Error(ex, "Authentication failed: installation token was rejected for {Owner}/{Repo}", Owner, Repo);
+            throw new InvalidOperationException("Authentication failed: installation token was rejected", ex);
+        }
+        catch (NotFoundException ex)
+        {
+            Log.Error(ex, "Repository not found or app lacks access: {Owner}/{Repo}", Owner, Repo);
+            throw new InvalidOperationException("Repository not found or app lacks access", ex);
+        }
+    }
+
+    public async Task<bool> EnsureAgentLabelsAsync(CancellationToken ct)
+    {
+        var allSucceeded = true;
+        foreach (var (name, color) in AgentLabels.Definitions)
+        {
+            try
+            {
+                await ExecuteWithResilienceAsync(
+                    c => c.Issue.Labels.Create(Owner, Repo, new NewLabel(name, color)),
+                    "EnsureAgentLabels", ct);
+            }
+            catch (ApiValidationException)
+            {
+                // Label already exists — skip
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                Log.Warning(ex, "Failed to create agent label {LabelName} on {Owner}/{Repo}", name, Owner, Repo);
+                allSucceeded = false;
+            }
+        }
+        return allSucceeded;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> IsIssueClosedAsync(IssueIdentifier identifier, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
+        var issueNumber = ParseIssueIdentifier(identifier);
+
+        try
+        {
+            var issue = await ExecuteWithResilienceAsync(
+                client => client.Issue.Get(Owner, Repo, issueNumber),
+                "IsIssueClosed", ct);
+            return issue.State.Value == ItemState.Closed;
+        }
+        catch (NotFoundException)
+        {
+            Log.Warning("Issue #{IssueNumber} not found when checking dependency state", issueNumber);
+            return false;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task CloseIssueAsync(IssueIdentifier identifier, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
+        var issueNumber = ParseIssueIdentifier(identifier);
+
+        await ExecuteWithResilienceAsync(
+            client => client.Issue.Update(Owner, Repo, issueNumber, new IssueUpdate { State = ItemState.Closed }),
+            "CloseIssue", ct);
+    }
+
+    /// <inheritdoc />
+    public async Task<CreatedIssueResult> CreateIssueAsync(
+        string title, string body, IReadOnlyList<string>? labels, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(title);
+        ArgumentNullException.ThrowIfNull(body);
+
+        var newIssue = new NewIssue(title) { Body = body };
+
+        if (labels is { Count: > 0 })
+        {
+            foreach (var label in labels)
+                newIssue.Labels.Add(label);
+        }
+
+        var created = await ExecuteWithResilienceAsync(
+            client => client.Issue.Create(Owner, Repo, newIssue),
+            "CreateIssue", ct);
+
+        return new CreatedIssueResult
+        {
+            Identifier = created.Number.ToString(),
+            Url = created.HtmlUrl?.ToString() ?? string.Empty
+        };
+    }
+
+    private static IssueSummary MapToIssueSummary(Issue issue)
+    {
+        var labels = issue.Labels?.ToList() ?? [];
+        return new IssueSummary
+        {
+            Identifier = issue.Number.ToString(),
+            Title = issue.Title ?? string.Empty,
+            Description = issue.Body,
+            // TODO: [WARNING] Label.Name is typed as string? in Octokit. A null name would produce a null entry
+            // in the Labels list and throw ArgumentNullException as a dictionary key in LabelColors below.
+            // Fix: add a null guard, e.g. labels.Select(l => l.Name ?? string.Empty).
+            Labels = labels.Select(l => l.Name).ToList().AsReadOnly(),
+            LabelColors = labels.Count > 0
+                ? labels
+                    // TODO: [WARNING] The Where predicate filters on Color but not on Name. A label with a
+                    // null Name would pass this filter and throw ArgumentNullException in ToDictionary.
+                    // Fix: add "&& l.Name != null" (or "!string.IsNullOrEmpty(l.Name)") to the predicate.
+                    .Where(l => !string.IsNullOrEmpty(l.Color))
+                    .ToDictionary(l => l.Name, l => l.Color, StringComparer.OrdinalIgnoreCase)
+                : null,
+            CreatedAt = issue.CreatedAt.UtcDateTime,
+            Url = issue.HtmlUrl
+        };
+    }
+}

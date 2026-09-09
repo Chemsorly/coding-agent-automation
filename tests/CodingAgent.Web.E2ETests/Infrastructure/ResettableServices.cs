@@ -1,0 +1,41 @@
+using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Services;
+using Serilog;
+
+namespace CodingAgent.Web.E2ETests.Infrastructure;
+
+/// <summary>
+/// Test subclass of <see cref="PipelineOrchestrationService"/> that exposes state reset
+/// for test isolation without polluting the production codebase.
+/// </summary>
+public sealed class ResettablePipelineOrchestrationService : PipelineOrchestrationService
+{
+    private readonly PipelineRunLifecycleService? _lifecycleForReset;
+
+    public ResettablePipelineOrchestrationService(
+        IConfigurationStore configStore,
+        IProviderFactory providerFactory,
+        IPipelineCancellationFacade cancellationFacade,
+        PipelineRunLifecycleService lifecycle,
+        ILabelService labelService,
+        ILogger logger)
+        : base(configStore, providerFactory,
+               cancellationFacade, lifecycle, labelService, logger)
+    {
+        _lifecycleForReset = lifecycle;
+    }
+
+    public void Reset()
+    {
+        // Lifecycle state reset (CTS, ActiveRun, events) is now on the lifecycle service
+        if (_lifecycleForReset != null)
+        {
+            _lifecycleForReset.CancellationTokenSource?.Cancel();
+            _lifecycleForReset.CancellationTokenSource?.Dispose();
+            _lifecycleForReset.ActiveRun = null;
+        }
+
+        // Provider field resets remain on orchestration
+        _providerManager.Reset();
+    }
+}

@@ -1,0 +1,95 @@
+using AwesomeAssertions;
+using FsCheck;
+using FsCheck.Xunit;
+using CodingAgent.Pipeline.Models;
+using CodingAgent.Infrastructure.GitHub;
+using CodingAgent.Infrastructure.Persistence;
+using CodingAgent.Infrastructure;
+using CodingAgent.Pipeline.Services;
+using Moq;
+using Octokit;
+
+namespace CodingAgent.Infrastructure.UnitTests;
+
+/// <summary>
+/// Property-based tests for GitHubRepositoryProvider helper methods.
+/// </summary>
+public class GitHubRepositoryProviderPropertyTests
+{
+    /// <summary>
+    /// Feature: provider-interface-gaps, Property 4: RepositoryFullName format
+    /// For any non-null owner and repo strings, RepositoryFullName equals $"{owner}/{repo}".
+    /// **Validates: Requirements 2.5**
+    /// </summary>
+    // Feature: provider-interface-gaps, Property 4: RepositoryFullName format
+    [Property(MaxTest = 20)]
+    public void RepositoryFullName_Equals_Owner_Slash_Repo(NonEmptyString owner, NonEmptyString repo)
+    {
+        // Arrange — use the internal test constructor with a mock IGitHubClient
+        var mockClient = new Mock<IGitHubClient>();
+        var provider = new GitHubRepositoryProvider(
+            new GitHubConnectionInfo("https://api.github.com", owner.Get, repo.Get),
+            gitHubClient: mockClient.Object,
+            token: "test-token",
+            baseBranch: "main");
+
+        // Act
+        var fullName = provider.RepositoryFullName;
+
+        // Assert — must be exactly "{owner}/{repo}"
+        fullName.Should().Be($"{owner.Get}/{repo.Get}");
+    }
+
+    /// <summary>
+    /// Property 1: Branch name generation produces valid slug format.
+    /// For any issue number (positive integer) and any issue title (non-empty string),
+    /// the generated branch name matches the pattern feature/auto-{issueNumber}-{slug}
+    /// where slug contains only lowercase alphanumeric characters and hyphens,
+    /// does not start or end with a hyphen, and does not contain consecutive hyphens.
+    /// **Validates: Requirements 2.4**
+    /// </summary>
+    [Property(MaxTest = 20)]
+    public void BranchName_AlwaysProducesValidSlugFormat(PositiveInt issueNum, NonEmptyString title)
+    {
+        var number = issueNum.Get.ToString();
+        var branchName = PipelineFormatting.GenerateBranchName(number, title.Get);
+
+        // Must start with feature/auto-{number}
+        branchName.Should().StartWith($"feature/auto-{number}");
+
+        // Must not exceed max length
+        branchName.Length.Should().BeLessThanOrEqualTo(100);
+
+        // Extract slug part (after the prefix)
+        var prefix = $"feature/auto-{number}";
+        if (branchName.Length > prefix.Length)
+        {
+            branchName[prefix.Length].Should().Be('-');
+            var slug = branchName[(prefix.Length + 1)..];
+
+            // Slug should only contain lowercase alphanumeric and hyphens
+            slug.Should().MatchRegex(@"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$");
+
+            // No consecutive hyphens
+            slug.Should().NotContain("--");
+        }
+    }
+
+    /// <summary>
+    /// Property 5: PR title follows conventional commit format.
+    /// For any issue title (non-empty string) and any issue number (positive integer),
+    /// the generated PR title equals feat: {issueTitle} (#{issueNumber}).
+    /// **Validates: Requirements 6.2**
+    /// </summary>
+    [Property(MaxTest = 20)]
+    public void PrTitle_FollowsConventionalCommitFormat(NonEmptyString title, PositiveInt issueNum)
+    {
+        var issueRef = $"#{issueNum.Get}";
+        var prTitle = PipelineFormatting.GeneratePrTitle(title.Get, issueRef);
+
+        prTitle.Should().Be($"feat: {title.Get} ({issueRef})");
+    }
+
+    // Deleted (behavior removed): PrBody_ContainsAllRequiredSections — asserted ## Files Changed,
+    // ## Test Results, ## Coverage, and ## AI Code Review Findings which are no longer emitted.
+}

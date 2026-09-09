@@ -1,5 +1,5 @@
 # =============================================================================
-# CodingAgentWebUI Agent Dockerfile (kiro-java21)
+# CodingAgent.Web Agent Dockerfile (kiro-java21)
 # Runs the Agent Worker process that executes the full pipeline end-to-end.
 # Includes JDK 21, Maven, Kiro CLI, uv (for MCP servers), and git.
 # Does NOT include Blazor UI or presentation layer.
@@ -16,18 +16,18 @@ WORKDIR /src
 COPY Directory.Build.props ./
 COPY Directory.Packages.props ./
 COPY src/KiroCliLib/KiroCliLib.csproj src/KiroCliLib/
-COPY src/CodingAgentWebUI.Pipeline/CodingAgentWebUI.Pipeline.csproj src/CodingAgentWebUI.Pipeline/
-COPY src/CodingAgentWebUI.Pipeline.CodeReview/CodingAgentWebUI.Pipeline.CodeReview.csproj src/CodingAgentWebUI.Pipeline.CodeReview/
-COPY src/CodingAgentWebUI.Infrastructure.Providers/CodingAgentWebUI.Infrastructure.Providers.csproj src/CodingAgentWebUI.Infrastructure.Providers/
-COPY src/CodingAgentWebUI.Orchestration/CodingAgentWebUI.Orchestration.csproj src/CodingAgentWebUI.Orchestration/
-COPY src/CodingAgentWebUI/CodingAgentWebUI.csproj src/CodingAgentWebUI/
-COPY src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj src/CodingAgentWebUI.Agent/
-COPY src/CodingAgentWebUI.Agent.KiroCli/CodingAgentWebUI.Agent.KiroCli.csproj src/CodingAgentWebUI.Agent.KiroCli/
-COPY src/CodingAgentWebUI.Agent.OpenCode/CodingAgentWebUI.Agent.OpenCode.csproj src/CodingAgentWebUI.Agent.OpenCode/
-RUN dotnet restore src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -a $TARGETARCH
+COPY src/CodingAgent.Pipeline/CodingAgent.Pipeline.csproj src/CodingAgent.Pipeline/
+COPY src/CodingAgent.Pipeline.CodeReview/CodingAgent.Pipeline.CodeReview.csproj src/CodingAgent.Pipeline.CodeReview/
+COPY src/CodingAgent.Infrastructure.Providers/CodingAgent.Infrastructure.Providers.csproj src/CodingAgent.Infrastructure.Providers/
+COPY src/CodingAgent.Orchestration/CodingAgent.Orchestration.csproj src/CodingAgent.Orchestration/
+COPY src/CodingAgent.Web/CodingAgent.Web.csproj src/CodingAgent.Web/
+COPY src/CodingAgent.Agent/CodingAgent.Agent.csproj src/CodingAgent.Agent/
+COPY src/CodingAgent.Agent.KiroCli/CodingAgent.Agent.KiroCli.csproj src/CodingAgent.Agent.KiroCli/
+COPY src/CodingAgent.Agent.OpenCode/CodingAgent.Agent.OpenCode.csproj src/CodingAgent.Agent.OpenCode/
+RUN dotnet restore src/CodingAgent.Agent/CodingAgent.Agent.csproj -a $TARGETARCH
 
 COPY . .
-RUN dotnet publish src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -c Release -a $TARGETARCH --self-contained false -o /app/publish
+RUN dotnet publish src/CodingAgent.Agent/CodingAgent.Agent.csproj -c Release -a $TARGETARCH --self-contained false -o /app/publish
 
 # Stage 2: Runtime (JDK 21 + Maven for Java quality gates)
 FROM mcr.microsoft.com/dotnet/sdk:10.0.400 AS runtime
@@ -87,4 +87,4 @@ ARG BUILD_COMMIT_SHA=local
 ENV SERVICE_VERSION=${BUILD_COMMIT_SHA}
 
 VOLUME ["/home/ubuntu/.local/share/kiro-cli", "/home/ubuntu/.aws", "/app/workspaces"]
-ENTRYPOINT ["dotnet", "CodingAgentWebUI.Agent.dll"]
+ENTRYPOINT ["dotnet", "CodingAgent.Agent.dll"]

@@ -1,0 +1,200 @@
+using AwesomeAssertions;
+using CodingAgent.Api.Client;
+using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.Services;
+using Moq;
+using Xunit;
+using ILogger = Serilog.ILogger;
+
+namespace CodingAgent.Web.UnitTests.Services;
+
+/// <summary>
+/// Tests for <see cref="LoopStatusPollingService"/>.
+/// TDD: written before the implementation.
+/// </summary>
+public sealed class LoopStatusPollingServiceTests
+{
+    private readonly Mock<ISchedulerApiClient> _mockClient;
+    private readonly Mock<ILogger> _mockLogger;
+
+    private static readonly LoopStatusDto DefaultStatus = new(
+        true, "Running", "issue-1", 5, 2, 3, false, null, 1, 2,
+        new[] { "Error A" },
+        new Dictionary<string, ConfigStatusSnapshot> { ["t1"] = ConfigStatusSnapshot.Empty });
+
+    public LoopStatusPollingServiceTests()
+    {
+        _mockClient = new Mock<ISchedulerApiClient>();
+        _mockLogger = new Mock<ILogger>();
+        _mockLogger.Setup(l => l.ForContext<LoopStatusPollingService>()).Returns(_mockLogger.Object);
+        _mockLogger.Setup(l => l.ForContext(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<bool>()))
+            .Returns(_mockLogger.Object);
+    }
+
+    private LoopStatusPollingService CreateService(TimeSpan? interval = null)
+        => new LoopStatusPollingService(
+            _mockClient.Object,
+            _mockLogger.Object,
+            interval ?? TimeSpan.FromMilliseconds(1));
+
+
+    [Fact]
+    public async Task WhenPollSucceeds_PropertiesUpdatedAndOnChangeFiredAndUnreachableFalse()
+    {
+        // Arrange
+        var firstPollCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockClient.Setup(c => c.GetLoopStatusAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                firstPollCompleted.TrySetResult();
+                return DefaultStatus;
+            });
+
+        var svc = CreateService();
+        var onChangeFired = false;
+        svc.OnChange += () => onChangeFired = true;
+
+        // Act: start, wait deterministically for the first poll to complete, then stop
+        await svc.StartAsync(CancellationToken.None);
+        await firstPollCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Wait for the OnChange subscribers to finish — they run synchronously after the poll,
+        // so by the time the mock lambda returns, OnChange has already fired. But to be safe
+        // against any future async changes, poll the flag rather than sleeping.
+        var onChangeSeen = await Task.WhenAny(
+            Task.Run(async () => { while (!onChangeFired) await Task.Yield(); }),
+            Task.Delay(TimeSpan.FromSeconds(5)));
+        onChangeSeen.IsCompletedSuccessfully.Should().BeTrue("OnChange must fire within 5s");
+
+        using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        try { await svc.StopAsync(stopCts.Token); } catch { }
+        svc.Dispose();
+
+        // Assert: properties match the DTO
+        svc.IsLoopActive.Should().Be(DefaultStatus.IsLoopActive);
+        svc.StatusMessage.Should().Be(DefaultStatus.StatusMessage);
+        svc.ProcessedCount.Should().Be(DefaultStatus.ProcessedCount);
+        svc.FailedCount.Should().Be(DefaultStatus.FailedCount);
+        svc.ValidationErrors.Should().BeEquivalentTo(DefaultStatus.ValidationErrors);
+        svc.IsSchedulerUnreachable.Should().BeFalse("successful poll clears unreachable flag");
+        onChangeFired.Should().BeTrue("OnChange should fire after successful poll");
+    }
+
+    [Fact]
+    public async Task WhenPollFails_IsSchedulerUnreachableTrueAndPriorStatePreserved()
+    {
+        // Arrange: first call succeeds, second fails
+        var callCount = 0;
+        var secondCallCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockClient.Setup(c => c.GetLoopStatusAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount == 1) return DefaultStatus;
+                var ex = new HttpRequestException("connection refused");
+                secondCallCompleted.TrySetResult();
+                throw ex;
+            });
+
+        var svc = CreateService(interval: TimeSpan.FromMilliseconds(1));
+        await svc.StartAsync(CancellationToken.None);
+
+        // Act: wait until the second call has completed (deterministic, not wall-clock)
+        var completed = await Task.WhenAny(secondCallCompleted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.Should().BeSameAs(secondCallCompleted.Task, "second poll call should complete within 5s");
+
+        // Wait deterministically for the flag write that follows the TCS signal.
+        // The TCS fires inside the mock lambda (before the exception unwinds into the catch block),
+        // so _isSchedulerUnreachable is written slightly after the TCS. Poll with a hard 5 s timeout
+        // instead of a fixed delay so the test is robust under CI load.
+        var flagSet = await Task.WhenAny(
+            Task.Run(async () => { while (!svc.IsSchedulerUnreachable) await Task.Yield(); }),
+            Task.Delay(TimeSpan.FromSeconds(5)));
+        flagSet.IsCompletedSuccessfully.Should().BeTrue("IsSchedulerUnreachable must be set within 5s");
+
+        // Assert: unreachable set after failure; prior state preserved (not reset to defaults)
+        svc.IsSchedulerUnreachable.Should().BeTrue("poll failure must set IsSchedulerUnreachable");
+        // Status from the first successful call should be preserved, not reset to empty
+        svc.StatusMessage.Should().Be(DefaultStatus.StatusMessage,
+            "prior state must be preserved when poll fails");
+
+        using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        try { await svc.StopAsync(stopCts.Token); } catch { }
+        svc.Dispose();
+    }
+
+    [Fact]
+    public async Task WhenPollRecovery_IsSchedulerUnreachableCleared()
+    {
+        // Arrange: first call fails, second succeeds
+        var callCount = 0;
+        var secondCallCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockClient.Setup(c => c.GetLoopStatusAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount == 1) throw new HttpRequestException("first call fails");
+                secondCallCompleted.TrySetResult();
+                return DefaultStatus;
+            });
+
+        var svc = CreateService(interval: TimeSpan.FromMilliseconds(1));
+        await svc.StartAsync(CancellationToken.None);
+
+        // Act: wait until the second (successful) call has completed — deterministic, not wall-clock
+        var completed = await Task.WhenAny(secondCallCompleted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.Should().BeSameAs(secondCallCompleted.Task, "second poll call should complete within 5s");
+
+        // Wait deterministically for _isSchedulerUnreachable to be cleared after the second
+        // successful poll. The TCS fires inside the mock before the service writes the flag,
+        // so poll with a hard 5 s timeout instead of a fixed delay.
+        var flagCleared = await Task.WhenAny(
+            Task.Run(async () => { while (svc.IsSchedulerUnreachable) await Task.Yield(); }),
+            Task.Delay(TimeSpan.FromSeconds(5)));
+        flagCleared.IsCompletedSuccessfully.Should().BeTrue("IsSchedulerUnreachable must be cleared within 5s");
+
+        // Assert: unreachable cleared after recovery; status updated from successful poll
+        svc.IsSchedulerUnreachable.Should().BeFalse("unreachable flag must be cleared on recovery");
+        svc.IsLoopActive.Should().Be(DefaultStatus.IsLoopActive);
+
+        using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        try { await svc.StopAsync(stopCts.Token); } catch { }
+        svc.Dispose();
+    }
+
+    [Fact]
+    public async Task WhenOnChangeSubscriberThrows_OtherSubscribersStillFire()
+    {
+        var firstPollCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockClient.Setup(c => c.GetLoopStatusAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                firstPollCompleted.TrySetResult();
+                return DefaultStatus;
+            });
+
+        var svc = CreateService();
+        var secondFired = false;
+        svc.OnChange += () => throw new InvalidOperationException("bad subscriber");
+        svc.OnChange += () => { secondFired = true; };
+
+        // Act: wait deterministically for the first poll (and its OnChange invocations) to complete
+        await svc.StartAsync(CancellationToken.None);
+        await firstPollCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // OnChange fires synchronously inside the poll loop after the mock returns,
+        // so by the time firstPollCompleted is set both subscribers have already been called.
+        // Poll the flag anyway for robustness.
+        var secondFiredSeen = await Task.WhenAny(
+            Task.Run(async () => { while (!secondFired) await Task.Yield(); }),
+            Task.Delay(TimeSpan.FromSeconds(5)));
+        secondFiredSeen.IsCompletedSuccessfully.Should().BeTrue("second subscriber must fire within 5s");
+
+        using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        try { await svc.StopAsync(stopCts.Token); } catch { }
+        svc.Dispose();
+
+        // The throwing subscriber must not prevent the second subscriber from firing
+        secondFired.Should().BeTrue("subscriber exception must be caught per-subscriber, not abort the loop");
+    }
+}

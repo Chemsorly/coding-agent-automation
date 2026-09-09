@@ -1,0 +1,1047 @@
+@using CodingAgent.Api.Client
+@using CodingAgent.Pipeline.Models
+@using System.Text.RegularExpressions
+@implements IAsyncDisposable
+
+<section class="settings-section">
+    <h2>@_project.Name</h2>
+    <p class="section-description">Project configuration — overview, template membership, and behavioral settings that override global defaults.</p>
+
+    <div class="project-tabs">
+        <button class="tab-btn @(IsTab(TabOverview))" @onclick="() => SetTab(TabOverview)">Overview</button>
+        <button class="tab-btn @(IsTab(TabTemplates))" @onclick="() => SetTab(TabTemplates)">Templates</button>
+        <button class="tab-btn @(IsTab(TabSecrets))" @onclick="() => SetTab(TabSecrets)">Secrets</button>
+        <button class="tab-btn @(IsTab(TabSettings))" @onclick="() => SetTab(TabSettings)">Settings</button>
+        <button class="tab-btn @(IsTab(TabMcp))" @onclick="() => SetTab(TabMcp)">MCP Servers</button>
+    </div>
+
+    @if (_activeTab == TabOverview)
+    {
+        @RenderOverviewTab()
+    }
+    else if (_activeTab == TabTemplates)
+    {
+        @RenderTemplatesTab()
+    }
+    else if (_activeTab == TabSecrets)
+    {
+        @RenderSecretsTab()
+    }
+    else if (_activeTab == TabSettings)
+    {
+        @RenderSettingsTab()
+    }
+    else if (_activeTab == TabMcp)
+    {
+        @RenderMcpTab()
+    }
+</section>
+
+@code {
+    private const string TabOverview = "overview";
+    private const string TabTemplates = "templates";
+    private const string TabSecrets = "secrets";
+    private const string TabSettings = "settings";
+    private const string TabMcp = "mcp";
+
+    [Parameter, EditorRequired] public string ProjectId { get; set; } = default!;
+    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!;
+    [Parameter] public EventCallback OnProjectSaved { get; set; }
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+
+    private string _activeTab = TabOverview;
+
+    private string IsTab(string tab) => _activeTab == tab ? "active" : "";
+    private void SetTab(string tab) { _activeTab = tab; }
+    private PipelineProject _project = new() { Id = "", Name = "" };
+    private PipelineConfiguration _globalConfig = new();
+    private List<ProviderConfig> _issueProviders = new();
+    private List<PipelineJobTemplate> _allTemplates = new();
+    private IReadOnlyList<PipelineProject> _allProjects = [];
+
+    // Overview fields
+    private string _name = "";
+    private string _description = "";
+    private bool _enabled = true;
+    private string? _epicIssueProviderId;
+
+    // Steering
+    private string? _steeringContent;
+
+    // Settings override fields
+    private int? _maxRetries;
+    private int? _maxAnalysisRetries;
+    private int? _agentTimeoutMinutes;
+    private string? _analysisPrompt;
+    private string? _implementationPrompt;
+    private bool? _analysisReviewEnabled;
+    private string? _analysisReviewPrompt;
+    private string? _analysisRefinementPrompt;
+    private bool? _acceptanceCriteriaEnabled;
+    private bool? _baselineHealthCheckEnabled;
+    private int? _externalCiTimeoutMinutes;
+    private int? _externalCiPollIntervalSeconds;
+    private int? _ciNotStartedTimeoutMinutes;
+    private int? _ciNotStartedMaxRetries;
+    private int? _maxInfrastructureRetries;
+    private int? _stallWarningIntervalMinutes;
+    private int? _maxDecompositionSubIssues;
+    private int? _maxDecompositionSubIssueFiles;
+    private int? _maxConcurrentDecompositions;
+    private int? _decompositionTimeoutMinutes;
+    private int? _maxOpenIssuesForContext;
+    private int? _maxRefactoringProposals;
+    private bool? _refactoringReviewEnabled;
+    private bool? _brainConsolidationReviewEnabled;
+    private bool? _harnessSuggestionsReviewEnabled;
+    private bool? _brainReadOnly;
+
+    // Blacklisted paths (null = inherit global)
+    private string? _blacklistedPathsText;
+
+    // Template management
+    private string? _selectedTemplateToAdd;
+
+    private readonly CancellationTokenSource _cts = new();
+
+    // Secrets management
+    private List<SecretEntry> _secrets = new();
+    private HashSet<int> _revealedSecrets = new();
+    private static readonly Regex SecretKeyPattern = new(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled, matchTimeout: TimeSpan.FromSeconds(1));
+
+    // MCP Servers management
+    private List<McpServerFormModel> _mcpServers = new();
+    private bool _showMcpForm;
+    private int _editingMcpIndex = -1;
+    private McpServerFormModel _mcpForm = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cts.CancelAsync();
+        _cts.Dispose();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        var project = await ConfigClient.GetProjectByIdAsync(ProjectId, CancellationToken.None);
+        if (project is null)
+        {
+            // New project being created — pre-populate with defaults, don't persist yet
+            _project = new PipelineProject { Id = ProjectId, Name = "", Enabled = true };
+        }
+        else
+        {
+            _project = project;
+        }
+        _globalConfig = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
+        _issueProviders = (await ConfigClient.GetProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
+        _allTemplates = (await ConfigClient.GetAllTemplatesAsync(CancellationToken.None)).ToList();
+        _allProjects = await ConfigClient.GetProjectsAsync(CancellationToken.None);
+
+        // Populate overview fields
+        _name = _project.Name;
+        _description = _project.Description ?? "";
+        _enabled = _project.Enabled;
+        _epicIssueProviderId = _project.EpicIssueProviderId;
+
+        // Populate settings override fields
+        _maxRetries = _project.MaxRetries;
+        _maxAnalysisRetries = _project.MaxAnalysisRetries;
+
+        // Populate secrets
+        _secrets = _project.Secrets?.Select(kv => new SecretEntry { Key = kv.Key, Value = kv.Value }).ToList() ?? new();
+        _revealedSecrets.Clear();
+        _agentTimeoutMinutes = _project.AgentTimeout.HasValue ? (int?)_project.AgentTimeout.Value.TotalMinutes : null;
+        _analysisPrompt = _project.AnalysisPrompt;
+        _implementationPrompt = _project.ImplementationPrompt;
+        _analysisReviewEnabled = _project.AnalysisReviewEnabled;
+        _analysisReviewPrompt = _project.AnalysisReviewPrompt;
+        _analysisRefinementPrompt = _project.AnalysisRefinementPrompt;
+        _acceptanceCriteriaEnabled = _project.AcceptanceCriteriaEnabled;
+        _baselineHealthCheckEnabled = _project.BaselineHealthCheckEnabled;
+        _externalCiTimeoutMinutes = _project.ExternalCiTimeout.HasValue ? (int?)_project.ExternalCiTimeout.Value.TotalMinutes : null;
+        _externalCiPollIntervalSeconds = _project.ExternalCiPollInterval.HasValue ? (int?)_project.ExternalCiPollInterval.Value.TotalSeconds : null;
+        _ciNotStartedTimeoutMinutes = _project.CiNotStartedTimeout.HasValue ? (int?)_project.CiNotStartedTimeout.Value.TotalMinutes : null;
+        _ciNotStartedMaxRetries = _project.CiNotStartedMaxRetries;
+        _maxInfrastructureRetries = _project.MaxInfrastructureRetries;
+        _stallWarningIntervalMinutes = _project.StallWarningInterval.HasValue ? (int?)_project.StallWarningInterval.Value.TotalMinutes : null;
+        _maxDecompositionSubIssues = _project.MaxDecompositionSubIssues;
+        _maxDecompositionSubIssueFiles = _project.MaxDecompositionSubIssueFiles;
+        _maxConcurrentDecompositions = _project.MaxConcurrentDecompositions;
+        _decompositionTimeoutMinutes = _project.DecompositionTimeout.HasValue ? (int?)_project.DecompositionTimeout.Value.TotalMinutes : null;
+        _maxOpenIssuesForContext = _project.MaxOpenIssuesForContext;
+        _maxRefactoringProposals = _project.MaxRefactoringProposals;
+        _refactoringReviewEnabled = _project.RefactoringReviewEnabled;
+        _brainConsolidationReviewEnabled = _project.BrainConsolidationReviewEnabled;
+        _harnessSuggestionsReviewEnabled = _project.HarnessSuggestionsReviewEnabled;
+        _brainReadOnly = _project.BrainReadOnly;
+        _blacklistedPathsText = _project.BlacklistedPaths != null ? string.Join(",", _project.BlacklistedPaths) : null;
+        _steeringContent = _project.SteeringContent;
+
+        // Populate MCP Servers
+        _mcpServers = _project.McpServers?.Select(s => new McpServerFormModel
+        {
+            Name = s.Name,
+            Type = s.Type ?? "stdio",
+            Command = s.Command ?? "",
+            Args = string.Join(" ", s.Args),
+            Url = s.Url ?? "",
+            EnvVars = string.Join("\n", s.Env?.Select(kv => $"{kv.Key}={kv.Value}") ?? []),
+            Headers = string.Join("\n", s.Headers?.Select(kv => $"{kv.Key}={kv.Value}") ?? []),
+            Enabled = !s.Disabled
+        }).ToList() ?? new();
+        _showMcpForm = false;
+        _editingMcpIndex = -1;
+        _mcpForm = new();
+    }
+
+    private RenderFragment RenderOverviewTab() => __builder =>
+    {
+        <div class="provider-form">
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" @bind="_name" maxlength="128" />
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <textarea @bind="_description" rows="3" maxlength="512"></textarea>
+            </div>
+            <div class="form-group form-checkbox">
+                <label>
+                    <input type="checkbox" @bind="_enabled" />
+                    Enabled
+                </label>
+            </div>
+            <div class="form-group">
+                <div class="label-with-hint">
+                    <label>Epic Issue Provider</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Optional centralized issue tracker for cross-repo epic decomposition. When set, the loop polls this provider for agent:epic issues.">?</span>
+                </div>
+                <select @bind="_epicIssueProviderId">
+                    <option value="">— None —</option>
+                    @foreach (var provider in _issueProviders)
+                    {
+                        <option value="@provider.Id">@provider.DisplayName</option>
+                    }
+                </select>
+            </div>
+            <div class="pipeline-form-actions">
+                <button class="btn-save" @onclick="SaveOverviewAsync">Save Overview</button>
+            </div>
+        </div>
+    };
+
+    private RenderFragment RenderTemplatesTab() => __builder =>
+    {
+        <div class="provider-form">
+            <h3>Templates in this project</h3>
+            @if (_project.TemplateIds.Count == 0)
+            {
+                <p class="form-hint">No templates assigned to this project.</p>
+            }
+            else
+            {
+                <div class="template-list">
+                    @for (var i = 0; i < _project.TemplateIds.Count; i++)
+                    {
+                        var index = i;
+                        var templateId = _project.TemplateIds[index];
+                        var template = _allTemplates.FirstOrDefault(t => t.Id == templateId);
+                        var displayName = template?.Name ?? $"Unknown ({templateId[..8]}...)";
+
+                        <div class="template-row">
+                            <span class="template-order">@(index + 1).</span>
+                            <span class="template-name">@displayName</span>
+                            <div class="template-actions">
+                                <select class="template-move-select" @onchange="e => MoveTemplateToProject(templateId, e.Value?.ToString())">
+                                    <option value="">Move to…</option>
+                                    @foreach (var proj in _allProjects.Where(p => p.Id != _project.Id))
+                                    {
+                                        <option value="@proj.Id">@proj.Name</option>
+                                    }
+                                </select>
+                                <button class="btn-icon" disabled="@(index == 0)" @onclick="() => MoveTemplateUp(index)" title="Move up">▲</button>
+                                <button class="btn-icon" disabled="@(index == _project.TemplateIds.Count - 1)" @onclick="() => MoveTemplateDown(index)" title="Move down">▼</button>
+                                <button class="btn-icon btn-danger" @onclick="() => RemoveTemplate(index)" title="Remove">✕</button>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+
+            <div class="template-add-row">
+                <select @bind="_selectedTemplateToAdd">
+                    <option value="">— Select template to add —</option>
+                    @foreach (var template in GetAvailableTemplates())
+                    {
+                        <option value="@template.Id">@template.Name</option>
+                    }
+                </select>
+                <button class="btn-save" disabled="@(string.IsNullOrEmpty(_selectedTemplateToAdd))" @onclick="AddTemplate">Add</button>
+            </div>
+        </div>
+    };
+
+    private RenderFragment RenderSecretsTab() => __builder =>
+    {
+        <div class="provider-form">
+            <h3>🔐 Project Secrets</h3>
+            <p class="form-hint">Environment variables injected into every run for this project. Merged with repo-level secrets (repo wins on key collision).</p>
+            <div class="secrets-section-body">
+                @for (var i = 0; i < _secrets.Count; i++)
+                {
+                    var index = i;
+                    var secret = _secrets[index];
+                    var isRevealed = _revealedSecrets.Contains(index);
+                    <div class="secret-row">
+                        <input type="text"
+                               class="secret-key-input"
+                               value="@secret.Key"
+                               @onchange="e => UpdateSecretKey(index, e.Value?.ToString() ?? string.Empty)"
+                               placeholder="ENV_VAR_NAME" />
+                        <input type="@(isRevealed ? "text" : "password")"
+                               class="secret-value-input"
+                               value="@secret.Value"
+                               @onchange="e => UpdateSecretValue(index, e.Value?.ToString() ?? string.Empty)"
+                               placeholder="secret value" />
+                        <button type="button" class="btn-icon" title="@(isRevealed ? "Hide" : "Reveal")" @onclick="() => ToggleSecretVisibility(index)">@(isRevealed ? "🙈" : "👁")</button>
+                        <button type="button" class="btn-icon btn-icon-danger" title="Remove" @onclick="() => RemoveSecret(index)">🗑</button>
+                    </div>
+                    @if (!string.IsNullOrEmpty(secret.ValidationError))
+                    {
+                        <div class="secret-validation-error">@secret.ValidationError</div>
+                    }
+                }
+                <button type="button" class="btn-add-inline" @onclick="AddSecret">+ Add Secret</button>
+            </div>
+            <div class="pipeline-form-actions">
+                <button class="btn-save" @onclick="SaveSecretsAsync">Save Secrets</button>
+            </div>
+        </div>
+    };
+
+    private RenderFragment RenderSettingsTab() => __builder =>
+    {
+        <div class="provider-form">
+            <p class="form-hint">Override global defaults for this project. Fields set to "Using global default" inherit from the global pipeline configuration.</p>
+
+            <h3>Retries &amp; Timeouts</h3>
+            @RenderIntOverride("Max Retries", () => _maxRetries, v => _maxRetries = v, _globalConfig.MaxRetries, 0, 10)
+            @RenderIntOverride("Max Analysis Retries", () => _maxAnalysisRetries, v => _maxAnalysisRetries = v, _globalConfig.MaxAnalysisRetries, 0, 10)
+            @RenderIntOverride("Agent Timeout (minutes)", () => _agentTimeoutMinutes, v => _agentTimeoutMinutes = v, (int)_globalConfig.AgentTimeout.TotalMinutes, 1, 120)
+            @RenderIntOverride("Max Infrastructure Retries", () => _maxInfrastructureRetries, v => _maxInfrastructureRetries = v, _globalConfig.MaxInfrastructureRetries, 0, 10)
+            @RenderIntOverride("Stall Warning Interval (minutes)", () => _stallWarningIntervalMinutes, v => _stallWarningIntervalMinutes = v, (int)_globalConfig.StallWarningInterval.TotalMinutes, 1, 60)
+            @RenderIntOverride("External CI Timeout (minutes)", () => _externalCiTimeoutMinutes, v => _externalCiTimeoutMinutes = v, (int)_globalConfig.ExternalCiTimeout.TotalMinutes, 1, 120)
+            @RenderIntOverride("External CI Poll Interval (seconds)", () => _externalCiPollIntervalSeconds, v => _externalCiPollIntervalSeconds = v, (int)_globalConfig.ExternalCiPollInterval.TotalSeconds, 5, 300)
+            @RenderIntOverride("CI Not Started Timeout (minutes)", () => _ciNotStartedTimeoutMinutes, v => _ciNotStartedTimeoutMinutes = v, (int)_globalConfig.CiNotStartedTimeout.TotalMinutes, 1, 30)
+            @RenderIntOverride("CI Not Started Max Retries", () => _ciNotStartedMaxRetries, v => _ciNotStartedMaxRetries = v, _globalConfig.CiNotStartedMaxRetries, 0, 20)
+
+            <h3>Decomposition</h3>
+            @RenderIntOverride("Max Sub-Issues Per Epic", () => _maxDecompositionSubIssues, v => _maxDecompositionSubIssues = v, _globalConfig.MaxDecompositionSubIssues, 1, 20)
+            @RenderIntOverride("Max Files Per Sub-Issue", () => _maxDecompositionSubIssueFiles, v => _maxDecompositionSubIssueFiles = v, _globalConfig.MaxDecompositionSubIssueFiles, 1, 30)
+            @RenderIntOverride("Max Concurrent Decompositions", () => _maxConcurrentDecompositions, v => _maxConcurrentDecompositions = v, _globalConfig.MaxConcurrentDecompositions, 1, 10)
+            @RenderIntOverride("Decomposition Timeout (minutes)", () => _decompositionTimeoutMinutes, v => _decompositionTimeoutMinutes = v, (int)_globalConfig.DecompositionTimeout.TotalMinutes, 5, 60)
+            @RenderIntOverride("Max Open Issues for Context", () => _maxOpenIssuesForContext, v => _maxOpenIssuesForContext = v, _globalConfig.MaxOpenIssuesForContext, 1, 200)
+            @RenderIntOverride("Max Refactoring Proposals", () => _maxRefactoringProposals, v => _maxRefactoringProposals = v, _globalConfig.MaxRefactoringProposals, 1, 10)
+
+            <h3>Feature Toggles</h3>
+            @RenderBoolOverride("Analysis Review Enabled", () => _analysisReviewEnabled, v => _analysisReviewEnabled = v, _globalConfig.AnalysisReviewEnabled)
+            @RenderBoolOverride("Acceptance Criteria Enabled", () => _acceptanceCriteriaEnabled, v => _acceptanceCriteriaEnabled = v, _globalConfig.AcceptanceCriteriaEnabled)
+            @RenderBoolOverride("Baseline Health Check Enabled", () => _baselineHealthCheckEnabled, v => _baselineHealthCheckEnabled = v, _globalConfig.BaselineHealthCheckEnabled)
+            @RenderBoolOverride("Refactoring Review Enabled", () => _refactoringReviewEnabled, v => _refactoringReviewEnabled = v, _globalConfig.RefactoringReviewEnabled)
+            @RenderBoolOverride("Brain Consolidation Review Enabled", () => _brainConsolidationReviewEnabled, v => _brainConsolidationReviewEnabled = v, _globalConfig.BrainConsolidationReviewEnabled)
+            @RenderBoolOverride("Harness Suggestions Review Enabled", () => _harnessSuggestionsReviewEnabled, v => _harnessSuggestionsReviewEnabled = v, _globalConfig.HarnessSuggestionsReviewEnabled)
+            @RenderBoolOverride("Brain Read-Only", () => _brainReadOnly, v => _brainReadOnly = v, _globalConfig.BrainReadOnly)
+
+            <h3>Prompts</h3>
+            @RenderStringOverride("Analysis Prompt", () => _analysisPrompt, v => _analysisPrompt = v, _globalConfig.AnalysisPrompt)
+            @RenderStringOverride("Implementation Prompt", () => _implementationPrompt, v => _implementationPrompt = v, _globalConfig.ImplementationPrompt)
+            @RenderStringOverride("Analysis Review Prompt", () => _analysisReviewPrompt, v => _analysisReviewPrompt = v, _globalConfig.AnalysisReviewPrompt)
+            @RenderStringOverride("Analysis Refinement Prompt", () => _analysisRefinementPrompt, v => _analysisRefinementPrompt = v, _globalConfig.AnalysisRefinementPrompt)
+
+            <h3>Steering</h3>
+            <div class="form-group">
+                <label>Steering Instructions</label>
+                <p class="form-hint">These instructions are provided to every agent working on issues in this project. Use them for cross-cutting rules like code style, build commands, tool preferences, or quality expectations.</p>
+                <textarea @bind="_steeringContent" rows="15" placeholder="## Code Style&#10;- Use descriptive variable names&#10;- Prefer composition over inheritance&#10;&#10;## Build &amp; Test&#10;- Always run the build after changes&#10;- Run tests before considering work complete&#10;&#10;## Tool Preferences&#10;- Use context7 to look up library documentation before using unfamiliar APIs&#10;- Use sequential-thinking for complex multi-step reasoning"></textarea>
+            </div>
+
+            <h3>Commit Blacklist</h3>
+            <div class="form-group override-group">
+                <div class="override-header">
+                    <label>Blacklisted Paths</label>
+                    @if (_blacklistedPathsText is not null)
+                    {
+                        <button class="btn-revert" @onclick="() => _blacklistedPathsText = null">Reset to global</button>
+                    }
+                    else
+                    {
+                        <button class="btn-override" @onclick="OverrideBlacklistedPaths">Override</button>
+                    }
+                </div>
+                @if (_blacklistedPathsText is not null)
+                {
+                    <input type="text" @bind="_blacklistedPathsText" />
+                    <span class="form-hint">Comma-separated paths excluded from commits. Overrides global blacklist for this project.</span>
+                }
+                else
+                {
+                    <span class="global-default-hint">Using global default: @string.Join(", ", _globalConfig.BlacklistedPaths)</span>
+                }
+            </div>
+
+            <div class="pipeline-form-actions">
+                <button class="btn-save" @onclick="SaveSettingsAsync">Save Settings</button>
+            </div>
+        </div>
+    };
+
+    private RenderFragment RenderIntOverride(string label, Func<int?> getter, Action<int?> setter, int globalDefault, int min, int max) => __builder =>
+    {
+        var value = getter();
+        <div class="form-group override-group">
+            <div class="override-header">
+                <label>@label</label>
+                @if (value.HasValue)
+                {
+                    <button class="btn-revert" @onclick="() => { setter(null); }">Reset to global</button>
+                }
+                else
+                {
+                    <button class="btn-override" @onclick="() => { setter(globalDefault); }">Override</button>
+                }
+            </div>
+            @if (value.HasValue)
+            {
+                <input type="number" value="@value.Value" @onchange="e => setter(int.TryParse(e.Value?.ToString(), out var v) ? v : null)" min="@min" max="@max" />
+            }
+            else
+            {
+                <span class="global-default-hint">Using global default: @globalDefault</span>
+            }
+        </div>
+    };
+
+    private RenderFragment RenderBoolOverride(string label, Func<bool?> getter, Action<bool?> setter, bool globalDefault) => __builder =>
+    {
+        var value = getter();
+        <div class="form-group override-group">
+            <div class="override-header">
+                <label>@label</label>
+                @if (value.HasValue)
+                {
+                    <button class="btn-revert" @onclick="() => { setter(null); }">Reset to global</button>
+                }
+                else
+                {
+                    <button class="btn-override" @onclick="() => { setter(globalDefault); }">Override</button>
+                }
+            </div>
+            @if (value.HasValue)
+            {
+                <label class="form-checkbox-inline">
+                    <input type="checkbox" checked="@value.Value" @onchange="e => setter((bool?)e.Value)" />
+                    @(value.Value ? "Enabled" : "Disabled")
+                </label>
+            }
+            else
+            {
+                <span class="global-default-hint">Using global default: @(globalDefault ? "Enabled" : "Disabled")</span>
+            }
+        </div>
+    };
+
+    private RenderFragment RenderStringOverride(string label, Func<string?> getter, Action<string?> setter, string globalDefault) => __builder =>
+    {
+        var value = getter();
+        <div class="form-group override-group">
+            <div class="override-header">
+                <label>@label</label>
+                @if (value is not null)
+                {
+                    <button class="btn-revert" @onclick="() => { setter(null); }">Reset to global</button>
+                }
+                else
+                {
+                    <button class="btn-override" @onclick="() => { setter(globalDefault); }">Override</button>
+                }
+            </div>
+            @if (value is not null)
+            {
+                <textarea @bind="value" @bind:after="() => setter(value)" rows="4"></textarea>
+            }
+            else
+            {
+                <span class="global-default-hint">Using global default (click Override to customize)</span>
+            }
+        </div>
+    };
+
+    private IEnumerable<PipelineJobTemplate> GetAvailableTemplates()
+    {
+        var currentProjectIds = _project.TemplateIds.ToHashSet();
+        return _allTemplates.Where(t => !currentProjectIds.Contains(t.Id));
+    }
+
+    private async Task AddTemplate()
+    {
+        if (string.IsNullOrEmpty(_selectedTemplateToAdd)) return;
+
+        // Find source project that currently owns this template
+        var sourceProject = _allProjects.FirstOrDefault(p => p.TemplateIds.Contains(_selectedTemplateToAdd));
+        if (sourceProject is null)
+        {
+            await OnShowStatus.InvokeAsync(("Template not found in any project.", true));
+            return;
+        }
+
+        try
+        {
+            await ConfigClient.MoveTemplateAsync(sourceProject.Id, _project.Id, _selectedTemplateToAdd, _cts.Token);
+            _selectedTemplateToAdd = null;
+            await LoadDataAsync();
+            await OnProjectSaved.InvokeAsync();
+            await OnShowStatus.InvokeAsync(("Template added to project.", false));
+        }
+        catch (OperationCanceledException)
+        {
+            // TODO: Re-throwing OperationCanceledException from a Blazor event handler propagates through
+            // the renderer's event dispatch path. On Blazor Server this tears down the SignalR circuit;
+            // on WASM it surfaces as an unhandled JS exception. Neither produces a visible UI error.
+            // The correct pattern for routine cancellation (user navigating away) is to swallow this
+            // silently (or log it) rather than re-throw. Fix by replacing `throw` with a silent return
+            // or a log-only call.
+            throw;
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to add template: {ex.Message}", true));
+        }
+    }
+
+    private async Task RemoveTemplate(int index)
+    {
+        var newIds = _project.TemplateIds.ToList();
+        newIds.RemoveAt(index);
+        _project = _project with { TemplateIds = newIds };
+
+        await SaveProjectAsync();
+        // TODO: SaveProjectAsync swallows exceptions silently (existing behaviour). If the save fails,
+        // _project has already been mutated in memory (TemplateIds updated above) but the persisted record
+        // still contains the removed template. LoadDataAsync then reloads from the store, so _project
+        // reverts to the pre-removal state and the template reappears in the list with no error shown.
+        // Fix: check whether SaveProjectAsync reported an error (e.g., return a bool/Result) before
+        // calling LoadDataAsync, and surface the failure to the user if the save did not succeed.
+        await LoadDataAsync();
+    }
+
+    private async Task MoveTemplateUp(int index)
+    {
+        if (index <= 0) return;
+        var newIds = _project.TemplateIds.ToList();
+        (newIds[index], newIds[index - 1]) = (newIds[index - 1], newIds[index]);
+        _project = _project with { TemplateIds = newIds };
+
+        await SaveProjectAsync();
+    }
+
+    private async Task MoveTemplateDown(int index)
+    {
+        if (index >= _project.TemplateIds.Count - 1) return;
+        var newIds = _project.TemplateIds.ToList();
+        (newIds[index], newIds[index + 1]) = (newIds[index + 1], newIds[index]);
+        _project = _project with { TemplateIds = newIds };
+
+        await SaveProjectAsync();
+    }
+
+    private async Task MoveTemplateToProject(string templateId, string? targetProjectId)
+    {
+        if (string.IsNullOrEmpty(targetProjectId)) return;
+
+        try
+        {
+            await ConfigClient.MoveTemplateAsync(_project.Id, targetProjectId, templateId, CancellationToken.None);
+            await LoadDataAsync();
+            await OnProjectSaved.InvokeAsync();
+            await OnShowStatus.InvokeAsync(("Template moved to another project.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to move template: {ex.Message}", true));
+        }
+    }
+
+    private async Task SaveOverviewAsync()
+    {
+        try
+        {
+            _project = _project with
+            {
+                Name = _name,
+                Description = string.IsNullOrWhiteSpace(_description) ? null : _description,
+                Enabled = _enabled,
+                EpicIssueProviderId = string.IsNullOrEmpty(_epicIssueProviderId) ? null : _epicIssueProviderId
+            };
+
+            await ConfigClient.SaveProjectAsync(_project, CancellationToken.None);
+            await OnProjectSaved.InvokeAsync();
+            await OnShowStatus.InvokeAsync(("Project overview saved.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+
+    private async Task SaveSecretsAsync()
+    {
+        if (!ValidateSecrets()) return;
+
+        try
+        {
+            _project = _project with { Secrets = BuildSecretsDictionary() };
+            await ConfigClient.SaveProjectAsync(_project, CancellationToken.None);
+            await OnProjectSaved.InvokeAsync();
+            await OnShowStatus.InvokeAsync(("Project secrets saved.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+
+    private async Task SaveSettingsAsync()
+    {
+        try
+        {
+            if (!ValidateSecrets())
+                return;
+
+            _project = _project with
+            {
+                MaxRetries = _maxRetries,
+                MaxAnalysisRetries = _maxAnalysisRetries,
+                AgentTimeout = _agentTimeoutMinutes.HasValue ? TimeSpan.FromMinutes(_agentTimeoutMinutes.Value) : null,
+                AnalysisPrompt = _analysisPrompt,
+                ImplementationPrompt = _implementationPrompt,
+                AnalysisReviewEnabled = _analysisReviewEnabled,
+                AnalysisReviewPrompt = _analysisReviewPrompt,
+                AnalysisRefinementPrompt = _analysisRefinementPrompt,
+                AcceptanceCriteriaEnabled = _acceptanceCriteriaEnabled,
+                BaselineHealthCheckEnabled = _baselineHealthCheckEnabled,
+                ExternalCiTimeout = _externalCiTimeoutMinutes.HasValue ? TimeSpan.FromMinutes(_externalCiTimeoutMinutes.Value) : null,
+                ExternalCiPollInterval = _externalCiPollIntervalSeconds.HasValue ? TimeSpan.FromSeconds(_externalCiPollIntervalSeconds.Value) : null,
+                CiNotStartedTimeout = _ciNotStartedTimeoutMinutes.HasValue ? TimeSpan.FromMinutes(_ciNotStartedTimeoutMinutes.Value) : null,
+                CiNotStartedMaxRetries = _ciNotStartedMaxRetries,
+                MaxInfrastructureRetries = _maxInfrastructureRetries,
+                StallWarningInterval = _stallWarningIntervalMinutes.HasValue ? TimeSpan.FromMinutes(_stallWarningIntervalMinutes.Value) : null,
+                MaxDecompositionSubIssues = _maxDecompositionSubIssues,
+                MaxDecompositionSubIssueFiles = _maxDecompositionSubIssueFiles,
+                MaxConcurrentDecompositions = _maxConcurrentDecompositions,
+                DecompositionTimeout = _decompositionTimeoutMinutes.HasValue ? TimeSpan.FromMinutes(_decompositionTimeoutMinutes.Value) : null,
+                MaxOpenIssuesForContext = _maxOpenIssuesForContext,
+                MaxRefactoringProposals = _maxRefactoringProposals,
+                RefactoringReviewEnabled = _refactoringReviewEnabled,
+                BrainConsolidationReviewEnabled = _brainConsolidationReviewEnabled,
+                HarnessSuggestionsReviewEnabled = _harnessSuggestionsReviewEnabled,
+                BrainReadOnly = _brainReadOnly,
+                BlacklistedPaths = ParseBlacklistedPaths(_blacklistedPathsText),
+                SteeringContent = string.IsNullOrWhiteSpace(_steeringContent) ? null : _steeringContent.Trim()
+            };
+
+            await ConfigClient.SaveProjectAsync(_project, CancellationToken.None);
+            await OnProjectSaved.InvokeAsync();
+            await OnShowStatus.InvokeAsync(("Project settings saved.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+
+    private async Task SaveProjectAsync()
+    {
+        try
+        {
+            await ConfigClient.SaveProjectAsync(_project, CancellationToken.None);
+            await OnProjectSaved.InvokeAsync();
+            await OnShowStatus.InvokeAsync(("Project updated.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+
+    // --- Secrets management ---
+
+    private void AddSecret()
+    {
+        _secrets.Add(new SecretEntry());
+    }
+
+    private void RemoveSecret(int index)
+    {
+        if (index >= 0 && index < _secrets.Count)
+        {
+            _secrets.RemoveAt(index);
+            var newRevealed = new HashSet<int>();
+            foreach (var i in _revealedSecrets)
+            {
+                if (i < index) newRevealed.Add(i);
+                else if (i > index) newRevealed.Add(i - 1);
+            }
+            _revealedSecrets = newRevealed;
+        }
+    }
+
+    private void UpdateSecretKey(int index, string value)
+    {
+        if (index >= 0 && index < _secrets.Count)
+        {
+            _secrets[index].Key = value;
+            _secrets[index].ValidationError = null;
+        }
+    }
+
+    private void UpdateSecretValue(int index, string value)
+    {
+        if (index >= 0 && index < _secrets.Count)
+        {
+            _secrets[index].Value = value;
+        }
+    }
+
+    private void ToggleSecretVisibility(int index)
+    {
+        if (!_revealedSecrets.Remove(index))
+            _revealedSecrets.Add(index);
+    }
+
+    private bool ValidateSecrets()
+    {
+        if (_secrets.Count == 0) return true;
+
+        var isValid = true;
+        var seenKeys = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var secret in _secrets)
+        {
+            secret.ValidationError = null;
+
+            if (string.IsNullOrWhiteSpace(secret.Key))
+            {
+                secret.ValidationError = "Key is required.";
+                isValid = false;
+                continue;
+            }
+
+            if (!SecretKeyPattern.IsMatch(secret.Key))
+            {
+                secret.ValidationError = "Key must match POSIX env var pattern (letters, digits, underscores; cannot start with digit).";
+                isValid = false;
+                continue;
+            }
+
+            if (!seenKeys.Add(secret.Key))
+            {
+                secret.ValidationError = "Duplicate key.";
+                isValid = false;
+            }
+        }
+
+        return isValid;
+    }
+
+    private Dictionary<string, string>? BuildSecretsDictionary()
+    {
+        if (_secrets.Count == 0) return null;
+        var dict = new Dictionary<string, string>();
+        foreach (var secret in _secrets)
+        {
+            if (!string.IsNullOrWhiteSpace(secret.Key))
+                dict[secret.Key] = secret.Value;
+        }
+        return dict.Count > 0 ? dict : null;
+    }
+
+    private static IReadOnlyList<string>? ParseBlacklistedPaths(string? input)
+    {
+        if (input is null) return null;
+        var paths = input.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .ToList();
+        return paths.Count > 0 ? paths : null;
+    }
+
+    private void OverrideBlacklistedPaths()
+    {
+        _blacklistedPathsText = string.Join(",", _globalConfig.BlacklistedPaths);
+    }
+
+    private class SecretEntry
+    {
+        public string Key { get; set; } = "";
+        public string Value { get; set; } = "";
+        public string? ValidationError { get; set; }
+    }
+
+    // ── MCP Servers tab ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Renders the MCP Servers tab. Delegates to two focused helpers to keep
+    /// cognitive complexity within the S3776 limit of 15.
+    /// </summary>
+    private RenderFragment RenderMcpTab() => __builder =>
+    {
+        <div class="provider-form">
+            <h3>MCP Servers</h3>
+            <p class="form-hint">Project MCP servers are merged with the profile's servers at dispatch time. Servers with the same name override the profile configuration; others are added. Leave empty to use the profile's MCP servers unchanged.</p>
+
+            @RenderMcpServerTable()
+            @RenderMcpServerFormOrAddButton()
+
+            <div class="pipeline-form-actions">
+                <button class="btn-save" @onclick="SaveMcpServersAsync">Save MCP Servers</button>
+            </div>
+        </div>
+    };
+
+    /// <summary>
+    /// Renders the server list table when at least one MCP server is configured.
+    /// Renders nothing when the server list is empty.
+    /// </summary>
+    private RenderFragment RenderMcpServerTable() => __builder =>
+    {
+        @if (_mcpServers.Count > 0)
+        {
+            <div class="monitoring-table-wrap" style="margin-bottom: 8px;">
+                <table class="monitoring-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Command / URL</th>
+                            <th>Enabled</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var (server, idx) in _mcpServers.Select((s, i) => (s, i)))
+                        {
+                            <tr>
+                                <td class="monitoring-mono">@server.Name</td>
+                                <td>@server.Type</td>
+                                <td class="monitoring-mono">@(server.Type == "http" ? server.Url : $"{server.Command} {server.Args}".Trim())</td>
+                                <td>@(server.Enabled ? "✓" : "✗")</td>
+                                <td>
+                                    <button class="btn-edit" @onclick="() => EditMcpServer(idx)">Edit</button>
+                                    <button class="btn-delete" @onclick="() => RemoveMcpServer(idx)">Remove</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    };
+
+    /// <summary>
+    /// Renders either the add/edit form (when _showMcpForm is true) or the
+    /// "+ Add MCP Server" button (when _showMcpForm is false).
+    /// </summary>
+    private RenderFragment RenderMcpServerFormOrAddButton() => __builder =>
+    {
+        @if (_showMcpForm)
+        {
+            <div class="provider-form" style="margin-top: 8px; padding: 12px; border: 1px solid var(--border-color, #ddd); border-radius: 4px;">
+                <h4 style="margin-top: 0;">@(_editingMcpIndex >= 0 ? "Edit" : "Add") MCP Server</h4>
+                <div class="form-group">
+                    <label>Name *</label>
+                    <input type="text" @bind="_mcpForm.Name" placeholder="e.g. context7" />
+                </div>
+                <div class="form-group">
+                    <label>Type</label>
+                    <select @bind="_mcpForm.Type">
+                        <option value="stdio">stdio (command-based)</option>
+                        <option value="http">HTTP (URL-based)</option>
+                    </select>
+                </div>
+                @if (_mcpForm.Type == "http")
+                {
+                    <div class="form-group">
+                        <label>URL *</label>
+                        <input type="text" @bind="_mcpForm.Url" placeholder="e.g. https://mcp.context7.com/mcp" />
+                    </div>
+                    <div class="form-group">
+                        <label>Headers <span class="form-hint">(one per line, KEY=VALUE — use for auth tokens)</span></label>
+                        <textarea rows="3" @bind="_mcpForm.Headers" @bind:event="oninput" placeholder="Authorization=Bearer mytoken&#10;X-Org=myorg"></textarea>
+                    </div>
+                }
+                else
+                {
+                    <div class="form-group">
+                        <label>Command *</label>
+                        <input type="text" @bind="_mcpForm.Command" placeholder="e.g. uvx" />
+                    </div>
+                    <div class="form-group">
+                        <label>Arguments <span class="form-hint">(space-separated)</span></label>
+                        <input type="text" @bind="_mcpForm.Args" placeholder="e.g. context7-mcp@latest" />
+                    </div>
+                    <div class="form-group">
+                        <label>Environment Variables <span class="form-hint">(one per line, KEY=VALUE)</span></label>
+                        <textarea rows="3" @bind="_mcpForm.EnvVars" @bind:event="oninput" placeholder="FASTMCP_LOG_LEVEL=ERROR"></textarea>
+                    </div>
+                }
+                <div class="form-group form-checkbox">
+                    <label>
+                        <input type="checkbox" @bind="_mcpForm.Enabled" />
+                        Enabled
+                    </label>
+                </div>
+                <div class="form-buttons">
+                    <button class="btn-save" @onclick="SaveMcpServer">Save Server</button>
+                    <button class="btn-cancel" @onclick="() => _showMcpForm = false">Cancel</button>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div style="display: flex; gap: 8px; margin-top: 4px;">
+                <button class="btn-add" @onclick="ShowAddMcpForm">+ Add MCP Server</button>
+            </div>
+        }
+    };
+
+    private void ShowAddMcpForm()
+    {
+        _editingMcpIndex = -1;
+        _mcpForm = new McpServerFormModel();
+        _showMcpForm = true;
+    }
+
+    private void EditMcpServer(int index)
+    {
+        _editingMcpIndex = index;
+        var server = _mcpServers[index];
+        _mcpForm = new McpServerFormModel
+        {
+            Name = server.Name,
+            Type = server.Type,
+            Command = server.Command,
+            Args = server.Args,
+            Url = server.Url,
+            EnvVars = server.EnvVars,
+            Headers = server.Headers,
+            Enabled = server.Enabled
+        };
+        _showMcpForm = true;
+    }
+
+    private void RemoveMcpServer(int index)
+    {
+        _mcpServers.RemoveAt(index);
+    }
+
+    private void SaveMcpServer()
+    {
+        if (string.IsNullOrWhiteSpace(_mcpForm.Name))
+            return;
+
+        if (_mcpForm.Type == "http" && string.IsNullOrWhiteSpace(_mcpForm.Url))
+            return;
+        if (_mcpForm.Type != "http" && string.IsNullOrWhiteSpace(_mcpForm.Command))
+            return;
+
+        var entry = new McpServerFormModel
+        {
+            Name = _mcpForm.Name.Trim(),
+            Type = _mcpForm.Type,
+            Command = _mcpForm.Command?.Trim() ?? "",
+            Args = _mcpForm.Args?.Trim() ?? "",
+            Url = _mcpForm.Url?.Trim() ?? "",
+            EnvVars = _mcpForm.EnvVars?.Trim() ?? "",
+            Headers = _mcpForm.Headers?.Trim() ?? "",
+            Enabled = _mcpForm.Enabled
+        };
+
+        if (_editingMcpIndex >= 0)
+            _mcpServers[_editingMcpIndex] = entry;
+        else
+            _mcpServers.Add(entry);
+
+        _showMcpForm = false;
+        _editingMcpIndex = -1;
+    }
+
+    private async Task SaveMcpServersAsync()
+    {
+        try
+        {
+            var servers = _mcpServers.Select(s =>
+            {
+                string? command;
+                if (s.Type == "http") command = null;
+                else if (string.IsNullOrWhiteSpace(s.Command)) command = null;
+                else command = s.Command.Trim();
+                return new McpServerConfig
+                {
+                    Name = s.Name.Trim(),
+                    Type = s.Type,
+                    Command = command,
+                    Args = string.IsNullOrWhiteSpace(s.Args) ? [] : s.Args.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList(),
+                    Url = s.Type == "http" ? s.Url.Trim() : null,  // TODO [WARNING]: s.Url could be null if a future McpServerFormModel is constructed without enforcing the "" default; consider s.Url?.Trim() ?? "" for defensive safety.
+                    Env = ParseMcpEnvVars(s.EnvVars),
+                    Headers = s.Type == "http" ? ParseMcpEnvVars(s.Headers) : new Dictionary<string, string>(),
+                    Disabled = !s.Enabled,
+                    AutoApprove = []
+                };
+            }).ToList();
+
+            _project = _project with { McpServers = servers.Count > 0 ? servers : null };
+            await ConfigClient.SaveProjectAsync(_project, CancellationToken.None);
+            await OnProjectSaved.InvokeAsync();
+            await OnShowStatus.InvokeAsync(("Project MCP servers saved.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+
+    private static IReadOnlyDictionary<string, string> ParseMcpEnvVars(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return new Dictionary<string, string>();
+        var dict = new Dictionary<string, string>();
+        foreach (var line in input.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var eqIdx = line.IndexOf('=');
+            if (eqIdx > 0)
+                dict[line[..eqIdx].Trim()] = line[(eqIdx + 1)..].Trim();
+        }
+        return dict;
+    }
+
+    private sealed class McpServerFormModel
+    {
+        public string Name { get; set; } = "";
+        public string Type { get; set; } = "stdio";
+        public string Command { get; set; } = "";
+        public string Args { get; set; } = "";
+        public string Url { get; set; } = "";
+        public string EnvVars { get; set; } = "";
+        public string Headers { get; set; } = "";
+        public bool Enabled { get; set; } = true;
+    }
+}
