@@ -175,13 +175,14 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     {
         // Load config outside the lock to avoid sync-over-async deadlocks
         // (Blazor Server's RendererSynchronizationContext would deadlock on .GetAwaiter().GetResult())
+        PipelineConfiguration config;
         IReadOnlyList<ProviderConfig> issueProviders;
         IReadOnlyList<ProviderConfig> repoProviders;
         IReadOnlyList<PipelineJobTemplate> templates;
 
         try
         {
-            _ = await _pipelineConfigStore.LoadPipelineConfigAsync(CancellationToken.None).ConfigureAwait(false);
+            config = await _pipelineConfigStore.LoadPipelineConfigAsync(CancellationToken.None).ConfigureAwait(false);
             issueProviders = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None).ConfigureAwait(false);
             repoProviders = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None).ConfigureAwait(false);
             templates = await _projectStore.LoadAllTemplatesAsync(CancellationToken.None).ConfigureAwait(false);
@@ -197,36 +198,58 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
             return false;
         }
 
-        lock (_lock)
+        // Validate before touching shared state — still outside the lock
+        var enabledTemplates = templates.Where(t => t.Enabled).ToList();
+        var validationErrors = new List<string>();
+
+        if (enabledTemplates.Count == 0)
+            validationErrors.Add("No enabled pipeline job templates configured.");
+
+        if (validationErrors.Count == 0)
         {
-            if (IsLoopActive)
-                return false;
-
-            var enabledTemplates = templates.Where(t => t.Enabled).ToList();
-
-            _validationErrors = [];
-
-            if (enabledTemplates.Count == 0)
-            {
-                _validationErrors.Add("No enabled pipeline job templates configured.");
-                return false;
-            }
-
-            // Validate all enabled templates reference existing provider IDs
             var issueProviderIds = issueProviders.Select(p => p.Id).ToHashSet();
             var repoProviderIds = repoProviders.Select(p => p.Id).ToHashSet();
 
             foreach (var template in enabledTemplates)
             {
                 if (!issueProviderIds.Contains(template.IssueProviderId))
-                    _validationErrors.Add($"Template '{template.Name}' references non-existent issue provider '{template.IssueProviderId}'.");
+                    validationErrors.Add($"Template '{template.Name}' references non-existent issue provider '{template.IssueProviderId}'.");
                 if (!repoProviderIds.Contains(template.RepoProviderId))
-                    _validationErrors.Add($"Template '{template.Name}' references non-existent repo provider '{template.RepoProviderId}'.");
+                    validationErrors.Add($"Template '{template.Name}' references non-existent repo provider '{template.RepoProviderId}'.");
             }
+        }
 
-            if (_validationErrors.Count > 0)
+        if (validationErrors.Count > 0)
+        {
+            lock (_lock) { _validationErrors = validationErrors; }
+            NotifyChange();
+            return false;
+        }
+
+        // Persist ClosedLoopAutoStart=true so that RunMultiTemplateLoopAsync reads it back on
+        // every subsequent cycle and does not self-stop. This also ensures that if the pod
+        // restarts while the loop is running, it auto-starts again (the original intent of the
+        // flag). Best-effort: a failure here is non-fatal — the loop still starts, but the next
+        // cycle will self-stop via the guard in RunMultiTemplateLoopAsync.
+        if (!config.ClosedLoopAutoStart)
+        {
+            try
+            {
+                await _pipelineConfigStore.SavePipelineConfigAsync(
+                    config with { ClosedLoopAutoStart = true }, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "StartLoopAsync could not persist ClosedLoopAutoStart=true; loop will self-stop on first cycle");
+            }
+        }
+
+        lock (_lock)
+        {
+            if (IsLoopActive)
                 return false;
 
+            _validationErrors = [];
             _stopRequested = false;
             ProcessedCount = 0;
             FailedCount = 0;
