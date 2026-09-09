@@ -225,6 +225,14 @@ public class ConsolidationWorkItemDispatchServiceDispatchLoopTests : IDisposable
         item!.Status.Should().Be(WorkItemStatus.Dispatched);
         _mockKubeClient.Verify(k => k.CreateJobAsync(
             It.IsAny<k8s.Models.V1Job>(), "default", It.IsAny<CancellationToken>()), Times.Once);
+
+        // ConsolidationWorkItemDispatchService is now the sole owner of the ConsolidationRun
+        // Queued → Running transition (ConsolidationDispatchLoop was removed in #2323).
+        // Verify TransitionToRunningAsync is called exactly once so that a future accidental
+        // removal of that call from ExecuteDispatchAsync is caught immediately.
+        _mockConsolidationService.Verify(s => s.TransitionToRunningAsync(
+            (RunId)"run-eligible", It.IsAny<CancellationToken>()), Times.Once,
+            "ConsolidationWorkItemDispatchService must transition the ConsolidationRun to Running on successful dispatch");
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

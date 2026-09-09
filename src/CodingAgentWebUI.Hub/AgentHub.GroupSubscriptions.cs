@@ -141,5 +141,6 @@ public sealed partial class AgentHub
         IssueTitle = run.IssueTitle,
         StartedAtOffset = run.StartedAtOffset,
         BrainProviderConfigId = run.BrainProviderConfigId,
+        ChatHistory = run.ChatHistory.ToArray(),
     };
 }

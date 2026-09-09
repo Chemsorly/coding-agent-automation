@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgentWebUI.Orchestration.Redis;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.LeaderElection;
+using Microsoft.Extensions.Hosting;
 using Moq;
 using ILogger = Serilog.ILogger;
 
@@ -168,8 +169,81 @@ public sealed class AgentRegistryCleanupServiceTests
         var act = () => svc.SweepAsync(cts.Token);
         await act.Should().ThrowAsync<OperationCanceledException>();
 
-        // id2 was never reached
+        // id2 was never reached — cancellation fired before next iteration
         _store.Verify(s => s.ExistsAsync($"agent:{id2}"), Times.Never,
             "cancellation must abort the loop before processing remaining members");
+        // id1 removal was already in flight when cancellation was signalled; it completes
+        _store.Verify(s => s.SetRemoveAsync("agents:all", id1), Times.Once,
+            "the member whose check triggered cancellation is already being removed when OCE fires");
+    }
+
+    // ── ExecuteAsync: timer loop ─────────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_OnTick_CallsSweepAsync()
+    {
+        // Arrange: configure store so a sweep can complete
+        _store.Setup(s => s.SetMembersAsync("agents:all")).ReturnsAsync([]);
+
+        // Use a very short interval so the tick fires immediately in the test
+        var svc = new AgentRegistryCleanupService(_store.Object, _logger.Object,
+            leaderElection: null, sweepInterval: TimeSpan.FromMilliseconds(1));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        // Act: start the background service and wait for at least one sweep
+        await ((IHostedService)svc).StartAsync(cts.Token);
+
+        // Poll until SetMembersAsync is called (= at least one tick executed SweepAsync)
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            try { _store.Verify(s => s.SetMembersAsync("agents:all"), Times.AtLeastOnce()); break; }
+            catch (MockException) { await Task.Delay(20); }
+        }
+
+        cts.Cancel();
+        await ((IHostedService)svc).StopAsync(CancellationToken.None);
+
+        _store.Verify(s => s.SetMembersAsync("agents:all"), Times.AtLeastOnce(),
+            "ExecuteAsync timer loop must call SweepAsync on each tick");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_SweepThrowsNonCancellation_ExceptionSwallowedAndLoopContinues()
+    {
+        // Arrange: first call throws, second returns empty — loop must continue
+        var callCount = 0;
+        _store.Setup(s => s.SetMembersAsync("agents:all"))
+            .Returns(() =>
+            {
+                callCount++;
+                if (callCount == 1)
+                    throw new InvalidOperationException("transient Redis error");
+                return Task.FromResult(Array.Empty<string>());
+            });
+
+        var svc = new AgentRegistryCleanupService(_store.Object, _logger.Object,
+            leaderElection: null, sweepInterval: TimeSpan.FromMilliseconds(1));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await ((IHostedService)svc).StartAsync(cts.Token);
+
+        // Wait until the second tick completes successfully (callCount >= 2)
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline && callCount < 2)
+            await Task.Delay(20);
+
+        cts.Cancel();
+        await ((IHostedService)svc).StopAsync(CancellationToken.None);
+
+        callCount.Should().BeGreaterThanOrEqualTo(2,
+            "a non-cancellation exception during sweep must be swallowed and the loop must continue");
+        // Verify the warning was logged — ServiceName is passed as a string property value
+        _logger.Verify(
+            l => l.Warning(It.IsAny<Exception>(), It.Is<string>(s => s.Contains("sweep error")),
+                It.IsAny<string>()),
+            Times.AtLeastOnce(),
+            "the swallowed exception must be logged as a warning");
     }
 }

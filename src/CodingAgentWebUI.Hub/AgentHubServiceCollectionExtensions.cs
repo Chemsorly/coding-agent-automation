@@ -1,7 +1,6 @@
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -20,7 +19,6 @@ public static class AgentHubServiceCollectionExtensions
         services.AddSingleton<AgentHubFacadeDependencies>(sp => new AgentHubFacadeDependencies(
             sp.GetRequiredService<IAgentRegistryService>(),
             sp.GetRequiredService<IOrchestratorRunService>(),
-            sp.GetRequiredService<JobDeduplicationGuardService>(),
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             sp.GetRequiredService<IProviderConfigStore>(),
             sp.GetRequiredService<IProviderFactory>(),

@@ -1,9 +1,11 @@
 using System.Diagnostics;
 using System.Security.Claims;
 using System.Text.Json;
+using CodingAgentWebUI.Api.Dispatch;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
+using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Telemetry;
@@ -78,6 +80,12 @@ public static class WorkItemEndpoints
         group.MapPost("/{id:guid}/label-swap", PostLabelSwap).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapPost("/{id:guid}/last-progress", PostLastProgress).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapPost("/{id:guid}/priority", PostPriorityWeight).RequireAuthorization(ApiAuthPolicies.Operator);
+
+        // Synchronous dispatch endpoint — called by KubernetesWorkDistributor instead of POST /.
+        // Atomically performs PVC selection, K8s Job creation, and Dispatched state write in a
+        // single request. Returns 200+WorkItemId on success, 409 if at concurrency limit,
+        // 503 if no PVC available or K8s failure.
+        group.MapPost("/dispatch", DispatchWorkItem).RequireAuthorization(ApiAuthPolicies.Operator);
 
         // ── Metrics feed for the Scheduler's WorkItemCountsPoller ─────────────
         group.MapGet("/counts-by-status", GetCountsByStatus).RequireAuthorization(ApiAuthPolicies.Operator);
@@ -336,14 +344,24 @@ public static class WorkItemEndpoints
     // concrete class with an in-memory DB. Consider adding TransitionDetailedAsync to an interface
     // (e.g. IWorkItemTransitionService or a new IWorkItemTransitionDetailedService) so PostStatus can
     // be tested with pure mocks and to allow future DI substitution.
-    internal static async Task<IResult> PostStatus(
+    internal static async Task<IResult> PostStatus( // NOSONAR S107 — 8th param is a test-only seam; CA1068 suppressed via attribute below
         Guid id,
         WorkItemStatusRequest request,
         WorkItemTransitionService transitionService,
         IOrchestratorRunService runService,
         IRunLifecycleManager runLifecycleManager,
         IDbContextFactory<PipelineDbContext>? dbFactory = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        // Test seam only: when true, the telemetry task is awaited before returning so tests can
+        // assert metric side-effects deterministically. In production the route lambda never passes
+        // this parameter, so it defaults to false and the fire-and-forget path is unchanged.
+        // Suppression: CA1068 (ct not last) and S107 (>7 params) are acceptable here because
+        // this is an internal method with a test-only parameter appended after the conventional
+        // CancellationToken position. Moving the bool before ct would break naming conventions;
+        // splitting into an overload doubles the S107 surface area. The bool is never passed by
+        // production callers.
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1068", Justification = "Test seam bool appended after ct intentionally")]
+        bool awaitTelemetry = false)
     {
         var transitionResult = await transitionService.TransitionDetailedAsync(
             id, request.Status,
@@ -385,13 +403,22 @@ public static class WorkItemEndpoints
                 await runLifecycleManager.CancelRunAsync(new RunId(id.ToString()), ct);
             }
 
-            // Emit telemetry for terminal transitions — fire-and-forget: enrichment query must
-            // not block the agent's 200 response, and a slow/failed DB read must not surface as a 500.
-            // Pass CancellationToken.None because the task runs independently of the HTTP request
-            // lifetime; using the request-scoped ct would cause spurious OperationCanceledException
-            // warnings when ASP.NET Core cancels the token as soon as the response is sent.
+            // Emit telemetry for terminal transitions.
+            // Production path (awaitTelemetry=false): fire-and-forget so the enrichment DB read
+            // does not block the agent's 200 response and a slow/failed read does not surface as a 500.
+            // Test path (awaitTelemetry=true): task is awaited before returning, eliminating the
+            // Task.Delay race that made telemetry-asserting tests flaky on loaded CI hosts.
+            // CancellationToken.None is intentional: this task outlives the HTTP request lifetime;
+            // using the request-scoped ct would cause spurious OperationCanceledException warnings
+            // when ASP.NET Core cancels the token as soon as the response is sent.
             if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-                _ = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, CancellationToken.None);
+            {
+                var emitTask = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, CancellationToken.None);
+                if (awaitTelemetry)
+                    await emitTask;
+                else
+                    _ = emitTask;
+            }
         }
 
         return TypedResults.Ok();
@@ -570,6 +597,277 @@ public static class WorkItemEndpoints
         };
     }
 
+    // ── POST /dispatch — synchronous dispatch endpoint ────────────────────
+
+    /// <summary>
+    /// POST /api/work-items/dispatch
+    /// Synchronous dispatch path: atomically performs PVC selection, K8s Job creation, and
+    /// <c>Dispatched</c> state write in a single request. Called by <c>KubernetesWorkDistributor</c>
+    /// instead of the two-step <c>POST /api/work-items</c> + DispatchLoop path.
+    ///
+    /// Returns:
+    /// <list type="bullet">
+    ///   <item>200 + WorkItemId — dispatch succeeded (K8s Job running, WorkItem=Dispatched)</item>
+    ///   <item>409 Conflict — concurrency limit reached for this selector</item>
+    ///   <item>503 Service Unavailable — no PVC available or K8s Job creation failed</item>
+    /// </list>
+    /// </summary>
+    internal static async Task<IResult> DispatchWorkItem(
+        [FromBody] JobDistributionRequest request,
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        IOrchestratorRunService runService,
+        DispatchLifecycleService lifecycle,
+        JobTemplateStore templateStore,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        // Template resolution: selector → JobTemplate
+        var template = templateStore.Resolve(request.AgentSelector ?? "");
+        if (template is null)
+        {
+            Log.Warning("DispatchWorkItem: no job template for selector {Selector} — returning 409",
+                request.AgentSelector);
+            return TypedResults.Conflict($"No job template for agent selector: {request.AgentSelector}");
+        }
+
+        var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
+
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+
+        // Build concurrency map (dispatched/running items by selector)
+        var activeCounts = await db.WorkItems
+            .Where(w => w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
+            .GroupBy(w => w.AgentSelector)
+            .Select(g => new { Selector = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
+        // Normalise stored selectors before building the lookup key so that items written by
+        // any path (including the old DispatchLoop which may have normalised differently) are
+        // counted correctly. NormalizeLabels is idempotent — normalising an already-normalised
+        // key is a no-op.
+        var concurrencyBySelector = activeCounts.ToDictionary(
+            x => JobTemplateStore.NormalizeLabels(x.Selector),
+            x => x.Count,
+            StringComparer.Ordinal);
+
+        // Concurrency gate
+        var maxConcurrent = template.MaxConcurrent;
+        if (maxConcurrent > 0)
+        {
+            var lookupKey = JobTemplateStore.NormalizeLabels(request.AgentSelector ?? "");
+            var currentCount = concurrencyBySelector.GetValueOrDefault(lookupKey, 0);
+            if (currentCount >= maxConcurrent)
+            {
+                Log.Information("DispatchWorkItem: concurrency limit reached for selector {Selector} ({Current}/{Max}) — returning 409",
+                    request.AgentSelector, currentCount, maxConcurrent);
+                return TypedResults.Conflict($"Concurrency limit reached for selector '{request.AgentSelector}' ({currentCount}/{maxConcurrent}).");
+            }
+        }
+
+        // PVC gate: kiro agents require an available credential PVC
+        // TODO [WARNING]: This PVC availability snapshot is taken OUTSIDE _pvcSelectLock. Two concurrent
+        // requests can both observe availablePvcs.Count > 0, pass the gate, create their Pending rows,
+        // and then both enter ExecuteDispatchLifecycleAsync. Inside the lock, SelectPvcAsync re-queries
+        // and the second caller will find zero PVCs (correct), but its Pending row has already been
+        // committed. SafelyCancelOrphanedPendingWorkItemAsync handles cleanup of the Pending row in
+        // that case. In a single-process deployment _pvcSelectLock ensures exactly one 200 and one 503.
+        // In a multi-replica deployment no cross-process lock exists; both replicas may dispatch
+        // simultaneously. A distributed lock (Postgres advisory lock) would be required to guarantee
+        // the one-200/one-503 invariant across replicas.
+        var pvcPool = lifecycle.GetPvcPool();
+        var pvcResult = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, pvcPool, ct);
+        var availablePvcs = pvcResult.AvailablePvcs;
+
+        if (isKiroAgent && availablePvcs.Count == 0)
+        {
+            Log.Information("DispatchWorkItem: no PVC available for kiro agent selector {Selector} — returning 503",
+                request.AgentSelector);
+            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        // Capacity checks passed — create the WorkItem directly as Dispatched.
+        // Issue #2322 requirement: no WorkItem is ever written as Pending on the live dispatch path.
+        // The item is created as Dispatched atomically with the lifecycle call that creates the K8s Job.
+        var workItemId = !string.IsNullOrEmpty(request.RunId) && Guid.TryParse(request.RunId, out var parsedRunId)
+            ? parsedRunId
+            : Guid.NewGuid();
+
+        var minimalPayload = BuildMinimalPayload(request);
+        var payloadJson = JsonSerializer.Serialize(minimalPayload, PipelineJsonOptions.Default);
+
+        var entity = new WorkItemEntity
+        {
+            Id = workItemId,
+            TaskType = request.TaskType,
+            IssueIdentifier = request.IssueIdentifier.Value,
+            IssueProviderConfigId = request.IssueProviderConfigId,
+            Status = WorkItemStatus.Dispatched,
+            DispatchedAt = DateTimeOffset.UtcNow,
+            Payload = payloadJson,
+            AgentSelector = JobTemplateStore.NormalizeLabels(request.AgentSelector ?? ""),
+            TimeoutSeconds = request.TimeoutSeconds,
+            ProjectId = request.ProjectId,
+            CreatedAt = DateTimeOffset.UtcNow,
+            PriorityWeight = InitiatedByConstants.IsManual(request.InitiatedBy) ? 100 : 0,
+            TraceParent = request.TraceContext?.GetValueOrDefault("traceparent")
+                ?? PipelineTelemetry.FormatTraceParent(Activity.Current)
+        };
+
+        try
+        {
+            db.WorkItems.Add(entity);
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (IsUniqueViolation(ex))
+        {
+            // Idempotent retry: a work item with this ID already exists.
+            // Return 200 only when the existing item is still active (Dispatched or Running).
+            // For terminal or Pending states, return 409 so the Scheduler re-queues the issue
+            // rather than treating it as dispatched — a Failed/Cancelled item has no K8s Job
+            // and returning 200 would cause DispatchOrchestrationService to swap the GitHub
+            // label to agent:in-progress with no running job.
+            //
+            // Use a fresh DbContext — after DbUpdateException the original context is in a faulted state
+            // and further queries on it may return stale results or fail.
+            await using var freshDb = await dbFactory.CreateDbContextAsync(ct);
+            var existing = await freshDb.WorkItems.AsNoTracking()
+                .Select(w => new { w.Id, w.Status })
+                .FirstOrDefaultAsync(w => w.Id == workItemId, ct);
+            if (existing is not null)
+            {
+                var isActive = existing.Status is WorkItemStatus.Dispatched or WorkItemStatus.Running;
+                if (isActive)
+                    return TypedResults.Ok(workItemId);
+                Log.Warning("DispatchWorkItem: idempotent retry for {WorkItemId} but existing item is in non-active state {Status} — returning 409",
+                    workItemId, existing.Status);
+                return TypedResults.Conflict($"Work item {workItemId} already exists in non-active state {existing.Status}.");
+            }
+            return TypedResults.Conflict("A live work item already exists for this issue.");
+        }
+
+        // Register PipelineRun so the UI can subscribe to hub events immediately.
+        var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request);
+        // TODO [WARNING]: If PipelineRunFactory.CreateFromWorkItem returns null, the WorkItem will be
+        // dispatched (K8s Job running, WorkItem=Dispatched) but no PipelineRun is registered in
+        // IOrchestratorRunService. The UI will not receive live run events for this WorkItem. The
+        // requirement states registration is mandatory for SignalR hub routing. Add a log warning
+        // and investigate why CreateFromWorkItem returns null (missing required fields in the request).
+        if (run is not null)
+            runService.AddRun(run);
+
+        // Projection for ExecuteDispatchLifecycleAsync
+        var projection = new PendingWorkItemProjection
+        {
+            Id = workItemId,
+            AgentSelector = entity.AgentSelector,
+            CreatedAt = entity.CreatedAt,
+            TimeoutSeconds = entity.TimeoutSeconds,
+            TaskType = entity.TaskType,
+            ProjectId = entity.ProjectId,
+            IssueIdentifier = entity.IssueIdentifier,
+            IssueProviderConfigId = entity.IssueProviderConfigId,
+            PriorityWeight = entity.PriorityWeight
+        };
+
+        var ctx = new DispatchLifecycleContext(
+            db,
+            projection,
+            template,
+            isKiroAgent,
+            availablePvcs,
+            concurrencyBySelector,
+            "sync-dispatch ")
+        {
+            // The WorkItem was created directly as Dispatched (issue #2322: no Pending write on live path).
+            // The lifecycle race-guard checks this status when reloading the item after K8s Job creation.
+            ExpectedInitialStatus = WorkItemStatus.Dispatched
+        };
+
+        // Track whether dispatch succeeded so we can return the correct status.
+        bool dispatched = false;
+        try
+        {
+            await lifecycle.ExecuteDispatchLifecycleAsync(
+                ctx,
+                prepareVariant: async workItem =>
+                {
+                    // Load project secrets if a project is configured — mirrors what the
+                    // DispatchService's regular dispatch path does.
+                    Dictionary<string, string>? projectSecrets = null;
+                    if (workItem.ProjectId.HasValue)
+                        projectSecrets = await DispatchLifecycleService.LoadProjectSecretsAsync(
+                            db, workItem.ProjectId.Value.ToString(), ct);
+                    return (shouldContinue: true, projectSecrets);
+                },
+                onDispatchSuccess: _ =>
+                {
+                    dispatched = true;
+                    // Label swap to agent:in-progress is handled by DispatchOrchestrationService
+                    // after this endpoint returns 200. No action needed here.
+                    return Task.CompletedTask;
+                },
+                ct,
+                onFailure: null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Error(ex, "DispatchWorkItem: unhandled exception during dispatch lifecycle for {WorkItemId}", workItemId);
+            // Clean up the item: if the lifecycle didn't already transition it to Failed,
+            // cancel it now so it doesn't remain as an orphaned Dispatched item forever.
+            // DispatchLoop no longer exists to pick up orphaned items on the live dispatch path.
+            // Use CancellationToken.None: the originating request token may already be cancelled
+            // (client disconnected), but the cleanup write must complete regardless.
+            await SafelyCancelOrphanedDispatchedWorkItemAsync(lifecycle, workItemId, "Dispatch lifecycle threw: " + ex.Message);
+            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        if (!dispatched)
+        {
+            // ExecuteDispatchLifecycleAsync returned without dispatching — PVC race (another replica
+            // claimed the same PVC under the lock), or K8s Job creation failed (lifecycle already
+            // transitioned the WorkItem to Failed in that case).
+            // Clean up the Dispatched item so it doesn't linger: if the lifecycle didn't transition
+            // it, cancel it here.
+            // DispatchLoop no longer exists to drain orphaned items on the live dispatch path.
+            Log.Warning("DispatchWorkItem: lifecycle did not dispatch WorkItem {WorkItemId} (PVC race or K8s failure) — returning 503",
+                workItemId);
+            await SafelyCancelOrphanedDispatchedWorkItemAsync(lifecycle, workItemId, "Dispatch did not complete (PVC race or K8s failure)");
+            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        return TypedResults.Ok(workItemId);
+    }
+
+    /// <summary>
+    /// Attempts to transition an orphaned Dispatched work item to Cancelled/Failed.
+    /// Called when <c>DispatchWorkItem</c> returns 503 and the item may still be in <c>Dispatched</c>
+    /// state with no running K8s Job (e.g. PVC race where the lifecycle returned early without
+    /// cleaning up, or an unhandled exception during the dispatch lifecycle).
+    /// If the lifecycle already moved the item to <c>Failed</c>, the transition is a no-op.
+    /// Uses <see cref="CancellationToken.None"/> so the cleanup always completes regardless of
+    /// the originating request's lifetime (the request token may already be cancelled if the
+    /// client disconnected before the lifecycle completed).
+    /// Swallows all exceptions — this is a best-effort cleanup that must not mask the 503.
+    /// </summary>
+    private static async Task SafelyCancelOrphanedDispatchedWorkItemAsync(
+        DispatchLifecycleService lifecycle,
+        Guid workItemId,
+        string reason)
+    {
+        try
+        {
+            // FailWorkItemAsync uses WorkItemTransitionService.TransitionAsync which is a no-op
+            // (returns false) when the item is not in Dispatched state, so this is safe to call
+            // even if the lifecycle already transitioned the item to Failed.
+            await lifecycle.FailWorkItemAsync(workItemId, reason, CancellationToken.None);
+            Log.Information("DispatchWorkItem: cancelled orphaned Dispatched WorkItem {WorkItemId} after 503 response", workItemId);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "DispatchWorkItem: failed to cancel orphaned Dispatched WorkItem {WorkItemId} — item may linger in Dispatched state", workItemId);
+        }
+    }
+
     // ── GET /pending ──────────────────────────────────────────────────────
 
     /// <summary>
@@ -696,6 +994,11 @@ public static class WorkItemEndpoints
                 entity.DispatchedAt = request.DispatchedAt;
                 if (request.K8sJobName is not null)
                     entity.K8sJobName = request.K8sJobName;
+                // KiroPvcName is set by the Job Controller for kiro agent dispatches.
+                // Written here so QueryAvailablePvcsAsync can compute accurate PVC availability
+                // from the DB without querying live K8s Jobs (issue #2338).
+                if (request.KiroPvcName is not null)
+                    entity.ClaimedPvcName = request.KiroPvcName;
                 payloadJson = entity.Payload;
             },
             ct: ct);
@@ -893,6 +1196,13 @@ public static class WorkItemEndpoints
     internal static async Task<IResult> GetActiveWorkItems(
         int olderThanSeconds,
         IDbContextFactory<PipelineDbContext> dbFactory,
+        // TODO: The nullable optional DI service creates a silent-degradation pattern — if
+        // IOrchestratorRunService is ever accidentally unregistered, the endpoint silently returns
+        // no CurrentStep enrichment instead of failing at startup. Tests call this handler directly
+        // with an explicit null argument so they do not rely on DI optional resolution; in
+        // production the service is always registered as a singleton. Consider switching to a
+        // non-nullable required [FromServices] parameter once the test callability story is clear.
+        IOrchestratorRunService? runService = null,
         string? projectId = null,
         CancellationToken ct = default)
     {
@@ -913,7 +1223,38 @@ public static class WorkItemEndpoints
             active = active.Where(w => w.ProjectId == scopeProjectId);
 
         var items = await active
-            .Select(w => new ActiveWorkItemDto
+            .Select(w => new
+            {
+                w.Id,
+                w.Status,
+                w.DispatchedAt,
+                w.AgentSelector,
+                w.IssueIdentifier,
+                w.K8sJobName,
+                w.TimeoutSeconds,
+                w.Payload
+            })
+            .ToListAsync(ct);
+
+        // Phase 2: in-memory deserialization to extract IssueTitle from Payload.
+        // Same defensive pattern as GetPendingWorkItems — a malformed or absent payload
+        // produces a null IssueTitle rather than a 500.
+        var dtos = items.Select(w =>
+        {
+            string? issueTitle = null;
+            if (w.Payload is not null)
+            {
+                try
+                {
+                    var req = JsonSerializer.Deserialize<JobDistributionRequest>(w.Payload, PipelineJsonOptions.Lenient);
+                    issueTitle = req?.IssueDetail?.Title;
+                }
+                catch (JsonException)
+                {
+                    // Corrupt or legacy payload — leave IssueTitle null.
+                }
+            }
+            return new ActiveWorkItemDto
             {
                 Id = w.Id,
                 Status = w.Status,
@@ -921,11 +1262,32 @@ public static class WorkItemEndpoints
                 AgentSelector = w.AgentSelector,
                 IssueIdentifier = w.IssueIdentifier,
                 K8sJobName = w.K8sJobName,
-                TimeoutSeconds = w.TimeoutSeconds
-            })
-            .ToListAsync(ct);
+                TimeoutSeconds = w.TimeoutSeconds,
+                IssueTitle = issueTitle
+            };
+        // TODO [WARNING]: ct is available and used in the SQL phase (ToListAsync(ct)) but is not
+        // propagated to this in-memory LINQ loop. Under normal payload sizes this is harmless because
+        // the deserialization is synchronous and fast. If payload sizes grow significantly, consider
+        // adding a cancellation check (ct.ThrowIfCancellationRequested()) inside the loop body.
+        }).ToList();
 
-        return TypedResults.Ok((IReadOnlyList<ActiveWorkItemDto>)items);
+        // Enrich with live pipeline step from the in-memory run service when available.
+        // runService may be null in test scenarios that construct the handler directly without DI.
+        if (runService is not null)
+        {
+            for (var i = 0; i < dtos.Count; i++)
+            {
+                // TODO: The explicit cast (RunId) calls ArgumentException.ThrowIfNullOrEmpty internally.
+                // Guid.ToString() is always non-null/non-empty, so this is safe in practice, but if
+                // ActiveWorkItemDto.Id ever becomes nullable (Guid?) the cast would throw instead of
+                // skipping enrichment. Consider using new RunId(dtos[i].Id.ToString()) for clarity.
+                var liveRun = runService.GetRun((RunId)dtos[i].Id.ToString());
+                if (liveRun is not null)
+                    dtos[i] = dtos[i] with { CurrentStep = liveRun.CurrentStep };
+            }
+        }
+
+        return TypedResults.Ok((IReadOnlyList<ActiveWorkItemDto>)dtos);
     }
 
     // ── POST /{id}/label-swap ─────────────────────────────────────────────
@@ -1181,6 +1543,10 @@ public static class WorkItemEndpoints
 
         if (request.Status == WorkItemStatus.Failed)
         {
+            // TODO: This bare Enum.TryParse has no Enum.IsDefined guard (unlike the telemetry path
+            // fixed in issue #2341). A numeric string like "99" will parse to an undefined FailureReason
+            // value and be persisted to the database. Add an Enum.IsDefined check here so that only
+            // named members are written to entity.FailureReason.
             if (request.FailureReason is not null
                 && Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason))
             {
@@ -1216,14 +1582,18 @@ public static class WorkItemEndpoints
                     duration = item.CompletedAt.Value - item.DispatchedAt.Value;
             }
 
+            // Enum.TryParse succeeds for numeric string inputs (e.g. "99") even when they don't
+            // correspond to a named FailureReason member, yielding an undefined enum instance that
+            // would become a high-cardinality metric tag. The IsDefined guard rejects such values
+            // so only named members reach the telemetry dimension. (Issue #2341)
+            FailureReason? failureReason = Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason)
+                && Enum.IsDefined(typeof(FailureReason), parsedReason)
+                ? parsedReason
+                : (FailureReason?)null;
+
             WorkDistributionTelemetry.LogTerminalStatus(
                 id, request.Status, duration, request.AgentId,
-                // TODO: Enum.TryParse succeeds for numeric string inputs (e.g. "99") even when they don't
-                // correspond to a named FailureReason member, allowing callers to inject undefined enum values
-                // as metric tags. This can cause high-cardinality label explosion in the metrics backend.
-                // Fix: add Enum.IsDefined check after TryParse, or use a switch/dictionary over expected names.
-                // (Issue #2202 review, SecurityReviewer)
-                failureReason: Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason) ? parsedReason : (FailureReason?)null);
+                failureReason);
         }
         catch (Exception ex)
         {

@@ -37,7 +37,7 @@ try
     builder.Services.AddOpenTelemetry()
         .ConfigureResource(r => r.AddService(
             serviceName: Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "coding-agent-worker",
-            serviceVersion: typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0"))
+            serviceVersion: Environment.GetEnvironmentVariable("SERVICE_VERSION") ?? "local"))
         .WithTracing(t => t
             .AddHttpClientInstrumentation()
             .AddSource(PipelineTelemetry.SourceName)

@@ -168,6 +168,53 @@ public class ConsolidationProviderResolverTests
         await act.Should().ThrowAsync<NotSupportedException>();
     }
 
+    // ── OrchestratorProxy overloads — backward compat and proxy threading ──
+
+    [Fact]
+    public async Task ResolveBrainConsolidation_WithNullProxy_BehavesIdenticallyToNoProxyOverload()
+    {
+        // Regression: passing null proxy explicitly should behave the same as the zero-proxy
+        // overload (both produce a factory without a refresh delegate).
+        var resolver = CreateResolver();
+        var job = CreateJob(ConsolidationRunType.BrainConsolidation, []);
+
+        var resultNoProxy = await resolver.ResolveBrainConsolidationProvidersAsync(job, CancellationToken.None);
+        var resultNullProxy = await resolver.ResolveBrainConsolidationProvidersAsync(job, orchestratorProxy: null, CancellationToken.None);
+
+        // Both overloads should return the same failure (no brain config)
+        resultNoProxy.IsSuccess.Should().BeFalse();
+        resultNullProxy.IsSuccess.Should().BeFalse();
+        resultNullProxy.Failure!.ErrorMessage.Should().Be(resultNoProxy.Failure!.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task ResolveRefactoring_WithNullProxy_BehavesIdenticallyToNoProxyOverload()
+    {
+        var resolver = CreateResolver();
+        var job = CreateJob(ConsolidationRunType.RefactoringDetection, []);
+
+        var resultNoProxy = await resolver.ResolveRefactoringProvidersAsync(job, CancellationToken.None);
+        var resultNullProxy = await resolver.ResolveRefactoringProvidersAsync(job, orchestratorProxy: null, CancellationToken.None);
+
+        resultNoProxy.IsSuccess.Should().BeFalse();
+        resultNullProxy.IsSuccess.Should().BeFalse();
+        resultNullProxy.Failure!.ErrorMessage.Should().Be(resultNoProxy.Failure!.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task ResolveHarness_WithNullProxy_BehavesIdenticallyToNoProxyOverload()
+    {
+        var resolver = CreateResolver();
+        var job = CreateJob(ConsolidationRunType.HarnessSuggestions, []);
+
+        var resultNoProxy = await resolver.ResolveHarnessProvidersAsync(job, CancellationToken.None);
+        var resultNullProxy = await resolver.ResolveHarnessProvidersAsync(job, orchestratorProxy: null, CancellationToken.None);
+
+        resultNoProxy.IsSuccess.Should().BeFalse();
+        resultNullProxy.IsSuccess.Should().BeFalse();
+        resultNullProxy.Failure!.ErrorMessage.Should().Be(resultNoProxy.Failure!.ErrorMessage);
+    }
+
     // ── Refactoring — Unsupported Issue Provider Type ────────────────────
 
     [Fact]
@@ -277,24 +324,24 @@ public class ConsolidationProviderResolverTests
     private static ConsolidationJobMessage CreateJob(
         ConsolidationRunType type,
         IReadOnlyList<ProviderConfig> providerConfigs) => new()
-    {
-        JobId = $"job-{Guid.NewGuid():N}",
-        Type = type,
-        ProviderConfigs = providerConfigs,
-        PipelineConfiguration = new PipelineConfiguration()
-    };
+        {
+            JobId = $"job-{Guid.NewGuid():N}",
+            Type = type,
+            ProviderConfigs = providerConfigs,
+            PipelineConfiguration = new PipelineConfiguration()
+        };
 
     private static ProviderConfig CreateProviderConfig(
         ProviderKind kind,
         string providerType,
         RepositoryRole? role = null,
         Dictionary<string, string>? settings = null) => new()
-    {
-        Id = $"{kind}-{Guid.NewGuid():N}",
-        Kind = kind,
-        ProviderType = providerType,
-        DisplayName = $"Test {kind}",
-        RepositoryRole = role ?? RepositoryRole.Work,
-        Settings = settings ?? new Dictionary<string, string>()
-    };
+        {
+            Id = $"{kind}-{Guid.NewGuid():N}",
+            Kind = kind,
+            ProviderType = providerType,
+            DisplayName = $"Test {kind}",
+            RepositoryRole = role ?? RepositoryRole.Work,
+            Settings = settings ?? new Dictionary<string, string>()
+        };
 }

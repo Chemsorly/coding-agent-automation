@@ -148,6 +148,9 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                     b.Property<int>("FinalStep")
                         .HasColumnType("integer");
 
+                    b.Property<string>("HarnessVersion")
+                        .HasColumnType("text");
+
                     b.Property<string>("IssueIdentifier")
                         .IsRequired()
                         .HasColumnType("text");

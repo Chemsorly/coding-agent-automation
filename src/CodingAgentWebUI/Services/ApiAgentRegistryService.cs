@@ -75,7 +75,30 @@ public sealed class ApiAgentRegistryService : IAgentRegistryService
     /// </summary>
     public async Task RefreshAsync(CancellationToken ct = default)
     {
-        var agents = await _client.GetAgentsAsync(ct);
+        var dtos = await _client.GetAgentsAsync(ct);
+        // Project AgentEntryDto → AgentEntry so the rest of the monolith (IAgentRegistryService
+        // consumers, Overview page, sidebar) continues to work with the domain type. The enrichment
+        // fields on AgentEntryDto are only needed in Fleet.razor, which reads directly from the client.
+        var agents = dtos
+            .Select(dto => new AgentEntry
+            {
+                AgentId = dto.AgentId,
+                ConnectionId = dto.ConnectionId,
+                Hostname = dto.Hostname,
+                Labels = dto.Labels,
+                Status = dto.Status,
+                ActiveJobId = dto.ActiveJobId,
+                ActiveChatSessionId = dto.ActiveChatSessionId,
+                RegisteredAt = dto.RegisteredAt,
+                LastHeartbeatAt = dto.LastHeartbeatAt,
+                LastJobCompletedAt = dto.LastJobCompletedAt,
+                DisconnectedAt = dto.DisconnectedAt,
+                Disabled = dto.Disabled,
+                OrphanRestoredAt = dto.OrphanRestoredAt,
+                BusySince = dto.BusySince,
+            })
+            .ToList()
+            .AsReadOnly();
         _snapshot = Snapshot.From(agents, _clock.GetUtcNow());
     }
 

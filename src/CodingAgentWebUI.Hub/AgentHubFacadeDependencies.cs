@@ -1,6 +1,5 @@
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
@@ -15,7 +14,6 @@ namespace CodingAgentWebUI.Hub;
 public sealed record AgentHubFacadeDependencies(
     IAgentRegistryService Registry,
     IOrchestratorRunService RunService,
-    JobDeduplicationGuardService Dispatcher,
     IPipelineRunHistoryService HistoryService,
     IProviderConfigStore ConfigStore,
     IProviderFactory ProviderFactory,

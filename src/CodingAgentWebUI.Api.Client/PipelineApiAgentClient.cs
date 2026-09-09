@@ -17,9 +17,9 @@ internal sealed class PipelineApiAgentClient : IPipelineApiAgentClient
         _http = http;
     }
 
-    public async Task<IReadOnlyList<AgentEntry>> GetAgentsAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<AgentEntryDto>> GetAgentsAsync(CancellationToken ct = default)
     {
-        var agents = await _http.GetFromJsonAsync<List<AgentEntry>>(
+        var agents = await _http.GetFromJsonAsync<List<AgentEntryDto>>(
             "/api/agents",
             PipelineJsonOptions.Default,
             ct);

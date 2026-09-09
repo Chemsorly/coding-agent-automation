@@ -1,7 +1,6 @@
 using CodingAgentWebUI.E2ETests.Fakes;
 using CodingAgentWebUI.E2ETests.Infrastructure;
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -109,47 +108,6 @@ public sealed class MultiReplicaTests : MultiReplicaTestBase
         Assert.NotNull(entry);
         Assert.Equal(jobId, entry.ActiveJobId);
     }
-
-    // ── R4: SelectAgent exclusivity — only one replica dispatches ─────────
-
-    [Fact]
-    public async Task MultiReplica_SelectAgent_OnlyOneReplicaDispatches()
-    {
-        // Arrange: register one idle agent visible to both replicas
-        var agentId = $"mr-select-{Guid.NewGuid():N}";
-        RegisterAgent(Fixture.Registry1, agentId, $"conn-{agentId}", "dotnet");
-
-        await Task.Delay(50);
-
-        // Act: both replicas race to select the same agent concurrently
-        var task1 = Task.Run(() => Fixture.ReservationService1.SelectAgent(["dotnet"]));
-        var task2 = Task.Run(() => Fixture.ReservationService2.SelectAgent(["dotnet"]));
-        var results = await Task.WhenAll(task1, task2);
-
-        // Wait for the winning SelectAgent's fire-and-forget TransitionStatus(Busy) to complete.
-        // SelectAgent returns before TransitionStatus finishes; without this delay the Redis
-        // state check below may read before the Busy write lands.
-        await Task.Delay(50);
-
-        // Assert: exactly one reservation succeeds; the other returns null.
-        // Note: FakeRedisStore.SetIfNotExistsAsync uses ConcurrentDictionary.TryAdd which is
-        // atomically correct for NX semantics — the SETNX invariant holds in this fake.
-        var winner = results.Count(r => r is not null);
-        var loser  = results.Count(r => r is null);
-        Assert.Equal(1, winner);
-        Assert.Equal(1, loser);
-
-        // The winning result should be the registered agent
-        var selected = results.Single(r => r is not null);
-        Assert.Equal(agentId, selected!.AgentId.Value);
-
-        // Verify Redis state: agent is now Busy and removed from the idle set
-        var entryAfter = Fixture.Registry1.GetAllAgents().Single(a => a.AgentId.Value == agentId);
-        Assert.Equal(AgentStatus.Busy, entryAfter.Status);
-        Assert.DoesNotContain(Fixture.Registry1.GetIdleAgents(), a => a.AgentId.Value == agentId);
-    }
-
-    // ── R5: Run added on Replica1 readable from Replica2 ─────────────────
 
     [Fact]
     public async Task MultiReplica_RunAddedOnReplica1_VisibleFromReplica2()
@@ -396,66 +354,6 @@ public sealed class MultiReplicaTests : MultiReplicaTestBase
         Assert.Equal(runId, viaR2.RunId);
     }
 
-    // ── F5: SelectAgent works from replacement replica after Replica1 death ─
-
-    [Fact]
-    public async Task Failover_SelectAgent_WorksFromReplacementReplica()
-    {
-        // Arrange: register an agent through Replica1
-        var agentId = $"fo-select-{Guid.NewGuid():N}";
-        RegisterAgent(Fixture.Registry1, agentId, $"conn-{agentId}", "dotnet");
-
-        await Task.Yield();
-
-        // Act: Replica1 dies; a replacement starts cold
-        await using var replica1b = CreateReplacementReplica();
-        var reservationService1b = replica1b.Services
-            .GetRequiredService<AgentReservationService>();
-
-        // Assert: replacement can select the agent (reads idle set from Redis)
-        var selected = reservationService1b.SelectAgent(["dotnet"]);
-        Assert.NotNull(selected);
-        Assert.Equal(agentId, selected.AgentId.Value);
-
-        // Replica2 can no longer select the same agent — it was reserved above
-        var shouldBeNull = Fixture.ReservationService2.SelectAgent(["dotnet"]);
-        Assert.Null(shouldBeNull);
-    }
-
-    // ── X-series: additional correctness tests ─────────────────────────────
-
-    // ── X1: Disabled agent skipped by SelectAgent on other replica ─────────
-
-    [Fact]
-    public async Task X1_SelectAgent_SkipsDisabledAgent_WhenDisabledWrittenByOtherReplica()
-    {
-        // Arrange: register agent on Replica1, then mark it disabled via UpdateAgentFieldAsync
-        var agentId = $"x1-disabled-{Guid.NewGuid():N}";
-        RegisterAgent(Fixture.Registry1, agentId, $"conn-{agentId}", "dotnet");
-
-        // Mark disabled through Replica1 (simulates operator action on any replica)
-        await Fixture.Registry1.UpdateAgentFieldAsync(new AgentId(agentId), "disabled", "True");
-        await Task.Delay(50); // let fire-and-forget write settle
-
-        // Act: Replica2 tries to select — GetCompatibleCandidates filters !agent.Disabled
-        var selected = Fixture.ReservationService2.SelectAgent(["dotnet"]);
-
-        // Assert: disabled agent must not be dispatched to
-        Assert.Null(selected);
-
-        // disabled is a hash field, not a set membership flag — the agent remains in
-        // agents:idle but is filtered out by GetCompatibleCandidates(!agent.Disabled).
-        var idleAgents = Fixture.Registry1.GetIdleAgents();
-        Assert.Contains(idleAgents, a => a.AgentId.Value == agentId);
-
-        // Verify the Disabled flag survived the Redis hash round-trip
-        var entry = Fixture.Registry2.GetByAgentId(new AgentId(agentId));
-        Assert.NotNull(entry);
-        Assert.True(entry.Disabled);
-    }
-
-    // ── X2: Re-registration on different replica restores correct busy status ─
-
     [Fact]
     public async Task X2_ReRegistration_OnOtherReplica_PreservesActiveJobIdAndBusyStatus()
     {
@@ -606,80 +504,6 @@ public sealed class MultiReplicaTests : MultiReplicaTestBase
         Assert.Equal("line-beta", backlog[1]);
         Assert.Equal("line-gamma", backlog[2]);
     }
-
-    // ── X7: Full agent lifecycle — Idle → Busy → Idle, sets consistent ───
-
-    [Fact]
-    public async Task X7_AgentFullLifecycle_IdleToBusyToIdle_SetMembershipConsistentCrossReplica()
-    {
-        // Arrange: register on R1 (→ agents:idle)
-        var agentId = $"x7-lifecycle-{Guid.NewGuid():N}";
-        RegisterAgent(Fixture.Registry1, agentId, $"conn-{agentId}", "dotnet");
-        await Task.Delay(50);
-
-        // Step 1: R2 selects agent (→ removes from agents:idle, marks Busy)
-        var selected = Fixture.ReservationService2.SelectAgent(["dotnet"]);
-        Assert.NotNull(selected);
-        Assert.Equal(agentId, selected.AgentId.Value);
-        await Task.Delay(50);
-
-        // Both replicas: not in idle list
-        Assert.DoesNotContain(Fixture.Registry1.GetIdleAgents(), a => a.AgentId.Value == agentId);
-        Assert.DoesNotContain(Fixture.Registry2.GetIdleAgents(), a => a.AgentId.Value == agentId);
-
-        // Step 2: R1 transitions back to Idle (job completed)
-        Fixture.Registry1.TransitionStatus(new AgentId(agentId), AgentStatus.Idle);
-        await Task.Delay(50);
-
-        // Both replicas: agent is back in idle list
-        Assert.Contains(Fixture.Registry1.GetIdleAgents(), a => a.AgentId.Value == agentId);
-        Assert.Contains(Fixture.Registry2.GetIdleAgents(), a => a.AgentId.Value == agentId);
-    }
-
-    // ── X8: Label deserialization round-trip cross-replica ────────────────
-
-    [Fact]
-    public async Task X8_SelectAgent_LabelMatch_CrossReplica_FindsAgentRegisteredOnOtherReplica()
-    {
-        // Arrange: register agent with specific labels on R1
-        var agentId = $"x8-labels-{Guid.NewGuid():N}";
-        RegisterAgent(Fixture.Registry1, agentId, $"conn-{agentId}", "env=prod", "kiro", "dotnet");
-        await Task.Delay(50);
-
-        // Act: R2 selects with label requirement — exercises JSON label deserialization
-        // in HashToEntry when reading the hash from the shared FakeRedisStore
-        var selected = Fixture.ReservationService2.SelectAgent(["env=prod", "kiro"]);
-
-        // Assert: correct agent found via label match after Redis round-trip deserialization
-        Assert.NotNull(selected);
-        Assert.Equal(agentId, selected.AgentId.Value);
-    }
-
-    // ── X9: Lock TTL self-heals — expired lock doesn't block future selection
-
-    [Fact]
-    public async Task X9_SelectAgent_ExpiredLock_DoesNotBlockFutureSelection()
-    {
-        // Arrange: register agent on R1
-        var agentId = $"x9-lock-{Guid.NewGuid():N}";
-        RegisterAgent(Fixture.Registry1, agentId, $"conn-{agentId}", "dotnet");
-        await Task.Delay(50);
-
-        // Simulate a crashed replica that acquired the lock but never released it
-        // (the 5s TTL is the safety net — ForceExpire simulates it firing)
-        var lockKey = $"lock:agent:{agentId}";
-        await Fixture.SharedRedisStore.SetIfNotExistsAsync(lockKey, "crashed-replica", TimeSpan.FromSeconds(5));
-        Fixture.SharedRedisStore.ForceExpire(lockKey);
-
-        // Act: fresh SelectAgent on R2 — the expired lock is gone, selection proceeds
-        var selected = Fixture.ReservationService2.SelectAgent(["dotnet"]);
-
-        // Assert: succeeds despite the "previously crashed" lock
-        Assert.NotNull(selected);
-        Assert.Equal(agentId, selected.AgentId.Value);
-    }
-
-    // ── X10: RecentlyCompleted TTL expiry allows re-dispatch ─────────────
 
     [Fact]
     public async Task X10_RecentlyCompleted_AfterTtlExpiry_AllowsRedispatch()
@@ -933,81 +757,6 @@ public sealed class MultiReplicaTests : MultiReplicaTestBase
         Assert.Null(entry.BusySince); // cleared by Idle transition
     }
 
-    // ── Y4: SelectAgent double-check rejects candidate whose status changed to Busy ──
-
-    [Fact]
-    public async Task Y4_SelectAgent_DoubleCheck_RejectsAgentThatBecameBusyAfterLockAcquired()
-    {
-        // This tests the protection path inside SelectAgentDistributed:
-        // after acquiring lock:agent:{id}, a second GetByAgentId confirms status is still Idle.
-        // If a different path (e.g. TransitionStatus fire-and-forget) set status=Busy between
-        // GetIdleAgents() and the double-check, the candidate must be skipped.
-        //
-        // Arrangement: 2 agents. Mark agent-1 as Busy in the hash ONLY
-        // (agents:idle still contains it — simulating the race window).
-        var agentId1 = $"y4-busy-{Guid.NewGuid():N}";
-        var agentId2 = $"y4-idle-{Guid.NewGuid():N}";
-
-        RegisterAgent(Fixture.Registry1, agentId1, $"conn-{agentId1}", "dotnet");
-        await Task.Delay(50); // ensure agentId1 has an earlier RegisteredAt than agentId2
-        RegisterAgent(Fixture.Registry1, agentId2, $"conn-{agentId2}", "dotnet");
-        await Task.Delay(50);
-
-        // Simulate partial TransitionStatus: hash updated to Busy but agents:idle not yet updated
-        await Fixture.SharedRedisStore.HashSetFieldAsync($"agent:{agentId1}", "status", "Busy");
-        // agents:idle still contains agentId1 — GetIdleAgents() will return it
-
-        // agentId1 has earlier RegisteredAt → FIFO first candidate → double-check sees Busy → skip
-        // agentId2 has later RegisteredAt → second candidate → double-check sees Idle → selected
-        var selected = Fixture.ReservationService2.SelectAgent(["dotnet"]);
-        await Task.Delay(50); // allow TransitionStatus(Busy) fire-and-forget to settle
-
-        // Assert: truly-idle agent was selected
-        Assert.NotNull(selected);
-        Assert.Equal(agentId2, selected.AgentId.Value);
-
-        // Assert: agentId1 was attempted (lock acquired, double-check ran) but NOT transitioned
-        // to Busy by SelectAgent — it was still Busy from the manual write above
-        var agent1 = Fixture.Registry1.GetAllAgents().Single(a => a.AgentId.Value == agentId1);
-        Assert.Equal(AgentStatus.Busy, agent1.Status); // still the manually-set Busy
-
-        // Assert: agentId2 is now Busy (SelectAgent transitioned it)
-        var agent2 = Fixture.Registry2.GetAllAgents().Single(a => a.AgentId.Value == agentId2);
-        Assert.Equal(AgentStatus.Busy, agent2.Status);
-    }
-
-    // ── Y5: SelectAgent lock is a STRING key — confirm release via ExistsAsync ──
-
-    [Fact]
-    public async Task Y5_SelectAgent_LockKey_IsStringNotSet_ExistsAsyncConfirmsRelease()
-    {
-        // The SelectAgent lock (lock:agent:{id}) is stored via SetIfNotExistsAsync,
-        // which writes to _strings in FakeRedisStore — NOT _sets.
-        // GetSet() would always return empty for a string key regardless of whether the lock
-        // was released. ExistsAsync() is the correct assertion method.
-        var agentId = $"y5-locktype-{Guid.NewGuid():N}";
-        RegisterAgent(Fixture.Registry1, agentId, $"conn-{agentId}", "dotnet");
-        await Task.Delay(50);
-
-        // Act: SelectAgent acquires and then releases the lock in its finally block
-        var selected = Fixture.ReservationService2.SelectAgent(["dotnet"]);
-        Assert.NotNull(selected);
-
-        await Task.Delay(50); // allow DeleteAsync in finally to settle
-
-        // Assert: lock is gone — verified as a string key, not a set member
-        var lockKey = $"lock:agent:{agentId}";
-        var lockExists = await Fixture.SharedRedisStore.ExistsAsync(lockKey);
-        Assert.False(lockExists);
-
-        // Sanity check: the agent is now Busy (TransitionStatus fired)
-        var entry = Fixture.Registry1.GetByAgentId(new AgentId(agentId));
-        Assert.NotNull(entry);
-        Assert.Equal(AgentStatus.Busy, entry.Status);
-    }
-
-    // ── Y6: AppendOutputLines cap boundary — 500 retained, 501st evicts oldest ─
-
     [Fact]
     public async Task Y6_AppendOutputLines_CapAt500_OldestEvicted_At501()
     {
@@ -1124,58 +873,4 @@ public sealed class MultiReplicaTests : MultiReplicaTestBase
         Assert.Equal(2, Fixture.RunService1.ActiveRunCount);
     }
 
-    // ── Y9: SelectAgent FIFO ordering is stable across replicas ──────────
-
-    [Fact]
-    public async Task Y9_SelectAgent_FifoOrdering_LongestIdleFirst_ReplicaAgnostic()
-    {
-        // SelectAgent picks the longest-idle agent (OrderBy LastJobCompletedAt ?? RegisteredAt).
-        // With FakeRedisStore the hash round-trips through JSON serialization — verify the
-        // DateTimeOffset fields survive the round-trip and FIFO still holds cross-replica.
-        var agentId1 = $"y9-fifo-first-{Guid.NewGuid():N}";
-        var agentId2 = $"y9-fifo-second-{Guid.NewGuid():N}";
-
-        // Register agent1 first (longer idle), then agent2 with a guaranteed time gap
-        RegisterAgent(Fixture.Registry1, agentId1, $"conn-{agentId1}", "dotnet");
-        await Task.Delay(100); // 100ms >> Windows timer resolution (~15ms) → distinct RegisteredAt
-        RegisterAgent(Fixture.Registry1, agentId2, $"conn-{agentId2}", "dotnet");
-        await Task.Delay(50);
-
-        // Act: R2 selects — should pick agent1 (registered first = idle longest)
-        var selected = Fixture.ReservationService2.SelectAgent(["dotnet"]);
-
-        Assert.NotNull(selected);
-        Assert.Equal(agentId1, selected.AgentId.Value);
-
-        // agent2 was not selected — still Idle
-        var agent2Entry = Fixture.Registry1.GetAllAgents().Single(a => a.AgentId.Value == agentId2);
-        Assert.Equal(AgentStatus.Idle, agent2Entry.Status);
-    }
-
-    // ── Y10: GetBusyAgentCount cross-replica ──────────────────────────────
-
-    [Fact]
-    public async Task Y10_GetBusyAgentCount_CrossReplica_ReflectsAllReplicas()
-    {
-        // GetBusyAgentCount scans GetAllAgents() and counts Busy entries.
-        // Each agent hash is read from Redis — cross-replica correctness follows from
-        // basic visibility, but worth an explicit test since it's used for capacity decisions.
-        var agentId = $"y10-busy-count-{Guid.NewGuid():N}";
-        RegisterAgent(Fixture.Registry1, agentId, $"conn-{agentId}");
-        await Task.Delay(50);
-
-        // Initial state: no busy agents
-        Assert.Equal(0, Fixture.Registry2.GetBusyAgentCount());
-
-        // Dispatch via R2 (marks Busy via TransitionStatus)
-        Fixture.ReservationService2.SelectAgent([]);
-        await Task.Delay(50);
-
-        // R1 sees the count increase
-        Assert.Equal(1, Fixture.Registry1.GetBusyAgentCount());
-
-        // R2 also sees it
-        Assert.Equal(1, Fixture.Registry2.GetBusyAgentCount());
-    }
 }
-

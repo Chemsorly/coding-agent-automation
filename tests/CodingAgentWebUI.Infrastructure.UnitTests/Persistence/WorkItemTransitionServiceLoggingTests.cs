@@ -59,7 +59,8 @@ public class WorkItemTransitionServiceLoggingTests
     public async Task WhenAllRetriesExhausted_TransitionAsync_LogsWarningWithException()
     {
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        // Use Dispatched→Running (valid operational transition) instead of removed Pending→Dispatched
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
 
         // Always throw on save — all retries will be consumed
         var factory = new AlwaysThrowDbContextFactory(opts);
@@ -80,7 +81,7 @@ public class WorkItemTransitionServiceLoggingTests
 
         var svc = new WorkItemTransitionService(factory, mockLogger.Object);
 
-        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Dispatched);
+        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Running);
 
         result.Should().BeFalse("all retries were exhausted");
         capturedEx.Should().BeOfType<DbUpdateConcurrencyException>(

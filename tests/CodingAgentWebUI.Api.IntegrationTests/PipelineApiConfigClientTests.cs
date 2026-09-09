@@ -316,12 +316,20 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
     [Fact]
     public async Task GetKeyValueAsync_NotFound_ReturnsNull()
     {
+        // Server now returns 200 with JSON null for unset keys (not 404)
         _server.Given(Request.Create().WithPath("/api/config/key-value/missing-key").UsingGet())
-            .RespondWith(Response.Create().WithStatusCode(404));
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("null"));
 
         var result = await _client.GetKeyValueAsync("missing-key");
 
         result.Should().BeNull();
+        // TODO: [WARNING] The client's string.IsNullOrEmpty branch (empty-body path) has no
+        // test coverage here. The real server emits `null` (not empty), so this is not a
+        // production defect, but the live branch is untested. Consider adding a complementary
+        // test that stubs a 200 response with an empty body to document that fallback path.
     }
 
     [Fact]

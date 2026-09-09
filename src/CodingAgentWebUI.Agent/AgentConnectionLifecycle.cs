@@ -66,9 +66,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
 
     internal TimeSpan ExtendedRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
 
-    /// <summary>Fired when the orchestrator assigns a job to this agent.</summary>
-    public event Func<JobAssignmentMessage, Task>? OnAssignJob;
-
     /// <summary>Fired when the orchestrator requests cancellation of the current job.</summary>
     public event Func<string, Task>? OnCancelJob;
 
@@ -285,7 +282,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     // SafeDisposeAsync would be more defensive and prevent potential GC reference leaks.
     private void WireEventHandlers(IHubConnectionManager hubManager)
     {
-        hubManager.OnAssignJob += msg => OnAssignJob?.Invoke(msg) ?? Task.CompletedTask;
         hubManager.OnCancelJob += jobId => OnCancelJob?.Invoke(jobId) ?? Task.CompletedTask;
         hubManager.OnAssignChatPrompt += msg => OnAssignChatPrompt?.Invoke(msg) ?? Task.CompletedTask;
         hubManager.OnCancelChat += sessionId => OnCancelChat?.Invoke(sessionId) ?? Task.CompletedTask;

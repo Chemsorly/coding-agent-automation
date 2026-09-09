@@ -1,7 +1,4 @@
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.Health;
-using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR;
@@ -24,26 +21,11 @@ public sealed class SignalRAgentCommunication : IAgentCommunication
     }
 
     /// <inheritdoc />
-    public Task AssignJobAsync(string connectionId, JobAssignmentMessage job, CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(connectionId);
-        ArgumentNullException.ThrowIfNull(job);
-        return _hubContext.Clients.Client(connectionId).AssignJob(job);
-    }
-
-    /// <inheritdoc />
     public Task RequestFetchModelsAsync(string connectionId, FetchModelsRequest request, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(connectionId);
         ArgumentNullException.ThrowIfNull(request);
         return _hubContext.Clients.Client(connectionId).RequestFetchModels(request);
-    }
-
-    /// <inheritdoc />
-    public Task ForceDisconnectAsync(string connectionId, CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(connectionId);
-        return _hubContext.Clients.Client(connectionId).ForceDisconnect();
     }
 
     /// <inheritdoc />

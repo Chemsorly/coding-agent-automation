@@ -205,6 +205,17 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         return result.Select(r => (r.IssueIdentifier, r.IssueProviderConfigId)).ToList();
     }
 
+    public async Task<Guid> DispatchAsync(JobDistributionRequest request, CancellationToken ct = default)
+    {
+        var response = await _http.PostAsJsonAsync(
+            "/api/work-items/dispatch",
+            request,
+            PipelineJsonOptions.Default,
+            ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<Guid>(cancellationToken: ct);
+    }
+
     // Internal DTOs for response deserialization
     /// <summary>Shape of <c>GET /api/work-items/{id}/retry-count</c>. Positional so the
     /// deserializer assigns through the constructor — an init-only property looks unassigned to

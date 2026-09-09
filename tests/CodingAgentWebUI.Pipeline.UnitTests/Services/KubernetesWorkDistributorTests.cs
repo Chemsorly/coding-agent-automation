@@ -49,21 +49,22 @@ public sealed class KubernetesWorkDistributorTests
     public async Task DistributeAsync_OnSuccess_ReturnsSuccessResult()
     {
         var workItemId = Guid.NewGuid();
-        _client.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(workItemId);
 
         var result = await _sut.DistributeAsync(MakeRequest(), CancellationToken.None);
 
         result.Success.Should().BeTrue();
         result.WorkItemId.Should().Be(workItemId.ToString());
-        result.Queued.Should().BeTrue();
+        // Synchronous dispatch path: Queued=false (item is Dispatched immediately, not in Pending queue)
+        result.Queued.Should().BeFalse("synchronous dispatch always returns Queued=false");
         result.ErrorMessage.Should().BeNull();
     }
 
     [Fact]
     public async Task DistributeAsync_WhenClientThrows_ReturnsFailureResult()
     {
-        _client.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("API unavailable"));
 
         var result = await _sut.DistributeAsync(MakeRequest(), CancellationToken.None);
@@ -71,6 +72,30 @@ public sealed class KubernetesWorkDistributorTests
         result.Success.Should().BeFalse();
         result.WorkItemId.Should().BeNull();
         result.ErrorMessage.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task DistributeAsync_When409Conflict_ReturnsFailureResult()
+    {
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("concurrency limit", null, System.Net.HttpStatusCode.Conflict));
+
+        var result = await _sut.DistributeAsync(MakeRequest(), CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Conflict"); // HttpStatusCode.Conflict formats as "Conflict"
+    }
+
+    [Fact]
+    public async Task DistributeAsync_When503ServiceUnavailable_ReturnsFailureResult()
+    {
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("no PVC", null, System.Net.HttpStatusCode.ServiceUnavailable));
+
+        var result = await _sut.DistributeAsync(MakeRequest(), CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("ServiceUnavailable"); // HttpStatusCode.ServiceUnavailable formats as "ServiceUnavailable"
     }
 
     [Fact]

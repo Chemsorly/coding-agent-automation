@@ -57,6 +57,11 @@ public sealed class FleetPage
         }", agentId);
     }
 
+    // TODO: Add tests to assert (a) no element with label text 'Disconnected' exists in .cockpit-stat-l,
+    // and (b) an element with label text containing 'Kiro Credentials' is present. Without these,
+    // accidental reversion of the tile removal or rename would go undetected. Consider also adding a
+    // generic GetStatTileValueAsync(string labelText) helper to avoid duplicating DOM-traversal logic.
+    // See review findings for issue #2329 (TestQualityReviewer warning).
     /// <summary>Total registered agents, read from the "Agents" stat tile.</summary>
     public async Task<int> GetAgentCountAsync()
     {
@@ -71,6 +76,85 @@ public sealed class FleetPage
             }
             return 0;
         }");
+    }
+
+    /// <summary>
+    /// Returns true if a stat tile with the given label text is present on the Fleet page.
+    /// Use to verify removed tiles (e.g. "Busy", "Idle", "Utilization") are absent.
+    /// </summary>
+    public async Task<bool> IsStatTilePresentAsync(string labelText)
+    {
+        return await _page.EvaluateAsync<bool>(@"(labelText) => {
+            const stats = document.querySelectorAll('.cockpit-stat');
+            for (const s of stats) {
+                const label = s.querySelector('.cockpit-stat-l');
+                if (label && label.textContent.trim() === labelText) return true;
+            }
+            return false;
+        }", labelText);
+    }
+
+    /// <summary>
+    /// Returns the href of the issue link chip in the "Active work" cell for the given agent,
+    /// or null if no issue link is present.
+    /// </summary>
+    public async Task<string?> GetActiveIssueLinkAsync(string agentId)
+    {
+        return await _page.EvaluateAsync<string?>(@"(agentId) => {
+            const rows = document.querySelectorAll('.monitoring-table tbody tr');
+            for (const row of rows) {
+                const mono = row.querySelector('.monitoring-mono');
+                if (mono && mono.textContent.trim() === agentId) {
+                    const cell = row.querySelector('.fleet-work-cell');
+                    if (!cell) return null;
+                    const issueLink = cell.querySelector('a[title^=""Open issue""]');
+                    return issueLink ? issueLink.getAttribute('href') : null;
+                }
+            }
+            return null;
+        }", agentId);
+    }
+
+    /// <summary>
+    /// Returns the href of the run link in the "Active work" cell for the given agent,
+    /// or null if no run link is present.
+    /// </summary>
+    public async Task<string?> GetActiveRunLinkAsync(string agentId)
+    {
+        return await _page.EvaluateAsync<string?>(@"(agentId) => {
+            const rows = document.querySelectorAll('.monitoring-table tbody tr');
+            for (const row of rows) {
+                const mono = row.querySelector('.monitoring-mono');
+                if (mono && mono.textContent.trim() === agentId) {
+                    const cell = row.querySelector('.fleet-work-cell');
+                    if (!cell) return null;
+                    const runLink = cell.querySelector('a[title=""Open pipeline run""]');
+                    return runLink ? runLink.getAttribute('href') : null;
+                }
+            }
+            return null;
+        }", agentId);
+    }
+
+    /// <summary>
+    /// Returns the href of the PR link in the "Active work" cell for the given agent,
+    /// or null if no PR link is present.
+    /// </summary>
+    public async Task<string?> GetActivePrLinkAsync(string agentId)
+    {
+        return await _page.EvaluateAsync<string?>(@"(agentId) => {
+            const rows = document.querySelectorAll('.monitoring-table tbody tr');
+            for (const row of rows) {
+                const mono = row.querySelector('.monitoring-mono');
+                if (mono && mono.textContent.trim() === agentId) {
+                    const cell = row.querySelector('.fleet-work-cell');
+                    if (!cell) return null;
+                    const prLink = cell.querySelector('a[title=""Open pull request""]');
+                    return prLink ? prLink.getAttribute('href') : null;
+                }
+            }
+            return null;
+        }", agentId);
     }
 
     /// <summary>Polls until the agent shows the expected status, or the timeout elapses.</summary>

@@ -10,8 +10,11 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// (<see cref="IPipelineApiWorkItemClient"/>). No direct database access.
 /// </summary>
 /// <remarks>
-/// <see cref="DistributeAsync"/> creates a WorkItem row via <c>POST /api/work-items</c>.
-/// The Job Controller's dispatch loop picks up the Pending item and creates the K8s Job.
+/// <see cref="DistributeAsync"/> calls the synchronous <c>POST /api/work-items/dispatch</c>
+/// endpoint, which atomically performs PVC selection, K8s Job creation, and <c>Dispatched</c>
+/// state write in the API. On 409/503 (no capacity), the distributor returns
+/// <c>Success=false</c> so the caller can revert the GitHub label to <c>agent:next</c>
+/// and the Scheduler re-queues the issue on the next poll cycle.
 /// <para>
 /// Cancel, status-query, and dedup operations route through the same API client.
 /// This class no longer inherits <c>DbWorkDistributorBase</c> — all DB coupling is removed.
@@ -39,15 +42,28 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
 
         try
         {
-            var workItemId = await _apiClient.CreateAsync(request, ct);
+            var workItemId = await _apiClient.DispatchAsync(request, ct);
             _logger.LogInformation(
-                "WorkItem {WorkItemId} created via Pipeline API for issue {IssueIdentifier}",
+                "WorkItem {WorkItemId} dispatched synchronously via Pipeline API for issue {IssueIdentifier}",
                 workItemId, request.IssueIdentifier);
-            return new DistributionResult(true, workItemId.ToString(), null, Queued: true);
+            // Queued=false: the item is already Dispatched (K8s Job running), not in the Pending queue.
+            return new DistributionResult(true, workItemId.ToString(), null, Queued: false);
+        }
+        catch (HttpRequestException ex) when (
+            ex.StatusCode == System.Net.HttpStatusCode.Conflict ||
+            ex.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
+        {
+            // 409 = concurrency limit or issue ineligible; 503 = no PVC or K8s failure.
+            // These are expected "no capacity" responses. Return failure so the orchestrator
+            // reverts the label back to agent:next and re-queues on the next Scheduler cycle.
+            _logger.LogInformation(
+                "Dispatch endpoint returned {StatusCode} for issue {IssueIdentifier} — no capacity, will revert label",
+                ex.StatusCode, request.IssueIdentifier);
+            return new DistributionResult(false, null, $"No capacity ({ex.StatusCode}): {ex.Message}");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to create WorkItem via Pipeline API for issue {IssueIdentifier}",
+            _logger.LogError(ex, "Failed to dispatch WorkItem via Pipeline API for issue {IssueIdentifier}",
                 request.IssueIdentifier);
             return new DistributionResult(false, null, ex.Message);
         }

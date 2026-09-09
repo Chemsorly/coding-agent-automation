@@ -191,12 +191,6 @@ public class HubMessageSerializationTests
                 TestsFailed = 0,
                 TestsSkipped = 3
             },
-            SecurityScan = new GateResult
-            {
-                GateName = "SecurityScan",
-                Passed = false,
-                Details = "1 high-severity vulnerability in dependency"
-            },
             ExternalCi = new GateResult
             {
                 GateName = "ExternalCI",
@@ -222,11 +216,10 @@ public class HubMessageSerializationTests
                 },
                 new()
                 {
-                    QgcId = "qgc-security",
-                    DisplayName = "Security Scan",
-                    Compilation = null,
-                    Tests = null,
-                    SecurityScan = new GateResult { GateName = "SecurityScan", Passed = false, Details = "CVE-2026-1234" }
+                    QgcId = "qgc-secondary",
+                    DisplayName = "Secondary Check",
+                    Compilation = new GateResult { GateName = "Compilation", Passed = false, Details = "Build error" },
+                    Tests = null
                 }
             },
             Timestamp = timestamp
@@ -247,12 +240,6 @@ public class HubMessageSerializationTests
         deserialized.Tests.TestsFailed.Should().Be(0);
         deserialized.Tests.TestsSkipped.Should().Be(3);
 
-        // SecurityScan (optional, populated)
-        deserialized.SecurityScan.Should().NotBeNull();
-        deserialized.SecurityScan!.GateName.Should().Be("SecurityScan");
-        deserialized.SecurityScan.Passed.Should().BeFalse();
-        deserialized.SecurityScan.Details.Should().Be("1 high-severity vulnerability in dependency");
-
         // ExternalCi (optional, populated)
         deserialized.ExternalCi.Should().NotBeNull();
         deserialized.ExternalCi!.GateName.Should().Be("ExternalCI");
@@ -269,19 +256,18 @@ public class HubMessageSerializationTests
         qgc1.Tests!.TestsPassed.Should().Be(100);
 
         var qgc2 = deserialized.QgcResults[1];
-        qgc2.QgcId.Should().Be("qgc-security");
-        qgc2.DisplayName.Should().Be("Security Scan");
-        qgc2.Compilation.Should().BeNull();
+        qgc2.QgcId.Should().Be("qgc-secondary");
+        qgc2.DisplayName.Should().Be("Secondary Check");
+        qgc2.Compilation.Should().NotBeNull();
+        qgc2.Compilation!.Passed.Should().BeFalse();
         qgc2.Tests.Should().BeNull();
-        qgc2.SecurityScan.Should().NotBeNull();
-        qgc2.SecurityScan!.Passed.Should().BeFalse();
-        qgc2.SecurityScan.Details.Should().Be("CVE-2026-1234");
 
         // Timestamp
         deserialized.Timestamp.Should().Be(timestamp);
 
         // Computed property (not serialized but should be consistent)
-        deserialized.AllPassed.Should().BeFalse(); // SecurityScan failed
+        // QgcResults has a failed compilation entry, so AllPassed is false (driven by QgcResults)
+        deserialized.AllPassed.Should().BeFalse();
     }
 
     /// <summary>

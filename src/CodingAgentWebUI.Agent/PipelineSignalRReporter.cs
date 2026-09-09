@@ -134,7 +134,7 @@ public sealed class PipelineSignalRReporter : IAsyncDisposable
         {
             _run.CurrentStep = step;
             if (step is not (PipelineStep.Failed or PipelineStep.Cancelled)
-                && (int)step > (int)_run.HighWaterMark)
+                && StepOrder.GetOrder(step) > StepOrder.GetOrder(_run.HighWaterMark))
                 _run.HighWaterMark = step;
 
             _onStepChanged?.Invoke(step);
@@ -247,6 +247,11 @@ public sealed class PipelineSignalRReporter : IAsyncDisposable
         return metadata;
     }
 
+    // TODO: These helper methods use raw enum-ordinal comparisons (e.g. newStep > PipelineStep.CreatingBranch).
+    // This is the same class of bug fixed in TransitionToInternalAsync (issue #2229): if a PipelineStep with an
+    // out-of-order ordinal (like RunningEnvironmentSetup = 29) is the current step, these threshold guards yield
+    // wrong results. Replace all raw ordinal comparisons here with StepOrder.GetOrder calls to be consistent.
+    // Tracked as a follow-up to issue #2229.
     private static void AddBranchAndBaselineMetadata(PipelineRun run, PipelineStep newStep, Action<string, string?> add)
     {
         if (newStep > PipelineStep.CreatingBranch && !string.IsNullOrEmpty(run.BranchName))

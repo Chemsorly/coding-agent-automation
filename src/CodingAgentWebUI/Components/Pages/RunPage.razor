@@ -25,7 +25,7 @@
 <PageTitle>Run - Coding Agent</PageTitle>
 
 <div class="cockpit-page">
-    <a href="/runs" class="cockpit-back"><Icon Name="chevrons-left" Size="14" /> Runs</a>
+    <a href="runs" class="cockpit-back"><Icon Name="chevrons-left" Size="14" /> Runs</a>
 
     @if (_loading)
     {
@@ -43,6 +43,7 @@
             PipelineStep.Completed => "Completed",
             PipelineStep.Failed => "Failed",
             PipelineStep.Cancelled => "Cancelled",
+            PipelineStep.ConflictRestart => "Restarted",
             _ => "Running"
         };
         var resultClass = run.FinalStep switch
@@ -50,6 +51,7 @@
             PipelineStep.Completed => "step-completed",
             PipelineStep.Cancelled => "step-cancelled",
             PipelineStep.Failed => "step-failed",
+            PipelineStep.ConflictRestart => "step-restart",
             _ => "step-running"
         };
 
@@ -73,7 +75,7 @@
                         <span class="run-type-badge run-type-impl"><Icon Name="hammer" Size="14" /> Impl</span>
                     }
                     <span class="step-badge @resultClass">@result</span>
-                    @if (run.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled)
+                    @if (run.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled and not PipelineStep.ConflictRestart)
                     {
                         <span class="cockpit-page-sub">at @run.FinalStep.ToDisplayName()</span>
                     }
@@ -242,7 +244,7 @@
     private bool _subscribed;
     private PipelineStep? _liveStep;
     private readonly List<string> _liveOutput = new();
-    private IDisposable? _outputSub, _stepSub, _completedSub, _snapshotSub;
+    private IDisposable? _outputSub, _stepSub, _completedSub, _snapshotSub, _chatEntrySub;
     private ElementReference _logRef;
     private bool _scrollOnRender;
 
@@ -330,6 +332,8 @@
                 HubMethodNames.OnRunStateSnapshot, (jobId, snap) => OnSnapshot(jobId, snap));
             _completedSub = HubConnection.On<string, JobCompletionPayload>(
                 HubMethodNames.OnRunCompleted, (jobId, _) => OnCompleted(jobId));
+            _chatEntrySub = HubConnection.On<string, ChatRole, string>(
+                HubMethodNames.OnChatEntry, (jobId, role, content) => OnChatEntry(jobId, role, content));
 
             if (HubConnection.State == HubConnectionState.Disconnected)
                 await HubConnection.StartAsync(_cts.Token);
@@ -424,6 +428,18 @@
         });
     }
 
+    // Accumulates incremental chat entries pushed by the hub during an active run.
+    // The initial batch of chat history is seeded from RunStateSnapshot on subscribe.
+    private void OnChatEntry(string jobId, ChatRole role, string content)
+    {
+        if (jobId != RunId) return;
+        _ = InvokeAsync(() =>
+        {
+            _model?.ChatHistory.Enqueue(new ChatEntry { Role = role, Content = content });
+            StateHasChanged();
+        });
+    }
+
     // Cancels the active run via the API (WorkItem.Id == PipelineRun.RunId). PostStatus(Cancelled)
     // drives RunLifecycleManager.CancelRunAsync on the server — the same effect as the old modal's
     // "Cancel Run". The live OnRunCompleted event will flip the view to its terminal state.
@@ -511,6 +527,10 @@
         while (model.QualityGateHistory.TryDequeue(out _)) { }
         foreach (var report in snapshot.QualityGateHistory)
             model.QualityGateHistory.Enqueue(report);
+        // Drain before re-seeding from the snapshot — prevents duplicates on reconnect.
+        while (model.ChatHistory.TryDequeue(out _)) { }
+        foreach (var entry in snapshot.ChatHistory)
+            model.ChatHistory.Enqueue(entry);
         if (snapshot.StartedAtOffset != default)
             model.ResetStartedAt(snapshot.StartedAtOffset);
     }
@@ -542,6 +562,7 @@
         _stepSub?.Dispose();
         _completedSub?.Dispose();
         _snapshotSub?.Dispose();
+        _chatEntrySub?.Dispose();
 
         await _cts.CancelAsync();
         _cts.Dispose();

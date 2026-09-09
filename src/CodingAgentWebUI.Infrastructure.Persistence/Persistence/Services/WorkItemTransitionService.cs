@@ -264,7 +264,18 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
     public static bool IsValidTransition(WorkItemStatus current, WorkItemStatus target)
         => (current, target) switch
         {
+            // Pending→Dispatched: used by the consolidation claim endpoint (ClaimWorkItem).
+            // The regular live dispatch path (issue #2322) no longer creates items as Pending —
+            // it creates them directly as Dispatched. The consolidation JobController dispatch
+            // path (ConsolidationDispatchLoop) was removed in issue #2323.
+            // TODO [CRITICAL]: Remove Pending→Dispatched once the ClaimWorkItem endpoint is confirmed
+            // to have no remaining callers and consolidation claim flow is fully retired.
             (WorkItemStatus.Pending, WorkItemStatus.Dispatched or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,
+            // Dispatched→Pending: was used by ConsolidationDispatchLoop.TryCreateK8sJobAsync
+            // (which called RequeueAsync on K8s Job creation failure, transitioning Dispatched→Pending).
+            // ConsolidationDispatchLoop was removed in issue #2323.
+            // TODO [CRITICAL]: Remove Dispatched→Pending once the consolidation claim/requeue flow
+            // is confirmed to have no remaining callers.
             (WorkItemStatus.Dispatched, WorkItemStatus.Running or WorkItemStatus.Failed or WorkItemStatus.Cancelled or WorkItemStatus.Pending) => true,
             (WorkItemStatus.Running, WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,
             // Requeue paths: Failed/Cancelled → Pending (Req 6.1, POST /api/work-items/{id}/requeue)
@@ -463,6 +474,10 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
             item.RetryCount++;
             item.DispatchedAt = null;
             item.AssignedAgentId = null;
+            // Clear the claimed PVC so QueryAvailablePvcsAsync does not count this requeued item
+            // as consuming a credential slot. If the K8s Job creation failed, no agent ever ran
+            // against this PVC, so the slot must be released back to the pool (issue #2338).
+            item.ClaimedPvcName = null;
         }, ct: ct);
     }
 

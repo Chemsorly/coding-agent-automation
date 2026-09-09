@@ -196,11 +196,6 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
                         store,
                         (_, _, _) => Task.FromResult(false),
                         Serilog.Log.Logger));
-
-                // AgentReservationService with the distributed Redis store
-                services.RemoveAll<AgentReservationService>();
-                services.AddSingleton<AgentReservationService>(sp =>
-                    new AgentReservationService(sp.GetRequiredService<IAgentRegistryService>(), Serilog.Log.Logger, store));
             }
         });
     }

@@ -97,7 +97,7 @@
             </div>
 
             <div class="cockpit-topbar-right">
-                <a href="/attention" class="cockpit-attention @(State.AttentionCount > 0 ? "" : "is-disabled")" title="Attention inbox" style="text-decoration: none;">
+                <a href="attention" class="cockpit-attention @(State.AttentionCount > 0 ? "" : "is-disabled")" title="Attention inbox" style="text-decoration: none;">
                     <Icon Name="alert-triangle" Size="14" /> @(State.AttentionCount > 0 ? $"{State.AttentionCount} need attention" : "Attention")
                 </a>
             </div>

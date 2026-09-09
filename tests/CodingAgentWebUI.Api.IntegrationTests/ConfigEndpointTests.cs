@@ -75,20 +75,26 @@ public sealed class ConfigEndpointTests
         var key = $"test-key-{Guid.NewGuid():N}";
         const string value = "hello-world";
 
-        // Initially 404
+        // Initially returns 200 (unset key is not an error — no Warning log noise)
         var get1 = await _client.GetAsync($"/api/config/key-value/{key}");
-        get1.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        get1.StatusCode.Should().Be(HttpStatusCode.OK);
+        // Assert the body is JSON null (not an object wrapper) — locks in the server contract
+        // so the typed client's `content == "null"` path is verifiable end-to-end.
+        var unsetBody = (await get1.Content.ReadAsStringAsync()).Trim();
+        unsetBody.Should().Be("null");
 
         // PUT
         var put = await _client.PutAsJsonAsync($"/api/config/key-value/{key}",
             new { value }, PipelineJsonOptions.Default);
         put.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // GET again — should return value
+        // GET again — should return bare JSON string (not an object wrapper).
+        // Exact equality verifies the latent-bug fix: the old Ok(new { key, value }) object
+        // wrapper would fail this assertion; only TypedResults.Ok<string?>(value) passes.
         var get2 = await _client.GetAsync($"/api/config/key-value/{key}");
         get2.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await get2.Content.ReadAsStringAsync();
-        body.Should().Contain(value);
+        body.Should().Be($"\"{value}\"");
     }
 
     // ── ProviderConfigs ───────────────────────────────────────────────────────────

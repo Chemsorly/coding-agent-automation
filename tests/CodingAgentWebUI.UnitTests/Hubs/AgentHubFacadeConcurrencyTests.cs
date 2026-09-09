@@ -1,7 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -32,12 +31,10 @@ public class AgentHubFacadeConcurrencyTests
         var mockLogger = new Mock<ILogger>();
         _registry = new AgentRegistryService(mockLogger.Object);
         _runService = new OrchestratorRunService(mockLogger.Object);
-        var dispatcher = new JobDeduplicationGuardService(_registry, mockLogger.Object);
 
         _facade = new AgentHubFacade(new AgentHubFacadeDependencies(
             _registry,
             _runService,
-            dispatcher,
             Mock.Of<IPipelineRunHistoryService>(),
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),

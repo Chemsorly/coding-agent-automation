@@ -166,48 +166,6 @@ public class AgentWorkerServiceTests : IDisposable
         completed.Should().Be(executeTask, "service should stop when cancelled");
     }
 
-    // ── Requirement 4.2: Job Assignment Handler Tests ──────────────────
-
-    [Fact]
-    public async Task HandleAssignJob_SetsIsBusyTrue_BeforeInvokingExecutor()
-    {
-        // Arrange
-        var service = CreateService();
-        var message = CreateTestJobAssignment();
-
-        // Act — invoke the private handler via reflection
-        var handler = GetPrivateMethod(service, "HandleAssignJobAsync");
-        var task = (Task)handler.Invoke(service, [message])!;
-        await task;
-
-        // Assert — after handler completes with disconnected connection,
-        // IsBusy returns to false because InvokeAsync("JobAccepted") throws
-        // and the handler resets _activeJobId. But the handler DID set it first.
-        // We verify the handler ran without throwing.
-        service.IsBusy.Should().BeFalse("connection is disconnected so handler resets after failure");
-    }
-
-    [Fact]
-    public async Task HandleAssignJob_WhenBusy_RejectsNewJob()
-    {
-        // Arrange
-        var service = CreateService();
-        // Simulate an active job by setting _activeJobId via reflection
-        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"existing-job");
-        SetPrivateField(GetSlotManager(service), "_isBusy", true);
-
-        var message = CreateTestJobAssignment("new-job");
-
-        // Act
-        var handler = GetPrivateMethod(service, "HandleAssignJobAsync");
-        var task = (Task)handler.Invoke(service, [message])!;
-        await task;
-
-        // Assert — the active job should still be the original one (new job rejected)
-        var activeJobId = GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId");
-        activeJobId.Should().Be((JobId)"existing-job");
-    }
-
     // ── Requirement 4.3: Cancel Job for Active Job ──────────────────────
 
     [Fact]
@@ -502,27 +460,6 @@ public class AgentWorkerServiceTests : IDisposable
     }
 
     // ── Bug Fix Characterization Tests ─────────────────────────────────
-
-    [Fact]
-    public async Task HandleAssignJob_WhenBusy_AwaitsJobRejectedNotification()
-    {
-        // Arrange — the handler should complete without throwing even when
-        // InvokeAsync("JobRejected") fails (disconnected connection).
-        var service = CreateService();
-        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"existing-job");
-        SetPrivateField(GetSlotManager(service), "_isBusy", true);
-
-        var message = CreateTestJobAssignment("new-job");
-
-        // Act — invoke the handler; the try/catch around JobRejected should swallow the error
-        var handler = GetPrivateMethod(service, "HandleAssignJobAsync");
-        var task = (Task)handler.Invoke(service, [message])!;
-        await task;
-
-        // Assert — handler completed without throwing, active job unchanged
-        var activeJobId = GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId");
-        activeJobId.Should().Be((JobId)"existing-job");
-    }
 
     [Fact]
     public async Task HandleAssignConsolidationJob_WhenBusy_NotifiesOrchestrator()

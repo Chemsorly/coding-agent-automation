@@ -8,8 +8,9 @@
 
 @*
     Fleet — registered agents split out of Monitoring (see docs/frontend-redesign-handoff.md).
-    Data: IPipelineApiAgentClient.GetAgentsAsync → AgentEntry[]. Status is Idle / Busy / Disconnected.
-    (Per-agent credential-expiry from the design needs new backend surfacing — omitted, not faked.)
+    Data: IPipelineApiAgentClient.GetAgentsAsync → AgentEntryDto[]. Status is Idle / Busy / Disconnected.
+    Enrichment fields (ActiveIssueUrl, ActiveRunId, ActivePullRequestUrl, etc.) are populated by the
+    API endpoint from IOrchestratorRunService and rendered as inline chips in the agent row.
 *@
 
 <PageTitle>Fleet - Coding Agent</PageTitle>
@@ -20,12 +21,14 @@
             <h1>Fleet</h1>
             <span class="cockpit-page-sub">Registered agents — status, capacity, and current work</span>
         </div>
-        <button class="cockpit-pager-btn" @onclick="LoadAsync" disabled="@_loading">
-            <Icon Name="refresh-cw" Size="14" /> Refresh
-        </button>
+        <RefreshBar OnRefresh="RefreshQuietAsync" IsLoading="@(_loading && _agents is null)" />
     </div>
 
-    <AutoRefresh IntervalSeconds="10" OnTick="RefreshQuietAsync" />
+    @* TODO: [WARNING] Fleet shows agent status (Idle/Busy) which changes on job assignment/completion.
+       The run-scoped hub events (OnStepTransition, OnRunCompleted) are not wired here because they are
+       sent only to run-specific groups and agent heartbeat/status events are not exposed via
+       IAgentHubUiClient. A global agent-status push event would enable reactive Fleet updates.
+       Until then, the RefreshBar auto-refresh polling is the only mechanism for background updates. *@
 
     @if (_loading && _agents is null)
     {
@@ -38,19 +41,11 @@
     else
     {
         var agents = _agents ?? [];
-        var busy = agents.Count(a => a.Status == AgentStatus.Busy);
-        var idle = agents.Count(a => a.Status == AgentStatus.Idle);
-        var disconnected = agents.Count(a => a.Status == AgentStatus.Disconnected);
-        var utilization = agents.Count > 0 ? (int)Math.Round(100.0 * busy / agents.Count) : 0;
 
         <div class="cockpit-stat-strip">
             <div class="cockpit-stat"><span class="cockpit-stat-l">Agents</span><span class="cockpit-stat-v">@agents.Count</span></div>
-            <div class="cockpit-stat"><span class="cockpit-stat-l">Busy</span><span class="cockpit-stat-v" style="color: var(--accent);">@busy</span></div>
-            <div class="cockpit-stat"><span class="cockpit-stat-l">Idle</span><span class="cockpit-stat-v" style="color: var(--success);">@idle</span></div>
-            <div class="cockpit-stat"><span class="cockpit-stat-l">Disconnected</span><span class="cockpit-stat-v" style="color: var(--text-faint);">@disconnected</span></div>
-            <div class="cockpit-stat"><span class="cockpit-stat-l">Utilization</span><span class="cockpit-stat-v">@utilization<span style="font-size: 15px; color: var(--text-faint);">%</span></span></div>
             <div class="cockpit-stat" title="@(_pool is { Total: > 0 } ? "Kiro credential (PVC) slots available / configured" : "Credential pooling not configured")">
-                <span class="cockpit-stat-l">Credentials</span>
+                <span class="cockpit-stat-l">Kiro Credentials <span class="cockpit-chip" style="font-size: 9.5px; padding: 1px 5px; vertical-align: middle;">kiro</span></span>
                 <span class="cockpit-stat-v">
                     @if (_pool is { Total: > 0 } p)
                     {
@@ -84,7 +79,7 @@
                                 <th>Agent</th>
                                 <th>Labels</th>
                                 <th>Status</th>
-                                <th>Active job</th>
+                                <th>Active work</th>
                                 <th>Heartbeat</th>
                             </tr>
                         </thead>
@@ -115,7 +110,39 @@
                                             <span class="cockpit-chip" style="color: var(--warning); background: var(--warning-bg); margin-left: 5px;">Disabled</span>
                                         }
                                     </td>
-                                    <td class="monitoring-mono">@(string.IsNullOrEmpty(a.ActiveJobId) ? "—" : a.ActiveJobId)</td>
+                                    <td class="fleet-work-cell" @onclick:stopPropagation="true">
+                                        @if (!string.IsNullOrEmpty(a.ActiveIssueUrl))
+                                        {
+                                            @* TODO: Validate that ActiveIssueUrl starts with https:// before rendering as href.
+                                               Blazor HTML-encodes attribute values but does NOT strip javascript: URI schemes,
+                                               so a malicious/corrupted record could produce a clickable XSS link. *@
+                                            <a href="@a.ActiveIssueUrl" target="_blank" rel="noopener noreferrer" class="runs-link" title="Open issue @a.ActiveIssueIdentifier">
+                                                <Icon Name="message-square" Size="13" /> #@a.ActiveIssueIdentifier
+                                                @if (!string.IsNullOrEmpty(a.ActiveIssueTitle))
+                                                {
+                                                    <span class="monitoring-muted"> — @Truncate(a.ActiveIssueTitle, 35)</span>
+                                                }
+                                            </a>
+                                        }
+                                        @if (!string.IsNullOrEmpty(a.ActiveRunId))
+                                        {
+                                            <a href="/runs/@a.ActiveRunId" class="runs-link" title="Open pipeline run">
+                                                <Icon Name="play-circle" Size="13" /> Run
+                                            </a>
+                                        }
+                                        @if (!string.IsNullOrEmpty(a.ActivePullRequestUrl))
+                                        {
+                                            @* TODO: Validate that ActivePullRequestUrl starts with https:// before rendering as href.
+                                               Same javascript: URI injection risk as ActiveIssueUrl above. *@
+                                            <a href="@a.ActivePullRequestUrl" target="_blank" rel="noopener noreferrer" class="runs-link runs-link-pr" title="Open pull request">
+                                                <Icon Name="git-pull-request" Size="13" /> PR
+                                            </a>
+                                        }
+                                        @if (string.IsNullOrEmpty(a.ActiveIssueUrl) && string.IsNullOrEmpty(a.ActiveRunId) && string.IsNullOrEmpty(a.ActivePullRequestUrl))
+                                        {
+                                            <span class="monitoring-mono monitoring-muted">—</span>
+                                        }
+                                    </td>
                                     <td title="@Abs(a.LastHeartbeatAt)">@Ago(a.LastHeartbeatAt)</td>
                                 </tr>
                                 @if (isOpen)
@@ -131,9 +158,45 @@
                                                 {
                                                     <div class="cockpit-detail-item"><div class="k">Busy since</div><div class="v" title="@Abs(a.BusySince.Value)">@Ago(a.BusySince.Value)</div></div>
                                                 }
-                                                @if (!string.IsNullOrEmpty(a.ActiveJobId))
+                                                @if (!string.IsNullOrEmpty(a.ActiveIssueIdentifier))
                                                 {
-                                                    <div class="cockpit-detail-item"><div class="k">Active job</div><div class="v mono">@a.ActiveJobId</div></div>
+                                                    <div class="cockpit-detail-item">
+                                                        <div class="k">Active issue</div>
+                                                        <div class="v">
+                                                            @if (!string.IsNullOrEmpty(a.ActiveIssueUrl))
+                                                            {
+                                                                @* TODO: Validate that ActiveIssueUrl starts with https:// before rendering as href.
+                                                                   Blazor HTML-encodes attribute values but does NOT strip javascript: URI schemes,
+                                                                   so a malicious/corrupted record could produce a clickable XSS link. *@
+                                                                <a href="@a.ActiveIssueUrl" target="_blank" rel="noopener noreferrer">#@a.ActiveIssueIdentifier</a>
+                                                            }
+                                                            else
+                                                            {
+                                                                <span class="mono">#@a.ActiveIssueIdentifier</span>
+                                                            }
+                                                            @if (!string.IsNullOrEmpty(a.ActiveIssueTitle))
+                                                            {
+                                                                <span class="monitoring-muted"> @a.ActiveIssueTitle</span>
+                                                            }
+                                                        </div>
+                                                    </div>
+                                                }
+                                                @if (!string.IsNullOrEmpty(a.ActiveRunId))
+                                                {
+                                                    <div class="cockpit-detail-item">
+                                                        <div class="k">Active run</div>
+                                                        <div class="v"><a href="/runs/@a.ActiveRunId" class="mono">@a.ActiveRunId</a></div>
+                                                    </div>
+                                                }
+                                                @if (!string.IsNullOrEmpty(a.ActivePullRequestUrl))
+                                                {
+                                                    <div class="cockpit-detail-item">
+                                                        <div class="k">Pull request</div>
+                                                        @* TODO: Validate that ActivePullRequestUrl starts with https:// before rendering as href.
+                                                           Blazor HTML-encodes attribute values but does NOT strip javascript: URI schemes,
+                                                           so a malicious/corrupted record could produce a clickable XSS link. *@
+                                                        <div class="v"><a href="@a.ActivePullRequestUrl" target="_blank" rel="noopener noreferrer">@a.ActivePullRequestUrl</a></div>
+                                                    </div>
                                                 }
                                                 @if (!string.IsNullOrEmpty(a.ActiveChatSessionId))
                                                 {
@@ -167,7 +230,7 @@
 
 @code {
     private readonly CancellationTokenSource _cts = new();
-    private IReadOnlyList<AgentEntry>? _agents;
+    private IReadOnlyList<AgentEntryDto>? _agents;
     private CredentialPoolStatus? _pool;
     private bool _loading = true;
     private string? _error;
@@ -228,6 +291,9 @@
     }
 
     private static string Abs(DateTimeOffset t) => t.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+
+    private static string Truncate(string? s, int max) =>
+        string.IsNullOrEmpty(s) ? "" : s.Length <= max ? s : s[..max] + "…";
 
     public async ValueTask DisposeAsync()
     {

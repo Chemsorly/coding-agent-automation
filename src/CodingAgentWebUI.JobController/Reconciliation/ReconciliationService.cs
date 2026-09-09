@@ -12,10 +12,9 @@ namespace CodingAgentWebUI.JobController.Reconciliation;
 /// - Dispatched timeout sweep (short-circuit orphaned claims)
 /// - Orphan cleanup (stale Jobs with no active WorkItem)
 ///
-/// Implements <see cref="IReconciliationTrigger"/> so that <see cref="CodingAgentWebUI.JobController.Dispatch.DispatchLoop"/>
-/// and <see cref="CodingAgentWebUI.JobController.Dispatch.ConsolidationDispatchLoop"/>
-/// can request an early reconciliation cycle when the PVC pool is exhausted, rather than
-/// waiting up to 30 seconds for the regular poll interval.
+/// Implements <see cref="IReconciliationTrigger"/> to allow dispatch components to request
+/// an early reconciliation cycle when the PVC pool is exhausted, rather than waiting up to
+/// 30 seconds for the regular poll interval.
 /// </summary>
 // ReconciliationService was changed from sealed to public class to allow
 // TestableReconciliationService to subclass it in tests. This is a test-driven design leak.
@@ -61,10 +60,10 @@ public class ReconciliationService : LeaderElectedPollingService, IReconciliatio
     public void RequestImmediateCycle()
     {
         // No guard against post-Dispose calls. _wakeSignal.Release() on a
-        // disposed SemaphoreSlim throws ObjectDisposedException. DispatchLoop and
-        // ConsolidationDispatchLoop hold a reference to IReconciliationTrigger and may call
-        // this during shutdown, racing with Dispose(). Consider catching ObjectDisposedException
-        // or checking a disposed flag before calling Release().
+        // disposed SemaphoreSlim throws ObjectDisposedException. Future dispatch components
+        // that hold a reference to IReconciliationTrigger and call this during shutdown,
+        // racing with Dispose(), should catch ObjectDisposedException or check a disposed
+        // flag before calling Release().
         // Try to release the semaphore. SemaphoreFullException means it was already
         // signalled (CurrentCount == maxCount == 1) — the pending wake covers this request,
         // so swallow the exception. This is safe under concurrent callers: checking

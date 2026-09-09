@@ -64,6 +64,8 @@ public static class TestPipelineConfig
         DbRetentionSweepInterval = TimeSpan.FromHours(24),
         CiCancelledMoveMaxRetries = PipelineConstants.DefaultCiCancelledMoveMaxRetries,
         FeedbackTimeoutSeconds = 60,
+        HousekeepingTriggerCooldownMinutes = 25,
+        ClosedLoopAutoStart = true,
     };
 
     /// <summary>
@@ -118,6 +120,8 @@ public static class TestPipelineConfig
         DbRetentionSweepInterval = TimeSpan.FromHours(24),
         CiCancelledMoveMaxRetries = PipelineConstants.DefaultCiCancelledMoveMaxRetries,
         FeedbackTimeoutSeconds = 60,
+        HousekeepingTriggerCooldownMinutes = 25,
+        ClosedLoopAutoStart = true,
     };
 
     /// <summary>
@@ -141,10 +145,10 @@ public static class TestPipelineConfig
     public static PipelineProject WithProject(
         string name = "TestProject",
         params string[] templateIds) => new()
-    {
-        Id = Guid.NewGuid().ToString(),
-        Name = name,
-        Enabled = true,
-        TemplateIds = templateIds,
-    };
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = name,
+            Enabled = true,
+            TemplateIds = templateIds,
+        };
 }

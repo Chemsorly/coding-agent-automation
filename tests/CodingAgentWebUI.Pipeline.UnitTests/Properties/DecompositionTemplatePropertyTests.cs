@@ -46,7 +46,8 @@ public class DecompositionTemplatePropertyTests
         {
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
             ClosedLoopMaxRunsPerCycle = 10,
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            WorkspaceBaseDirectory = Path.GetTempPath(),
+            ClosedLoopAutoStart = true,
         };
 
         var mockStore = new Mock<IConfigurationStore>();
@@ -171,7 +172,8 @@ public class DecompositionTemplatePropertyTests
         {
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
             ClosedLoopMaxRunsPerCycle = 10,
-            WorkspaceBaseDirectory = Path.GetTempPath()
+            WorkspaceBaseDirectory = Path.GetTempPath(),
+            ClosedLoopAutoStart = true,
         };
 
         var mockStore = new Mock<IConfigurationStore>();

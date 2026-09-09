@@ -399,6 +399,14 @@ public partial class GitHubRepositoryProvider
                 },
                 "ListOpenPullRequests.GetDetail", ct);
 
+            // Guard against the Issues API eventual-consistency window: a PR that merged
+            // between the Issues fetch (Step A) and this detail fetch (Step B) will have
+            // state="closed" here. Filtering it out prevents merged PRs from entering
+            // the housekeeping agentDonePrs list and triggering spurious rework swaps.
+            // null state (field absent in response) → treat as non-open and filter out.
+            if (!string.Equals(pr.State, "open", StringComparison.OrdinalIgnoreCase))
+                continue;
+
             items.Add(new PullRequestSummary
             {
                 Number = pr.Number,
@@ -487,12 +495,6 @@ public partial class GitHubRepositoryProvider
                 }
             }
 
-            if (issueNumbers.Count > 0)
-            {
-                // API found results — still parse title/body for additional references
-                // that may not appear in timeline events (e.g., "Related to #42" without closing keyword).
-                // The HashSet deduplicates across all sources.
-            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -504,14 +506,26 @@ public partial class GitHubRepositoryProvider
         // Body uses ParseClosingKeywords only (Closes/Fixes/Resolves #N) — the broad SimpleHashPattern
         // picks up any bare #N in the body prose (e.g., "PR #2194" in AI review text), which can
         // return spurious numbers including the PR's own number.
-        var pr = await ExecuteWithResilienceAsync(
-            client => client.PullRequest.Get(Owner, Repo, prNumber),
-            "ExtractLinkedIssues.GetPr", ct);
+        // GetPr is guarded independently so a transient failure here does not discard timeline results.
+        Octokit.PullRequest? pr = null;
+        try
+        {
+            pr = await ExecuteWithResilienceAsync(
+                client => client.PullRequest.Get(Owner, Repo, prNumber),
+                "ExtractLinkedIssues.GetPr", ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Warning(ex, "Failed to fetch PR metadata for #{PrNumber}, skipping title/body parsing", prNumber);
+        }
 
-        // Title first (priority b) — full patterns including (#N) parenthetical convention
-        ParseIssueReferences(pr.Title, issueNumbers);
-        // Body (priority c) — closing keywords only to avoid false positives from prose mentions
-        IssueReferenceParser.ParseClosingKeywords(pr.Body, issueNumbers);
+        if (pr is not null)
+        {
+            // Title first (priority b) — full patterns including (#N) parenthetical convention
+            ParseIssueReferences(pr.Title, issueNumbers);
+            // Body (priority c) — closing keywords only to avoid false positives from prose mentions
+            IssueReferenceParser.ParseClosingKeywords(pr.Body, issueNumbers);
+        }
 
         return issueNumbers.ToList().AsReadOnly();
     }
@@ -614,6 +628,14 @@ public partial class GitHubRepositoryProvider
         public GitHubPrUserDto? User { get; set; }
         public DateTimeOffset CreatedAt { get; set; }
         public GitHubPrLabelDto[]? Labels { get; set; }
+        /// <summary>
+        /// PR state as returned by GitHub: "open", "closed". Captured to filter out PRs
+        /// that merged or closed between the Issues API fetch (Step A) and the detail fetch (Step B).
+        /// GitHub's Issues API has eventual consistency — a just-merged PR can still appear as open
+        /// in the Issues index for a brief window. Filtering here prevents merged PRs from entering
+        /// the housekeeping <c>agentDonePrs</c> list.
+        /// </summary>
+        public string? State { get; set; }
     }
 
     private sealed class GitHubPrRefDto

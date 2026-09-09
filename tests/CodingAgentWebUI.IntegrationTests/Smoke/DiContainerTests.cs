@@ -1,6 +1,5 @@
 using System.Reflection;
 using CodingAgentWebUI.Infrastructure.GitHub;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
@@ -104,38 +103,12 @@ public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     /// <summary>
-    /// The local registry stays registered under its concrete type — <c>ConsolidationDispatchService</c>,
-    /// <c>ModelFetchService</c>, <c>AgentChat.razor</c> and the E2E factories all resolve it directly.
+    /// The local registry stays registered under its concrete type — <c>ModelFetchService</c>,
+    /// <c>AgentChat.razor</c> and the E2E factories all resolve it directly.
     /// </summary>
     [Fact]
     public void LocalAgentRegistry_RemainsResolvableByConcreteType()
     {
         Assert.NotNull(_factory.Services.GetRequiredService<AgentRegistryService>());
-    }
-
-    /// <summary>
-    /// The dedup guard stays on the in-process registry. <c>SelectAgent</c> reserves an agent by
-    /// flipping it to Busy under the same lock that chose it; against a read-only replica that
-    /// reservation evaporates and two callers can be handed the same agent.
-    /// </summary>
-    [Fact]
-    public void JobDeduplicationGuard_ReadsTheLocalRegistry_NotTheApiBackedOne()
-    {
-        var guard = _factory.Services.GetRequiredService<JobDeduplicationGuardService>();
-
-        // JobDeduplicationGuardService is a backward-compat wrapper around AgentReservationService (_inner).
-        // The actual registry reference lives on the inner service.
-        var innerField = typeof(JobDeduplicationGuardService)
-            .GetField("_inner", BindingFlags.Instance | BindingFlags.NonPublic);
-        Assert.NotNull(innerField);
-
-        var inner = innerField!.GetValue(guard);
-        Assert.NotNull(inner);
-
-        var registryField = typeof(CodingAgentWebUI.Orchestration.Dispatch.AgentReservationService)
-            .GetField("_registry", BindingFlags.Instance | BindingFlags.NonPublic);
-        Assert.NotNull(registryField);
-
-        Assert.IsType<AgentRegistryService>(registryField!.GetValue(inner));
     }
 }

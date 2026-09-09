@@ -131,16 +131,17 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
         await SeedIssueAndProfileAsync("200");
         await SeedIssueAndProfileAsync("201");
 
-        // Dispatch first issue WITHOUT an agent → goes to Pending
+        // Dispatch first issue WITHOUT an agent → synchronous dispatch path (issue #2322):
+        // item is created as Dispatched immediately, never Pending
         var result1 = await DispatchIssueAsync("200");
         Assert.True(result1.Success);
-        Assert.True(result1.Queued, "Should be queued as Pending (no agent)");
+        Assert.False(result1.Queued, "Synchronous dispatch: item is Dispatched immediately, never Pending");
 
-        // Now connect agent — this triggers drain service
+        // Now connect agent — FakeJobController will bootstrap the assignment
         await using var agent = new FakeAgentClient("edge-agent-concurrent", "edge-e2e");
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
-        // Wait for drain to deliver the pending item
+        // FakeJobController polls Dispatched items and calls StartAssignedWorkItemAsync
         var assignment1 = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
         Assert.Equal("200", assignment1.IssueIdentifier);
 
@@ -148,17 +149,15 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
         var result2 = await DispatchIssueAsync("201");
         Assert.True(result2.Success);
 
-        // Second issue should be queued (agent is busy with first)
-        // OR dispatched if agent completed fast — either way only one job per agent at a time
         var workItemId2 = Guid.Parse(result2.WorkItemId!);
 
         // Complete first job to free the agent
         await agent.AcceptAndCompleteJobAsync(assignment1.JobId);
 
-        // If the second issue was queued, drain should pick it up now
+        // FakeJobController picks up the second dispatched item for the now-idle agent
         agent.ResetJobAssigned();
 
-        // Wait for second job (either via drain or direct dispatch)
+        // Wait for second job
         var assignment2 = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
         Assert.Equal("201", assignment2.IssueIdentifier);
 
@@ -314,7 +313,7 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // F8: Multiple agents connect → queued jobs distributed correctly
+    // F8: Multiple agents connect → dispatched jobs distributed correctly
     // ═══════════════════════════════════════════════════════════════════════
 
     [Fact]
@@ -325,16 +324,17 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
         await SeedIssueAndProfileAsync("601");
         await SeedIssueAndProfileAsync("602");
 
-        // Dispatch all 3 without any agent → all go to Pending
+        // Dispatch all 3 without any agent — synchronous dispatch path (issue #2322):
+        // all items are created as Dispatched immediately (never Pending)
         var r1 = await DispatchIssueAsync("600");
         var r2 = await DispatchIssueAsync("601");
         var r3 = await DispatchIssueAsync("602");
 
-        Assert.True(r1.Success && r1.Queued, "Issue 600 should be queued");
-        Assert.True(r2.Success && r2.Queued, "Issue 601 should be queued");
-        Assert.True(r3.Success && r3.Queued, "Issue 602 should be queued");
+        Assert.True(r1.Success && !r1.Queued, "Issue 600 should be dispatched synchronously");
+        Assert.True(r2.Success && !r2.Queued, "Issue 601 should be dispatched synchronously");
+        Assert.True(r3.Success && !r3.Queued, "Issue 602 should be dispatched synchronously");
 
-        // Connect 2 agents — drain service should distribute 2 jobs
+        // Connect 2 agents — FakeJobController distributes 2 of the 3 dispatched items
         await using var agent1 = new FakeAgentClient("edge-multi-1", "edge-e2e");
         await using var agent2 = new FakeAgentClient("edge-multi-2", "edge-e2e");
         await agent1.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
@@ -347,22 +347,21 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
         // Assert: each agent got a different job
         Assert.NotEqual(job1.IssueIdentifier, job2.IssueIdentifier);
 
-        // Assert: third issue should still be Pending (only 2 agents)
+        // Assert: third item is Dispatched (K8s Job created, agent not yet assigned)
         var allIssuesDispatched = new HashSet<string> { job1.IssueIdentifier, job2.IssueIdentifier };
         var remainingIssue = new[] { "600", "601", "602" }.First(i => !allIssuesDispatched.Contains(i));
 
-        // Find the WorkItem for the remaining issue
         await using var db = Fixture.DbContextFactory.CreateDbContext();
-        var pendingItem = await db.WorkItems.AsNoTracking()
+        var dispatchedItem = await db.WorkItems.AsNoTracking()
             .FirstOrDefaultAsync(w => w.IssueIdentifier == remainingIssue);
-        Assert.NotNull(pendingItem);
-        Assert.Equal(WorkItemStatus.Pending, pendingItem.Status);
+        Assert.NotNull(dispatchedItem);
+        Assert.Equal(WorkItemStatus.Dispatched, dispatchedItem.Status);
 
-        // Complete both jobs, then the third should drain
+        // Complete one job to free agent1 — FakeJobController delivers the third item
         await agent1.AcceptAndCompleteJobAsync(job1.JobId);
         agent1.ResetJobAssigned();
 
-        // Wait for third job to be drained to agent1 (now idle)
+        // Wait for third job to be assigned to agent1 (now idle)
         var job3 = await agent1.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
         Assert.Equal(remainingIssue, job3.IssueIdentifier);
 

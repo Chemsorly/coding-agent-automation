@@ -40,5 +40,6 @@ internal static class JobCompletionMapper
         run.TotalTokens = payload.TotalTokens;
         run.TotalCost = payload.TotalCost;
         run.FinalLabel = payload.FinalLabel;
+        run.HarnessVersion = payload.HarnessVersion;
     }
 }

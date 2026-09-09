@@ -118,7 +118,7 @@ public class ResiliencePipelineFactoryTests
     public async Task CreateGitNetworkPipeline_HangingOperation_ThrowsTimeoutRejectedException()
     {
         // Short per-attempt timeout (500ms) and short outer timeout (3s) for fast test execution.
-        // With TimeoutRejectedException now retried (MaxRetryAttempts=2 → 3 attempts × 500ms + backoff),
+        // With TimeoutRejectedException now retried (MaxRetryAttempts=3 → 4 attempts × 500ms + backoff),
         // the outer timeout caps total execution.
         var pipeline = ResiliencePipelineFactory.CreateGitNetworkPipeline(
             Log.Logger, TimeSpan.FromMilliseconds(500), outerTimeout: TimeSpan.FromSeconds(3));
@@ -153,7 +153,7 @@ public class ResiliencePipelineFactoryTests
     {
         // Per-attempt timeout is 200ms; retryDelay shrunk to ~0 so the test exercises the retry
         // COUNT without waiting real exponential backoff (base 2s → ~6s before this change).
-        // MaxRetryAttempts=2 → 3 total attempts when every attempt times out.
+        // MaxRetryAttempts=3 → 4 total attempts when every attempt times out.
         var pipeline = ResiliencePipelineFactory.CreateGitNetworkPipeline(
             Log.Logger, TimeSpan.FromMilliseconds(200), outerTimeout: TimeSpan.FromSeconds(60),
             retryDelay: TimeSpan.FromMilliseconds(1));
@@ -166,8 +166,8 @@ public class ResiliencePipelineFactoryTests
         }, CancellationToken.None).AsTask();
 
         await act.Should().ThrowAsync<TimeoutRejectedException>();
-        // MaxRetryAttempts=2 means 1 initial + 2 retries = 3 total attempts
-        callCount.Should().Be(3);
+        // MaxRetryAttempts=3 means 1 initial + 3 retries = 4 total attempts
+        callCount.Should().Be(4);
     }
 
     [Fact]

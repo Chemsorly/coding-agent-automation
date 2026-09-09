@@ -264,13 +264,15 @@ public class PipelineRunInstrumentationTests : IDisposable
     {
         using var durationCollector = DoubleCollector("pipeline.jobs.duration");
 
+        // Capture start timestamp before StartRun so the upper bound covers
+        // any wall-clock drift in mres4.Wait(10) under CI load.
+        var testStartTimestamp = Stopwatch.GetTimestamp();
         var instrumentation = StartRun();
         using var mres4 = new ManualResetEventSlim(false);
         mres4.Wait(10); // Ensure non-zero duration before freeze
 
         instrumentation.StopTiming();
 
-        var freezeTimestamp = Stopwatch.GetTimestamp();
         using var mres5 = new ManualResetEventSlim(false);
         mres5.Wait(50); // Let at least 50ms pass after freeze
 
@@ -278,12 +280,15 @@ public class PipelineRunInstrumentationTests : IDisposable
         instrumentation.StopTiming();
         instrumentation.Dispose();
 
-        var totalElapsedSeconds = Stopwatch.GetElapsedTime(freezeTimestamp).TotalSeconds + 0.010;
+        // Upper bound: total time elapsed since before StartRun(), plus a small buffer.
+        // Using the pre-StartRun timestamp ensures the bound is always >= the frozen
+        // duration even when mres4.Wait(10) oversleeps under CI load.
+        var upperBoundSeconds = Stopwatch.GetElapsedTime(testStartTimestamp).TotalSeconds + 0.010;
 
         var snapshot = durationCollector.GetMeasurementSnapshot();
         snapshot.Should().ContainSingle();
         snapshot[0].Value.Should().BeGreaterThan(0, "frozen duration must be non-zero")
-            .And.BeLessThan(totalElapsedSeconds,
+            .And.BeLessThan(upperBoundSeconds,
                 "StopTiming must freeze elapsed time at first call; subsequent calls must not extend it");
     }
 

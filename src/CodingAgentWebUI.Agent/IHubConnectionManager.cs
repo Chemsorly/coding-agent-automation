@@ -19,7 +19,6 @@ public interface IHubConnectionManager : IAsyncDisposable
     Task StopAsync(CancellationToken ct);
 
     // Business events — wired by AgentConnectionLifecycle.WireEventHandlers
-    event Func<JobAssignmentMessage, Task>? OnAssignJob;
     event Func<string, Task>? OnCancelJob;
     event Func<ChatPromptMessage, Task>? OnAssignChatPrompt;
     event Func<string, Task>? OnCancelChat;

@@ -23,9 +23,7 @@ public sealed class SignalRAgentCommunicationTests
     {
         _hubContext.Setup(h => h.Clients).Returns(_clients.Object);
         _clients.Setup(c => c.Client(It.IsAny<string>())).Returns(_client.Object);
-        _client.Setup(c => c.AssignJob(It.IsAny<JobAssignmentMessage>())).Returns(Task.CompletedTask);
         _client.Setup(c => c.RequestFetchModels(It.IsAny<FetchModelsRequest>())).Returns(Task.CompletedTask);
-        _client.Setup(c => c.ForceDisconnect()).Returns(Task.CompletedTask);
         _client.Setup(c => c.CancelJob(It.IsAny<JobId>())).Returns(Task.CompletedTask);
         _client.Setup(c => c.AssignConsolidationJob(It.IsAny<AgentId>(), It.IsAny<ConsolidationJobMessage>())).Returns(Task.CompletedTask);
 
@@ -39,64 +37,6 @@ public sealed class SignalRAgentCommunicationTests
     {
         var act = () => new SignalRAgentCommunication(null!);
         act.Should().Throw<ArgumentNullException>();
-    }
-
-    // ── AssignJobAsync null guards ────────────────────────────────────────
-
-    [Fact]
-    public async Task AssignJobAsync_NullConnectionId_Throws()
-    {
-        var act = () => _sut.AssignJobAsync(null!, new JobAssignmentMessage
-        {
-            JobId = "j1", IssueIdentifier = new IssueIdentifier("GH-1"),
-            IssueDetail = new IssueDetail { Identifier = new IssueIdentifier("GH-1"), Title = "", Description = "", Labels = [] },
-            ParsedIssue = new ParsedIssue { AcceptanceCriteria = [], RequirementsSection = "" },
-            IssueComments = [], ProviderConfigs = [], QualityGateConfigs = [], McpServers = [],
-            ReviewerConfigs = [], InitiatedBy = "t", RepoProviderConfigId = "r", AgentProviderConfigId = "a",
-            PipelineConfiguration = new PipelineConfiguration()
-        });
-        await act.Should().ThrowAsync<ArgumentNullException>();
-    }
-
-    [Fact]
-    public async Task AssignJobAsync_NullJob_Throws()
-    {
-        var act = () => _sut.AssignJobAsync("conn-1", null!);
-        await act.Should().ThrowAsync<ArgumentNullException>();
-    }
-
-    [Fact]
-    public async Task AssignJobAsync_ValidArgs_DelegatesToClient()
-    {
-        var job = new JobAssignmentMessage
-        {
-            JobId = "j1", IssueIdentifier = new IssueIdentifier("GH-1"),
-            IssueDetail = new IssueDetail { Identifier = new IssueIdentifier("GH-1"), Title = "", Description = "", Labels = [] },
-            ParsedIssue = new ParsedIssue { AcceptanceCriteria = [], RequirementsSection = "" },
-            IssueComments = [], ProviderConfigs = [], QualityGateConfigs = [], McpServers = [],
-            ReviewerConfigs = [], InitiatedBy = "t", RepoProviderConfigId = "r", AgentProviderConfigId = "a",
-            PipelineConfiguration = new PipelineConfiguration()
-        };
-
-        await _sut.AssignJobAsync("conn-1", job);
-
-        _client.Verify(c => c.AssignJob(job), Times.Once);
-    }
-
-    // ── ForceDisconnectAsync null guard ───────────────────────────────────
-
-    [Fact]
-    public async Task ForceDisconnectAsync_NullConnectionId_Throws()
-    {
-        var act = () => _sut.ForceDisconnectAsync(null!);
-        await act.Should().ThrowAsync<ArgumentNullException>();
-    }
-
-    [Fact]
-    public async Task ForceDisconnectAsync_ValidConnectionId_DelegatesToClient()
-    {
-        await _sut.ForceDisconnectAsync("conn-1");
-        _client.Verify(c => c.ForceDisconnect(), Times.Once);
     }
 
     // ── CancelJobAsync null guards ────────────────────────────────────────

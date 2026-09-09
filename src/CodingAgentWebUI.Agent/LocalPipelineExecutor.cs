@@ -321,7 +321,8 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         Feedback = run.Feedback,
         TotalTokens = run.TotalTokens,
         TotalCost = run.TotalCost,
-        FinalLabel = run.FinalLabel
+        FinalLabel = run.FinalLabel,
+        HarnessVersion = Environment.GetEnvironmentVariable("SERVICE_VERSION")
     };
 
     /// <summary>

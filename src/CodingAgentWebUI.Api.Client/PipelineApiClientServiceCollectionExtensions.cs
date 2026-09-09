@@ -10,7 +10,7 @@ public static class PipelineApiClientServiceCollectionExtensions
 {
     private const string BearerScheme = "Bearer";
     /// <summary>
-    /// Registers all five typed HTTP clients, the <see cref="IAgentHubConnection"/> factory,
+    /// Registers all typed HTTP clients, the <see cref="IAgentHubConnection"/> factory,
     /// and the <see cref="PipelineApiClientOptions"/> singleton.
     /// </summary>
     /// <exception cref="ArgumentException">Thrown when <see cref="PipelineApiClientOptions.AgentApiKey"/> is null or empty.</exception>
@@ -68,15 +68,6 @@ public static class PipelineApiClientServiceCollectionExtensions
 
         // Consolidation run client — authenticated (operator tier; master key required)
         services.AddHttpClient<IPipelineApiConsolidationRunClient, PipelineApiConsolidationRunClient>(client =>
-        {
-            client.BaseAddress = new Uri(options.BaseUrl);
-            client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue(BearerScheme, options.AgentApiKey);
-        }).AddStandardResilienceHandler();
-
-        // Consolidation work item client — authenticated (operator tier; master key required).
-        // Used by the Job Controller's ConsolidationDispatchLoop.
-        services.AddHttpClient<IPipelineApiConsolidationWorkItemClient, PipelineApiConsolidationWorkItemClient>(client =>
         {
             client.BaseAddress = new Uri(options.BaseUrl);
             client.DefaultRequestHeaders.Authorization =

@@ -212,19 +212,6 @@ public static class ApiServiceCollectionExtensions
             return sp.GetRequiredService<OrchestratorRunService>();
         });
 
-        // ── AgentReservationService (renamed from JobDeduplicationGuardService) ────────
-        services.AddSingleton<AgentReservationService>(sp =>
-        {
-            var mux = sp.GetService<StackExchange.Redis.IConnectionMultiplexer>();
-            CodingAgentWebUI.Orchestration.Redis.IRedisStore? store = mux is not null
-                ? new CodingAgentWebUI.Orchestration.Redis.RedisStore(mux.GetDatabase())
-                : null;
-            return new AgentReservationService(sp.GetRequiredService<IAgentRegistryService>(), Log.Logger, store);
-        });
-        // Backward-compat: JobDeduplicationGuardService resolves to AgentReservationService
-        services.AddSingleton<JobDeduplicationGuardService>(sp =>
-            new JobDeduplicationGuardService(sp.GetRequiredService<IAgentRegistryService>(), Log.Logger));
-
         // ── ITokenVendingService ─────────────────────────────────────────────
         services.AddHttpClient("TokenVending")
             .AddStandardResilienceHandler();
@@ -290,7 +277,6 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<IPipelineRunHistoryService>(),
                 sp.GetRequiredService<IAgentRegistryService>(),
                 sp.GetRequiredService<ILabelService>(),
-                sp.GetRequiredService<AgentReservationService>(),
                 Log.Logger,
                 sp.GetService<IJobCleanupStrategy>(),
                 sp.GetRequiredService<IWorkItemFallbackTransitionService>())));
@@ -437,6 +423,39 @@ public static class ApiServiceCollectionExtensions
             sp.GetRequiredService<IConsolidationService>(),
             sp.GetRequiredService<IConfiguration>(),
             sp.GetRequiredService<IPipelineConfigStore>()));
+
+        // ── Synchronous dispatch services (POST /api/work-items/dispatch) ────────────────────
+        // DispatchLifecycleService — shared PVC-selection lock + K8s Job creation lifecycle.
+        // DispatchTemplateResolver — agent-selector → JobTemplate fallback resolution.
+        // DispatchStateBuilder     — builds concurrency map and PVC availability state.
+        // These were previously only used internally by ConsolidationWorkItemDispatchService.
+        // They are now also used by the new synchronous dispatch endpoint, which eliminates
+        // the Pending queue for regular work items.
+        services.AddSingleton<CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService>(sp =>
+        {
+            var jobClient = sp.GetService<IKubernetesJobClient>();
+            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
+            if (jobClient is null)
+                throw new InvalidOperationException(
+                    "API: IKubernetesJobClient is not registered. " +
+                    "POST /api/work-items/dispatch requires a Kubernetes client. " +
+                    "Register IKubernetesJobClient in DI or disable the synchronous dispatch endpoint.");
+            return new CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService(
+                jobClient,
+                sp.GetRequiredService<WorkItemTransitionService>(),
+                options);
+        });
+        services.AddSingleton<CodingAgentWebUI.Api.Dispatch.DispatchTemplateResolver>(sp =>
+            new CodingAgentWebUI.Api.Dispatch.DispatchTemplateResolver(
+                sp.GetService<IAgentProfileStore>(),
+                sp.GetRequiredService<JobTemplateStore>()));
+        services.AddSingleton<CodingAgentWebUI.Api.Dispatch.DispatchStateBuilder>(sp =>
+            new CodingAgentWebUI.Api.Dispatch.DispatchStateBuilder(
+                sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+                sp.GetRequiredService<CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService>(),
+                sp.GetRequiredService<JobTemplateStore>(),
+                sp.GetRequiredService<CodingAgentWebUI.Api.Dispatch.DispatchTemplateResolver>(),
+                DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>())));
 
         // ── WorkItemMetricsBackgroundService ──────────────────────────────────────────────────
         // Spec 047: Removed from API hosted services — replaced by WorkItemCountsPoller in

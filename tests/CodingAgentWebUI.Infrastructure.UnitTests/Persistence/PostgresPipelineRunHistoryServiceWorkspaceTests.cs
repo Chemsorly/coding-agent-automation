@@ -50,6 +50,9 @@ public sealed class PostgresPipelineRunHistoryServiceWorkspaceTests : IDisposabl
     }
 
     // ── TryDeleteWorkspace ────────────────────────────────────────────────
+    // Guard logic (symlink check, path-containment, recursive delete) is tested in
+    // WorkspaceDeletionGuardTests. The tests below verify that the Postgres service
+    // correctly delegates to the guard without throwing.
 
     [Fact]
     public void TryDeleteWorkspace_NullPath_DoesNothing()
@@ -57,48 +60,13 @@ public sealed class PostgresPipelineRunHistoryServiceWorkspaceTests : IDisposabl
         // null path → early return without touching the filesystem
         _sut.TryDeleteWorkspace(null, "run-1", _tempBase);
 
+        // TODO: This Warning verify is fragile: WorkspaceDeletionGuard uses Serilog ILogger
+        // structured overloads that may not match the Moq mock's generic parameter capture,
+        // causing Times.Never to silently pass even if a warning is actually emitted. This
+        // is the same fragility noted for the deleted TryDeleteWorkspace_ValidPath_LogsInformationOnSuccess
+        // test. Consider removing the verify or replacing with a behavior-only assertion.
         // no side effects — no exception, no warning logged for null/empty path case
         _mockLogger.Verify(l => l.Warning(It.IsAny<string>(), It.IsAny<object[]>()), Times.Never);
-    }
-
-    [Fact]
-    public void TryDeleteWorkspace_EmptyPath_DoesNothing()
-    {
-        _sut.TryDeleteWorkspace("", "run-1", _tempBase);
-
-        _mockLogger.Verify(l => l.Warning(It.IsAny<string>(), It.IsAny<object[]>()), Times.Never);
-    }
-
-    [Fact]
-    public void TryDeleteWorkspace_NonExistentDirectory_DoesNothing()
-    {
-        var path = Path.Combine(_tempBase, "does-not-exist");
-
-        _sut.TryDeleteWorkspace(path, "run-1", _tempBase);
-
-        // directory still doesn't exist (nothing created)
-        Directory.Exists(path).Should().BeFalse();
-    }
-
-    [Fact]
-    public void TryDeleteWorkspace_PathOutsideBase_LogsWarningAndSkips()
-    {
-        // Create a real directory outside the base
-        var outsideDir = Path.Combine(Path.GetTempPath(), $"outside-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(outsideDir);
-
-        try
-        {
-            _sut.TryDeleteWorkspace(outsideDir, "run-1", _tempBase);
-
-            // Directory must NOT be deleted (traversal guard proven by directory still existing)
-            Directory.Exists(outsideDir).Should().BeTrue("path outside base must not be deleted");
-        }
-        finally
-        {
-            if (Directory.Exists(outsideDir))
-                Directory.Delete(outsideDir, recursive: true);
-        }
     }
 
     [Fact]
@@ -112,30 +80,6 @@ public sealed class PostgresPipelineRunHistoryServiceWorkspaceTests : IDisposabl
         _sut.TryDeleteWorkspace(workspaceDir, runId, _tempBase);
 
         Directory.Exists(workspaceDir).Should().BeFalse("successful cleanup must remove the workspace directory");
-    }
-
-    [Fact]
-    public void TryDeleteWorkspace_ValidPath_LogsInformationOnSuccess()
-    {
-        var runId = Guid.NewGuid().ToString();
-        var workspaceDir = Path.Combine(_tempBase, runId);
-        Directory.CreateDirectory(workspaceDir);
-
-        _sut.TryDeleteWorkspace(workspaceDir, runId, _tempBase);
-
-        // Behavior assertion: directory is gone. Serilog generic overload makes mock verify fragile.
-        Directory.Exists(workspaceDir).Should().BeFalse("successful cleanup must remove the workspace directory");
-    }
-
-    [Fact]
-    public void TryDeleteWorkspace_PathEqualsBase_LogsWarningAndSkips()
-    {
-        // Attempting to delete the base directory itself must be rejected
-        var runId = Guid.NewGuid().ToString();
-
-        _sut.TryDeleteWorkspace(_tempBase, runId, _tempBase);
-
-        Directory.Exists(_tempBase).Should().BeTrue("deleting the base directory itself must be blocked");
     }
 
     // ── CleanupExpiredWorkspaces ──────────────────────────────────────────

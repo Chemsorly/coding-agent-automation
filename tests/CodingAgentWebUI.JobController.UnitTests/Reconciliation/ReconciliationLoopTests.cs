@@ -15,6 +15,16 @@ namespace CodingAgentWebUI.JobController.UnitTests.Reconciliation;
 /// Unit tests for ReconciliationLoop — the K8s Job watch and timeout enforcement logic.
 /// Tests are written before implementation (TDD: Task 12b).
 /// </summary>
+/// <remarks>
+/// Placed in the "Metrics" collection to serialize execution with
+/// <see cref="ReconciliationLoopMetricTests"/> and <see cref="ReconciliationLoopErrorTests"/>.
+/// Tests here call <c>ReconcileOnceAsync</c> with terminal K8s jobs, which flows through
+/// <c>HandleJobCompletedAsync → WorkDistributionTelemetry.LogTerminalStatus →
+/// PipelineTelemetry.JobsFailed.Add()</c>. Without serialization, those emissions bleed
+/// into the snapshot-delta assertions in <see cref="ReconciliationLoopMetricTests"/> and
+/// cause a spurious "delta of 2 instead of 1" failure.
+/// </remarks>
+[Collection("Metrics")]
 public sealed class ReconciliationLoopTests
 {
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
@@ -224,6 +234,12 @@ public sealed class ReconciliationLoopTests
             TimeoutSeconds = 0 // legacy: field not stored
         };
 
+        // TODO [WARNING]: The mock setup uses It.IsAny<int>() for the GetActiveAsync canary threshold.
+        // If EnforceTimeoutsAsync passes a wrong canary threshold, the mock still returns legacyItem
+        // and PostStatusAsync fires, making this test a false-green that masks the wrong argument.
+        // Add a Verify call (analogous to WhenExecutionAgeExceedsTimeout_TimesOutAndDeletesJob) to
+        // confirm GetActiveAsync was called with the correct canary threshold value (60s).
+        // See review finding: TestQualityReviewer WARNING — ReconciliationLoopTests.cs:~230
         _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([legacyItem]);
 
@@ -1397,6 +1413,20 @@ public sealed class ReconciliationLoopErrorTests
 // ReconciliationLoop tests now use TestMeterFactory for isolated instrument capture.
 // LogTerminalStatus tests still use MeterListener against static meters since that method
 // calls static PipelineTelemetry/WorkDistributionTelemetry instruments directly.
+// TODO: [Collection("Metrics")] was removed from ReconciliationLoopMetricTests. DispatchLoopMetricTests
+// (in Dispatch/DispatchLoopTests.cs) still uses [Collection("Metrics")] with a static MeterListener.
+// If these classes run in parallel, PipelineTelemetry emissions from DispatchLoopMetricTests can
+// bleed into this class's shared _pipelineCounters bag, causing intermittent failures. Verify that
+// the scoped MeterListener gate in LogTerminalStatus_Failed is sufficient, or re-add
+// [Collection("Metrics")] to prevent cross-contamination. See review warning (issue #2255).
+
+// TODO: Three tests covering the GetJobPhase counter-fallback guard were deleted:
+//   - ReconcileOnce_RetryingJob_FailedCounterWithActiveCounter_IsNotTreatedAsFailed
+//   - ReconcileOnce_TerminalFailedJob_FailedCounterWithNoActive_IsTreatedAsFailed
+//   - ReconcileOnce_JobWithNullStatus_IsNotTreatedAsFailed
+// These covered the "Failed > 0 && (Active ?? 0) == 0" guard that prevents premature failure of
+// retrying jobs — a documented data-corruption risk. If the guard is still in production code,
+// re-add these regression tests to prevent silent removal. See review warning (issue #2255).
 
 public sealed class ReconciliationLoopMetricTests : IDisposable
 {
@@ -1595,6 +1625,11 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
     {
         // Arrange
         var id = Guid.NewGuid();
+        // TODO [WARNING]: Replace magic number 1800 with (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds
+        // so a change to DefaultAgentTimeout causes this test to fail rather than silently pass with a stale
+        // expected value. The sibling test ReconcileOnce_LegacyItemWithoutTimeoutSeconds_TimesOutViaDefaultFallback
+        // was already fixed to use the constant reference.
+        // See review finding: TestQualityReviewer WARNING — ReconciliationLoopTests.cs:1609
         const int itemTimeoutSeconds = 1800; // global default
         var item = new ActiveWorkItemDto
         {
@@ -1695,7 +1730,11 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
     [Fact]
     public void LogTerminalStatus_Failed_EmitsPipelineJobsFailed_WithSnakeCaseTag()
     {
-        // Snapshot before to tolerate stray recordings
+        // Use the class-level _pipelineCounters bag with a before/after delta to count emissions.
+        // A scoped MeterListener subscribing to the static PipelineTelemetry meter would pick up
+        // emissions from other test assemblies running in parallel in the same process on CI,
+        // causing spurious double-counts. The delta approach is immune to pre-existing recordings
+        // and is consistent with the pattern used by other tests in this class.
         var failedCountBefore = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
 
         WorkDistributionTelemetry.LogTerminalStatus(

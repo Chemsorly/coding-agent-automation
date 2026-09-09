@@ -103,16 +103,17 @@ public class WorkItemTransitionServiceAdditionalTests
     public async Task TransitionAsync_ValidTransition_ChangesStatusAndReturnTrue()
     {
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        // Use Failed→Pending (valid recovery path) instead of removed Pending→Dispatched
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Failed);
         var svc = CreateService(opts);
 
-        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Dispatched);
+        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Pending);
 
         result.Should().BeTrue();
 
         await using var verify = new TestPipelineDbContext(opts);
         var updated = await verify.WorkItems.FindAsync(item.Id);
-        updated!.Status.Should().Be(WorkItemStatus.Dispatched);
+        updated!.Status.Should().Be(WorkItemStatus.Pending);
     }
 
     [Fact]
@@ -139,12 +140,13 @@ public class WorkItemTransitionServiceAdditionalTests
     public async Task TransitionAsync_ConcurrencyRetry_SucceedsAfterOneConflict()
     {
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        // Use Dispatched→Running (valid operational transition) instead of removed Pending→Dispatched
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
         // Factory throws on first save, succeeds on second
         var factory = new ThrowingOnSaveDbContextFactory(opts, throwOnCallNumbers: [1]);
         var svc = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
 
-        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Dispatched);
+        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Running);
 
         result.Should().BeTrue();
     }
@@ -159,12 +161,13 @@ public class WorkItemTransitionServiceAdditionalTests
     public async Task TransitionAsync_ExhaustedRetries_ReturnsFalse()
     {
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        // Use Dispatched→Running (valid operational transition) instead of removed Pending→Dispatched
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
         // Factory always throws on save (all 4 calls = attempts 0..3 with maxRetries=3)
         var factory = new ThrowingOnSaveDbContextFactory(opts, throwOnCallNumbers: [1, 2, 3, 4]);
         var svc = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
 
-        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Dispatched, maxRetries: 3);
+        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Running, maxRetries: 3);
 
         result.Should().BeFalse();
     }
@@ -227,27 +230,29 @@ public class WorkItemTransitionServiceAdditionalTests
     public async Task TransitionIfAsync_ValidCAS_TransitionsAndReturnsTrue()
     {
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        // Use Dispatched→Running (valid operational transition) instead of removed Pending→Dispatched
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
         var svc = CreateService(opts);
 
-        var result = await svc.TransitionIfAsync(item.Id, WorkItemStatus.Pending, WorkItemStatus.Dispatched);
+        var result = await svc.TransitionIfAsync(item.Id, WorkItemStatus.Dispatched, WorkItemStatus.Running);
 
         result.Should().BeTrue();
 
         await using var verify = new TestPipelineDbContext(opts);
         var updated = await verify.WorkItems.FindAsync(item.Id);
-        updated!.Status.Should().Be(WorkItemStatus.Dispatched);
+        updated!.Status.Should().Be(WorkItemStatus.Running);
     }
 
     [Fact]
     public async Task TransitionIfAsync_WithMutate_SetsAdditionalFields()
     {
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        // Use Dispatched→Running (valid operational transition) instead of removed Pending→Dispatched
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
         var svc = CreateService(opts);
 
         var result = await svc.TransitionIfAsync(
-            item.Id, WorkItemStatus.Pending, WorkItemStatus.Dispatched,
+            item.Id, WorkItemStatus.Dispatched, WorkItemStatus.Running,
             entity => entity.AssignedAgentId = "agent-42");
 
         result.Should().BeTrue();
@@ -260,11 +265,12 @@ public class WorkItemTransitionServiceAdditionalTests
     public async Task TransitionIfAsync_ConcurrencyRetry_SucceedsAfterOneConflict()
     {
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        // Use Dispatched→Running (valid operational transition) instead of removed Pending→Dispatched
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
         var factory = new ThrowingOnSaveDbContextFactory(opts, throwOnCallNumbers: [1]);
         var svc = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
 
-        var result = await svc.TransitionIfAsync(item.Id, WorkItemStatus.Pending, WorkItemStatus.Dispatched);
+        var result = await svc.TransitionIfAsync(item.Id, WorkItemStatus.Dispatched, WorkItemStatus.Running);
 
         result.Should().BeTrue();
     }
@@ -279,11 +285,12 @@ public class WorkItemTransitionServiceAdditionalTests
     public async Task TransitionIfAsync_AllRetriesExhausted_ReturnsFalse()
     {
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        // Use Dispatched→Running (valid operational transition) instead of removed Pending→Dispatched
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
         var factory = new ThrowingOnSaveDbContextFactory(opts, throwOnCallNumbers: [1, 2, 3, 4]);
         var svc = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
 
-        var result = await svc.TransitionIfAsync(item.Id, WorkItemStatus.Pending, WorkItemStatus.Dispatched);
+        var result = await svc.TransitionIfAsync(item.Id, WorkItemStatus.Dispatched, WorkItemStatus.Running);
 
         result.Should().BeFalse();
     }
@@ -341,16 +348,17 @@ public class WorkItemTransitionServiceAdditionalTests
     public async Task TransitionDetailedAsync_ValidTransition_ReturnsTransitioned()
     {
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        // Use Failed→Pending (valid recovery path) instead of removed Pending→Dispatched
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Failed);
         var svc = CreateService(opts);
 
-        var result = await svc.TransitionDetailedAsync(item.Id, WorkItemStatus.Dispatched);
+        var result = await svc.TransitionDetailedAsync(item.Id, WorkItemStatus.Pending);
 
         result.Should().Be(TransitionResult.Transitioned);
 
         await using var verify = new TestPipelineDbContext(opts);
         var updated = await verify.WorkItems.FindAsync(item.Id);
-        updated!.Status.Should().Be(WorkItemStatus.Dispatched);
+        updated!.Status.Should().Be(WorkItemStatus.Pending);
     }
 
     [Fact]
@@ -447,6 +455,16 @@ public class WorkItemTransitionServiceAdditionalTests
 
     // ── RequeueAsync ──────────────────────────────────────────────────────────
 
+    // TODO: This test does not seed ClaimedPvcName and does not assert that it is cleared after
+    // RequeueAsync. The fix for issue #2338 adds `item.ClaimedPvcName = null` inside RequeueAsync
+    // so that a requeued item does not continue to consume a credential slot. Without a dedicated
+    // test that seeds ClaimedPvcName = "pvc-1" before calling RequeueAsync and then asserts it is
+    // null on the persisted entity, that clearing behaviour has no regression guard and could be
+    // silently removed by a future refactor. Add a test:
+    //   - seed entity with ClaimedPvcName = "pvc-1"
+    //   - call RequeueAsync
+    //   - assert updated.ClaimedPvcName is null
+    // See review-findings-correctness.md [WARNING] at WorkItemTransitionServiceAdditionalTests.cs:451.
     [Fact]
     public async Task RequeueAsync_IncrementsRetryCountAndClearsDispatchFields()
     {
@@ -469,6 +487,8 @@ public class WorkItemTransitionServiceAdditionalTests
         updated.RetryCount.Should().Be(2, "RetryCount should be incremented");
         updated.DispatchedAt.Should().BeNull("DispatchedAt should be cleared on requeue");
         updated.AssignedAgentId.Should().BeNull("AssignedAgentId should be cleared on requeue");
+        // TODO: also assert updated.ClaimedPvcName.Should().BeNull() after seeding it above
+        // (see TODO block above this test for full context — issue #2338).
     }
 
     // ── HasAgentErrorSinceAsync ──────────────────────────────────────────────
@@ -619,7 +639,8 @@ public class WorkItemTransitionServiceAdditionalTests
         // Verify that when a ResiliencePipelineProvider is supplied, the service still succeeds —
         // proving the Polly execution wrapper does not break the normal path.
         var opts = CreateDbOptions();
-        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        // Use Failed→Pending (valid recovery path) instead of removed Pending→Dispatched
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Failed);
 
         var invoked = false;
         // Build a no-op pipeline using the public API and a separate invocation tracker
@@ -632,7 +653,7 @@ public class WorkItemTransitionServiceAdditionalTests
         var svc = new WorkItemTransitionService(
             new TestDbContextFactory(opts), NullLogger<WorkItemTransitionService>.Instance, provider);
 
-        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Dispatched);
+        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Pending);
 
         result.Should().BeTrue();
         invoked.Should().BeTrue("Polly pipeline provider should have been queried");

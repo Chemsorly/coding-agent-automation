@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using AwesomeAssertions;
+using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
@@ -19,7 +20,7 @@ namespace CodingAgentWebUI.Api.IntegrationTests;
 /// therefore the registry — lives only in this process. Two things are load-bearing and both are
 /// asserted here. First, the payload has to survive a round trip through
 /// <see cref="PipelineJsonOptions.Default"/>, because that is what
-/// <c>IPipelineApiAgentClient</c> deserializes with and <see cref="AgentEntry"/> carries an
+/// <c>IPipelineApiAgentClient</c> deserializes with and <see cref="AgentEntryDto"/> carries an
 /// <see cref="AgentId"/> struct and an enum that a naive contract would mangle. Second, the route
 /// must reject an agent-derived key: it lists every agent in the cluster with hostnames, labels and
 /// connection IDs, which is control-plane data, not something a pod should be able to enumerate.
@@ -84,7 +85,7 @@ public sealed class AgentEndpointTests
         var response = await _client.GetAsync("/api/agents");
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var agents = await response.Content.ReadFromJsonAsync<List<AgentEntry>>(PipelineJsonOptions.Default);
+        var agents = await response.Content.ReadFromJsonAsync<List<AgentEntryDto>>(PipelineJsonOptions.Default);
         agents.Should().NotBeNull();
 
         var agent = agents!.SingleOrDefault(a => a.AgentId.Value == agentId);
@@ -106,7 +107,7 @@ public sealed class AgentEndpointTests
         var registry = _factory.Services.GetRequiredService<AgentRegistryService>();
         registry.TransitionStatus(new AgentId(agentId), AgentStatus.Busy);
 
-        var agents = await _client.GetFromJsonAsync<List<AgentEntry>>("/api/agents", PipelineJsonOptions.Default);
+        var agents = await _client.GetFromJsonAsync<List<AgentEntryDto>>("/api/agents", PipelineJsonOptions.Default);
 
         agents.Should().NotBeNull();
         agents!.Single(a => a.AgentId.Value == agentId).Status.Should().Be(AgentStatus.Busy);
@@ -123,10 +124,136 @@ public sealed class AgentEndpointTests
         var registry = _factory.Services.GetRequiredService<AgentRegistryService>();
         registry.Deregister(new AgentId(agentId)).Should().BeTrue();
 
-        var agents = await _client.GetFromJsonAsync<List<AgentEntry>>("/api/agents", PipelineJsonOptions.Default);
+        var agents = await _client.GetFromJsonAsync<List<AgentEntryDto>>("/api/agents", PipelineJsonOptions.Default);
 
         agents.Should().NotBeNull();
         agents!.Should().NotContain(a => a.AgentId.Value == agentId);
+    }
+
+    // ── Enrichment: active run fields ─────────────────────────────────────────
+
+    /// <summary>
+    /// When a busy agent has a matching active run, the response must include the issue/run/PR
+    /// enrichment fields populated from that run.
+    /// </summary>
+    [Fact]
+    public async Task GetAgents_BusyAgent_WithActiveRun_IncludesIssueAndRunLinks()
+    {
+        var agentId = RegisterAgent();
+        var registry = _factory.Services.GetRequiredService<AgentRegistryService>();
+        var runService = _factory.Services.GetRequiredService<OrchestratorRunService>();
+
+        var runId = $"run-enrich-{Guid.NewGuid():N}";
+        var run = new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = new IssueIdentifier("owner/repo#42"),
+            IssueTitle = "Fix the widget",
+            IssueUrl = "https://github.com/owner/repo/issues/42",
+            PullRequestUrl = "https://github.com/owner/repo/pull/7",
+            IssueProviderConfigId = "ip-enrich",
+            RepoProviderConfigId = "rp-enrich",
+        };
+        runService.AddRun(run);
+
+        // Mark the agent busy with the run's ID as its active job.
+        registry.TransitionStatus(new AgentId(agentId), AgentStatus.Busy);
+        var entry = registry.GetByAgentId(agentId)!;
+        lock (entry.SyncRoot)
+            entry.ActiveJobId = runId;
+
+        var agents = await _client.GetFromJsonAsync<List<AgentEntryDto>>("/api/agents", PipelineJsonOptions.Default);
+        agents.Should().NotBeNull();
+
+        var dto = agents!.Single(a => a.AgentId.Value == agentId);
+        dto.ActiveIssueIdentifier.Should().Be("owner/repo#42");
+        dto.ActiveIssueTitle.Should().Be("Fix the widget");
+        dto.ActiveIssueUrl.Should().Be("https://github.com/owner/repo/issues/42");
+        dto.ActiveRunId.Should().Be(runId);
+        dto.ActivePullRequestUrl.Should().Be("https://github.com/owner/repo/pull/7");
+    }
+
+    /// <summary>
+    /// An idle agent has no active run, so all enrichment fields must be null.
+    /// </summary>
+    [Fact]
+    public async Task GetAgents_IdleAgent_HasNullEnrichmentFields()
+    {
+        var agentId = RegisterAgent();
+
+        var agents = await _client.GetFromJsonAsync<List<AgentEntryDto>>("/api/agents", PipelineJsonOptions.Default);
+        agents.Should().NotBeNull();
+
+        var dto = agents!.Single(a => a.AgentId.Value == agentId);
+        dto.Status.Should().Be(AgentStatus.Idle);
+        dto.ActiveIssueIdentifier.Should().BeNull();
+        dto.ActiveIssueTitle.Should().BeNull();
+        dto.ActiveIssueUrl.Should().BeNull();
+        dto.ActiveRunId.Should().BeNull();
+        dto.ActivePullRequestUrl.Should().BeNull();
+    }
+
+    /// <summary>
+    /// When a busy agent's ActiveJobId points to a run that is no longer in the service (e.g.
+    /// the run completed between the registry read and enrichment), all enrichment fields must be
+    /// null — graceful degradation, not an error.
+    /// </summary>
+    [Fact]
+    public async Task GetAgents_BusyAgent_WithCompletedRun_ReturnsNullEnrichment()
+    {
+        var agentId = RegisterAgent();
+        var registry = _factory.Services.GetRequiredService<AgentRegistryService>();
+
+        registry.TransitionStatus(new AgentId(agentId), AgentStatus.Busy);
+        var entry = registry.GetByAgentId(agentId)!;
+        lock (entry.SyncRoot)
+            entry.ActiveJobId = $"run-gone-{Guid.NewGuid():N}";
+
+        var agents = await _client.GetFromJsonAsync<List<AgentEntryDto>>("/api/agents", PipelineJsonOptions.Default);
+        agents.Should().NotBeNull();
+
+        var dto = agents!.Single(a => a.AgentId.Value == agentId);
+        dto.Status.Should().Be(AgentStatus.Busy);
+        dto.ActiveIssueIdentifier.Should().BeNull();
+        dto.ActiveRunId.Should().BeNull();
+        dto.ActivePullRequestUrl.Should().BeNull();
+    }
+
+    /// <summary>
+    /// When the active run has no PR yet, ActivePullRequestUrl must be null — no broken link.
+    /// </summary>
+    [Fact]
+    public async Task GetAgents_BusyAgent_WithNoPullRequest_HasNullPrUrl()
+    {
+        var agentId = RegisterAgent();
+        var registry = _factory.Services.GetRequiredService<AgentRegistryService>();
+        var runService = _factory.Services.GetRequiredService<OrchestratorRunService>();
+
+        var runId = $"run-nopr-{Guid.NewGuid():N}";
+        var run = new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = new IssueIdentifier("owner/repo#99"),
+            IssueTitle = "Add feature",
+            IssueUrl = "https://github.com/owner/repo/issues/99",
+            PullRequestUrl = null,   // no PR yet
+            IssueProviderConfigId = "ip-nopr",
+            RepoProviderConfigId = "rp-nopr",
+        };
+        runService.AddRun(run);
+
+        registry.TransitionStatus(new AgentId(agentId), AgentStatus.Busy);
+        var entry = registry.GetByAgentId(agentId)!;
+        lock (entry.SyncRoot)
+            entry.ActiveJobId = runId;
+
+        var agents = await _client.GetFromJsonAsync<List<AgentEntryDto>>("/api/agents", PipelineJsonOptions.Default);
+        agents.Should().NotBeNull();
+
+        var dto = agents!.Single(a => a.AgentId.Value == agentId);
+        dto.ActiveIssueIdentifier.Should().Be("owner/repo#99");
+        dto.ActiveRunId.Should().Be(runId);
+        dto.ActivePullRequestUrl.Should().BeNull("no PR has been created for this run yet");
     }
 
     // ── Auth: operator vs agent key ───────────────────────────────────────────────

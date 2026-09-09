@@ -22,13 +22,11 @@ public sealed record QgcExecutionResult
 
     // Key(4) is retired (was Coverage). Do not reuse to avoid deserialization issues with existing data.
 
-    [Key(5)]
-    public GateResult? SecurityScan { get; init; }
+    // Key(5) is retired (was SecurityScan). Do not reuse to avoid deserialization issues with existing data.
 
     /// <summary>
     /// Computed: all individual gates passed (or were not applicable).
     /// </summary>
     [IgnoreMember]
-    public bool Passed => (Compilation?.Passed ?? true) && (Tests?.Passed ?? true)
-        && (SecurityScan?.Passed ?? true);
+    public bool Passed => (Compilation?.Passed ?? true) && (Tests?.Passed ?? true);
 }

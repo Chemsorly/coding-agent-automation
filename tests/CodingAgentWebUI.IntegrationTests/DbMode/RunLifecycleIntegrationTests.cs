@@ -32,7 +32,6 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
     private readonly WorkItemTransitionService _transitionService;
     private readonly OrchestratorRunService _runService;
     private readonly AgentRegistryService _registry;
-    private readonly AgentReservationService _dispatcher;
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService;
     private readonly Mock<ILabelService> _mockLabelService;
     private readonly Mock<ILogger> _mockLogger;
@@ -55,7 +54,6 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
         _mockLogger = new Mock<ILogger>();
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _registry = new AgentRegistryService(_mockLogger.Object);
-        _dispatcher = new AgentReservationService(_registry, _mockLogger.Object);
         _mockHistoryService = new Mock<IPipelineRunHistoryService>();
         _mockLabelService = new Mock<ILabelService>();
 
@@ -69,7 +67,6 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 _mockHistoryService.Object,
                 _registry,
                 _mockLabelService.Object,
-                _dispatcher,
                 _mockLogger.Object,
                 WorkItemFallbackTransition: fallbackTransitionService));
     }
@@ -348,7 +345,6 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 _mockHistoryService.Object,
                 _registry,
                 _mockLabelService.Object,
-                _dispatcher,
                 _mockLogger.Object,
                 WorkItemFallbackTransition: new WorkItemFallbackTransitionService(
                     _transitionService,
@@ -417,7 +413,6 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 _mockHistoryService.Object,
                 _registry,
                 _mockLabelService.Object,
-                _dispatcher,
                 _mockLogger.Object,
                 WorkItemFallbackTransition: new WorkItemFallbackTransitionService(
                     _transitionService,
@@ -490,7 +485,6 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 _mockHistoryService.Object,
                 _registry,
                 _mockLabelService.Object,
-                _dispatcher,
                 _mockLogger.Object,
                 WorkItemFallbackTransition: new WorkItemFallbackTransitionService(
                     _transitionService,
@@ -566,7 +560,6 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 _mockHistoryService.Object,
                 _registry,
                 _mockLabelService.Object,
-                _dispatcher,
                 _mockLogger.Object,
                 WorkItemFallbackTransition: new WorkItemFallbackTransitionService(
                     _transitionService,
@@ -1013,7 +1006,6 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 _mockHistoryService.Object,
                 _registry,
                 _mockLabelService.Object,
-                _dispatcher,
                 _mockLogger.Object,
                 JobCleanup: new KubernetesJobCleanup(
                     MockApiClientForJobCleanup(runId, k8sJobName),

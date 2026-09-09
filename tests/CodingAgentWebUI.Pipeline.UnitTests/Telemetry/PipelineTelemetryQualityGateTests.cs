@@ -38,10 +38,13 @@ public class PipelineTelemetryQualityGateTests : IDisposable
     {
         using var collector = new MetricCollector<long>(_factory, PipelineTelemetry.SourceName, "quality_gate.retries");
 
-        _qualityGateRetries.Add(1, PipelineTelemetry.RunTypeTag(PipelineRunType.Implementation));
+        _qualityGateRetries.Add(1, PipelineTelemetry.BuildTags(PipelineRunType.Implementation, "proj-1", "MyProject"));
 
         collector.GetMeasurementSnapshot().Should().ContainSingle(m =>
-            m.Value == 1 && m.Tags.Contains(new KeyValuePair<string, object?>("run_type", "implementation")));
+            m.Value == 1 &&
+            m.Tags.Contains(new KeyValuePair<string, object?>("run_type", "implementation")) &&
+            m.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "proj-1")) &&
+            m.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_name", "MyProject")));
     }
 
     [Theory]
@@ -98,5 +101,33 @@ public class PipelineTelemetryQualityGateTests : IDisposable
         PipelineTelemetry.QualityGateNames.Tests.Should().Be("tests");
         PipelineTelemetry.QualityGateNames.Security.Should().Be("security");
         PipelineTelemetry.QualityGateNames.ExternalCi.Should().Be("external_ci");
+    }
+
+    [Theory]
+    [InlineData("Quality gate retry agent (attempt 1)", "qgc_retry_agent")]
+    [InlineData("Pre-PR cleanup agent", "qgc_retry_agent")]
+    [InlineData("Final QG retry agent", "qgc_retry_agent")]
+    [InlineData("Post-PR CI retry agent", "qgc_retry_agent")]
+    [InlineData("Code generation agent", "codegen")]
+    [InlineData("Code gen (attempt 2)", "codegen")]
+    [InlineData("Analysis agent session", "analysis")]
+    [InlineData("Analysis phase", "analysis")]
+    [InlineData("Code review agent", "code_review")]
+    [InlineData("Follow-up for reviewer #1", "code_review")]
+    [InlineData("Review summary agent", "code_review")]
+    [InlineData("Acceptance criteria validation", "code_review")]
+    [InlineData("Decomposition agent", "decomposition")]
+    [InlineData("Some unrecognized description", "unknown")]
+    public void NormalizeStallPhase_MapsDescriptionToExpectedPhase(string description, string expectedPhase)
+    {
+        PipelineTelemetry.NormalizeStallPhase(description).Should().Be(expectedPhase,
+            $"description '{description}' should map to phase '{expectedPhase}'");
+    }
+
+    [Fact]
+    public void NormalizeStallPhase_ThrowsOnEmptyString()
+    {
+        var act = () => PipelineTelemetry.NormalizeStallPhase(string.Empty);
+        act.Should().Throw<ArgumentException>("empty string is not a valid phase description");
     }
 }

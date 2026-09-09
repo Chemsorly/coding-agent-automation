@@ -42,7 +42,23 @@ public static class AgentLabels
     public static readonly IReadOnlyList<string> All = Definitions.Select(d => d.Name).ToList().AsReadOnly();
 
     /// <summary>Labels representing terminal pipeline states — should not be overwritten by recovery services.</summary>
-    public static readonly IReadOnlySet<string> TerminalLabels = new HashSet<string>
+    public static readonly IReadOnlySet<string> TerminalLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        Done, Error, NeedsRefinement, WontDo, Cancelled
+    };
+
+    /// <summary>
+    /// Labels that make an issue ineligible for dispatch.
+    /// When the <c>DispatchLoop</c> sees any of these labels on the upstream issue it cancels the
+    /// pending <c>WorkItem</c> rather than dispatching it.
+    /// <para>
+    /// Includes <c>agent:done</c> — a completed issue must not be re-dispatched automatically.
+    /// <c>agent:in-progress</c> is intentionally absent: a second WorkItem for an issue that is
+    /// already running is blocked by the partial unique index on <c>WorkItems</c>, not this set.
+    /// <c>agent:next</c> is also absent: it is the normal pre-dispatch signal and must not block dispatch.
+    /// </para>
+    /// </summary>
+    public static readonly IReadOnlySet<string> DispatchIneligibleLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         Done, Error, NeedsRefinement, WontDo, Cancelled
     };
