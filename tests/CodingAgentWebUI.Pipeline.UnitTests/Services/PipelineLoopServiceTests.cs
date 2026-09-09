@@ -395,7 +395,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
-                ClosedLoopMaxPagesToFetch = 3
+                ClosedLoopMaxPagesToFetch = 3,
+                ClosedLoopAutoStart = true
             });
 
         var svc = CreateService();
@@ -511,7 +512,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
                 ClosedLoopMaxConsecutivePollFailures = 5,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(2)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(2),
+                ClosedLoopAutoStart = true
             });
 
         var svc = CreateService();
@@ -552,7 +554,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                ClosedLoopPollInterval = TimeSpan.FromSeconds(60)
+                ClosedLoopPollInterval = TimeSpan.FromSeconds(60),
+                ClosedLoopAutoStart = true
             });
 
         var svc = CreateService();
@@ -596,7 +599,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
-                ClosedLoopMaxRunsPerCycle = 1
+                ClosedLoopMaxRunsPerCycle = 1,
+                ClosedLoopAutoStart = true
             });
 
         var attemptedIssues = new List<string>();
@@ -866,7 +870,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
                 ClosedLoopMaxConsecutivePollFailures = 10, // High threshold so circuit breaker doesn't trip
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(10)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(10),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -910,7 +915,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
                 ClosedLoopMaxConsecutivePollFailures = 20,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(300)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(300),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -962,7 +968,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
                 ClosedLoopMaxConsecutivePollFailures = 10,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(5)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(5),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -1000,7 +1007,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
                 ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -1054,7 +1062,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
                 ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -1106,7 +1115,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
                 ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -1160,6 +1170,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 ClosedLoopMaxConsecutivePollFailures = 3,
                 ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(100),
                 ClosedLoopCircuitBreakerCooldown = TimeSpan.FromSeconds(1),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -1220,7 +1231,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
                 ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(5)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(5),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -1270,7 +1282,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
                 ClosedLoopMaxConsecutivePollFailures = 5,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(2)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(2),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -1309,7 +1322,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
                 ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
@@ -1349,7 +1363,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
                 ClosedLoopMaxConsecutivePollFailures = 2,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200)
+                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200),
+                ClosedLoopAutoStart = true,
             });
 
         var svc = CreateService();
