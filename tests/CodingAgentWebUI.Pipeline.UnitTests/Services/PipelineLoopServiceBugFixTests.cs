@@ -971,22 +971,21 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
     [Fact]
     public async Task WhenClosedLoopAutoStartBecomesFalse_LoopExitsWithinOneCycle()
     {
-        // Arrange: first call (StartLoopAsync validation) returns true; subsequent calls return
-        // ClosedLoopAutoStart=true so the loop runs normally, then finally returns false —
-        // simulating another pod writing ClosedLoopAutoStart=false to the DB.
-        // Use short ClosedLoopPollInterval so cycles complete in test time.
-        // TODO: The sequence has exactly 3 entries. If timing causes more than one "normal" cycle
-        // before the false-stop entry is consumed, Moq will throw MockException ("sequence contains
-        // no more elements") once the sequence is exhausted — producing a noisy failure unrelated to
-        // the actual fix. Consider adding a 4th DbStopTestConfig() fallback entry (or switching the
-        // final entry to a ReturnsAsync callback) to make the sequence robust against timing variation.
-        // Additionally, the first entry is consumed by the StartLoopAsync internal LoadPipelineConfigAsync
-        // call. If StartLoopAsync ever stops making that call, the sequence shifts by one and the false
-        // entry lands on cycle-1 instead of cycle-2, making the "cycle 1 runs normally" comment misleading.
-        _mockStore.SetupSequence(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DbStopTestConfig())          // StartLoopAsync validation
-            .ReturnsAsync(DbStopTestConfig())          // cycle 1 — loop runs normally
-            .ReturnsAsync(DbStopTestConfig(false));    // cycle 2 — DB stop detected
+        // Arrange: a counter-based setup that returns ClosedLoopAutoStart=true for the first
+        // call (StartLoopAsync validation) plus at least one normal cycle, then returns false
+        // for every subsequent call — simulating another pod writing ClosedLoopAutoStart=false.
+        //
+        // This is deliberately timing-insensitive: no matter how many normal cycles the loop
+        // completes before the false entry is consumed, the mock never throws MockException.
+        // The first entry is consumed by StartLoopAsync's LoadPipelineConfigAsync call; all
+        // subsequent calls from SnapshotCycleConfigAsync return true until the counter flips,
+        // then return false unconditionally.
+        var loadCallCount = 0;
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+                Interlocked.Increment(ref loadCallCount) <= 2
+                    ? DbStopTestConfig()         // call 1 (StartLoopAsync) + call 2 (≥1 normal cycle)
+                    : DbStopTestConfig(false));  // all subsequent calls → DB stop
 
         var svc = CreateService(leaderGate: null);
         using var hostCts = new CancellationTokenSource();
@@ -1028,16 +1027,15 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
     [Fact]
     public async Task WhenClosedLoopAutoStartBecomesFalse_IsLoopActiveBecomesFalse_AndOnChangeFires()
     {
-        // Arrange: two cycles with ClosedLoopAutoStart=true, then one with false.
-        // TODO: Same SetupSequence fragility as WhenClosedLoopAutoStartBecomesFalse_LoopExitsWithinOneCycle:
-        // only 3 entries — sequence exhaustion under timing variation will throw MockException rather
-        // than failing the assertion cleanly. Consider adding a 4th DbStopTestConfig() fallback entry.
-        // The first entry is also tied to the StartLoopAsync internal LoadPipelineConfigAsync call; if
-        // that call is removed, the sequence shifts and the false-stop lands one cycle earlier than expected.
-        _mockStore.SetupSequence(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DbStopTestConfig())
-            .ReturnsAsync(DbStopTestConfig())
-            .ReturnsAsync(DbStopTestConfig(false));
+        // Arrange: same counter-based approach as WhenClosedLoopAutoStartBecomesFalse_LoopExitsWithinOneCycle.
+        // Returns ClosedLoopAutoStart=true for the first two calls (StartLoopAsync + one normal cycle),
+        // then false for all subsequent calls — timing-insensitive, never throws MockException.
+        var loadCallCount2 = 0;
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+                Interlocked.Increment(ref loadCallCount2) <= 2
+                    ? DbStopTestConfig()
+                    : DbStopTestConfig(false));
 
         var onChangeCount = 0;
         var svc = CreateService(leaderGate: null);
