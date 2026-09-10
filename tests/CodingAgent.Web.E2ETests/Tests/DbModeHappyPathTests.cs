@@ -123,11 +123,10 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
     [Fact]
     public async Task DbMode_NoAgentAvailable_WorkItemDispatchedImmediately_AgentPicksUpOnConnect()
     {
-        // With the synchronous dispatch path (issue #2322), no WorkItem is ever written as
-        // Pending on the live dispatch path. The endpoint creates the K8s Job and writes the
-        // WorkItem as Dispatched immediately, regardless of whether a FakeAgentClient is
-        // already connected. FakeJobController picks up Dispatched items and calls
-        // StartAssignedWorkItemAsync once a matching agent registers.
+        // With the Pending enqueue path (fix/restore-pending-queue), WorkItems are written as
+        // Pending on the live dispatch path. FakeJobController polls for Pending items and
+        // claims them to Dispatched, then calls StartAssignedWorkItemAsync once a matching
+        // agent registers. This test verifies the full Pending → Dispatched → agent-assignment flow.
 
         // Arrange: seed data but do NOT connect agent yet
         await SeedTestDataAsync("44", "Pending issue");
@@ -137,9 +136,9 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
         Assert.True(result.Success, $"Distribution failed: {result.ErrorMessage}");
         var workItemId = Guid.Parse(result.WorkItemId!);
 
-        // Assert: WorkItem is Dispatched immediately (synchronous dispatch — no Pending state)
+        // Assert: WorkItem transitions to Dispatched once FakeJobController claims it from Pending
         var dispatched = await WaitForWorkItemStatusAsync(
-            workItemId, WorkItemStatus.Dispatched, TimeSpan.FromSeconds(10));
+            workItemId, WorkItemStatus.Dispatched, TimeSpan.FromSeconds(15));
         Assert.Equal(WorkItemStatus.Dispatched, dispatched.Status);
         Assert.NotNull(dispatched.DispatchedAt);
 

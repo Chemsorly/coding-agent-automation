@@ -403,14 +403,14 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
             TimeSpan.FromSeconds(5));
 
         // Act: dispatch second job — synchronous dispatch path (issue #2322):
-        // item is created as Dispatched immediately regardless of agent status
+        // item is created as Pending (visible in UI queue)
         var r2 = await DispatchIssueAsync("3041");
         Assert.True(r2.Success);
-        Assert.False(r2.Queued, "Synchronous dispatch: item is Dispatched immediately, never Pending");
+        Assert.True(r2.Queued, "Pending enqueue path: item enters queue, FakeJobController dispatches when agent is idle");
 
-        // Verify WorkItem is Dispatched (not Pending)
+        // Verify WorkItem starts as Pending, FakeJobController will transition to Dispatched
         var workItemId2 = Guid.Parse(r2.WorkItemId!);
-        var dispatched = await WaitForWorkItemStatusAsync(workItemId2, WorkItemStatus.Dispatched, TimeSpan.FromSeconds(5));
+        var dispatched = await WaitForWorkItemStatusAsync(workItemId2, WorkItemStatus.Dispatched, TimeSpan.FromSeconds(15));
         Assert.Equal(WorkItemStatus.Dispatched, dispatched.Status);
 
         // Complete first job → agent becomes Idle → FakeJobController assigns second item

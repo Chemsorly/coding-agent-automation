@@ -86,11 +86,11 @@ public sealed class PrReviewPipelineTests : E2ETestBase
         await codingPage.SelectPrAsync("99");
         await codingPage.ClickDispatchPrReviewAsync();
 
-        // Assert: success message. Synchronous dispatch path (issue #2322): outcome.Queued is
-        // always false, so DrawerDispatchHelper selects dispatchedMessage: "PR #N dispatched for review."
+        // Assert: success message. Pending enqueue path: outcome.Queued is
+        // true, so DrawerDispatchHelper selects queuedMessage.
         await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
         var successText = await Page.TextContentAsync(".settings-status.status-success");
-        Assert.Contains("PR #99 dispatched for review", successText);
+        Assert.Contains("Queued PR #99", successText);
 
         // Wait for agent to receive job
         var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
@@ -266,15 +266,14 @@ public sealed class PrReviewPipelineTests : E2ETestBase
         await codingPage.SelectPrAsync("55");
         await codingPage.ClickDispatchPrReviewAsync();
 
-        // Assert: the review is dispatched synchronously (issue #2322: no Pending queue).
-        // outcome.Queued is always false, so DrawerDispatchHelper selects dispatchedMessage.
+        // Assert: the review is enqueued (Pending queue path).
+        // outcome.Queued is true, so DrawerDispatchHelper selects queuedMessage.
         await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
         var statusText = await Page.TextContentAsync(".settings-status.status-success");
         Assert.NotNull(statusText);
-        Assert.Contains("PR #55 dispatched for review", statusText);
+        Assert.Contains("Queued PR #55", statusText);
 
-        // WorkItem is created as Dispatched immediately — not Pending.
-        // Verify it exists in active items (Dispatched/Running) rather than pending.
+        // WorkItem is created as Pending — FakeJobController will claim it to Dispatched.
         var active = await Fixture.WorkItems.GetActiveAsync(olderThanSeconds: -3600, ct: CancellationToken.None);
         Assert.Contains(active, w => w.IssueIdentifier == "55");
     }
