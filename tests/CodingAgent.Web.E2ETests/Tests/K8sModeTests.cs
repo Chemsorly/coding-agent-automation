@@ -207,8 +207,8 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
             Enabled = true
         }, CancellationToken.None);
 
-        // Wait for FakeJobController to claim to Dispatched so assignment endpoint works
-        await WaitForWorkItemStatusAsync(workItemId, WorkItemStatus.Dispatched, TimeSpan.FromSeconds(10));
+        // The assignment endpoint works on Pending items too — no need to wait for Dispatched.
+        // The endpoint enriches with config regardless of status.
 
         // Act: call the assignment endpoint (same as WorkItemHttpClient.GetAssignmentAsync)
         using var httpClient = Fixture.CreateApiClient();
@@ -272,12 +272,11 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     [Fact]
     public async Task K8sMode_AgentPostsRunningStatus_TransitionAccepted()
     {
-        // Arrange: distribute → item starts as Pending, FakeJobController claims it to Dispatched
-        var result = await DistributeDirectlyAsync("k8s-status-running-1000");
-        Assert.True(result.Success);
-        var workItemId = Guid.Parse(result.WorkItemId!);
-        // Wait for FakeJobController to transition Pending → Dispatched
-        await WaitForWorkItemStatusAsync(workItemId, WorkItemStatus.Dispatched, TimeSpan.FromSeconds(10));
+        // Arrange: insert WorkItem directly as Dispatched (testing HTTP status endpoint)
+        var workItemId = await InsertPendingWorkItemAsync("k8s-status-running-1000", "kiro,dotnet");
+        var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
+        await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
+            w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
 
         // Act: agent POSTs Running status (as WorkItemAgentService does)
         using var httpClient = Fixture.CreateApiClient();
@@ -332,14 +331,11 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     [Fact]
     public async Task K8sMode_AgentPostsFailedStatus_TransitionAccepted()
     {
-        // Arrange: distribute → item starts as Pending, wait for FakeJobController to claim it
-        var result = await DistributeDirectlyAsync("k8s-status-failed-1002");
-        Assert.True(result.Success);
-        var workItemId = Guid.Parse(result.WorkItemId!);
-        // Wait for Pending → Dispatched
-        await WaitForWorkItemStatusAsync(workItemId, WorkItemStatus.Dispatched, TimeSpan.FromSeconds(10));
-
+        // Arrange: insert WorkItem directly as Dispatched → Running (testing HTTP endpoint)
+        var workItemId = await InsertPendingWorkItemAsync("k8s-status-failed-1002", "kiro,dotnet");
         var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
+        await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
+            w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, ct: CancellationToken.None);
 
         // Act: agent POSTs Failed status (as WorkItemAgentService does on pipeline failure)
@@ -478,15 +474,12 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     [Fact]
     public async Task K8sMode_AgentPostsSucceededStatus_WithResultPayload_Accepted()
     {
-        // Arrange: full lifecycle → wait for Pending → Dispatched → transition to Running
-        var result = await DistributeDirectlyAsync("k8s-status-succeeded-1300");
-        Assert.True(result.Success);
-        var workItemId = Guid.Parse(result.WorkItemId!);
-
-        // Wait for FakeJobController to claim it to Dispatched first
-        await WaitForWorkItemStatusAsync(workItemId, WorkItemStatus.Dispatched, TimeSpan.FromSeconds(10));
-
+        // Arrange: insert WorkItem directly as Dispatched — this test covers the HTTP
+        // status endpoint, not the dispatch pipeline.
+        var workItemId = await InsertPendingWorkItemAsync("k8s-status-succeeded-1300", "kiro,dotnet");
         var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
+        await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
+            w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, ct: CancellationToken.None);
 
         // Act: agent POSTs Succeeded with a result payload (completion data)
@@ -525,14 +518,12 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     [Fact]
     public async Task K8sMode_AgentPostsDuplicateTerminalStatus_IsIdempotent()
     {
-        // Arrange: WorkItem already in terminal state (Failed)
-        var result = await DistributeDirectlyAsync("k8s-status-duplicate-1301");
-        Assert.True(result.Success);
-        var workItemId = Guid.Parse(result.WorkItemId!);
-
+        // Arrange: insert WorkItem directly as Dispatched → transition to Failed
+        // (testing HTTP status idempotency, not the dispatch pipeline)
+        var workItemId = await InsertPendingWorkItemAsync("k8s-status-duplicate-1301", "kiro,dotnet");
         var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
-        // Wait for FakeJobController to claim it to Dispatched before transitioning
-        await WaitForWorkItemStatusAsync(workItemId, WorkItemStatus.Dispatched, TimeSpan.FromSeconds(10));
+        await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
+            w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, ct: CancellationToken.None);
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Failed,
             w => { w.CompletedAt = DateTimeOffset.UtcNow; w.ErrorMessage = "First failure"; },
@@ -1054,17 +1045,23 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         Assert.True(distResult.Queued, "Pending enqueue path: Queued should be true");
         var workItemId = Guid.Parse(distResult.WorkItemId!);
 
-        // Verify: DB has Pending WorkItem initially (K8s Job not yet created)
-        // FakeJobController will claim it and transition to Dispatched.
+        // Verify: DB has Pending or Dispatched WorkItem (FakeJobController may have already claimed)
         await using (var db = Fixture.DbContextFactory.CreateDbContext())
         {
             var wi = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == workItemId);
             Assert.NotNull(wi);
-            // Item is Pending until WorkItemDispatchService (FakeJobController) claims it
             Assert.True(wi.Status == WorkItemStatus.Pending || wi.Status == WorkItemStatus.Dispatched,
                 $"Expected Pending or Dispatched immediately after enqueue, got {wi.Status}");
             Assert.NotNull(wi.Payload);
         }
+
+        // Connect an agent so FakeJobController can claim the Pending item to Dispatched.
+        // The agent must be registered before GetAssignment and before POSTing Running status.
+        await using var lifecycleAgent = new FakeAgentClient("caa-lifecycle-pod", "kiro", "dotnet");
+        await lifecycleAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+
+        // Wait for FakeJobController to transition Pending → Dispatched
+        await WaitForWorkItemStatusAsync(workItemId, WorkItemStatus.Dispatched, TimeSpan.FromSeconds(15));
 
         // ── Step 2: Agent fetches assignment (HTTP — as WorkItemHttpClient does) ──
         using var httpClient = Fixture.CreateApiClient();
@@ -1095,8 +1092,8 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         }
 
         // ── Step 4: Agent connects to SignalR and registers with ActiveJob ──
-        await using var agent = new FakeAgentClient("caa-lifecycle-pod", "kiro", "dotnet");
-        await agent.ConnectWithActiveJobAsync(
+        // lifecycleAgent is already connected (from before dispatch); re-register with job
+        await lifecycleAgent.ConnectWithActiveJobAsync(
             AgentHubUrl,
             E2EWebApplicationFactory.TestApiKey,
             workItemId.ToString(),
@@ -1111,7 +1108,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         Assert.Equal(workItemId.ToString(), agentEntry.ActiveJobId);
 
         // ── Step 5: Agent refreshes token (SignalR — the operation that broke in production) ──
-        var tokenResponse = await agent.RequestTokenRefreshAsync(workItemId.ToString(), ProviderKind.Repository);
+        var tokenResponse = await lifecycleAgent.RequestTokenRefreshAsync(workItemId.ToString(), ProviderKind.Repository);
         Assert.NotNull(tokenResponse);
         Assert.Equal("fake-lifecycle-token-e2e", tokenResponse.Token);
         Assert.True(tokenResponse.ExpiresAt > DateTimeOffset.UtcNow, "Token expiry should be in the future");
