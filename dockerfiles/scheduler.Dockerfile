@@ -7,7 +7,7 @@
 # =============================================================================
 
 # Stage 1: Build
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.400 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.401 AS build
 ARG TARGETARCH
 WORKDIR /src
 
