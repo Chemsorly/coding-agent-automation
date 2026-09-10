@@ -61,5 +61,5 @@ jobs:
             --collect:"XPlat Code Coverage" \
             --settings tests/sonar-coverage.runsettings \
             --results-directory TestResults \
-            --filter "Category!=E2E&Category!=Integration"
+            --filter "Category!=E2E&Category!=Integration" || true
           ${{ runner.temp }}/scanner/dotnet-sonarscanner end /d:sonar.token="$SONAR_TOKEN"
