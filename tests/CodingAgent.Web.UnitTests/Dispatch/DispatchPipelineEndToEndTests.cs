@@ -160,12 +160,22 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
     private static KubernetesWorkDistributor CreateDistributor()
     {
         var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
+        // Implementation/Review/Decomposition → CreateAsync (Pending enqueue path)
         mockApiClient
             .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((JobDistributionRequest req, CancellationToken _) =>
             {
                 // Simulate the API honoring request.RunId
                 // This is required for the hub routing invariant: WorkItem.Id must match PipelineRun.RunId
+                if (!string.IsNullOrEmpty(req.RunId) && Guid.TryParse(req.RunId, out var runId))
+                    return runId;
+                return Guid.NewGuid();
+            });
+        // Consolidation → DispatchAsync (synchronous path)
+        mockApiClient
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((JobDistributionRequest req, CancellationToken _) =>
+            {
                 if (!string.IsNullOrEmpty(req.RunId) && Guid.TryParse(req.RunId, out var runId))
                     return runId;
                 return Guid.NewGuid();

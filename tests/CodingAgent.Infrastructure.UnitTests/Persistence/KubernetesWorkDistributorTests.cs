@@ -29,6 +29,7 @@ public class KubernetesWorkDistributorTests
     [Fact]
     public async Task DistributeAsync_CallsApiClientCreateAsync()
     {
+        // Non-Consolidation task types call CreateAsync (Pending enqueue path).
         var request = CreateRequest("owner/repo#1", "provider-1");
         _mockApiClient
             .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
@@ -55,7 +56,6 @@ public class KubernetesWorkDistributorTests
         var result = await _distributor.DistributeAsync(request, CancellationToken.None);
 
         result.Success.Should().BeTrue();
-        // Pending enqueue path: Queued=true (item is in visible UI queue, not yet Dispatched)
         result.Queued.Should().BeTrue("enqueue path returns Queued=true");
         result.WorkItemId.Should().Be(expectedId.ToString());
         result.ErrorMessage.Should().BeNull();
@@ -73,6 +73,25 @@ public class KubernetesWorkDistributorTests
 
         result.Success.Should().BeFalse();
         result.ErrorMessage.Should().Contain("Pipeline API unreachable");
+    }
+
+    [Fact]
+    public async Task DistributeAsync_ConsolidationRequest_CallsDispatchAsync()
+    {
+        // Consolidation uses the synchronous DispatchAsync path.
+        var expectedId = Guid.NewGuid();
+        var request = CreateRequest("consolidation-run-1", "consolidation",
+            taskType: WorkItemTaskType.Consolidation);
+        _mockApiClient
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expectedId);
+
+        var result = await _distributor.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        result.Queued.Should().BeFalse("Consolidation dispatched synchronously");
+        _mockApiClient.Verify(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockApiClient.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── CancelJobAsync ───────────────────────────────────────────────────
@@ -210,13 +229,16 @@ public class KubernetesWorkDistributorTests
 
     // ── Helpers ───────────────────────────────────────────────────────────
 
-    private static JobDistributionRequest CreateRequest(string issueId, string providerId) => new()
+    private static JobDistributionRequest CreateRequest(
+        string issueId,
+        string providerId,
+        WorkItemTaskType taskType = WorkItemTaskType.Implementation) => new()
     {
         IssueIdentifier = issueId,
         IssueProviderConfigId = providerId,
         RepoProviderConfigId = "repo-provider-1",
         InitiatedBy = "pipeline-loop",
-        TaskType = WorkItemTaskType.Implementation,
+        TaskType = taskType,
         AgentSelector = "kiro,linux",
         TimeoutSeconds = 1800,
         ProjectId = new Guid("11110000-0000-0000-0000-000000000001"),

@@ -23,13 +23,14 @@ public sealed class KubernetesWorkDistributorTests
         _sut = new KubernetesWorkDistributor(_client.Object, NullLogger<KubernetesWorkDistributor>.Instance);
     }
 
-    private static JobDistributionRequest MakeRequest() => new()
+    private static JobDistributionRequest MakeRequest(
+        WorkItemTaskType taskType = WorkItemTaskType.Implementation) => new()
     {
         IssueIdentifier = new IssueIdentifier("GH-1"),
         IssueProviderConfigId = "github",
         RepoProviderConfigId = "github-repo",
         InitiatedBy = "test",
-        TaskType = WorkItemTaskType.Implementation,
+        TaskType = taskType,
         AgentSelector = "kiro",
         TimeoutSeconds = 3600
     };
@@ -64,8 +65,7 @@ public sealed class KubernetesWorkDistributorTests
     [Fact]
     public async Task DistributeAsync_OnSuccess_CallsCreateAsync_NotDispatchAsync()
     {
-        // DistributeAsync must call CreateAsync (Pending path) so the item is visible in the UI queue.
-        // Calling DispatchAsync (Dispatched path) would skip the Pending state entirely.
+        // Non-Consolidation task types must call CreateAsync (Pending path).
         var workItemId = Guid.NewGuid();
         _client.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(workItemId);
@@ -92,37 +92,48 @@ public sealed class KubernetesWorkDistributorTests
     }
 
     [Fact]
-    public async Task DistributeAsync_When409Conflict_ReturnsFailureResult()
+    public async Task DistributeAsync_When409Conflict_ReturnsSuccessQueued_IdempotentAlreadyQueued()
     {
-        // 409 from CreateAsync means a live WorkItem already exists for this issue
-        // (the partial unique index on (IssueIdentifier, IssueProviderConfigId) rejects it).
-        // This is different from the old synchronous-dispatch path where 409 meant
-        // "concurrency limit reached". Capacity enforcement now lives in WorkItemDispatchService,
-        // which respects maxConcurrent when picking up Pending items; CreateAsync itself does
-        // not enforce concurrency.
+        // 409 from CreateAsync means a live WorkItem already exists for this issue.
+        // Treated as idempotent success (Queued=true) to avoid a label-revert loop.
         _client.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("conflict", null, System.Net.HttpStatusCode.Conflict));
 
         var result = await _sut.DistributeAsync(MakeRequest(), CancellationToken.None);
 
-        result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().NotBeNullOrEmpty();
+        result.Success.Should().BeTrue("409 is treated as already-queued, not a failure");
+        result.Queued.Should().BeTrue();
+        result.ErrorMessage.Should().BeNull();
     }
 
     [Fact]
     public async Task DistributeAsync_When503ServiceUnavailable_ReturnsFailureResult()
     {
         // 503 from CreateAsync indicates a transient API error (the server is unavailable).
-        // The old synchronous-dispatch path used 503 to signal "no PVC available"; that
-        // capacity check is now inside WorkItemDispatchService. CreateAsync returns 503
-        // only for true infrastructure failures.
         _client.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("server error", null, System.Net.HttpStatusCode.ServiceUnavailable));
 
         var result = await _sut.DistributeAsync(MakeRequest(), CancellationToken.None);
 
         result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().NotBeNullOrEmpty();
+        result.ErrorMessage.Should().Contain("server error", "error message must propagate the underlying failure text");
+    }
+
+    [Fact]
+    public async Task DistributeAsync_Consolidation_CallsDispatchAsync_ReturnsQueuedFalse()
+    {
+        // Consolidation routes through the synchronous DispatchAsync path (Dispatched directly).
+        var workItemId = Guid.NewGuid();
+        var request = MakeRequest(taskType: WorkItemTaskType.Consolidation);
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workItemId);
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        result.Queued.Should().BeFalse("Consolidation uses synchronous dispatch, not Pending queue");
+        _client.Verify(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        _client.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

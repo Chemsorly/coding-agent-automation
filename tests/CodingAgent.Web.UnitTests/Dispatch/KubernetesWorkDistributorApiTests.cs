@@ -29,11 +29,12 @@ public class KubernetesWorkDistributorApiTests
             Mock.Of<ILogger<KubernetesWorkDistributor>>());
     }
 
-    // ── DistributeAsync calls CreateAsync (not DispatchAsync) ─────────────
+    // ── DistributeAsync routes by task type ─────────────────────────────
 
     [Fact]
-    public async Task DistributeAsync_CallsCreateAsync_NotDispatchAsync()
+    public async Task DistributeAsync_ImplementationRequest_CallsCreateAsync_NotDispatchAsync_InApiTests()
     {
+        // Non-Consolidation requests must use CreateAsync (Pending enqueue path).
         var workItemId = Guid.NewGuid();
         var request = CreateMinimalRequest();
 
@@ -59,7 +60,7 @@ public class KubernetesWorkDistributorApiTests
     }
 
     [Fact]
-    public async Task DistributeAsync_ReturnsSuccessResult_WithQueued_True()
+    public async Task DistributeAsync_ImplementationRequest_ReturnsSuccessResult_WithQueued_True()
     {
         var workItemId = Guid.NewGuid();
         var request = CreateMinimalRequest();
@@ -92,8 +93,12 @@ public class KubernetesWorkDistributorApiTests
     }
 
     [Fact]
-    public async Task DistributeAsync_When409Conflict_ReturnsFailureResult()
+    public async Task DistributeAsync_When409Conflict_ReturnsSuccessQueued_IdempotentAlreadyQueued()
     {
+        // 409 from CreateAsync means a live WorkItem already exists for this issue.
+        // This is treated as idempotent success (Queued=true) to avoid a label-revert
+        // loop: returning failure would cause DistributeAndFinalizeAsync to revert the
+        // label to agent:next, which re-queues the issue and causes another 409 next cycle.
         var request = CreateMinimalRequest();
 
         _mockClient
@@ -102,8 +107,9 @@ public class KubernetesWorkDistributorApiTests
 
         var result = await _sut.DistributeAsync(request, CancellationToken.None);
 
-        result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().NotBeNullOrEmpty();
+        result.Success.Should().BeTrue("409 is treated as already-queued, not a failure");
+        result.Queued.Should().BeTrue("existing live WorkItem means the item is effectively queued");
+        result.ErrorMessage.Should().BeNull();
     }
 
     [Fact]
@@ -118,7 +124,49 @@ public class KubernetesWorkDistributorApiTests
         var result = await _sut.DistributeAsync(request, CancellationToken.None);
 
         result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().NotBeNullOrEmpty();
+        result.ErrorMessage.Should().Contain("server error", "error message must propagate the underlying failure text");
+    }
+
+    [Fact]
+    public async Task DistributeAsync_ConsolidationRequest_CallsDispatchAsync_NotCreateAsync()
+    {
+        // Consolidation must use the synchronous DispatchAsync path so it is not orphaned
+        // in a Pending state with no poller to claim it.
+        var workItemId = Guid.NewGuid();
+        var request = CreateConsolidationRequest();
+
+        _mockClient
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workItemId);
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        result.Queued.Should().BeFalse("Consolidation is dispatched synchronously, not via Pending queue");
+        result.WorkItemId.Should().Be(workItemId.ToString());
+
+        _mockClient.Verify(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockClient.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DistributeAsync_ImplementationRequest_CallsCreateAsync_NotDispatchAsync()
+    {
+        // Implementation (and Review/Decomposition) must use the Pending enqueue path.
+        var workItemId = Guid.NewGuid();
+        var request = CreateMinimalRequest(); // TaskType = Implementation
+
+        _mockClient
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workItemId);
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        result.Queued.Should().BeTrue();
+
+        _mockClient.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockClient.Verify(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -138,6 +186,17 @@ public class KubernetesWorkDistributorApiTests
         InitiatedBy = "api-test",
         TaskType = WorkItemTaskType.Implementation,
         AgentSelector = "default",
+        TimeoutSeconds = 3600
+    };
+
+    private static JobDistributionRequest CreateConsolidationRequest() => new()
+    {
+        IssueIdentifier = "consolidation-run-42",
+        IssueProviderConfigId = "consolidation",
+        RepoProviderConfigId = "",
+        InitiatedBy = "consolidation",
+        TaskType = WorkItemTaskType.Consolidation,
+        AgentSelector = "dotnet,kiro",
         TimeoutSeconds = 3600
     };
 }

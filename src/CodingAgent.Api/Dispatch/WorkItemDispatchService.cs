@@ -28,6 +28,15 @@ namespace CodingAgent.Api.Dispatch;
 /// The label is already <c>agent:in-progress</c> when items reach this service — it was swapped
 /// by <c>DistributeAndFinalizeAsync</c> at enqueue time. No additional label swap is performed here.
 /// </para>
+/// <para>
+/// <b>Multi-replica note:</b> all API replicas run this service simultaneously (via
+/// <see cref="AlwaysLeaderService"/>). The CAS <c>TransitionIfAsync(Pending → Dispatched)</c>
+/// in <see cref="DispatchLifecycleService"/> prevents the same item from being double-claimed.
+/// However, <c>maxConcurrent</c> per selector is not atomically enforced across replicas:
+/// two replicas can both read a concurrency snapshot showing capacity available and each
+/// dispatch a different item for the same selector. This is an accepted limitation for
+/// single-replica deployments; see <see cref="AlwaysLeaderService"/> for details.
+/// </para>
 /// </summary>
 internal sealed class WorkItemDispatchService : LeaderElectedPollingService
 {
@@ -81,7 +90,6 @@ internal sealed class WorkItemDispatchService : LeaderElectedPollingService
             var rateLimiter = RateLimiter ?? throw new InvalidOperationException(
                 $"{ServiceName} requires a rate limiter but RateLimiter is null. " +
                 "Ensure the constructor passes rateLimitPerSecond to the base class.");
-
             await foreach (var candidate in _stateBuilder.GetEligibleCandidatesAsync(
                 state, LeaderElection, rateLimiter,
                 ServiceName,

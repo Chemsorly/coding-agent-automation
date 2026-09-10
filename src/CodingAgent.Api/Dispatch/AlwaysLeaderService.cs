@@ -5,10 +5,23 @@ namespace CodingAgent.Api.Dispatch;
 /// <summary>
 /// An <see cref="ILeaderElectionService"/> implementation that is always the leader.
 /// Used in the API host where all replicas are allowed to dispatch Pending WorkItems.
-/// Race safety is provided by the CAS <c>TransitionIfAsync(Pending → Dispatched)</c>
-/// in <see cref="DispatchLifecycleService"/> — only one replica will succeed claiming
-/// the same Pending item; the second gets a no-op and moves on.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <b>Race safety (single item):</b> the CAS <c>TransitionIfAsync(Pending → Dispatched)</c>
+/// in <see cref="DispatchLifecycleService"/> prevents the same Pending item from being claimed
+/// by two replicas simultaneously — only the first write succeeds; the second is a no-op.
+/// </para>
+/// <para>
+/// <b>Known limitation (concurrency cap across items):</b> with multiple API replicas,
+/// <c>maxConcurrent</c> per selector is not guaranteed. Each replica builds its concurrency
+/// snapshot independently from the DB. Two replicas can both read <c>current = N &lt; maxConcurrent</c>
+/// and each dispatch a different Pending item for the same selector, resulting in
+/// <c>N+2</c> active pods where <c>N+1</c> is the cap. This is an accepted trade-off for the
+/// single-process deployment target; a distributed advisory lock (e.g. Postgres advisory lock)
+/// would be required to close the gap in a true multi-replica setup.
+/// </para>
+/// </remarks>
 internal sealed class AlwaysLeaderService : ILeaderElectionService
 {
     /// <inheritdoc />

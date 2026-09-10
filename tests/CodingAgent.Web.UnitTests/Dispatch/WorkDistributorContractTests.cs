@@ -272,8 +272,17 @@ file static class ApiWorkItemClientFake
         var created = new List<(Guid Id, JobDistributionRequest Request)>();
         var mock = new Mock<IPipelineApiWorkItemClient>();
 
-        // CreateAsync — the Pending enqueue endpoint. Creates the item as Pending in the visible UI queue.
+        // CreateAsync — Pending enqueue endpoint (Implementation/Review/Decomposition).
         mock.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((JobDistributionRequest request, CancellationToken _) =>
+            {
+                var id = Guid.NewGuid();
+                created.Add((id, request));
+                return id;
+            });
+
+        // DispatchAsync — synchronous dispatch endpoint (Consolidation).
+        mock.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((JobDistributionRequest request, CancellationToken _) =>
             {
                 var id = Guid.NewGuid();
