@@ -7,7 +7,7 @@ The pipeline is a state machine that progresses through a fixed sequence of step
 3. **Epic decomposition pipeline** — Processes epics through a two-phase workflow producing implementation-ready sub-issues (see [Epic Decomposition Pipeline](#epic-decomposition-pipeline) below)
 4. **Consolidation pipeline** — Brain consolidation, refactoring detection, and harness suggestion runs. Dispatched on-demand via the Consolidation page, not by the label-based loop. See [Feedback & Consolidation](feedback-and-consolidation.md) for details.
 
-The first three workflows share the same dispatch mechanism, label lifecycle, and agent infrastructure. Consolidation jobs are dispatched by `ConsolidationDispatchService` (in the Job Controller, leader-elected via `caa-{release}-dispatch-lock`) and do not go through the label loop.
+The first three workflows share the same dispatch mechanism, label lifecycle, and agent infrastructure. Consolidation jobs are dispatched via `IConsolidationDispatchService` — in K8s mode the dispatch call originates from the Orchestrator (Web) and runs through the Pipeline API, using the same `caa-{release}-dispatch-lock` lease — and do not go through the label loop.
 
 ## Dispatch Mode
 
@@ -18,8 +18,8 @@ The pipeline dispatches work via Kubernetes Jobs. `DispatchOrchestrationService`
 **K8s Job naming** uses three formats depending on the dispatch path:
 
 - **Job Controller** (implementation, review, decomposition runs): `caa-agent-{11 hex chars}` — the first 21 characters of `"caa-agent-" + workItemId.ToString("N")` (e.g. `caa-agent-7f3a9b2e1c4`). The Job name also serves as the agent's `AGENT_ID`.
-- **Job Controller** (consolidation runs dispatched by `ConsolidationDispatchService`): `caa-cons-{12 hex chars}` — the first 21 characters of `"caa-cons-" + workItemId.ToString("N")` (e.g. `caa-cons-7f3a9b2e1c4d`). Distinguishes consolidation Jobs from regular agent Jobs.
-- **Pipeline API** (model-fetch runs dispatched by `DispatchLifecycleService`): `caa-models-{hex chars}` — e.g. `caa-models-7f3a9b2e1c4d`. Uses the `caa-models-` prefix to distinguish model-fetch Jobs from agent work-item Jobs.
+- **Job Controller** (consolidation runs): `caa-cons-{12 hex chars}` — the first 21 characters of `"caa-cons-" + workItemId.ToString("N")` (e.g. `caa-cons-7f3a9b2e1c4d`). This naming format is preserved for compatibility with in-flight Jobs; `ConsolidationDispatchService` was removed in #2323 and dispatch now flows through `DispatchLifecycleService`.
+- **Pipeline API** (model-fetch runs dispatched by `ModelFetchJobService`): `caa-models-{8 hex chars}` — e.g. `caa-models-7f3a9b2e`. Uses a freshly generated GUID (not a WorkItem ID). Uses the `caa-models-` prefix to distinguish model-fetch Jobs from agent work-item Jobs.
 
 ### Dispatch Priority
 
@@ -453,7 +453,7 @@ When multiple work types are queued in the same poll cycle, the loop uses a fixe
 | 2 | Decomposition | Phase 1 and Phase 2 epics |
 | 3 | Issues (Implementation) | Dispatched last |
 
-The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs are handled by `ConsolidationDispatchService` (in the Job Controller) and do not participate in this scheduler.
+The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs are handled separately via `IConsolidationDispatchService` and do not participate in this scheduler.
 
 ### Dispatch Budget Sharing
 
