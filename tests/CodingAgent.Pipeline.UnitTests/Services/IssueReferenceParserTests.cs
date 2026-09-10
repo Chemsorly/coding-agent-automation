@@ -9,6 +9,7 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// </summary>
 public class IssueReferenceParserTests
 {
+    private static readonly string[] ExpectedMultiVerbFormIssues = ["1", "2", "3", "4"];
     // ─── ParseClosingKeywords (GitLab-compatible) ───────────────────────────────
 
     [Fact]
@@ -197,7 +198,7 @@ public class IssueReferenceParserTests
     {
         var results = new HashSet<string>(StringComparer.Ordinal);
         IssueReferenceParser.ParseAllClosingKeywords("Fixes #1\nFixed #2\nClosed #3\nResolves #4", results);
-        results.Should().BeEquivalentTo(new[] { "1", "2", "3", "4" });
+        results.Should().BeEquivalentTo(ExpectedMultiVerbFormIssues);
     }
 
     [Fact]

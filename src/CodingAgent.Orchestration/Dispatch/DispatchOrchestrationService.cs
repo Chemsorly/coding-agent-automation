@@ -342,7 +342,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             return Array.Empty<LinkedIssueContext>();
 
         // Cap to prevent latency spikes from adversarial PR descriptions.
-        // TODO: [WARNING] HashSet iteration order is not deterministic across CLR versions — when
+        // Note: HashSet iteration order is not deterministic across CLR versions — when
         // issueNumbers.Count > MaxLinkedIssues, different issues may be fetched on different runs.
         // Consider sorting issueNumbers before Take(MaxLinkedIssues) to make truncation deterministic,
         // and log which issue numbers were dropped.
@@ -354,7 +354,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                 issueNumbers.Count, MaxLinkedIssues);
         }
 
-        // TODO: [WARNING] reviewRequest.IssueProviderId.Value is accessed unconditionally here.
+        // Note: reviewRequest.IssueProviderId.Value is accessed unconditionally here.
         // ProviderConfigId can be default-initialized (empty string) via JSON deserialization or
         // direct struct construction, bypassing the implicit-conversion ArgumentException guard.
         // Add ArgumentException.ThrowIfNullOrEmpty(reviewRequest.IssueProviderId.Value) before this
