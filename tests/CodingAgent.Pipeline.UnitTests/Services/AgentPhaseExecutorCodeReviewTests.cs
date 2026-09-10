@@ -3,6 +3,9 @@ using Moq;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Telemetry;
+using CodingAgent.Web.TestUtilities;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 
 namespace CodingAgent.Pipeline.UnitTests;
 
@@ -20,6 +23,7 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
     private readonly PipelineConfiguration _config;
     private readonly AgentPhaseExecutor _executor;
     private readonly string _workspacePath;
+    private readonly TestMeterFactory _meterFactory = new();
 
     public AgentPhaseExecutorCodeReviewTests()
     {
@@ -54,7 +58,7 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
             }
         };
 
-        _executor = new AgentPhaseExecutor(_mockLogger.Object);
+        _executor = new AgentPhaseExecutor(_mockLogger.Object, _meterFactory);
 
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus { IsExecuting = true, ProcessId = 1, IsProcessAlive = true, LastOutputTime = DateTime.UtcNow });
@@ -65,6 +69,7 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
 
     public void Dispose()
     {
+        _meterFactory.Dispose();
         try { Directory.Delete(_workspacePath, recursive: true); } catch { }
     }
 
@@ -155,6 +160,60 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
                 "To restore review, add or re-enable a reviewer configuration in Settings → Reviewers.",
                 It.IsAny<string>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task WhenFlattenedAgentsIsEmpty_LogsWarningAtWarnLevel()
+    {
+        var configs = new[]
+        {
+            new ReviewerConfiguration
+            {
+                DisplayName = "Empty",
+                Agents = Array.Empty<ReviewAgent>()
+            }
+        };
+
+        await _executor.ExecuteCodeReviewAsync(BuildContext(), CancellationToken.None,
+            resolvedReviewerConfigs: configs);
+
+        _mockLogger.Verify(
+            l => l.Warning(
+                "Pipeline {RunId} reviewer configurations matched but resolved to zero agents — review phase skipped. " +
+                "Ensure each enabled ReviewerConfiguration has at least one agent defined.",
+                It.Is<string>(id => id == _run.RunId)),
+            Times.Once);
+        _mockAgent.Verify(
+            a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task WhenFlattenedAgentsIsEmpty_IncrementsReviewSkippedCounter()
+    {
+        var configs = new[]
+        {
+            new ReviewerConfiguration
+            {
+                DisplayName = "Empty",
+                Agents = Array.Empty<ReviewAgent>()
+            }
+        };
+
+        using var collector = new MetricCollector<long>(
+            _meterFactory, PipelineTelemetry.SourceName, "pipeline.review.skipped");
+
+        await _executor.ExecuteCodeReviewAsync(BuildContext(), CancellationToken.None,
+            resolvedReviewerConfigs: configs);
+
+        // TODO: Also assert telemetry tags emitted by PipelineTelemetry.BuildTags (run_type,
+        // pipeline.project_id, pipeline.project_name). Currently, a regression that passes the
+        // wrong PipelineRun or omits tags entirely would still satisfy this assertion because
+        // MetricCollector records Value independently of Tags. The same gap exists in the
+        // analogous empty-configs counter tests added in #2228. Tighten by checking e.g.:
+        // collector.GetMeasurementSnapshot().Should().ContainSingle(
+        //     m => m.Value == 1 && m.Tags.ToList().Any(t => t.Key == "run_type"));
+        collector.GetMeasurementSnapshot().Should().ContainSingle(m => m.Value == 1);
     }
 
     [Fact]
