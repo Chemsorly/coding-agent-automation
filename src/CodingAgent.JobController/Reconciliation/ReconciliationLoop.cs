@@ -496,6 +496,15 @@ public sealed class ReconciliationLoop
                 : DateTimeOffset.UtcNow;
             var duration = dispatchedAt.HasValue ? completedAt - dispatchedAt.Value : (TimeSpan?)null;
             var agentId = job.Metadata?.Name;
+            // TODO: Spurious terminal metric double-count — since the PostStatus endpoint now returns
+            // HTTP 200 for late terminal callbacks on already-terminal items (issue #2461 fix),
+            // PostStatusAsync no longer throws an exception for Cancelled→Failed cases. This means
+            // execution reaches LogTerminalStatus unconditionally and emits a Failed metric for an item
+            // that was already counted as Cancelled when it was originally cancelled. To fix, PostStatus
+            // should return a distinguishing response (e.g. HTTP 204 No Content or a custom header) for
+            // the idempotent-success path so that HandleJobCompletedAsync can skip LogTerminalStatus on
+            // late callbacks. Alternatively, the PostStatus response body could carry a flag indicating
+            // whether a real transition occurred.
             WorkDistributionTelemetry.LogTerminalStatus(workItemId, workItemStatus, duration, agentId, failureReasonEnum);
 
             Log.Information("WorkItem {Id} marked {Status} from K8s Job {Job}", workItemId, status, job.Metadata?.Name);

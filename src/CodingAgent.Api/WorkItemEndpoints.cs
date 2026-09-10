@@ -363,39 +363,52 @@ public static class WorkItemEndpoints
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1068", Justification = "Test seam bool appended after ct intentionally")]
         bool awaitTelemetry = false)
     {
-        // Recovery-first path: when the agent sends Running, attempt infrastructure recovery
-        // *before* TransitionDetailedAsync so that the "Invalid transition" warning in
-        // TransitionCoreAsync is never emitted for a recoverable race (issue #2459).
+        // Pre-read guard: if the incoming status is terminal and the item is already in a
+        // "stronger" terminal state (Cancelled or Succeeded), return Ok silently without calling
+        // TransitionDetailedAsync. This suppresses the "Invalid transition" LogWarning that
+        // TransitionCoreAsync would otherwise emit for Cancelled→Failed, Succeeded→Failed, etc.
         //
-        // TryRecoverFromInfrastructureFailureAsync issues a real DB read on every call, including
-        // the normal Pending→Running path (where the item is not in Failed state and it returns false
-        // immediately). This doubles DB reads for the happy-path Running transition.
-        // TODO: Consider caching the item's current status in a lightweight pre-check (e.g. a
-        // direct scalar query) to avoid the full entity load on the non-Failed hot path. The extra
-        // round-trip is acceptable at current throughput but may need revisiting under high load.
-        //   • Failed/Timeout or Failed/InfrastructureFailure → recovery succeeds → return 200
-        //   • Failed/AgentError or non-Failed item            → recovery returns false → fall through
-        //     to TransitionDetailedAsync (which handles the normal transition or emits 400)
-        if (request.Status == WorkItemStatus.Running)
+        // This guard exists because "must NOT emit the warning" requires short-circuiting before
+        // TransitionCoreAsync is entered — a post-read check (after Rejected is returned) cannot
+        // suppress the warning because TransitionCoreAsync emits it before returning Rejected.
+        //
+        // Trade-off: this pre-read fires for ALL terminal incoming requests, including valid
+        // Running→Failed transitions. For those paths GetCurrentStatusAsync returns Running (not
+        // Cancelled/Succeeded), so execution falls through to TransitionDetailedAsync as normal —
+        // no behavior change except for the extra SELECT. The post-read alternative cannot satisfy
+        // the "no warning" acceptance criterion, so the extra read is the required trade-off.
+        //
+        // TODO: Residual TOCTOU race — the guard reads status in one DB round-trip and
+        // TransitionDetailedAsync reads it again in a second. If a concurrent cancellation
+        // transitions the item from Running→Cancelled between the two reads, TransitionDetailedAsync
+        // will see Cancelled→Failed (invalid) and still emit the spurious warning. This race is
+        // narrow (requires a new cancellation to occur within the two-read window for an already-Running
+        // item) and represents a residual frequency reduction rather than full elimination. Closing it
+        // fully would require a database-level serializable transaction or a new TransitionResult value
+        // (e.g. TerminalConflict) returned from TransitionCoreAsync to distinguish "wrong direction"
+        // from "already terminal" without a second read. See issue #2461.
+        //
+        // TODO: If a new terminal WorkItemStatus value is added (e.g. TimedOut), this guard must be
+        // updated to include it or idempotency protection will be missing for that status. There is
+        // no compile-time exhaustiveness check on this pattern match.
+        //
+        // See issue #2461.
+        // TODO: The early-return condition below checks `currentStatus is Cancelled or Succeeded`
+        // but intentionally does NOT include `Failed`. An already-Failed item receiving PostStatus(Failed)
+        // falls through to TransitionDetailedAsync, which returns AlreadyAtTarget → HTTP 200 with no
+        // warning and no lifecycle call — correct behaviour, but via a different code path than
+        // Cancelled→Cancelled and Succeeded→Succeeded. This asymmetry is currently harmless because
+        // AlreadyAtTarget never emits a warning. If TransitionCoreAsync's AlreadyAtTarget handling ever
+        // changes to emit a log entry, Failed→Failed would be affected while the other same-status
+        // combinations would not. Consider including Failed in the guard condition for consistency.
+        // See review finding (DotNetSpecialist) for issue #2461.
+        if (request.Status is WorkItemStatus.Failed or WorkItemStatus.Cancelled or WorkItemStatus.Succeeded)
         {
-            var recovered = await transitionService.TryRecoverFromInfrastructureFailureAsync(
-                id, WorkItemStatus.Running,
-                mutate: entity => ApplyStatusMutation(entity, request),
-                ct: ct);
-            if (recovered)
-            {
-                // TODO: When TryRecoverFromInfrastructureFailureCoreAsync takes the idempotent
-                // early-return path (item is already Running), it returns true without invoking
-                // mutate — so fields set by ApplyStatusMutation (AgentId, StartedAt, etc.) are
-                // silently skipped for duplicate Running posts on an already-recovered item.
-                // This is pre-existing behaviour in TryRecoverFromInfrastructureFailureCoreAsync
-                // (not introduced here), but this call site is the first to make that idempotent
-                // path reachable from PostStatus. Assess whether a second PostStatus(Running) on
-                // an already-Running item should re-apply the mutation fields (e.g. to update
-                // AgentId on a re-dispatch). If so, the idempotent branch in
-                // TryRecoverFromInfrastructureFailureCoreAsync should invoke mutate before returning.
+            var currentStatus = await transitionService.GetCurrentStatusAsync(id, ct);
+            if (currentStatus is WorkItemStatus.Cancelled or WorkItemStatus.Succeeded)
                 return TypedResults.Ok();
-            }
+            // null  → item not found; fall through so TransitionDetailedAsync returns NotFound.
+            // Any non-terminal current status → fall through for normal processing.
         }
 
         var transitionResult = await transitionService.TransitionDetailedAsync(
