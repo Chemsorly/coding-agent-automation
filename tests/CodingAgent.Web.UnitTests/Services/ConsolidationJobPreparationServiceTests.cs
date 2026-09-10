@@ -237,8 +237,11 @@ public sealed class ConsolidationJobPreparationServiceTests
         // removed; an explicit profile is required for agent config resolution.
         var kiroConfig = new ProviderConfig
         {
-            Id = "kiro-agent-cfg", Kind = ProviderKind.Agent, ProviderType = "KiroCli",
-            DisplayName = "KiroCli", RequiredLabels = new List<string> { "kiro" }
+            Id = "kiro-agent-cfg",
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "KiroCli",
+            RequiredLabels = new List<string> { "kiro" }
         };
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { kiroConfig });
@@ -263,8 +266,11 @@ public sealed class ConsolidationJobPreparationServiceTests
         // Agent config requires "opencode" but agent has "kiro" labels → incompatible
         var openCodeConfig = new ProviderConfig
         {
-            Id = "opencode-cfg", Kind = ProviderKind.Agent, ProviderType = "OpenCode",
-            DisplayName = "OpenCode", RequiredLabels = new List<string> { "opencode" }
+            Id = "opencode-cfg",
+            Kind = ProviderKind.Agent,
+            ProviderType = "OpenCode",
+            DisplayName = "OpenCode",
+            RequiredLabels = new List<string> { "opencode" }
         };
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { openCodeConfig });
@@ -287,7 +293,9 @@ public sealed class ConsolidationJobPreparationServiceTests
         // is injected. Empty labels produce no profile match; token vending is skipped.
         var agentConfig = new ProviderConfig
         {
-            Id = "default-agent", Kind = ProviderKind.Agent, ProviderType = "KiroCli",
+            Id = "default-agent",
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
             DisplayName = "Default Agent"
         };
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
@@ -316,7 +324,10 @@ public sealed class ConsolidationJobPreparationServiceTests
 
         var template = new PipelineJobTemplate
         {
-            Id = "t1", Name = "Repo Only", IssueProviderId = "ip-1", RepoProviderId = "rp-1"
+            Id = "t1",
+            Name = "Repo Only",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1"
         };
         _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate> { template });
@@ -351,7 +362,11 @@ public sealed class ConsolidationJobPreparationServiceTests
 
         var template = new PipelineJobTemplate
         {
-            Id = "t1", Name = "Full", IssueProviderId = "ip-1", RepoProviderId = "rp-1", BrainProviderId = "bp-1"
+            Id = "t1",
+            Name = "Full",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            BrainProviderId = "bp-1"
         };
         _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate> { template });
@@ -441,7 +456,10 @@ public sealed class ConsolidationJobPreparationServiceTests
 
         var template = new PipelineJobTemplate
         {
-            Id = "t1", Name = "Test", IssueProviderId = "ip-1", RepoProviderId = "rp-1"
+            Id = "t1",
+            Name = "Test",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1"
         };
         _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate> { template });
@@ -655,7 +673,11 @@ public sealed class ConsolidationJobPreparationServiceTests
     {
         var template = new PipelineJobTemplate
         {
-            Id = "t1", Name = "Full Template", IssueProviderId = "ip-1", RepoProviderId = "rp-1", BrainProviderId = "bp-1"
+            Id = "t1",
+            Name = "Full Template",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            BrainProviderId = "bp-1"
         };
         _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate> { template });

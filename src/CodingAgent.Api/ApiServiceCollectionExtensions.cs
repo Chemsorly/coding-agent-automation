@@ -1,7 +1,8 @@
 using CodingAgent.AgentGateway;
 using CodingAgent.Api.Client;
 using CodingAgent.Infrastructure;
-using CodingAgent.Infrastructure.Locking;using CodingAgent.Infrastructure.Persistence;
+using CodingAgent.Infrastructure.Locking;
+using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Infrastructure.Persistence.Stores;
 using CodingAgent.Kubernetes;
