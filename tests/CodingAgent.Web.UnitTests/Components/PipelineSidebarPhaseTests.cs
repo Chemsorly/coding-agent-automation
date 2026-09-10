@@ -142,7 +142,12 @@ public class PipelineSidebarPhaseTests : BunitContext
         Assert.Contains("phase-group-completed", cut.Find("[data-testid='phase-finalization']").GetAttribute("class"));
     }
 
-    // ─── Phase expansion/collapse ────────────────────────────────────────
+    // ─── Phase visibility (always expanded in horizontal layout) ─────────
+    // TODO: CompletedPhase_BodyIsAlwaysVisible, PendingPhase_BodyIsAlwaysVisible,
+    // ClickingPhaseHeader_DoesNotAffectBodyVisibility, and AllPhases_AlwaysHaveVisibleBody all render the
+    // same fixture and assert DoesNotContain("phase-body-collapsed") on .phase-body elements — they are
+    // near-duplicates. A genuine regression would produce four simultaneous failures with no additional
+    // diagnostic signal. Consider consolidating into a single parameterized test to reduce maintenance overhead.
 
     [Fact]
     public void ActivePhase_IsExpandedByDefault()
@@ -155,23 +160,25 @@ public class PipelineSidebarPhaseTests : BunitContext
     }
 
     [Fact]
-    public void CompletedPhase_IsCollapsedByDefault()
+    public void CompletedPhase_BodyIsAlwaysVisible()
     {
+        // Phase bodies are always shown in the horizontal layout — no collapse for completed phases.
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
         var phaseBody = cut.Find("[data-testid='phase-preparation'] .phase-body");
-        Assert.Contains("phase-body-collapsed", phaseBody.GetAttribute("class"));
+        Assert.DoesNotContain("phase-body-collapsed", phaseBody.GetAttribute("class"));
     }
 
     [Fact]
-    public void PendingPhase_IsCollapsedByDefault()
+    public void PendingPhase_BodyIsAlwaysVisible()
     {
+        // Phase bodies are always shown in the horizontal layout — no collapse for pending phases.
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
         var phaseBody = cut.Find("[data-testid='phase-finalization'] .phase-body");
-        Assert.Contains("phase-body-collapsed", phaseBody.GetAttribute("class"));
+        Assert.DoesNotContain("phase-body-collapsed", phaseBody.GetAttribute("class"));
     }
 
     [Fact]
@@ -192,57 +199,29 @@ public class PipelineSidebarPhaseTests : BunitContext
     }
 
     [Fact]
-    public void ClickingCompletedPhaseHeader_ExpandsIt()
+    public void ClickingPhaseHeader_DoesNotAffectBodyVisibility()
     {
+        // Phase headers have no click handler — the body is always visible regardless.
+        // bUnit throws MissingEventHandlerException if we try to click a handler-less element,
+        // so we verify the body visibility without dispatching a click event.
+        // TODO: This test cannot detect a regression where @onclick is re-added to the phase header and
+        // collapse logic is reintroduced. If click-toggle behavior returns, add a test that dispatches
+        // a click and asserts the body remains visible (or that MissingEventHandlerException is NOT thrown
+        // and the body is still not collapsed). Consider also asserting the header lacks an onclick attribute.
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
-        // Initially collapsed
-        var phaseBody = cut.Find("[data-testid='phase-preparation'] .phase-body");
-        Assert.Contains("phase-body-collapsed", phaseBody.GetAttribute("class"));
+        // Completed phase body is visible without any interaction
+        var completedBody = cut.Find("[data-testid='phase-preparation'] .phase-body");
+        Assert.DoesNotContain("phase-body-collapsed", completedBody.GetAttribute("class") ?? "");
 
-        // Click the header
-        cut.Find("[data-testid='phase-preparation'] .phase-header").Click();
+        // Active phase body is visible without any interaction
+        var activeBody = cut.Find("[data-testid='phase-code-generation'] .phase-body");
+        Assert.DoesNotContain("phase-body-collapsed", activeBody.GetAttribute("class") ?? "");
 
-        // Now expanded
-        phaseBody = cut.Find("[data-testid='phase-preparation'] .phase-body");
-        Assert.DoesNotContain("phase-body-collapsed", phaseBody.GetAttribute("class"));
-    }
-
-    [Fact]
-    public void ClickingActivePhaseHeader_CollapsesIt()
-    {
-        var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
-        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
-
-        // Initially expanded (active)
-        var phaseBody = cut.Find("[data-testid='phase-code-generation'] .phase-body");
-        Assert.DoesNotContain("phase-body-collapsed", phaseBody.GetAttribute("class"));
-
-        // Click the header to collapse
-        cut.Find("[data-testid='phase-code-generation'] .phase-header").Click();
-
-        // Now collapsed
-        phaseBody = cut.Find("[data-testid='phase-code-generation'] .phase-body");
-        Assert.Contains("phase-body-collapsed", phaseBody.GetAttribute("class"));
-    }
-
-    [Fact]
-    public void ClickingPendingPhaseHeader_ExpandsIt()
-    {
-        var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
-        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
-
-        // Initially collapsed (pending)
-        var phaseBody = cut.Find("[data-testid='phase-finalization'] .phase-body");
-        Assert.Contains("phase-body-collapsed", phaseBody.GetAttribute("class"));
-
-        // Click the header
-        cut.Find("[data-testid='phase-finalization'] .phase-header").Click();
-
-        // Now expanded
-        phaseBody = cut.Find("[data-testid='phase-finalization'] .phase-body");
-        Assert.DoesNotContain("phase-body-collapsed", phaseBody.GetAttribute("class"));
+        // Pending phase body is visible without any interaction
+        var pendingBody = cut.Find("[data-testid='phase-finalization'] .phase-body");
+        Assert.DoesNotContain("phase-body-collapsed", pendingBody.GetAttribute("class") ?? "");
     }
 
     // ─── Phase counters ──────────────────────────────────────────────────
@@ -338,20 +317,30 @@ public class PipelineSidebarPhaseTests : BunitContext
     }
 
     // ─── Aria-hidden attribute ───────────────────────────────────────────
+    // TODO: AllPhaseBodies_HaveAriaHiddenFalse and AllPhases_AriaHiddenAlwaysFalse both assert
+    // aria-hidden="false" on every .phase-body. The only difference is the fixture (in-progress vs completed run).
+    // Since aria-hidden is hardcoded in the razor template (not state-driven), the second test adds no meaningful
+    // coverage. Additionally, ExpandedPhaseBody_HasAriaHiddenFalse overlaps for the active-phase case.
+    // Consider consolidating into a single test to reduce maintenance overhead.
 
     [Fact]
-    public void CollapsedPhaseBody_HasAriaHiddenTrue()
+    public void AllPhaseBodies_HaveAriaHiddenFalse()
     {
+        // All phase bodies are always visible in the horizontal layout —
+        // aria-hidden="true" on visible content would be an accessibility violation.
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
-        var phaseBody = cut.Find("[data-testid='phase-preparation'] .phase-body");
-        Assert.Equal("true", phaseBody.GetAttribute("aria-hidden"));
+        var phaseBodies = cut.FindAll(".phase-body");
+        Assert.NotEmpty(phaseBodies);
+        foreach (var body in phaseBodies)
+            Assert.Equal("false", body.GetAttribute("aria-hidden"));
     }
 
     [Fact]
     public void ExpandedPhaseBody_HasAriaHiddenFalse()
     {
+        // This test was previously scoped to active phases only; now all bodies are always visible.
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
@@ -382,5 +371,49 @@ public class PipelineSidebarPhaseTests : BunitContext
         Assert.Equal("completed", cut.Find("[data-testid='phase-preparation']").GetAttribute("data-phase-state"));
         Assert.Equal("active", cut.Find("[data-testid='phase-code-generation']").GetAttribute("data-phase-state"));
         Assert.Equal("pending", cut.Find("[data-testid='phase-finalization']").GetAttribute("data-phase-state"));
+    }
+
+    // ─── Horizontal layout regression guards ─────────────────────────────
+
+    [Fact]
+    public void AllPhases_AlwaysHaveVisibleBody()
+    {
+        // All phase bodies must be visible regardless of phase state — completed, active, and pending.
+        // TODO: This test uses the same fixture and assertions as CompletedPhase_BodyIsAlwaysVisible,
+        // PendingPhase_BodyIsAlwaysVisible, and ClickingPhaseHeader_DoesNotAffectBodyVisibility —
+        // they are near-duplicates. Consider consolidating into a single parameterized test or removing
+        // redundant siblings to reduce maintenance overhead.
+        var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        var phaseBodies = cut.FindAll(".phase-body");
+        Assert.NotEmpty(phaseBodies);
+        foreach (var body in phaseBodies)
+            Assert.DoesNotContain("phase-body-collapsed", body.GetAttribute("class") ?? "");
+    }
+
+    [Fact]
+    public void AllPhases_AriaHiddenAlwaysFalse()
+    {
+        // Visible content must never be aria-hidden="true". All bodies use aria-hidden="false".
+        var run = CreateRun(PipelineStep.Completed, PipelineStep.Completed);
+        run.CompletedAt = DateTime.UtcNow;
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
+
+        var phaseBodies = cut.FindAll(".phase-body");
+        Assert.NotEmpty(phaseBodies);
+        foreach (var body in phaseBodies)
+            Assert.Equal("false", body.GetAttribute("aria-hidden"));
+    }
+
+    [Fact]
+    public void PhaseHeader_HasNoChevronElement()
+    {
+        // The phase-chevron span was removed with the horizontal layout — assert it stays gone.
+        var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        var chevrons = cut.FindAll(".phase-chevron");
+        Assert.Empty(chevrons);
     }
 }
