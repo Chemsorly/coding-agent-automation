@@ -125,4 +125,86 @@ public class IssueReferenceParserTests
         IssueReferenceParser.ParseIssueReferences("Closes #5 and also #5", results);
         results.Should().ContainSingle().Which.Should().Be("5");
     }
+
+    // ─── ParseAllClosingKeywords (GitHub + GitLab closing keyword forms) ─────────
+
+    [Fact]
+    public void ParseAllClosingKeywords_NullText_DoesNothing()
+    {
+        var results = new HashSet<string>(StringComparer.Ordinal);
+        IssueReferenceParser.ParseAllClosingKeywords(null, results);
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ParseAllClosingKeywords_EmptyText_DoesNothing()
+    {
+        var results = new HashSet<string>(StringComparer.Ordinal);
+        IssueReferenceParser.ParseAllClosingKeywords("", results);
+        results.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("Closes #42", "42")]
+    [InlineData("Fixes #7", "7")]
+    [InlineData("Resolves #100", "100")]
+    [InlineData("closes #1", "1")]
+    [InlineData("FIXES #99", "99")]
+    public void ParseAllClosingKeywords_GitLabBaseForms_ExtractsNumber(string text, string expected)
+    {
+        var results = new HashSet<string>(StringComparer.Ordinal);
+        IssueReferenceParser.ParseAllClosingKeywords(text, results);
+        results.Should().Contain(expected);
+    }
+
+    [Theory]
+    [InlineData("closed #5", "5")]
+    [InlineData("fixed #5", "5")]
+    [InlineData("resolved #5", "5")]
+    [InlineData("close #5", "5")]
+    [InlineData("fix #5", "5")]
+    [InlineData("resolve #5", "5")]
+    [InlineData("Fixed #99", "99")]
+    [InlineData("Closed #99", "99")]
+    [InlineData("Resolved #99", "99")]
+    public void ParseAllClosingKeywords_GitHubAllVerbForms_ExtractsNumber(string text, string expected)
+    {
+        // These past-tense and non-base verb forms are valid GitHub closing keywords but are
+        // NOT matched by ParseClosingKeywords (GitLab pattern only). ParseAllClosingKeywords
+        // must handle them — this is the CRITICAL fix from the .NET Specialist review.
+        var results = new HashSet<string>(StringComparer.Ordinal);
+        IssueReferenceParser.ParseAllClosingKeywords(text, results);
+        results.Should().Contain(expected,
+            $"'{text}' is a valid GitHub closing keyword and must populate LinkedIssueContexts");
+    }
+
+    [Theory]
+    [InlineData("GH-5")]        // standalone GH-N without a keyword — ParseAllClosingKeywords must NOT match this
+    [InlineData("myorg/repo#5")] // cross-repo reference — must not match
+    [InlineData("See #5 for details")] // plain #N mention — must not match
+    public void ParseAllClosingKeywords_NonKeywordPatterns_DoesNotMatch(string text)
+    {
+        // ParseAllClosingKeywords deliberately excludes standalone GH-N, cross-repo, and plain #N
+        // to avoid over-matching PR description prose. Only closing-keyword forms are matched.
+        var results = new HashSet<string>(StringComparer.Ordinal);
+        IssueReferenceParser.ParseAllClosingKeywords(text, results);
+        results.Should().BeEmpty(
+            $"'{text}' is not a closing keyword reference and must not be matched by ParseAllClosingKeywords");
+    }
+
+    [Fact]
+    public void ParseAllClosingKeywords_MultipleVerbForms_ExtractsAll()
+    {
+        var results = new HashSet<string>(StringComparer.Ordinal);
+        IssueReferenceParser.ParseAllClosingKeywords("Fixes #1\nFixed #2\nClosed #3\nResolves #4", results);
+        results.Should().BeEquivalentTo(new[] { "1", "2", "3", "4" });
+    }
+
+    [Fact]
+    public void ParseAllClosingKeywords_DuplicateReferences_Deduplicates()
+    {
+        var results = new HashSet<string>(StringComparer.Ordinal);
+        IssueReferenceParser.ParseAllClosingKeywords("Fixes #99\nFixed #99", results);
+        results.Should().ContainSingle().Which.Should().Be("99");
+    }
 }
