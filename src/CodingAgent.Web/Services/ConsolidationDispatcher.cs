@@ -48,6 +48,34 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
             var profile = ProfileResolver.ResolveByRequiredLabels(profiles, requiredLabels.ToList());
             var selectorLabels = profile?.MatchLabels ?? requiredLabels;
 
+            // If selectorLabels is still empty (no required labels set, no matching profile),
+            // fall back to DefaultRequiredAgentLabels from pipeline config, then to the first
+            // available profile's MatchLabels. An empty selector produces a 409 from the dispatch
+            // endpoint ("no job template for agent selector: ''").
+            if (selectorLabels.Count == 0)
+            {
+                if (!string.IsNullOrWhiteSpace(liveConfig.DefaultRequiredAgentLabels))
+                {
+                    var defaultLabels = liveConfig.DefaultRequiredAgentLabels
+                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .ToList()
+                        .AsReadOnly();
+                    var defaultProfile = ProfileResolver.ResolveByRequiredLabels(profiles, defaultLabels);
+                    selectorLabels = defaultProfile?.MatchLabels ?? defaultLabels;
+                }
+                else if (profiles.Count > 0)
+                {
+                    // Last resort: pick the highest-priority enabled profile
+                    var fallbackProfile = profiles
+                        .Where(p => p.Enabled)
+                        .OrderByDescending(p => p.Priority)
+                        .ThenBy(p => p.Id, StringComparer.Ordinal)
+                        .FirstOrDefault();
+                    if (fallbackProfile is not null)
+                        selectorLabels = fallbackProfile.MatchLabels;
+                }
+            }
+
             var request = new JobDistributionRequest
             {
                 IssueIdentifier = run.RunId,
