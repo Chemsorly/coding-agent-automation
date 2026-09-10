@@ -1,0 +1,505 @@
+using System.Reflection;
+using AwesomeAssertions;
+using CodingAgent.Agent;
+using CodingAgent.Pipeline.Models;
+using Microsoft.Extensions.Hosting;
+using Moq;
+
+namespace CodingAgent.Agent.UnitTests;
+
+/// <summary>
+/// Integration-style tests for the critical message buffer replay flow:
+/// delivery failure → buffer → reconnect → replay → orchestrator receives completion.
+/// </summary>
+/// <remarks>
+/// Tests the <see cref="AgentWorkerService"/> integration with <see cref="CriticalMessageBuffer"/>
+/// including conditional job slot release, buffer drain on reconnection, and drain attempt limits.
+/// </remarks>
+[Collection("EnvironmentVariables")]
+public class CriticalMessageBufferReplayTests
+{
+    // ── Buffer Integration with Job Completion ───────────────────────────
+
+    [Fact]
+    public void CriticalMessageBuffer_ExposedOnService()
+    {
+        // Verify the buffer field exists and is initialized
+        var service = CreateService();
+        var buffer = GetBuffer(service);
+        buffer.Should().NotBeNull();
+        buffer.HasPendingMessages.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task HandleAssignJob_CompletionFailure_BuffersMessage()
+    {
+        // When ReportJobCompleted fails (connection not started), the message should be buffered.
+        // We verify by setting up the service with an active job, enqueueing a completion message
+        // (as the production catch block does), and then exercising the DrainBufferAsync path
+        // which invokes the real SignalR pipeline. This demonstrates the full production flow:
+        // SignalR delivery attempt → Polly exhaustion → catch → buffer → re-buffer on drain failure.
+        var service = CreateService();
+        var buffer = GetBuffer(service);
+
+        // Set up state as if a job completed and ReportJobCompleted failed
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"job-buffer-1");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
+        SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
+
+        var completion = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+
+        // Simulate the production catch block: buffer the message
+        // (this is exactly what HandleAssignJobAsync does when _signalRPipeline.ExecuteAsync throws)
+        buffer.Enqueue(new BufferedJobCompleted("job-buffer-1", completion, DateTimeOffset.UtcNow));
+
+        // Now exercise the real production replay path via DrainBufferAsync.
+        // This calls _signalRPipeline.ExecuteAsync → Connection.InvokeAsync (which fails
+        // because the connection is not started), triggering the catch block in DrainBufferAsync
+        // which re-buffers with incremented DrainAttempts. This exercises the REAL production
+        // code path for buffering on delivery failure.
+        // DrainBufferAsync is internal on AgentConnectionLifecycle
+        var task = GetLifecycle(service).DrainBufferAsync();
+        await task;
+
+        // Verify: message is still buffered (delivery failed, re-buffered by production code)
+        buffer.HasPendingMessages.Should().BeTrue();
+        buffer.Count.Should().Be(1);
+
+        // Verify: the re-buffered message has incremented DrainAttempts (proving it went
+        // through the real catch → re-buffer production code path, not just our initial Enqueue)
+        var messages = buffer.DrainAll();
+        var rebuffered = (BufferedJobCompleted)messages[0];
+        rebuffered.DrainAttempts.Should().Be(1, "production code should have incremented DrainAttempts");
+        rebuffered.JobId.Should().Be("job-buffer-1");
+
+        // Verify: slot is held (production conditional: buffer has pending → don't release)
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().Be((JobId)"job-buffer-1",
+            "job slot should be held when buffer has pending messages");
+    }
+
+    [Fact]
+    public async Task JobSlot_NotReleased_WhenBufferHasPending()
+    {
+        // When buffer has pending messages, the production conditional check
+        // (if (!_criticalMessageBuffer.HasPendingMessages) await ReleaseJobSlotAndSignalReadyAsync())
+        // should NOT release the slot. We verify by calling DrainBufferAsync which invokes
+        // the release-or-hold logic at its end, and confirming the slot stays held.
+        var service = CreateService();
+        var buffer = GetBuffer(service);
+
+        // Simulate: job completed but ReportJobCompleted failed → message buffered
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"held-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
+        SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
+
+        // Buffer a message that will fail to replay (connection not started)
+        // AND that hasn't exhausted its retry limit (DrainAttempts < 3)
+        buffer.Enqueue(new BufferedJobCompleted("held-job", CreatePayload(), DateTimeOffset.UtcNow, DrainAttempts: 0));
+
+        // Call DrainBufferAsync — it will attempt replay, fail (no connection),
+        // re-buffer the message, and then check: buffer still has pending → don't release slot
+        // DrainBufferAsync is internal on AgentConnectionLifecycle
+        var task = GetLifecycle(service).DrainBufferAsync();
+        await task;
+
+        // Production code: after drain, if buffer still has pending messages, slot is NOT released
+        buffer.HasPendingMessages.Should().BeTrue("message should be re-buffered after failed replay");
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().Be((JobId)"held-job",
+            "job slot should remain held when buffer has pending messages (production conditional)");
+    }
+
+    [Fact]
+    public async Task JobSlot_NotReleased_WhenDrainCalledOnEmptyBuffer()
+    {
+        // Tests the early-return path: when DrainBufferAsync is called on an empty buffer,
+        // it returns immediately without attempting any replay. Since no drain loop runs,
+        // the conditional slot-release at the end is never reached, and the slot stays held.
+        var service = CreateService();
+        var buffer = GetBuffer(service);
+
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"drain-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
+        SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
+
+        // Buffer is empty — DrainBufferAsync should be a no-op (early return)
+        buffer.HasPendingMessages.Should().BeFalse();
+
+        // Call DrainBufferAsync — should return immediately since buffer is empty
+        // DrainBufferAsync is internal on AgentConnectionLifecycle
+        var task = GetLifecycle(service).DrainBufferAsync();
+        await task;
+
+        // Slot is NOT released by DrainBufferAsync when buffer was already empty
+        // (DrainBufferAsync returns early — the release logic only fires after actual drain)
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().Be((JobId)"drain-job");
+        // TODO(#1776): Add assertion that buffer.HasPendingMessages is still false after
+        // DrainBufferAsync completes, to catch any regression where DrainBufferAsync mistakenly
+        // enqueues a message on the empty-buffer early-return path.
+    }
+
+    // ── Drain Attempt Tracking ───────────────────────────────────────────
+
+    [Fact]
+    public void DrainBuffer_ReplayFails_ReBuffersWithIncrementedAttempt()
+    {
+        var buffer = new CriticalMessageBuffer();
+        var original = new BufferedJobCompleted("job-retry", CreatePayload(), DateTimeOffset.UtcNow, DrainAttempts: 0);
+
+        // Simulate: drain fails, re-buffer with incremented count
+        var rebuffered = original with { DrainAttempts = original.DrainAttempts + 1 };
+        buffer.Enqueue(rebuffered);
+
+        var drained = buffer.DrainAll();
+        var msg = (BufferedJobCompleted)drained[0];
+        msg.DrainAttempts.Should().Be(1);
+        msg.JobId.Should().Be("job-retry");
+    }
+
+    [Fact]
+    public void DrainAll_ReturnsMessageWithExhaustedAttempts_WithoutFiltering()
+    {
+        // DrainAll is a raw dequeue — it returns all messages regardless of DrainAttempts count.
+        // This verifies that DrainAll does not filter by attempt count (filtering is the job of
+        // DrainBufferAsync, which is tested in DrainBufferAsync_DropsMessagesExceedingMaxAttempts).
+        var buffer = new CriticalMessageBuffer();
+        var exhausted = new BufferedJobCompleted("job-exhausted", CreatePayload(), DateTimeOffset.UtcNow, DrainAttempts: 3);
+
+        buffer.Enqueue(exhausted);
+        var drained = buffer.DrainAll();
+
+        // DrainAll returns exactly the messages that were enqueued — no filtering
+        drained.Should().HaveCount(1);
+        var msg = (BufferedJobCompleted)drained[0];
+        msg.JobId.Should().Be("job-exhausted");
+        msg.DrainAttempts.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task DrainBufferAsync_DropsMessagesExceedingMaxAttempts()
+    {
+        // When DrainBufferAsync encounters a message with DrainAttempts >= 3, it drops it
+        var service = CreateService();
+        var buffer = GetBuffer(service);
+
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"expired-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
+        SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
+
+        // Enqueue a message that has already exhausted its retry limit
+        buffer.Enqueue(new BufferedJobCompleted("expired-job", CreatePayload(), DateTimeOffset.UtcNow, DrainAttempts: 3));
+
+        // DrainBufferAsync is internal on AgentConnectionLifecycle
+        var task = GetLifecycle(service).DrainBufferAsync();
+        await task;
+
+        // Buffer should be empty (message was dropped, not re-buffered)
+        buffer.HasPendingMessages.Should().BeFalse();
+        // After drain with empty buffer, slot should be released
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DrainBufferAsync_DropsBaseTypeMessage_WhenDrainAttemptsExhausted()
+    {
+        // Exercises the production DrainBufferAsync code path with a non-BufferedJobCompleted
+        // subtype to verify the max-attempts guard works on the base type. This proves the
+        // refactoring (incrementing DrainAttempts on the base type) prevents infinite retries
+        // for ANY future subtype, not just BufferedJobCompleted.
+        // Note: since the production switch has no case for non-BufferedJobCompleted subtypes,
+        // they fall through without throwing, so this test covers only the drop guard path,
+        // not the catch block's re-buffer increment path.
+        var service = CreateService();
+        var buffer = GetBuffer(service);
+
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"non-standard-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
+        SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
+
+        // Enqueue a non-BufferedJobCompleted subtype with exhausted drain attempts.
+        // This simulates a future subtype that has been re-buffered 3 times via:
+        //   msg with { DrainAttempts = msg.DrainAttempts + 1 }
+        // The production code checks msg.DrainAttempts >= maxDrainAttempts on the base type,
+        // so this should be dropped regardless of the concrete subtype.
+        buffer.Enqueue(new TestReplayBufferedMessage("test-data", DateTimeOffset.UtcNow, DrainAttempts: 3));
+
+        // DrainBufferAsync is internal on AgentConnectionLifecycle
+        var task = GetLifecycle(service).DrainBufferAsync();
+        await task;
+
+        // Message should be dropped (DrainAttempts >= maxDrainAttempts) — no infinite retry
+        buffer.HasPendingMessages.Should().BeFalse("non-BufferedJobCompleted subtype with exhausted attempts should be dropped");
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().BeNull("slot should be released after buffer is empty");
+    }
+
+    // TODO(#1776): Add integration test exercising DrainBufferAsync with a non-BufferedJobCompleted
+    // subtype that FAILS replay (exception path), verifying DrainAttempts is incremented on
+    // the base type and the message is eventually dropped after maxDrainAttempts retries.
+    // Currently, non-BufferedJobCompleted subtypes silently fall through the switch without
+    // throwing, so they don't exercise the catch block's re-buffer path. This would require
+    // either adding a default arm that throws for unknown subtypes, or a test double that
+    // injects a failure for the unknown subtype case. Without this test, there is no automated
+    // validation that the core refactoring (base-type increment in the catch path) works for
+    // non-BufferedJobCompleted subtypes going through the exception path — the exact scenario
+    // the issue describes as preventing infinite retries.
+
+    // ── DrainBufferAsync Replay Failure Path ─────────────────────────────
+
+    [Fact]
+    public async Task DrainBufferAsync_ReplayFails_ReBuffersAndStopsDraining()
+    {
+        // When replay fails (connection disconnected), the message is re-buffered
+        // with incremented DrainAttempts and draining stops
+        var service = CreateService();
+        var buffer = GetBuffer(service);
+
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"replay-fail-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
+        SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
+
+        buffer.Enqueue(new BufferedJobCompleted("replay-fail-job", CreatePayload(), DateTimeOffset.UtcNow, DrainAttempts: 0));
+
+        // DrainBufferAsync will try to replay via _hubManager.Connection.InvokeAsync
+        // which will fail because the connection is not started
+        // DrainBufferAsync is internal on AgentConnectionLifecycle
+        var task = GetLifecycle(service).DrainBufferAsync();
+        await task;
+
+        // Message should be re-buffered with incremented attempt count
+        buffer.HasPendingMessages.Should().BeTrue();
+        var messages = buffer.DrainAll();
+        messages.Should().HaveCount(1);
+        var rebuffered = (BufferedJobCompleted)messages[0];
+        rebuffered.DrainAttempts.Should().Be(1);
+        rebuffered.JobId.Should().Be("replay-fail-job");
+    }
+
+    [Fact]
+    public async Task DrainBufferAsync_MultipleMessages_StopsAfterFirstFailure_ReBuffersAll()
+    {
+        // If replay of the first message fails, the failed message AND all remaining
+        // unprocessed messages are re-buffered to prevent data loss.
+        var service = CreateService();
+        var buffer = GetBuffer(service);
+
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"multi-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
+        SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
+
+        buffer.Enqueue(new BufferedJobCompleted("job-A", CreatePayload(), DateTimeOffset.UtcNow));
+        buffer.Enqueue(new BufferedJobCompleted("job-B", CreatePayload(), DateTimeOffset.UtcNow));
+
+        // DrainBufferAsync is internal on AgentConnectionLifecycle
+        var task = GetLifecycle(service).DrainBufferAsync();
+        await task;
+
+        // Both messages should be preserved in the buffer:
+        // - job-A: re-buffered with DrainAttempts incremented (replay failed)
+        // - job-B: re-buffered as-is (never attempted, preserved from data loss)
+        buffer.HasPendingMessages.Should().BeTrue();
+        buffer.Count.Should().Be(2, "both the failed message and remaining unprocessed messages should be re-buffered");
+
+        var messages = buffer.DrainAll();
+        var jobA = (BufferedJobCompleted)messages[0];
+        var jobB = (BufferedJobCompleted)messages[1];
+
+        jobA.JobId.Should().Be("job-A");
+        jobA.DrainAttempts.Should().Be(1, "failed message should have incremented DrainAttempts");
+
+        jobB.JobId.Should().Be("job-B");
+        jobB.DrainAttempts.Should().Be(0, "unprocessed message should retain original DrainAttempts");
+    }
+
+    // ── BuildRegistrationMessage includes ActiveJob when buffer is pending ──
+
+    [Fact]
+    public void BuildRegistrationMessage_IncludesActiveJob_WhenSlotHeld()
+    {
+        var service = CreateService();
+        var buffer = GetBuffer(service);
+        var slotManager = GetSlotManager(service);
+
+        // Simulate: job completed, ReportJobCompleted failed, slot held
+        SetPrivateField(slotManager, "_activeJobId", (JobId?)(JobId)"pending-job");
+        SetPrivateField(slotManager, "_isBusy", true);
+        SetPrivateField(slotManager, "_activeJobAssignment", CreateTestJobAssignment("pending-job"));
+        SetPrivateField(slotManager, "_activeJobStartedAt", DateTimeOffset.UtcNow);
+        buffer.Enqueue(new BufferedJobCompleted("pending-job", CreatePayload(), DateTimeOffset.UtcNow));
+
+        // BuildActiveJobState should return non-null since _activeJobId is set
+        var activeJobState = slotManager.BuildActiveJobState();
+
+        activeJobState.Should().NotBeNull();
+        activeJobState!.RunId.Should().Be("pending-job");
+    }
+
+    // ── End-to-End Buffer Lifecycle ──────────────────────────────────────
+
+    [Fact]
+    public async Task EndToEnd_BufferLifecycle_EnqueueDrainRelease()
+    {
+        // Simulate the full lifecycle:
+        // 1. Job completes
+        // 2. ReportJobCompleted fails → buffered
+        // 3. Slot held
+        // 4. DrainBufferAsync called (simulating reconnection)
+        // 5. Drain fails (no connection) → re-buffered with attempt=1
+        // 6. DrainBufferAsync called again → fails → re-buffered with attempt=2
+        // 7. DrainBufferAsync called again → fails → re-buffered with attempt=3
+        // 8. DrainBufferAsync called again → dropped (attempt >= 3) → slot released
+
+        var service = CreateService();
+        var buffer = GetBuffer(service);
+        // DrainBufferAsync is internal on AgentConnectionLifecycle
+
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"lifecycle-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
+        SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
+
+        // Step 2: Buffer the message
+        buffer.Enqueue(new BufferedJobCompleted("lifecycle-job", CreatePayload(), DateTimeOffset.UtcNow));
+
+        // Steps 4-7: Drain attempts fail (connection not started)
+        for (var i = 0; i < 3; i++)
+        {
+            var task = GetLifecycle(service).DrainBufferAsync();
+            await task;
+            // Should still be pending (re-buffered with incremented attempts)
+            buffer.HasPendingMessages.Should().BeTrue($"after drain attempt {i + 1}, message should be re-buffered");
+            GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().NotBeNull($"slot should remain held after drain attempt {i + 1}");
+        }
+
+        // Verify attempt count reached max
+        var messages = buffer.DrainAll();
+        messages.Should().HaveCount(1);
+        var msg = (BufferedJobCompleted)messages[0];
+        msg.DrainAttempts.Should().Be(3);
+
+        // Re-enqueue for final drain that should drop it
+        buffer.Enqueue(msg);
+
+        // Step 8: Final drain — message dropped, slot released
+        // Need to reset _activeJobId since previous drain may have cleared it
+        // Actually, DrainBufferAsync only releases slot when buffer is empty.
+        // The buffer still had pending messages, so slot was not released.
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"lifecycle-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
+        SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
+
+        var finalDrain = GetLifecycle(service).DrainBufferAsync();
+        await finalDrain;
+
+        buffer.HasPendingMessages.Should().BeFalse("exhausted message should be dropped");
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().BeNull("slot should be released after buffer is empty");
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Test-only subtype of BufferedCriticalMessage used to verify that DrainBufferAsync
+    /// correctly handles the max-attempts guard on the base type for any subtype.
+    /// </summary>
+    private sealed record TestReplayBufferedMessage(
+        string Data,
+        DateTimeOffset EnqueuedAt,
+        int DrainAttempts = 0) : BufferedCriticalMessage(EnqueuedAt, DrainAttempts);
+
+    private static AgentWorkerService CreateService()
+    {
+        return TestAgentWorkerServiceFactory.Create();
+    }
+
+    private static CriticalMessageBuffer GetBuffer(AgentWorkerService service)
+    {
+        var lifecycle = GetLifecycle(service);
+        var reporterField = typeof(AgentConnectionLifecycle).GetField("_completionReporter",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("Field '_completionReporter' not found");
+        var reporter = (SignalRCompletionReporter)reporterField.GetValue(lifecycle)!;
+        return reporter.Buffer;
+    }
+
+    private static HubConnectionManager CreateTestHubManager()
+    {
+        var logger = new Mock<Serilog.ILogger>();
+        return new HubConnectionManager("http://localhost:9999", "test-agent", "test-api-key", logger.Object);
+    }
+
+    private static HubConnectionManagerFactory CreateTestHubManagerFactory()
+    {
+        var logger = new Mock<Serilog.ILogger>();
+        return new HubConnectionManagerFactory("http://localhost:9999", "test-agent", "test-api-key", logger.Object);
+    }
+
+    private static AgentJobSlotManager GetSlotManager(AgentWorkerService service)
+    {
+        var field = typeof(AgentWorkerService).GetField("_slotManager",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("Field '_slotManager' not found");
+        return (AgentJobSlotManager)field.GetValue(service)!;
+    }
+
+    private static AgentConnectionLifecycle GetLifecycle(AgentWorkerService service)
+    {
+        var field = typeof(AgentWorkerService).GetField("_connectionLifecycle",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("Field '_connectionLifecycle' not found");
+        return (AgentConnectionLifecycle)field.GetValue(service)!;
+    }
+
+    private static JobCompletionPayload CreatePayload() => new()
+    {
+        FinalStep = PipelineStep.Completed,
+        CompletedAt = DateTimeOffset.UtcNow
+    };
+
+    private static JobAssignmentMessage CreateTestJobAssignment(string jobId = "test-job-1") => new()
+    {
+        JobId = jobId,
+        IssueIdentifier = "owner/repo#1",
+        IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+        ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+        RepoProviderConfigId = "repo-1",
+        AgentProviderConfigId = "agent-1",
+        PipelineConfiguration = new PipelineConfiguration(),
+        ProviderConfigs = [],
+        ReviewerConfigs = [],
+        QualityGateConfigs = [],
+        IssueComments = [],
+        McpServers = [],
+        InitiatedBy = "test-user"
+    };
+
+    private static void SetPrivateField(object obj, string fieldName, object? value)
+    {
+        var field = obj.GetType().GetField(fieldName,
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException($"Field '{fieldName}' not found");
+        field.SetValue(obj, value);
+    }
+
+    private static T? GetPrivateField<T>(object obj, string fieldName)
+    {
+        var field = obj.GetType().GetField(fieldName,
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException($"Field '{fieldName}' not found");
+        return (T?)field.GetValue(obj);
+    }
+
+    // TODO(#1776): Add test for orchestrator-side idempotency guard (AgentHub.Pipeline.cs).
+    // The acceptance criteria require "Duplicate ReportJobCompleted for the same jobId is handled
+    // idempotently on the orchestrator (no crash, no double-history)." The new else branch with
+    // the debug log is untested — calling ReportJobCompleted twice for the same jobId where
+    // GetRun returns null on the second call is not covered by any test.
+
+    // TODO(#1776): Add test for HeartbeatMonitor interaction with held slot during partition.
+    // The acceptance criteria require "HeartbeatMonitor no longer produces false 'agent stuck'
+    // failures for jobs that completed during a network partition (verifiable in test)."
+    // Need a scenario that exercises: delivery failure → buffer → progress timeout fires →
+    // reconnect → replay → verify HeartbeatMonitor did NOT mark it as stuck.
+    // A basic test exists in HeartbeatMonitorServiceTests but a full end-to-end scenario
+    // (with the agent-side buffer interaction) is not covered.
+}

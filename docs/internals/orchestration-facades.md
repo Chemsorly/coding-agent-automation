@@ -65,7 +65,7 @@ Created internally (not injected) by the orchestrator. Manages provider resoluti
 
 ## DI Registration
 
-Registered as a singleton in `ServiceCollectionExtensions.RegisterPipelineFacades()` at `src/CodingAgentWebUI/ServiceCollectionExtensions.PipelineFacades.cs`:
+Registered as a singleton in `ServiceCollectionExtensions.RegisterPipelineFacades()` at `src/CodingAgent.Web/ServiceCollectionExtensions.PipelineFacades.cs`:
 
 ```csharp
 services.AddSingleton<IPipelineCancellationFacade>(sp => new PipelineCancellationFacade(
@@ -77,8 +77,8 @@ services.AddSingleton<IPipelineCancellationFacade>(sp => new PipelineCancellatio
 
 | Component | Path |
 |-----------|------|
-| `IPipelineCancellationFacade` | `src/CodingAgentWebUI.Pipeline/Interfaces/IPipelineCancellationFacade.cs` |
-| `PipelineCancellationFacade` | `src/CodingAgentWebUI.Pipeline/Services/PipelineCancellationFacade.cs` |
-| `PipelineRunLifecycleService` | `src/CodingAgentWebUI.Pipeline/Services/PipelineRunLifecycleService.cs` |
-| `PipelineOrchestrationService` | `src/CodingAgentWebUI.Pipeline/Services/PipelineOrchestrationService.cs` |
-| DI Registration | `src/CodingAgentWebUI/ServiceCollectionExtensions.PipelineFacades.cs` |
+| `IPipelineCancellationFacade` | `src/CodingAgent.Contracts/Interfaces/IPipelineCancellationFacade.cs` |
+| `PipelineCancellationFacade` | `src/CodingAgent.Pipeline/Services/PipelineCancellationFacade.cs` |
+| `PipelineRunLifecycleService` | `src/CodingAgent.Pipeline/Services/PipelineRunLifecycleService.cs` |
+| `PipelineOrchestrationService` | `src/CodingAgent.Pipeline/Services/PipelineOrchestrationService.cs` |
+| DI Registration | `src/CodingAgent.Web/ServiceCollectionExtensions.PipelineFacades.cs` |

@@ -1,0 +1,73 @@
+using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Models;
+
+namespace CodingAgent.Web.E2ETests.Fakes;
+
+/// <summary>
+/// In-memory pipeline run history service. No file I/O.
+/// </summary>
+public sealed class InMemoryPipelineRunHistoryService : IPipelineRunHistoryService
+{
+    private readonly List<PipelineRunSummary> _history = new();
+
+    public void Reset() => _history.Clear();
+
+    public Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PipelineRunSummary>>(_history.ToList().AsReadOnly());
+
+    // TODO: This fake does not filter by InitiatedBy != ConsolidationConstants.InitiatedBy, unlike the real
+    // PostgresPipelineRunHistoryService. If E2E tests rely on this for pagination validation, results may
+    // diverge from production behavior. Consider adding a contract test or aligning the filter logic.
+    public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, CancellationToken ct = default)
+    {
+        var items = _history.Skip((page - 1) * pageSize).Take(pageSize + 1).ToList();
+        var hasMore = items.Count > pageSize;
+        if (hasMore)
+            items = items.Take(pageSize).ToList();
+        return Task.FromResult(new PagedResult<PipelineRunSummary>
+        {
+            Items = items.AsReadOnly(),
+            Page = page,
+            PageSize = pageSize,
+            HasMore = hasMore
+        });
+    }
+
+    public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default)
+    {
+        _history.Insert(0, run.ToSummary());
+        return Task.CompletedTask;
+    }
+
+    public Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default)
+    {
+        var match = _history.FirstOrDefault(r => r.RunId == runId.ToString());
+        return Task.FromResult<PipelineRunSummary?>(match);
+    }
+
+    public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, CancellationToken ct = default)
+    {
+        var filtered = feedbackOnly
+            ? _history.Where(r => r.Feedback != null).ToList()
+            : _history.ToList();
+        var items = filtered.Skip((page - 1) * pageSize).Take(pageSize + 1).ToList();
+        var hasMore = items.Count > pageSize;
+        if (hasMore)
+            items = items.Take(pageSize).ToList();
+        return Task.FromResult(new PagedResult<PipelineRunSummary>
+        {
+            Items = items.AsReadOnly(),
+            Page = page,
+            PageSize = pageSize,
+            HasMore = hasMore
+        });
+    }
+
+    public void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory) { }
+    public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null) { }
+    public Task AddRunSummaryAsync(PipelineRunSummary summary, CancellationToken ct = default)
+    {
+        _history.Insert(0, summary);
+        return Task.CompletedTask;
+    }
+}

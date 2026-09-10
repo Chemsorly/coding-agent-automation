@@ -1,0 +1,235 @@
+using Octokit;
+using Polly;
+using Serilog;
+using CodingAgent.Infrastructure.Resilience;
+using PipelineRateLimitExceededException = CodingAgent.Pipeline.Models.RateLimitExceededException;
+
+namespace CodingAgent.Infrastructure.GitHub;
+
+/// <summary>
+/// Base class for GitHub providers that share common authentication,
+/// client management, and repository validation patterns.
+/// </summary>
+public abstract class GitHubProviderBase : IAsyncDisposable
+{
+    private readonly GitHubClientProvider _clientProvider;
+    private readonly ResiliencePipeline _resiliencePipeline;
+    private readonly TimeProvider _timeProvider;
+
+    /// <summary>Repository owner.</summary>
+    protected string Owner { get; }
+
+    /// <summary>Repository name.</summary>
+    protected string Repo { get; }
+
+    protected GitHubProviderBase(GitHubConnectionInfo connection, string token)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(token);
+        _clientProvider = new GitHubClientProvider(connection.ApiUrl, token);
+        Owner = connection.Owner;
+        Repo = connection.Repo;
+        _resiliencePipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(Log.Logger);
+        _timeProvider = TimeProvider.System;
+    }
+
+    protected GitHubProviderBase(GitHubConnectionInfo connection, Func<CancellationToken, Task<string>> tokenProvider)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(tokenProvider);
+        _clientProvider = new GitHubClientProvider(connection.ApiUrl, tokenProvider);
+        Owner = connection.Owner;
+        Repo = connection.Repo;
+        _resiliencePipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(Log.Logger);
+        _timeProvider = TimeProvider.System;
+    }
+
+    protected GitHubProviderBase(GitHubConnectionInfo connection, IGitHubClient client)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(client);
+        _clientProvider = new GitHubClientProvider(client);
+        Owner = connection.Owner;
+        Repo = connection.Repo;
+        _resiliencePipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(Log.Logger);
+        _timeProvider = TimeProvider.System;
+    }
+
+    protected GitHubProviderBase(GitHubConnectionInfo connection, IGitHubClient client, string token)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(client);
+        ArgumentNullException.ThrowIfNull(token);
+        _clientProvider = new GitHubClientProvider(client, token);
+        Owner = connection.Owner;
+        Repo = connection.Repo;
+        _resiliencePipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(Log.Logger);
+        _timeProvider = TimeProvider.System;
+    }
+
+    /// <summary>API base URL from the client provider.</summary>
+    protected string? ApiUrl => _clientProvider.ApiUrl;
+
+    /// <summary>
+    /// Derives the GraphQL endpoint URI from the configured API URL.
+    /// For GitHub.com (api.github.com) → https://api.github.com/graphql.
+    /// For GHE (e.g. https://github.example.com/api/v3) → https://github.example.com/api/graphql.
+    /// </summary>
+    protected Uri DeriveGraphQlUri()
+    {
+        var apiUrl = ApiUrl ?? "https://api.github.com";
+
+        if (apiUrl.EndsWith("/api/v3", StringComparison.OrdinalIgnoreCase))
+        {
+            return new Uri(apiUrl[..^"/api/v3".Length] + "/api/graphql");
+        }
+
+        return new Uri(apiUrl.TrimEnd('/') + "/graphql");
+    }
+
+    /// <summary>Returns a GitHubClient configured with a current token.</summary>
+    protected Task<IGitHubClient> GetClientAsync(CancellationToken ct)
+        => _clientProvider.GetClientAsync(ct);
+
+    /// <summary>Returns a current token.</summary>
+    protected Task<string> GetTokenAsync(CancellationToken ct)
+        => _clientProvider.GetTokenAsync(ct);
+
+    /// <inheritdoc />
+    public virtual async Task ValidateAsync(CancellationToken ct)
+    {
+        await ExecuteWithResilienceAsync(
+            async client => { await client.Repository.Get(Owner, Repo); return true; },
+            "ValidateRepository", ct);
+    }
+
+    /// <summary>
+    /// Parses a string issue identifier into a numeric issue number.
+    /// </summary>
+    protected static int ParseIssueIdentifier(string identifier)
+    {
+        if (!int.TryParse(identifier, out var issueNumber))
+        {
+            Log.Warning("Invalid issue identifier '{Identifier}' — expected numeric issue number", identifier);
+            throw new ArgumentException(
+                $"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.",
+                nameof(identifier));
+        }
+        return issueNumber;
+    }
+
+    private static readonly TimeSpan DefaultRateLimitWait = TimeSpan.FromSeconds(60);
+
+    private const string RateLimitLogMessage = "GitHub API rate limit exceeded, reset at {Reset}";
+
+    /// <summary>
+    /// Executes an Octokit API call with resilience (retry on transient errors) and rate limit handling.
+    /// Acquires a fresh client inside the retry loop to ensure token freshness on retry.
+    /// </summary>
+    protected async Task<T> ExecuteWithResilienceAsync<T>(
+        Func<IGitHubClient, Task<T>> operation, string operationName, CancellationToken ct)
+    {
+        var context = ResilienceContextPool.Shared.Get(operationName, ct);
+        try
+        {
+            return await _resiliencePipeline.ExecuteAsync(async ctx =>
+            {
+                var client = await GetClientAsync(ctx.CancellationToken);
+                return await operation(client);
+            }, context);
+        }
+        catch (Octokit.AuthorizationException)
+        {
+            // Authorization failure is propagated to the caller for handling and logging.
+            // Logging here would cause duplicate log entries since callers already handle this exception.
+            throw;
+        }
+        catch (Octokit.RateLimitExceededException ex)
+        {
+            Log.Warning(ex, RateLimitLogMessage, ex.Reset);
+            throw new PipelineRateLimitExceededException(ex.Reset, ex);
+        }
+        catch (AbuseException ex)
+        {
+            var resetAt = ex.RetryAfterSeconds.HasValue
+                ? _timeProvider.GetUtcNow().AddSeconds(ex.RetryAfterSeconds.Value)
+                : _timeProvider.GetUtcNow().Add(DefaultRateLimitWait);
+            Log.Warning(ex, RateLimitLogMessage, resetAt);
+            throw new PipelineRateLimitExceededException(resetAt, ex);
+        }
+        finally
+        {
+            ResilienceContextPool.Shared.Return(context);
+        }
+    }
+
+    /// <summary>
+    /// Executes a void-returning Octokit API call with resilience and rate limit handling.
+    /// </summary>
+    protected async Task ExecuteWithResilienceAsync(
+        Func<IGitHubClient, Task> operation, string operationName, CancellationToken ct)
+    {
+        await ExecuteWithResilienceAsync(async client =>
+        {
+            await operation(client);
+            return true;
+        }, operationName, ct);
+    }
+
+    /// <summary>
+    /// Executes an Octokit API call with consistent rate limit exception handling.
+    /// Catches <see cref="Octokit.RateLimitExceededException"/> and <see cref="AbuseException"/>,
+    /// wrapping them in <see cref="PipelineRateLimitExceededException"/>.
+    /// </summary>
+    protected async Task<T> ExecuteWithRateLimitHandlingAsync<T>(Func<Task<T>> apiCall)
+    {
+        try
+        {
+            return await apiCall();
+        }
+        catch (Octokit.RateLimitExceededException ex)
+        {
+            Log.Warning(ex, RateLimitLogMessage, ex.Reset);
+            throw new PipelineRateLimitExceededException(ex.Reset, ex);
+        }
+        catch (AbuseException ex)
+        {
+            var resetAt = ex.RetryAfterSeconds.HasValue
+                ? _timeProvider.GetUtcNow().AddSeconds(ex.RetryAfterSeconds.Value)
+                : _timeProvider.GetUtcNow().Add(DefaultRateLimitWait);
+            Log.Warning(ex, RateLimitLogMessage, resetAt);
+            throw new PipelineRateLimitExceededException(resetAt, ex);
+        }
+    }
+
+    /// <summary>
+    /// Executes a void-returning Octokit API call with consistent rate limit exception handling.
+    /// </summary>
+    protected async Task ExecuteWithRateLimitHandlingAsync(Func<Task> apiCall)
+    {
+        try
+        {
+            await apiCall();
+        }
+        catch (Octokit.RateLimitExceededException ex)
+        {
+            Log.Warning(ex, RateLimitLogMessage, ex.Reset);
+            throw new PipelineRateLimitExceededException(ex.Reset, ex);
+        }
+        catch (AbuseException ex)
+        {
+            var resetAt = ex.RetryAfterSeconds.HasValue
+                ? _timeProvider.GetUtcNow().AddSeconds(ex.RetryAfterSeconds.Value)
+                : _timeProvider.GetUtcNow().Add(DefaultRateLimitWait);
+            Log.Warning(ex, RateLimitLogMessage, resetAt);
+            throw new PipelineRateLimitExceededException(resetAt, ex);
+        }
+    }
+
+    /// <inheritdoc />
+    public virtual ValueTask DisposeAsync()
+    {
+        GC.SuppressFinalize(this);
+        return ValueTask.CompletedTask;
+    }
+}

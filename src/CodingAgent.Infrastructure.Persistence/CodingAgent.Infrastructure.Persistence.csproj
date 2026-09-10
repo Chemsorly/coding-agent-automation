@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!--
+    InternalsVisibleTo: copied from CodingAgent.Infrastructure as a starting point.
+    Audit which test projects actually access internal Persistence types and trim accordingly.
+    InProcessDistributedLockProvider and PostgresDistributedLockProvider (both internal) are
+    in this assembly, so Infrastructure.UnitTests and UnitTests need access.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="CodingAgent.Infrastructure.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgent.Pipeline.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgent.Web.UnitTests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Serilog" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- One-way: Persistence references Providers. Never reverse. -->
+    <ProjectReference Include="..\CodingAgent.Infrastructure.Providers\CodingAgent.Infrastructure.Providers.csproj" />
+    <ProjectReference Include="..\CodingAgent.Pipeline\CodingAgent.Pipeline.csproj" />
+  </ItemGroup>
+
+</Project>

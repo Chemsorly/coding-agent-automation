@@ -1,0 +1,243 @@
+using AwesomeAssertions;
+using CodingAgent.Pipeline.Models;
+using CodingAgent.Infrastructure.GitHub;
+using CodingAgent.Infrastructure.Persistence;
+using CodingAgent.Infrastructure;
+using Octokit;
+using WireMock.RequestBuilders;
+using WireMock.ResponseBuilders;
+using System.Text.Json;
+
+namespace CodingAgent.Infrastructure.UnitTests;
+
+public class GitHubActionsPipelineProviderWireMockTests : WireMockTestBase
+{
+    private const string Owner = "test-owner";
+    private const string Repo = "test-repo";
+    private const string Token = "fake-token-12345";
+    private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(50);
+
+    private GitHubActionsPipelineProvider CreateProvider() =>
+        new(new GitHubConnectionInfo(Server.Url!, Owner, Repo), Token, PollInterval);
+
+    private GitHubActionsPipelineProvider CreateProviderWithTokenProvider(
+        Func<CancellationToken, Task<string>> tokenProvider) =>
+        new(new GitHubConnectionInfo(Server.Url!, Owner, Repo), tokenProvider, PollInterval);
+
+    private string RunsPath => ApiPath($"/repos/{Owner}/{Repo}/actions/runs");
+    private string JobsPath(long runId) => ApiPath($"/repos/{Owner}/{Repo}/actions/runs/{runId}/jobs");
+    private string LogsPath(long jobId) => ApiPath($"/repos/{Owner}/{Repo}/actions/jobs/{jobId}/logs");
+
+    [Fact]
+    public async Task GetRunStatusAsync_ReturnsDeserializedStatus()
+    {
+        var run = BuildWorkflowRunJson(100, "abc123", "completed", "success");
+        StubGet(RunsPath, new { total_count = 1, workflow_runs = new[] { run } });
+
+        var job = BuildWorkflowJobJson(200, "build", "completed", "success");
+        StubGet(JobsPath(100), new { total_count = 1, jobs = new[] { job } });
+
+        await using var provider = CreateProvider();
+        var result = await provider.GetRunStatusAsync("main", "abc123", CancellationToken.None);
+
+        result.State.Should().Be(PipelineRunState.Passed);
+        result.Jobs.Should().HaveCount(1);
+        result.Jobs[0].Name.Should().Be("build");
+        result.Jobs[0].State.Should().Be(PipelineRunState.Passed);
+        result.CommitSha.Should().Be("abc123");
+    }
+
+    [Fact]
+    public async Task GetRunStatusAsync_NoRuns_ReturnsPending()
+    {
+        StubGet(RunsPath, new { total_count = 0, workflow_runs = Array.Empty<object>() });
+
+        await using var provider = CreateProvider();
+        var result = await provider.GetRunStatusAsync("main", null, CancellationToken.None);
+
+        result.State.Should().Be(PipelineRunState.Pending);
+        result.Jobs.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetRunStatusAsync_FiltersByCommitSha()
+    {
+        // The provider passes head_sha="abc123" as a server-side filter to the GitHub API.
+        // The stub simulates the real API by returning only the matching run (run1).
+        var run1 = BuildWorkflowRunJson(100, "abc123", "completed", "success");
+        StubGet(RunsPath, new { total_count = 1, workflow_runs = new[] { run1 } });
+
+        var job = BuildWorkflowJobJson(200, "build", "completed", "success");
+        StubGet(JobsPath(100), new { total_count = 1, jobs = new[] { job } });
+
+        await using var provider = CreateProvider();
+        var result = await provider.GetRunStatusAsync("main", "abc123", CancellationToken.None);
+
+        result.State.Should().Be(PipelineRunState.Passed);
+        result.CommitSha.Should().Be("abc123");
+    }
+
+    [Fact]
+    public async Task GetRunStatusAsync_FailedRun_MapsCorrectly()
+    {
+        var run = BuildWorkflowRunJson(100, "abc123", "completed", "failure");
+        StubGet(RunsPath, new { total_count = 1, workflow_runs = new[] { run } });
+
+        var job = BuildWorkflowJobJson(200, "test", "completed", "failure");
+        StubGet(JobsPath(100), new { total_count = 1, jobs = new[] { job } });
+
+        await using var provider = CreateProvider();
+        var result = await provider.GetRunStatusAsync("main", "abc123", CancellationToken.None);
+
+        result.State.Should().Be(PipelineRunState.Failed);
+        result.Jobs[0].State.Should().Be(PipelineRunState.Failed);
+        result.Jobs[0].FailureReason.Should().Contain("test");
+    }
+
+    [Fact]
+    public async Task GetRunStatusAsync_404_ThrowsNotFoundException()
+    {
+        StubError(RunsPath, 404, new { message = "Not Found" });
+
+        await using var provider = CreateProvider();
+        await provider.Invoking(p => p.GetRunStatusAsync("main", null, CancellationToken.None))
+            .Should().ThrowAsync<NotFoundException>();
+    }
+
+    [Fact]
+    public async Task WaitForCompletionAsync_PollsUntilComplete()
+    {
+        var inProgressRun = BuildWorkflowRunJson(100, "abc123", "in_progress", null);
+        var completedRun = BuildWorkflowRunJson(100, "abc123", "completed", "success");
+        var job = BuildWorkflowJobJson(200, "build", "completed", "success");
+
+        var jsonOpts = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+        };
+
+        var inProgressBody = JsonSerializer.Serialize(
+            new { total_count = 1, workflow_runs = new[] { inProgressRun } }, jsonOpts);
+        var completedBody = JsonSerializer.Serialize(
+            new { total_count = 1, workflow_runs = new[] { completedRun } }, jsonOpts);
+
+        // First call: in_progress, second call: completed
+        Server.Given(Request.Create().WithPath(RunsPath).UsingGet())
+            .InScenario("polling")
+            .WillSetStateTo("poll-1")
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(inProgressBody));
+
+        Server.Given(Request.Create().WithPath(RunsPath).UsingGet())
+            .InScenario("polling")
+            .WhenStateIs("poll-1")
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(completedBody));
+
+        StubGet(JobsPath(100), new { total_count = 1, jobs = new[] { job } });
+
+        await using var provider = CreateProvider();
+        var result = await provider.WaitForCompletionAsync(
+            "main", "abc123", TimeSpan.FromSeconds(30), CancellationToken.None);
+
+        result.State.Should().Be(PipelineRunState.Passed);
+    }
+
+    [Fact]
+    public async Task WaitForCompletionAsync_Timeout_ReturnsLastStatus()
+    {
+        // Verify that when polling returns a non-terminal state and the timeout expires,
+        // the last observed status is returned. We use the successful polling test's pattern
+        // but with a scenario that never transitions to completed.
+        var run = BuildWorkflowRunJson(100, "abc123", "in_progress", null);
+        var job = BuildWorkflowJobJson(200, "build", "in_progress", null);
+
+        StubGet(RunsPath, new { total_count = 1, workflow_runs = new[] { run } });
+        StubGet(JobsPath(100), new { total_count = 1, jobs = new[] { job } });
+
+        // Poll interval of 50ms means multiple polls will complete within the timeout.
+        // The 200ms timeout is enough for several polls on localhost WireMock.
+        // If the first poll hasn't completed in 200ms (slow CI), lastStatus will be null
+        // and the method returns Pending — so we accept either Running or Pending.
+        await using var provider = CreateProvider();
+        var result = await provider.WaitForCompletionAsync(
+            "main", "abc123", TimeSpan.FromSeconds(2), CancellationToken.None);
+
+        // The method should return either the last polled state (Running) or the default (Pending)
+        // if no poll completed before timeout. Both are valid timeout behaviors.
+        result.State.Should().BeOneOf(PipelineRunState.Running, PipelineRunState.Pending);
+        result.State.Should().NotBe(PipelineRunState.Passed);
+        result.State.Should().NotBe(PipelineRunState.Failed);
+    }
+
+    [Fact]
+    public async Task GetJobLogsAsync_ReturnsLogContent()
+    {
+        StubGetRaw(LogsPath(200),
+            "2026-01-01T00:00:00Z Build started\n2026-01-01T00:01:00Z Build completed");
+
+        await using var provider = CreateProvider();
+        var result = await provider.GetJobLogsAsync(200, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result.Should().Contain("Build started");
+        result.Should().Contain("Build completed");
+    }
+
+    [Fact]
+    public async Task GetJobLogsAsync_404_ReturnsNull()
+    {
+        StubError(LogsPath(999), 404, new { message = "Not Found" });
+
+        await using var provider = CreateProvider();
+        var result = await provider.GetJobLogsAsync(999, CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AllRequests_IncludeAuthorizationHeader()
+    {
+        StubGet(RunsPath, new { total_count = 0, workflow_runs = Array.Empty<object>() });
+
+        await using var provider = CreateProvider();
+        await provider.GetRunStatusAsync("main", null, CancellationToken.None);
+
+        AssertAllRequestsHaveAuthHeader(Token);
+    }
+
+    [Fact]
+    public async Task DynamicTokenProvider_EachRequestUsesCurrentToken()
+    {
+        var callCount = 0;
+        var tokens = new[] { "token-alpha", "token-beta" };
+
+        StubGet(RunsPath, new { total_count = 0, workflow_runs = Array.Empty<object>() });
+
+        await using var provider = CreateProviderWithTokenProvider(ct =>
+        {
+            var token = tokens[Math.Min(Interlocked.Increment(ref callCount) - 1, tokens.Length - 1)];
+            return Task.FromResult(token);
+        });
+
+        await provider.GetRunStatusAsync("main", null, CancellationToken.None);
+        await provider.GetRunStatusAsync("main", null, CancellationToken.None);
+
+#pragma warning disable CS8602 // WireMock types use nullable references
+        var authHeaders = Server.LogEntries
+            .Select(e => GetHeaderValue(e.RequestMessage.Headers, "Authorization"))
+            .ToList();
+#pragma warning restore CS8602
+
+        // Each request delegates to the token provider (no local caching — upstream GitHubAppAuthService caches)
+        authHeaders.Should().HaveCount(2);
+        authHeaders[0].Should().Contain("token-alpha");
+        authHeaders[1].Should().Contain("token-beta");
+        callCount.Should().Be(2, "token provider is called per request (caching is upstream)");
+    }
+}

@@ -13,7 +13,8 @@ metadata:
 spec:
   # Spec 046: api.replicas > 1 is now safe. AgentRegistryService, OrchestratorRunService, and
   # JobDeduplicationGuardService are backed by Redis when signalr.redis.connectionString is set.
-  # If signalr.redis.connectionString is empty and replicas > 1, a startup warning is logged.
+  # Spec 048 Phase 2: if signalr.redis.connectionString is empty and replicas > 1, the chart now
+  # fails at render time (see _deprecations.tpl) — this is no longer just a startup warning.
   replicas: {{ .Values.api.replicas }}
   # RollingUpdate is safe after Spec 046. signalr.redis.connectionString must be set for
   # multi-replica deployments to avoid divergent in-memory state between old and new pods
@@ -124,7 +125,7 @@ spec:
             # Without these the factory returns empty OrchestratorUrl / ServiceAccount, and
             # JobSpecBuilder emits a Job spec the K8s admission webhook rejects.
             # ORCHESTRATOR_URL handed to the consolidation and model-fetch agent pods dispatched
-            # from this process. Must be the Pipeline API, not the orchestrator.
+            # from this process. Must be the Pipeline API, not the web service.
             {{- include "coding-agent-automation.workDistributionEnv" . | nindent 12 }}
           volumeMounts:
             - name: job-templates

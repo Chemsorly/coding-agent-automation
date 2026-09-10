@@ -1,0 +1,1924 @@
+using System.Diagnostics.Metrics;
+using System.Text.Json;
+using CodingAgent.Pipeline;
+using AwesomeAssertions;
+using CodingAgent.Agent;
+using CodingAgent.Infrastructure;
+using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Services.Steps;
+using CodingAgent.Pipeline.Telemetry;
+using KiroCliLib.Core;
+using Microsoft.AspNetCore.SignalR.Client;
+using Moq;
+
+namespace CodingAgent.Agent.UnitTests;
+
+/// <summary>
+/// Unit tests for <see cref="LocalPipelineExecutor"/>.
+/// Tests constructor validation, WriteMcpConfigToWorkspace static method,
+/// and failure payload construction.
+/// </summary>
+public class LocalPipelineExecutorTests : IDisposable
+{
+    private readonly Mock<IKiroCliOrchestrator> _mockOrchestrator = new();
+    private readonly Mock<IHttpClientFactory> _mockHttpClientFactory = new();
+    private readonly Mock<IQualityGateValidator> _mockQualityGateValidator = new();
+    private readonly Mock<Serilog.ILogger> _mockLogger = new();
+    private readonly PipelineConfiguration _defaultConfig = new();
+    private readonly string _tempDir;
+
+    public LocalPipelineExecutorTests()
+    {
+        _tempDir = Path.Combine(Path.GetTempPath(), $"test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(_tempDir);
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_tempDir))
+            Directory.Delete(_tempDir, recursive: true);
+    }
+
+    // ── Constructor Validation ──────────────────────────────────────────
+
+    [Fact]
+    public void Constructor_ValidParameters_DoesNotThrow()
+    {
+        var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
+
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void Constructor_NullBrainUpdateService_DoesNotThrow()
+    {
+        // BrainUpdateService is optional — passing null explicitly must not throw.
+        var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object,
+            BrainUpdateService: null, AgentIdentity: new AgentId("test-agent")));
+
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void Constructor_NullDeps_ThrowsArgumentNullException()
+    {
+        var act = () => new LocalPipelineExecutor(null!);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps");
+    }
+
+    [Fact]
+    public void Constructor_NullOrchestrator_ThrowsArgumentNullException()
+    {
+        var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            null!, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object));
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Orchestrator");
+    }
+
+    [Fact]
+    public void Constructor_NullHttpClientFactory_ThrowsArgumentNullException()
+    {
+        var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, null!, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object));
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.HttpClientFactory");
+    }
+
+    [Fact]
+    public void Constructor_NullDefaultPipelineConfig_ThrowsArgumentNullException()
+    {
+        var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, null!, _mockQualityGateValidator.Object, _mockLogger.Object));
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.DefaultPipelineConfig");
+    }
+
+    [Fact]
+    public void Constructor_NullQualityGateValidator_ThrowsArgumentNullException()
+    {
+        var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, null!, _mockLogger.Object));
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.QualityGateValidator");
+    }
+
+    [Fact]
+    public void Constructor_NullLogger_ThrowsArgumentNullException()
+    {
+        var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, null!));
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Logger");
+    }
+
+    // ── WriteMcpConfigToWorkspace ────────────────────────────────────────
+
+    [Fact]
+    public void McpConfigWriter_ValidStdioServers_ProducesValidJson()
+    {
+        // Arrange
+        var servers = new List<McpServerConfig>
+        {
+            new()
+            {
+                Name = "context7",
+                Type = "stdio",
+                Command = "npx",
+                Args = ["@context7/mcp", "--stdio"]
+            }
+        };
+        var relativePath = ".agent/settings/mcp.json";
+
+        // Act
+        McpConfigWriter.WriteConfig(Path.Combine(_tempDir, relativePath), servers);
+
+        // Assert
+        var fullPath = Path.Combine(_tempDir, relativePath);
+        File.Exists(fullPath).Should().BeTrue();
+
+        var json = File.ReadAllText(fullPath);
+        var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        root.TryGetProperty("mcpServers", out var mcpServers).Should().BeTrue();
+        mcpServers.ValueKind.Should().Be(JsonValueKind.Object);
+        mcpServers.TryGetProperty("context7", out var server).Should().BeTrue();
+        server.GetProperty("command").GetString().Should().Be("npx");
+        server.GetProperty("args").GetArrayLength().Should().Be(2);
+    }
+
+    [Fact]
+    public void McpConfigWriter_EmptyServerList_ProducesEmptyMcpServersObject()
+    {
+        // Arrange
+        var servers = new List<McpServerConfig>();
+        var relativePath = "mcp-config/mcp.json";
+
+        // Act
+        McpConfigWriter.WriteConfig(Path.Combine(_tempDir, relativePath), servers);
+
+        // Assert
+        var fullPath = Path.Combine(_tempDir, relativePath);
+        File.Exists(fullPath).Should().BeTrue();
+
+        var json = File.ReadAllText(fullPath);
+        var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        root.TryGetProperty("mcpServers", out var mcpServers).Should().BeTrue();
+        mcpServers.ValueKind.Should().Be(JsonValueKind.Object);
+
+        // Verify the mcpServers object is empty
+        var count = 0;
+        foreach (var _ in mcpServers.EnumerateObject())
+            count++;
+        count.Should().Be(0);
+    }
+
+    [Fact]
+    public void McpConfigWriter_BothStdioAndHttpServers_SerializesCorrectly()
+    {
+        // Arrange
+        var servers = new List<McpServerConfig>
+        {
+            new()
+            {
+                Name = "filesystem-mcp",
+                Type = "stdio",
+                Command = "uvx",
+                Args = ["filesystem-mcp-server", "--root", "/workspace"],
+                Env = new Dictionary<string, string> { ["HOME"] = "/root" }
+            },
+            new()
+            {
+                Name = "web-search",
+                Type = "http",
+                Url = "https://mcp.example.com/search"
+            }
+        };
+        var relativePath = ".agent/settings/mcp.json";
+
+        // Act
+        McpConfigWriter.WriteConfig(Path.Combine(_tempDir, relativePath), servers);
+
+        // Assert
+        var fullPath = Path.Combine(_tempDir, relativePath);
+        var json = File.ReadAllText(fullPath);
+        var doc = JsonDocument.Parse(json);
+        var mcpServers = doc.RootElement.GetProperty("mcpServers");
+
+        // Verify stdio server
+        var stdioServer = mcpServers.GetProperty("filesystem-mcp");
+        stdioServer.GetProperty("command").GetString().Should().Be("uvx");
+        stdioServer.GetProperty("args").GetArrayLength().Should().Be(3);
+        stdioServer.TryGetProperty("url", out _).Should().BeFalse();
+
+        // Verify HTTP server
+        var httpServer = mcpServers.GetProperty("web-search");
+        httpServer.GetProperty("type").GetString().Should().Be("http");
+        httpServer.GetProperty("url").GetString().Should().Be("https://mcp.example.com/search");
+        httpServer.TryGetProperty("command", out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public void McpConfigWriter_HttpServerWithHeaders_SerializesHeadersField()
+    {
+        // Arrange
+        var servers = new List<McpServerConfig>
+        {
+            new()
+            {
+                Name = "sonarqube",
+                Type = "http",
+                Url = "https://api.sonarcloud.io/mcp",
+                Headers = new Dictionary<string, string>
+                {
+                    ["Authorization"] = "Bearer mytoken",
+                    ["SONARQUBE_ORG"] = "chemsorly"
+                }
+            }
+        };
+
+        // Act
+        McpConfigWriter.WriteConfig(Path.Combine(_tempDir, "mcp.json"), servers);
+
+        // Assert
+        var json = File.ReadAllText(Path.Combine(_tempDir, "mcp.json"));
+        var doc = JsonDocument.Parse(json);
+        var server = doc.RootElement.GetProperty("mcpServers").GetProperty("sonarqube");
+        server.TryGetProperty("headers", out var headers).Should().BeTrue("headers must be present when non-empty");
+        headers.GetProperty("Authorization").GetString().Should().Be("Bearer mytoken");
+        headers.GetProperty("SONARQUBE_ORG").GetString().Should().Be("chemsorly");
+        // TODO: This test does not verify that sibling HTTP fields (type, url, disabled, autoApprove) are still
+        // present in the headers branch. The production code uses two separate anonymous object literals
+        // (conditional on Headers.Count > 0), so a future edit that accidentally drops a field from the
+        // headers branch would not be caught here. Add assertions for server.GetProperty("type"), "url", etc.
+    }
+
+    [Fact]
+    public void McpConfigWriter_HttpServerWithEmptyHeaders_OmitsHeadersField()
+    {
+        // Arrange
+        var servers = new List<McpServerConfig>
+        {
+            new()
+            {
+                Name = "web-search",
+                Type = "http",
+                Url = "https://mcp.example.com/search"
+                // Headers defaults to empty dictionary
+            }
+        };
+
+        // Act
+        McpConfigWriter.WriteConfig(Path.Combine(_tempDir, "mcp.json"), servers);
+
+        // Assert
+        var json = File.ReadAllText(Path.Combine(_tempDir, "mcp.json"));
+        var doc = JsonDocument.Parse(json);
+        var server = doc.RootElement.GetProperty("mcpServers").GetProperty("web-search");
+        server.TryGetProperty("headers", out _).Should().BeFalse("empty headers must be omitted from output");
+    }
+
+    [Fact]
+    public void McpConfigWriter_CreatesDirectoryIfNotExists()
+    {
+        // Arrange
+        var servers = new List<McpServerConfig>
+        {
+            new() { Name = "test-server", Type = "stdio", Command = "node" }
+        };
+        var relativePath = "nested/deep/path/mcp.json";
+
+        // Act
+        McpConfigWriter.WriteConfig(Path.Combine(_tempDir, relativePath), servers);
+
+        // Assert
+        var fullPath = Path.Combine(_tempDir, relativePath);
+        File.Exists(fullPath).Should().BeTrue();
+    }
+
+    // ── ExecuteAsync Failure Path ────────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_NullJob_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
+
+        // Act
+        var act = () => executor.ExecuteAsync(null!, null!, null!, null, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("job");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_NullConnection_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
+        var job = CreateMinimalJobAssignment();
+
+        // Act
+        var act = () => executor.ExecuteAsync(job, null!, null!, null, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("connection");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MissingRepoProviderConfig_ThrowsInvalidOperationException()
+    {
+        // Arrange — job references a provider config ID that doesn't exist in the list
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
+
+        var job = new JobAssignmentMessage
+        {
+            JobId = "test-job-1",
+            IssueIdentifier = "owner/repo#1",
+            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test Issue", Description = "", Labels = [] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            RepoProviderConfigId = "non-existent-repo-config",
+            AgentProviderConfigId = "agent-config-1",
+            PipelineConfiguration = new PipelineConfiguration(),
+            ProviderConfigs = [],
+            ReviewerConfigs = [],
+            QualityGateConfigs = [],
+            IssueComments = [],
+            InitiatedBy = "test-user"
+        };
+
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+
+        // Act & Assert — missing repo config throws InvalidOperationException with failure reason
+        var act = () => executor.ExecuteAsync(job, connection, batcher, null, CancellationToken.None);
+
+        var ex = await act.Should().ThrowAsync<InvalidOperationException>();
+        ex.WithMessage("*non-existent-repo-config*");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MissingAgentProviderConfig_ThrowsInvalidOperationException()
+    {
+        // Arrange — repo config exists but agent config doesn't
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
+
+        var repoConfig = new ProviderConfig
+        {
+            Id = "repo-config-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Test Repo",
+            Settings = new Dictionary<string, string>()
+        };
+
+        var job = new JobAssignmentMessage
+        {
+            JobId = "test-job-2",
+            IssueIdentifier = "owner/repo#2",
+            IssueDetail = new IssueDetail { Identifier = "owner/repo#2", Title = "Test Issue", Description = "", Labels = [] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            RepoProviderConfigId = "repo-config-1",
+            AgentProviderConfigId = "non-existent-agent-config",
+            PipelineConfiguration = new PipelineConfiguration(),
+            ProviderConfigs = [repoConfig],
+            ReviewerConfigs = [],
+            QualityGateConfigs = [],
+            IssueComments = [],
+            InitiatedBy = "test-user"
+        };
+
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+
+        // Act & Assert — missing agent config throws InvalidOperationException with failure reason
+        var act = () => executor.ExecuteAsync(job, connection, batcher, null, CancellationToken.None);
+
+        var ex = await act.Should().ThrowAsync<InvalidOperationException>();
+        ex.WithMessage("*non-existent-agent-config*");
+    }
+
+    // ── BuildCompletionPayload ───────────────────────────────────────────
+
+    [Fact]
+    public void BuildCompletionPayload_MapsAllFieldsFromRun()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-1",
+            IssueIdentifier = "owner/repo#5",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            StartedAt = DateTime.UtcNow,
+            CurrentStep = PipelineStep.Completed,
+            CompletedAt = new DateTime(2026, 5, 15, 12, 0, 0, DateTimeKind.Utc),
+            CompletedAtOffset = new DateTimeOffset(2026, 5, 15, 12, 0, 0, TimeSpan.Zero),
+            PullRequestUrl = "https://github.com/owner/repo/pull/42",
+            PullRequestNumber = "42",
+            IsDraftPr = false,
+            RetryCount = 2,
+            FilesChangedCount = 5,
+            LinesAdded = 100,
+            LinesRemoved = 20,
+            BrainUpdatesPushed = true,
+            AnalysisRecommendation = AnalysisGateResult.Ready,
+            FinalLabel = AgentLabels.Done,
+            LinkedPullRequest = new LinkedPullRequest { Url = "https://github.com/owner/repo/pull/41", Number = 41, BranchName = "agent/issue-41", IsDraft = false }
+        };
+        run.RunMode = RunMode.Rework;
+        run.AnalysisConcerns = ["concern-1"];
+        run.AnalysisBlockingIssues = ["blocker-1"];
+        run.BlacklistedFilesDetected = ["secret.env"];
+        run.CodeReviewAgentsRun = ["Correctness"];
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.FinalStep.Should().Be(PipelineStep.Completed);
+        payload.PullRequestUrl.Should().Be("https://github.com/owner/repo/pull/42");
+        payload.PullRequestNumber.Should().Be("42");
+        payload.IsDraftPr.Should().BeFalse();
+        payload.RetryCount.Should().Be(2);
+        payload.FilesChangedCount.Should().Be(5);
+        payload.LinesAdded.Should().Be(100);
+        payload.LinesRemoved.Should().Be(20);
+        payload.BrainUpdatesPushed.Should().BeTrue();
+        payload.AnalysisRecommendation.Should().Be(AnalysisGateResult.Ready);
+        payload.RunMode.Should().Be(RunMode.Rework);
+        payload.AnalysisConcerns.Should().ContainSingle().Which.Should().Be("concern-1");
+        payload.AnalysisBlockingIssues.Should().ContainSingle().Which.Should().Be("blocker-1");
+        payload.BlacklistedFilesDetected.Should().ContainSingle().Which.Should().Be("secret.env");
+        payload.CodeReviewAgentsRun.Should().ContainSingle().Which.Should().Be("Correctness");
+        payload.CompletedAt.Should().Be(new DateTimeOffset(2026, 5, 15, 12, 0, 0, TimeSpan.Zero));
+        payload.FinalLabel.Should().Be(AgentLabels.Done);
+    }
+
+    [Fact]
+    public void BuildCompletionPayload_NullLinkedPullRequest_RunModeIsNew()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-2",
+            IssueIdentifier = "owner/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            CurrentStep = PipelineStep.Completed,
+            CompletedAt = DateTime.UtcNow
+        };
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.RunMode.Should().Be(RunMode.New);
+    }
+
+    [Fact]
+    public void BuildCompletionPayload_NullCompletedAt_UsesUtcNow()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-3",
+            IssueIdentifier = "owner/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            CurrentStep = PipelineStep.Completed,
+            CompletedAt = null
+        };
+
+        var before = DateTimeOffset.UtcNow;
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.CompletedAt.Should().BeOnOrAfter(before);
+    }
+
+    // ── BuildFailurePayload ─────────────────────────────────────────────
+
+    [Fact]
+    public void BuildFailurePayload_SetsFailureReasonAndStep()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-4",
+            IssueIdentifier = "owner/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            RetryCount = 3,
+            FilesChangedCount = 2,
+            LinesAdded = 10,
+            LinesRemoved = 5
+        };
+
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "Something went wrong");
+
+        payload.FinalStep.Should().Be(PipelineStep.Failed);
+        payload.FailureReason.Should().Be("Something went wrong");
+        payload.RetryCount.Should().Be(3);
+        payload.FilesChangedCount.Should().Be(2);
+        payload.LinesAdded.Should().Be(10);
+        payload.LinesRemoved.Should().Be(5);
+        payload.RunMode.Should().Be(RunMode.New);
+    }
+
+    [Fact]
+    public void BuildFailurePayload_WithLinkedPR_RunModeIsRework()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-5",
+            IssueIdentifier = "owner/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            RunMode = RunMode.Rework,
+            LinkedPullRequest = new LinkedPullRequest { Url = "https://github.com/owner/repo/pull/10", Number = 10, BranchName = "agent/issue-10", IsDraft = false }
+        };
+
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "error");
+
+        payload.RunMode.Should().Be(RunMode.Rework);
+    }
+
+    [Fact]
+    public void BuildFailurePayload_PreservesCodeReviewStats()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-6",
+            IssueIdentifier = "owner/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow
+        };
+        run.CodeReviewAgentsRun = ["Security", "Correctness"];
+        run.SetCodeReviewCounts(2, 5, 10);
+
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "gate failed");
+
+        payload.CodeReviewAgentsRun.Should().HaveCount(2);
+        payload.CodeReviewCriticalCount.Should().Be(2);
+        payload.CodeReviewWarningCount.Should().Be(5);
+        payload.CodeReviewSuggestionCount.Should().Be(10);
+    }
+
+    [Fact]
+    public void BuildFailurePayload_WithFinalLabel_PropagatesLabel()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-7",
+            IssueIdentifier = "owner/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            FinalLabel = AgentLabels.NeedsRefinement
+        };
+
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "Analysis gate: needs refinement");
+
+        payload.FinalLabel.Should().Be(AgentLabels.NeedsRefinement);
+    }
+
+    [Fact]
+    public void BuildCompletionPayload_WithFinalLabelWontDo_PropagatesLabel()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "run-8",
+            IssueIdentifier = "owner/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            CurrentStep = PipelineStep.Completed,
+            CompletedAt = DateTime.UtcNow,
+            FinalLabel = AgentLabels.WontDo
+        };
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.FinalLabel.Should().Be(AgentLabels.WontDo);
+    }
+
+    // TODO(#1776): ExecuteAsync tests below dispose OutputBatcher/HubConnection after assertions.
+    // If an assertion fails, DisposeAsync calls are skipped, leaking timers and semaphores.
+    // Refactor to use 'await using' declarations or try/finally for reliable cleanup.
+
+    // ── ExecuteAsync — Provider Validation Failure ───────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_RepoProviderValidationFails_ThrowsFromProvider()
+    {
+        // Arrange — provide valid config structure so factory creates a provider,
+        // but the provider will fail validation because it can't reach the API
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
+            _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
+
+        var repoConfig = new ProviderConfig
+        {
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Test Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake-token"
+            }
+        };
+        var agentConfig = new ProviderConfig
+        {
+            Id = "agent-1",
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Test Agent",
+            Settings = new Dictionary<string, string>()
+        };
+
+        var job = new JobAssignmentMessage
+        {
+            JobId = "test-job-validation",
+            IssueIdentifier = "owner/repo#1",
+            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            RepoProviderConfigId = "repo-1",
+            AgentProviderConfigId = "agent-1",
+            PipelineConfiguration = new PipelineConfiguration(),
+            ProviderConfigs = [repoConfig, agentConfig],
+            ReviewerConfigs = [],
+            QualityGateConfigs = [],
+            IssueComments = [],
+            InitiatedBy = "test-user"
+        };
+
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+
+        // Act — ValidateAsync on the real GitHubRepositoryProvider will fail
+        // because the token is fake and it can't reach the API
+        var act = () => executor.ExecuteAsync(job, connection, batcher, null, CancellationToken.None);
+
+        // Assert — should throw (validation failure propagates)
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    // ── ExecuteAsync — Cancellation ─────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_CancellationBeforeProviderCreation_ThrowsOperationCancelled()
+    {
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
+            _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
+
+        var repoConfig = new ProviderConfig
+        {
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Test Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake-token"
+            }
+        };
+        var agentConfig = new ProviderConfig
+        {
+            Id = "agent-1",
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Test Agent",
+            Settings = new Dictionary<string, string>()
+        };
+
+        var job = new JobAssignmentMessage
+        {
+            JobId = "test-job-cancel",
+            IssueIdentifier = "owner/repo#1",
+            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            RepoProviderConfigId = "repo-1",
+            AgentProviderConfigId = "agent-1",
+            PipelineConfiguration = new PipelineConfiguration(),
+            ProviderConfigs = [repoConfig, agentConfig],
+            ReviewerConfigs = [],
+            QualityGateConfigs = [],
+            IssueComments = [],
+            InitiatedBy = "test-user"
+        };
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel(); // Cancel immediately
+
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+
+        // Act — should throw OperationCanceledException since token is already cancelled
+        var act = () => executor.ExecuteAsync(job, connection, batcher, null, cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    // ── ExecuteAsync — Null OutputBatcher ────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_NullOutputBatcher_ThrowsArgumentNullException()
+    {
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
+            _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
+        var job = CreateMinimalJobAssignment();
+        await using var connection = CreateDisconnectedHubConnection();
+
+        var act = () => executor.ExecuteAsync(job, connection, null!, null, CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("outputBatcher");
+    }
+
+    // ── ExecuteAsync — Blacklist Override ────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_RepoConfigHasBlacklistedPaths_OverridesDefaultConfig()
+    {
+        // This test verifies the blacklist override logic runs without error.
+        // The actual override is applied before provider validation, so we verify
+        // the code path doesn't throw by checking it reaches provider creation.
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
+            _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
+
+        var repoConfig = new ProviderConfig
+        {
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Test Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake-token"
+            },
+            BlacklistedPaths = ["*.secret", "credentials/"],
+        };
+        var agentConfig = new ProviderConfig
+        {
+            Id = "agent-1",
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Test Agent",
+            Settings = new Dictionary<string, string>()
+        };
+
+        var job = new JobAssignmentMessage
+        {
+            JobId = "test-job-blacklist",
+            IssueIdentifier = "owner/repo#1",
+            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            RepoProviderConfigId = "repo-1",
+            AgentProviderConfigId = "agent-1",
+            PipelineConfiguration = new PipelineConfiguration(),
+            ProviderConfigs = [repoConfig, agentConfig],
+            ReviewerConfigs = [],
+            QualityGateConfigs = [],
+            IssueComments = [],
+            InitiatedBy = "test-user"
+        };
+
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+
+        // Act — will fail at provider validation (fake token), but the blacklist
+        // override code path is exercised before that point
+        var act = () => executor.ExecuteAsync(job, connection, batcher, null, CancellationToken.None);
+
+        // The exception proves we got past the blacklist override (which doesn't throw)
+        // and into provider validation
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    // ── ExecuteAsync — Brain Provider Path ──────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_WithBrainProviderConfig_AttemptsValidation()
+    {
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
+            _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
+
+        var repoConfig = new ProviderConfig
+        {
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Test Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake-token"
+            }
+        };
+        var agentConfig = new ProviderConfig
+        {
+            Id = "agent-1",
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Test Agent",
+            Settings = new Dictionary<string, string>()
+        };
+        var brainConfig = new ProviderConfig
+        {
+            Id = "brain-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Brain Repo",
+            RepositoryRole = RepositoryRole.Brain,
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-brain",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake-brain-token"
+            }
+        };
+
+        var job = new JobAssignmentMessage
+        {
+            JobId = "test-job-brain",
+            IssueIdentifier = "owner/repo#1",
+            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            RepoProviderConfigId = "repo-1",
+            AgentProviderConfigId = "agent-1",
+            BrainProviderConfigId = "brain-1",
+            PipelineConfiguration = new PipelineConfiguration(),
+            ProviderConfigs = [repoConfig, agentConfig, brainConfig],
+            ReviewerConfigs = [],
+            QualityGateConfigs = [],
+            IssueComments = [],
+            InitiatedBy = "test-user"
+        };
+
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+
+        // Act — brain provider validation will fail (fake token), but it's caught
+        // and execution continues to repo provider validation (which also fails)
+        var act = () => executor.ExecuteAsync(job, connection, batcher, null, CancellationToken.None);
+
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_BrainProviderConfigIdSetButNotInList_SkipsBrainProvider()
+    {
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
+            _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
+
+        var repoConfig = new ProviderConfig
+        {
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Test Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake-token"
+            }
+        };
+        var agentConfig = new ProviderConfig
+        {
+            Id = "agent-1",
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Test Agent",
+            Settings = new Dictionary<string, string>()
+        };
+
+        var job = new JobAssignmentMessage
+        {
+            JobId = "test-job-brain-missing",
+            IssueIdentifier = "owner/repo#1",
+            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            RepoProviderConfigId = "repo-1",
+            AgentProviderConfigId = "agent-1",
+            BrainProviderConfigId = "non-existent-brain",
+            PipelineConfiguration = new PipelineConfiguration(),
+            ProviderConfigs = [repoConfig, agentConfig],
+            ReviewerConfigs = [],
+            QualityGateConfigs = [],
+            IssueComments = [],
+            InitiatedBy = "test-user"
+        };
+
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+
+        // Act — brain config not found in list, so brain provider is skipped.
+        // Execution continues to repo validation (which fails with fake token).
+        var act = () => executor.ExecuteAsync(job, connection, batcher, null, CancellationToken.None);
+
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithPipelineProviderConfig_AttemptsCreation()
+    {
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
+            _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
+
+        var repoConfig = new ProviderConfig
+        {
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Test Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake-token"
+            }
+        };
+        var agentConfig = new ProviderConfig
+        {
+            Id = "agent-1",
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Test Agent",
+            Settings = new Dictionary<string, string>()
+        };
+        var pipelineConfig = new ProviderConfig
+        {
+            Id = "pipeline-1",
+            Kind = ProviderKind.Pipeline,
+            ProviderType = "GitHub",
+            DisplayName = "CI Pipeline",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.Token] = "fake-pipeline-token"
+            }
+        };
+
+        var job = new JobAssignmentMessage
+        {
+            JobId = "test-job-pipeline",
+            IssueIdentifier = "owner/repo#1",
+            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            RepoProviderConfigId = "repo-1",
+            AgentProviderConfigId = "agent-1",
+            PipelineProviderConfigId = "pipeline-1",
+            PipelineConfiguration = new PipelineConfiguration(),
+            ProviderConfigs = [repoConfig, agentConfig, pipelineConfig],
+            ReviewerConfigs = [],
+            QualityGateConfigs = [],
+            IssueComments = [],
+            InitiatedBy = "test-user"
+        };
+
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+
+        // Act — pipeline provider is created, then repo validation fails
+        var act = () => executor.ExecuteAsync(job, connection, batcher, null, CancellationToken.None);
+
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PipelineProviderConfigIdSetButNotInList_SkipsPipelineProvider()
+    {
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
+            _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
+
+        var repoConfig = new ProviderConfig
+        {
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Test Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake-token"
+            }
+        };
+        var agentConfig = new ProviderConfig
+        {
+            Id = "agent-1",
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Test Agent",
+            Settings = new Dictionary<string, string>()
+        };
+
+        var job = new JobAssignmentMessage
+        {
+            JobId = "test-job-pipeline-missing",
+            IssueIdentifier = "owner/repo#1",
+            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            RepoProviderConfigId = "repo-1",
+            AgentProviderConfigId = "agent-1",
+            PipelineProviderConfigId = "non-existent-pipeline",
+            PipelineConfiguration = new PipelineConfiguration(),
+            ProviderConfigs = [repoConfig, agentConfig],
+            ReviewerConfigs = [],
+            QualityGateConfigs = [],
+            IssueComments = [],
+            InitiatedBy = "test-user"
+        };
+
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+
+        // Act — pipeline config not found, skipped. Repo validation fails.
+        var act = () => executor.ExecuteAsync(job, connection, batcher, null, CancellationToken.None);
+
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_EmptyBrainProviderConfigId_SkipsBrainProvider()
+    {
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
+            _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
+
+        var repoConfig = new ProviderConfig
+        {
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Test Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.BaseBranch] = "main",
+                [ProviderSettingKeys.Token] = "fake-token"
+            }
+        };
+        var agentConfig = new ProviderConfig
+        {
+            Id = "agent-1",
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Test Agent",
+            Settings = new Dictionary<string, string>()
+        };
+
+        var job = new JobAssignmentMessage
+        {
+            JobId = "test-job-empty-brain",
+            IssueIdentifier = "owner/repo#1",
+            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            RepoProviderConfigId = "repo-1",
+            AgentProviderConfigId = "agent-1",
+            BrainProviderConfigId = "",
+            PipelineProviderConfigId = "",
+            PipelineConfiguration = new PipelineConfiguration(),
+            ProviderConfigs = [repoConfig, agentConfig],
+            ReviewerConfigs = [],
+            QualityGateConfigs = [],
+            IssueComments = [],
+            InitiatedBy = "test-user"
+        };
+
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+
+        // Act — empty brain/pipeline config IDs are treated as "not set"
+        var act = () => executor.ExecuteAsync(job, connection, batcher, null, CancellationToken.None);
+
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    // ── BuildAgentStepPipeline ─────────────────────────────────────────
+
+    // TODO(#1776): These tests dispose HubConnection after assertions. If an assertion fails,
+    // DisposeAsync is skipped. Use 'await using' declarations for reliable cleanup.
+
+    [Fact]
+    public async Task BuildAgentStepPipeline_Returns16Steps()
+    {
+        var job = CreateMinimalJobAssignment();
+        await using var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
+
+        var steps = AgentStepPipelineBuilder.BuildAgentStepPipeline(job, proxy, repoConfig);
+
+        steps.Should().HaveCount(16);
+    }
+
+    [Fact]
+    public async Task BuildAgentStepPipeline_StartsWithCloneAndEndsWithQualityGates()
+    {
+        var job = CreateMinimalJobAssignment();
+        await using var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
+
+        var steps = AgentStepPipelineBuilder.BuildAgentStepPipeline(job, proxy, repoConfig);
+
+        steps[0].Should().BeOfType<CloneRepositoryStep>();
+        steps[^1].Should().BeOfType<RunQualityGatesStep>();
+    }
+
+    [Fact]
+    public async Task BuildAgentStepPipeline_IncludesWriteMcpConfigStep()
+    {
+        var job = CreateMinimalJobAssignment();
+        await using var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
+
+        var steps = AgentStepPipelineBuilder.BuildAgentStepPipeline(job, proxy, repoConfig);
+
+        steps[2].Should().BeOfType<WriteMcpConfigStep>();
+    }
+
+    [Fact]
+    public async Task BuildAgentStepPipeline_IncludesDownloadIssueImagesStep()
+    {
+        var job = CreateMinimalJobAssignment();
+        await using var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
+
+        var steps = AgentStepPipelineBuilder.BuildAgentStepPipeline(job, proxy, repoConfig);
+
+        steps.Should().ContainItemsAssignableTo<DownloadIssueImagesStep>();
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    private static HubConnection CreateDisconnectedHubConnection()
+    {
+        return new HubConnectionBuilder()
+            .WithUrl($"http://localhost{HubRoutes.Agent}", options =>
+            {
+                options.HttpMessageHandlerFactory = _ => new NoOpHandler();
+            })
+            .Build();
+    }
+
+    private static JobAssignmentMessage CreateMinimalJobAssignment()
+    {
+        return new JobAssignmentMessage
+        {
+            JobId = "test-job",
+            IssueIdentifier = "owner/repo#1",
+            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            RepoProviderConfigId = "repo-1",
+            AgentProviderConfigId = "agent-1",
+            PipelineConfiguration = new PipelineConfiguration(),
+            ProviderConfigs = [],
+            ReviewerConfigs = [],
+            QualityGateConfigs = [],
+            IssueComments = [],
+            InitiatedBy = "test-user"
+        };
+    }
+
+    private static ProviderConfig CreateMinimalRepoConfig()
+    {
+        return new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Test Repo",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            Settings = new Dictionary<string, string>()
+        };
+    }
+
+    /// <summary>
+    /// A no-op HTTP handler for building disconnected HubConnections.
+    /// </summary>
+    private sealed class NoOpHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK));
+    }
+
+    // ── BuildStepMetadata ───────────────────────────────────────────────
+
+    [Fact]
+    public void BuildStepMetadata_AfterCreatingBranch_IncludesBranchName()
+    {
+        var run = CreateMinimalRun();
+        run.BranchName = "feature/auto-42-fix-bug";
+
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.VerifyingBaseline);
+
+        metadata.Should().NotBeNull();
+        metadata!["BranchName"].Should().Be("feature/auto-42-fix-bug");
+    }
+
+    [Fact]
+    public void BuildStepMetadata_AfterVerifyingBaseline_IncludesBaselineHealth()
+    {
+        var run = CreateMinimalRun();
+        run.BranchName = "feature/test";
+        run.BaselineHealthPassed = true;
+
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.AnalyzingCode);
+
+        metadata.Should().NotBeNull();
+        metadata!["BaselineHealthPassed"].Should().Be("True");
+    }
+
+    [Fact]
+    public void BuildStepMetadata_AfterGeneratingCode_IncludesFileStats()
+    {
+        var run = CreateMinimalRun();
+        run.BranchName = "feature/test";
+        run.BaselineHealthPassed = true;
+        run.FilesChangedCount = 5;
+        run.LinesAdded = 100;
+        run.LinesRemoved = 20;
+
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.ReviewingCode);
+
+        metadata.Should().NotBeNull();
+        metadata!["FilesChangedCount"].Should().Be("5");
+        metadata["LinesAdded"].Should().Be("100");
+        metadata["LinesRemoved"].Should().Be("20");
+    }
+
+    [Fact]
+    public void BuildStepMetadata_WithCodeReviewProgress_IncludesIterations()
+    {
+        var run = CreateMinimalRun();
+        run.BranchName = "feature/test";
+        run.BaselineHealthPassed = true;
+        run.CodeReviewIterationsTotal = 3;
+        run.CodeReviewIterationsCompleted = 2;
+
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.RunningQualityGates);
+
+        metadata.Should().NotBeNull();
+        metadata!["CodeReviewIterationsTotal"].Should().Be("3");
+        metadata["CodeReviewIterationsCompleted"].Should().Be("2");
+    }
+
+    [Fact]
+    public void BuildStepMetadata_EarlyStep_ReturnsNull()
+    {
+        var run = CreateMinimalRun();
+
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.CloningRepository);
+
+        metadata.Should().BeNull();
+    }
+
+    [Fact]
+    public void BuildStepMetadata_NoDataSet_ReturnsNull()
+    {
+        var run = CreateMinimalRun();
+
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.AnalyzingCode);
+
+        metadata.Should().BeNull();
+    }
+
+    [Fact]
+    public void BuildStepMetadata_WithRetryCount_IncludesRetryCount()
+    {
+        var run = CreateMinimalRun();
+        run.RetryCount = 2;
+        run.InfrastructureRetryCount = 1;
+
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.GeneratingCode);
+
+        metadata.Should().NotBeNull();
+        metadata!["RetryCount"].Should().Be("2");
+        metadata["InfrastructureRetryCount"].Should().Be("1");
+    }
+
+    [Fact]
+    public void BuildStepMetadata_WithTokensAndCost_IncludesAccumulatedMetrics()
+    {
+        var run = CreateMinimalRun();
+        run.TotalTokens = 75000;
+        run.TotalCost = 1.23m;
+
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.GeneratingCode);
+
+        metadata.Should().NotBeNull();
+        metadata!["TotalTokens"].Should().Be("75000");
+        metadata["TotalCost"].Should().Be("1.23");
+    }
+
+    [Fact]
+    public void BuildStepMetadata_WithCodeReviewFindings_IncludesCounts()
+    {
+        var run = CreateMinimalRun();
+        run.AddCodeReviewCounts(3, 5, 7);
+        run.CodeReviewAgentsRun = new[] { "security-agent", "style-agent" };
+
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.RunningQualityGates);
+
+        metadata.Should().NotBeNull();
+        metadata!["CodeReviewCriticalCount"].Should().Be("3");
+        metadata["CodeReviewWarningCount"].Should().Be("5");
+        metadata["CodeReviewSuggestionCount"].Should().Be("7");
+        metadata["CodeReviewAgentsRun"].Should().Be("security-agent\x1Fstyle-agent");
+    }
+
+    [Fact]
+    public void BuildStepMetadata_ZeroRetryCount_DoesNotIncludeRetryCount()
+    {
+        var run = CreateMinimalRun();
+        run.RetryCount = 0;
+        run.TotalTokens = 0;
+
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.GeneratingCode);
+
+        // No data to report → null or missing keys
+        metadata?.ContainsKey("RetryCount").Should().NotBe(true);
+        metadata?.ContainsKey("TotalTokens").Should().NotBe(true);
+    }
+
+    private static PipelineRun CreateMinimalRun() => new()
+    {
+        RunId = "run-meta",
+        IssueIdentifier = "owner/repo#1",
+        IssueTitle = "Test",
+        IssueProviderConfigId = "ip",
+        RepoProviderConfigId = "rp",
+        StartedAt = DateTime.UtcNow,
+        CurrentStep = PipelineStep.Created
+    };
+
+    // ── TransitionToInternalAsync (PipelineSignalRReporter) ────────────
+
+    // TODO(#1776): Add test for PipelineSignalRReporter.ReportStepTransitionAsync — verify it updates
+    // run.CurrentStep and swallows SignalR failures (awaited path used during PR creation).
+
+    // TODO(#1776): Add test for PipelineSignalRReporter.ReportBrainSyncResultAsync — verify it correctly
+    // forwards parameters and swallows exceptions on connection failure.
+
+    [Fact]
+    public async Task TransitionToInternalAsync_UpdatesCurrentStepAndHighWaterMark()
+    {
+        var run = CreateMinimalRun();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+
+        await reporter.TransitionToInternalAsync(PipelineStep.AnalyzingCode, CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.AnalyzingCode);
+        run.HighWaterMark.Should().Be(PipelineStep.AnalyzingCode);
+    }
+
+    [Fact]
+    public async Task TransitionToInternalAsync_FailedStep_DoesNotUpdateHighWaterMark()
+    {
+        var run = CreateMinimalRun();
+        run.HighWaterMark = PipelineStep.AnalyzingCode;
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+
+        await reporter.TransitionToInternalAsync(PipelineStep.Failed, CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.HighWaterMark.Should().Be(PipelineStep.AnalyzingCode);
+    }
+
+    [Fact]
+    public async Task TransitionToInternalAsync_InvokesOnStepChanged()
+    {
+        var run = CreateMinimalRun();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+        PipelineStep? received = null;
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, s => received = s, _mockLogger.Object);
+
+        await reporter.TransitionToInternalAsync(PipelineStep.GeneratingCode, CancellationToken.None);
+
+        received.Should().Be(PipelineStep.GeneratingCode);
+    }
+
+    [Fact]
+    public async Task TransitionToInternalAsync_SignalRFailure_DoesNotThrow()
+    {
+        // Disconnected connection will fail SendAsync — should be swallowed
+        var run = CreateMinimalRun();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+
+        var act = () => reporter.TransitionToInternalAsync(PipelineStep.AnalyzingCode, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    /// <summary>
+    /// Regression test for issue #2229.
+    /// RunningEnvironmentSetup has ordinal 29 but logical order 2. With the broken raw-ordinal
+    /// comparison, once HWM reaches 29 all subsequent steps (ordinals 2–4) can never advance it.
+    /// The fix uses StepOrder.GetOrder for the comparison, matching the server-side logic.
+    /// Satisfies AC1 (uses StepOrder.GetOrder) and AC2 (HWM does not get stuck at ordinal 29).
+    /// Note: AC3 ("SignalR metadata payloads carry the correct logical HWM value") is only
+    /// transitively covered here — BuildStepMetadata does not embed HighWaterMark as a metadata
+    /// key, and the disconnected hub connection silently discards all payloads, so no assertion
+    /// on emitted metadata content is made. The BuildStepMetadata helpers still use raw ordinal
+    /// comparisons on newStep (separate TODO in PipelineSignalRReporter.cs).
+    /// TODO: Add a test that captures and inspects metadata payload content after
+    /// RunningEnvironmentSetup to fully verify AC3 once the BuildStepMetadata helpers are fixed.
+    /// </summary>
+    [Fact]
+    public async Task TransitionToInternalAsync_RunningEnvironmentSetup_DoesNotPreventSubsequentHwmAdvancement()
+    {
+        // Arrange — mirrors real pipeline execution order
+        var run = CreateMinimalRun();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+
+        // Act & Assert — assert HWM after every step so a future regression is immediately locatable
+
+        // Step 1: CloningRepository — ordinal 1, logical order 1
+        await reporter.TransitionToInternalAsync(PipelineStep.CloningRepository, CancellationToken.None);
+        run.HighWaterMark.Should().Be(PipelineStep.CloningRepository);
+
+        // Step 2: RunningEnvironmentSetup — ordinal 29, logical order 2
+        // With broken code: HWM jumps to ordinal 29, preventing all subsequent advances.
+        await reporter.TransitionToInternalAsync(PipelineStep.RunningEnvironmentSetup, CancellationToken.None);
+        run.HighWaterMark.Should().Be(PipelineStep.RunningEnvironmentSetup);
+
+        // Step 3: SyncingBrainRepoPreRun — ordinal 2, logical order 3
+        // With broken code: (int)2 < 29 → HWM stuck at RunningEnvironmentSetup.
+        await reporter.TransitionToInternalAsync(PipelineStep.SyncingBrainRepoPreRun, CancellationToken.None);
+        run.HighWaterMark.Should().Be(PipelineStep.SyncingBrainRepoPreRun,
+            "SyncingBrainRepoPreRun (ordinal 2) must advance HWM past RunningEnvironmentSetup (ordinal 29) because its logical order (3) is greater");
+
+        // Step 4: CreatingBranch — ordinal 3, logical order 4
+        // With broken code: (int)3 < 29 → HWM stuck.
+        await reporter.TransitionToInternalAsync(PipelineStep.CreatingBranch, CancellationToken.None);
+        run.HighWaterMark.Should().Be(PipelineStep.CreatingBranch,
+            "CreatingBranch (ordinal 3) must advance HWM because its logical order (4) is greater than RunningEnvironmentSetup's logical order (2)");
+
+        // Step 5: VerifyingBaseline — ordinal 4, logical order 5
+        // With broken code: (int)4 < 29 → HWM stuck.
+        await reporter.TransitionToInternalAsync(PipelineStep.VerifyingBaseline, CancellationToken.None);
+        run.HighWaterMark.Should().Be(PipelineStep.VerifyingBaseline,
+            "VerifyingBaseline (ordinal 4) must advance HWM because its logical order (5) is greater than RunningEnvironmentSetup's logical order (2)");
+    }
+
+    // ── EmitOutputLineInternalAsync (PipelineSignalRReporter) ────────────
+
+    [Fact]
+    public async Task EmitOutputLineInternalAsync_EnqueuesLineToRun()
+    {
+        var run = CreateMinimalRun();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+
+        await reporter.EmitOutputLineInternalAsync("hello", CancellationToken.None);
+
+        run.OutputLines.Should().Contain("hello");
+    }
+
+    [Fact]
+    public async Task EmitOutputLineInternalAsync_CancelledToken_DoesNotThrow()
+    {
+        var run = CreateMinimalRun();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = () => reporter.EmitOutputLineInternalAsync("line", cts.Token);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    // ── ReportQualityGateResultInternalAsync (PipelineSignalRReporter) ───
+
+    [Fact]
+    public async Task ReportQualityGateResultInternalAsync_SignalRFailure_DoesNotThrow()
+    {
+        var run = CreateMinimalRun();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        var report = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "build", Passed = true },
+            Tests = new GateResult { GateName = "test", Passed = true }
+        };
+
+        var act = () => reporter.ReportQualityGateResultInternalAsync(report, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    // ── SerializedSendAsync ordering (PipelineSignalRReporter) ──────────
+
+    [Fact]
+    public async Task TransitionToInternalAsync_SignalRFailure_IncrementsMetricCounter()
+    {
+        using var listener = new MeterListener();
+        var measurements = new List<string>();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, _, _, _) =>
+            measurements.Add(instrument.Name));
+        listener.Start();
+
+        var run = CreateMinimalRun();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        measurements.Clear();
+
+        await reporter.TransitionToInternalAsync(PipelineStep.AnalyzingCode, CancellationToken.None);
+
+        measurements.Should().Contain("agent.signalr.failures");
+    }
+
+    [Fact]
+    public async Task ReportQualityGateResultInternalAsync_SignalRFailure_IncrementsMetricCounter()
+    {
+        using var listener = new MeterListener();
+        var measurements = new List<string>();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, _, _, _) =>
+            measurements.Add(instrument.Name));
+        listener.Start();
+
+        var run = CreateMinimalRun();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        var report = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "build", Passed = true },
+            Tests = new GateResult { GateName = "test", Passed = true }
+        };
+        measurements.Clear();
+
+        await reporter.ReportQualityGateResultInternalAsync(report, CancellationToken.None);
+
+        measurements.Should().Contain("agent.signalr.failures");
+    }
+
+    [Fact]
+    public async Task SerializedSendAsync_GuaranteesOrdering()
+    {
+        // Simulate the serialization lock used in ExecuteAsync
+        using var signalrLock = new SemaphoreSlim(1, 1);
+        var executionOrder = new List<int>();
+
+        async Task SerializedSend(Func<Task> send)
+        {
+            await signalrLock.WaitAsync(CancellationToken.None);
+            try { await send(); }
+            finally { signalrLock.Release(); }
+        }
+
+        // Fire 5 sends concurrently — they should complete in order
+        var tasks = Enumerable.Range(0, 5).Select(i =>
+            SerializedSend(async () =>
+            {
+                await Task.Delay(10 - i); // Later sends are faster, but ordering is preserved
+                lock (executionOrder) { executionOrder.Add(i); }
+            })).ToArray();
+
+        await Task.WhenAll(tasks);
+
+        executionOrder.Should().BeInAscendingOrder();
+    }
+
+    [Fact]
+    public async Task SerializedSendAsync_ConcurrentCalls_ExecuteSequentially()
+    {
+        // Regression test for #791: verifies that the production SerializedSendAsync method
+        // guarantees sequential execution even when 10 callers race concurrently.
+        using var signalrLock = new SemaphoreSlim(1, 1);
+        var executionOrder = new List<int>();
+
+        // Fire 10 concurrent sends via the real production method
+        var tasks = Enumerable.Range(0, 10).Select(i =>
+            PipelineSignalRReporter.SerializedSendAsync(
+                signalrLock,
+                async () =>
+                {
+                    // Vary delays: later items are faster. If ordering breaks, we'd see them jump ahead.
+                    await Task.Delay(10 - i);
+                    lock (executionOrder) { executionOrder.Add(i); }
+                },
+                CancellationToken.None)).ToArray();
+
+        await Task.WhenAll(tasks);
+
+        // Items must appear in the order they acquired the semaphore (FIFO under no contention at start)
+        executionOrder.Should().HaveCount(10);
+        executionOrder.Should().BeInAscendingOrder(
+            "SerializedSendAsync must guarantee that concurrent calls execute sequentially in arrival order");
+    }
+
+    [Fact]
+    public async Task SerializedSendAsync_WhenCancelled_DoesNotThrow()
+    {
+        using var signalrLock = new SemaphoreSlim(1, 1);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // Should complete without throwing — cancellation is swallowed
+        var task = PipelineSignalRReporter.SerializedSendAsync(
+            signalrLock,
+            () => Task.CompletedTask,
+            cts.Token);
+
+        await task; // Must not throw
+
+        // Semaphore was never acquired on the cancelled path — no lock leak
+        signalrLock.CurrentCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task SerializedSendAsync_WhenSemaphoreDisposed_DoesNotThrow()
+    {
+        // Dispose the semaphore BEFORE calling SerializedSendAsync — this is the real scenario
+        // where a fire-and-forget task calls WaitAsync after the semaphore is already disposed.
+        var signalrLock = new SemaphoreSlim(1, 1);
+        signalrLock.Dispose();
+
+        await PipelineSignalRReporter.SerializedSendAsync(
+            signalrLock,
+            () => Task.CompletedTask,
+            CancellationToken.None);
+
+        Assert.True(true, "SerializedSendAsync swallowed ObjectDisposedException without rethrowing");
+    }
+
+    [Fact]
+    public async Task SerializedSendAsync_WhenSemaphoreDisposed_SendIsNotExecuted()
+    {
+        var signalrLock = new SemaphoreSlim(1, 1);
+        var sendExecuted = false;
+
+        signalrLock.Dispose();
+
+        await PipelineSignalRReporter.SerializedSendAsync(
+            signalrLock,
+            () => { sendExecuted = true; return Task.CompletedTask; },
+            CancellationToken.None);
+
+        sendExecuted.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task SerializedSendAsync_WhenSemaphoreDisposedDuringSend_DoesNotThrow()
+    {
+        var signalrLock = new SemaphoreSlim(1, 1);
+        var executed = false;
+
+        await PipelineSignalRReporter.SerializedSendAsync(
+            signalrLock,
+            () => { executed = true; signalrLock.Dispose(); return Task.CompletedTask; },
+            CancellationToken.None);
+
+        Assert.True(executed, "send callback was invoked before semaphore disposal");
+    }
+
+    // ── PullRequestCreationContext ──────────────────────────────────────
+
+    // TODO(#1776): Add test that exercises CreatePullRequestAsync with ReportStepTransition set to null,
+    // verifying it completes without NullReferenceException (validates the ?.Invoke ?? Task.CompletedTask fix).
+
+    [Fact]
+    public void PullRequestCreationContext_CanBeConstructed()
+    {
+        var context = new PullRequestCreationContext
+        {
+            RepoProvider = Mock.Of<IRepositoryProvider>(),
+            AgentProvider = Mock.Of<IAgentProvider>(),
+            Config = new PipelineConfiguration(),
+            IssueOps = new OrchestratorProxy(CreateDisconnectedHubConnection(), "job-1"),
+            Job = CreateMinimalJobAssignment(),
+            PrOrchestrator = new PullRequestOrchestrator(Mock.Of<Serilog.ILogger>()),
+            EmitOutputLine = _ => { }
+        };
+
+        context.RepoProvider.Should().NotBeNull();
+        context.BrainProvider.Should().BeNull();
+        context.BrainSync.Should().BeNull();
+    }
+
+    private LocalPipelineExecutor CreateExecutor() => new(new LocalPipelineExecutorDependencies(
+        _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
+        _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
+
+    // ── BuildReviewStepPipeline ─────────────────────────────────────────
+
+    [Fact]
+    public async Task BuildReviewStepPipeline_IncludesWriteMcpConfigStep()
+    {
+        var job = CreateMinimalJobAssignment();
+        await using var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
+
+        var steps = AgentStepPipelineBuilder.BuildReviewStepPipeline(job, proxy, repoConfig);
+
+        steps.Should().Contain(s => s.GetType() == typeof(WriteMcpConfigStep));
+    }
+
+    [Fact]
+    public async Task BuildReviewStepPipeline_WriteMcpConfigStep_BeforeWriteSteeringStep()
+    {
+        var job = CreateMinimalJobAssignment();
+        await using var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
+
+        var steps = AgentStepPipelineBuilder.BuildReviewStepPipeline(job, proxy, repoConfig);
+
+        var mcpIndex = steps.ToList().FindIndex(s => s is WriteMcpConfigStep);
+        var steeringIndex = steps.ToList().FindIndex(s => s is WriteSteeringStep);
+        mcpIndex.Should().BeGreaterThanOrEqualTo(0, "WriteMcpConfigStep should be present");
+        steeringIndex.Should().BeGreaterThanOrEqualTo(0, "WriteSteeringStep should be present");
+        mcpIndex.Should().BeLessThan(steeringIndex, "WriteMcpConfigStep should come before WriteSteeringStep");
+    }
+
+    [Fact]
+    public async Task BuildReviewStepPipeline_StartsWithCloneRepository()
+    {
+        var job = CreateMinimalJobAssignment();
+        await using var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
+
+        var steps = AgentStepPipelineBuilder.BuildReviewStepPipeline(job, proxy, repoConfig);
+
+        steps[0].Should().BeOfType<CloneRepositoryStep>();
+    }
+
+    [Fact]
+    public async Task BuildReviewStepPipeline_IncludesDownloadIssueImagesStep()
+    {
+        var job = CreateMinimalJobAssignment();
+        await using var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
+
+        var steps = AgentStepPipelineBuilder.BuildReviewStepPipeline(job, proxy, repoConfig);
+
+        steps.Should().Contain(s => s.GetType() == typeof(DownloadIssueImagesStep));
+    }
+
+    [Fact]
+    public async Task BuildReviewStepPipeline_DownloadIssueImagesStep_AfterSyncBrainPreRun_BeforeExtractLinkedIssues()
+    {
+        var job = CreateMinimalJobAssignment();
+        await using var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
+
+        var steps = AgentStepPipelineBuilder.BuildReviewStepPipeline(job, proxy, repoConfig);
+
+        var syncIndex = steps.ToList().FindIndex(s => s is SyncBrainPreRunStep);
+        var downloadIndex = steps.ToList().FindIndex(s => s is DownloadIssueImagesStep);
+        var extractIndex = steps.ToList().FindIndex(s => s is ExtractLinkedIssuesStep);
+        syncIndex.Should().BeGreaterThanOrEqualTo(0);
+        downloadIndex.Should().BeGreaterThanOrEqualTo(0);
+        extractIndex.Should().BeGreaterThanOrEqualTo(0);
+        downloadIndex.Should().BeGreaterThan(syncIndex, "DownloadIssueImagesStep should come after SyncBrainPreRunStep");
+        downloadIndex.Should().BeLessThan(extractIndex, "DownloadIssueImagesStep should come before ExtractLinkedIssuesStep");
+    }
+
+    // ── BuildDecompositionAnalysisStepPipeline ───────────────────────────
+
+    [Fact]
+    public async Task BuildDecompositionAnalysisStepPipeline_IncludesWriteMcpConfigStep()
+    {
+        var job = CreateMinimalJobAssignment();
+        await using var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
+
+        var steps = AgentStepPipelineBuilder.BuildDecompositionAnalysisStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
+
+        steps.Should().Contain(s => s.GetType() == typeof(WriteMcpConfigStep));
+    }
+
+    [Fact]
+    public async Task BuildDecompositionAnalysisStepPipeline_WriteMcpConfigStep_BeforeWriteSteeringStep()
+    {
+        var job = CreateMinimalJobAssignment();
+        await using var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
+
+        var steps = AgentStepPipelineBuilder.BuildDecompositionAnalysisStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
+
+        var mcpIndex = steps.ToList().FindIndex(s => s is WriteMcpConfigStep);
+        var steeringIndex = steps.ToList().FindIndex(s => s is WriteSteeringStep);
+        mcpIndex.Should().BeGreaterThanOrEqualTo(0);
+        steeringIndex.Should().BeGreaterThanOrEqualTo(0);
+        mcpIndex.Should().BeLessThan(steeringIndex);
+    }
+
+    // ── BuildDecompositionStepPipeline ───────────────────────────────────
+
+    [Fact]
+    public async Task BuildDecompositionStepPipeline_IncludesWriteMcpConfigStep()
+    {
+        var job = CreateMinimalJobAssignment();
+        await using var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
+
+        var steps = AgentStepPipelineBuilder.BuildDecompositionStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
+
+        steps.Should().Contain(s => s.GetType() == typeof(WriteMcpConfigStep));
+    }
+
+    [Fact]
+    public async Task BuildDecompositionStepPipeline_WriteMcpConfigStep_BeforeWriteSteeringStep()
+    {
+        var job = CreateMinimalJobAssignment();
+        await using var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
+
+        var steps = AgentStepPipelineBuilder.BuildDecompositionStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
+
+        var mcpIndex = steps.ToList().FindIndex(s => s is WriteMcpConfigStep);
+        var steeringIndex = steps.ToList().FindIndex(s => s is WriteSteeringStep);
+        mcpIndex.Should().BeGreaterThanOrEqualTo(0);
+        steeringIndex.Should().BeGreaterThanOrEqualTo(0);
+        mcpIndex.Should().BeLessThan(steeringIndex);
+    }
+}

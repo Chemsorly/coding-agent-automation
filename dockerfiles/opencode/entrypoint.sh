@@ -165,7 +165,7 @@ fi
 # The Agent Worker is the .NET process that orchestrates pipeline steps and
 # communicates with the orchestrator via SignalR.
 echo "Starting Agent Worker..."
-dotnet /app/CodingAgentWebUI.Agent.dll "$@" &
+dotnet /app/CodingAgent.Agent.dll "$@" &
 WORKER_PID=$!
 
 echo "Agent Worker started (PID: $WORKER_PID)"

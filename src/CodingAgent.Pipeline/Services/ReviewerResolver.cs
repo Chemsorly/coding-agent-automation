@@ -1,0 +1,54 @@
+using CodingAgent.Pipeline.Models;
+
+namespace CodingAgent.Pipeline.Services;
+
+/// <summary>
+/// Stateless service responsible for resolving which Reviewer Configurations apply to a job.
+/// Matching uses label intersection with case-insensitive comparison. Configurations with empty
+/// MatchLabels always apply unconditionally (they match every job).
+/// </summary>
+public sealed class ReviewerResolver
+{
+    /// <summary>
+    /// Resolves all matching ReviewerConfigurations for a job's required labels, returned in execution order.
+    /// </summary>
+    /// <param name="allConfigs">All available reviewer configurations.</param>
+    /// <param name="jobRequiredLabels">The labels required by the job being dispatched.</param>
+    /// <returns>Matching configurations ordered by <see cref="ReviewerConfiguration.ExecutionOrder"/> ascending,
+    /// then <see cref="ReviewerConfiguration.DisplayName"/> alphabetically (case-insensitive).</returns>
+    public IReadOnlyList<ReviewerConfiguration> Resolve(
+        IReadOnlyList<ReviewerConfiguration> allConfigs,
+        IReadOnlyList<string> jobRequiredLabels)
+    {
+        ArgumentNullException.ThrowIfNull(allConfigs);
+        ArgumentNullException.ThrowIfNull(jobRequiredLabels);
+
+        return LabelMatchResolver.Resolve(
+            allConfigs,
+            jobRequiredLabels,
+            enabledPredicate: rc => rc.Enabled,
+            labelSelector: rc => rc.MatchLabels,
+            matchStrategy: LabelMatchStrategies.Intersection,
+            orderBy: items => items
+                .OrderBy(rc => rc.ExecutionOrder)
+                .ThenBy(rc => rc.DisplayName, StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Flattens all ReviewAgents from the given configurations into a single list of
+    /// <see cref="ReviewAgentConfig"/> instances, preserving configuration order then agent order.
+    /// </summary>
+    /// <param name="configs">The resolved reviewer configurations to flatten.</param>
+    /// <returns>A flat list of ReviewAgentConfig mapped from all ReviewAgents, or empty if input is null or empty.</returns>
+    public static IReadOnlyList<ReviewAgentConfig> FlattenAgents(IReadOnlyList<ReviewerConfiguration>? configs)
+    {
+        if (configs is null or { Count: 0 })
+            return [];
+
+        return configs
+            .SelectMany(rc => rc.Agents)
+            .Select(ra => new ReviewAgentConfig { Name = ra.Name, Prompt = ra.Prompt })
+            .ToList()
+            .AsReadOnly();
+    }
+}

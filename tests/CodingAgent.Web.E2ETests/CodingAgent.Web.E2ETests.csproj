@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <!-- Deliberately false, and the E2E job must NOT use `dotnet test` on this project.
+         Two constraints pull against each other:
+           - true  ⇒ ci.yml's solution-wide `dotnet test`, which filters on `Category!=E2E`,
+                     includes this project, matches zero tests here, and fails the whole run
+                     (exit 1) even though every other project passes.
+           - false ⇒ the VSTest target is a no-op, so `dotnet test` on this project alone exits 0
+                     having discovered nothing — which is how the E2E job reported green while
+                     running no tests at all.
+         The resolution is to keep this false and drive the suite through `dotnet vstest` against
+         the built DLL, after building with -p:IsTestProject=true so the test host and adapters
+         are copied. Both e2e-tests.yml and dockerfiles/e2e-tests.Dockerfile do exactly that. -->
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AwesomeAssertions" />
+    <PackageReference Include="coverlet.collector">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.MessagePack" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Microsoft.Playwright" />
+    <PackageReference Include="Moq" />
+    <!-- CreateBootstrapLogger: the harness builds two hosts in one process and must hand
+         Serilog's global logger over twice. See E2ETestDefaults.ResetSerilogBootstrapLogger. -->
+    <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\CodingAgent.Web\CodingAgent.Web.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgent.Orchestration\CodingAgent.Orchestration.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgent.Pipeline\CodingAgent.Pipeline.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgent.Infrastructure.Providers\CodingAgent.Infrastructure.Providers.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgent.Infrastructure.Persistence\CodingAgent.Infrastructure.Persistence.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgent.Kubernetes\CodingAgent.Kubernetes.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgent.Api.Client\CodingAgent.Api.Client.csproj" />
+    <!-- The harness runs the Pipeline API alongside the Blazor app: the API is the sole host of
+         /hubs/agent and /api/work-items/* from Spec 044 onward, so fake agents connect there. -->
+    <ProjectReference Include="..\..\src\CodingAgent.Api\CodingAgent.Api.csproj" />
+    <ProjectReference Include="..\CodingAgent.Web.TestUtilities\CodingAgent.Web.TestUtilities.csproj" />
+  </ItemGroup>
+
+</Project>

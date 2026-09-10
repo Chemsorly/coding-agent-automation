@@ -17,7 +17,7 @@
 | **Health footer** | `IPipelineApiHealthClient.IsHealthyAsync/IsReadyAsync`, `ISchedulerApiClient` | Drives "Scheduler & DB healthy". |
 | **Auth** | Operator (master) key required for agent/config endpoints; per-pod derived keys are rejected 403 | The operator UI holds the master key. |
 
-The UI talks to the backend through the **typed API clients** in `CodingAgentWebUI.Api.Client` (inject the `IPipelineApi*Client` interface, never raw HTTP). All DTOs/models live in `CodingAgentWebUI.Pipeline.Models`.
+The UI talks to the backend through the **typed API clients** in `CodingAgent.Api.Client` (inject the `IPipelineApi*Client` interface, never raw HTTP). All DTOs/models live in `CodingAgent.Pipeline.Models`.
 
 ---
 

@@ -1,0 +1,1170 @@
+using AwesomeAssertions;
+using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Services.Prompts;
+
+namespace CodingAgent.Pipeline.UnitTests;
+
+/// <summary>
+/// Unit tests for <see cref="PromptBuilder"/>.
+/// </summary>
+public class PromptBuilderTests
+{
+    private static IssueDetail CreateIssue(string id = "42", string title = "Add feature X",
+        string description = "Implement feature X as described.") => new()
+    {
+        Identifier = id,
+        Title = title,
+        Description = description,
+        Labels = new[] { "enhancement" }
+    };
+
+    private static ParsedIssue CreateParsedIssue(string requirements = "Build the thing",
+        IReadOnlyList<string>? criteria = null) => new()
+    {
+        RequirementsSection = requirements,
+        AcceptanceCriteria = criteria ?? new[] { "It compiles", "Tests pass" }
+    };
+
+    #region BuildAnalysisPrompt
+
+    [Fact]
+    public void BuildAnalysisPrompt_ContainsInstructions()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Analyze carefully", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain("Analyze carefully");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_ContainsDoNotImplementWarning()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain("Do NOT implement any changes");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_ContainsAnalysisFilePath()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain(AgentWorkspacePaths.AnalysisFilePath);
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_ContainsAssessmentFilePath()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain(AgentWorkspacePaths.AnalysisAssessmentFilePath);
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_ContainsIssueTitle()
+    {
+        var issue = CreateIssue(title: "Fix login bug");
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", issue, CreateParsedIssue());
+        result.Should().Contain("Fix login bug");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_ContainsAcceptanceCriteria()
+    {
+        var parsed = CreateParsedIssue(criteria: new[] { "Users can log in", "Session persists" });
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), parsed);
+        result.Should().Contain("- Users can log in");
+        result.Should().Contain("- Session persists");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithBrainContext_ContainsBrainReference()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            brainContextWritten: true);
+        result.Should().Contain(AgentWorkspacePaths.BrainContextFilePath);
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithoutBrainContext_OmitsBrainReference()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            brainContextWritten: false);
+        result.Should().NotContain("Project knowledge and conventions are at");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_NullInstructions_Throws()
+    {
+        var act = () => PromptBuilder.BuildAnalysisPrompt(null!, CreateIssue(), CreateParsedIssue());
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_NullIssue_Throws()
+    {
+        var act = () => PromptBuilder.BuildAnalysisPrompt("Instructions", null!, CreateParsedIssue());
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_NullParsed_Throws()
+    {
+        var act = () => PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_ContainsRecommendationOptions()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain("\"ready\"");
+        result.Should().Contain("\"not_ready\"");
+        result.Should().Contain("\"wont_do\"");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_ContainsScopeGuidance()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain("scope is too broad for a single agent run");
+        result.Should().Contain(">30 files");
+        result.Should().Contain(">3 distinct projects");
+        result.Should().Contain("splitting recommendations");
+    }
+
+    // --- Rework context tests ---
+
+    private static AnalysisReworkContext CreateReworkContext(
+        int prNumber = 42,
+        string branchName = "feature/test-branch",
+        IReadOnlyList<string>? forceResolvedFiles = null,
+        bool hasReviewFeedback = false) =>
+        new(prNumber, branchName, forceResolvedFiles ?? Array.Empty<string>(), hasReviewFeedback);
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithReworkContext_ContainsReworkContextSection()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext());
+
+        result.Should().Contain("## Rework Context");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithReworkContext_ContainsPrNumber()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext(prNumber: 1234));
+
+        result.Should().Contain("1234");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithReworkContext_ContainsBranchName()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext(branchName: "feature/my-feature-branch"));
+
+        result.Should().Contain("feature/my-feature-branch");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithForceResolvedFiles_ListsEachFile()
+    {
+        var files = new[] { "src/Foo.cs", "src/Bar.cs" };
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext(forceResolvedFiles: files));
+
+        result.Should().Contain("`src/Foo.cs`");
+        result.Should().Contain("`src/Bar.cs`");
+        result.Should().Contain("force-resolved");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithEmptyForceResolvedFiles_NoConflictList()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext(forceResolvedFiles: Array.Empty<string>()));
+
+        result.Should().NotContain("force-resolved");
+        result.Should().Contain("rebased onto main without conflicts");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithHasReviewFeedback_ReferencesConversationContextFile()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext(hasReviewFeedback: true));
+
+        result.Should().Contain(AgentWorkspacePaths.PrConversationContextFilePath);
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithoutHasReviewFeedback_OmitsConversationContextReference()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext(hasReviewFeedback: false, forceResolvedFiles: Array.Empty<string>()));
+
+        result.Should().NotContain("pr-conversation-context.md");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithReworkContext_UpdatesWontDoInstruction()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext());
+
+        // Rework-specific wont_do clause is present
+        result.Should().Contain("AND this is not a rework run");
+        result.Should().Contain("\"wont_do\"` is never correct in a rework run");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithNullReworkContext_ProducesIdenticalOutputToNoParameter()
+    {
+        // Core backward-compat AC: explicit null must produce byte-for-byte identical output to omitting the parameter.
+        var withoutParam = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+        var withNullParam = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: null);
+
+        withNullParam.Should().Be(withoutParam);
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithNullReworkContext_ContainsOriginalWontDoClause()
+    {
+        // When reworkContext is null, the original unmodified wont_do clause must be present.
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+
+        result.Should().Contain("do NOT pivot to `\"ready\"` on the grounds that test coverage could still be added");
+        result.Should().NotContain("AND this is not a rework run");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithReworkContext_ContainsAssessWhatRemainsDirective()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext());
+
+        result.Should().Contain("assess what remains to be done");
+    }
+
+    #endregion
+
+    #region BuildPrompt
+
+    [Fact]
+    public void BuildPrompt_ContainsImplementationInstructions()
+    {
+        var result = PromptBuilder.BuildPrompt("Implement now", CreateIssue(), CreateParsedIssue());
+        result.Should().StartWith("Implement now");
+    }
+
+    [Fact]
+    public void BuildPrompt_ContainsGitRestriction()
+    {
+        var result = PromptBuilder.BuildPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain("Do NOT run git write commands");
+    }
+
+    [Fact]
+    public void BuildPrompt_ContainsAnalysisFileReference()
+    {
+        var result = PromptBuilder.BuildPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain(AgentWorkspacePaths.AnalysisFilePath);
+    }
+
+    [Fact]
+    public void BuildPrompt_ContainsIssueContext()
+    {
+        var issue = CreateIssue(id: "99", title: "Refactor DB layer");
+        var result = PromptBuilder.BuildPrompt("Instructions", issue, CreateParsedIssue());
+        result.Should().Contain("Issue #99: Refactor DB layer");
+    }
+
+    [Fact]
+    public void BuildPrompt_WithBrainWriteInstructions_AppendsAtEnd()
+    {
+        var result = PromptBuilder.BuildPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            brainWriteInstructions: "Write lessons to .brain/");
+        result.Should().Contain("Write lessons to .brain/");
+    }
+
+    [Fact]
+    public void BuildPrompt_WithBrainContext_ContainsBrainReference()
+    {
+        var result = PromptBuilder.BuildPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            brainContextWritten: true);
+        result.Should().Contain(AgentWorkspacePaths.BrainContextFilePath);
+    }
+
+    [Fact]
+    public void BuildPrompt_NullInstructions_Throws()
+    {
+        var act = () => PromptBuilder.BuildPrompt(null!, CreateIssue(), CreateParsedIssue());
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    #endregion
+
+    #region BuildReviewPrompt
+
+    [Fact]
+    public void BuildReviewPrompt_ContainsReviewInstructions()
+    {
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review this code", CreateIssue(), CreateParsedIssue(), findingsPath);
+        result.Should().Contain("Review this code");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_ContainsAgentSpecificFindingsFilePath()
+    {
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("Correctness");
+        var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath);
+        result.Should().Contain(findingsPath);
+        result.Should().Contain(".agent/review-findings-correctness.md");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_ContainsGitRestriction()
+    {
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath);
+        result.Should().Contain("Do NOT run git write commands");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_ContainsIssueContext()
+    {
+        var issue = CreateIssue(title: "Add caching");
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review", issue, CreateParsedIssue(), findingsPath);
+        result.Should().Contain("Add caching");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_NullInstructions_Throws()
+    {
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
+        var act = () => PromptBuilder.BuildReviewPrompt(null!, CreateIssue(), CreateParsedIssue(), findingsPath);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_NullFindingsFilePath_Throws()
+    {
+        var act = () => PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_ContainsIndependentReviewerFraming()
+    {
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath);
+        result.Should().Contain("reviewing code changes made by another agent");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_ContainsGitDiffInstruction()
+    {
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath);
+        result.Should().Contain("git diff");
+    }
+
+    #endregion
+
+    #region GetReviewFindingsFilePath
+
+    [Fact]
+    public void GetReviewFindingsFilePath_ReturnsExpectedFormat()
+    {
+        var result = AgentWorkspacePaths.GetReviewFindingsFilePath("Correctness");
+        result.Should().Be(".agent/review-findings-correctness.md");
+    }
+
+    [Fact]
+    public void GetReviewFindingsFilePath_SanitizesSpaces()
+    {
+        var result = AgentWorkspacePaths.GetReviewFindingsFilePath("DotNet Specialist");
+        result.Should().Be(".agent/review-findings-dotnet-specialist.md");
+    }
+
+    [Fact]
+    public void GetReviewFindingsFilePath_SanitizesPathSeparators()
+    {
+        var result = AgentWorkspacePaths.GetReviewFindingsFilePath("Agent/Sub\\Name");
+        result.Should().Be(".agent/review-findings-agent-sub-name.md");
+    }
+
+    [Fact]
+    public void GetReviewFindingsFilePath_NullName_Throws()
+    {
+        var act = () => AgentWorkspacePaths.GetReviewFindingsFilePath(null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    #endregion
+
+    #region BuildFixPrompt
+
+    [Fact]
+    public void BuildFixPrompt_ContainsFixInstructions()
+    {
+        var result = PromptBuilder.BuildFixPrompt("Fix the critical issues");
+        result.Should().StartWith("Fix the critical issues");
+    }
+
+    [Fact]
+    public void BuildFixPrompt_ContainsReviewFindingsReference()
+    {
+        var result = PromptBuilder.BuildFixPrompt("Fix");
+        result.Should().Contain(AgentWorkspacePaths.ReviewFindingsFilePath);
+    }
+
+    [Fact]
+    public void BuildFixPrompt_ContainsCriticalOnlyInstruction()
+    {
+        var result = PromptBuilder.BuildFixPrompt("Fix");
+        result.Should().Contain("[CRITICAL]");
+    }
+
+    [Fact]
+    public void BuildFixPrompt_NullInstructions_Throws()
+    {
+        var act = () => PromptBuilder.BuildFixPrompt(null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    #endregion
+
+    #region BuildCleanupPrompt
+
+    [Fact]
+    public void BuildCleanupPrompt_ContainsCleanupHeader()
+    {
+        var result = PromptBuilder.BuildCleanupPrompt();
+        result.Should().Contain("Pre-Pull Request Cleanup");
+    }
+
+    [Fact]
+    public void BuildCleanupPrompt_ContainsNoFunctionalChangesWarning()
+    {
+        var result = PromptBuilder.BuildCleanupPrompt();
+        result.Should().Contain("Do NOT make functional changes");
+    }
+
+    [Fact]
+    public void BuildCleanupPrompt_ContainsGitRestriction()
+    {
+        var result = PromptBuilder.BuildCleanupPrompt();
+        result.Should().Contain("Do NOT run git write commands");
+    }
+
+    #endregion
+
+    #region BuildReworkPrompt
+
+    [Fact]
+    public void BuildReworkPrompt_NoConflictsNoCommentsNotDraft_ReturnsNull()
+    {
+        var result = PromptBuilder.BuildReworkPrompt(
+            Array.Empty<string>(),
+            Array.Empty<PullRequestReviewComment>(),
+            isDraft: false);
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void BuildReworkPrompt_WithConflictFiles_ContainsConflictSection()
+    {
+        var result = PromptBuilder.BuildReworkPrompt(
+            new[] { "src/Foo.cs", "src/Bar.cs" },
+            Array.Empty<PullRequestReviewComment>());
+
+        result.Should().NotBeNull();
+        result.Should().Contain("Merge Conflicts");
+        result.Should().Contain("`src/Foo.cs`");
+        result.Should().Contain("`src/Bar.cs`");
+    }
+
+    [Fact]
+    public void BuildReworkPrompt_WithReviewComments_ContainsFeedbackSection()
+    {
+        var comments = new[]
+        {
+            new PullRequestReviewComment
+            {
+                Id = "1", Body = "Fix this null check", Author = "reviewer1",
+                CreatedAt = DateTime.UtcNow, Path = "src/Service.cs"
+            }
+        };
+
+        var result = PromptBuilder.BuildReworkPrompt(Array.Empty<string>(), comments);
+
+        result.Should().NotBeNull();
+        result.Should().Contain("Review Feedback");
+        result.Should().Contain("pr-conversation-context.md");
+        result.Should().Contain("Address all human feedback");
+    }
+
+    [Fact]
+    public void BuildReworkPrompt_IsDraft_ReturnsPromptEvenWithoutConflictsOrComments()
+    {
+        var result = PromptBuilder.BuildReworkPrompt(
+            Array.Empty<string>(),
+            Array.Empty<PullRequestReviewComment>(),
+            isDraft: true);
+
+        result.Should().NotBeNull();
+        result.Should().Contain("Draft PR");
+    }
+
+    [Fact]
+    public void BuildReworkPrompt_ContainsIssueContextReference()
+    {
+        var result = PromptBuilder.BuildReworkPrompt(
+            new[] { "file.cs" },
+            Array.Empty<PullRequestReviewComment>());
+
+        result.Should().Contain(AgentWorkspacePaths.IssueContextFilePath);
+    }
+
+    #endregion
+
+    #region BuildIssueContextFileContent
+
+    [Fact]
+    public void BuildIssueContextFileContent_ContainsTitle()
+    {
+        var issue = CreateIssue(title: "My Feature");
+        var result = PromptBuilder.BuildIssueContextFileContent(issue, CreateParsedIssue());
+        result.Should().Contain("# Issue: My Feature");
+    }
+
+    [Fact]
+    public void BuildIssueContextFileContent_ContainsDescription()
+    {
+        var issue = CreateIssue(description: "Detailed description here");
+        var result = PromptBuilder.BuildIssueContextFileContent(issue, CreateParsedIssue());
+        result.Should().Contain("Detailed description here");
+    }
+
+    [Fact]
+    public void BuildIssueContextFileContent_ContainsRequirements()
+    {
+        var parsed = CreateParsedIssue(requirements: "Must support OAuth2");
+        var result = PromptBuilder.BuildIssueContextFileContent(CreateIssue(), parsed);
+        result.Should().Contain("Must support OAuth2");
+    }
+
+    [Fact]
+    public void BuildIssueContextFileContent_ContainsAcceptanceCriteria()
+    {
+        var parsed = CreateParsedIssue(criteria: new[] { "Login works", "Logout works" });
+        var result = PromptBuilder.BuildIssueContextFileContent(CreateIssue(), parsed);
+        result.Should().Contain("- Login works");
+        result.Should().Contain("- Logout works");
+    }
+
+    [Fact]
+    public void BuildIssueContextFileContent_WithComments_IncludesFilteredComments()
+    {
+        var comments = new List<IssueComment>
+        {
+            new() { Id = "1", Body = "Please also handle edge case", Author = "user1", CreatedAt = DateTime.UtcNow }
+        };
+
+        var result = PromptBuilder.BuildIssueContextFileContent(CreateIssue(), CreateParsedIssue(), comments);
+        result.Should().Contain("@user1");
+        result.Should().Contain("Please also handle edge case");
+    }
+
+    [Fact]
+    public void BuildIssueContextFileContent_ExcludesBotComments()
+    {
+        var comments = new List<IssueComment>
+        {
+            new() { Id = "1", Body = "## 🤖 Agent Analysis\nSome analysis", Author = "bot", CreatedAt = DateTime.UtcNow },
+            new() { Id = "2", Body = "Human comment", Author = "human", CreatedAt = DateTime.UtcNow }
+        };
+
+        var result = PromptBuilder.BuildIssueContextFileContent(CreateIssue(), CreateParsedIssue(), comments);
+        result.Should().NotContain("Agent Analysis");
+        result.Should().Contain("Human comment");
+    }
+
+    [Fact]
+    public void BuildIssueContextFileContent_ExcludesGateRejectionComments()
+    {
+        var comments = new List<IssueComment>
+        {
+            new() { Id = "1", Body = "<!-- agent:gate-rejection -->Rejected", Author = "bot", CreatedAt = DateTime.UtcNow },
+            new() { Id = "2", Body = "Real feedback", Author = "dev", CreatedAt = DateTime.UtcNow }
+        };
+
+        var result = PromptBuilder.BuildIssueContextFileContent(CreateIssue(), CreateParsedIssue(), comments);
+        result.Should().NotContain("Rejected");
+        result.Should().Contain("Real feedback");
+    }
+
+    [Fact]
+    public void BuildIssueContextFileContent_NullComments_OmitsCommentsSection()
+    {
+        var result = PromptBuilder.BuildIssueContextFileContent(CreateIssue(), CreateParsedIssue(), null);
+        result.Should().NotContain("## Comments");
+    }
+
+    [Fact]
+    public void BuildIssueContextFileContent_EmptyComments_OmitsCommentsSection()
+    {
+        var result = PromptBuilder.BuildIssueContextFileContent(CreateIssue(), CreateParsedIssue(),
+            new List<IssueComment>());
+        result.Should().NotContain("## Comments");
+    }
+
+    #endregion
+
+    #region BuildBrainContextSection
+
+    [Fact]
+    public void BuildBrainContextSection_NotAvailable_ReturnsEmpty()
+    {
+        var result = PromptBuilder.BuildBrainContextSection(brainAvailable: false);
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void BuildBrainContextSection_Available_ContainsBrainHeader()
+    {
+        var result = PromptBuilder.BuildBrainContextSection(brainAvailable: true);
+        result.Should().Contain("Brain Repository");
+    }
+
+    [Fact]
+    public void BuildBrainContextSection_WithProjectName_ContainsProjectPath()
+    {
+        var result = PromptBuilder.BuildBrainContextSection(brainAvailable: true, projectName: "my-app");
+        result.Should().Contain(".brain/projects/my-app/");
+    }
+
+    [Fact]
+    public void BuildBrainContextSection_WithTechStack_ContainsTechReference()
+    {
+        var result = PromptBuilder.BuildBrainContextSection(brainAvailable: true, techStack: "dotnet, blazor");
+        result.Should().Contain("dotnet, blazor");
+    }
+
+    [Fact]
+    public void BuildBrainContextSection_ContainsNoGitWarning()
+    {
+        var result = PromptBuilder.BuildBrainContextSection(brainAvailable: true);
+        result.Should().Contain("Do NOT run git commands");
+    }
+
+    #endregion
+
+    #region BuildReflectionPrompt
+
+    [Fact]
+    public void BuildReflectionPrompt_ContainsRunId()
+    {
+        var run = CreatePipelineRun("run-123");
+        var result = PromptBuilder.BuildReflectionPrompt(run);
+        result.Should().Contain("run-123");
+    }
+
+    [Fact]
+    public void BuildReflectionPrompt_ContainsIssueIdentifier()
+    {
+        var run = CreatePipelineRun(issueId: "55");
+        var result = PromptBuilder.BuildReflectionPrompt(run);
+        result.Should().Contain("#55");
+    }
+
+    [Fact]
+    public void BuildReflectionPrompt_WithIssueTitle_ContainsTitle()
+    {
+        var run = CreatePipelineRun();
+        var result = PromptBuilder.BuildReflectionPrompt(run, issueTitle: "Fix auth bug");
+        result.Should().Contain("Fix auth bug");
+    }
+
+    [Fact]
+    public void BuildReflectionPrompt_WithProjectName_ContainsProject()
+    {
+        var run = CreatePipelineRun();
+        var result = PromptBuilder.BuildReflectionPrompt(run, projectName: "my-service");
+        result.Should().Contain("my-service");
+    }
+
+    [Fact]
+    public void BuildReflectionPrompt_WithRetries_ShowsRetryCount()
+    {
+        var run = CreatePipelineRun();
+        run.RetryCount = 3;
+        var result = PromptBuilder.BuildReflectionPrompt(run);
+        result.Should().Contain("3");
+    }
+
+    [Fact]
+    public void BuildReflectionPrompt_WithRetryErrors_ShowsErrors()
+    {
+        var run = CreatePipelineRun();
+        run.RetryErrors.Enqueue("Build failed: missing reference");
+        var result = PromptBuilder.BuildReflectionPrompt(run);
+        result.Should().Contain("Build failed: missing reference");
+    }
+
+    [Fact]
+    public void BuildReflectionPrompt_NullRun_Throws()
+    {
+        var act = () => PromptBuilder.BuildReflectionPrompt(null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void BuildReflectionPrompt_ContainsNoSourceCodeWarning()
+    {
+        var run = CreatePipelineRun();
+        var result = PromptBuilder.BuildReflectionPrompt(run);
+        result.Should().Contain("Do NOT modify any source code files");
+    }
+
+    [Fact]
+    public void BuildReflectionPrompt_DoesNotContainFeedbackSection()
+    {
+        var run = CreatePipelineRun();
+        var result = PromptBuilder.BuildReflectionPrompt(run);
+        result.Should().NotContain("Feedback Collection");
+        result.Should().NotContain("Feedback Questions");
+    }
+
+    #endregion
+
+    #region BuildBrainWriteInstructions
+
+    [Fact]
+    public void BuildBrainWriteInstructions_NotAvailable_ReturnsEmpty()
+    {
+        var result = PromptBuilder.BuildBrainWriteInstructions(brainAvailable: false, "run1", "issue1");
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void BuildBrainWriteInstructions_ReadOnly_ReturnsEmpty()
+    {
+        var result = PromptBuilder.BuildBrainWriteInstructions(brainAvailable: true, "run1", "issue1",
+            brainReadOnly: true);
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void BuildBrainWriteInstructions_Available_ContainsWriteHeader()
+    {
+        var result = PromptBuilder.BuildBrainWriteInstructions(brainAvailable: true, "run1", "issue1");
+        result.Should().Contain("Write Back What You Learned");
+    }
+
+    [Fact]
+    public void BuildBrainWriteInstructions_ContainsAppendWarning()
+    {
+        var result = PromptBuilder.BuildBrainWriteInstructions(brainAvailable: true, "run1", "issue1");
+        result.Should().Contain("APPEND to existing files");
+    }
+
+    #endregion
+
+    #region BuildAnalysisReviewPrompt
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_ContainsInstructions()
+    {
+        var result = PromptBuilder.BuildAnalysisReviewPrompt("Review carefully", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain("Review carefully");
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_ContainsReviewFilePath()
+    {
+        var result = PromptBuilder.BuildAnalysisReviewPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain(AgentWorkspacePaths.AnalysisReviewFilePath);
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_ProhibitsModifyingAnalysis()
+    {
+        var result = PromptBuilder.BuildAnalysisReviewPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain("Do NOT modify `.agent/analysis.md`");
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_ContainsIssueTitle()
+    {
+        var issue = CreateIssue(title: "Fix login bug");
+        var result = PromptBuilder.BuildAnalysisReviewPrompt("Instructions", issue, CreateParsedIssue());
+        result.Should().Contain("Fix login bug");
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_ContainsAcceptanceCriteria()
+    {
+        var parsed = CreateParsedIssue(criteria: new[] { "Users can log in", "Session persists" });
+        var result = PromptBuilder.BuildAnalysisReviewPrompt("Instructions", CreateIssue(), parsed);
+        result.Should().Contain("- Users can log in");
+        result.Should().Contain("- Session persists");
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_NullInstructions_Throws()
+    {
+        var act = () => PromptBuilder.BuildAnalysisReviewPrompt(null!, CreateIssue(), CreateParsedIssue());
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_NullIssue_Throws()
+    {
+        var act = () => PromptBuilder.BuildAnalysisReviewPrompt("Instructions", null!, CreateParsedIssue());
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_NullParsed_Throws()
+    {
+        var act = () => PromptBuilder.BuildAnalysisReviewPrompt("Instructions", CreateIssue(), null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    #endregion
+
+    #region BuildAnalysisRefinementPrompt
+
+    [Fact]
+    public void BuildAnalysisRefinementPrompt_ContainsInstructions()
+    {
+        var result = PromptBuilder.BuildAnalysisRefinementPrompt("Refine the analysis");
+        result.Should().StartWith("Refine the analysis");
+    }
+
+    [Fact]
+    public void BuildAnalysisRefinementPrompt_ReferencesReviewFile()
+    {
+        var result = PromptBuilder.BuildAnalysisRefinementPrompt("Instructions");
+        result.Should().Contain(AgentWorkspacePaths.AnalysisReviewFilePath);
+    }
+
+    [Fact]
+    public void BuildAnalysisRefinementPrompt_ReferencesAnalysisFile()
+    {
+        var result = PromptBuilder.BuildAnalysisRefinementPrompt("Instructions");
+        result.Should().Contain(AgentWorkspacePaths.AnalysisFilePath);
+    }
+
+    [Fact]
+    public void BuildAnalysisRefinementPrompt_ReferencesAssessmentFile()
+    {
+        var result = PromptBuilder.BuildAnalysisRefinementPrompt("Instructions");
+        result.Should().Contain(AgentWorkspacePaths.AnalysisAssessmentFilePath);
+    }
+
+    [Fact]
+    public void BuildAnalysisRefinementPrompt_NullInstructions_Throws()
+    {
+        var act = () => PromptBuilder.BuildAnalysisRefinementPrompt(null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    #endregion
+
+    #region ThoroughnessFooter
+
+    [Fact]
+    public void BuildReviewPrompt_ContainsThoroughnessInstruction()
+    {
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review this code", CreateIssue(), CreateParsedIssue(), findingsPath);
+        result.Should().Contain("## Thoroughness");
+        result.Should().Contain("Be exhaustive within your domain");
+        result.Should().Contain("scan the entire scope systematically");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_ContainsThoroughnessInstruction()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Analyze carefully", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain("## Thoroughness");
+        result.Should().Contain("Be exhaustive within your domain");
+        result.Should().Contain("scan the entire scope systematically");
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_ContainsThoroughnessInstruction()
+    {
+        var result = PromptBuilder.BuildAnalysisReviewPrompt("Review carefully", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain("## Thoroughness");
+        result.Should().Contain("Be exhaustive within your domain");
+        result.Should().Contain("scan the entire scope systematically");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_ThoroughnessAppliesToCustomPrompt()
+    {
+        var customPrompt = "Only check for SQL injection vulnerabilities.";
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("CustomAgent");
+        var result = PromptBuilder.BuildReviewPrompt(customPrompt, CreateIssue(), CreateParsedIssue(), findingsPath);
+        result.Should().Contain(customPrompt);
+        result.Should().Contain("## Thoroughness");
+        result.Should().Contain("Be exhaustive within your domain");
+    }
+
+    #endregion
+
+    #region ReviewCalibrationFooter
+
+    [Fact]
+    public void BuildReviewPrompt_ContainsCalibrationFooter()
+    {
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review this code", CreateIssue(), CreateParsedIssue(), findingsPath);
+        result.Should().Contain("## Calibration");
+        result.Should().Contain("SEVERITY GUIDELINES:");
+        result.Should().Contain("ACCURACY OVER THOROUGHNESS:");
+        result.Should().Contain("Judge the CODE DIFF only");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_CalibrationAppliesToCustomPrompt()
+    {
+        var customPrompt = "Only check for SQL injection vulnerabilities.";
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("CustomAgent");
+        var result = PromptBuilder.BuildReviewPrompt(customPrompt, CreateIssue(), CreateParsedIssue(), findingsPath);
+        result.Should().Contain(customPrompt);
+        result.Should().Contain("## Calibration");
+        result.Should().Contain("SEVERITY GUIDELINES:");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_CalibrationContainsConcurrencyCarveOut()
+    {
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review this code", CreateIssue(), CreateParsedIssue(), findingsPath);
+        result.Should().Contain("specific interleaving that produces inconsistent state");
+    }
+
+    [Fact]
+    public void BuildAcceptanceCriteriaPrompt_DoesNotContainCalibrationFooter()
+    {
+        var result = PromptBuilder.BuildAcceptanceCriteriaPrompt("Evaluate compliance");
+        result.Should().NotContain("## Calibration");
+        result.Should().NotContain("SEVERITY GUIDELINES:");
+        result.Should().NotContain("ACCURACY OVER THOROUGHNESS:");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_DoesNotContainCalibrationFooter()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Analyze carefully", CreateIssue(), CreateParsedIssue());
+        result.Should().NotContain("## Calibration");
+        result.Should().NotContain("SEVERITY GUIDELINES:");
+        result.Should().NotContain("ACCURACY OVER THOROUGHNESS:");
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_DoesNotContainCalibrationFooter()
+    {
+        var result = PromptBuilder.BuildAnalysisReviewPrompt("Review carefully", CreateIssue(), CreateParsedIssue());
+        result.Should().NotContain("## Calibration");
+        result.Should().NotContain("SEVERITY GUIDELINES:");
+        result.Should().NotContain("ACCURACY OVER THOROUGHNESS:");
+    }
+
+    [Theory]
+    [InlineData(nameof(DefaultPrompts.CodeReview))]
+    [InlineData(nameof(DefaultPrompts.CorrectnessReview))]
+    [InlineData(nameof(DefaultPrompts.DotNetSpecialistReview))]
+    [InlineData(nameof(DefaultPrompts.SecurityReview))]
+    [InlineData(nameof(DefaultPrompts.TestQualityReview))]
+    public void DefaultPrompts_ReviewPrompts_ContainFocusAreas(string promptName)
+    {
+        var prompt = promptName switch
+        {
+            nameof(DefaultPrompts.CodeReview) => DefaultPrompts.CodeReview,
+            nameof(DefaultPrompts.CorrectnessReview) => DefaultPrompts.CorrectnessReview,
+            nameof(DefaultPrompts.DotNetSpecialistReview) => DefaultPrompts.DotNetSpecialistReview,
+            nameof(DefaultPrompts.SecurityReview) => DefaultPrompts.SecurityReview,
+            nameof(DefaultPrompts.TestQualityReview) => DefaultPrompts.TestQualityReview,
+            _ => throw new ArgumentOutOfRangeException(nameof(promptName))
+        };
+
+        prompt.Should().Contain("FOCUS AREAS (flag only when a concrete defect exists):",
+            because: $"review prompt '{promptName}' must use the FOCUS AREAS header");
+        prompt.Should().NotContain("CHECK FOR:",
+            because: $"review prompt '{promptName}' must not use the old CHECK FOR header");
+    }
+
+    [Fact]
+    public void DefaultPrompts_AnalysisReview_RetainsCheckFor()
+    {
+        DefaultPrompts.AnalysisReview.Should().Contain("CHECK FOR:");
+        DefaultPrompts.AnalysisReview.Should().NotContain("FOCUS AREAS");
+    }
+
+    #endregion
+
+    #region ScopeFences
+
+    [Fact]
+    public void BuildAnalysisPrompt_StartsWithAnalysisScopeFence()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Analyze carefully", CreateIssue(), CreateParsedIssue());
+        result.Should().StartWith(PromptBuilder.AnalysisScopeFence);
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_StartsWithReviewScopeFence()
+    {
+        var result = PromptBuilder.BuildAnalysisReviewPrompt("Review carefully", CreateIssue(), CreateParsedIssue());
+        result.Should().StartWith(PromptBuilder.ReviewScopeFence);
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_StartsWithReviewScopeFence()
+    {
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review this code", CreateIssue(), CreateParsedIssue(), findingsPath);
+        result.Should().StartWith(PromptBuilder.ReviewScopeFence);
+    }
+
+    [Fact]
+    public void BuildAcceptanceCriteriaPrompt_StartsWithReviewScopeFence()
+    {
+        var result = PromptBuilder.BuildAcceptanceCriteriaPrompt("Evaluate compliance");
+        result.Should().StartWith(PromptBuilder.ReviewScopeFence);
+    }
+
+    [Fact]
+    public void BuildPrompt_ContainsVerificationClause()
+    {
+        var result = PromptBuilder.BuildPrompt("Implement now", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain(PromptBuilder.VerificationClause);
+    }
+
+    [Fact]
+    public void BuildPrompt_VerificationClauseAfterInstructions()
+    {
+        var result = PromptBuilder.BuildPrompt("Implement now", CreateIssue(), CreateParsedIssue());
+        var instructionsIndex = result.IndexOf("Implement now", StringComparison.Ordinal);
+        var clauseIndex = result.IndexOf("## Verification Before Use", StringComparison.Ordinal);
+        clauseIndex.Should().BeGreaterThan(instructionsIndex,
+            "VerificationClause should appear after configurable instructions");
+    }
+
+    [Fact]
+    public void BuildPrompt_VerificationClauseBeforeGitRestriction()
+    {
+        var result = PromptBuilder.BuildPrompt("Implement now", CreateIssue(), CreateParsedIssue());
+        var clauseIndex = result.IndexOf("## Verification Before Use", StringComparison.Ordinal);
+        var gitIndex = result.IndexOf("Do NOT run git write commands", StringComparison.Ordinal);
+        clauseIndex.Should().BeLessThan(gitIndex,
+            "VerificationClause should appear before GitRestrictionFull");
+    }
+
+    [Fact]
+    public void ScopeFences_DoNotContainAnyFiles()
+    {
+        PromptBuilder.ReviewScopeFence.Should().NotContain("any files");
+        PromptBuilder.AnalysisScopeFence.Should().NotContain("any files");
+    }
+
+    [Fact]
+    public void VerificationClause_TokenBudget()
+    {
+        // ≤400 characters ≈ ≤80 tokens (using ~5 chars/token as conservative proxy for English+markdown)
+        // Acceptance criterion: total per-prompt overhead ≤80 tokens; clause is the largest single addition
+        PromptBuilder.VerificationClause.Length.Should().BeLessThanOrEqualTo(400);
+    }
+
+    #endregion
+
+    private static PipelineRun CreatePipelineRun(string runId = "test-run", string issueId = "42") => new()
+    {
+        RunId = runId,
+        IssueIdentifier = issueId,
+        IssueTitle = "Test Issue",
+        IssueProviderConfigId = "issue-provider",
+        RepoProviderConfigId = "repo-provider",
+        StartedAt = DateTime.UtcNow
+    };
+
+    #region BuildPrDescriptionPrompt
+
+    [Fact]
+    public void BuildPrDescriptionPrompt_ContainsPrDescriptionFilePath()
+    {
+        var run = CreatePipelineRun();
+        var result = PromptBuilder.BuildPrDescriptionPrompt(run);
+        result.Should().Contain(AgentWorkspacePaths.PrDescriptionFilePath);
+    }
+
+    [Fact]
+    public void BuildPrDescriptionPrompt_DoesNotContainOldNoFileWritesInstruction()
+    {
+        var run = CreatePipelineRun();
+        var result = PromptBuilder.BuildPrDescriptionPrompt(run);
+        result.Should().NotContain("no file writes, no code changes");
+    }
+
+    [Fact]
+    public void BuildPrDescriptionPrompt_ContainsSummarySection()
+    {
+        var run = CreatePipelineRun();
+        var result = PromptBuilder.BuildPrDescriptionPrompt(run);
+        result.Should().Contain("### Summary");
+    }
+
+    [Fact]
+    public void BuildPrDescriptionPrompt_ContainsApproachSection()
+    {
+        var run = CreatePipelineRun();
+        var result = PromptBuilder.BuildPrDescriptionPrompt(run);
+        result.Should().Contain("### Approach");
+    }
+
+    [Fact]
+    public void BuildPrDescriptionPrompt_ContainsBreakingChangesSection()
+    {
+        var run = CreatePipelineRun();
+        var result = PromptBuilder.BuildPrDescriptionPrompt(run);
+        result.Should().Contain("### Breaking Changes");
+    }
+
+    [Fact]
+    public void BuildPrDescriptionPrompt_InstructsNotToPrintToStdout()
+    {
+        var run = CreatePipelineRun();
+        var result = PromptBuilder.BuildPrDescriptionPrompt(run);
+        result.Should().Contain("Do NOT print it to stdout");
+    }
+
+    [Fact]
+    public void BuildPrDescriptionPrompt_ContainsIssueReference()
+    {
+        var run = CreatePipelineRun(issueId: "77");
+        run.IssueTitle = "Fix the thing";
+        var result = PromptBuilder.BuildPrDescriptionPrompt(run);
+        result.Should().Contain("#77");
+        result.Should().Contain("Fix the thing");
+    }
+
+    [Fact]
+    public void BuildPrDescriptionPrompt_NullRun_Throws()
+    {
+        // TODO: The production method uses ArgumentNullException.ThrowIfNull(run) so this test correctly
+        // asserts ArgumentNullException. If the null guard is ever removed or refactored, this test will
+        // start catching NullReferenceException instead — keep the guard in place.
+        var act = () => PromptBuilder.BuildPrDescriptionPrompt(null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    #endregion
+}

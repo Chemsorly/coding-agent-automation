@@ -1,3 +1,5 @@
+{{- /* Web component values, with back-compat: legacy `orchestrator.*` overrides win over `web.*` defaults. */ -}}
+{{- $web := mergeOverwrite (deepCopy (.Values.web | default dict)) (.Values.orchestrator | default dict) -}}
 Thank you for installing {{ .Chart.Name }}.
 
 Your release is named: {{ .Release.Name }}
@@ -12,13 +14,13 @@ To install (example):
     --set database.host=YOUR_POSTGRES_HOST \
     --set database.auth.existingSecret=YOUR_SECRET_NAME
 
-The orchestrator is available at:
-  http://{{ include "coding-agent-automation.fullname" . }}-orchestrator:{{ .Values.orchestrator.service.port }}
+The web service is available at:
+  http://{{ include "coding-agent-automation.fullname" . }}-web:{{ $web.service.port }}
 
-{{- if .Values.orchestrator.ingress.enabled }}
+{{- if $web.ingress.enabled }}
 Ingress is enabled. Access the UI at:
-{{- range .Values.orchestrator.ingress.hosts }}
-  http{{ if $.Values.orchestrator.ingress.tls }}s{{ end }}://{{ .host }}
+{{- range $web.ingress.hosts }}
+  http{{ if $web.ingress.tls }}s{{ end }}://{{ .host }}
 {{- end }}
 {{- end }}
 
@@ -29,13 +31,13 @@ Ingress is enabled. Access the UI at:
 Database: {{ .Values.database.host }}:{{ .Values.database.port | default 5432 }}
 {{- if .Values.database.migrateOnStartup }}
 Migrations: Applied automatically on startup.
-  WARNING: Keep orchestrator.replicas=1 during upgrades to avoid concurrent
+  WARNING: Keep web.replicas=1 during upgrades to avoid concurrent
   migration races (EF Core #13569). Scale up after the new pod reaches Ready.
 {{- else }}
 Migrations: NOT applied on startup (migrateOnStartup=false).
   Startup aborts when pending migrations are detected. Run migrations manually:
-    kubectl exec deployment/{{ include "coding-agent-automation.fullname" . }}-orchestrator \
-      -n {{ .Release.Namespace }} -- dotnet CodingAgentWebUI.dll migrate
+    kubectl exec deployment/{{ include "coding-agent-automation.fullname" . }}-web \
+      -n {{ .Release.Namespace }} -- dotnet CodingAgent.Web.dll migrate
 {{- end }}
 
 ── First-Run ─────────────────────────────────────────────────────────────────
@@ -65,13 +67,13 @@ Agent Jobs are spawned by the DispatchService. Job naming: caa-{workItemId[0:8]}
 View active agent jobs:
   kubectl get jobs -l app.kubernetes.io/managed-by=caa-orchestrator -n {{ .Release.Namespace }}
 
-View pending work items (via orchestrator logs):
-  kubectl logs deployment/{{ include "coding-agent-automation.fullname" . }}-orchestrator -n {{ .Release.Namespace }} | grep "Pending"
+View pending work items (via web logs):
+  kubectl logs deployment/{{ include "coding-agent-automation.fullname" . }}-web -n {{ .Release.Namespace }} | grep "Pending"
 
 Leader election Lease:
   kubectl get lease -n {{ .Release.Namespace }}
 
-RBAC: The orchestrator ServiceAccount has permissions for:
+RBAC: The web ServiceAccount has permissions for:
   - Jobs (create/get/list/watch/delete)
   - Leases (create/get/update)
   - Secrets (create/delete — per-job credential injection)
@@ -89,18 +91,18 @@ PVC Pool (kiro credentials):
 
 export-config is a backup tool — it exports DB state to JSON files for safekeeping.
 To export the current DB state:
-  kubectl exec deployment/{{ include "coding-agent-automation.fullname" . }}-orchestrator -n {{ .Release.Namespace }} -- \
-    dotnet CodingAgentWebUI.dll export-config --output /tmp/pipeline-export
+  kubectl exec deployment/{{ include "coding-agent-automation.fullname" . }}-web -n {{ .Release.Namespace }} -- \
+    dotnet CodingAgent.Web.dll export-config --output /tmp/pipeline-export
 
 Then copy out:
-  kubectl cp {{ .Release.Namespace }}/$(kubectl get pod -l app.kubernetes.io/component=orchestrator -n {{ .Release.Namespace }} -o jsonpath='{.items[0].metadata.name}'):/tmp/pipeline-export ./pipeline-backup
+  kubectl cp {{ .Release.Namespace }}/$(kubectl get pod -l app.kubernetes.io/component=web -n {{ .Release.Namespace }} -o jsonpath='{.items[0].metadata.name}'):/tmp/pipeline-export ./pipeline-backup
 
 To roll back to a previous version: restore from backup using the import endpoint (see First-Run above).
 
 ── Upgrading 044 → 045 ──────────────────────────────────────────────────────
 
-Spec 045 removes the orchestrator's direct Postgres access. After this upgrade,
-the orchestrator pod has no database connection — all data flows through the
+Spec 045 removes the web service's direct Postgres access. After this upgrade,
+the web pod has no database connection — all data flows through the
 Pipeline API.
 
   STEP 0 — BACKUP FIRST (required)
@@ -128,21 +130,21 @@ Pipeline API.
       --set jobController.enabled=true \
       [--values ...]
 
-  STEP 3 — Verify orchestrator has no DB connection
+  STEP 3 — Verify web has no DB connection
 
     kubectl logs -n {{ .Release.Namespace }} \
-      deployment/{{ include "coding-agent-automation.fullname" . }}-orchestrator | grep -i "database\|postgres\|EF\|migrate"
+      deployment/{{ include "coding-agent-automation.fullname" . }}-web | grep -i "database\|postgres\|EF\|migrate"
 
-  Expected: no DB-related log lines. The orchestrator now connects only to
+  Expected: no DB-related log lines. The web service now connects only to
   the Pipeline API (PipelineApi:BaseUrl).
 
   ROLLBACK BOUNDARY
 
-  Once helm upgrade is applied and orchestrator pods restart, the monolith no
+  Once helm upgrade is applied and web pods restart, the web service no
   longer has direct Postgres access. Rolling back requires:
 
     1. helm rollback {{ .Release.Name }} <previous-revision>
-       (restores the old orchestrator image which had EF Core and a DB connection)
+       (restores the old web image which had EF Core and a DB connection)
 
     2. If schema migrations applied during the upgrade, restore the pg_dump snapshot:
 
@@ -154,10 +156,10 @@ Pipeline API.
        values and images, but has no defined outcome against a migrated schema.
        The pg_dump snapshot is the supported rollback path.
 
-    3. Verify the orchestrator pod is healthy after rollback:
+    3. Verify the web pod is healthy after rollback:
 
          kubectl get pods -n {{ .Release.Namespace }} \
-           -l app.kubernetes.io/component=orchestrator
+           -l app.kubernetes.io/component=web
 
 ── Upgrade Notes ─────────────────────────────────────────────────────────────
 
@@ -194,17 +196,17 @@ work at the time of the 044 hub cutover is NOT preserved — agents retry foreve
 Delete orphaned Jobs explicitly (Step 3) if you need to free credential PVCs immediately.
 
 Spec 044 changes (current):
-  - Agent pods now connect to the Pipeline API (CodingAgentWebUI.Api) instead of
-    the orchestrator (CodingAgentWebUI). The ORCHESTRATOR_URL env var in agent Jobs
+  - Agent pods now connect to the Pipeline API (CodingAgent.Api) instead of
+    the web service (CodingAgent.Web). The ORCHESTRATOR_URL env var in agent Jobs
     points at the API service URL.
-  - The orchestrator no longer hosts AgentHub or WorkItem HTTP endpoints.
+  - The web service no longer hosts AgentHub or WorkItem HTTP endpoints.
   - The Pipeline API is the authoritative hub for real-time agent communication.
 
 Spec 043 changes:
   - Template validation in Settings is unavailable after 043 until a
     GET /api/config/job-templates endpoint is added.
   - The job-templates.yaml ConfigMap must be mounted to the Job Controller pod
-    (not the orchestrator). Changes to job-templates.yaml require a Job Controller
+    (not the web service). Changes to job-templates.yaml require a Job Controller
     rollout: kubectl rollout restart deployment/<release>-jobcontroller -n <namespace>
 
 {{- if .Values.jobController.enabled }}
@@ -231,7 +233,7 @@ ATOMIC CUTOVER REQUIREMENT:
   a race at the wrong moment can produce a duplicate K8s Job.
 
 IMMUTABLE IMAGE TAGS:
-  Use semver or SHA tags — NOT the mutable "coding-agent-webui" latest tag.
+  Use semver or SHA tags — NOT the mutable "coding-agent-web" latest tag.
   A mutable tag means helm rollback will NOT restore the old image, only values.
 
 ROLLBACK PROCEDURE (if upgrade fails):
@@ -240,7 +242,7 @@ ROLLBACK PROCEDURE (if upgrade fails):
   2. Verify Job Controller Deployment deleted:
        kubectl get deployment -n {{ .Release.Namespace }} | grep jobcontroller
   3. Verify DispatchService logs in monolith:
-       kubectl logs -n {{ .Release.Namespace }} deployment/{{ include "coding-agent-automation.fullname" . }}-orchestrator | grep DispatchService
+       kubectl logs -n {{ .Release.Namespace }} deployment/{{ include "coding-agent-automation.fullname" . }}-web | grep DispatchService
   4. Check for orphaned WorkItems stuck in Dispatched state (claimed before crash):
        GET /api/work-items/active?olderThanSeconds=0
      Manually requeue via POST /api/work-items/{id}/requeue, or wait 120s for the
@@ -266,8 +268,8 @@ Key metrics (OpenTelemetry):
 
 ── Scaling ───────────────────────────────────────────────────────────────────
 
-{{- if gt (int .Values.orchestrator.replicas) 1 }}
-Multi-replica mode active ({{ .Values.orchestrator.replicas }} replicas).
+{{- if gt (int $web.replicas) 1 }}
+Multi-replica mode active ({{ $web.replicas }} replicas).
 PodDisruptionBudget: minAvailable=1
 Leader election ensures only one replica runs dispatch/reconciliation.
 {{- if or .Values.signalr.redis.enabled .Values.signalr.redis.connectionString }}
@@ -279,7 +281,7 @@ Redis backplane enabled for SignalR cross-replica delivery.
 {{- end }}
 {{- else }}
 Single-replica mode. Scale to multiple replicas with:
-  orchestrator.replicas: N  (requires signalr.redis.enabled: true)
+  web.replicas: N  (requires signalr.redis.enabled: true)
 {{- end }}
 
 {{- if .Values.api.enabled }}
@@ -288,16 +290,21 @@ Single-replica mode. Scale to multiple replicas with:
 
 **Multi-replica API (api.replicas > 1):** Requires signalr.redis.connectionString to be set.
 With Redis, AgentRegistryService and OrchestratorRunService use distributed Redis-backed
-implementations (Spec 046). Without Redis, the API falls back to in-memory mode and
-api.replicas must be 1.
+implementations (Spec 046). Without Redis the API keeps agent/run state in-memory per pod, so
+Spec 048 Phase 2 makes the chart FAIL at render time when api.replicas > 1 and
+signalr.redis.connectionString is empty (previously this was only a startup warning).
 
 For api.replicas > 1: set signalr.redis.connectionString and ensure all replicas can
 reach the same Redis instance.
 
+⚠️  UPGRADE (Spec 048 Phase 2): api.replicas now DEFAULTS TO 1 (was 2). If you relied on the old
+default of 2 with Redis configured, set api.replicas explicitly to keep a multi-replica API —
+otherwise `helm upgrade` scales the API down to a single pod.
+
 **Expected restarts during schema upgrades (Req 9.5b).**
-When the orchestrator is applying database migrations, the API pod will repeatedly log:
+When the web service is applying database migrations, the API pod will repeatedly log:
   "Database has N pending migration(s)" (Error level)
 and restart with backoff until the migration completes. This is normal and self-resolving.
 Do NOT roll back on seeing these restarts — the API automatically recovers once the
-orchestrator finishes. Migration duration varies by schema change, typically 1–3 minutes.
+web service finishes. Migration duration varies by schema change, typically 1–3 minutes.
 {{- end }}

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat Code Coverage">
+        <Configuration>
+          <!--
+            IMPORTANT: Coverlet matches on exact assembly name, not on a namespace prefix.
+            [CodingAgent.Web]* covers ONLY the assembly literally named "CodingAgent.Web"
+            (the Blazor host). It does NOT cover CodingAgent.AgentGateway, CodingAgent.Api.Client,
+            etc. — those require their own explicit tokens, as shown below.
+          -->
+          <Include>[CodingAgent.Web]*,[CodingAgent.Orchestration]*,[CodingAgent.Web.TestUtilities]*,[CodingAgent.AgentGateway]*,[CodingAgent.Api.Client]*,[CodingAgent.Scheduler]*,[CodingAgent.Contracts]*,[CodingAgent.Infrastructure.Common]*</Include>
+          <Exclude>[CodingAgent.Pipeline]*,[CodingAgent.Infrastructure.Providers]*,[CodingAgent.Infrastructure.Persistence]*,[CodingAgent.Agent]*,[CodingAgent.Agent.*]*</Exclude>
+          <IncludeTestAssembly>false</IncludeTestAssembly>
+          <SkipAutoProps>true</SkipAutoProps>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>

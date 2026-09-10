@@ -1,0 +1,710 @@
+using System.Reflection;
+using AwesomeAssertions;
+using CodingAgent.AgentGateway;
+using CodingAgent.Orchestration;
+using CodingAgent.Orchestration.Dispatch;
+using CodingAgent.Orchestration.Health;
+using CodingAgent.Orchestration.Registry;
+using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.Services;
+using CodingAgent.Pipeline.Interfaces;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Connections.Features;
+using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.SignalR;
+using Moq;
+using ILogger = Serilog.ILogger;
+
+namespace CodingAgent.Web.UnitTests.Hubs;
+
+/// <summary>
+/// Unit tests for AgentAuthorizationFilter and RequiresActiveJobAttribute.
+/// Tests the authorization logic at the registry level since the filter
+/// requires a full SignalR pipeline to invoke.
+/// </summary>
+public class AgentAuthTests
+{
+    private readonly AgentRegistryService _registry;
+    private readonly Mock<ILogger> _mockLogger;
+
+    public AgentAuthTests()
+    {
+        _mockLogger = new Mock<ILogger>();
+        _registry = new AgentRegistryService(_mockLogger.Object);
+    }
+
+    // ── Constructor validation ──────────────────────────────────────────
+
+    [Fact]
+    public void AgentAuthorizationFilter_NullRegistry_ThrowsArgumentNull()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new AgentAuthorizationFilter(null!, _mockLogger.Object));
+    }
+
+    [Fact]
+    public void AgentAuthorizationFilter_NullLogger_ThrowsArgumentNull()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new AgentAuthorizationFilter(_registry, null!));
+    }
+
+    [Fact]
+    public void AgentAuthorizationFilter_ValidArgs_CreatesInstance()
+    {
+        var filter = new AgentAuthorizationFilter(_registry, _mockLogger.Object);
+        filter.Should().NotBeNull();
+    }
+
+    // ── RequiresActiveJobAttribute ──────────────────────────────────────
+
+    [Fact]
+    public void RequiresActiveJobAttribute_CanBeInstantiated()
+    {
+        var attr = new RequiresActiveJobAttribute();
+        attr.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void RequiresActiveJobAttribute_OnJobAccepted()
+    {
+        var method = typeof(AgentHub).GetMethod("JobAccepted");
+        method.Should().NotBeNull();
+        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().NotBeNull();
+    }
+
+    [Fact]
+    public void RequiresActiveJobAttribute_OnReportJobCompleted()
+    {
+        var method = typeof(AgentHub).GetMethod("ReportJobCompleted");
+        method.Should().NotBeNull();
+        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().NotBeNull();
+    }
+
+    [Fact]
+    public void RequiresActiveJobAttribute_OnReportStepTransition()
+    {
+        var method = typeof(AgentHub).GetMethod("ReportStepTransition");
+        method.Should().NotBeNull();
+        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().NotBeNull();
+    }
+
+    [Fact]
+    public void RequiresActiveJobAttribute_OnReportBrainSyncResult()
+    {
+        var method = typeof(AgentHub).GetMethod("ReportBrainSyncResult");
+        method.Should().NotBeNull();
+        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().NotBeNull();
+    }
+
+    [Fact]
+    public void RequiresActiveJobAttribute_OnReportOutputLines()
+    {
+        var method = typeof(AgentHub).GetMethod("ReportOutputLines");
+        method.Should().NotBeNull();
+        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().NotBeNull();
+    }
+
+    [Fact]
+    public void RequiresActiveJobAttribute_OnReportChatEntry()
+    {
+        var method = typeof(AgentHub).GetMethod("ReportChatEntry");
+        method.Should().NotBeNull();
+        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().NotBeNull();
+    }
+
+    [Fact]
+    public void RequiresActiveJobAttribute_OnReportQualityGateResult()
+    {
+        var method = typeof(AgentHub).GetMethod("ReportQualityGateResult");
+        method.Should().NotBeNull();
+        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().NotBeNull();
+    }
+
+    [Fact]
+    public void RequiresActiveJobAttribute_OnRequestPostComment()
+    {
+        var method = typeof(AgentHub).GetMethod("RequestPostComment");
+        method.Should().NotBeNull();
+        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().NotBeNull();
+    }
+
+    [Fact]
+    public void RequiresActiveJobAttribute_OnRequestLabelChange()
+    {
+        var method = typeof(AgentHub).GetMethod("RequestLabelChange");
+        method.Should().NotBeNull();
+        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().NotBeNull();
+    }
+
+    [Fact]
+    public void RequiresActiveJobAttribute_OnRequestTokenRefresh()
+    {
+        var method = typeof(AgentHub).GetMethod("RequestTokenRefresh");
+        method.Should().NotBeNull();
+        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().NotBeNull();
+    }
+
+    [Fact]
+    public void RequiresActiveJobAttribute_NotOnRegisterAgent()
+    {
+        var method = typeof(AgentHub).GetMethod("RegisterAgent");
+        method.Should().NotBeNull();
+        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().BeNull();
+    }
+
+    [Fact]
+    public void RequiresActiveJobAttribute_NotOnDeregisterAgent()
+    {
+        var method = typeof(AgentHub).GetMethod("DeregisterAgent");
+        method.Should().NotBeNull();
+        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().BeNull();
+    }
+
+    [Fact]
+    public void RequiresActiveJobAttribute_NotOnHeartbeat()
+    {
+        var method = typeof(AgentHub).GetMethod("Heartbeat");
+        method.Should().NotBeNull();
+        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().BeNull();
+    }
+
+    [Fact]
+    public void RequiresActiveJobAttribute_NotOnAgentReady()
+    {
+        var method = typeof(AgentHub).GetMethod("AgentReady");
+        method.Should().NotBeNull();
+        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().BeNull();
+    }
+
+    // TODO: This test only verifies attribute presence via reflection. Add an integration-level test
+    // that exercises the AgentAuthorizationFilter with a mismatched jobId to prove runtime enforcement
+    // (i.e., calling JobRejected with a jobId not assigned to the agent throws HubException).
+    // Also add a test verifying legitimate JobRejected calls (agent rejecting its own job) succeed
+    // through the authorization filter end-to-end.
+    [Fact]
+    public void RequiresActiveJobAttribute_OnJobRejected()
+    {
+        var method = typeof(AgentHub).GetMethod("JobRejected");
+        method.Should().NotBeNull();
+        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().NotBeNull();
+    }
+
+    [Fact]
+    public void RequiresActiveJobAttribute_NotOnReportChatResponse()
+    {
+        var method = typeof(AgentHub).GetMethod("ReportChatResponse");
+        method.Should().NotBeNull();
+        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().BeNull();
+    }
+
+    [Fact]
+    public void RequiresActiveJobAttribute_NotOnReportChatCompleted()
+    {
+        var method = typeof(AgentHub).GetMethod("ReportChatCompleted");
+        method.Should().NotBeNull();
+        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().BeNull();
+    }
+
+    // ── Authorization logic (registry-level validation) ─────────────────
+
+    [Fact]
+    public void UnregisteredConnection_NotFoundInRegistry()
+    {
+        _registry.GetByConnectionId("unknown-conn").Should().BeNull();
+    }
+
+    [Fact]
+    public void RegisteredAgent_FoundByConnectionId()
+    {
+        _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-1", Hostname = "h", Labels = new[] { "l" }
+        }, "conn-1");
+
+        var agent = _registry.GetByConnectionId("conn-1");
+        agent.Should().NotBeNull();
+        agent!.AgentId.Value.Should().Be("agent-1");
+    }
+
+    [Fact]
+    public void ActiveJobId_Mismatch_Detectable()
+    {
+        var entry = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-1", Hostname = "h", Labels = new[] { "l" }
+        }, "conn-1");
+        entry.ActiveJobId = "job-1";
+
+        var agent = _registry.GetByConnectionId("conn-1");
+        string.Equals(agent!.ActiveJobId, "job-2", StringComparison.Ordinal).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ActiveJobId_Match_Detectable()
+    {
+        var entry = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-1", Hostname = "h", Labels = new[] { "l" }
+        }, "conn-1");
+        entry.ActiveJobId = "job-1";
+
+        var agent = _registry.GetByConnectionId("conn-1");
+        string.Equals(agent!.ActiveJobId, "job-1", StringComparison.Ordinal).Should().BeTrue();
+    }
+
+    [Fact]
+    public void AgentWithNoActiveJob_HasNullActiveJobId()
+    {
+        _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-1", Hostname = "h", Labels = new[] { "l" }
+        }, "conn-1");
+
+        var agent = _registry.GetByConnectionId("conn-1");
+        agent!.ActiveJobId.Should().BeNull();
+    }
+
+    // ── IAgentHub interface ─────────────────────────────────────────────
+
+    [Fact]
+    public void AgentHub_ImplementsIAgentHub()
+    {
+        typeof(AgentHub).GetInterfaces().Should().Contain(typeof(IAgentHub));
+    }
+
+    [Fact]
+    public void AgentHub_IsSealed_NotInheritable()
+    {
+        typeof(AgentHub).IsSealed.Should().BeTrue();
+    }
+
+    // ── AgentApiKeyDefaults ─────────────────────────────────────────────
+
+    [Fact]
+    public void AgentApiKeyDefaults_AuthenticationScheme_HasExpectedValue()
+    {
+        AgentApiKeyDefaults.AuthenticationScheme.Should().Be("AgentApiKey");
+    }
+}
+
+/// <summary>
+/// Unit tests for <see cref="AgentAuthorizationFilter.InvokeMethodAsync"/> — exercises the
+/// full runtime authorization logic using a real <see cref="HubInvocationContext"/>.
+/// </summary>
+public class AgentAuthorizationFilterInvokeTests
+{
+    private readonly AgentRegistryService _registry;
+    private readonly Mock<ILogger> _mockLogger;
+    private readonly AgentAuthorizationFilter _filter;
+    private readonly AgentHub _hub;
+
+    public AgentAuthorizationFilterInvokeTests()
+    {
+        _mockLogger = new Mock<ILogger>();
+        _mockLogger.Setup(l => l.Warning(It.IsAny<string>(), It.IsAny<object[]>())).Verifiable();
+        _registry = new AgentRegistryService(_mockLogger.Object);
+        _filter = new AgentAuthorizationFilter(_registry, _mockLogger.Object);
+        _hub = CreateHub("conn-1");
+    }
+
+    // ── Non-AgentHub passes through without auth ────────────────────────
+
+    [Fact]
+    public async Task InvokeMethodAsync_NonAgentHub_CallsNextWithoutAuth()
+    {
+        var nonAgentHub = new DummyHub();
+        nonAgentHub.Context = MakeContext("conn-unknown");
+
+        var ctx = MakeInvocationContext(nonAgentHub, "conn-unknown", nameof(DummyHub.DoSomething), []);
+
+        var nextCalled = false;
+        var result = await _filter.InvokeMethodAsync(ctx, _ =>
+        {
+            nextCalled = true;
+            return ValueTask.FromResult((object?)"ok");
+        });
+
+        nextCalled.Should().BeTrue("non-AgentHub should bypass authorization");
+        result.Should().Be("ok");
+    }
+
+    // ── RegisterAgent bypasses the registry check ────────────────────────
+
+    [Fact]
+    public async Task InvokeMethodAsync_RegisterAgent_UnregisteredConnection_CallsNext()
+    {
+        // RegisterAgent is the only method that does NOT require prior registration
+        var ctx = MakeInvocationContext(_hub, "conn-new", nameof(AgentHub.RegisterAgent),
+            [new AgentRegistrationMessage { AgentId = "new-agent", Hostname = "h", Labels = [] }]);
+
+        var nextCalled = false;
+        await _filter.InvokeMethodAsync(ctx, _ =>
+        {
+            nextCalled = true;
+            return ValueTask.FromResult((object?)null);
+        });
+
+        nextCalled.Should().BeTrue("RegisterAgent must not require prior registration");
+    }
+
+    // ── Unregistered connection → HubException ──────────────────────────
+
+    [Fact]
+    public async Task InvokeMethodAsync_UnregisteredConnection_ThrowsHubException()
+    {
+        var ctx = MakeInvocationContext(_hub, "conn-unknown", "Heartbeat", []);
+
+        var act = () => _filter.InvokeMethodAsync(ctx, _ => ValueTask.FromResult((object?)null)).AsTask();
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*not registered*");
+    }
+
+    [Fact]
+    public async Task InvokeMethodAsync_UnregisteredConnection_LogsWarning()
+    {
+        var ctx = MakeInvocationContext(_hub, "conn-nobody", "Heartbeat", []);
+
+        var exceptionThrown = false;
+        try { await _filter.InvokeMethodAsync(ctx, _ => ValueTask.FromResult((object?)null)); }
+        catch (HubException) { exceptionThrown = true; }
+
+        // TODO: This assertion duplicates the HubException throw already verified (with stricter message check) by the
+        // adjacent test InvokeMethodAsync_UnregisteredConnection_ThrowsHubException. The *logging* behaviour advertised
+        // by this test's name cannot currently be verified because Serilog's generic Warning<T1,T2,...> overloads are not
+        // matchable via object[] mock signatures. If Serilog mocking support improves, replace this assertion with a
+        // direct log-call verification (e.g. _logger.Verify(...)) so the test covers its stated intent.
+        // Serilog mock generic overloads cannot be verified with object[] signature, so we assert
+        // the HubException was thrown — the throw proves the unregistered-connection warning path was entered.
+        exceptionThrown.Should().BeTrue("unregistered connection should throw HubException (which also triggers the warning log)");
+    }
+
+    // ── Registered connection without [RequiresActiveJob] → pass through ─
+
+    [Fact]
+    public async Task InvokeMethodAsync_RegisteredAgent_NonRequiresJob_CallsNext()
+    {
+        _registry.Register(new AgentRegistrationMessage { AgentId = "a1", Hostname = "h", Labels = [] }, "conn-1");
+
+        var ctx = MakeInvocationContext(_hub, "conn-1", "Heartbeat", []);
+
+        var nextCalled = false;
+        await _filter.InvokeMethodAsync(ctx, _ =>
+        {
+            nextCalled = true;
+            return ValueTask.FromResult((object?)null);
+        });
+
+        nextCalled.Should().BeTrue("registered agent without RequiresActiveJob should proceed");
+    }
+
+    // ── [RequiresActiveJob] method — missing jobId argument ─────────────
+
+    [Fact]
+    public async Task InvokeMethodAsync_RequiresJob_EmptyArguments_ThrowsHubException()
+    {
+        var entry = _registry.Register(new AgentRegistrationMessage { AgentId = "a2", Hostname = "h", Labels = [] }, "conn-1");
+        entry.ActiveJobId = "job-1";
+
+        // ReportJobCompleted has [RequiresActiveJob]; pass zero args so jobId is missing
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.ReportJobCompleted))!;
+        var ctx = new HubInvocationContext(MakeContext("conn-1"), Mock.Of<IServiceProvider>(), _hub, method, []);
+
+        var act = () => _filter.InvokeMethodAsync(ctx, _ => ValueTask.FromResult((object?)null)).AsTask();
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*requires a jobId*");
+    }
+
+    [Fact]
+    public async Task InvokeMethodAsync_RequiresJob_WrongArgumentType_ThrowsHubException()
+    {
+        var entry = _registry.Register(new AgentRegistrationMessage { AgentId = "a3", Hostname = "h", Labels = [] }, "conn-1");
+        entry.ActiveJobId = "job-1";
+
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.ReportJobCompleted))!;
+        // Pass a string instead of JobId as first argument
+        var ctx = new HubInvocationContext(MakeContext("conn-1"), Mock.Of<IServiceProvider>(), _hub, method,
+            ["not-a-jobid-type"]);
+
+        var act = () => _filter.InvokeMethodAsync(ctx, _ => ValueTask.FromResult((object?)null)).AsTask();
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*requires a jobId*");
+    }
+
+    // ── [RequiresActiveJob] method — mismatched jobId ────────────────────
+
+    [Fact]
+    public async Task InvokeMethodAsync_RequiresJob_MismatchedJobId_ThrowsHubException()
+    {
+        var entry = _registry.Register(new AgentRegistrationMessage { AgentId = "a4", Hostname = "h", Labels = [] }, "conn-1");
+        entry.ActiveJobId = "job-correct";
+
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.ReportJobCompleted))!;
+        var ctx = new HubInvocationContext(MakeContext("conn-1"), Mock.Of<IServiceProvider>(), _hub, method,
+            [new JobId("job-wrong"), new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow }]);
+
+        var act = () => _filter.InvokeMethodAsync(ctx, _ => ValueTask.FromResult((object?)null)).AsTask();
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*not assigned to agent*");
+    }
+
+    [Fact]
+    public async Task InvokeMethodAsync_RequiresJob_MismatchedJobId_LogsWarning()
+    {
+        var entry = _registry.Register(new AgentRegistrationMessage { AgentId = "a5", Hostname = "h", Labels = [] }, "conn-1");
+        entry.ActiveJobId = "job-correct";
+
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.ReportJobCompleted))!;
+        var ctx = new HubInvocationContext(MakeContext("conn-1"), Mock.Of<IServiceProvider>(), _hub, method,
+            [new JobId("job-wrong"), new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow }]);
+
+        // Verify that a HubException is thrown (proves the warning+throw path was reached)
+        var act = () => _filter.InvokeMethodAsync(ctx, _ => ValueTask.FromResult((object?)null)).AsTask();
+        await act.Should().ThrowAsync<HubException>("mismatch must throw");
+    }
+
+    // ── [RequiresActiveJob] method — matching jobId ──────────────────────
+
+    [Fact]
+    public async Task InvokeMethodAsync_RequiresJob_MatchingJobId_CallsNext()
+    {
+        var entry = _registry.Register(new AgentRegistrationMessage { AgentId = "a6", Hostname = "h", Labels = [] }, "conn-1");
+        entry.ActiveJobId = "job-good";
+
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.ReportJobCompleted))!;
+        var ctx = new HubInvocationContext(MakeContext("conn-1"), Mock.Of<IServiceProvider>(), _hub, method,
+            [new JobId("job-good"), new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow }]);
+
+        var nextCalled = false;
+        await _filter.InvokeMethodAsync(ctx, _ =>
+        {
+            nextCalled = true;
+            return ValueTask.FromResult((object?)null);
+        });
+
+        nextCalled.Should().BeTrue("matching jobId should authorize and call next");
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    private AgentHub CreateHub(string connectionId)
+    {
+        var hub = new AgentHub(new AgentHubDependencies(
+            Mock.Of<IAgentHubFacade>(),
+            Mock.Of<IChatNotifier>(),
+            Mock.Of<IChangeNotifier>(),
+            Mock.Of<IHubConsolidationOperations>(),
+            Mock.Of<IHubIssueOperations>(),
+            Mock.Of<IAgentJobLifecycleService>(),
+            Mock.Of<IAgentTokenRefreshService>(),
+            Mock.Of<IGateCommentFormatter>(),
+            _mockLogger.Object,
+            Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
+        hub.Context = MakeContext(connectionId);
+        return hub;
+    }
+
+    private static HubCallerContext MakeContext(string connectionId)
+    {
+        var mock = new Mock<HubCallerContext>();
+        mock.Setup(c => c.ConnectionId).Returns(connectionId);
+        return mock.Object;
+    }
+
+    private static HubInvocationContext MakeInvocationContext(Microsoft.AspNetCore.SignalR.Hub hub, string connectionId, string methodName, IReadOnlyList<object> args)
+    {
+        // For methods that don't exist on AgentHub (e.g. on DummyHub), search on the actual hub type.
+        var method = hub.GetType().GetMethod(methodName)
+            ?? typeof(AgentHub).GetMethod(methodName)
+            ?? throw new InvalidOperationException($"Method {methodName} not found on {hub.GetType().Name} or AgentHub");
+        hub.Context = MakeContext(connectionId);
+        return new HubInvocationContext(hub.Context, Mock.Of<IServiceProvider>(), hub, method, args);
+    }
+}
+
+/// <summary>Minimal non-AgentHub stub for testing the hub-type bypass in the filter.</summary>
+public sealed class DummyHub : Microsoft.AspNetCore.SignalR.Hub
+{
+    public void DoSomething() { }
+}
+
+/// <summary>
+/// Unit tests for the Redis fallback in <see cref="AgentAuthorizationFilter.GuardAgentMethod"/>
+/// (Fix 1 for issue #2152). Tests use <see cref="Mock{IAgentRegistryService}"/> to independently
+/// control <c>GetByConnectionId</c> (returning null, simulating a cold pod) and
+/// <c>GetByAgentId</c> (returning a controlled Redis snapshot).
+///
+/// Note on operator connections: operators are routed to <c>GuardOperatorMethod</c> before
+/// <c>GuardAgentMethod</c> is ever reached (via the <c>IsOperatorConnection</c> claim check),
+/// so the <c>?agentId</c> fallback is structurally unreachable for operator-authenticated
+/// connections — no separate test is needed for that path.
+/// </summary>
+public class AgentAuthorizationFilterRedisFallbackTests
+{
+    private readonly Mock<IAgentRegistryService> _registryMock;
+    private readonly Mock<ILogger> _loggerMock;
+    private readonly AgentAuthorizationFilter _filter;
+
+    public AgentAuthorizationFilterRedisFallbackTests()
+    {
+        _registryMock = new Mock<IAgentRegistryService>();
+        _loggerMock = new Mock<ILogger>();
+        _filter = new AgentAuthorizationFilter(_registryMock.Object, _loggerMock.Object);
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds a <see cref="HubCallerContext"/> mock with the given connectionId and, optionally,
+    /// an HttpContext with the agentId query parameter — matching how the SignalR pipeline
+    /// attaches the original HTTP request context to the connection.
+    /// </summary>
+    private static HubCallerContext MakeContextWithAgentIdQuery(string connectionId, string? agentIdQueryParam)
+    {
+        var httpContext = new DefaultHttpContext();
+        if (agentIdQueryParam is not null)
+            httpContext.Request.QueryString = new QueryString($"?agentId={agentIdQueryParam}");
+
+        var features = new FeatureCollection();
+        features.Set<IHttpContextFeature>(new TestHttpContextFeature(httpContext));
+
+        var mock = new Mock<HubCallerContext>();
+        mock.Setup(c => c.ConnectionId).Returns(connectionId);
+        mock.Setup(c => c.Features).Returns(features);
+        return mock.Object;
+    }
+
+    private static AgentEntry MakeEntry(string agentId, string connectionId) => new()
+    {
+        AgentId = new AgentId(agentId),
+        ConnectionId = connectionId,
+        Hostname = "host",
+        Labels = [],
+        Status = AgentStatus.Idle,
+        RegisteredAt = DateTimeOffset.UtcNow
+    };
+
+    private AgentHub CreateHub(HubCallerContext context)
+    {
+        var hub = new AgentHub(new AgentHubDependencies(
+            Mock.Of<IAgentHubFacade>(),
+            Mock.Of<IChatNotifier>(),
+            Mock.Of<IChangeNotifier>(),
+            Mock.Of<IHubConsolidationOperations>(),
+            Mock.Of<IHubIssueOperations>(),
+            Mock.Of<IAgentJobLifecycleService>(),
+            Mock.Of<IAgentTokenRefreshService>(),
+            Mock.Of<IGateCommentFormatter>(),
+            _loggerMock.Object,
+            Mock.Of<IAgentOrphanRecoveryService>(),
+            HubTestHelpers.CreateNoOpHubContext()));
+        hub.Context = context;
+        return hub;
+    }
+
+    // ── Fix 1 tests ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Scenario: Cold pod — _connectionIndex misses (GetByConnectionId returns null), but Redis
+    /// already has the new connectionId (Register completed on another replica).
+    /// Fallback reads Redis via GetByAgentId, sees connectionId match → authorizes the call.
+    /// </summary>
+    [Fact]
+    public async Task GuardAgentMethod_ConnectionIdMiss_RedisHasMatchingConnectionId_AllowsCall()
+    {
+        const string agentId = "agent-1";
+        const string connectionId = "conn-new";
+
+        // GetByConnectionId returns null (cold pod — _connectionIndex empty)
+        _registryMock.Setup(r => r.GetByConnectionId(connectionId)).Returns((AgentEntry?)null);
+
+        // Redis has the current connectionId (Register completed on another replica)
+        _registryMock.Setup(r => r.GetByAgentId(new AgentId(agentId)))
+            .Returns(MakeEntry(agentId, connectionId));
+
+        var ctx = MakeContextWithAgentIdQuery(connectionId, agentId);
+        var hub = CreateHub(ctx);
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.Heartbeat))!;
+        var invocationCtx = new HubInvocationContext(ctx, Mock.Of<IServiceProvider>(), hub, method, []);
+
+        var nextCalled = false;
+        await _filter.InvokeMethodAsync(invocationCtx, _ =>
+        {
+            nextCalled = true;
+            return ValueTask.FromResult((object?)null);
+        });
+
+        nextCalled.Should().BeTrue("Redis fallback should authorize when connectionId matches");
+    }
+
+    /// <summary>
+    /// Scenario: Cold pod — _connectionIndex misses. Redis has an entry, but it still holds the
+    /// previous connection's ID (RegisterAgent hasn't written the new connectionId to Redis yet).
+    /// Fallback sees the mismatch and falls through → throws HubException.
+    /// Polly retry (Fix 2) handles this residual window.
+    /// </summary>
+    [Fact]
+    public async Task GuardAgentMethod_ConnectionIdMiss_RedisHasStaleConnectionId_Throws()
+    {
+        const string agentId = "agent-1";
+        const string currentConnectionId = "conn-new";
+        const string staleConnectionId = "conn-OLD";
+
+        // GetByConnectionId returns null (cold pod)
+        _registryMock.Setup(r => r.GetByConnectionId(currentConnectionId)).Returns((AgentEntry?)null);
+
+        // Redis has a stale connectionId from the previous session
+        _registryMock.Setup(r => r.GetByAgentId(new AgentId(agentId)))
+            .Returns(MakeEntry(agentId, staleConnectionId));
+
+        var ctx = MakeContextWithAgentIdQuery(currentConnectionId, agentId);
+        var hub = CreateHub(ctx);
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.Heartbeat))!;
+        var invocationCtx = new HubInvocationContext(ctx, Mock.Of<IServiceProvider>(), hub, method, []);
+
+        var act = () => _filter.InvokeMethodAsync(invocationCtx, _ => ValueTask.FromResult((object?)null)).AsTask();
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*not registered*",
+                "stale connectionId in Redis must not grant access to the new connection");
+    }
+
+    /// <summary>
+    /// Scenario: Cold pod — _connectionIndex misses. Redis also returns null (e.g. first-ever
+    /// registration, or Register hasn't reached any replica's Redis yet).
+    /// Both lookups fail → throws HubException.
+    /// </summary>
+    [Fact]
+    public async Task GuardAgentMethod_ConnectionIdMiss_RedisReturnsNull_Throws()
+    {
+        const string agentId = "agent-1";
+        const string connectionId = "conn-new";
+
+        // Both lookups return null
+        _registryMock.Setup(r => r.GetByConnectionId(connectionId)).Returns((AgentEntry?)null);
+        _registryMock.Setup(r => r.GetByAgentId(new AgentId(agentId))).Returns((AgentEntry?)null);
+
+        var ctx = MakeContextWithAgentIdQuery(connectionId, agentId);
+        var hub = CreateHub(ctx);
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.Heartbeat))!;
+        var invocationCtx = new HubInvocationContext(ctx, Mock.Of<IServiceProvider>(), hub, method, []);
+
+        var act = () => _filter.InvokeMethodAsync(invocationCtx, _ => ValueTask.FromResult((object?)null)).AsTask();
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*not registered*",
+                "missing Redis entry should not grant access");
+    }
+
+    // ── Inner helper for IHttpContextFeature ─────────────────────────────
+
+    private sealed class TestHttpContextFeature : IHttpContextFeature
+    {
+        public TestHttpContextFeature(HttpContext httpContext) => HttpContext = httpContext;
+        public HttpContext? HttpContext { get; set; }
+    }
+}

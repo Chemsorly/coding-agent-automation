@@ -23,24 +23,24 @@ COPY CodingAgentAutomation.sln ./
 COPY Directory.Build.props ./
 COPY Directory.Packages.props ./
 COPY src/KiroCliLib/KiroCliLib.csproj src/KiroCliLib/
-COPY src/CodingAgentWebUI.Pipeline/CodingAgentWebUI.Pipeline.csproj src/CodingAgentWebUI.Pipeline/
-COPY src/CodingAgentWebUI.Pipeline.CodeReview/CodingAgentWebUI.Pipeline.CodeReview.csproj src/CodingAgentWebUI.Pipeline.CodeReview/
-COPY src/CodingAgentWebUI.Infrastructure.Persistence/CodingAgentWebUI.Infrastructure.Persistence.csproj src/CodingAgentWebUI.Infrastructure.Persistence/
-COPY src/CodingAgentWebUI.Infrastructure.Providers/CodingAgentWebUI.Infrastructure.Providers.csproj src/CodingAgentWebUI.Infrastructure.Providers/
-COPY src/CodingAgentWebUI.Orchestration/CodingAgentWebUI.Orchestration.csproj src/CodingAgentWebUI.Orchestration/
+COPY src/CodingAgent.Pipeline/CodingAgent.Pipeline.csproj src/CodingAgent.Pipeline/
+COPY src/CodingAgent.Pipeline.CodeReview/CodingAgent.Pipeline.CodeReview.csproj src/CodingAgent.Pipeline.CodeReview/
+COPY src/CodingAgent.Infrastructure.Persistence/CodingAgent.Infrastructure.Persistence.csproj src/CodingAgent.Infrastructure.Persistence/
+COPY src/CodingAgent.Infrastructure.Providers/CodingAgent.Infrastructure.Providers.csproj src/CodingAgent.Infrastructure.Providers/
+COPY src/CodingAgent.Orchestration/CodingAgent.Orchestration.csproj src/CodingAgent.Orchestration/
 # Added by Specs 042/043 — the harness runs the Pipeline API alongside the Blazor app, so the
 # API, its shared hub library, its typed client and the K8s toolkit all take part in the restore.
-COPY src/CodingAgentWebUI.Hub/CodingAgentWebUI.Hub.csproj src/CodingAgentWebUI.Hub/
-COPY src/CodingAgentWebUI.Kubernetes/CodingAgentWebUI.Kubernetes.csproj src/CodingAgentWebUI.Kubernetes/
-COPY src/CodingAgentWebUI.Api/CodingAgentWebUI.Api.csproj src/CodingAgentWebUI.Api/
-COPY src/CodingAgentWebUI.Api.Client/CodingAgentWebUI.Api.Client.csproj src/CodingAgentWebUI.Api.Client/
-COPY src/CodingAgentWebUI/CodingAgentWebUI.csproj src/CodingAgentWebUI/
-COPY src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj src/CodingAgentWebUI.Agent/
-COPY src/CodingAgentWebUI.Agent.KiroCli/CodingAgentWebUI.Agent.KiroCli.csproj src/CodingAgentWebUI.Agent.KiroCli/
-COPY src/CodingAgentWebUI.Agent.OpenCode/CodingAgentWebUI.Agent.OpenCode.csproj src/CodingAgentWebUI.Agent.OpenCode/
-COPY tests/CodingAgentWebUI.E2ETests/CodingAgentWebUI.E2ETests.csproj tests/CodingAgentWebUI.E2ETests/
-COPY tests/CodingAgentWebUI.TestUtilities/CodingAgentWebUI.TestUtilities.csproj tests/CodingAgentWebUI.TestUtilities/
-RUN dotnet restore tests/CodingAgentWebUI.E2ETests/CodingAgentWebUI.E2ETests.csproj
+COPY src/CodingAgent.AgentGateway/CodingAgent.AgentGateway.csproj src/CodingAgent.AgentGateway/
+COPY src/CodingAgent.Kubernetes/CodingAgent.Kubernetes.csproj src/CodingAgent.Kubernetes/
+COPY src/CodingAgent.Api/CodingAgent.Api.csproj src/CodingAgent.Api/
+COPY src/CodingAgent.Api.Client/CodingAgent.Api.Client.csproj src/CodingAgent.Api.Client/
+COPY src/CodingAgent.Web/CodingAgent.Web.csproj src/CodingAgent.Web/
+COPY src/CodingAgent.Agent/CodingAgent.Agent.csproj src/CodingAgent.Agent/
+COPY src/CodingAgent.Agent.KiroCli/CodingAgent.Agent.KiroCli.csproj src/CodingAgent.Agent.KiroCli/
+COPY src/CodingAgent.Agent.OpenCode/CodingAgent.Agent.OpenCode.csproj src/CodingAgent.Agent.OpenCode/
+COPY tests/CodingAgent.Web.E2ETests/CodingAgent.Web.E2ETests.csproj tests/CodingAgent.Web.E2ETests/
+COPY tests/CodingAgent.Web.TestUtilities/CodingAgent.Web.TestUtilities.csproj tests/CodingAgent.Web.TestUtilities/
+RUN dotnet restore tests/CodingAgent.Web.E2ETests/CodingAgent.Web.E2ETests.csproj
 
 # Copy source and build
 # NOTE: Do NOT use --no-restore here. The prior restore step doesn't fully resolve
@@ -54,7 +54,7 @@ RUN dotnet restore tests/CodingAgentWebUI.E2ETests/CodingAgentWebUI.E2ETests.csp
 COPY . .
 # -p:IsTestProject=true so the test host and adapters land in the output; the csproj keeps it
 # false to stay out of ci.yml's solution-wide `dotnet test`. See the csproj for why.
-RUN dotnet build tests/CodingAgentWebUI.E2ETests/ -c Debug -p:IsTestProject=true
+RUN dotnet build tests/CodingAgent.Web.E2ETests/ -c Debug -p:IsTestProject=true
 
 # Ensure the test host runs in Development mode so static web assets
 # (including _framework/blazor.web.js from NuGet packages) are resolved correctly.
@@ -86,7 +86,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # --create-home is not optional. `adduser --system` made a home directory implicitly; useradd does
 # not, and the .NET CLI refuses to start without one ("The user's home directory could not be
 # determined"). USER does not set $HOME either, so it is set explicitly below.
-RUN pwsh tests/CodingAgentWebUI.E2ETests/bin/Debug/net10.0/playwright.ps1 install --with-deps chromium \
+RUN pwsh tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/playwright.ps1 install --with-deps chromium \
     && groupadd --system appgroup \
     && useradd --system --gid appgroup --create-home --home-dir /home/appuser appuser \
     && mkdir -p /src/TestResults && chown -R appuser:appgroup /src/TestResults \
@@ -100,4 +100,4 @@ ENV DOTNET_CLI_HOME=/home/appuser
 # 'dotnet vstest' against the built DLL, so the run never re-enters MSBuild inside the container.
 # The project now sets IsTestProject=true — with it false the VSTest target is a no-op and
 # `dotnet test` silently discovers zero tests, which is how the CI job passed while running nothing.
-ENTRYPOINT ["dotnet", "vstest", "tests/CodingAgentWebUI.E2ETests/bin/Debug/net10.0/CodingAgentWebUI.E2ETests.dll", "--TestCaseFilter:Category=E2E", "--logger:trx", "--ResultsDirectory:/src/TestResults"]
+ENTRYPOINT ["dotnet", "vstest", "tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/CodingAgent.Web.E2ETests.dll", "--TestCaseFilter:Category=E2E", "--logger:trx", "--ResultsDirectory:/src/TestResults"]

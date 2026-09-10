@@ -1,0 +1,42 @@
+using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Services;
+using CodingAgent.Web.Services;
+using Serilog;
+
+namespace CodingAgent.Web;
+
+public static partial class ServiceCollectionExtensions
+{
+    /// <summary>
+    /// Registers shutdown infrastructure: shutdown signal, graceful shutdown service,
+    /// and readiness drain service.
+    /// </summary>
+    private static void RegisterPipelineShutdown(IServiceCollection services)
+    {
+        // Shutdown signal: cooperative flag to prevent dispatch-during-shutdown races
+        services.AddSingleton<IShutdownSignal>(new ShutdownSignal());
+
+        // Graceful shutdown via IHostedLifecycleService (async, 15s timeout, non-blocking)
+        services.AddHostedService(sp => new ShutdownService(
+            sp.GetRequiredService<ILifecycleShutdownAction>(),
+            sp.GetRequiredService<IOrchestrationShutdownAction>(),
+            sp.GetRequiredService<IShutdownSignal>(),
+            Log.Logger));
+
+        // Readiness drain: marks /readyz as 503 during shutdown, then waits for endpoint removal.
+        // Registered AFTER ShutdownService — StoppingAsync fires in REVERSE order,
+        // so drain runs FIRST (flips readiness, waits), THEN ShutdownService cancels work.
+        services.AddSingleton<ReadinessState>();
+        services.AddHostedService(sp =>
+        {
+            var opts = sp.GetService<Microsoft.Extensions.Options.IOptions<MonolithRuntimeOptions>>()?.Value;
+            var drainDelay = opts is not null
+                ? TimeSpan.FromSeconds(System.Math.Clamp(opts.ReadinessDrainDelaySeconds, 0, 120))
+                : (TimeSpan?)null;
+            return new ReadinessDrainService(
+                sp.GetRequiredService<ReadinessState>(),
+                Log.Logger,
+                drainDelay: drainDelay);
+        });
+    }
+}

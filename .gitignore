@@ -86,3 +86,6 @@ config/postgres/
 __pycache__/
 *.pyc
 *.pyo
+local-values.yaml
+postgres-local.yaml
+redis-local.yaml

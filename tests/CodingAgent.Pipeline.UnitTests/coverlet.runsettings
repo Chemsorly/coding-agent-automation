@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat Code Coverage">
+        <Configuration>
+          <Include>[CodingAgent.Pipeline*]*,[CodingAgent.Orchestration]*,[CodingAgent.Web]*,[CodingAgent.Api.Client]*,[CodingAgent.AgentGateway]*,[CodingAgent.JobController]*,[CodingAgent.Contracts]*,[CodingAgent.Infrastructure.Common]*</Include>
+          <Exclude>[CodingAgent.Pipeline.UnitTests]*,[CodingAgent.Pipeline.CodeReview.UnitTests]*,[CodingAgent.Infrastructure.Providers]*,[CodingAgent.Infrastructure.Persistence]*,[CodingAgent.Agent]*,[CodingAgent.Agent.*]*,[CodingAgent.Orchestration.UnitTests]*</Exclude>
+          <IncludeTestAssembly>false</IncludeTestAssembly>
+          <SkipAutoProps>true</SkipAutoProps>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>

@@ -1,0 +1,521 @@
+@* Route retired — this component is now embedded in Pipelines (AgentCoding.razor). /consolidation redirects there (ConsolidationRedirect.razor). *@
+@implements IDisposable
+@using CodingAgent.Api.Client
+@using CodingAgent.Pipeline.Interfaces
+@using CodingAgent.Pipeline.Models
+@using CodingAgent.Pipeline.Services
+@using CodingAgent.AgentGateway
+@using CodingAgent.Web.Services
+@using Serilog
+@inject IConsolidationService ConsolidationService
+@inject ConsolidationBadgeService BadgeService
+@inject IPipelineApiConfigClient ConfigClient
+
+@* No <PageTitle> — this component is embedded in the Pipelines page and must not override its
+   browser-tab title (a <PageTitle> rendered later wins). The Pipelines page owns the title. *@
+
+<div class="consolidation-page">
+    <header class="consolidation-header">
+        <h1>Consolidation</h1>
+    </header>
+
+    @if (!string.IsNullOrEmpty(_statusMessage))
+    {
+        <div class="consolidation-status-message @(_statusIsError ? "consolidation-status-error" : "consolidation-status-info")">
+            @_statusMessage
+        </div>
+    }
+
+    <!-- Per-Template Cards -->
+    <section class="settings-section" style="margin: 16px 20px;">
+        <h2><Icon Name="clipboard-list" Size="16" /> Template Consolidation</h2>
+        @if (_isLoading)
+        {
+            <div class="monitoring-empty">Loading...</div>
+        }
+        else if (_templates.Count == 0)
+        {
+            <div class="monitoring-empty">No enabled templates configured.</div>
+        }
+        else
+        {
+            <div class="consolidation-cards">
+                @foreach (var template in _templates)
+                {
+                    var supportsBrain = ConsolidationTemplateFilter.SupportsBrainConsolidation(template);
+                    var supportsRefactoring = ConsolidationTemplateFilter.SupportsRefactoringDetection(template);
+                    var lastBrain = _lastRuns.GetValueOrDefault((ConsolidationRunType.BrainConsolidation, template.Id));
+                    var lastRefactoring = _lastRuns.GetValueOrDefault((ConsolidationRunType.RefactoringDetection, template.Id));
+
+                    <div class="consolidation-card">
+                        <h3 class="consolidation-card-title">@template.Name</h3>
+
+                        <div class="consolidation-card-row">
+                            <span class="consolidation-card-label">Brain Consolidation:</span>
+                            @if (supportsBrain)
+                            {
+                                @if (lastBrain != null)
+                                {
+                                    <span class="consolidation-card-value">
+                                        @lastBrain.StartedAtUtc.ToLocalTime().ToString("g") —
+                                        <span class="consolidation-status consolidation-status-@lastBrain.Status.ToString().ToLowerInvariant()">@lastBrain.Status</span>
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="consolidation-card-value consolidation-muted">Never run</span>
+                                }
+                            }
+                            else
+                            {
+                                <span class="consolidation-card-value consolidation-muted">No brain provider configured</span>
+                            }
+                        </div>
+
+                        <div class="consolidation-card-row">
+                            <span class="consolidation-card-label">Refactoring Scan:</span>
+                            @if (supportsRefactoring)
+                            {
+                                @if (lastRefactoring != null)
+                                {
+                                    <span class="consolidation-card-value">
+                                        @lastRefactoring.StartedAtUtc.ToLocalTime().ToString("g") —
+                                        <span class="consolidation-status consolidation-status-@lastRefactoring.Status.ToString().ToLowerInvariant()">@lastRefactoring.Status</span>
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="consolidation-card-value consolidation-muted">Never run</span>
+                                }
+                            }
+                            else
+                            {
+                                <span class="consolidation-card-value consolidation-muted">No repo/issue provider configured</span>
+                            }
+                        </div>
+
+                        <div class="consolidation-card-actions">
+                            @if (supportsBrain)
+                            {
+                                <button class="btn-trigger" disabled="@IsRunning(ConsolidationRunType.BrainConsolidation, template.Id)"
+                                        @onclick="() => TriggerConsolidation(ConsolidationRunType.BrainConsolidation, template.Id, template.Name)">
+                                    <Icon Name="brain" Size="14" /> Brain Consolidation
+                                </button>
+                            }
+                            @if (supportsRefactoring)
+                            {
+                                <button class="btn-trigger" disabled="@IsRunning(ConsolidationRunType.RefactoringDetection, template.Id)"
+                                        @onclick="() => OpenRefactoringModal(template.Id, template.Name)">
+                                    <Icon Name="search" Size="14" /> Refactoring Scan
+                                </button>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </section>
+
+    <!-- Global Harness Suggestions -->
+    <section class="settings-section" style="margin: 16px 20px;">
+        <h2><Icon Name="lightbulb" Size="16" /> Harness Suggestions</h2>
+        @if (_isLoading)
+        {
+            <div class="monitoring-empty">Loading...</div>
+        }
+        else if (_harnessSuggestions == null)
+        {
+            <div class="monitoring-empty">No suggestions generated yet.</div>
+        }
+        else
+        {
+            <div class="consolidation-suggestions-meta">
+                Generated: @_harnessSuggestions.GeneratedAtUtc.ToLocalTime().ToString("g")
+                — Based on @_harnessSuggestions.BasedOnRunCount runs
+                — Success rate: @_harnessSuggestions.SuccessRate.ToString("P1")
+            </div>
+            @if (_harnessSuggestions.Suggestions.Count == 0)
+            {
+                <div class="monitoring-empty">No suggestions in the current batch.</div>
+            }
+            else
+            {
+                <div class="consolidation-suggestions-list">
+                    @foreach (var suggestion in _harnessSuggestions.Suggestions)
+                    {
+                        <div class="consolidation-suggestion-item">
+                            <div class="consolidation-suggestion-text">@suggestion.Text</div>
+                            <div class="consolidation-suggestion-rationale">@suggestion.Rationale</div>
+                            <div class="consolidation-suggestion-frequency">Frequency: @suggestion.Frequency runs</div>
+                        </div>
+                    }
+                </div>
+            }
+        }
+        <div class="consolidation-card-actions" style="margin-top: 12px;">
+            <button class="btn-trigger" disabled="@(_isLoading || IsRunning(ConsolidationRunType.HarnessSuggestions, null))"
+                    @onclick="() => TriggerConsolidation(ConsolidationRunType.HarnessSuggestions, null, null)">
+                <Icon Name="sparkles" Size="14" /> Generate Suggestions
+            </button>
+        </div>
+    </section>
+
+    <!-- Run History -->
+    <section class="settings-section" style="margin: 16px 20px;">
+        <h2><Icon Name="scroll" Size="16" /> Run History (@(_isLoading ? "…" : _runHistory.Count.ToString()))</h2>
+        @if (_isLoading)
+        {
+            <div class="monitoring-empty">Loading...</div>
+        }
+        else if (_runHistory.Count == 0)
+        {
+            <div class="monitoring-empty">No consolidation runs yet.</div>
+        }
+        else
+        {
+            <div class="monitoring-table-wrap">
+                <table class="monitoring-table">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Template</th>
+                            <th>Started</th>
+                            <th>Status</th>
+                            <th>Summary</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var run in _runHistory)
+                        {
+                            <tr>
+                                <td>@FormatRunType(run.Type)</td>
+                                <td>@(run.TemplateName ?? "Global")</td>
+                                <td>@run.StartedAtUtc.ToLocalTime().ToString("g")</td>
+                                <td>
+                                    <span class="consolidation-status consolidation-status-@run.Status.ToString().ToLowerInvariant()">
+                                        @run.Status
+                                    </span>
+                                </td>
+                                <td class="consolidation-summary-cell" title="@(run.Summary ?? "—")">@(run.Summary ?? "—")</td>
+                                <td>
+                                    @if (run.Status == ConsolidationRunStatus.Queued)
+                                    {
+                                        <button class="btn-cancel-run" @onclick="() => CancelQueuedRun(run.RunId)">Cancel</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+</div>
+
+@* Refactoring Scan Pre-Flight Modal *@
+@if (_showRefactoringModal)
+{
+    <div class="modal-overlay" tabindex="-1" @ref="_modalOverlayRef" @onclick="DismissRefactoringModal" @onkeydown="HandleRefactoringModalKeyDown">
+        <div class="modal-card" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-labelledby="refactoring-modal-title">
+            <h3 id="refactoring-modal-title">Trigger Refactoring Scan</h3>
+            <p class="modal-description">Template: <strong>@_modalTemplateName</strong></p>
+
+            <div class="form-group">
+                <label>Issue Labels</label>
+                <div class="refactoring-modal-labels">
+                    <span class="label-badge label-badge-static">agent:generated</span>
+                    <div class="form-checkbox">
+                        <label>
+                            @* Known limitation: @onkeydown:stopPropagation stops ALL keydown events (not just Enter) from reaching
+                               the modal overlay. If focus is on this checkbox and Escape is pressed, the modal will NOT close —
+                               the Escape event is swallowed here. Keyboard-only users must use Cancel or click outside.
+                               A more targeted fix would propagate Escape explicitly or only stop Enter/Space.
+                               Note: Blazor's KeyboardEventArgs does not expose e.Target, so a target-based guard is not directly
+                               implementable. This is a known trade-off, not an open work item. *@
+                            <input type="checkbox" @bind="_modalAutoDispatch" @onkeydown:stopPropagation="true" />
+                            <span class="label-badge label-badge-optional">agent:next</span>
+                            — auto-dispatch created issues for agent execution
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Run Parameters</label>
+                <div class="refactoring-modal-params">
+                    <div class="refactoring-modal-param">
+                        <span class="refactoring-modal-param-label">Max issues:</span>
+                        <span class="refactoring-modal-param-value">@_modalMaxProposals</span>
+                    </div>
+                    <div class="refactoring-modal-param">
+                        <span class="refactoring-modal-param-label">Hotspot lookback:</span>
+                        <span class="refactoring-modal-param-value">@_modalHotspotDays days</span>
+                    </div>
+                    <div class="refactoring-modal-param">
+                        <span class="refactoring-modal-param-label">Adversarial review:</span>
+                        <span class="refactoring-modal-param-value">@(_modalReviewEnabled ? "Enabled" : "Disabled")</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-buttons">
+                <button class="btn-save" @onclick="ConfirmRefactoringModal">Start Scan</button>
+                <button class="btn-cancel" @onclick="DismissRefactoringModal">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private IReadOnlyList<PipelineJobTemplate> _templates = [];
+    private Dictionary<(ConsolidationRunType, string?), ConsolidationRun?> _lastRuns = new();
+    private IReadOnlyList<ConsolidationRun> _runHistory = [];
+    private HarnessSuggestions? _harnessSuggestions;
+    private string? _statusMessage;
+    private bool _statusIsError;
+    private bool _isLoading = true;
+
+    // Refactoring modal state
+    private bool _showRefactoringModal;
+    private bool _modalJustOpened;
+    private string? _modalTemplateId;
+    private string? _modalTemplateName;
+    private bool _modalAutoDispatch;
+    private int _modalMaxProposals;
+    private int _modalHotspotDays;
+    private bool _modalReviewEnabled;
+    private ElementReference _modalOverlayRef;
+
+    protected override async Task OnInitializedAsync()
+    {
+        BadgeService.Reset();
+        ConsolidationService.OnChange += HandleConsolidationChanged;
+
+        await LoadDataAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_showRefactoringModal && _modalJustOpened)
+        {
+            // TODO(WARNING): _modalJustOpened is cleared before FocusAsync is awaited. If FocusAsync throws
+            // (caught below), the flag is already false and there is no retry — the modal overlay loses focus
+            // permanently for this open. The original code retried on every re-render as a fallback.
+            // Fix: clear the flag only after FocusAsync succeeds, or accept a single retry by clearing inside
+            // the catch block only when an explicit retry count is exhausted.
+            _modalJustOpened = false;
+            try
+            {
+                await _modalOverlayRef.FocusAsync();
+            }
+            catch (Exception) { /* Element may not be rendered yet */ }
+        }
+    }
+
+    private async Task LoadDataAsync()
+    {
+        try
+        {
+            var allTemplates = await ConfigClient.GetAllTemplatesAsync(CancellationToken.None);
+            var projects = await ConfigClient.GetProjectsAsync(CancellationToken.None);
+            var templateLookup = allTemplates.ToDictionary(t => t.Id);
+
+            _templates = projects
+                .Where(p => p.Enabled)
+                .OrderBy(p => p.Name, StringComparer.Ordinal)
+                .SelectMany(p => p.TemplateIds)
+                .Where(tid => templateLookup.ContainsKey(tid))
+                .Select(tid => templateLookup[tid])
+                .Where(t => t.Enabled)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load templates for consolidation page");
+            _templates = [];
+        }
+
+        try
+        {
+            // Null-coalesce: this section is embedded in the Pipelines page, so a null return
+            // (e.g. a service that doesn't honour the non-null contract) must not NRE the render.
+            _runHistory = await ConsolidationService.GetRunHistoryAsync(CancellationToken.None) ?? [];
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load consolidation run history");
+            _runHistory = [];
+        }
+
+        try
+        {
+            _harnessSuggestions = await ConsolidationService.GetHarnessSuggestionsAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load harness suggestions");
+            _harnessSuggestions = null;
+        }
+
+        // Load last runs per template per type
+        _lastRuns.Clear();
+        foreach (var template in _templates)
+        {
+            try
+            {
+                var lastBrain = await ConsolidationService.GetLastRunAsync(
+                    ConsolidationRunType.BrainConsolidation, template.Id, CancellationToken.None);
+                _lastRuns[(ConsolidationRunType.BrainConsolidation, template.Id)] = lastBrain;
+
+                var lastRefactoring = await ConsolidationService.GetLastRunAsync(
+                    ConsolidationRunType.RefactoringDetection, template.Id, CancellationToken.None);
+                _lastRuns[(ConsolidationRunType.RefactoringDetection, template.Id)] = lastRefactoring;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to load last runs for template {TemplateId}", template.Id);
+            }
+        }
+
+        _isLoading = false;
+    }
+
+    private async Task OpenRefactoringModal(string templateId, string templateName)
+    {
+        // Load fresh config values when opening the modal
+        try
+        {
+            var config = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
+            _modalMaxProposals = config.MaxRefactoringProposals;
+            _modalHotspotDays = (int)config.HotspotAnalysisLookback.TotalDays;
+            _modalReviewEnabled = config.RefactoringReviewEnabled;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load pipeline config for refactoring modal");
+            _modalMaxProposals = 3;
+            _modalHotspotDays = 90;
+            _modalReviewEnabled = true;
+        }
+
+        _modalTemplateId = templateId;
+        _modalTemplateName = templateName;
+        _modalAutoDispatch = false;
+        _showRefactoringModal = true;
+        _modalJustOpened = true;
+    }
+
+    private async Task ConfirmRefactoringModal()
+    {
+        _showRefactoringModal = false;
+        await TriggerConsolidation(ConsolidationRunType.RefactoringDetection, _modalTemplateId, _modalTemplateName, _modalAutoDispatch);
+    }
+
+    private void DismissRefactoringModal()
+    {
+        _showRefactoringModal = false;
+    }
+
+    // Known limitation (#1772): @onkeydown:stopPropagation on the checkbox stops ALL keydown events
+    // from bubbling to this handler, not just Enter. This means Escape pressed while the checkbox is
+    // focused will not close the modal — keyboard-only users must use Cancel or click outside.
+    // Blazor's KeyboardEventArgs does not expose a Target property, so a target-based guard that would
+    // selectively pass through Escape is not directly implementable. This is an accepted trade-off.
+    private async Task HandleRefactoringModalKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            DismissRefactoringModal();
+        }
+        else if (e.Key == "Enter")
+        {
+            await ConfirmRefactoringModal();
+        }
+    }
+
+    private async Task TriggerConsolidation(ConsolidationRunType type, string? templateId, string? templateName, bool autoDispatch = false)
+    {
+        _statusMessage = null;
+        _statusIsError = false;
+
+        try
+        {
+            TemplateId? typedTemplateId = !string.IsNullOrEmpty(templateId)
+                ? (TemplateId)templateId
+                : (TemplateId?)null;
+            var run = await ConsolidationService.TriggerAsync(type, typedTemplateId, CancellationToken.None, autoDispatch);
+            if (run == null)
+            {
+                _statusMessage = type switch
+                {
+                    ConsolidationRunType.BrainConsolidation => $"Brain consolidation rejected for {templateName} — already running/queued or template not found.",
+                    ConsolidationRunType.RefactoringDetection => $"Refactoring scan rejected for {templateName} — already running/queued or template not found.",
+                    ConsolidationRunType.HarnessSuggestions => "Harness suggestions rejected — already running/queued.",
+                    _ => "Consolidation rejected."
+                };
+                _statusIsError = true;
+            }
+            else if (run.Status == ConsolidationRunStatus.Queued)
+            {
+                _statusMessage = $"{FormatRunType(type)} queued — waiting for an idle agent.";
+                await LoadDataAsync();
+            }
+            else
+            {
+                _statusMessage = $"{FormatRunType(type)} triggered successfully.";
+                await LoadDataAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to trigger consolidation {Type} for template {TemplateId}", type, templateId);
+            _statusMessage = $"{FormatRunType(type)} dispatch failed — check orchestrator logs for details.";
+            _statusIsError = true;
+        }
+    }
+
+    private bool IsRunning(ConsolidationRunType type, string? templateId)
+    {
+        return _runHistory.Any(r => r.Type == type
+            && r.TemplateId == templateId
+            && (r.Status == ConsolidationRunStatus.Running || r.Status == ConsolidationRunStatus.Queued));
+    }
+
+    private async Task CancelQueuedRun(string runId)
+    {
+        var cancelled = await ConsolidationService.CancelQueuedRunAsync(runId, CancellationToken.None);
+        if (cancelled)
+        {
+            _statusMessage = "Queued run cancelled.";
+            _statusIsError = false;
+            await LoadDataAsync();
+        }
+    }
+
+    private async void HandleConsolidationChanged()
+    {
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                await LoadDataAsync();
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private static string FormatRunType(ConsolidationRunType type) => type switch
+    {
+        ConsolidationRunType.BrainConsolidation => "Brain Consolidation",
+        ConsolidationRunType.RefactoringDetection => "Refactoring Detection",
+        ConsolidationRunType.HarnessSuggestions => "Harness Suggestions",
+        _ => type.ToString()
+    };
+
+    public void Dispose()
+    {
+        ConsolidationService.OnChange -= HandleConsolidationChanged;
+    }
+}

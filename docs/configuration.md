@@ -169,6 +169,7 @@ Controls automated PR branch management for templates with `HousekeepingEnabled:
 |---------|---------|-------------|
 | `housekeepingConcurrencyLimit` | `1` | Max PRs simultaneously in "update triggered, CI running" state per repository. Enforced per `RepoProviderId`, not per template. Default: 1 (fully serial). Can be overridden per template via `HousekeepingConcurrencyLimit` on the `PipelineJobTemplate`. |
 | `housekeepingBranchCleanupIntervalMinutes` | `60` | How often (in minutes) stale agent branch cleanup runs per repository. Set to `0` to run every poll cycle. Only active when the template has `HousekeepingBranchCleanupEnabled: true`. |
+| `housekeepingTriggerCooldownMinutes` | `25` | Minimum minutes between consecutive branch-update triggers for the same PR. Prevents a single PR from consuming the update slot on every poll cycle when CI takes longer than one interval. |
 
 Per-template controls (on `PipelineJobTemplate`):
 
@@ -302,7 +303,7 @@ The maintenance service is triggered by the Scheduler via `POST /api/scheduler/m
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector endpoint (e.g., `https://otlp-gateway.grafana.net/otlp`) |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP protocol: `grpc` (default) or `http/protobuf` |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Authentication headers for OTLP endpoint (e.g., `Authorization=Basic xxx`) |
-| `OTEL_SERVICE_NAME` | Service name for telemetry (set per process — `coding-agent-orchestrator`, `coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`). For the Orchestrator, configure via `otel.orchestratorServiceName` in `values.yaml`. Other processes use fixed names set in their own deployment templates. |
+| `OTEL_SERVICE_NAME` | Service name for telemetry (set per process — `coding-agent-web`, `coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`). For the web service, configure via `otel.webServiceName` in `values.yaml` (legacy alias `otel.orchestratorServiceName` still honored). Other processes use fixed names set in their own deployment templates. |
 | `OTEL_RESOURCE_ATTRIBUTES` | Additional resource attributes (e.g., `deployment.environment=production`) |
 
 ### Agent Containers

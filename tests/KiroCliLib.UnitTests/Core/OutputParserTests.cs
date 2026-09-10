@@ -9,7 +9,7 @@ namespace KiroCliLib.UnitTests.Core;
 
 /// <summary>
 /// Property-based tests for OutputParser.
-/// Migrated from CodingAgentWebUI.IntegrationTests as part of KiroCliLib test separation.
+/// Migrated from CodingAgent.Web.IntegrationTests as part of KiroCliLib test separation.
 /// Validates: State detection, test result parsing.
 /// </summary>
 public class OutputParserTests

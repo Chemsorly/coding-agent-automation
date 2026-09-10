@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="CodingAgent.Web.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgent.Pipeline.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgent.Web.IntegrationTests" />
+    <InternalsVisibleTo Include="CodingAgent.Web.E2ETests" />
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\CodingAgent.Orchestration\CodingAgent.Orchestration.csproj" />
+    <ProjectReference Include="..\CodingAgent.Pipeline\CodingAgent.Pipeline.csproj" />
+    <ProjectReference Include="..\CodingAgent.Pipeline.CodeReview\CodingAgent.Pipeline.CodeReview.csproj" />
+  </ItemGroup>
+</Project>

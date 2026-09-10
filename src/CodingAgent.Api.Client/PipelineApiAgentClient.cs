@@ -1,0 +1,52 @@
+using System.Net.Http.Json;
+using CodingAgent.Pipeline;
+using CodingAgent.Pipeline.Models;
+
+namespace CodingAgent.Api.Client;
+
+/// <summary>
+/// <see cref="IPipelineApiAgentClient"/> backed by <see cref="HttpClient"/> registered
+/// via <see cref="IHttpClientFactory"/>.
+/// </summary>
+internal sealed class PipelineApiAgentClient : IPipelineApiAgentClient
+{
+    private readonly HttpClient _http;
+
+    public PipelineApiAgentClient(HttpClient http)
+    {
+        _http = http;
+    }
+
+    public async Task<IReadOnlyList<AgentEntryDto>> GetAgentsAsync(CancellationToken ct = default)
+    {
+        var agents = await _http.GetFromJsonAsync<List<AgentEntryDto>>(
+            "/api/agents",
+            PipelineJsonOptions.Default,
+            ct);
+
+        // A 200 carrying a literal `null` body is not something the endpoint produces, but
+        // GetFromJsonAsync types it as nullable — collapse it to empty rather than propagating null
+        // into an IReadOnlyList the callers dereference without checking.
+        return agents ?? [];
+    }
+
+    public async Task<CredentialPoolStatus> GetCredentialPoolAsync(CancellationToken ct = default)
+    {
+        var status = await _http.GetFromJsonAsync<CredentialPoolStatus>(
+            "/api/agents/credential-pool",
+            PipelineJsonOptions.Default,
+            ct);
+        return status ?? new CredentialPoolStatus(0, 0, 0);
+    }
+
+    public async Task AssignChatPromptAsync(string agentId, ChatPromptMessage message, CancellationToken ct = default)
+    {
+        var response = await _http.PostAsJsonAsync(
+            $"/api/agents/{Uri.EscapeDataString(agentId)}/chat-prompt",
+            message,
+            PipelineJsonOptions.Default,
+            ct);
+
+        response.EnsureSuccessStatusCode();
+    }
+}

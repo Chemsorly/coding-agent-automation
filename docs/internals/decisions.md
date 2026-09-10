@@ -45,7 +45,7 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 **Payoff:** `AgentHubConsolidationTests` can now test `HubConsolidationOperations` directly without requiring `null!` for `ModelFetchService` (which was sealed/unmockable).
 
-**Reassess when:** If the remaining 10 deps prove unwieldy, apply the same Facade Service pattern to the IssueOps or Lifecycle clusters.
+**Reassess when:** If the remaining 11 deps prove unwieldy, apply the same Facade Service pattern to the IssueOps or Lifecycle clusters.
 
 ### Environment variable options binding (T11)
 
@@ -117,10 +117,10 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 **Decision:** We kept all dispatch logic, reconciliation, leader election, and lifecycle management inside the single web application process (Blazor UI + orchestration + dispatch in one binary). Splitting into a standalone operator/controller was on the roadmap but was not justified by scale at the time.
 
 **Status (2026-08-28 — Reassess-when condition met and resolved):** The monolith was split into **4 separate services** in specs 041–045:
-- `CodingAgentWebUI` (orchestrator) — Blazor UI + pipeline orchestration. **No direct DB access.** Connects to API via HTTP/SignalR for all state reads and writes.
-- `CodingAgentWebUI.Api` — sole owner of the Postgres database, `/hubs/agent`, `/api/work-items/*`, and all agent-facing endpoints.
-- `CodingAgentWebUI.JobController` — owns dispatch and reconciliation loops. Leader-elected; one leader runs them, others idle as hot standbys.
-- `CodingAgentWebUI.Scheduler` — owns all scheduled/periodic background work (retention sweeps, maintenance). No direct DB access; triggers work via HTTP.
+- `CodingAgent.Web` (orchestrator) — Blazor UI + pipeline orchestration. **No direct DB access.** Connects to API via HTTP/SignalR for all state reads and writes.
+- `CodingAgent.Api` — sole owner of the Postgres database, `/hubs/agent`, `/api/work-items/*`, and all agent-facing endpoints.
+- `CodingAgent.JobController` — owns dispatch and reconciliation loops. Leader-elected; one leader runs them, others idle as hot standbys.
+- `CodingAgent.Scheduler` — owns all scheduled/periodic background work (retention sweeps, maintenance). No direct DB access; triggers work via HTTP.
 
 Leader election continues to handle multi-replica safety. The split was driven by: (a) the orchestrator needing to be a UI-only consumer of the API rather than the source of truth, (b) dispatch/reconciliation needing a separate leader lease from the pipeline loop, and (c) scheduled maintenance needing isolation from both.
 
@@ -220,10 +220,10 @@ The practical impact is low: draft PRs are rare (require retry exhaustion), and 
 
 **Topology (verified 2026-08-22):**
 - GitHub App PEM and GitLab access tokens live exclusively in the database (`ProviderConfig.Settings["privateKeyBase64"]` / `Settings["accessToken"]`). No K8s Secret in the Helm chart contains these credentials — the chart manages only `agent-api-key` (the HMAC master key).
-- `TokenVendingService` is registered in `CodingAgentWebUI.Api`, `CodingAgentWebUI` (Orchestrator), and `CodingAgentWebUI.Scheduler`. All three processes read `ProviderConfig` from Postgres and perform the GitHub JWT exchange in-process.
+- `TokenVendingService` is registered in `CodingAgent.Api`, `CodingAgent.Web` (Orchestrator), and `CodingAgent.Scheduler`. All three processes read `ProviderConfig` from Postgres and perform the GitHub JWT exchange in-process.
 - Agent pods receive only: (a) the HMAC-derived per-job key (`HMAC-SHA256(master, jobName)`, mounted from the chart Secret), and (b) short-lived GitHub installation access tokens (1-hour expiry) vended via SignalR `RefreshToken` calls handled by `AgentTokenRefreshService` in the API hub. The raw PEM and long-lived GitLab PATs never enter the agent container.
 - The agent's `HubConnectionManager` receives the master key at construction and derives its per-agent key internally (`DeriveKey(masterKey, agentId.Value)`) — it never sends the master key over the wire.
-- Assembly boundary: NetArchTest rules in `LayerBoundaryTests.cs` prevent `CodingAgentWebUI.Agent`, `Agent.KiroCli`, and `Agent.OpenCode` from depending on `CodingAgentWebUI.Orchestration` (where `TokenVendingService` and `ProviderSettingKeys.PrivateKeyBase64` live). This is structural enforcement, not a named invariant test.
+- Assembly boundary: NetArchTest rules in `LayerBoundaryTests.cs` prevent `CodingAgent.Agent`, `Agent.KiroCli`, and `Agent.OpenCode` from depending on `CodingAgent.Orchestration` (where `TokenVendingService` and `ProviderSettingKeys.PrivateKeyBase64` live). This is structural enforcement, not a named invariant test.
 
 **Known limitation — GitLab PATs:** GitLab access tokens are passed through in plaintext (no vending). Unlike GitHub App tokens (short-lived and scoped), GitLab PATs are long-lived. Recommend project access tokens with ≤1-day expiry to minimize exposure if an agent is compromised.
 
@@ -720,7 +720,7 @@ The budget is a soft prompt constraint (not mechanically enforced). Agents may e
 **Date:** 2026-07-04
 **Category:** configuration
 
-**Decision:** `PipelineEnumJsonRoundtripTests.cs` is a mandatory test file — any new enum added to the `CodingAgentWebUI.Pipeline` namespace MUST have a corresponding test method and `MemberData` source in this file. The test exhaustively verifies every value of every pipeline enum survives JSON roundtrip as a string (not numeric). This catches silent config corruption at CI time: if an enum value serializes as `0` instead of `"Ready"`, persisted run files become unreadable after code changes.
+**Decision:** `PipelineEnumJsonRoundtripTests.cs` is a mandatory test file — any new enum added to the `CodingAgent.Pipeline` namespace MUST have a corresponding test method and `MemberData` source in this file. The test exhaustively verifies every value of every pipeline enum survives JSON roundtrip as a string (not numeric). This catches silent config corruption at CI time: if an enum value serializes as `0` instead of `"Ready"`, persisted run files become unreadable after code changes.
 
 **Context:** Most projects rely on integration tests to catch serialization bugs. This explicit per-value test is comparable to financial systems and protocol implementations where data corruption is high-severity. The cost is one line per new enum; the benefit is preventing severity-1 runtime failures.
 
@@ -1659,7 +1659,7 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 - "Label swap: add-first ordering" scoped by "Token vending: private keys never leave orchestrator" (both assume imperfect external APIs)
 - "External CI re-push" scoped by "Partial failure contract" (CI is on the critical path — failure is retried, not ignored)
 - "Project overrides: deep-merge (#1044 resolved)" constrains "No schema versioning" (merge requires distinguishing "not set" from "set to default")
-- "LocalPipelineExecutor: decomposition complete" — lives in CodingAgentWebUI.Agent (K8s-only agent binary); prior "agent lifetime dual model" correlation is no longer relevant
+- "LocalPipelineExecutor: decomposition complete" — lives in CodingAgent.Agent (K8s-only agent binary); prior "agent lifetime dual model" correlation is no longer relevant
 - "AgentCoding component ↔ PageService boundary" scoped by "PipelineService event handling" (event state transitions should migrate to PageService per the boundary principle)
 - "Undo snackbar: always show" correlates with "Error messages: sticky with dismiss" (both are feedback pattern decisions — success/undo are transient, errors are persistent)
 - "Drawer tabs: three-component approach" scoped by "AgentCoding component ↔ PageService boundary" (drawer state lives in PageService, rendering in components)
@@ -1781,7 +1781,7 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 - Only `OrphanRestoredJobSweepPhase` had no JobController equivalent — but `AgentOrphanRecoveryService` now logs a warning and ReconciliationService's work-item timeout fires within `ReconciliationTimeoutSeconds` (default: 3600s), which is acceptable.
 
 **What covers timeout enforcement now:**
-- **Work-item timeouts:** `ReconciliationService` + `ReconciliationLoop` in `CodingAgentWebUI.JobController`.
+- **Work-item timeouts:** `ReconciliationService` + `ReconciliationLoop` in `CodingAgent.JobController`.
 - **Orphan detection/restoration:** `AgentOrphanRecoveryService` (in Hub, fires on agent re-registration).
 - **Stale-heartbeat / disconnect state cleanup:** Not enforced in the agent registry — agents are ephemeral. A pod that exits simply stops sending heartbeats; its registry entry ages out naturally when the reconciler terminates its work item.
 
@@ -1796,7 +1796,7 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 **Date:** 2026-08-22
 **Category:** architecture
 
-**Decision:** Extracted `AgentSelectorKey.From(IEnumerable<string>? labels)` into `CodingAgentWebUI.Pipeline.Models.AgentSelectorKey`. It normalises a label list into the comma-separated, ordinally-sorted string stored in `WorkItemEntity.AgentSelector` and `JobDistributionRequest.AgentSelector`.
+**Decision:** Extracted `AgentSelectorKey.From(IEnumerable<string>? labels)` into `CodingAgent.Pipeline.Models.AgentSelectorKey`. It normalises a label list into the comma-separated, ordinally-sorted string stored in `WorkItemEntity.AgentSelector` and `JobDistributionRequest.AgentSelector`.
 
 **Rationale:** Two callers (`ConsolidationDispatchService.cs` and `ConsolidationRehydrationExtensions.cs`) had byte-identical logic that had already co-changed 4 times. Divergence in sort order or separator would cause agent selection to silently return `null` — the lookup in `JobDeduplicationGuardService.SelectAgent` uses the same serialization to build the candidate key. A difference causes a silent no-match rather than a compile error. Centralising makes the invariant visible.
 

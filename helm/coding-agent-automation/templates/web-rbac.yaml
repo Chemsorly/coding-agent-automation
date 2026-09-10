@@ -1,0 +1,31 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-web
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+rules:
+  # Leader election via Lease — the web service holds a lease for the deprecated
+  # pipeline-loop lock (caa-{release}-pipeline-loop-lock). PipelineLoopService moved
+  # to the Scheduler in Spec 047; this lease is now unused operationally but retained
+  # to avoid disrupting existing deployments.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create", "get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-web
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "coding-agent-automation.fullname" . }}-web
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "coding-agent-automation.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}

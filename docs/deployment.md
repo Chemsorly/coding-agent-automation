@@ -4,19 +4,19 @@
 
 The application runs on Kubernetes as five distinct processes:
 
-- **Orchestrator** (`CodingAgentWebUI`) — Blazor Server app. Hosts the web UI. No direct database access — all config and run history read from the Pipeline API via HTTP. `IAgentHubConnection` (defined in `CodingAgentWebUI.Api.Client`, scoped per Blazor circuit) subscribes to the API hub for live run streaming.
-- **Pipeline API** (`CodingAgentWebUI.Api`) — HTTP and SignalR hub server. Authoritative database owner (EF Core + Postgres). Hosts `AgentHub`, `AgentRegistryService`, `OrchestratorRunService`, `AgentReservationService` (`JobDeduplicationGuardService` is a backward-compat alias), `DatabaseMaintenanceService`, and `ChatJobDispatcher`.
-- **Job Controller** (`CodingAgentWebUI.JobController`) — Kubernetes Job dispatch. Claims `WorkItem` rows from the API and creates K8s Jobs. Also dispatches consolidation Jobs via `ConsolidationDispatchService` (shares the same leader-election lease). Leader-elected via `caa-{release}-dispatch-lock` Lease. Stateless between dispatches; all state lives in Postgres via the API.
-- **Scheduler** (`CodingAgentWebUI.Scheduler`) — Owns all scheduled/periodic background work: orphaned label recovery, housekeeping, work-item metrics polling, and periodic maintenance sweeps. No direct Postgres connection — all persistence goes through the Pipeline API. Leader-elected via `caa-{release}-scheduler-lock` Lease.
-- **Agent Host** (`CodingAgentWebUI.Agent`) — Ephemeral K8s Job pod. Connects to the Pipeline API hub using `AGENT_API_KEY` as a Bearer token. Picks up assignments via `GET /api/work-items/{id}/assignment`, reports progress and terminal status via hub methods and `POST /api/work-items/{id}/status`. Two execution modes: _work-item pods_ (spawned with `--work-item-id`) and _chat pods_.
+- **Orchestrator** (`CodingAgent.Web`) — Blazor Server app. Hosts the web UI. No direct database access — all config and run history read from the Pipeline API via HTTP. `IAgentHubConnection` (defined in `CodingAgent.Api.Client`, scoped per Blazor circuit) subscribes to the API hub for live run streaming.
+- **Pipeline API** (`CodingAgent.Api`) — HTTP and SignalR hub server. Authoritative database owner (EF Core + Postgres). Hosts `AgentHub`, `AgentRegistryService`, `OrchestratorRunService`, `DatabaseMaintenanceService`, and `ChatJobDispatcher`.
+- **Job Controller** (`CodingAgent.JobController`) — Kubernetes Job dispatch. Receives dispatch requests from `KubernetesWorkDistributor` (in the Pipeline API) and creates K8s Jobs atomically via `POST /api/work-items/dispatch`. Leader-elected via a `caa-{release}-dispatch-lock` Lease (name configured via `jobController.leaderElection.dispatchLeaseName`). Stateless between dispatches; all state lives in Postgres via the API.
+- **Scheduler** (`CodingAgent.Scheduler`) — Owns all scheduled/periodic background work: orphaned label recovery, housekeeping, work-item metrics polling, and periodic maintenance sweeps. No direct Postgres connection — all persistence goes through the Pipeline API. Leader-elected via `caa-{release}-scheduler-lock` Lease.
+- **Agent Host** (`CodingAgent.Agent`) — Ephemeral K8s Job pod. Connects to the Pipeline API hub using `AGENT_API_KEY` as a Bearer token. Picks up assignments via `GET /api/work-items/{id}/assignment`, reports progress and terminal status via hub methods and `POST /api/work-items/{id}/status`. Two execution modes: _work-item pods_ (spawned with `--work-item-id`) and _chat pods_.
 
 Supporting libraries (shared, not deployed independently):
 
-- **Orchestration** (`CodingAgentWebUI.Orchestration`) — Dispatch logic, agent registry, run lifecycle, telemetry. Linked into the Pipeline API, Scheduler, and Orchestrator (transitively pulls in `Infrastructure.Persistence` and `Infrastructure.Providers`).
-- **Infrastructure.Persistence** (`CodingAgentWebUI.Infrastructure.Persistence`) — EF Core context, database migrations, config store. Directly referenced by `CodingAgentWebUI.Api`, `CodingAgentWebUI.Orchestration`, and `CodingAgentWebUI.Hub`. The Scheduler and Orchestrator have no direct reference but use it transitively through Orchestration.
-- **Infrastructure.Providers** (`CodingAgentWebUI.Infrastructure.Providers`) — Provider implementations (GitHub, GitLab, filesystem), token vending. Linked into the Pipeline API, Agent, Scheduler, Job Controller, and Orchestration (transitive).
-- **Pipeline** (`CodingAgentWebUI.Pipeline`) — Core pipeline model, step execution, `HousekeepingService`, interfaces, constants. Linked into the Scheduler (which runs `PipelineLoopService`) and Pipeline API.
-- **Hub** (`CodingAgentWebUI.Hub`) — Full hub implementation: `AgentHub` (split across partial classes), authentication handlers (`AgentApiKeyAuthHandler`), `ChatJobDispatcher` (ephemeral chat pod dispatch), job lifecycle services (`AgentJobLifecycleService`, `AgentOrphanRecoveryService`, `AgentTokenRefreshService`), completion strategies, `AgentHubFacade`, and DI wiring. Linked into the Pipeline API and Orchestrator.
+- **Orchestration** (`CodingAgent.Orchestration`) — Dispatch logic, agent registry, run lifecycle, telemetry. Linked into the Pipeline API, Scheduler, and Orchestrator. References `Infrastructure.Providers` directly; does not reference `Infrastructure.Persistence`.
+- **Infrastructure.Persistence** (`CodingAgent.Infrastructure.Persistence`) — EF Core context, database migrations, config store. Directly referenced by `CodingAgent.Api` and `CodingAgent.AgentGateway`. The Scheduler and Orchestrator have no direct or transitive reference to Persistence.
+- **Infrastructure.Providers** (`CodingAgent.Infrastructure.Providers`) — Provider implementations (GitHub, GitLab, filesystem), token vending. Linked into the Pipeline API, Agent, Scheduler, Job Controller, and Orchestration.
+- **Pipeline** (`CodingAgent.Pipeline`) — Core pipeline model, step execution, `PipelineLoopService`, `HousekeepingService`, `DispatchScheduler`, interfaces, constants. Linked into the Scheduler (which registers and runs these services) and Pipeline API.
+- **Hub** (`CodingAgent.AgentGateway`) — Full hub implementation: `AgentHub` (split across 8 partial classes), authentication handlers (`AgentApiKeyAuthHandler`), `ChatJobDispatcher` (ephemeral chat pod dispatch), job lifecycle services (`AgentJobLifecycleService`, `AgentOrphanRecoveryService`, `AgentTokenRefreshService`), `AgentHubFacade`, and DI wiring. Linked into the Pipeline API and Orchestrator.
 
 ### Agent API Keys
 
@@ -61,13 +61,15 @@ helm install coding-agent ./helm/coding-agent-automation \
   --set jobController.enabled=true
 ```
 
+> **Docker build args:** All service images (`api.Dockerfile`, `web.Dockerfile`, `jobcontroller.Dockerfile`, `scheduler.Dockerfile`) accept a `BUILD_COMMIT_SHA` build arg at image build time. This arg is exposed as the `SERVICE_VERSION` runtime environment variable and is reported in `build-info.json` inside the container for version identification. Pass it via `--build-arg BUILD_COMMIT_SHA=$(git rev-parse HEAD)` in CI. Omitting it defaults to `"local"` (safe for dev builds).
+
 ### Architecture
 
 The chart deploys:
-- **1 Orchestrator Deployment** — Blazor Server app (`CodingAgentWebUI`). Connects to the API for all data access; no direct database connection.
-- **1 Pipeline API Deployment** — `CodingAgentWebUI.Api`. Authoritative database owner, agent hub, and config/run-history server.
-- **1 Job Controller Deployment** — `CodingAgentWebUI.JobController`. Claims WorkItems and dispatches K8s Jobs. Leader-elected.
-- **1 Scheduler Deployment** — `CodingAgentWebUI.Scheduler`. Owns all periodic background work (orphaned label recovery, housekeeping, metrics polling). No direct Postgres connection. Leader-elected.
+- **1 Orchestrator Deployment** — Blazor Server app (`CodingAgent.Web`). Connects to the API for all data access; no direct database connection.
+- **1 Pipeline API Deployment** — `CodingAgent.Api`. Authoritative database owner, agent hub, and config/run-history server.
+- **1 Job Controller Deployment** — `CodingAgent.JobController`. Claims WorkItems and dispatches K8s Jobs. Leader-elected.
+- **1 Scheduler Deployment** — `CodingAgent.Scheduler`. Owns all periodic background work (orphaned label recovery, housekeeping, metrics polling). No direct Postgres connection. Leader-elected.
 - **No persistent agent Deployments** — All agents are ephemeral K8s Jobs dispatched on demand by the Job Controller.
 
 ### Key values.yaml Settings
@@ -75,16 +77,17 @@ The chart deploys:
 | Path | Description |
 |------|-------------|
 | `orchestrator.image.repository/tag` | Orchestrator container image |
-| `api.replicas` | Number of Pipeline API replicas (default: `2`). Values > 1 require `signalr.redis.connectionString` to be set — without Redis, in-memory state cannot be shared across replicas. |
+| `api.replicas` | Number of Pipeline API replicas (default: `1`). Values > 1 require `signalr.redis.connectionString` to be set — the chart fails at render time otherwise, since without Redis in-memory state cannot be shared across replicas. |
 | `jobTemplates[]` | List of K8s Job templates defining pod specs per label set. Each entry controls which image, resources, securityContext, initContainers, and `maxConcurrent` to use when dispatching work-item pods. |
 | `secrets.agentApiKey` | HMAC master key for agent auth |
 | `secrets.otelHeaders` | OTLP auth headers |
 | `secrets.opencodeConfigContent` | OpenCode config JSON (mounted as file for opencode agents) |
 | `existingSecret` | Use a pre-existing K8s Secret instead of chart-managed one |
 | `otel.endpoint` | OTLP collector endpoint |
-| `otel.orchestratorServiceName` | `OTEL_SERVICE_NAME` for the Orchestrator (default: `coding-agent-orchestrator`). The Orchestrator's service name is hardcoded at compile time via `AddService(serviceName:...)` in `OpenTelemetryRegistration.cs` — it is not configurable via the `OTEL_SERVICE_NAME` env var the way the other processes are. API, Job Controller, and Scheduler read `OTEL_SERVICE_NAME` at startup with fixed-name fallbacks (`coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`). |
-| `orchestrator.env.faroCollectorUrl` | Grafana Faro collector URL for frontend RUM monitoring. Leave empty to disable (default: `""`). See [Faro configuration](configuration.md#frontend-observability-grafana-faro) for details. |
-| `orchestrator.ingress.enabled` | Enable Ingress for external access |
+| `otel.webServiceName` | `OTEL_SERVICE_NAME` for the web service (default: `coding-agent-web`; legacy alias `otel.orchestratorServiceName` still honored). The web service's service name is hardcoded at compile time via `AddService(serviceName:...)` in `OpenTelemetryRegistration.cs` — it is not configurable via the `OTEL_SERVICE_NAME` env var the way the other processes are. API, Job Controller, and Scheduler read `OTEL_SERVICE_NAME` at startup with fixed-name fallbacks (`coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`). |
+| `otel.apiServiceName` | `OTEL_SERVICE_NAME` for the Pipeline API process (default: `coding-agent-web`). This intentional default collapses API and Blazor UI spans under the same Grafana Tempo service name so the "Recent Pipeline Traces" panel (which queries `rootServiceName="coding-agent-web"`) captures both. Override to `coding-agent-api` if you need to distinguish API spans from Blazor UI spans in Tempo — then update your Grafana panel query accordingly. See issue #2255. |
+| `web.env.faroCollectorUrl` | Grafana Faro collector URL for frontend RUM monitoring. Leave empty to disable (default: `""`). See [Faro configuration](configuration.md#frontend-observability-grafana-faro) for details. (Legacy alias `orchestrator.env.faroCollectorUrl` still honored.) |
+| `web.env.basePath` | Base path for the Blazor web UI under a reverse proxy (default: `"./"`). Set to the proxy prefix path when serving under a non-root path (e.g., Rancher: `"/k8s/clusters/c-xxxxx/proxy/"`). Injected as the `<base href>` in the HTML shell. Must end with `/` (appended automatically if missing). |
 | `database.host` | PostgreSQL hostname (required) |
 | `database.port` | PostgreSQL port (default: `5432`) |
 | `database.auth.existingSecret` | K8s Secret containing database credentials (keys: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`) |
@@ -98,7 +101,7 @@ The chart deploys:
 | `workDistribution.dispatch.chatIdleTimeoutSeconds` | Seconds a chat pod may remain idle (no client keepalive) before automatic termination (default: `90`). Minimum: `10`. |
 | `workDistribution.reconciliation.intervalSeconds` | Seconds between reconciliation cycles (default: `30`) |
 | `workDistribution.reconciliation.staleRetentionDays` | Days to retain stale work items before cleanup (default: `7`) |
-| `credentialPools.kiro` | List of PVC names for Kiro agent credential data. PVCs **must** use `ReadWriteOnce` or `ReadWriteOncePod` to prevent concurrent access from multiple agent Jobs. `DispatchService` claims one PVC per Job at dispatch time. |
+| `credentialPools.kiro` | List of PVC names for Kiro agent credential data. PVCs **must** use `ReadWriteOnce` or `ReadWriteOncePod` to prevent concurrent access from multiple agent Jobs. The pipeline API claims one PVC per dispatched Job. |
 | `signalr.redis.enabled` | Documents intent to enable Redis backplane (default: `false`). Note: the Helm templates only check `signalr.redis.connectionString` — setting `enabled: true` without a non-empty `connectionString` has no effect. To activate the backplane, set `signalr.redis.connectionString` to a non-empty value. |
 | `signalr.redis.connectionString` | Redis connection string (deploy Redis independently) |
 | `monitoring.prometheusRules.enabled` | Create PrometheusRule resources for alerting (requires Prometheus Operator) |
@@ -140,7 +143,7 @@ jobTemplates:
 
 When the Kubernetes client is unavailable (e.g., local `dotnet run`), `ILeaderElectionService` logs a warning and remains non-leader for the lifetime of the process. `PipelineLoopService` null-checks the leader gate: when the gate is `null`, the loop runs unconditionally — no leader gate needed for single-instance local dev.
 
-> **Note on `AgentReservationService` and Redis:** When Redis is configured (`signalr.redis.connectionString` is set), `AgentReservationService` switches to distributed per-agent Redis locks (`lock:agent:{id}`, 5-second TTL) instead of the in-process `_selectionLock`. This enables safe agent selection across multiple API replicas. The in-process lock is used only when Redis is absent (local dev or single-replica deployments).
+> **Note on Redis and multi-replica API:** When Redis is configured (`signalr.redis.connectionString` is set), `AgentRegistryService` and `OrchestratorRunService` switch to distributed Redis-backed implementations (`DistributedAgentRegistryService` / `DistributedRunService`). This enables safe agent selection and run tracking across multiple API replicas. The in-process implementations are used only when Redis is absent (local dev or single-replica deployments).
 
 > **Note on Data Protection and Redis:** The Orchestrator (Blazor Server) uses ASP.NET Core Data Protection to encrypt antiforgery tokens for Blazor circuits. In a multi-replica Orchestrator deployment each pod generates its own ephemeral key ring by default. If the load balancer routes the initial page request to replica A (token encrypted with A's key) but the Blazor WebSocket to replica B, circuit initialization fails with a `CryptographicException`. When `signalr.redis.connectionString` is set, the Orchestrator persists Data Protection keys to Redis under `caa:data-protection-keys` so all replicas share one ring. This is the same connection string used for the SignalR backplane — no additional config key is needed.
 
@@ -170,7 +173,6 @@ Three independent leases are used — one per relevant process (the Pipeline API
 
 | Service | Behavior When Leader | Behavior When Non-Leader |
 |---------|---------------------|--------------------------|
-| `DispatchService` | Polls for pending WorkItems and dispatches K8s Jobs | Waits (linked `LeaderToken` is cancelled, re-checks on leadership change) |
 | `ReconciliationService` | Runs startup reconciliation, watches K8s Jobs, enforces timeouts | Waits (linked `LeaderToken` is cancelled, re-checks on leadership change) |
 
 **Pipeline API** — No leader election. All API replicas handle requests concurrently. `DatabaseMaintenanceService` is a singleton triggered by the Scheduler via HTTP (`POST /api/scheduler/maintenance/retention-sweep`); `ChatJobDispatcher` uses K8s double-dispatch guards instead of a lease. Set `signalr.redis.connectionString` when running more than one API replica.
@@ -206,7 +208,7 @@ Helm sets the lease name via `jobController.leaderElection.dispatchLeaseName` (J
 
 The Helm chart creates ServiceAccounts and ClusterRoleBindings (or RoleBindings) automatically for each process.
 
-**Orchestrator** (`CodingAgentWebUI`) ServiceAccount:
+**Orchestrator** (`CodingAgent.Web`) ServiceAccount:
 
 ```yaml
 rules:
@@ -217,7 +219,7 @@ rules:
 
 The Orchestrator only needs leader-election Lease access. It has no direct K8s Job dispatch — `ChatJobDispatcher` and work-item dispatch both run in the Pipeline API and Job Controller respectively.
 
-**Pipeline API** (`CodingAgentWebUI.Api`) ServiceAccount:
+**Pipeline API** (`CodingAgent.Api`) ServiceAccount:
 
 ```yaml
 rules:
@@ -233,7 +235,7 @@ rules:
 ```
 The Pipeline API has no leader election, so it does not need a `coordination.k8s.io/leases` rule.
 
-**Job Controller** (`CodingAgentWebUI.JobController`) ServiceAccount:
+**Job Controller** (`CodingAgent.JobController`) ServiceAccount:
 
 ```yaml
 rules:
@@ -335,21 +337,21 @@ Set up a `~/.kube/config` pointing at your local cluster. The Kubernetes client 
 
 ```bash
 # Run the orchestrator locally against your local cluster
-dotnet run --project src/CodingAgentWebUI/
+dotnet run --project src/CodingAgent.Web/
 ```
 
-> `PipelineApi__BaseUrl` must be set — the Orchestrator has no direct database connection and will fail to start without the Pipeline API URL. `Database__Host` is required by the **Pipeline API** (`src/CodingAgentWebUI.Api/`), not the Orchestrator.
+> `PipelineApi__BaseUrl` must be set — the Orchestrator has no direct database connection and will fail to start without the Pipeline API URL. `Database__Host` is required by the **Pipeline API** (`src/CodingAgent.Api/`), not the Orchestrator.
 
 For the agent project (work-item mode, connecting to the Pipeline API hub on port 8080):
 ```bash
 ORCHESTRATOR_URL=http://localhost:8080 AGENT_ID=local-agent-1 AGENT_API_KEY=<key> \
-  dotnet run --project src/CodingAgentWebUI.Agent/ -- --mode=workitem --work-item-id=<guid>
+  dotnet run --project src/CodingAgent.Agent/ -- --mode=workitem --work-item-id=<guid>
 ```
 
 For chat mode (no `--work-item-id`):
 ```bash
 ORCHESTRATOR_URL=http://localhost:8080 AGENT_ID=local-chat-1 AGENT_API_KEY=<key> \
-  dotnet run --project src/CodingAgentWebUI.Agent/ -- --mode=chat
+  dotnet run --project src/CodingAgent.Agent/ -- --mode=chat
 ```
 
 `ORCHESTRATOR_URL`, `AGENT_ID`, and `AGENT_API_KEY` are environment variables, not CLI arguments. `--mode` (workitem or chat) is required.

@@ -1,0 +1,576 @@
+@using CodingAgent.Api.Client
+@using CodingAgent.Pipeline.Models
+@using CodingAgent.Orchestration.Dispatch
+@using CodingAgent.Kubernetes
+
+<section class="settings-section">
+    <h2>Agent Profiles</h2>
+    <p class="section-description">Profiles map agents to their capabilities via labels. When a job is dispatched, the agent's labels are matched against profile labels (ALL must match) to determine MCP servers and provider config.</p>
+
+    @if (_missingTemplates.Count > 0)
+    {
+        <div class="agent-detail-error" style="margin-bottom: 12px;">
+            <Icon Name="alert-octagon" Size="16" />
+            <strong>Dispatch will fail:</strong> @_missingTemplates.Count profile(s) have no matching job template in the <code>orchestrator-job-templates</code> ConfigMap.
+            Work items routed to these profiles will fail at dispatch. See highlighted rows below.
+        </div>
+    }
+
+    @if (_profiles.Count == 0)
+    {
+        <div class="monitoring-empty">No agent profiles configured. Create at least one profile to enable job dispatch.</div>
+    }
+    else
+    {
+        <div class="monitoring-table-wrap">
+            <table class="monitoring-table">
+                <thead>
+                    <tr>
+                        <th>Display Name</th>
+                        <th class="th-has-hint">Match Labels <span class="th-hint" tabindex="0" role="img" aria-label="ALL match — profile matches only if ALL its labels exist on the agent" data-tooltip="ALL match — profile matches only if ALL its labels exist on the agent">?</span></th>
+                        <th>Agent Provider</th>
+                        <th>Enabled</th>
+                        <th>Priority</th>
+                        <th>MCP</th>
+                        @if (IsKubernetesMode)
+                        {
+                            <th>Template</th>
+                        }
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var profile in _profiles.OrderByDescending(p => p.Priority))
+                    {
+                        <tr>
+                            <td>
+                                @profile.DisplayName
+                                @if (profile.MatchLabels.Count == 0)
+                                {
+                                    <span class="badge-default">DEFAULT</span>
+                                }
+                            </td>
+                            <td>
+                                @if (profile.MatchLabels.Count > 0)
+                                {
+                                    @foreach (var label in profile.MatchLabels)
+                                    {
+                                        <span class="sidebar-label">@label</span>
+                                    }
+                                }
+                                else
+                                {
+                                    <span class="monitoring-muted">(matches all)</span>
+                                }
+                            </td>
+                            <td class="monitoring-mono">@GetProviderName(profile.AgentProviderConfigId)</td>
+                            <td><Icon Name="@(profile.Enabled ? "check-circle" : "x-circle")" /></td>
+                            <td>@profile.Priority</td>
+                            <td>@(profile.McpServers?.Count(s => !s.Disabled) ?? 0)</td>
+                            @if (IsKubernetesMode)
+                            {
+                                <td>
+                                    @if (_missingTemplates.Contains(profile.Id))
+                                    {
+                                        <span class="template-missing"
+                                              title="No job template matches labels [@string.Join(", ", profile.MatchLabels)]. Work items will fail at dispatch.">
+                                            <Icon Name="alert-octagon" Size="14" /> No template
+                                        </span>
+                                    }
+                                    else if (profile.Enabled && profile.MatchLabels.Count > 0)
+                                    {
+                                        <span title="Template matched"><Icon Name="check-circle" Size="14" /></span>
+                                    }
+                                    else
+                                    {
+                                        <span class="monitoring-muted" title="@(profile.MatchLabels.Count == 0 ? "Default profile — no template lookup needed" : "Profile disabled")">—</span>
+                                    }
+                                </td>
+                            }
+                            <td>
+                                <button class="btn-edit" @onclick="() => EditProfile(profile)">Edit</button>
+                                <button class="btn-delete" @onclick="() => ConfirmDelete(profile)">Delete</button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    @if (_showForm)
+    {
+        <div class="provider-form" style="margin-top: 12px;">
+            <h3>@(_editingProfile != null ? "Edit" : "Create") Agent Profile</h3>
+
+            @if (!string.IsNullOrEmpty(_formError))
+            {
+                <div class="settings-status status-error">@_formError</div>
+            }
+
+            <div class="form-group">
+                <label>Display Name *</label>
+                <input type="text" @bind="_form.DisplayName" placeholder="e.g. Kiro .NET Agent" />
+            </div>
+            <div class="form-group">
+                <label>Match Labels <span class="form-hint">(comma-separated, empty = default/catch-all · ALL match — agent must have every label listed)</span></label>
+                <input type="text" @bind="_form.MatchLabels" placeholder="e.g. kiro, dotnet" />
+            </div>
+            <div class="form-group">
+                <label>Agent Provider Config *</label>
+                <select @bind="_form.AgentProviderConfigId">
+                    <option value="">-- Select --</option>
+                    @foreach (var p in AgentProviders)
+                    {
+                        <option value="@p.Id">@p.DisplayName</option>
+                    }
+                </select>
+            </div>
+            <div class="form-group form-checkbox">
+                <label>
+                    <input type="checkbox" @bind="_form.Enabled" />
+                    Enabled
+                </label>
+            </div>
+            <div class="form-group">
+                <label>Priority <span class="form-hint">(higher = preferred when multiple profiles match)</span></label>
+                <input type="number" @bind="_form.Priority" />
+            </div>
+
+            <div class="form-group">
+                <label>MCP Servers</label>
+                @if (_form.McpServers.Count > 0)
+                {
+                    <div class="monitoring-table-wrap" style="margin-bottom: 8px;">
+                        <table class="monitoring-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Type</th>
+                                    <th>Command / URL</th>
+                                    <th>Enabled</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var (server, idx) in _form.McpServers.Select((s, i) => (s, i)))
+                                {
+                                    <tr>
+                                        <td class="monitoring-mono">@server.Name</td>
+                                        <td>@server.Type</td>
+                                        <td class="monitoring-mono">@(server.Type == "http" ? server.Url : $"{server.Command} {server.Args}".Trim())</td>
+                                        <td><Icon Name="@(server.Enabled ? "check-circle" : "x-circle")" /></td>
+                                        <td>
+                                            <button class="btn-edit" @onclick="() => EditMcpServer(idx)">Edit</button>
+                                            <button class="btn-delete" @onclick="() => RemoveMcpServer(idx)">Remove</button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+
+                @if (_showMcpForm)
+                {
+                    <div class="provider-form" style="margin-top: 8px; padding: 12px; border: 1px solid var(--border-color, #ddd); border-radius: 4px;">
+                        <h4 style="margin-top: 0;">@(_editingMcpIndex >= 0 ? "Edit" : "Add") MCP Server</h4>
+                        <div class="form-group">
+                            <label>Name *</label>
+                            <input type="text" @bind="_mcpForm.Name" placeholder="e.g. context7" />
+                        </div>
+                        <div class="form-group">
+                            <label>Type</label>
+                            <select @bind="_mcpForm.Type">
+                                <option value="stdio">stdio (command-based)</option>
+                                <option value="http">HTTP (URL-based)</option>
+                            </select>
+                        </div>
+                        @if (_mcpForm.Type == "http")
+                        {
+                            <div class="form-group">
+                                <label>URL *</label>
+                                <input type="text" @bind="_mcpForm.Url" placeholder="e.g. https://mcp.context7.com/mcp" />
+                            </div>
+                            <div class="form-group">
+                                <label>Headers <span class="form-hint">(one per line, KEY=VALUE — use for auth tokens)</span></label>
+                                <textarea rows="3" @bind="_mcpForm.Headers" @bind:event="oninput" placeholder="Authorization=Bearer mytoken&#10;X-Org=myorg"></textarea>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="form-group">
+                                <label>Command *</label>
+                                <input type="text" @bind="_mcpForm.Command" placeholder="e.g. uvx" />
+                            </div>
+                            <div class="form-group">
+                                <label>Arguments <span class="form-hint">(space-separated)</span></label>
+                                <input type="text" @bind="_mcpForm.Args" placeholder="e.g. context7-mcp@latest" />
+                            </div>
+                            <div class="form-group">
+                                <label>Environment Variables <span class="form-hint">(one per line, KEY=VALUE)</span></label>
+                                <textarea rows="3" @bind="_mcpForm.EnvVars" @bind:event="oninput" placeholder="FASTMCP_LOG_LEVEL=ERROR"></textarea>
+                            </div>
+                        }
+                        <div class="form-group form-checkbox">
+                            <label>
+                                <input type="checkbox" @bind="_mcpForm.Enabled" />
+                                Enabled
+                            </label>
+                        </div>
+                        <div class="form-buttons">
+                            <button class="btn-save" @onclick="SaveMcpServer">Save Server</button>
+                            <button class="btn-cancel" @onclick="() => _showMcpForm = false">Cancel</button>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div style="display: flex; gap: 8px; margin-top: 4px;">
+                        <button class="btn-add" @onclick="ShowAddMcpForm">+ Add MCP Server</button>
+                    </div>
+                }
+            </div>
+
+            <div class="form-buttons">
+                <button class="btn-save" @onclick="SaveProfile">Save</button>
+                <button class="btn-cancel" @onclick="CancelForm">Cancel</button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <button class="btn-add" style="margin-top: 12px;" @onclick="ShowAddForm">+ Add Agent Profile</button>
+    }
+
+    @if (_showDeleteConfirm && _deletingProfile != null)
+    {
+        <div class="agent-detail-confirm" style="margin-top: 12px;">
+            <p>Delete profile <strong>@_deletingProfile.DisplayName</strong>?</p>
+            <div class="confirm-buttons">
+                <button class="btn-delete" @onclick="DeleteProfile">Delete</button>
+                <button class="btn-cancel" @onclick="() => _showDeleteConfirm = false">Cancel</button>
+            </div>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
+    [Parameter] public IReadOnlyList<ProviderConfig> AgentProviders { get; set; } = [];
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+    /// <summary>
+    /// Job template store injected in k8s mode only. Null in SignalR/Legacy modes.
+    /// When non-null, profiles whose MatchLabels have no matching template show a warning.
+    /// </summary>
+    [Parameter] public JobTemplateStore? JobTemplateStore { get; set; }
+    /// <summary>When true, the Template column and validation are active (k8s mode).</summary>
+    [Parameter] public bool IsKubernetesMode { get; set; }
+
+    private List<AgentProfile> _profiles = new();
+    private HashSet<string> _missingTemplates = new();
+    private bool _showForm;
+    private AgentProfile? _editingProfile;
+    private ProfileForm _form = new();
+    private string? _formError;
+    private bool _showDeleteConfirm;
+    private AgentProfile? _deletingProfile;
+
+    // MCP form state
+    private bool _showMcpForm;
+    private int _editingMcpIndex = -1;
+    private McpServerFormModel _mcpForm = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadProfiles();
+    }
+
+    private async Task LoadProfiles()
+    {
+        try
+        {
+            _profiles = (await ConfigClient.GetAgentProfilesAsync(CancellationToken.None)).ToList();
+            _missingTemplates = ComputeMissingTemplates(_profiles, JobTemplateStore, IsKubernetesMode);
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to load profiles: {ex.Message}", true));
+        }
+    }
+
+    /// <summary>
+    /// Returns IDs of enabled profiles whose MatchLabels have no matching job template.
+    /// Returns empty set when not in k8s mode.
+    /// </summary>
+    private static HashSet<string> ComputeMissingTemplates(
+        IReadOnlyList<AgentProfile> profiles, JobTemplateStore? store, bool isKubernetesMode = true)
+    {
+        if (!isKubernetesMode || store is null) return [];
+        var missing = new HashSet<string>();
+        foreach (var profile in profiles)
+        {
+            if (!profile.Enabled || profile.MatchLabels.Count == 0)
+                continue;
+            var selector = JobTemplateStore.NormalizeLabels(string.Join(",", profile.MatchLabels));
+            if (store.Resolve(selector) is null)
+                missing.Add(profile.Id);
+        }
+        return missing;
+    }
+
+    private void ShowAddForm()
+    {
+        _editingProfile = null;
+        _form = new ProfileForm { Enabled = true };
+        _formError = null;
+        _showMcpForm = false;
+        _editingMcpIndex = -1;
+        _showForm = true;
+    }
+
+    private void EditProfile(AgentProfile profile)
+    {
+        _editingProfile = profile;
+        _form = new ProfileForm
+        {
+            DisplayName = profile.DisplayName,
+            MatchLabels = string.Join(", ", profile.MatchLabels),
+            AgentProviderConfigId = profile.AgentProviderConfigId,
+            Enabled = profile.Enabled,
+            Priority = profile.Priority,
+            McpServers = profile.McpServers.Select(s => new McpServerFormModel
+            {
+                Name = s.Name,
+                Type = s.Type ?? "stdio",
+                Command = s.Command ?? "",
+                Args = string.Join(" ", s.Args),
+                Url = s.Url ?? "",
+                EnvVars = string.Join("\n", s.Env?.Select(kv => $"{kv.Key}={kv.Value}") ?? []),
+                Headers = string.Join("\n", s.Headers?.Select(kv => $"{kv.Key}={kv.Value}") ?? []),
+                Enabled = !s.Disabled
+            }).ToList()
+        };
+        _formError = null;
+        _showMcpForm = false;
+        _editingMcpIndex = -1;
+        _showForm = true;
+    }
+
+    private void CancelForm()
+    {
+        _showForm = false;
+        _formError = null;
+    }
+
+    private async Task SaveProfile()
+    {
+        _formError = null;
+
+        var labels = ParseLabels(_form.MatchLabels);
+        _formError = ValidateProfileForm(labels);
+        if (_formError is not null) return;
+
+        var profile = new AgentProfile
+        {
+            Id = _editingProfile?.Id ?? Guid.NewGuid().ToString(),
+            DisplayName = _form.DisplayName.Trim(),
+            MatchLabels = labels,
+            AgentProviderConfigId = _form.AgentProviderConfigId,
+            Enabled = _form.Enabled,
+            Priority = _form.Priority,
+            McpServers = _form.McpServers.Select(MapMcpServerFormToConfig).ToList()
+        };
+
+        try
+        {
+            await ConfigClient.SaveAgentProfileAsync(profile, CancellationToken.None);
+            _showForm = false;
+            await LoadProfiles();
+            await OnShowStatus.InvokeAsync(("Agent profile saved.", false));
+        }
+        catch (Exception ex)
+        {
+            _formError = $"Failed to save: {ex.Message}";
+        }
+    }
+
+    private string? ValidateProfileForm(IReadOnlyList<string> labels)
+    {
+        if (string.IsNullOrWhiteSpace(_form.DisplayName))
+            return "Display Name is required.";
+
+        if (string.IsNullOrEmpty(_form.AgentProviderConfigId))
+            return "Agent Provider Config is required.";
+
+        if (labels.Count == 0)
+        {
+            var existingDefault = _profiles.FirstOrDefault(p =>
+                p.MatchLabels.Count == 0 && (_editingProfile == null || p.Id != _editingProfile.Id));
+            if (existingDefault != null)
+                return $"A default profile already exists: \"{existingDefault.DisplayName}\". Only one default (empty MatchLabels) is allowed.";
+        }
+
+        return null;
+    }
+
+    private McpServerConfig MapMcpServerFormToConfig(McpServerFormModel s)
+    {
+        string? command;
+        if (s.Type == "http") command = null;
+        else if (string.IsNullOrWhiteSpace(s.Command)) command = null;
+        else command = s.Command.Trim();
+
+        return new McpServerConfig
+        {
+            Name = s.Name.Trim(),
+            Type = s.Type,
+            Command = command,
+            Args = string.IsNullOrWhiteSpace(s.Args) ? [] : s.Args.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList(),
+            Url = s.Type == "http" ? s.Url.Trim() : null,
+            Env = ParseEnvVars(s.EnvVars),
+            // TODO: SSE servers also support headers (OpenCodeAgentProvider treats "http" and "sse" identically),
+            // but this condition discards headers for SSE-type servers on save. A user who opens an existing
+            // SSE server record with stored Headers, then saves without changes, will have those headers silently
+            // cleared. Fix by extending the condition to also include "sse": s.Type is "http" or "sse".
+            Headers = s.Type == "http" ? ParseEnvVars(s.Headers) : new Dictionary<string, string>(),
+            Disabled = !s.Enabled,
+            AutoApprove = []
+        };
+    }
+
+    private void ConfirmDelete(AgentProfile profile)
+    {
+        _deletingProfile = profile;
+        _showDeleteConfirm = true;
+    }
+
+    private async Task DeleteProfile()
+    {
+        if (_deletingProfile == null) return;
+
+        try
+        {
+            await ConfigClient.DeleteAgentProfileAsync(_deletingProfile.Id, CancellationToken.None);
+            _showDeleteConfirm = false;
+            _deletingProfile = null;
+            await LoadProfiles();
+            await OnShowStatus.InvokeAsync(("Agent profile deleted.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to delete: {ex.Message}", true));
+        }
+    }
+
+    private string GetProviderName(string configId)
+    {
+        var provider = AgentProviders.FirstOrDefault(p => p.Id == configId);
+        return provider?.DisplayName ?? Truncate(configId, 16);
+    }
+
+    private static IReadOnlyList<string> ParseLabels(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return [];
+        return input.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .ToList();
+    }
+
+    private class ProfileForm
+    {
+        public string DisplayName { get; set; } = "";
+        public string MatchLabels { get; set; } = "";
+        public string AgentProviderConfigId { get; set; } = "";
+        public bool Enabled { get; set; } = true;
+        public int Priority { get; set; } = 0;
+        public List<McpServerFormModel> McpServers { get; set; } = new();
+    }
+
+    private class McpServerFormModel
+    {
+        public string Name { get; set; } = "";
+        public string Type { get; set; } = "stdio";
+        public string Command { get; set; } = "";
+        public string Args { get; set; } = "";
+        public string Url { get; set; } = "";
+        public string EnvVars { get; set; } = "";
+        public string Headers { get; set; } = "";
+        public bool Enabled { get; set; } = true;
+    }
+
+    private void ShowAddMcpForm()
+    {
+        _editingMcpIndex = -1;
+        _mcpForm = new McpServerFormModel();
+        _showMcpForm = true;
+    }
+
+    private void EditMcpServer(int index)
+    {
+        _editingMcpIndex = index;
+        var server = _form.McpServers[index];
+        _mcpForm = new McpServerFormModel
+        {
+            Name = server.Name,
+            Type = server.Type,
+            Command = server.Command,
+            Args = server.Args,
+            Url = server.Url,
+            EnvVars = server.EnvVars,
+            Headers = server.Headers,
+            Enabled = server.Enabled
+        };
+        _showMcpForm = true;
+    }
+
+    private void RemoveMcpServer(int index)
+    {
+        _form.McpServers.RemoveAt(index);
+    }
+
+    private void SaveMcpServer()
+    {
+        if (string.IsNullOrWhiteSpace(_mcpForm.Name))
+            return;
+
+        // Validate based on type
+        if (_mcpForm.Type == "http" && string.IsNullOrWhiteSpace(_mcpForm.Url))
+            return;
+        if (_mcpForm.Type != "http" && string.IsNullOrWhiteSpace(_mcpForm.Command))
+            return;
+
+        var entry = new McpServerFormModel
+        {
+            Name = _mcpForm.Name.Trim(),
+            Type = _mcpForm.Type,
+            Command = _mcpForm.Command?.Trim() ?? "",
+            Args = _mcpForm.Args?.Trim() ?? "",
+            Url = _mcpForm.Url?.Trim() ?? "",
+            EnvVars = _mcpForm.EnvVars?.Trim() ?? "",
+            Headers = _mcpForm.Headers?.Trim() ?? "",
+            Enabled = _mcpForm.Enabled
+        };
+
+        if (_editingMcpIndex >= 0)
+            _form.McpServers[_editingMcpIndex] = entry;
+        else
+            _form.McpServers.Add(entry);
+
+        _showMcpForm = false;
+        _editingMcpIndex = -1;
+    }
+
+    private static IReadOnlyDictionary<string, string> ParseEnvVars(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return new Dictionary<string, string>();
+        var dict = new Dictionary<string, string>();
+        foreach (var line in input.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var eqIdx = line.IndexOf('=');
+            if (eqIdx > 0)
+                dict[line[..eqIdx].Trim()] = line[(eqIdx + 1)..].Trim();
+        }
+        return dict;
+    }
+}

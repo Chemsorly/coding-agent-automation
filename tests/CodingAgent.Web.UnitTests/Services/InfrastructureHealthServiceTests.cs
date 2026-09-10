@@ -1,0 +1,153 @@
+using CodingAgent.Infrastructure;
+using CodingAgent.Web.Services;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Moq;
+using StackExchange.Redis;
+
+namespace CodingAgent.Web.UnitTests.Services;
+
+public class InfrastructureHealthServiceTests
+{
+    private static InfrastructureHealthService CreateService(
+        DatabaseHealthState? dbHealth = null,
+        IConnectionMultiplexer? redis = null,
+        bool dbModeActive = false,
+        bool redisConfigured = false)
+    {
+        var services = new ServiceCollection();
+        if (dbHealth is not null)
+            services.AddSingleton(dbHealth);
+        if (redis is not null)
+            services.AddSingleton(redis);
+
+        var sp = services.BuildServiceProvider();
+
+        var configData = new Dictionary<string, string?>();
+        if (dbModeActive)
+            configData["Database:Host"] = "localhost";
+        if (redisConfigured)
+            configData["SignalR:Redis:ConnectionString"] = "localhost:6379";
+
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(configData)
+            .Build();
+
+        return new InfrastructureHealthService(sp, configuration, Mock.Of<CodingAgent.Api.Client.IPipelineApiHealthClient>());
+    }
+
+    [Fact]
+    public void DatabaseConnected_ReturnsNull_WhenDbModeNotActive()
+    {
+        var service = CreateService(dbModeActive: false);
+
+        Assert.Null(service.DatabaseConnected);
+    }
+
+    // TODO: Add test for when dbModeActive=true but DatabaseHealthState is not registered in DI.
+    // Should document whether the service returns null or false in that scenario.
+
+    [Fact]
+    public void DatabaseConnected_ReturnsNull_WhenDbModeActiveButHealthStateNotRegistered()
+    {
+        // dbModeActive=true, but DatabaseHealthState is NOT in DI.
+        // _dbHealth is null → null-propagation returns null (not false).
+        // This represents a DI misconfiguration where DB mode is enabled but the
+        // health monitoring background service hasn't registered DatabaseHealthState.
+        var service = CreateService(dbHealth: null, dbModeActive: true);
+
+        Assert.Null(service.DatabaseConnected);
+    }
+
+    [Fact]
+    public void DatabaseConnected_ReturnsNull_WhenDbHealthy()
+    {
+        // Spec 045 Task 10 (Req 1.5): the monolith no longer has a direct Postgres connection.
+        // DatabaseConnected always returns null regardless of dbModeActive or DatabaseHealthState.
+        var dbHealth = new DatabaseHealthState();
+        var service = CreateService(dbHealth: dbHealth, dbModeActive: true);
+
+        Assert.Null(service.DatabaseConnected);
+    }
+
+    [Fact]
+    public void DatabaseConnected_ReturnsNull_WhenDbUnhealthy()
+    {
+        // Spec 045 Task 10 (Req 1.5): always null — monolith has no DB.
+        var dbHealth = new DatabaseHealthState();
+        dbHealth.MarkUnhealthy();
+        var service = CreateService(dbHealth: dbHealth, dbModeActive: true);
+
+        Assert.Null(service.DatabaseConnected);
+    }
+
+    [Fact]
+    public void RedisConnected_ReturnsNull_WhenRedisNotConfigured()
+    {
+        var service = CreateService(redisConfigured: false);
+
+        Assert.Null(service.RedisConnected);
+    }
+
+    // TODO: Add test for when redisConfigured=true but IConnectionMultiplexer is not registered in DI.
+    // Should document whether the service returns null or false in that scenario.
+
+    [Fact]
+    public void RedisConnected_ReturnsNull_WhenRedisConfiguredButMultiplexerNotRegistered()
+    {
+        // redisConfigured=true, but IConnectionMultiplexer is NOT in DI.
+        // _redis is null → null-propagation returns null (not false).
+        // This represents a startup race where Redis config exists but the
+        // ConnectionMultiplexer hasn't been created yet (e.g., connection failure).
+        var service = CreateService(redis: null, redisConfigured: true);
+
+        Assert.Null(service.RedisConnected);
+    }
+
+    [Fact]
+    public void RedisConnected_ReturnsTrue_WhenMultiplexerConnected()
+    {
+        var mockRedis = new Mock<IConnectionMultiplexer>();
+        mockRedis.Setup(r => r.IsConnected).Returns(true);
+
+        var service = CreateService(redis: mockRedis.Object, redisConfigured: true);
+
+        Assert.True(service.RedisConnected);
+    }
+
+    [Fact]
+    public void RedisConnected_ReturnsFalse_WhenMultiplexerDisconnected()
+    {
+        var mockRedis = new Mock<IConnectionMultiplexer>();
+        mockRedis.Setup(r => r.IsConnected).Returns(false);
+
+        var service = CreateService(redis: mockRedis.Object, redisConfigured: true);
+
+        Assert.False(service.RedisConnected);
+    }
+
+    [Fact]
+    public void DatabaseConnected_ReflectsStateChanges()
+    {
+        // Spec 045 Task 10 (Req 1.5): always null — no DB in monolith.
+        var dbHealth = new DatabaseHealthState();
+        var service = CreateService(dbHealth: dbHealth, dbModeActive: true);
+
+        Assert.Null(service.DatabaseConnected);
+
+        dbHealth.MarkUnhealthy();
+        Assert.Null(service.DatabaseConnected);
+
+        dbHealth.MarkHealthy();
+        Assert.Null(service.DatabaseConnected);
+    }
+
+    [Fact]
+    public void BothNull_WhenLegacyModeAndNoRedis()
+    {
+        var service = CreateService(dbModeActive: false, redisConfigured: false);
+
+        Assert.Null(service.DatabaseConnected);
+        Assert.Null(service.RedisConnected);
+    }
+}

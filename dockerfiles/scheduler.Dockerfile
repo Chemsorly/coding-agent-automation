@@ -1,5 +1,5 @@
 # =============================================================================
-# CodingAgentWebUI Scheduler Dockerfile
+# CodingAgent.Web Scheduler Dockerfile
 # Runs the Scheduler microservice on port 8080.
 # Owns all scheduled/periodic background work (poll loop, maintenance sweeps,
 # orphaned-label recovery, metrics polling, Redis cleanup).
@@ -15,18 +15,18 @@ WORKDIR /src
 COPY Directory.Build.props ./
 COPY Directory.Packages.props ./
 COPY src/KiroCliLib/KiroCliLib.csproj src/KiroCliLib/
-COPY src/CodingAgentWebUI.Pipeline/CodingAgentWebUI.Pipeline.csproj src/CodingAgentWebUI.Pipeline/
-COPY src/CodingAgentWebUI.Pipeline.CodeReview/CodingAgentWebUI.Pipeline.CodeReview.csproj src/CodingAgentWebUI.Pipeline.CodeReview/
-COPY src/CodingAgentWebUI.Infrastructure.Providers/CodingAgentWebUI.Infrastructure.Providers.csproj src/CodingAgentWebUI.Infrastructure.Providers/
-COPY src/CodingAgentWebUI.Orchestration/CodingAgentWebUI.Orchestration.csproj src/CodingAgentWebUI.Orchestration/
-COPY src/CodingAgentWebUI.Kubernetes/CodingAgentWebUI.Kubernetes.csproj src/CodingAgentWebUI.Kubernetes/
-COPY src/CodingAgentWebUI.Api.Client/CodingAgentWebUI.Api.Client.csproj src/CodingAgentWebUI.Api.Client/
-COPY src/CodingAgentWebUI.Scheduler/CodingAgentWebUI.Scheduler.csproj src/CodingAgentWebUI.Scheduler/
-RUN dotnet restore src/CodingAgentWebUI.Scheduler/CodingAgentWebUI.Scheduler.csproj -a $TARGETARCH
+COPY src/CodingAgent.Pipeline/CodingAgent.Pipeline.csproj src/CodingAgent.Pipeline/
+COPY src/CodingAgent.Pipeline.CodeReview/CodingAgent.Pipeline.CodeReview.csproj src/CodingAgent.Pipeline.CodeReview/
+COPY src/CodingAgent.Infrastructure.Providers/CodingAgent.Infrastructure.Providers.csproj src/CodingAgent.Infrastructure.Providers/
+COPY src/CodingAgent.Orchestration/CodingAgent.Orchestration.csproj src/CodingAgent.Orchestration/
+COPY src/CodingAgent.Kubernetes/CodingAgent.Kubernetes.csproj src/CodingAgent.Kubernetes/
+COPY src/CodingAgent.Api.Client/CodingAgent.Api.Client.csproj src/CodingAgent.Api.Client/
+COPY src/CodingAgent.Scheduler/CodingAgent.Scheduler.csproj src/CodingAgent.Scheduler/
+RUN dotnet restore src/CodingAgent.Scheduler/CodingAgent.Scheduler.csproj -a $TARGETARCH
 
 # Copy everything else and publish
 COPY . .
-RUN dotnet publish src/CodingAgentWebUI.Scheduler/CodingAgentWebUI.Scheduler.csproj \
+RUN dotnet publish src/CodingAgent.Scheduler/CodingAgent.Scheduler.csproj \
     -c Release \
     -a $TARGETARCH \
     --self-contained false \
@@ -71,4 +71,4 @@ ENV SERVICE_VERSION=${BUILD_COMMIT_SHA}
 HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
-ENTRYPOINT ["dotnet", "CodingAgentWebUI.Scheduler.dll"]
+ENTRYPOINT ["dotnet", "CodingAgent.Scheduler.dll"]

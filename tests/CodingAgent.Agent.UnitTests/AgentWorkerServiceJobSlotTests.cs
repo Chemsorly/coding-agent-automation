@@ -1,0 +1,250 @@
+using System.Reflection;
+using AwesomeAssertions;
+using CodingAgent.Agent;
+using CodingAgent.Pipeline.Models;
+using Microsoft.Extensions.Hosting;
+using Moq;
+
+namespace CodingAgent.Agent.UnitTests;
+
+/// <summary>
+/// Unit tests for <see cref="AgentWorkerService"/> job slot acquisition,
+/// concurrency races, and heartbeat lifecycle transitions.
+/// </summary>
+// TODO: These tests exercise AgentJobSlotManager indirectly through AgentWorkerService using
+// reflection to access private fields. Add dedicated AgentJobSlotManagerTests that test the
+// public API (TryAcquireJobSlot, TryAcquireChatSlot, ReleaseJobSlotAndSignalReadyAsync,
+// ReleaseChatSlot, ForceReleaseJobSlot, BuildActiveJobState) directly as a unit, verifying
+// behavior without reflection. Similarly, add AgentConnectionLifecycleTests for standalone
+// lifecycle testing (reconnection, buffer drain, heartbeat) without the full AgentWorkerService.
+[Collection("EnvironmentVariables")]
+public class AgentWorkerServiceJobSlotTests
+{
+    // ── Capacity Enforcement ─────────────────────────────────────────────
+
+    [Fact]
+    public void TryAcquireJobSlot_BelowCapacity_AcquiresSlot()
+    {
+        var service = CreateService();
+
+        var result = InvokeTryAcquireJobSlot(service, "job-1", out var busyWith);
+
+        result.Should().BeTrue();
+        busyWith.Should().BeNull();
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().Be((JobId)"job-1");
+    }
+
+    [Fact]
+    public void TryAcquireJobSlot_AtCapacity_ActiveJob_Rejects()
+    {
+        var service = CreateService();
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"existing-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
+
+        var result = InvokeTryAcquireJobSlot(service, "new-job", out var busyWith);
+
+        result.Should().BeFalse();
+        busyWith.Should().Be("existing-job");
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().Be((JobId)"existing-job");
+    }
+
+    [Fact]
+    public void TryAcquireJobSlot_AtCapacity_ActiveChat_Rejects()
+    {
+        var service = CreateService();
+        SetPrivateField(GetSlotManager(service), "_activeChatSessionId", "session-42");
+
+        var result = InvokeTryAcquireJobSlot(service, "new-job", out var busyWith);
+
+        result.Should().BeFalse();
+        busyWith.Should().Be("chat:session-42");
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().BeNull();
+    }
+
+    [Fact]
+    public async Task TryAcquireJobSlot_AfterRelease_SlotFreed()
+    {
+        // TODO: This test never verifies that signalReady callback was invoked during
+        // ReleaseJobSlotAndSignalReadyAsync. If the _signalReady() call were accidentally
+        // removed, this test would still pass. Add assertion on callback invocation.
+        var service = CreateService();
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"old-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
+        SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
+
+        await GetSlotManager(service).ReleaseJobSlotAndSignalReadyAsync();
+
+        var result = InvokeTryAcquireJobSlot(service, "new-job", out var busyWith);
+
+        result.Should().BeTrue();
+        busyWith.Should().BeNull();
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().Be((JobId)"new-job");
+    }
+
+    // ── Rejection Notification ───────────────────────────────────────────
+
+    [Fact]
+    public async Task HandleAssignConsolidationJob_WhenBusy_RejectionPathCompletes()
+    {
+        var service = CreateService();
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"existing-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
+
+        var message = new ConsolidationJobMessage
+        {
+            JobId = "consolidation-rejected",
+            Type = ConsolidationRunType.BrainConsolidation,
+            ProviderConfigs = [],
+            PipelineConfiguration = new PipelineConfiguration()
+        };
+
+        var consolidationJobHandler = GetConsolidationJobHandler(service);
+        await consolidationJobHandler.HandleAssignConsolidationJobAsync(message);
+
+        // Handler completes without throwing; active job unchanged
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().Be((JobId)"existing-job");
+    }
+
+    // ── Concurrency Race ─────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ConcurrentTryAcquireJobSlot_ExactlyOneWins()
+    {
+        var service = CreateService();
+        var barrier = new Barrier(2);
+        bool? result1 = null;
+        bool? result2 = null;
+
+        var task1 = Task.Run(() =>
+        {
+            barrier.SignalAndWait();
+            result1 = InvokeTryAcquireJobSlot(service, "race-job-1", out _);
+        });
+        var task2 = Task.Run(() =>
+        {
+            barrier.SignalAndWait();
+            result2 = InvokeTryAcquireJobSlot(service, "race-job-2", out _);
+        });
+
+        await Task.WhenAll(task1, task2);
+
+        // Exactly one should succeed
+        var successes = new[] { result1, result2 }.Count(r => r == true);
+        successes.Should().Be(1);
+
+        var activeJobId = GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId");
+        activeJobId.Should().NotBeNull();
+        activeJobId!.Value.Value.Should().BeOneOf("race-job-1", "race-job-2");
+    }
+
+    // ── Heartbeat Lifecycle ──────────────────────────────────────────────
+
+    [Fact]
+    public void Heartbeat_Idle_CurrentStepIsNull()
+    {
+        var service = CreateService();
+
+        service.CurrentStep.Should().BeNull();
+    }
+
+    [Fact]
+    // TODO: This test sets _currentStep via reflection, bypassing SetCurrentStep(). The Volatile.Write
+    // + int conversion logic in SetCurrentStep is never exercised. Add a test that calls SetCurrentStep
+    // through the public API and verifies the round-trip through CurrentStep getter.
+    public void Heartbeat_JobActive_CurrentStepReflectsBusy()
+    {
+        var service = CreateService();
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"busy-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
+        SetPrivateField(GetSlotManager(service), "_currentStep", (int)PipelineStep.AnalyzingCode);
+
+        service.CurrentStep.Should().Be(PipelineStep.AnalyzingCode);
+    }
+
+    [Fact]
+    public async Task Heartbeat_AfterRelease_CurrentStepReturnsToNull()
+    {
+        var service = CreateService();
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"finishing-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
+        SetPrivateField(GetSlotManager(service), "_currentStep", (int)PipelineStep.GeneratingCode);
+        SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
+
+        await GetSlotManager(service).ReleaseJobSlotAndSignalReadyAsync();
+
+        service.CurrentStep.Should().BeNull();
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().BeNull();
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    private static bool InvokeTryAcquireJobSlot(AgentWorkerService service, string jobId, out string? busyWith)
+    {
+        var slotManager = GetSlotManager(service);
+        return slotManager.TryAcquireJobSlot(jobId, out busyWith);
+    }
+
+    private static AgentWorkerService CreateService()
+    {
+        return TestAgentWorkerServiceFactory.Create();
+    }
+
+    private static JobAssignmentMessage CreateTestJobAssignment(string jobId)
+    {
+        return new JobAssignmentMessage
+        {
+            JobId = jobId,
+            IssueIdentifier = "owner/repo#1",
+            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            RepoProviderConfigId = "repo-1",
+            AgentProviderConfigId = "agent-1",
+            PipelineConfiguration = new PipelineConfiguration(),
+            ProviderConfigs = [],
+            ReviewerConfigs = [],
+            QualityGateConfigs = [],
+            IssueComments = [],
+            McpServers = [],
+            InitiatedBy = "test-user"
+        };
+    }
+
+    private static MethodInfo GetPrivateMethod(object obj, string methodName)
+    {
+        return obj.GetType().GetMethod(methodName,
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException($"Method '{methodName}' not found");
+    }
+
+    private static void SetPrivateField(object obj, string fieldName, object? value)
+    {
+        var field = obj.GetType().GetField(fieldName,
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException($"Field '{fieldName}' not found");
+        field.SetValue(obj, value);
+    }
+
+    private static T? GetPrivateField<T>(object obj, string fieldName)
+    {
+        var field = obj.GetType().GetField(fieldName,
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException($"Field '{fieldName}' not found");
+        return (T?)field.GetValue(obj);
+    }
+
+    private static AgentJobSlotManager GetSlotManager(AgentWorkerService service)
+    {
+        var field = typeof(AgentWorkerService).GetField("_slotManager",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("Field '_slotManager' not found");
+        return (AgentJobSlotManager)field.GetValue(service)!;
+    }
+
+    private static ConsolidationJobHandler GetConsolidationJobHandler(AgentWorkerService service)
+    {
+        var field = typeof(AgentWorkerService).GetField("_consolidationJobHandler",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("Field '_consolidationJobHandler' not found");
+        return (ConsolidationJobHandler)field.GetValue(service)!;
+    }
+}

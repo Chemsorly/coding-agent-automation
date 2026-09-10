@@ -1,0 +1,709 @@
+using System.Globalization;
+using System.Text;
+using System.Text.Json;
+using CodingAgent.Pipeline;
+using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Services.Prompts;
+
+namespace CodingAgent.Agent.Executors;
+
+/// <summary>
+/// Executes refactoring detection: clones the code repo, runs the holistic analysis
+/// agent prompt, parses proposals from the workspace, and creates GitHub issues.
+/// </summary>
+public sealed class RefactoringExecutor : ConsolidationExecutorBase
+{
+    protected override string WorkspaceSuffix => "refactoring";
+    protected override string ExecutorName => "Refactoring detection";
+
+    public RefactoringExecutor(Serilog.ILogger logger) : base(logger)
+    {
+    }
+
+    /// <summary>
+    /// Executes the phased refactoring detection workflow:
+    /// 1. Clone code repo + brain into temp workspace
+    /// 2. Hotspot analysis (git log)
+    /// 3. Phase 0: Context extraction (project conventions)
+    /// 4. Phase 1: Parallel focused detection (3 sub-agents: structural, correctness, design)
+    /// 5. Phase 2: Aggregation + prioritization → produces proposals JSON
+    /// 6. If no proposals: return success
+    /// 7. Adversarial review (if enabled)
+    /// 8. Create GitHub issues (capped at MaxRefactoringProposals)
+    /// 9. Return summary
+    /// </summary>
+    public async Task<ConsolidationJobResult> ExecuteAsync(
+        ConsolidationJobMessage job,
+        IRepositoryProvider repoProvider,
+        IRepositoryProvider? brainProvider,
+        IIssueProvider issueProvider,
+        IAgentProvider agentProvider,
+        CancellationToken ct,
+        Action<string>? onOutputLine = null)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+        ArgumentNullException.ThrowIfNull(repoProvider);
+        ArgumentNullException.ThrowIfNull(issueProvider);
+        ArgumentNullException.ThrowIfNull(agentProvider);
+
+        var invalid = ValidateJobId(job);
+        if (invalid is not null) return invalid;
+
+        var workspacePath = ResolveWorkspacePath(job);
+
+        return await WrapWithCancellationHandlingAsync(job.JobId, async () =>
+        {
+            // 1. Clone code repo (optionally + brain repo)
+            Directory.CreateDirectory(workspacePath);
+            Logger.Information("Cloning code repo for refactoring detection run {RunId} into {Workspace}", job.JobId, workspacePath);
+
+            await RunWithTracingAsync("RefactoringDetection.Clone", job.JobId, async _ =>
+            {
+                await repoProvider.CloneAsync(workspacePath, ct);
+                if (brainProvider is not null)
+                    await TryCloneBrainRepoAsync(brainProvider, workspacePath, job.JobId, ct);
+            });
+
+            // 2. Hotspot analysis
+            await RunWithTracingAsync("RefactoringDetection.HotspotAnalysis", job.JobId, async _ =>
+            {
+                await WriteHotspotAnalysisAsync(workspacePath, job.PipelineConfiguration.HotspotAnalysisLookback, ct);
+            });
+
+            // 2b. Query open issues for deduplication context
+            var issueContext = await TryBuildIssueContextAsync(issueProvider, job.JobId, ct);
+
+            // 2c. Query past proposal outcomes for feedback context
+            var outcomeContext = await TryBuildOutcomeContextAsync(issueProvider, job.PipelineConfiguration, job.JobId, ct);
+
+            // ── Phased Refactoring Detection ──
+            var phasedResult = await ExecutePhasedRefactoringAsync(job, agentProvider, workspacePath, issueContext, outcomeContext, ct);
+            if (!phasedResult.Success) return phasedResult;
+
+            return await FinalizeProposalsAsync(job, agentProvider, issueProvider, workspacePath, onOutputLine, ct);
+        }, ct);
+    }
+
+    private async Task TryCloneBrainRepoAsync(IRepositoryProvider brainProvider, string workspacePath, string jobId, CancellationToken ct)
+    {
+        var brainPath = Path.Combine(workspacePath, ".brain");
+        try
+        {
+            await brainProvider.CloneAsync(brainPath, ct);
+            Logger.Information("Brain repo cloned for architectural context in run {RunId}", jobId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.Warning(ex, "Failed to clone brain repo for context in run {RunId}, continuing without it", jobId);
+        }
+    }
+
+    private async Task<string?> TryBuildIssueContextAsync(IIssueProvider issueProvider, string jobId, CancellationToken ct)
+    {
+        try
+        {
+            var refactoringResult = await issueProvider.ListOpenIssuesAsync(1, 30, new[] { AgentLabels.Generated }, ct);
+            var openRefactoringIssues = refactoringResult.Items;
+            var allOpenResult = await issueProvider.ListOpenIssuesAsync(1, 50, null, ct);
+            var cutoff = DateTime.UtcNow.AddDays(-30);
+            var recentOpenIssues = allOpenResult.Items
+                .Where(i => i.CreatedAt >= cutoff)
+                .Where(i => !openRefactoringIssues.Any(r => r.Identifier == i.Identifier))
+                .Take(50 - openRefactoringIssues.Count)
+                .ToList();
+            var context = ConsolidationPromptBuilder.BuildOpenIssueContext(openRefactoringIssues, recentOpenIssues);
+            if (!string.IsNullOrEmpty(context))
+                Logger.Information("Including {Count} open issues as context for refactoring detection in run {RunId}",
+                    openRefactoringIssues.Count + recentOpenIssues.Count, jobId);
+            return context;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.Warning(ex, "Failed to query open issues for context in run {RunId}, continuing without", jobId);
+            return null;
+        }
+    }
+
+    private async Task<string> TryBuildOutcomeContextAsync(
+        IIssueProvider issueProvider, PipelineConfiguration config, string jobId, CancellationToken ct)
+    {
+        try
+        {
+            var since = DateTime.UtcNow - config.RefactoringOutcomeLookback;
+            var closedResult = await issueProvider.ListClosedIssuesAsync(
+                page: 1, pageSize: 20, labels: new[] { AgentLabels.Generated }, since: since, ct);
+            return ConsolidationPromptBuilder.BuildProposalOutcomeContext(closedResult.Items);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.Warning(ex, "Failed to query closed issues for feedback context in run {RunId}", jobId);
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Phased multi-agent refactoring path.
+    /// Phase 0 → Phase 1 (3 parallel) → Phase 2 (aggregation) → finalize.
+    /// </summary>
+    private async Task<ConsolidationJobResult> ExecutePhasedRefactoringAsync(
+        ConsolidationJobMessage job,
+        IAgentProvider agentProvider,
+        string workspacePath,
+        string? issueContext,
+        string outcomeContext,
+        CancellationToken ct)
+    {
+        ConsolidationJobResult? failure;
+
+        // Phase 0: Context Extraction
+        Logger.Information("Phase 0: Extracting project conventions for run {RunId}", job.JobId);
+
+        (_, failure) = await RunWithTracingAsync("RefactoringDetection.Phase0.ContextExtraction", job.JobId, async _ =>
+        {
+            return await ExecuteAgentAndCheckAsync(
+                agentProvider,
+                new AgentRequest
+                {
+                    Prompt = ConsolidationPromptBuilder.BuildRefactoringContextExtractionPrompt(),
+                    WorkspacePath = workspacePath,
+                    Timeout = job.PipelineConfiguration.AgentTimeout
+                },
+                job.JobId,
+                ct);
+        });
+
+        if (failure is not null) return failure;
+
+        // Phase 1: Parallel Focused Detection (3 sub-agents)
+        Logger.Information("Phase 1: Dispatching 3 parallel analysis agents for run {RunId}", job.JobId);
+
+        var phase1Tasks = new[]
+        {
+            RunWithTracingAsync("RefactoringDetection.Phase1.StructuralDebt", job.JobId, async _ =>
+            {
+                return await ExecuteAgentAndCheckAsync(
+                    agentProvider,
+                    new AgentRequest
+                    {
+                        Prompt = ConsolidationPromptBuilder.BuildRefactoringStructuralDebtPrompt(),
+                        WorkspacePath = workspacePath,
+                        Timeout = job.PipelineConfiguration.AgentTimeout
+                    },
+                    job.JobId,
+                    ct);
+            }),
+            RunWithTracingAsync("RefactoringDetection.Phase1.Correctness", job.JobId, async _ =>
+            {
+                return await ExecuteAgentAndCheckAsync(
+                    agentProvider,
+                    new AgentRequest
+                    {
+                        Prompt = ConsolidationPromptBuilder.BuildRefactoringCorrectnessPrompt(),
+                        WorkspacePath = workspacePath,
+                        Timeout = job.PipelineConfiguration.AgentTimeout
+                    },
+                    job.JobId,
+                    ct);
+            }),
+            RunWithTracingAsync("RefactoringDetection.Phase1.DesignConsistency", job.JobId, async _ =>
+            {
+                return await ExecuteAgentAndCheckAsync(
+                    agentProvider,
+                    new AgentRequest
+                    {
+                        Prompt = ConsolidationPromptBuilder.BuildRefactoringDesignConsistencyPrompt(),
+                        WorkspacePath = workspacePath,
+                        Timeout = job.PipelineConfiguration.AgentTimeout
+                    },
+                    job.JobId,
+                    ct);
+            })
+        };
+
+        var phase1Results = await Task.WhenAll(phase1Tasks);
+
+        // Check for failures — log but continue if at least one agent succeeded
+        var phase1Failures = phase1Results.Where(r => r.Failure is not null).ToList();
+        if (phase1Failures.Count == phase1Results.Length)
+        {
+            return CreateFailureResult(job.JobId, "All Phase 1 analysis agents failed");
+        }
+
+        if (phase1Failures.Count > 0)
+        {
+            Logger.Warning("{FailCount}/{TotalCount} Phase 1 agents failed in run {RunId}, continuing with partial results",
+                phase1Failures.Count, phase1Results.Length, job.JobId);
+        }
+
+        // Phase 2: Aggregation & Prioritization
+        Logger.Information("Phase 2: Aggregating and prioritizing findings for run {RunId}", job.JobId);
+
+        var aggregationPrompt = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt(
+            job.PipelineConfiguration.MaxRefactoringProposals,
+            issueContext,
+            outcomeContext.Length > 0 ? outcomeContext : null);
+
+        (_, failure) = await RunWithTracingAsync("RefactoringDetection.Phase2.Aggregation", job.JobId, async _ =>
+        {
+            return await ExecuteAgentAndCheckAsync(
+                agentProvider,
+                new AgentRequest
+                {
+                    Prompt = aggregationPrompt,
+                    WorkspacePath = workspacePath,
+                    Timeout = job.PipelineConfiguration.AgentTimeout
+                },
+                job.JobId,
+                ct);
+        });
+
+        if (failure is not null) return failure;
+
+        // Proposals are now at .agent/refactoring-proposals.json — return success
+        // (the caller will finalize with review + issue creation)
+        return new ConsolidationJobResult { JobId = job.JobId, Success = true, Summary = "Phased analysis complete" };
+    }
+
+    /// <summary>
+    /// Shared finalization: parse proposals → adversarial review → create GitHub issues.
+    /// Used by both phased and legacy paths.
+    /// </summary>
+    private async Task<ConsolidationJobResult> FinalizeProposalsAsync(
+        ConsolidationJobMessage job,
+        IAgentProvider agentProvider,
+        IIssueProvider issueProvider,
+        string workspacePath,
+        Action<string>? onOutputLine,
+        CancellationToken ct)
+    {
+        var proposalsFilePath = Path.Combine(workspacePath, AgentWorkspacePaths.RefactoringProposalsFilePath);
+        var proposals = await ParseProposalsAsync(proposalsFilePath, ct);
+
+        if (proposals is null)
+        {
+            return CreateFailureResult(job.JobId, "Failed to parse refactoring proposals JSON from agent output");
+        }
+
+        if (proposals.Count == 0)
+        {
+            Logger.Information("No refactoring opportunities identified in run {RunId}", job.JobId);
+            return new ConsolidationJobResult
+            {
+                JobId = job.JobId,
+                Success = true,
+                Summary = "No refactoring opportunities identified"
+            };
+        }
+
+        // Adversarial review (if enabled and proposals non-empty)
+        AdversarialReviewResult reviewResult;
+        reviewResult = await RunWithTracingAsync("RefactoringDetection.AdversarialReview", job.JobId, async _ =>
+        {
+            return await AdversarialReviewHelper.ExecuteReviewAsync(
+                agentProvider,
+                workspacePath,
+                ConsolidationPromptBuilder.BuildRefactoringReviewPrompt(),
+                ConsolidationPromptBuilder.BuildRefactoringRefinementPrompt(),
+                AgentWorkspacePaths.RefactoringReviewFilePath,
+                new AdversarialReviewConfig
+                {
+                    Enabled = job.PipelineConfiguration.RefactoringReviewEnabled,
+                    AgentTimeout = job.PipelineConfiguration.AgentTimeout
+                },
+                onOutputLine,
+                Logger,
+                ct);
+        });
+
+        if (reviewResult.RefinementTriggered)
+        {
+            var refinedProposals = await ParseProposalsAsync(proposalsFilePath, ct);
+            if (refinedProposals is null)
+            {
+                Logger.Warning("Refined proposals file is malformed in run {RunId}, keeping original proposals", job.JobId);
+            }
+            else
+            {
+                proposals = refinedProposals;
+                Logger.Information("Using refined proposals ({Count} proposals) in run {RunId}",
+                    proposals.Count, job.JobId);
+            }
+        }
+
+        // Create GitHub issues (capped at MaxRefactoringProposals)
+        IReadOnlyList<CreatedIssueInfo> createdIssues;
+        createdIssues = await RunWithTracingAsync("RefactoringDetection.CreateIssues", job.JobId, async activity =>
+        {
+            activity?.SetTag("pipeline.proposal_count", proposals.Count);
+            return await CreateIssuesAsync(proposals, issueProvider, job.PipelineConfiguration.MaxRefactoringProposals, job.AutoDispatch, ct);
+        });
+
+        var summary = FormatRefactoringSummary(createdIssues, proposals.Count);
+        Logger.Information("{ExecutorName} run {RunId} completed: {Summary}", ExecutorName, job.JobId, summary);
+
+        return new ConsolidationJobResult
+        {
+            JobId = job.JobId,
+            Success = true,
+            Summary = summary,
+            CreatedIssues = createdIssues,
+            ReviewTokenUsage = reviewResult.ReviewTokenUsage,
+            RefinementTokenUsage = reviewResult.RefinementTokenUsage
+        };
+    }
+
+    /// <summary>
+    /// Runs git log to identify frequently-changed files and writes a hotspot summary.
+    /// Gracefully degrades on any failure — logs a warning and continues without the file.
+    /// </summary>
+    private async Task WriteHotspotAnalysisAsync(string workspacePath, TimeSpan lookback, CancellationToken ct)
+    {
+        try
+        {
+            var sinceDate = DateTime.UtcNow.Subtract(lookback).ToString("yyyy-MM-dd");
+            var output = await RunGitCommandAsync(workspacePath, $"log --name-only --since=\"{sinceDate}\" --format=\"COMMIT_DATE:%ai\"", ct);
+
+            var hotspots = ParseHotspotOutput(output, lookback);
+            if (hotspots is null)
+            {
+                Logger.Information("No git history found within lookback window for hotspot analysis");
+                return;
+            }
+
+            var outputPath = Path.Combine(workspacePath, AgentWorkspacePaths.HotspotAnalysisFilePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+            await File.WriteAllTextAsync(outputPath, hotspots, ct);
+
+            Logger.Information("Wrote hotspot analysis to {Path}", outputPath);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.Warning(ex, "Hotspot analysis failed, continuing without it");
+        }
+    }
+
+    /// <summary>
+    /// Parses git log output with COMMIT_DATE: markers into a time-decay-weighted hotspot summary.
+    /// Each change is weighted by recency: factor = 1/(1 + days_since/30).
+    /// Returns null if no files found. Exposed as internal static for testability.
+    /// </summary>
+    internal static string? ParseHotspotOutput(string gitLogOutput, TimeSpan lookback, DateTime? referenceTime = null)
+    {
+        var now = referenceTime ?? DateTime.UtcNow;
+        var entries = new List<(string File, double RecencyFactor, double DaysSince)>();
+        // Note: files appearing before any COMMIT_DATE: marker receive max recency weight (1.0).
+        // In practice, git --format always emits the date line before file names per commit.
+        DateTime currentCommitDate = now;
+        bool dateParseFailedForCurrentCommit = false;
+
+        foreach (var line in gitLogOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trimmed = line.Trim();
+            if (string.IsNullOrWhiteSpace(trimmed))
+                continue;
+
+            if (trimmed.StartsWith("COMMIT_DATE:"))
+            {
+                var dateStr = trimmed[12..];
+                if (DateTimeOffset.TryParse(dateStr, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+                {
+                    currentCommitDate = parsed.UtcDateTime;
+                    dateParseFailedForCurrentCommit = false;
+                }
+                else
+                {
+                    // Graceful degradation: neutral weight (0.5 → equivalent to 30 days old)
+                    dateParseFailedForCurrentCommit = true;
+                }
+                continue;
+            }
+
+            double daysSince;
+            double recencyFactor;
+
+            if (dateParseFailedForCurrentCommit)
+            {
+                daysSince = 30.0;
+                recencyFactor = 0.5;
+            }
+            else
+            {
+                daysSince = Math.Max(0, (now - currentCommitDate).TotalDays);
+                recencyFactor = 1.0 / (1.0 + daysSince / 30.0);
+            }
+
+            entries.Add((trimmed, recencyFactor, daysSince));
+        }
+
+        if (entries.Count == 0)
+            return null;
+
+        var hotspots = entries
+            .GroupBy(e => e.File)
+            .Select(g => (
+                File: g.Key,
+                Score: g.Sum(e => e.RecencyFactor),
+                Count: g.Count(),
+                AvgDaysAgo: (int)g.Average(e => e.DaysSince)))
+            .OrderByDescending(x => x.Score)
+            .Take(30)
+            .ToList();
+
+        if (hotspots.Count == 0)
+            return null;
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"# Git Hotspot Analysis (last {lookback.Days} days, time-decay weighted)");
+        sb.AppendLine("# Score = sum of recency factors (1/(1+days/30) per change — recent changes weighted higher)");
+        sb.AppendLine();
+        foreach (var (file, score, count, avgDaysAgo) in hotspots)
+            sb.AppendLine($"{score.ToString("F1", CultureInfo.InvariantCulture)} — {file} ({count} changes, avg {avgDaysAgo} days ago)");
+
+        return sb.ToString();
+    }
+
+    internal static Task<string> RunGitCommandAsync(string workingDirectory, string arguments, CancellationToken ct)
+        => GitProcessRunner.RunAsync(workingDirectory, arguments, ct, throwOnNonZeroExit: true);
+
+    /// <summary>
+    /// Parses the refactoring proposals JSON file from the workspace.
+    /// Returns null if the file doesn't exist or contains malformed JSON.
+    /// Returns an empty list if the file contains an empty array.
+    /// </summary>
+    private async Task<IReadOnlyList<RefactoringProposal>?> ParseProposalsAsync(
+        string filePath, CancellationToken ct)
+    {
+        if (!File.Exists(filePath))
+        {
+            Logger.Information("No refactoring proposals file found at {Path}, treating as no proposals", filePath);
+            return Array.Empty<RefactoringProposal>();
+        }
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(filePath, ct);
+            var proposals = JsonSerializer.Deserialize<List<RefactoringProposal>>(json, PipelineJsonOptions.Lenient);
+            return (IReadOnlyList<RefactoringProposal>?)proposals ?? Array.Empty<RefactoringProposal>();
+        }
+        catch (JsonException ex)
+        {
+            Logger.Warning(ex, "Malformed JSON in refactoring proposals file at {Path}", filePath);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Creates GitHub issues for each proposal, capped at <paramref name="maxProposals"/>.
+    /// Proposals are processed sequentially. For each successful creation the proposal title is
+    /// registered with a <see cref="DependencyResolver"/> so that later proposals whose
+    /// <see cref="RefactoringProposal.DependsOn"/> lists reference it receive a resolved
+    /// "Depends on #N" line prepended to their issue body.
+    /// Individual issue creation failures are logged but do not stop processing.
+    /// </summary>
+    /// <remarks>
+    /// TODO: If a proposal's issue creation fails (exception swallowed by the catch block), its
+    /// title is never registered with the resolver. Any later proposal that lists the failed title
+    /// in its DependsOn will silently receive no dependency line — the same behaviour as an
+    /// unresolvable title. Document this caveat at the call site or in tests if the contract needs
+    /// to be visible to future maintainers.
+    /// </remarks>
+    private async Task<IReadOnlyList<CreatedIssueInfo>> CreateIssuesAsync(
+        IReadOnlyList<RefactoringProposal> proposals,
+        IIssueProvider issueProvider,
+        int maxProposals,
+        bool autoDispatch,
+        CancellationToken ct)
+    {
+        var createdIssues = new List<CreatedIssueInfo>();
+        var proposalsToProcess = proposals.Take(maxProposals);
+        var labels = autoDispatch
+            ? new[] { AgentLabels.Generated, AgentLabels.Next }
+            : new[] { AgentLabels.Generated };
+
+        var resolver = new DependencyResolver();
+
+        foreach (var proposal in proposalsToProcess)
+        {
+            try
+            {
+                // Build the full body first, then resolve and prepend any dependency lines.
+                // Register() uses proposal.Title (raw, not sanitized) so that DependsOn references
+                // from other proposals — which also use the raw agent-generated title — can resolve.
+                var body = FormatIssueBody(proposal);
+                var dependencyLines = resolver.Resolve(proposal.DependsOn ?? [], Logger);
+                if (dependencyLines.Count > 0)
+                {
+                    var depSection = string.Join("\n", dependencyLines);
+                    body = $"{depSection}\n\n{body}";
+                }
+
+                var sanitizedTitle = SanitizeTitle(proposal.Title);
+                var result = await issueProvider.CreateIssueAsync(
+                    sanitizedTitle,
+                    body,
+                    labels,
+                    ct);
+
+                resolver.Register(proposal.Title, result.Identifier);
+
+                // TODO: resolver.Register uses the raw proposal.Title while CreateIssueAsync is
+                // called with sanitizedTitle — the issue in the tracker is created under the
+                // sanitized title, but the resolver key is the raw title. This is internally
+                // consistent (DependsOn references from sibling proposals also use raw titles), but
+                // means a DependsOn entry that matches the sanitized title instead of the raw title
+                // will silently fail to resolve. No test currently covers this mismatch scenario.
+                // TODO: resolver.Register is placed immediately after the awaited CreateIssueAsync
+                // and before createdIssues.Add/logging. If the try block grows with additional
+                // awaitable calls between Register and the catch, a failure there would leave the
+                // resolver holding a registered title for an issue whose entry was never added to
+                // createdIssues. This is harmless today but is a latent structural fragility — keep
+                // Register as the last substantive statement before createdIssues.Add, or move it
+                // inside a finally-guarded section if the block expands.
+
+                createdIssues.Add(new CreatedIssueInfo
+                {
+                    Identifier = result.Identifier,
+                    Title = proposal.Title,
+                    Url = result.Url
+                });
+
+                Logger.Information("Created refactoring issue {Identifier}: {Title}",
+                    result.Identifier, proposal.Title);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Logger.Warning(ex, "Failed to create issue for proposal '{Title}', continuing with remaining",
+                    proposal.Title);
+            }
+        }
+
+        return createdIssues;
+    }
+
+    /// <summary>
+    /// Formats the issue body from a refactoring proposal using the project's issue template.
+    /// </summary>
+    internal static string FormatIssueBody(RefactoringProposal proposal)
+    {
+        var sanitizedDescription = SanitizeMarkdown(proposal.Description);
+        var sanitizedRationale = SanitizeMarkdown(proposal.Rationale);
+        var affectedFiles = string.Join("\n", proposal.AffectedFiles.Select(f => $"- `{f}`"));
+
+        var sb = new StringBuilder();
+        sb.AppendLine("## Summary");
+        sb.AppendLine();
+        sb.AppendLine(sanitizedDescription);
+        sb.AppendLine();
+
+        AppendMetadataLine(sb, proposal);
+
+        if (proposal.Prerequisites is { Count: > 0 })
+        {
+            sb.AppendLine("## Prerequisites");
+            sb.AppendLine();
+            // TODO: SanitizeMarkdown does not escape #N patterns (e.g., "proposal #1") which GitHub
+            // auto-links to unrelated issues. Consider restoring #N autolink escaping (previously
+            // handled by a dedicated SanitizePrerequisite method) to prevent misleading cross-references.
+            foreach (var prereq in proposal.Prerequisites.Where(p => p is not null))
+                sb.AppendLine($"- {SanitizeMarkdown(prereq)}");
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("## Affected Components");
+        sb.AppendLine();
+        sb.AppendLine(affectedFiles);
+        sb.AppendLine();
+
+        AppendListSection(sb, "## Evidence", proposal.EvidenceSources, s => $"- `{SanitizeMarkdown(s)}`");
+
+        sb.AppendLine("## Suggested Approach");
+        sb.AppendLine();
+        sb.AppendLine(sanitizedRationale);
+        sb.AppendLine();
+        sb.AppendLine("## Acceptance Criteria");
+        sb.AppendLine();
+
+        AppendAcceptanceCriteria(sb, proposal.AcceptanceCriteria);
+
+        sb.AppendLine();
+        sb.AppendLine("---");
+        sb.Append("*This issue was automatically generated by the refactoring detection consolidation loop.*");
+
+        return sb.ToString();
+    }
+
+    private static void AppendMetadataLine(StringBuilder sb, RefactoringProposal proposal)
+    {
+        if (proposal.EstimatedEffort is null && proposal.RiskLevel is null && proposal.Technique is null)
+            return;
+
+        if (proposal.EstimatedEffort is not null)
+            sb.Append($"**Effort:** {SanitizeMarkdown(proposal.EstimatedEffort)}");
+        if (proposal.RiskLevel is not null)
+            sb.Append($"{(proposal.EstimatedEffort is not null ? " | " : "")}**Risk:** {SanitizeMarkdown(proposal.RiskLevel)}");
+        if (proposal.Technique is not null)
+            sb.Append($"{(proposal.EstimatedEffort is not null || proposal.RiskLevel is not null ? " | " : "")}**Technique:** {SanitizeMarkdown(proposal.Technique)}");
+        sb.AppendLine();
+        sb.AppendLine();
+    }
+
+    private static void AppendListSection(
+        StringBuilder sb, string header, IReadOnlyList<string>? items, Func<string, string> formatLine)
+    {
+        if (items is not { Count: > 0 })
+            return;
+
+        sb.AppendLine(header);
+        sb.AppendLine();
+        foreach (var item in items.Where(s => s is not null))
+            sb.AppendLine(formatLine(item));
+        sb.AppendLine();
+    }
+
+    private static void AppendAcceptanceCriteria(StringBuilder sb, IReadOnlyList<string>? criteria)
+    {
+        if (criteria is { Count: > 0 })
+        {
+            foreach (var criterion in criteria.Where(c => c is not null))
+                sb.AppendLine($"- [ ] {SanitizeMarkdown(criterion)}");
+        }
+        else
+        {
+            sb.AppendLine("- [ ] Refactoring applied without changing observable behavior");
+            sb.AppendLine("- [ ] All existing tests continue to pass");
+        }
+    }
+
+    /// <summary>
+    /// Sanitizes the proposal title for use in GitHub issue titles.
+    /// Truncates to 200 chars and strips newlines.
+    /// </summary>
+    internal static string SanitizeTitle(string title) => TextSanitizer.SanitizeTitle(title);
+
+    /// <summary>
+    /// Escapes markdown-sensitive characters to prevent injection in GitHub issues.
+    /// Delegates to <see cref="TextSanitizer.SanitizeMarkdown"/>.
+    /// </summary>
+    private static string SanitizeMarkdown(string value) => TextSanitizer.SanitizeMarkdown(value);
+
+    /// <summary>
+    /// Formats the refactoring run summary with issue count and identifiers.
+    /// Distinguishes between "no proposals found" and "proposals found but issue creation failed".
+    /// </summary>
+    internal static string FormatRefactoringSummary(IReadOnlyList<CreatedIssueInfo> createdIssues, int proposalCount = 0)
+    {
+        if (createdIssues.Count == 0 && proposalCount == 0)
+            return "No refactoring opportunities identified";
+
+        if (createdIssues.Count == 0 && proposalCount > 0)
+            return $"Found {proposalCount} proposal(s) but failed to create issues (check GitHub App permissions)";
+
+        var identifiers = string.Join(", ", createdIssues.Select(i => $"#{i.Identifier}"));
+        if (createdIssues.Count < proposalCount)
+            return $"Created {createdIssues.Count}/{proposalCount} refactoring issue(s): {identifiers} ({proposalCount - createdIssues.Count} failed)";
+
+        return $"Created {createdIssues.Count} refactoring issue(s): {identifiers}";
+    }
+}
