@@ -19,6 +19,7 @@ public class ConsolidationPageComponentTests : BunitContext
 {
     private readonly Mock<IConsolidationService> _mockConsolidationService = new();
     private readonly Mock<IPipelineApiConfigClient> _mockConfigClient = new();
+    private readonly Mock<IConsolidationDispatcher> _mockDispatcher = new();
     private readonly ConsolidationBadgeService _badgeService = new();
 
     private void RegisterServices(
@@ -41,7 +42,12 @@ public class ConsolidationPageComponentTests : BunitContext
                 It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ConsolidationRun?)null);
 
+        // Default: DispatchRunAsync succeeds silently (Task.CompletedTask)
+        _mockDispatcher.Setup(d => d.DispatchRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
         Services.AddSingleton<IConsolidationService>(_mockConsolidationService.Object);
+        Services.AddSingleton<IConsolidationDispatcher>(_mockDispatcher.Object);
         Services.AddSingleton(_mockConfigClient.Object);
         Services.AddSingleton(_badgeService);
 
@@ -883,4 +889,175 @@ public class ConsolidationPageComponentTests : BunitContext
     // TriggerAsync should receive null — not a TemplateId constructed from ""). These regression guards
     // should be restored in a follow-up: add BrainConsolidation_PassesCorrectTemplateIdValue_ToTriggerAsync
     // and BrainConsolidation_WithEmptyTemplateId_PassesNullToTriggerAsync.
+
+    // ═══ Dispatch: IConsolidationDispatcher called after TriggerAsync succeeds ═══
+
+    /// <summary>
+    /// AC1: When BrainConsolidation is triggered and TriggerAsync returns a run, DispatchRunAsync
+    /// must be called exactly once with that run. This is the regression test for the bug where
+    /// UI-triggered runs stayed Queued forever because dispatch was never called.
+    /// </summary>
+    [Fact]
+    public void TriggerConsolidation_WhenRunCreated_CallsDispatchRunAsync()
+    {
+        var templates = new List<PipelineJobTemplate>
+        {
+            CreateTemplate(brainProviderId: "brain-1", issueProviderId: "issue-1", repoProviderId: "repo-1")
+        };
+        RegisterServices(templates: templates);
+
+        var queuedRun = new ConsolidationRun
+        {
+            RunId = "run-dispatch-test",
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            Status = ConsolidationRunStatus.Queued
+        };
+
+        _mockConsolidationService.Setup(s => s.TriggerAsync(
+                ConsolidationRunType.BrainConsolidation, "t1", It.IsAny<CancellationToken>(), false))
+            .ReturnsAsync(queuedRun);
+
+        var cut = Render<Consolidation>();
+
+        cut.FindAll(".btn-trigger").First(b => b.TextContent.Contains("Brain Consolidation")).Click();
+
+        _mockDispatcher.Verify(
+            d => d.DispatchRunAsync(queuedRun, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "DispatchRunAsync must be called after TriggerAsync returns a run — otherwise the run stays Queued forever");
+    }
+
+    /// <summary>
+    /// AC2: When TriggerAsync returns null (rejected — duplicate running), DispatchRunAsync
+    /// must NOT be called.
+    /// </summary>
+    [Fact]
+    public void TriggerConsolidation_WhenRunRejected_DoesNotCallDispatchRunAsync()
+    {
+        var templates = new List<PipelineJobTemplate>
+        {
+            CreateTemplate(brainProviderId: "brain-1", issueProviderId: "issue-1", repoProviderId: "repo-1")
+        };
+        RegisterServices(templates: templates);
+
+        _mockConsolidationService.Setup(s => s.TriggerAsync(
+                It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .ReturnsAsync((ConsolidationRun?)null);
+
+        var cut = Render<Consolidation>();
+
+        cut.FindAll(".btn-trigger").First(b => b.TextContent.Contains("Brain Consolidation")).Click();
+
+        _mockDispatcher.Verify(
+            d => d.DispatchRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    /// <summary>
+    /// AC3: Refactoring scan with autoDispatch=true — DispatchRunAsync is called after TriggerAsync.
+    /// Verifies the modal confirmation path also dispatches.
+    /// </summary>
+    [Fact]
+    public void TriggerConsolidation_RefactoringModal_CallsDispatchRunAsync()
+    {
+        var templates = new List<PipelineJobTemplate>
+        {
+            CreateTemplate(issueProviderId: "issue-1", repoProviderId: "repo-1")
+        };
+        RegisterServices(templates: templates);
+
+        var queuedRun = new ConsolidationRun
+        {
+            RunId = "run-refactor-dispatch",
+            Type = ConsolidationRunType.RefactoringDetection,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            Status = ConsolidationRunStatus.Queued
+        };
+
+        _mockConsolidationService.Setup(s => s.TriggerAsync(
+                ConsolidationRunType.RefactoringDetection, "t1", It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .ReturnsAsync(queuedRun);
+
+        var cut = Render<Consolidation>();
+
+        // Open the refactoring modal and confirm
+        cut.FindAll(".btn-trigger").First(b => b.TextContent.Contains("Refactoring Scan")).Click();
+        cut.Find(".modal-card .btn-save").Click();
+
+        _mockDispatcher.Verify(
+            d => d.DispatchRunAsync(queuedRun, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// AC4: HarnessSuggestions trigger also calls DispatchRunAsync after TriggerAsync.
+    /// </summary>
+    [Fact]
+    public void TriggerConsolidation_HarnessSuggestions_CallsDispatchRunAsync()
+    {
+        var templates = new List<PipelineJobTemplate>
+        {
+            CreateTemplate(brainProviderId: "brain-1", issueProviderId: "issue-1", repoProviderId: "repo-1")
+        };
+        RegisterServices(templates: templates);
+
+        var queuedRun = new ConsolidationRun
+        {
+            RunId = "run-harness-dispatch",
+            Type = ConsolidationRunType.HarnessSuggestions,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            Status = ConsolidationRunStatus.Queued
+        };
+
+        _mockConsolidationService.Setup(s => s.TriggerAsync(
+                ConsolidationRunType.HarnessSuggestions, null, It.IsAny<CancellationToken>(), false))
+            .ReturnsAsync(queuedRun);
+
+        var cut = Render<Consolidation>();
+
+        cut.FindAll(".btn-trigger").First(b => b.TextContent.Contains("Generate Suggestions")).Click();
+
+        _mockDispatcher.Verify(
+            d => d.DispatchRunAsync(queuedRun, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// AC5: After a successful trigger and dispatch, the status message shows
+    /// "queued — waiting for an idle agent" (not "triggered successfully" — run.Status
+    /// is always Queued at this point since dispatch is asynchronous).
+    /// </summary>
+    [Fact]
+    public async Task TriggerConsolidation_ShowsQueuedStatusMessage_AfterSuccessfulDispatch()
+    {
+        var templates = new List<PipelineJobTemplate>
+        {
+            CreateTemplate(brainProviderId: "brain-1", issueProviderId: "issue-1", repoProviderId: "repo-1")
+        };
+        RegisterServices(templates: templates);
+
+        _mockConsolidationService.Setup(s => s.TriggerAsync(
+                ConsolidationRunType.BrainConsolidation, "t1", It.IsAny<CancellationToken>(), false))
+            .ReturnsAsync(new ConsolidationRun
+            {
+                RunId = "run-status-msg",
+                Type = ConsolidationRunType.BrainConsolidation,
+                StartedAtUtc = DateTimeOffset.UtcNow,
+                Status = ConsolidationRunStatus.Queued
+            });
+
+        var cut = Render<Consolidation>();
+
+        cut.FindAll(".btn-trigger").First(b => b.TextContent.Contains("Brain Consolidation")).Click();
+
+        await cut.WaitForStateAsync(() =>
+            cut.FindAll(".consolidation-status-message").Count > 0,
+            TimeSpan.FromSeconds(2));
+
+        var msg = cut.Find(".consolidation-status-message");
+        Assert.Contains("queued", msg.TextContent, StringComparison.OrdinalIgnoreCase);
+        // Must NOT show error styling
+        Assert.DoesNotContain("consolidation-status-error", msg.ClassName ?? "");
+    }
 }
