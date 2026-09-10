@@ -1,6 +1,7 @@
 using CodingAgent.AgentGateway;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 
@@ -25,7 +26,12 @@ internal static class EmbeddedConsolidationTestDeps
                 It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ConsolidationRun?)null);
 
+        var dispatcherMock = new Mock<IConsolidationDispatcher>();
+        dispatcherMock.Setup(d => d.DispatchRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
         services.AddSingleton(mock.Object);
+        services.AddSingleton(dispatcherMock.Object);
         services.AddSingleton(new ConsolidationBadgeService());
     }
 }

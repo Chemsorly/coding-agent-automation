@@ -8,6 +8,7 @@
 @using CodingAgent.Web.Services
 @using Serilog
 @inject IConsolidationService ConsolidationService
+@inject IConsolidationDispatcher ConsolidationDispatcher
 @inject ConsolidationBadgeService BadgeService
 @inject IPipelineApiConfigClient ConfigClient
 
@@ -456,14 +457,15 @@
                 };
                 _statusIsError = true;
             }
-            else if (run.Status == ConsolidationRunStatus.Queued)
-            {
-                _statusMessage = $"{FormatRunType(type)} queued — waiting for an idle agent.";
-                await LoadDataAsync();
-            }
             else
             {
-                _statusMessage = $"{FormatRunType(type)} triggered successfully.";
+                // Dispatch to the K8s job queue. If dispatch fails the run stays Queued —
+                // startup rehydration will retry on next orchestrator restart.
+                await ConsolidationDispatcher.DispatchRunAsync(run, CancellationToken.None);
+
+                // run.Status is always Queued here — the K8s job transitions it to Running
+                // asynchronously after the agent starts. Show the queued message always.
+                _statusMessage = $"{FormatRunType(type)} queued — waiting for an idle agent.";
                 await LoadDataAsync();
             }
         }

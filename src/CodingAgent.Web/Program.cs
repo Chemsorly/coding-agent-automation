@@ -110,6 +110,10 @@ builder.Services.AddSingleton<CodingAgent.Pipeline.Interfaces.IBrainUpdateServic
     sp => new CodingAgent.Infrastructure.Git.BrainUpdateService(Serilog.Log.Logger));
 builder.Services.AddPipelineCoreServices();
 builder.Services.AddOrchestrationServices(pipelineConfig);
+// AddConsolidationServices registers IConsolidationDispatcher which has a lazy factory
+// that resolves IWorkDistributor. IWorkDistributor is registered by AddWorkDistribution (next line).
+// Ordering is safe at runtime (singleton factories resolve lazily), but keep AddWorkDistribution
+// immediately after AddConsolidationServices so the dependency is visible.
 builder.Services.AddConsolidationServices(pipelineConfig);
 builder.Services.AddWorkDistribution(builder.Configuration);
 
@@ -164,7 +168,7 @@ app.ValidateShutdownBudget();
 app.ValidateDiWiring();
 app.RegisterObservableGauges();
 app.MapApplicationEndpoints();
-await app.RunConsolidationStartupAsync(pipelineConfig);
+await app.RunConsolidationStartupAsync();
 
 app.Run();
 

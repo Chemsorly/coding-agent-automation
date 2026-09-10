@@ -118,6 +118,15 @@ public static partial class ServiceCollectionExtensions
 
         services.AddSingleton<ConsolidationBadgeService>();
 
+        // Dispatches consolidation runs to the K8s job queue. Shared by UI trigger and
+        // startup rehydration (ConsolidationRehydrationExtensions) so both paths use
+        // identical JobDistributionRequest construction.
+        services.AddSingleton<IConsolidationDispatcher>(sp => new ConsolidationDispatcher(
+            sp.GetRequiredService<IWorkDistributor>(),
+            sp.GetRequiredService<IAgentProfileStore>(),
+            sp.GetRequiredService<IConsolidationWorkspaceManager>(),
+            sp.GetRequiredService<IPipelineConfigStore>()));
+
         return services;
     }
 }

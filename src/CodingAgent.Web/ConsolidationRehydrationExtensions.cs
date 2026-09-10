@@ -1,7 +1,7 @@
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
-using CodingAgent.Pipeline.Services;
+using CodingAgent.Web.Services;
 
 namespace CodingAgent.Web;
 
@@ -13,16 +13,15 @@ internal static class ConsolidationRehydrationExtensions
 {
     /// <summary>
     /// Cleans up orphaned consolidation runs from previous sessions and rehydrates
-    /// queued consolidation runs via <see cref="IWorkDistributor"/> (unified dispatch path).
+    /// queued consolidation runs via <see cref="IConsolidationDispatcher"/> (unified dispatch path).
     /// </summary>
     /// <remarks>
     /// Must run after <see cref="EndpointRegistration.MapApplicationEndpoints"/> so that
     /// middleware is configured before background work begins.
     /// </remarks>
-    public static async Task RunConsolidationStartupAsync(this WebApplication app, PipelineConfiguration pipelineConfig)
+    public static async Task RunConsolidationStartupAsync(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        ArgumentNullException.ThrowIfNull(pipelineConfig);
 
         // Clean up orphaned consolidation runs from previous sessions.
         // A run is only truly orphaned if no agent is currently working on it.
@@ -49,47 +48,16 @@ internal static class ConsolidationRehydrationExtensions
             StringComparer.OrdinalIgnoreCase);
         await consolidationService.CleanupOrphanedRunsAsync(activeAgentJobIds, CancellationToken.None);
 
-        // Load live config from the store (the startup singleton may be stale in DB mode)
-        var configStore = app.Services.GetRequiredService<IPipelineConfigStore>();
-        var liveConfig = await configStore.LoadPipelineConfigAsync(CancellationToken.None);
-
-        // Rehydrate queued consolidation runs via IWorkDistributor (unified dispatch path)
+        // Rehydrate queued consolidation runs via IConsolidationDispatcher (unified dispatch path).
+        // IConsolidationDispatcher is shared with the UI trigger path so both use identical
+        // JobDistributionRequest construction.
         var queuedRuns = await consolidationService.RehydrateQueuedRunsAsync(CancellationToken.None);
         if (queuedRuns.Count > 0)
         {
-            var workDistributor = app.Services.GetRequiredService<IWorkDistributor>();
-            var profileStore = app.Services.GetRequiredService<IAgentProfileStore>();
-            var workspaceManager = app.Services.GetRequiredService<IConsolidationWorkspaceManager>();
-            var rehydrationProfiles = await profileStore.LoadAgentProfilesAsync(CancellationToken.None);
+            var dispatcher = app.Services.GetRequiredService<IConsolidationDispatcher>();
             foreach (var run in queuedRuns)
             {
-                // Resolve full profile MatchLabels from QueuedRequiredLabels to produce correct AgentSelector
-                var requiredLabels = run.QueuedRequiredLabels ?? [];
-                var profile = ProfileResolver.ResolveByRequiredLabels(rehydrationProfiles, requiredLabels.ToList());
-                var selectorLabels = profile?.MatchLabels ?? requiredLabels;
-
-                var request = new JobDistributionRequest
-                {
-                    IssueIdentifier = run.RunId,
-                    IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
-                    RepoProviderConfigId = "",
-                    InitiatedBy = ConsolidationConstants.InitiatedBy,
-                    TaskType = WorkItemTaskType.Consolidation,
-                    AgentSelector = AgentSelectorKey.From(selectorLabels),
-                    TimeoutSeconds = (int)liveConfig.AgentTimeout.TotalSeconds,
-                    ConsolidationRunType = run.Type,
-                    ConsolidationTemplateId = run.TemplateId,
-                    ConsolidationWorkspacePath = workspaceManager.GetWorkspacePath(run.RunId),
-                    RunId = run.RunId,
-                    AutoDispatch = run.AutoDispatch,
-                    // Carry the traceparent stored at trigger time so the resulting WorkItem
-                    // inherits the original trace even though Activity.Current is null here
-                    // (startup runs outside any HTTP request context).
-                    TraceContext = !string.IsNullOrEmpty(run.TraceParent)
-                        ? new Dictionary<string, string> { ["traceparent"] = run.TraceParent }
-                        : null
-                };
-                await workDistributor.DistributeAsync(request, CancellationToken.None);
+                await dispatcher.DispatchRunAsync(run, CancellationToken.None);
             }
         }
     }

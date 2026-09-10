@@ -1,6 +1,7 @@
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -34,6 +35,16 @@ public sealed class ConsolidationRehydrationExtensionsTests
         builder.Services.AddSingleton(_workDistributor.Object);
         builder.Services.AddSingleton(_profileStore.Object);
         builder.Services.AddSingleton(_workspaceManager.Object);
+
+        // Register the real ConsolidationDispatcher so that RunConsolidationStartupAsync
+        // can resolve IConsolidationDispatcher from the container. This lets existing
+        // _workDistributor.Verify() assertions continue to work — ConsolidationDispatcher
+        // delegates to IWorkDistributor internally.
+        builder.Services.AddSingleton<IConsolidationDispatcher>(sp => new ConsolidationDispatcher(
+            sp.GetRequiredService<IWorkDistributor>(),
+            sp.GetRequiredService<IAgentProfileStore>(),
+            sp.GetRequiredService<IConsolidationWorkspaceManager>(),
+            sp.GetRequiredService<IPipelineConfigStore>()));
 
         return builder.Build();
     }
@@ -70,15 +81,7 @@ public sealed class ConsolidationRehydrationExtensionsTests
     {
         await Assert.ThrowsAsync<ArgumentNullException>(
             () => ConsolidationRehydrationExtensions
-                .RunConsolidationStartupAsync(null!, new PipelineConfiguration()));
-    }
-
-    [Fact]
-    public async Task RunConsolidationStartupAsync_NullConfig_Throws()
-    {
-        await using var app = BuildApp();
-        await Assert.ThrowsAsync<ArgumentNullException>(
-            () => app.RunConsolidationStartupAsync(null!));
+                .RunConsolidationStartupAsync(null!));
     }
 
     // ── Orphan cleanup ────────────────────────────────────────────────────
@@ -89,7 +92,7 @@ public sealed class ConsolidationRehydrationExtensionsTests
         SetupDefaults(agents: Array.Empty<AgentEntryDto>());
         await using var app = BuildApp();
 
-        await app.RunConsolidationStartupAsync(new PipelineConfiguration());
+        await app.RunConsolidationStartupAsync();
 
         _consolidationService.Verify(
             s => s.CleanupOrphanedRunsAsync(
@@ -114,7 +117,7 @@ public sealed class ConsolidationRehydrationExtensionsTests
         SetupDefaults(agents: [activeAgent]);
         await using var app = BuildApp();
 
-        await app.RunConsolidationStartupAsync(new PipelineConfiguration());
+        await app.RunConsolidationStartupAsync();
 
         // The active job ID should NOT be in the orphan set — runs with that job ID are preserved
         _consolidationService.Verify(
@@ -147,7 +150,7 @@ public sealed class ConsolidationRehydrationExtensionsTests
         await using var app = BuildApp();
 
         // Should not throw — exception is swallowed and treated as "no live agents"
-        await app.RunConsolidationStartupAsync(new PipelineConfiguration());
+        await app.RunConsolidationStartupAsync();
 
         _consolidationService.Verify(
             s => s.CleanupOrphanedRunsAsync(
@@ -164,7 +167,7 @@ public sealed class ConsolidationRehydrationExtensionsTests
         SetupDefaults(queuedRuns: Array.Empty<ConsolidationRun>());
         await using var app = BuildApp();
 
-        await app.RunConsolidationStartupAsync(new PipelineConfiguration());
+        await app.RunConsolidationStartupAsync();
 
         // No runs to rehydrate → distributor never touched
         _workDistributor.Verify(
@@ -200,7 +203,7 @@ public sealed class ConsolidationRehydrationExtensionsTests
 
         await using var app = BuildApp();
 
-        await app.RunConsolidationStartupAsync(new PipelineConfiguration());
+        await app.RunConsolidationStartupAsync();
 
         // One dispatch per queued run
         _workDistributor.Verify(
@@ -250,7 +253,7 @@ public sealed class ConsolidationRehydrationExtensionsTests
 
         await using var app = BuildApp();
 
-        await app.RunConsolidationStartupAsync(new PipelineConfiguration());
+        await app.RunConsolidationStartupAsync();
 
         Assert.NotNull(capturedRequest);
         // AgentSelector should be built from profile's MatchLabels (broader set), not requiredLabels
@@ -288,7 +291,7 @@ public sealed class ConsolidationRehydrationExtensionsTests
 
         await using var app = BuildApp();
 
-        await app.RunConsolidationStartupAsync(new PipelineConfiguration());
+        await app.RunConsolidationStartupAsync();
 
         Assert.NotNull(capturedRequest);
         // No profile match → falls back to requiredLabels themselves as the selector
@@ -321,7 +324,7 @@ public sealed class ConsolidationRehydrationExtensionsTests
             .ReturnsAsync(new DistributionResult(true, null, null));
 
         await using var app = BuildApp();
-        await app.RunConsolidationStartupAsync(new PipelineConfiguration());
+        await app.RunConsolidationStartupAsync();
 
         Assert.NotNull(captured);
         Assert.Equal(runId, captured!.IssueIdentifier);
