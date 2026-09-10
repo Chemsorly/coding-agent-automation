@@ -1227,8 +1227,13 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             await Task.Delay(50);
         Assert.True(svc.IsCircuitBroken);
 
-        // Wait for auto-resume after cooldown (no manual intervention needed)
-        deadline = DateTime.UtcNow.AddSeconds(5);
+        // Wait for auto-resume after cooldown (no manual intervention needed).
+        // Use a 15-second deadline: the 1-second cooldown fires quickly in isolation, but under
+        // full parallel test suite load (~10 000 concurrent tests) the loop thread can be
+        // CPU-starved, making the SnapshotCycleConfigAsync round-trip that precedes the
+        // circuit-breaker wait significantly slower.  15 s matches the deadline used by the
+        // analogous Loop_CircuitBreakerResume_ResetsAndContinuesPolling test.
+        deadline = DateTime.UtcNow.AddSeconds(15);
         while (svc.IsCircuitBroken && DateTime.UtcNow < deadline)
             await Task.Delay(50);
 
@@ -1236,7 +1241,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         Assert.True(svc.IsLoopActive);
 
         // Verify polling continued after auto-resume
-        deadline = DateTime.UtcNow.AddSeconds(5);
+        deadline = DateTime.UtcNow.AddSeconds(15);
         while (callCount < 4 && DateTime.UtcNow < deadline)
             await Task.Delay(50);
         Assert.True(callCount >= 4, $"Expected at least 4 poll attempts (3 failures + 1 after resume), got {callCount}");
