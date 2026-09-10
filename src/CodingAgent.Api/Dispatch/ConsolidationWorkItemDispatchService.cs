@@ -31,7 +31,6 @@ internal sealed class ConsolidationWorkItemDispatchService : LeaderElectedPollin
     private readonly IConsolidationRunStore? _consolidationRunStore;
     private readonly IConsolidationService? _consolidationService;
     private readonly IConsolidationJobPreparationService? _consolidationJobPreparer;
-    private readonly IPipelineConfigStore? _pipelineConfigStore;
     private readonly IProjectStore? _projectStore;
     private readonly DispatchStateBuilder _stateBuilder;
 
@@ -62,7 +61,6 @@ internal sealed class ConsolidationWorkItemDispatchService : LeaderElectedPollin
         _consolidationRunStore = deps.ConsolidationRunStore;
         _consolidationService = deps.ConsolidationService;
         _consolidationJobPreparer = deps.ConsolidationJobPreparer;
-        _pipelineConfigStore = deps.PipelineConfigStore;
         _projectStore = deps.ProjectStore;
         _options = options;
 #pragma warning disable S3236 // Explicit "StateBuilder" param name required to match test contracts and error messages
@@ -274,11 +272,7 @@ internal sealed class ConsolidationWorkItemDispatchService : LeaderElectedPollin
             agentLabels,
             ct);
 
-        PipelineConfiguration? pipelineConfig = null;
-        if (_pipelineConfigStore is not null)
-            pipelineConfig = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
-
-        return (preparation.ProviderConfigs, preparation.RepoProviderConfigId, pipelineConfig);
+        return (preparation.ProviderConfigs, preparation.RepoProviderConfigId, preparation.PipelineConfiguration);
     }
 
     /// <summary>
