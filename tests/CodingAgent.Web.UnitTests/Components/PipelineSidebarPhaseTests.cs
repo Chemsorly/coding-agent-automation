@@ -14,17 +14,17 @@ public class PipelineSidebarPhaseTests : BunitContext
         PipelineStep currentStep,
         PipelineStep highWaterMark,
         string? brainProviderConfigId = null) => new()
-    {
-        RunId = Guid.NewGuid().ToString(),
-        IssueIdentifier = "99",
-        IssueTitle = "Phase Test",
-        IssueProviderConfigId = "ip-1",
-        RepoProviderConfigId = "rp-1",
-        StartedAt = DateTime.UtcNow.AddMinutes(-3),
-        CurrentStep = currentStep,
-        HighWaterMark = highWaterMark,
-        BrainProviderConfigId = brainProviderConfigId
-    };
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "99",
+            IssueTitle = "Phase Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            StartedAt = DateTime.UtcNow.AddMinutes(-3),
+            CurrentStep = currentStep,
+            HighWaterMark = highWaterMark,
+            BrainProviderConfigId = brainProviderConfigId
+        };
 
     // ─── Phase state aggregation ─────────────────────────────────────────
 
