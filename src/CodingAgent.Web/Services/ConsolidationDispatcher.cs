@@ -66,23 +66,6 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
                         "ConsolidationDispatcher: run {RunId} has no QueuedRequiredLabels; fell back to DefaultRequiredAgentLabels → selector '{Selector}'",
                         run.RunId, AgentSelectorKey.From(selectorLabels));
                 }
-                else if (profiles.Count > 0)
-                {
-                    // Last resort: pick the highest-priority enabled profile.
-                    // Only reached for old persisted runs (pre-fix) with no default labels configured.
-                    var fallbackProfile = profiles
-                        .Where(p => p.Enabled)
-                        .OrderByDescending(p => p.Priority)
-                        .ThenBy(p => p.Id, StringComparer.Ordinal)
-                        .FirstOrDefault();
-                    if (fallbackProfile is not null)
-                    {
-                        selectorLabels = fallbackProfile.MatchLabels;
-                        Log.Warning(
-                            "ConsolidationDispatcher: run {RunId} has no QueuedRequiredLabels and no DefaultRequiredAgentLabels; fell back to profile '{ProfileId}' → selector '{Selector}'",
-                            run.RunId, fallbackProfile.Id, AgentSelectorKey.From(selectorLabels));
-                    }
-                }
                 else
                 {
                     // Profiles are empty — startup race or profile store unavailable.
