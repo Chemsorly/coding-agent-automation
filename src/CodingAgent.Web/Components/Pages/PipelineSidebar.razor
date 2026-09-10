@@ -34,7 +34,6 @@
             if (visibleSteps.Count == 0) continue;
 
             var phaseState = GetPhaseState(visibleSteps);
-            var isPhaseExpanded = IsPhaseExpanded(phase.Name, phaseState);
             var completedCount = CountCompleted(visibleSteps);
             var phaseStateClass = PhaseStateCssClass(phaseState);
             var phaseTestId = phase.TestId;
@@ -42,15 +41,13 @@
             <div @key="phase.Name" class="phase-group phase-group-@phaseStateClass"
                  data-testid="phase-@phaseTestId"
                  data-phase-state="@phaseStateClass">
-                <div class="phase-header" @onclick="() => TogglePhase(phase.Name)" aria-expanded="@isPhaseExpanded.ToString().ToLower()">
-                    <span class="phase-chevron"><Icon Name="@(isPhaseExpanded ? "chevron-down" : "chevron-right")" /></span>
+                <div class="phase-header">
                     <span class="phase-icon"><Icon Name="@GetPhaseIcon(phaseState)" /></span>
                     <span class="phase-name">@phase.Name</span>
                     <span class="phase-counter">@GetPhaseCounter(phaseState, completedCount, visibleSteps.Count)</span>
                 </div>
 
-                <div class="phase-body @(isPhaseExpanded ? "" : "phase-body-collapsed")"
-                     aria-hidden="@(isPhaseExpanded ? "false" : "true")">
+                <div class="phase-body" aria-hidden="false">
                     @foreach (var step in visibleSteps)
                     {
                         var state = GetStepState(step);
@@ -144,10 +141,6 @@
     [Parameter] public int MaxRetries { get; set; } = 3;
 
     private readonly HashSet<PipelineStep> _expandedSteps = new();
-    /// <summary>Phases manually expanded by the user (overrides auto-collapse for completed/pending).</summary>
-    private readonly HashSet<string> _expandedPhases = new();
-    /// <summary>Phases manually collapsed by the user (overrides auto-expand for active/failed/retry).</summary>
-    private readonly HashSet<string> _collapsedPhases = new();
     private string? _lastRunId;
     /// <summary>Tracks whether the cost breakdown collapsible is expanded; persists across re-renders triggered by live state updates.</summary>
     private bool _costBreakdownExpanded;
@@ -207,8 +200,6 @@
         if (Run.RunId != _lastRunId)
         {
             _expandedSteps.Clear();
-            _expandedPhases.Clear();
-            _collapsedPhases.Clear();
             _costBreakdownExpanded = false;
             _lastRunId = Run.RunId;
         }
@@ -364,17 +355,6 @@
         return new StepStateFlags(hasActive, hasFailed, hasCancelled, hasRevisited, allCompleted, allPending);
     }
 
-    /// <summary>Determines if a phase should be visually expanded, considering both auto-expansion and user overrides.</summary>
-    private bool IsPhaseExpanded(string phaseName, PhaseState state)
-    {
-        // User explicitly collapsed an auto-expanded phase
-        if (_collapsedPhases.Contains(phaseName)) return false;
-        // User explicitly expanded a normally-collapsed phase
-        if (_expandedPhases.Contains(phaseName)) return true;
-        // Auto-expand active, failed, and retry phases
-        return state is PhaseState.Active or PhaseState.Failed or PhaseState.Retry;
-    }
-
     private static string GetPhaseIcon(PhaseState state) => state switch
     {
         PhaseState.Completed => "check-circle",
@@ -394,33 +374,6 @@
         PhaseState.Cancelled => $"{completed}/{total} cancelled",
         _ => $"0/{total}"
     };
-
-    /// <summary>Toggles phase expansion. Works for all phases including auto-expanded ones.</summary>
-    private void TogglePhase(string phaseName)
-    {
-        // If currently in the collapsed override set, remove it (re-expand)
-        if (_collapsedPhases.Remove(phaseName)) return;
-        // If currently in the expanded override set, remove it (re-collapse)
-        if (_expandedPhases.Remove(phaseName)) return;
-
-        // No override exists — determine current visual state and toggle
-        var phase = _phases.FirstOrDefault(p => p.Name == phaseName);
-        if (phase == null) return;
-
-        var visibleSteps = GetVisibleSteps(phase.Steps);
-        var phaseState = GetPhaseState(visibleSteps);
-
-        if (phaseState is PhaseState.Active or PhaseState.Failed or PhaseState.Retry)
-        {
-            // Auto-expanded → user wants to collapse
-            _collapsedPhases.Add(phaseName);
-        }
-        else
-        {
-            // Auto-collapsed (Completed, Cancelled, Pending) → user wants to expand
-            _expandedPhases.Add(phaseName);
-        }
-    }
 
     /// <summary>Counts completed steps without LINQ allocation.</summary>
     private int CountCompleted(List<PipelineStep> visibleSteps)
