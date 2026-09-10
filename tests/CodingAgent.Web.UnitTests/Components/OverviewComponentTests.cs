@@ -16,7 +16,10 @@ public class OverviewComponentTests : BunitContext
 {
     private static PagedResult<PipelineRunSummary> EmptyHistory() => new()
     {
-        Items = new List<PipelineRunSummary>(), Page = 1, PageSize = 100, HasMore = false
+        Items = new List<PipelineRunSummary>(),
+        Page = 1,
+        PageSize = 100,
+        HasMore = false
     };
 
     private static AgentEntryDto MakeConnectedAgent(string id = "agent-1") => new()
