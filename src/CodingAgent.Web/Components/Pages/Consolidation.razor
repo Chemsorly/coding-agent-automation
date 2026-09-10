@@ -1,4 +1,5 @@
-@* Route retired — this component is now embedded in Pipelines (AgentCoding.razor). /consolidation redirects there (ConsolidationRedirect.razor). *@
+@page "/consolidation"
+@layout CockpitLayout
 @implements IDisposable
 @using CodingAgent.Api.Client
 @using CodingAgent.Pipeline.Interfaces
@@ -12,8 +13,7 @@
 @inject ConsolidationBadgeService BadgeService
 @inject IPipelineApiConfigClient ConfigClient
 
-@* No <PageTitle> — this component is embedded in the Pipelines page and must not override its
-   browser-tab title (a <PageTitle> rendered later wins). The Pipelines page owns the title. *@
+<PageTitle>Consolidation - Coding Agent</PageTitle>
 
 <div class="consolidation-page">
     <header class="consolidation-header">
@@ -495,6 +495,12 @@
         }
     }
 
+    // TODO(WARNING): This method is `async void`. If LoadDataAsync (or InvokeAsync itself) throws
+    // an exception not caught internally, it will propagate on the thread-pool and terminate the
+    // process, because there is no caller to observe the returned Task. The ObjectDisposedException
+    // guard only covers the disposed-circuit case. Fix: convert to `async Task` and subscribe via
+    // `ConsolidationService.OnChange += () => _ = HandleConsolidationChangedAsync();`, or add a
+    // broad try/catch inside the InvokeAsync lambda to swallow/log unexpected exceptions.
     private async void HandleConsolidationChanged()
     {
         try
