@@ -301,12 +301,15 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     [Fact]
     public async Task K8sMode_AgentPostsRunningStatus_InvalidTransition_Returns400()
     {
-        // Arrange: WorkItem is Dispatched after synchronous dispatch.
-        // Dispatched→Running is valid. Test an actually invalid transition instead:
-        // try to go directly from Dispatched to Succeeded (must go through Running first).
-        var result = await DistributeDirectlyAsync("k8s-status-invalid-1001");
-        Assert.True(result.Success);
-        var workItemId = Guid.Parse(result.WorkItemId!);
+        // Arrange: put a WorkItem into Dispatched directly (the state a pod is in once its Job is
+        // running). DistributeAsync now enqueues as Pending and, with no agent connected, nothing
+        // moves it to Dispatched — so insert Pending and transition explicitly, mirroring
+        // K8sMode_AgentPostsFailedStatus_TransitionAccepted. Dispatched→Running is valid, so this
+        // tests an actually invalid transition: Dispatched → Succeeded (must go through Running first).
+        var workItemId = await InsertPendingWorkItemAsync("k8s-status-invalid-1001", "kiro,dotnet");
+        var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
+        await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
+            w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
         // WorkItem is Dispatched — Dispatched→Succeeded is not a valid transition
 
         // Act: try to transition Dispatched → Succeeded directly (skipping Running)
@@ -1091,14 +1094,15 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
             Assert.Equal("caa-lifecycle-pod", wi.AssignedAgentId);
         }
 
-        // ── Step 4: Agent connects to SignalR and registers with ActiveJob ──
-        // lifecycleAgent is already connected (from before dispatch); re-register with job
-        await lifecycleAgent.ConnectWithActiveJobAsync(
-            AgentHubUrl,
-            E2EWebApplicationFactory.TestApiKey,
-            workItemId.ToString(),
-            "k8s-lifecycle-e2e-9999",
-            "repo-lifecycle-e2e");
+        // ── Step 4: Agent is bootstrapped onto the work item on its existing hub connection ──
+        // When FakeJobController claimed the Pending item it called StartAssignedWorkItemAsync,
+        // which fetched the assignment over HTTP and re-registered on lifecycleAgent's SAME hub
+        // connection declaring the active job — exactly what a real work-item pod does. Awaiting
+        // JobAssigned confirms that bootstrap completed. Opening a second connection here (via
+        // ConnectWithActiveJobAsync) would leave two connections for one agent id; the hub evicts
+        // the duplicate, and the token-refresh call below would then hit the closed connection.
+        var assignment = await lifecycleAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.Equal(workItemId.ToString(), assignment.JobId);
 
         // Verify: agent is Busy in registry with correct ActiveJobId
         var registry = Fixture.AgentRegistry;

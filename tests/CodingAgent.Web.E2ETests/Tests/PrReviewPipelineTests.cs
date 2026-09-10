@@ -273,8 +273,10 @@ public sealed class PrReviewPipelineTests : E2ETestBase
         Assert.NotNull(statusText);
         Assert.Contains("Queued PR #55", statusText);
 
-        // WorkItem is created as Pending — FakeJobController will claim it to Dispatched.
-        var active = await Fixture.WorkItems.GetActiveAsync(olderThanSeconds: -3600, ct: CancellationToken.None);
-        Assert.Contains(active, w => w.IssueIdentifier == "55");
+        // WorkItem is enqueued as Pending. No agent is connected, so nothing claims it — it sits in
+        // the Pending queue, which is exactly the "queued for the Job Controller" outcome this test
+        // asserts. GetActiveAsync only returns Dispatched/Running items, so query the Pending queue.
+        var pending = await Fixture.WorkItems.GetPendingAsync(50, ct: CancellationToken.None);
+        Assert.Contains(pending, w => w.IssueIdentifier == "55");
     }
 }
