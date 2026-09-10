@@ -137,7 +137,7 @@ Each step is represented by the `PipelineStep` enum. The pipeline tracks both th
 | **PostingAnalysis** | Analysis comment posted to the GitHub issue |
 | **GeneratingCode** | Agent implements the changes. Also used during quality gate retries |
 | **ReviewingCode** | Multi-agent code review: each review agent writes findings, then a fix agent addresses `[CRITICAL]` items. After all review iterations complete, an AI-generated review summary and verdict (approve/request-changes) is produced and included in the PR body |
-| **RunningQualityGates** | Build, tests, coverage, and external CI checks run |
+| **RunningQualityGates** | Build, tests, and external CI checks run |
 | **PreparingForPullRequest** | Agent cleans up the working directory (removes debug artifacts, unused code, formatting). Quality gates run one final time after cleanup |
 | **CreatingPullRequest** | PR created (normal or draft). Blacklisted file detection happens here |
 | **GeneratingPrDescription** | Agent generates a structured PR description summarizing the changes (non-fatal on failure) |
@@ -190,10 +190,11 @@ flowchart TD
 Quality gates checked (in order):
 1. **Compilation** — Build command must succeed with 0 errors
 2. **Tests** — Test command must have 0 failures
-3. **Coverage** — Code coverage must meet `coverageThreshold` (if configured). Supports Cobertura XML (Python, .NET) and JaCoCo XML (Java) formats
-4. **External CI** — External CI pipeline must pass (if enabled). Requires commit + push before checking
+3. **External CI** — External CI pipeline must pass (if enabled). Requires commit + push before checking
 
-External CI is only evaluated after local gates (compilation, tests, coverage) pass. If any gate (including external CI) fails, the pipeline enters the retry loop — the agent gets error feedback and attempts to fix the code. After all retries are exhausted, the run falls back to a draft PR. Infrastructure-level CI failures (runner crashes, network errors) are counted separately via `MaxInfrastructureRetries` and do not consume the agent's code-fix retry budget.
+> **Coverage enforcement:** The built-in coverage threshold gate was retired. To enforce coverage minimums, pass the appropriate flag via the `TestArguments` field on the QGC (e.g., `--minimum-coverage 80` for a test runner that supports it, or `--coverage-fail-below 80` for pytest-cov). The test command will fail with a non-zero exit code if the threshold is not met, which the Tests gate will catch.
+
+External CI is only evaluated after local gates (compilation, tests) pass. If any gate (including external CI) fails, the pipeline enters the retry loop — the agent gets error feedback and attempts to fix the code. After all retries are exhausted, the run falls back to a draft PR. Infrastructure-level CI failures (runner crashes, network errors) are counted separately via `MaxInfrastructureRetries` and do not consume the agent's code-fix retry budget.
 
 **Conflict-restart short-circuit:** Before each empty-commit re-trigger push (and before the final exhaustion failure), `PollCiWithNotStartedRetryAsync` checks the PR's mergeability via `IsPullRequestBehindBaseAsync`. If the PR branch is `Conflicted` (dirty) with main, GitHub holds all required CI checks in "Expected — Waiting for status to be reported" state and will not schedule them regardless of how many commits are pushed. When a conflict is detected, the pipeline returns `ConflictRestart` status immediately without pushing any empty commit, without entering the retry loop, and without creating a draft PR. `run.FinalLabel = agent:next` is set, causing the issue to be automatically re-labelled `agent:next` and re-dispatched. The re-dispatched run enters `RunMode.Rework`, rebases (main wins), and re-enters the full pipeline. This avoids exhausting the 15-attempt retry budget (150+ minutes) on a branch that GitHub will never build.
 
