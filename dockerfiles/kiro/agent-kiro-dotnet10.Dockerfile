@@ -9,7 +9,7 @@
 # Pinned to 10.0.400 feature band to match global.json (rollForward: latestFeature)
 # --platform=$BUILDPLATFORM: SDK runs natively on the build host (ARM64 in CI, x64 locally).
 # Cross-compiles to the target platform via -a $TARGETARCH.
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.400 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.401 AS build
 ARG TARGETARCH
 WORKDIR /src
 
@@ -34,7 +34,7 @@ RUN dotnet publish src/CodingAgent.Agent/CodingAgent.Agent.csproj -c Release -a 
 
 # Stage 2: Runtime (full SDK — agent runs dotnet build/test for quality gates)
 # Pinned to 10.0.400 feature band to match global.json (rollForward: latestFeature)
-FROM mcr.microsoft.com/dotnet/sdk:10.0.400 AS runtime
+FROM mcr.microsoft.com/dotnet/sdk:10.0.401 AS runtime
 ARG TARGETARCH
 
 # Install dependencies for Kiro CLI and pipeline execution
