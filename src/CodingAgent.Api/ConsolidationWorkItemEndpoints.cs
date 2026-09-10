@@ -87,7 +87,6 @@ public static class ConsolidationWorkItemEndpoints
         WorkItemTransitionService transitionService,
         IDbContextFactory<PipelineDbContext> dbFactory,
         IConsolidationJobPreparationService consolidationJobPreparer,
-        IPipelineConfigStore? pipelineConfigStore,
         IProjectStore? projectStore,
         IConfiguration configuration,
         CancellationToken ct)
@@ -110,7 +109,7 @@ public static class ConsolidationWorkItemEndpoints
         ConsolidationWorkItemClaimPayload? enriched;
         try
         {
-            enriched = await EnrichPayloadAsync(entity, consolidationJobPreparer, pipelineConfigStore, projectStore, ct);
+            enriched = await EnrichPayloadAsync(entity, consolidationJobPreparer, projectStore, ct);
         }
         catch (Exception ex)
         {
@@ -168,7 +167,6 @@ public static class ConsolidationWorkItemEndpoints
     private static async Task<ConsolidationWorkItemClaimPayload?> EnrichPayloadAsync(
         Infrastructure.Persistence.Entities.WorkItemEntity entity,
         IConsolidationJobPreparationService preparer,
-        IPipelineConfigStore? pipelineConfigStore,
         IProjectStore? projectStore,
         CancellationToken ct)
     {
@@ -200,15 +198,11 @@ public static class ConsolidationWorkItemEndpoints
             agentLabels,
             ct);
 
-        Pipeline.Models.PipelineConfiguration? pipelineConfig = null;
-        if (pipelineConfigStore is not null)
-            pipelineConfig = await pipelineConfigStore.LoadPipelineConfigAsync(ct);
-
         var enrichedRequest = request with
         {
             ProviderConfigs = preparation.ProviderConfigs ?? [],
             RepoProviderConfigId = preparation.RepoProviderConfigId,
-            PipelineConfiguration = pipelineConfig ?? new Pipeline.Models.PipelineConfiguration()
+            PipelineConfiguration = preparation.PipelineConfiguration ?? new Pipeline.Models.PipelineConfiguration()
         };
 
         var enrichedJson = JsonSerializer.Serialize(enrichedRequest, PipelineJsonOptions.Default);

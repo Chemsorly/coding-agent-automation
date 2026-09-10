@@ -74,7 +74,12 @@ Reviewer Configurations define per-stack code review agents. Configured in Setti
 |----------------|-------------|--------|
 | Default Reviewers | *(empty — global fallback)* | Correctness, DotNetSpecialist, SecurityReviewer, TestQualityReviewer |
 
-Resolution: all Reviewer Configurations whose labels intersect with the job's labels are applied sequentially (ANY match). Each configuration contains one or more review agents that run in order. A configuration with empty MatchLabels acts as a global fallback (applies to all jobs). When no reviewer config matches, the default agents (Correctness, DotNetSpecialist, SecurityReviewer, TestQualityReviewer) are used as a fallback.
+Resolution: all Reviewer Configurations whose labels intersect with the job's labels are applied sequentially (ANY match). Each configuration contains one or more review agents that run in order. A configuration with empty MatchLabels acts as a global fallback (applies to all jobs). When no reviewer config matches (or all are disabled), the review phase is **skipped**. A warning is logged (`Pipeline {RunId} no reviewer configurations matched — review phase skipped`) and a `pipeline.review.skipped` telemetry counter is incremented. No review agents execute and the run completes as `agent:done` without a review comment. To ensure review always runs, keep the default reviewer configuration (`MatchLabels = []`) enabled in Settings → Reviewers.
+
+<!-- TODO [WARNING]: Verify that `pipeline.review.skipped` matches the externally observable OTel counter name
+     if the telemetry backend or metric export configuration is ever changed. The counter is defined in
+     PipelineTelemetry.cs as Meter.CreateCounter<long>("pipeline.review.skipped", ...) and referenced in
+     AgentPhaseExecutor.CodeReview.cs. If the name changes, update the counter name referenced above. -->
 
 ## Agent Lifecycle Labels
 
