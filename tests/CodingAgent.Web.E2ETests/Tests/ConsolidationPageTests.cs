@@ -7,8 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace CodingAgent.Web.E2ETests.Tests;
 
 /// <summary>
-/// E2E tests for the consolidation section — folded into the Pipelines page (/pipelines) when the
-/// legacy shell was retired (the old /consolidation route redirects there). Covers page rendering,
+/// E2E tests for the Consolidation page at /consolidation. Covers page rendering,
 /// trigger buttons, and the queued-dispatch feedback an operator sees. Feature 021 (Consolidation Loops).
 ///
 /// <para>
@@ -61,10 +60,9 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // Wait for the Blazor interactive content to render by checking for any section header
         await Page.WaitForSelectorAsync(".settings-section h2", new() { Timeout = 10_000 });
 
-        // Assert: the section is embedded in the Pipelines page now (its own header is hidden),
-        // so the page title reads "Pipelines".
+        // Assert: the page is now standalone at /consolidation with its own header.
         var title = await page.GetPageTitleAsync();
-        Assert.Contains("Pipelines", title);
+        Assert.Contains("Consolidation", title);
 
         // The consolidation section should show "No enabled templates configured."
         var pageText = await Page.TextContentAsync(".consolidation-page");
@@ -177,6 +175,11 @@ public sealed class ConsolidationPageTests : E2ETestBase
 
         // Only click if button is enabled (not blocked by stale state)
         var isDisabled = await page.IsBrainButtonDisabledAsync("Failure Template");
+        // TODO(WARNING): This early-return silently passes the test when the button is disabled
+        // (e.g. due to stale state from a prior test's seeded template not being cleared). If the
+        // button is perpetually disabled in the test environment, this test always reports green
+        // and never exercises the "no agent → queued" path. Fix: add an Assert.False(isDisabled)
+        // before the return, or ensure test isolation clears provider state between runs.
         if (isDisabled)
             return;
 

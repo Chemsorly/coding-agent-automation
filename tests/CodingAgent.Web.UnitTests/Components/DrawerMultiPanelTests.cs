@@ -112,7 +112,6 @@ public class DrawerMultiPanelTests : BunitContext
         Services.AddScoped<IEpicDrawerService, EpicDrawerService>();
         Services.AddScoped<AgentCodingPageService>();
         Services.AddScoped<NotificationService>();
-        Services.AddEmbeddedConsolidationDeps();
     }
 
     private void SetupDefaults()
