@@ -94,7 +94,12 @@ public sealed class KubernetesWorkDistributorTests
     [Fact]
     public async Task DistributeAsync_When409Conflict_ReturnsFailureResult()
     {
-        // 409 from CreateAsync means a live WorkItem already exists for this issue (partial unique index).
+        // 409 from CreateAsync means a live WorkItem already exists for this issue
+        // (the partial unique index on (IssueIdentifier, IssueProviderConfigId) rejects it).
+        // This is different from the old synchronous-dispatch path where 409 meant
+        // "concurrency limit reached". Capacity enforcement now lives in WorkItemDispatchService,
+        // which respects maxConcurrent when picking up Pending items; CreateAsync itself does
+        // not enforce concurrency.
         _client.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("conflict", null, System.Net.HttpStatusCode.Conflict));
 
@@ -107,6 +112,10 @@ public sealed class KubernetesWorkDistributorTests
     [Fact]
     public async Task DistributeAsync_When503ServiceUnavailable_ReturnsFailureResult()
     {
+        // 503 from CreateAsync indicates a transient API error (the server is unavailable).
+        // The old synchronous-dispatch path used 503 to signal "no PVC available"; that
+        // capacity check is now inside WorkItemDispatchService. CreateAsync returns 503
+        // only for true infrastructure failures.
         _client.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("server error", null, System.Net.HttpStatusCode.ServiceUnavailable));
 

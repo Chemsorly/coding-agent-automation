@@ -1558,7 +1558,7 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
     }
 
     [Fact]
-    public async Task DistributeAndFinalizeAsync_WhenDistributeSucceedsWithQueuedTrue_SkipsLabelConfirmAndReturnsQueued()
+    public async Task DistributeAndFinalizeAsync_WhenDistributeSucceedsWithQueuedTrue_SwapsLabelAtEnqueueTimeAndReturnsQueued()
     {
         // When the distributor returns Queued=true (item enqueued as Pending), DistributeAndFinalizeAsync
         // must swap the label to agent:in-progress immediately (so the issue shows as claimed while

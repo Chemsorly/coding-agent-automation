@@ -460,7 +460,13 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             // while it waits for WorkItemDispatchService to create the pod. The label stays
             // agent:in-progress for the lifetime of the run — WorkItemDispatchService does not
             // perform any additional label swap.
-            await ConfirmDistributionLabelAsync(request, ct);
+            //
+            // Best-effort — fully swallow ALL exceptions including OperationCanceledException.
+            // The WorkItem is already durably Pending in the DB; reverting here would leave
+            // the item stranded (WorkItemDispatchService will pick it up and dispatch). A failed
+            // label swap means the GitHub label stays agent:next, but the item will still be
+            // dispatched correctly. This is preferable to reverting the DB row.
+            await ConfirmDistributionLabelAsync(request, ct, swallowCancellation: true);
             return new DispatchOutcome(true, true, null);
         }
 
@@ -473,6 +479,15 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 
     /// <inheritdoc />
     public async Task ConfirmDistributionLabelAsync(JobDistributionRequest request, CancellationToken ct)
+        => await ConfirmDistributionLabelAsync(request, ct, swallowCancellation: false);
+
+    /// <param name="swallowCancellation">
+    /// When <c>true</c>, <see cref="OperationCanceledException"/> is also swallowed.
+    /// Use on the Pending-enqueue path where the WorkItem is already committed to the DB —
+    /// the best-effort reasoning applies fully (there is nothing safe to revert).
+    /// </param>
+    private async Task ConfirmDistributionLabelAsync(
+        JobDistributionRequest request, CancellationToken ct, bool swallowCancellation)
     {
         ArgumentNullException.ThrowIfNull(request);
 
@@ -489,6 +504,15 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                 request.IssueIdentifier);
             await _infra.LabelService.SwapLabelAsync(
                 request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.InProgress, ct);
+        }
+        catch (OperationCanceledException) when (swallowCancellation)
+        {
+            // Queued path: WorkItem already committed — swallow OCE so the item is not
+            // stranded by a cancellation that arrives after the DB write.
+            _logger.Warning(
+                "Orchestration: label swap to agent:in-progress cancelled for issue {IssueIdentifier} " +
+                "(WorkItem already Pending — label will be wrong until next cycle)",
+                request.IssueIdentifier);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

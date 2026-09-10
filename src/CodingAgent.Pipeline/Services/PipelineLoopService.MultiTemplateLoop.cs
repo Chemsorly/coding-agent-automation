@@ -234,8 +234,11 @@ public sealed partial class PipelineLoopService
 
         foreach (var item in pending)
         {
-            if (item.TaskType != WorkItemTaskType.Implementation)
+            if (item.TaskType == WorkItemTaskType.Consolidation)
             {
+                // Consolidation WorkItems are managed by ConsolidationWorkItemDispatchService
+                // which has its own lifecycle. Skip them — the eligibility map is built from
+                // issue-provider poll results and does not cover consolidation runs.
                 _queueSweepSkipped.Add(1);
                 continue;
             }
