@@ -87,8 +87,14 @@ public sealed class ConsolidationDispatcherTests
         };
 
         var sut = CreateSut();
-        // Must complete without throwing — failure is swallowed and logged
+        // Must complete without throwing — failure is swallowed and logged.
+        // Verify DistributeAsync was still called (failure happened after the call, not before).
         await sut.DispatchRunAsync(run, CancellationToken.None);
+
+        _workDistributor.Verify(
+            d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "DistributeAsync must be called even when the result is failure — swallow happens after the call");
     }
 
     /// <summary>
@@ -112,8 +118,14 @@ public sealed class ConsolidationDispatcherTests
         };
 
         var sut = CreateSut();
-        // Must complete without throwing — exception is swallowed and logged
+        // Must complete without throwing — exception is swallowed and logged.
+        // Verify DistributeAsync was called (throw happened inside it, not before).
         await sut.DispatchRunAsync(run, CancellationToken.None);
+
+        _workDistributor.Verify(
+            d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "DistributeAsync must be called — the exception comes from inside it, not before");
     }
 
     /// <summary>
