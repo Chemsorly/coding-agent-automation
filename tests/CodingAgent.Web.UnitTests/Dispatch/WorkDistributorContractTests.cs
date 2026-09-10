@@ -223,17 +223,18 @@ public class WorkDistributorAdditionalTests
     }
 
     [Fact]
-    public async Task Kubernetes_AfterDistribute_GetJobStatus_ReturnsDispatched()
+    public async Task Kubernetes_AfterDistribute_GetJobStatus_ReturnsPending()
     {
-        // Synchronous dispatch path: DistributeAsync calls POST /api/work-items/dispatch
-        // which atomically creates the WorkItem as Dispatched (K8s Job already running).
+        // Pending enqueue path: DistributeAsync calls POST /api/work-items (CreateAsync)
+        // which creates the WorkItem as Pending in the visible UI queue.
+        // WorkItemDispatchService will later pick it up and create the K8s Job.
         var sut = CreateKubernetes();
         var request = CreateMinimalRequest();
 
         var result = await sut.DistributeAsync(request, CancellationToken.None);
 
         var status = await sut.GetJobStatusAsync(result.WorkItemId!, CancellationToken.None);
-        status.Should().Be(JobDistributionStatus.Dispatched);
+        status.Should().Be(JobDistributionStatus.Pending);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -271,8 +272,8 @@ file static class ApiWorkItemClientFake
         var created = new List<(Guid Id, JobDistributionRequest Request)>();
         var mock = new Mock<IPipelineApiWorkItemClient>();
 
-        // DispatchAsync — the new synchronous dispatch endpoint. Creates the item as Dispatched.
-        mock.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+        // CreateAsync — the Pending enqueue endpoint. Creates the item as Pending in the visible UI queue.
+        mock.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((JobDistributionRequest request, CancellationToken _) =>
             {
                 var id = Guid.NewGuid();
@@ -280,10 +281,10 @@ file static class ApiWorkItemClientFake
                 return id;
             });
 
-        // After synchronous dispatch, the item is Dispatched (not Pending).
+        // After pending enqueue, the item is Pending (visible in queue, not yet Dispatched).
         mock.Setup(c => c.GetStatusAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((Guid id, CancellationToken _) =>
-                created.Any(w => w.Id == id) ? WorkItemStatus.Dispatched : null);
+                created.Any(w => w.Id == id) ? WorkItemStatus.Pending : null);
 
         mock.Setup(c => c.IsIssueDistributedAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string issueIdentifier, string providerConfigId, CancellationToken _) =>

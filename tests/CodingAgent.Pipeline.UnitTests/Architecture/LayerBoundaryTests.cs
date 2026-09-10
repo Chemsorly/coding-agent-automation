@@ -548,6 +548,13 @@ public partial class LayerBoundaryTests
             // (CodingAgent.Orchestration.UnitTests); it is not registered as a hosted service
             // anywhere in production and will be deleted once those tests are migrated.
             "ConsolidationWorkItemDispatchService",
+
+            // WorkItemDispatchService is registered via AddHostedService lambda pattern:
+            //   services.AddHostedService(sp => sp.GetRequiredService<WorkItemDispatchService>())
+            // The T4 scanner only detects AddHostedService<T>() (generic form), not the lambda
+            // pattern that resolves a pre-registered singleton. The service IS actively registered
+            // in ApiServiceCollectionExtensions.AddApiOrchestration.
+            "WorkItemDispatchService",
         };
 
         // ── Step 3: find all concrete BackgroundService subclasses in src files ──

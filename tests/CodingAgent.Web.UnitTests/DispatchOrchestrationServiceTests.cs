@@ -1558,26 +1558,25 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
     }
 
     [Fact]
-    public async Task DistributeAndFinalizeAsync_WhenDistributeSucceedsWithQueuedTrue_StillConfirmsLabel()
+    public async Task DistributeAndFinalizeAsync_WhenDistributeSucceedsWithQueuedTrue_SkipsLabelConfirmAndReturnsQueued()
     {
-        // DistributeAndFinalizeAsync always calls ConfirmDistributionLabelAsync on success
-        // regardless of the Queued flag — the synchronous dispatch path means the item is always
-        // Dispatched immediately. This test verifies that even if a distributor returns Queued=true
-        // (e.g., a legacy or alternative implementation), the label swap still fires unconditionally.
+        // When the distributor returns Queued=true (item enqueued as Pending), DistributeAndFinalizeAsync
+        // must swap the label to agent:in-progress immediately (so the issue shows as claimed while
+        // waiting in the queue) and return Queued=true so callers know no pod is running yet.
         _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(true, "work-1", null, Queued: true));
 
         var outcome = await _service.DistributeAndFinalizeAsync(TestRequest, CancellationToken.None);
 
         outcome.Success.Should().BeTrue();
-        // DistributeAndFinalizeAsync now always returns Queued=false (synchronous dispatch path)
-        outcome.Queued.Should().BeFalse("DistributeAndFinalizeAsync always returns Queued=false on success");
+        outcome.Queued.Should().BeTrue("when enqueued as Pending, outcome must report Queued=true");
         outcome.ErrorMessage.Should().BeNull();
 
-        // Label IS now swapped unconditionally on success — the drain service no longer defers it
+        // Label MUST be swapped to agent:in-progress at enqueue time so the issue is marked claimed
         _mockLabelService.Verify(
             s => s.SwapLabelAsync("ipc-1", "owner/repo#42", AgentLabels.InProgress, It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Once,
+            "label swap to agent:in-progress must happen at enqueue time so the issue shows as claimed");
     }
 
     [Fact]

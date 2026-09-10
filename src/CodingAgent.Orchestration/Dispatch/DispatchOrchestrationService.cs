@@ -453,8 +453,19 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             return new DispatchOutcome(false, false, result.ErrorMessage);
         }
 
-        // Synchronous dispatch path: every successful distribution is immediately Dispatched
-        // (no Pending queue). The label swap to agent:in-progress is always unconditional.
+        if (result.Queued)
+        {
+            // Pending enqueue path: item is in the Pending queue, no K8s Job running yet.
+            // Swap the label to agent:in-progress immediately so the issue is marked as claimed
+            // while it waits for WorkItemDispatchService to create the pod. The label stays
+            // agent:in-progress for the lifetime of the run — WorkItemDispatchService does not
+            // perform any additional label swap.
+            await ConfirmDistributionLabelAsync(request, ct);
+            return new DispatchOutcome(true, true, null);
+        }
+
+        // Synchronous dispatch path (non-Pending): item is already Dispatched (K8s Job running).
+        // Confirm the label swap to agent:in-progress.
         await ConfirmDistributionLabelAsync(request, ct);
 
         return new DispatchOutcome(true, false, null);

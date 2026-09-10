@@ -428,9 +428,8 @@ public static class ApiServiceCollectionExtensions
         // DispatchLifecycleService — shared PVC-selection lock + K8s Job creation lifecycle.
         // DispatchTemplateResolver — agent-selector → JobTemplate fallback resolution.
         // DispatchStateBuilder     — builds concurrency map and PVC availability state.
-        // These were previously only used internally by ConsolidationWorkItemDispatchService.
-        // They are now also used by the new synchronous dispatch endpoint, which eliminates
-        // the Pending queue for regular work items.
+        // Used by WorkItemDispatchService (non-consolidation Pending poll) and by
+        // ConsolidationWorkItemDispatchService (consolidation Pending poll).
         services.AddSingleton<CodingAgent.Api.Dispatch.DispatchLifecycleService>(sp =>
         {
             var jobClient = sp.GetService<IKubernetesJobClient>();
@@ -456,6 +455,26 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<JobTemplateStore>(),
                 sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchTemplateResolver>(),
                 DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>())));
+
+        // ── WorkItemDispatchService ──────────────────────────────────────────────────────────
+        // Polls Pending (non-consolidation) WorkItems ordered by PriorityWeight DESC, CreatedAt ASC
+        // and creates K8s Jobs when capacity is available. This restores the visible UI queue so
+        // operators can reorder work via PriorityWeight before pods are created.
+        // AlwaysLeaderService: all API replicas poll independently; race safety is provided by the
+        // CAS TransitionIfAsync(Pending→Dispatched) inside DispatchLifecycleService.
+        services.AddSingleton<CodingAgent.Api.Dispatch.AlwaysLeaderService>();
+        services.AddSingleton<CodingAgent.Api.Dispatch.WorkItemDispatchService>(sp =>
+            new CodingAgent.Api.Dispatch.WorkItemDispatchService(
+                new CodingAgent.Api.Dispatch.WorkItemDispatchServiceDependencies(
+                    sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+                    sp.GetRequiredService<CodingAgent.Api.Dispatch.AlwaysLeaderService>(),
+                    sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchLifecycleService>(),
+                    sp.GetRequiredService<JobTemplateStore>(),
+                    sp.GetRequiredService<IConfiguration>(),
+                    sp.GetRequiredService<WorkItemTransitionService>(),
+                    sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchStateBuilder>())));
+        services.AddHostedService(sp =>
+            sp.GetRequiredService<CodingAgent.Api.Dispatch.WorkItemDispatchService>());
 
         // ── WorkItemMetricsBackgroundService ──────────────────────────────────────────────────
         // Spec 047: Removed from API hosted services — replaced by WorkItemCountsPoller in

@@ -614,7 +614,7 @@ public class DispatchServiceConsolidationTests : IDisposable
         // Step 1: Insert via KubernetesWorkDistributor
         var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
         mockApiClient
-            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => Guid.NewGuid());
 
         var distributor = new KubernetesWorkDistributor(
@@ -639,8 +639,8 @@ public class DispatchServiceConsolidationTests : IDisposable
 
         var result = await distributor.DistributeAsync(request, CancellationToken.None);
         result.Success.Should().BeTrue();
-        // Synchronous dispatch path: Queued=false (item is Dispatched immediately)
-        result.Queued.Should().BeFalse("synchronous dispatch always returns Queued=false");
+        // Pending enqueue path: Queued=true (item is Pending in the visible UI queue)
+        result.Queued.Should().BeTrue("enqueue path returns Queued=true");
 
         // DistributeAsync is now API-backed and does not insert into local DB.
         // Insert the row directly so the consolidation dispatch service can find it.
