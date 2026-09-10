@@ -1,7 +1,8 @@
 using CodingAgent.AgentGateway;
 using CodingAgent.Api.Client;
 using CodingAgent.Infrastructure;
-using CodingAgent.Infrastructure.Locking;using CodingAgent.Infrastructure.Persistence;
+using CodingAgent.Infrastructure.Locking;
+using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Infrastructure.Persistence.Stores;
 using CodingAgent.Kubernetes;
@@ -324,7 +325,8 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<IProjectStore>(),
                 sp.GetRequiredService<ITokenVendingService>(),
                 Log.Logger,
-                sp.GetRequiredService<IAgentProfileStore>()));
+                sp.GetRequiredService<IAgentProfileStore>(),
+                sp.GetRequiredService<IPipelineConfigStore>()));
 
         // ── DispatchInfrastructure + AssignmentEnricher (issue #2171) ────────
         // DispatchInfrastructure aggregates ITokenVendingService, IProviderFactory,
