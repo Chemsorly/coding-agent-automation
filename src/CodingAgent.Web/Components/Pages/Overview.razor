@@ -49,7 +49,7 @@
     <div class="cockpit-stat-strip">
         <div class="cockpit-stat"><span class="cockpit-stat-l">Active</span><span class="cockpit-stat-v">@_activeCount</span></div>
         <div class="cockpit-stat"><span class="cockpit-stat-l">Queue</span><span class="cockpit-stat-v">@_queueCount</span></div>
-        <div class="cockpit-stat"><span class="cockpit-stat-l">Agents</span><span class="cockpit-stat-v">@_agentsOnline<span style="font-size: 15px; color: var(--text-faint);">/@_agentsTotal</span></span></div>
+        <div class="cockpit-stat"><span class="cockpit-stat-l">Agents</span><span class="cockpit-stat-v">@_agentsOnline</span></div>
         <div class="cockpit-stat"><span class="cockpit-stat-l">Success · recent</span><span class="cockpit-stat-v">@(_finishedCount > 0 ? $"{_successRate}%" : "—")</span></div>
         <div class="cockpit-stat"><span class="cockpit-stat-l">Tokens · recent</span><span class="cockpit-stat-v">@CostFormatter.FormatTokens(_tokensRecent)</span></div>
     </div>
@@ -140,7 +140,6 @@
     private int _activeCount;
     private int _queueCount;
     private int _agentsOnline;
-    private int _agentsTotal;
     private int _finishedCount;
     private int _successRate;
     private long _tokensRecent;
@@ -174,7 +173,6 @@
         try
         {
             var agents = await AgentClient.GetAgentsAsync(_cts.Token);
-            _agentsTotal = agents.Count;
             _agentsOnline = agents.Count(a => a.Status != AgentStatus.Disconnected);
         }
         catch (OperationCanceledException) { return; }

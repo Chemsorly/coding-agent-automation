@@ -453,8 +453,17 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
             .ThrowsAsync(new System.Net.Http.HttpRequestException(
                 "Response status code does not indicate success: 404 (Not Found)."));
 
+        // Capture Environment.ExitCode atomically inside StopApplication() callback, which is
+        // called by the service immediately after setting Environment.ExitCode. Reading it after
+        // Task.WhenAny is racy in CI because parallel tests may reset Environment.ExitCode = 0
+        // between the service setting it and the test reading it.
+        var capturedExitCode = 0;
         var stopCalled = new TaskCompletionSource<bool>();
-        _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
+        _mockLifetime.Setup(l => l.StopApplication()).Callback(() =>
+        {
+            capturedExitCode = Environment.ExitCode;
+            stopCalled.TrySetResult(true);
+        });
 
         var service = new WorkItemAgentService(new WorkItemAgentServiceDependencies(
             "job-404", client, mockConnectionManager.Object,
@@ -476,12 +485,11 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         }
         finally
         {
-            var actualExitCode = Environment.ExitCode;
             Environment.ExitCode = previousExitCode;
-
-            actualExitCode.Should().NotBe(0,
-                "Hub 404 is a failure — pod must exit non-zero so K8s marks it as Failed");
         }
+
+        capturedExitCode.Should().NotBe(0,
+            "Hub 404 is a failure — pod must exit non-zero so K8s marks it as Failed");
 
         // Assert: the 404-specific log message was emitted (not the generic one)
         _mockLogger.Verify(
