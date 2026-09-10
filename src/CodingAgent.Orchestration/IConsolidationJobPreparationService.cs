@@ -4,8 +4,9 @@ namespace CodingAgent.Orchestration;
 
 /// <summary>
 /// Result of preparing a consolidation job for dispatch.
-/// Contains vended provider configs and the resolved repo provider ID needed
-/// for both SignalR and K8s dispatch paths.
+/// Contains vended provider configs, the resolved repo provider ID, and the fully-resolved
+/// pipeline configuration (with project and template overrides applied) needed for both
+/// SignalR and K8s dispatch paths.
 /// </summary>
 public sealed record ConsolidationJobPreparationResult
 {
@@ -14,6 +15,19 @@ public sealed record ConsolidationJobPreparationResult
 
     /// <summary>Resolved repo provider config ID (from template). Empty if no template/repo.</summary>
     public required string RepoProviderConfigId { get; init; }
+
+    /// <summary>
+    /// Pipeline configuration resolved via <see cref="Pipeline.Services.PipelineConfigurationResolver.ResolveAsync"/>,
+    /// with project overrides and template overrides applied. Never null — falls back to global
+    /// config (no overrides) when no template or owning project is available.
+    /// </summary>
+    // TODO [WARNING]: This property is declared nullable (PipelineConfiguration?) but the contract above states
+    // "Never null". The implementation always assigns a non-null value via ResolvePipelineConfigurationAsync.
+    // The nullable declaration forces callers to use null-coalescing fallbacks (?? new PipelineConfiguration())
+    // which silently discard resolved project overrides if a future code path forgets to assign the field.
+    // Consider changing to `public required PipelineConfiguration PipelineConfiguration { get; init; }` to
+    // match the documented guarantee and eliminate the nullable/doc-comment contradiction.
+    public PipelineConfiguration? PipelineConfiguration { get; init; }
 }
 
 /// <summary>
