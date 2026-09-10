@@ -10,7 +10,7 @@ namespace CodingAgent.AgentGateway;
 /// Groups the core dependencies of <see cref="AgentHub"/> to reduce
 /// constructor parameter count (S107). All members are required.
 /// T10 (arch-audit 2026-08-22): Consolidation cluster extracted into
-/// <see cref="IHubConsolidationOperations"/> — record reduced from 13 to 10 members.
+/// <see cref="IHubConsolidationOperations"/> — record reduced from 13 to 11 members.
 /// </summary>
 public sealed record AgentHubDependencies(
     IAgentHubFacade Facade,

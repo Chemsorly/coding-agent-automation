@@ -77,7 +77,7 @@ services.AddSingleton<IPipelineCancellationFacade>(sp => new PipelineCancellatio
 
 | Component | Path |
 |-----------|------|
-| `IPipelineCancellationFacade` | `src/CodingAgent.Pipeline/Interfaces/IPipelineCancellationFacade.cs` |
+| `IPipelineCancellationFacade` | `src/CodingAgent.Contracts/Interfaces/IPipelineCancellationFacade.cs` |
 | `PipelineCancellationFacade` | `src/CodingAgent.Pipeline/Services/PipelineCancellationFacade.cs` |
 | `PipelineRunLifecycleService` | `src/CodingAgent.Pipeline/Services/PipelineRunLifecycleService.cs` |
 | `PipelineOrchestrationService` | `src/CodingAgent.Pipeline/Services/PipelineOrchestrationService.cs` |

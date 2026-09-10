@@ -67,7 +67,7 @@ public static class AgentHubServiceCollectionExtensions
 
         // AgentHubDependencies is scoped to match the Hub's per-connection lifetime.
         // All wrapped dependencies are singletons, so this is a safe downgrade.
-        // T10: 13 → 10 members — consolidation cluster extracted into IHubConsolidationOperations.
+        // T10: 13 → 11 members — consolidation cluster extracted into IHubConsolidationOperations.
         services.AddScoped(sp => new AgentHubDependencies(
             sp.GetRequiredService<IAgentHubFacade>(),
             sp.GetRequiredService<IChatNotifier>(),

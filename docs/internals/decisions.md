@@ -45,7 +45,7 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 **Payoff:** `AgentHubConsolidationTests` can now test `HubConsolidationOperations` directly without requiring `null!` for `ModelFetchService` (which was sealed/unmockable).
 
-**Reassess when:** If the remaining 10 deps prove unwieldy, apply the same Facade Service pattern to the IssueOps or Lifecycle clusters.
+**Reassess when:** If the remaining 11 deps prove unwieldy, apply the same Facade Service pattern to the IssueOps or Lifecycle clusters.
 
 ### Environment variable options binding (T11)
 

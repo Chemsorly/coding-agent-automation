@@ -6,7 +6,7 @@ See also: [Pipeline Orchestration](pipeline-orchestration.md) for how pipeline s
 
 ## Metrics
 
-All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `PipelineTelemetry.cs`.
+All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `PipelineTelemetry.cs` (`src/CodingAgent.Infrastructure.Common/Telemetry/PipelineTelemetry.cs`).
 
 | Metric | Type | Unit | Tags | Description |
 |--------|------|------|------|-------------|
@@ -156,7 +156,7 @@ The Job Controller-side recordings are not affected by any of the above.
 
 ### Work Distribution Metrics
 
-The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetry.cs` (in the `CodingAgent.Pipeline` assembly, namespace `CodingAgent.Pipeline.Telemetry`). Instruments are fed by `DispatchService` and `ReconciliationService` in the Job Controller, and by `WorkItemMetricsBackgroundService` in the Pipeline API (`workitems_by_status` gauge only).
+The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetry.cs` (`src/CodingAgent.Infrastructure.Common/Telemetry/WorkDistributionTelemetry.cs`, namespace `CodingAgent.Pipeline.Telemetry`). Instruments are fed by `ReconciliationService` in the Job Controller, and by `WorkItemMetricsBackgroundService` in the Pipeline API (`workitems_by_status` gauge only).
 
 | Metric | Type | Unit | Tags | Description |
 |--------|------|------|------|-------------|
@@ -275,12 +275,14 @@ Telemetry is exported via OTLP. The OpenTelemetry SDK reads configuration from s
 
 Agent pods emit telemetry with `service.name` derived from the agent image and labels.
 
-| `service.name` | Component | Port |
-|----------------|-----------|------|
-| `coding-agent-web` | Web service | — |
-| `coding-agent-api` | REST/WebSocket API | Port 8080 |
-| `coding-agent-jobcontroller` | Job Controller | Port 8080 |
-| `coding-agent-scheduler` | Scheduler | Port 8080 |
+| `service.name` | Component | Port | How configured |
+|----------------|-----------|------|----------------|
+| `coding-agent-web` | Web service (Blazor UI) | — | Hardcoded at compile time in `OpenTelemetryRegistration.cs`; not overridable via `OTEL_SERVICE_NAME` |
+| `coding-agent-web` *(default)* or override | REST/WebSocket API | Port 8080 | Set via `otel.apiServiceName` in `values.yaml` (default: `coding-agent-web`). Override to `coding-agent-api` to separate API spans from Blazor spans in Tempo — then also update Grafana panel queries. |
+| `coding-agent-jobcontroller` | Job Controller | Port 8080 | Fixed fallback; overridable via `OTEL_SERVICE_NAME` env var |
+| `coding-agent-scheduler` | Scheduler | Port 8080 | Fixed fallback; overridable via `OTEL_SERVICE_NAME` env var |
+
+> **Why API defaults to `coding-agent-web`:** The Grafana "Recent Pipeline Traces" panel queries `rootServiceName="coding-agent-web"`. With the API emitting under the same service name, `ExecutePipeline` spans (started by the API when a WorkItem is created) appear in that panel automatically. Override `otel.apiServiceName` to `coding-agent-api` if you want to distinguish API-origin spans from Blazor UI spans; then update the panel query to `rootServiceName=~"coding-agent-web|coding-agent-api"`. See issue #2255.
 
 ### Example: Grafana Cloud
 

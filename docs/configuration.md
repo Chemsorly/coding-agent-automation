@@ -169,6 +169,7 @@ Controls automated PR branch management for templates with `HousekeepingEnabled:
 |---------|---------|-------------|
 | `housekeepingConcurrencyLimit` | `1` | Max PRs simultaneously in "update triggered, CI running" state per repository. Enforced per `RepoProviderId`, not per template. Default: 1 (fully serial). Can be overridden per template via `HousekeepingConcurrencyLimit` on the `PipelineJobTemplate`. |
 | `housekeepingBranchCleanupIntervalMinutes` | `60` | How often (in minutes) stale agent branch cleanup runs per repository. Set to `0` to run every poll cycle. Only active when the template has `HousekeepingBranchCleanupEnabled: true`. |
+| `housekeepingTriggerCooldownMinutes` | `25` | Minimum minutes between consecutive branch-update triggers for the same PR. Prevents a single PR from consuming the update slot on every poll cycle when CI takes longer than one interval. |
 
 Per-template controls (on `PipelineJobTemplate`):
 

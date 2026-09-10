@@ -193,7 +193,29 @@ Set the dispatch priority weight for a pending work item. Operators call this to
 
 ---
 
-## Config Import/Export Endpoints
+### GET /api/work-items/active
+
+List all currently non-terminal work items (status: `Pending`, `Dispatched`, or `Running`). Used by the Job Controller's `ReconciliationService` and the Scheduler's `WorkItemCountsPoller`.
+
+**Authentication:** OperatorApiKey
+
+**Response:** `200` — JSON array of `ActiveWorkItemDto`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | GUID | Work item identifier (= `PipelineRun.RunId`) |
+| `status` | string | `Pending`, `Dispatched`, or `Running` |
+| `dispatchedAt` | datetime? | When the item was dispatched (null if still pending) |
+| `agentSelector` | string | Label selector used to match an agent |
+| `issueIdentifier` | string | Issue or PR identifier (e.g., `owner/repo#42`) |
+| `issueTitle` | string? | Issue title extracted from payload; null for older items |
+| `k8sJobName` | string? | K8s Job name assigned at dispatch; null if not yet dispatched |
+| `timeoutSeconds` | int | Per-item agent timeout in seconds (0 = pre-dates field; fall back to global `AgentTimeout`) |
+| `currentStep` | string? | Current `PipelineStep` value from the in-memory run state. `null` when no live run is tracked (e.g., after API restart without Redis). |
+
+---
+
+
 
 > ⚠️ **Warning:** The import endpoint is destructive — it clears ALL existing configuration before inserting the uploaded bundle. This operation is transactional (atomic commit or full rollback).
 

@@ -144,6 +144,59 @@ public class RefreshBarComponentTests : BunitContext
     }
 
     /// <summary>
+    /// Verifies that an exception thrown by the OnRefresh callback does NOT kill the
+    /// auto-refresh loop — subsequent ticks must still fire the callback.
+    ///
+    /// Root cause: RunTickLoopAsync only catches OperationCanceledException and
+    /// ObjectDisposedException. Any other exception (e.g. HttpRequestException from
+    /// Attention/Insights pages) propagates out of the while body and permanently
+    /// kills auto-refresh for the component lifetime with no log or user-visible
+    /// indication. This was a cross-PR semantic conflict introduced when PR#2420
+    /// added RefreshBar to pages (Attention, Insights) whose callbacks lack the
+    /// bare catch{} guard that Work/Fleet/Runs have.
+    /// </summary>
+    [Fact]
+    public async Task RefreshBar_AutoRefresh_ContinuesFiringAfterCallbackThrows()
+    {
+        var callCount = 0;
+        var secondCallTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var cut = Render<RefreshBar>(p => p
+            .Add(c => c.OnRefresh, EventCallback.Factory.Create(this, () =>
+            {
+                var n = Interlocked.Increment(ref callCount);
+                if (n == 1) throw new InvalidOperationException("Simulated transient callback failure");
+                if (n >= 2) secondCallTcs.TrySetResult();
+            })));
+
+        // Start a 1-second timer via reflection (same technique as the AutoRefresh fires test).
+        await cut.InvokeAsync(() =>
+        {
+            var instance = cut.Instance;
+            var type = instance.GetType();
+
+            var intervalField = type.GetField("_intervalSeconds",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            Assert.NotNull(intervalField);
+            intervalField.SetValue(instance, 1);
+
+            var restartMethod = type.GetMethod("RestartTimer",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            Assert.NotNull(restartMethod);
+            return (Task)restartMethod.Invoke(instance, null)!;
+        });
+
+        // Wait for the second call (up to 10 seconds — first tick throws, second tick should still fire).
+        var completed = await Task.WhenAny(secondCallTcs.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+
+        completed.Should().Be(secondCallTcs.Task,
+            "auto-refresh loop must survive a transient callback exception and continue firing; " +
+            "a loop that exits on the first exception would never invoke OnRefresh a second time");
+        callCount.Should().BeGreaterThanOrEqualTo(2,
+            "OnRefresh must be called at least twice — once throwing, once succeeding");
+    }
+
+    /// <summary>
     /// Verifies that enabling auto-refresh by changing the interval selector actually fires
     /// the OnRefresh callback at least once after the interval elapses.
     ///

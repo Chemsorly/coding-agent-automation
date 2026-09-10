@@ -80,31 +80,41 @@
         if (_intervalSeconds <= 0) return;
 
         _timerCts = new CancellationTokenSource();
-        _timer = new PeriodicTimer(TimeSpan.FromSeconds(_intervalSeconds));
+        var timer = new PeriodicTimer(TimeSpan.FromSeconds(_intervalSeconds));
+        _timer = timer;
         var token = _timerCts.Token;
-        _ = RunTickLoopAsync(token);
+        _ = RunTickLoopAsync(timer, OnRefresh, token);
     }
 
-    private async Task RunTickLoopAsync(CancellationToken ct)
+    private static async Task RunTickLoopAsync(PeriodicTimer timer, EventCallback onRefresh, CancellationToken ct)
     {
-        // TODO: [WARNING] _timer is a shared mutable field. If RestartTimer is called while this loop is
-        // awaiting WaitForNextTickAsync and the tick returns true, the loop re-reads _timer! after the
-        // await resumes. If RestartTimer has already disposed and nulled _timer (interval changed to Off),
-        // this produces a NullReferenceException that is not caught here (only OperationCanceledException
-        // and ObjectDisposedException are caught). Fix: capture the timer in a local variable passed as a
-        // parameter — `RunTickLoopAsync(PeriodicTimer timer, CancellationToken ct)` — and use the local
-        // inside the loop so it is never affected by field reassignment.
+        // Timer is passed as a local parameter (not read from the shared _timer field) so that
+        // a concurrent RestartTimer call that disposes and nulls _timer does not affect this loop.
+        // Cancellation is the correct exit path: RestartTimer calls CancelAsync() on the token
+        // before disposing the timer, so WaitForNextTickAsync throws OperationCanceledException
+        // and the loop exits cleanly before the timer is disposed.
         try
         {
-            while (await _timer!.WaitForNextTickAsync(ct))
+            while (await timer.WaitForNextTickAsync(ct))
             {
-                // TODO: [WARNING] If OnRefresh.InvokeAsync() throws any exception other than
-                // OperationCanceledException or ObjectDisposedException, the exception propagates out
-                // of the while body and is caught by neither catch below. The unhandled exception
-                // terminates this fire-and-forget task silently, permanently killing auto-refresh for
-                // the component lifetime with no log or user-visible indication. Fix: add an outer
-                // catch (Exception ex) with a debug log to survive transient callback failures.
-                await OnRefresh.InvokeAsync();
+                try
+                {
+                    await onRefresh.InvokeAsync();
+                }
+                catch (OperationCanceledException)
+                {
+                    // Cancellation during callback — propagate to exit the loop.
+                    throw;
+                }
+                catch
+                {
+                    // Swallow transient callback exceptions (e.g. HttpRequestException on a
+                    // network hiccup) so the auto-refresh loop survives and retries on the next
+                    // tick. Without this guard, a single callback failure permanently kills
+                    // auto-refresh for the component lifetime with no log or user-visible
+                    // indication. Pages like Attention and Insights whose callbacks lack an
+                    // outer bare catch{} are the primary beneficiaries.
+                }
             }
         }
         catch (OperationCanceledException) { }
