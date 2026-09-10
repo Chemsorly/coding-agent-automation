@@ -15,7 +15,7 @@ Supporting libraries (shared, not deployed independently):
 - **Orchestration** (`CodingAgent.Orchestration`) — Dispatch logic, agent registry, run lifecycle, telemetry. Linked into the Pipeline API, Scheduler, and Orchestrator. References `Infrastructure.Providers` directly; does not reference `Infrastructure.Persistence`.
 - **Infrastructure.Persistence** (`CodingAgent.Infrastructure.Persistence`) — EF Core context, database migrations, config store. Directly referenced by `CodingAgent.Api` and `CodingAgent.AgentGateway`. The Scheduler and Orchestrator have no direct or transitive reference to Persistence.
 - **Infrastructure.Providers** (`CodingAgent.Infrastructure.Providers`) — Provider implementations (GitHub, GitLab, filesystem), token vending. Linked into the Pipeline API, Agent, Scheduler, Job Controller, and Orchestration.
-- **Pipeline** (`CodingAgent.Pipeline`) — Core pipeline model, step execution, `PipelineLoopService`, `HousekeepingService`, `DispatchScheduler`, interfaces, constants. Linked into the Scheduler (which registers and runs these services) and Pipeline API.
+- **Pipeline** (`CodingAgent.Pipeline`) — Core pipeline model, step execution, `PipelineLoopService`, `HousekeepingService`, `DispatchScheduler`, interfaces, constants. Linked into the Scheduler (which registers and runs these services), the Pipeline API, and the Orchestrator (for pipeline model types and loop-status polling).
 - **Hub** (`CodingAgent.AgentGateway`) — Full hub implementation: `AgentHub` (split across 8 partial classes), authentication handlers (`AgentApiKeyAuthHandler`), `ChatJobDispatcher` (ephemeral chat pod dispatch), job lifecycle services (`AgentJobLifecycleService`, `AgentOrphanRecoveryService`, `AgentTokenRefreshService`), `AgentHubFacade`, and DI wiring. Linked into the Pipeline API and Orchestrator.
 
 ### Agent API Keys
@@ -77,6 +77,7 @@ The chart deploys:
 | Path | Description |
 |------|-------------|
 | `orchestrator.image.repository/tag` | Orchestrator container image |
+| `web.replicas` | Number of Orchestrator (web) replicas (default: `2`). Values > 1 require `signalr.redis.connectionString` to be set for correct chat keepalive behavior (see Redis note below). |
 | `api.replicas` | Number of Pipeline API replicas (default: `1`). Values > 1 require `signalr.redis.connectionString` to be set — the chart fails at render time otherwise, since without Redis in-memory state cannot be shared across replicas. |
 | `jobTemplates[]` | List of K8s Job templates defining pod specs per label set. Each entry controls which image, resources, securityContext, initContainers, and `maxConcurrent` to use when dispatching work-item pods. |
 | `secrets.agentApiKey` | HMAC master key for agent auth |
@@ -256,6 +257,8 @@ rules:
 ### Health Probe Endpoints
 
 All deployments expose `/healthz` (liveness) and `/readyz` (readiness) endpoints on port 8080. No authentication required.
+
+> **Note:** The Scheduler Dockerfile uses `/health` in its `HEALTHCHECK` instruction rather than `/healthz`. Both paths return the same response — the difference only affects the Docker-level health check, not Kubernetes probes (which read from `values.yaml`).
 
 | Process | `/healthz` behavior | `/readyz` behavior |
 |---------|--------------------|--------------------|
