@@ -333,6 +333,50 @@ public sealed class ConsolidationDispatcherTests
     }
 
     /// <summary>
+    /// When profiles are empty (startup race) AND no DefaultRequiredAgentLabels configured,
+    /// dispatch proceeds with an empty selector — the distributor call will 409,
+    /// run stays Queued for rehydration. No throw.
+    /// </summary>
+    [Fact]
+    public async Task DispatchRunAsync_OldRunNullLabels_EmptyProfiles_NoDefault_ProducesEmptySelector()
+    {
+        // Arrange: startup race — profiles empty AND no default labels
+        _configStore
+            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration()); // DefaultRequiredAgentLabels = null
+
+        _profileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>()); // empty — startup race
+
+        _workspaceManager
+            .Setup(m => m.GetWorkspacePath(It.IsAny<RunId>()))
+            .Returns("/workspaces/test");
+
+        _workDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(false, null, "No agent selector"));
+
+        var run = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.BrainConsolidation,
+            Status = ConsolidationRunStatus.Queued,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            QueuedRequiredLabels = null
+        };
+
+        var sut = CreateSut();
+        // Must not throw — graceful degradation, run stays Queued for rehydration retry
+        await sut.DispatchRunAsync(run, CancellationToken.None);
+
+        // DistributeAsync is still called (with empty selector), the 409 is swallowed
+        _workDistributor.Verify(
+            d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
     /// When QueuedRequiredLabels is null and DefaultRequiredAgentLabels is configured,
     /// the dispatcher uses DefaultRequiredAgentLabels to resolve the profile.
     /// </summary>
