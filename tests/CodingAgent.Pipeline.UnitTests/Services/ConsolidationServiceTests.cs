@@ -121,6 +121,59 @@ public sealed class ConsolidationServiceTests : IDisposable
         run.StartedAtUtc.Should().BeOnOrBefore(before.AddSeconds(10));
     }
 
+    /// <summary>
+    /// Regression test: TriggerAsync must stamp QueuedRequiredLabels on the created run so the
+    /// dispatcher has a deterministic selector without guessing from runtime profile state.
+    /// Previously, BuildNewRun never set QueuedRequiredLabels, causing ConsolidationDispatcher
+    /// to produce AgentSelectorKey.From([]) = "" → 409 "no job template for agent selector: ''"
+    /// → run stayed Queued forever.
+    /// </summary>
+    [Fact]
+    public async Task TriggerAsync_WithDefaultRequiredAgentLabels_StampsQueuedRequiredLabelsOnRun()
+    {
+        // Arrange: configure DefaultRequiredAgentLabels so LabelResolver.ResolveRequiredLabels returns them
+        var configWithLabels = new PipelineConfiguration
+        {
+            WorkspaceBaseDirectory = _tempDir,
+            DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10"
+        };
+        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
+            _logger,
+            configWithLabels,
+            _mockProjectStore.Object,
+            _mockRunHistory.Object,
+            new FileSystemConsolidationRunStore(_runsDir),
+            new FileSystemHarnessSuggestionStore(_suggestionsPath),
+            WorkspaceManager: new ConsolidationWorkspaceManager(_logger, configWithLabels)));
+
+        // Act
+        var run = await sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
+
+        // Assert: QueuedRequiredLabels must be set from DefaultRequiredAgentLabels
+        run.Should().NotBeNull();
+        run!.QueuedRequiredLabels.Should().NotBeNull(
+            "QueuedRequiredLabels must be populated at trigger time so dispatch never produces an empty selector");
+        run.QueuedRequiredLabels.Should().BeEquivalentTo(
+            new[] { "kiro", "dotnet", "dotnet10" },
+            "labels must match DefaultRequiredAgentLabels from PipelineConfiguration");
+    }
+
+    [Fact]
+    public async Task TriggerAsync_WithNoDefaultRequiredAgentLabels_LeavesQueuedRequiredLabelsNull()
+    {
+        // When DefaultRequiredAgentLabels is not configured, QueuedRequiredLabels stays null
+        // (any agent matches — the dispatcher falls back to profile-based selection).
+        var sut = CreateSut(); // _config has no DefaultRequiredAgentLabels
+
+        var run = await sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
+
+        run.Should().NotBeNull();
+        run!.QueuedRequiredLabels.Should().BeNull(
+            "when no default labels are configured, QueuedRequiredLabels should be null so any agent can handle it");
+    }
+
     [Fact]
     public async Task TriggerAsync_ValidTemplate_PersistsRunToDisk()
     {

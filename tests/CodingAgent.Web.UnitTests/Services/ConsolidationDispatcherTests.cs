@@ -234,39 +234,26 @@ public sealed class ConsolidationDispatcherTests
     // ── Selector fallback when QueuedRequiredLabels is null ───────────────
 
     /// <summary>
-    /// Regression test for: consolidation runs triggered from the UI always stayed Queued
-    /// because ConsolidationService.BuildNewRun never sets QueuedRequiredLabels, leading to
-    /// AgentSelectorKey.From([]) = "" and a 409 "no job template for agent selector: ''" from
-    /// the dispatch endpoint.
-    ///
-    /// Scenario: user clicks "Brain Consolidation" in the UI → TriggerAsync creates a run
-    /// with QueuedRequiredLabels = null → dispatcher must still produce a non-empty selector.
+    /// Regression test for backward compat: old runs with QueuedRequiredLabels = null (persisted
+    /// before the source fix) AND DefaultRequiredAgentLabels configured should use the default
+    /// labels to resolve the selector via the dispatcher fallback.
+    /// This exercises the actual fallback branch (profiles = [] → uses DefaultRequiredAgentLabels).
     /// </summary>
     [Fact]
-    public async Task DispatchRunAsync_UiTriggeredRun_NullLabels_ProducesNonEmptySelector()
+    public async Task DispatchRunAsync_OldRunNullLabels_EmptyProfiles_WithDefault_UsesDefaultLabels()
     {
-        // Arrange — no QueuedRequiredLabels (exactly what TriggerAsync produces),
-        // no DefaultRequiredAgentLabels (the production config), one enabled profile.
+        // Arrange: empty profiles (startup race or pre-fix DB row), DefaultRequiredAgentLabels set
         _configStore
             .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration()); // DefaultRequiredAgentLabels = null
+            .ReturnsAsync(new PipelineConfiguration { DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10" });
 
-        var kiroProfile = new AgentProfile
-        {
-            Id = "d6074277-2529-439d-9e15-056a12e24e4b",
-            DisplayName = "Kiro Dotnet 10 Agent",
-            Enabled = true,
-            Priority = 0,
-            MatchLabels = ["kiro", "dotnet", "dotnet10"],
-            AgentProviderConfigId = "46bec1e4-97bd-4b83-a91b-922941938a0f"
-        };
         _profileStore
             .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { kiroProfile });
+            .ReturnsAsync(Array.Empty<AgentProfile>()); // empty — startup race
 
         _workspaceManager
             .Setup(m => m.GetWorkspacePath(It.IsAny<RunId>()))
-            .Returns("/workspaces/brain");
+            .Returns("/workspaces/test");
 
         JobDistributionRequest? captured = null;
         _workDistributor
@@ -274,27 +261,24 @@ public sealed class ConsolidationDispatcherTests
             .Callback<JobDistributionRequest, CancellationToken>((r, _) => captured = r)
             .ReturnsAsync(new DistributionResult(true, null, null));
 
-        // Exactly what ConsolidationService.BuildNewRun produces: QueuedRequiredLabels is not set
+        // An old persisted run — QueuedRequiredLabels was never set
         var run = new ConsolidationRun
         {
             RunId = Guid.NewGuid().ToString(),
             Type = ConsolidationRunType.BrainConsolidation,
-            TemplateId = "4a0de0e8-f8ab-4da7-bc9f-ff7bc174e71d",
             Status = ConsolidationRunStatus.Queued,
             StartedAtUtc = DateTimeOffset.UtcNow,
-            QueuedRequiredLabels = null // ← the bug: BuildNewRun never populates this
+            QueuedRequiredLabels = null // pre-fix run
         };
 
         var sut = CreateSut();
         await sut.DispatchRunAsync(run, CancellationToken.None);
 
-        // Before the fix: AgentSelector = "" → dispatch endpoint returns 409, run stays Queued forever.
-        // After the fix:  AgentSelector = "dotnet,dotnet10,kiro" → K8s Job created successfully.
+        // The fallback branch must use DefaultRequiredAgentLabels as the raw selector
+        // (no profile match possible since profiles = [], falls back to raw label strings)
         Assert.NotNull(captured);
-        // Before the fix: AgentSelector = "" → dispatch endpoint returns 409, run stays Queued forever.
-        // After the fix:  AgentSelector = "dotnet,dotnet10,kiro" → K8s Job created successfully.
-        Assert.NotEmpty(captured!.AgentSelector); // empty selector → 409, run stays Queued forever
-        Assert.Equal(AgentSelectorKey.From(kiroProfile.MatchLabels), captured.AgentSelector);
+        Assert.Equal(AgentSelectorKey.From(["kiro", "dotnet", "dotnet10"]), captured!.AgentSelector);
+        Assert.NotEmpty(captured.AgentSelector);
     }
 
     /// <summary>

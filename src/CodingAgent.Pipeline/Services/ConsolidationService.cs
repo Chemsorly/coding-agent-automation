@@ -13,6 +13,7 @@ namespace CodingAgent.Pipeline.Services;
 public sealed class ConsolidationService : IConsolidationService, IConsolidationRunTracker
 {
     private readonly ILogger _logger;
+    private readonly PipelineConfiguration _config;
     private readonly IConsolidationRunStore _runStore;
     private readonly IHarnessSuggestionStore _harnessSuggestionStore;
     private readonly IConsolidationWorkspaceManager _workspaceManager;
@@ -46,6 +47,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         ArgumentNullException.ThrowIfNull(deps.HarnessSuggestionStore);
 
         _logger = deps.Logger;
+        _config = deps.Config;
         _runStore = deps.RunStore;
         _harnessSuggestionStore = deps.HarnessSuggestionStore;
         _workspaceManager = deps.WorkspaceManager ?? new ConsolidationWorkspaceManager(deps.Logger, deps.Config);
@@ -112,7 +114,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             templateName = "Global";
         }
 
-        var run = BuildNewRun(type, templateIdValue, templateName, projectName, autoDispatch);
+        var run = BuildNewRun(type, templateIdValue, templateName, projectName, autoDispatch, _config);
 
         if (!_runningRuns.TryAdd(key, run))
         {
@@ -389,7 +391,8 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         string? templateIdValue,
         string templateName,
         string? projectName,
-        bool autoDispatch) => new()
+        bool autoDispatch,
+        PipelineConfiguration config) => new()
     {
         RunId = Guid.NewGuid().ToString(),
         Type = type,
@@ -402,6 +405,13 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         Status = ConsolidationRunStatus.Queued,
         AutoDispatch = autoDispatch,
         ProjectName = projectName,
+        // Resolve required agent labels at trigger time so the dispatcher has a deterministic
+        // selector without guessing from runtime profile state. Mirrors the label resolution
+        // used by the regular pipeline dispatch loop (LabelResolver.ResolveRequiredLabels).
+        // Consolidation runs have no per-run repo provider config, so repoConfig is null and
+        // resolution falls back to DefaultRequiredAgentLabels → empty (any agent).
+        QueuedRequiredLabels = LabelResolver.ResolveRequiredLabels(repoConfig: null, config)
+                                    is { Count: > 0 } resolvedLabels ? resolvedLabels : null,
         // Capture trace context at trigger time (inside the HTTP request span).
         // Stored on the run so it survives restart/rehydration even when Activity.Current
         // is null at drain time. CaptureTraceContext creates a short-lived Producer span
