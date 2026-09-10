@@ -230,4 +230,200 @@ public sealed class ConsolidationDispatcherTests
 
         Assert.Null(captured!.TraceContext);
     }
+
+    // ── Selector fallback when QueuedRequiredLabels is null ───────────────
+
+    /// <summary>
+    /// Regression test for backward compat: old runs with QueuedRequiredLabels = null (persisted
+    /// before the source fix) AND DefaultRequiredAgentLabels configured should use the default
+    /// labels to resolve the selector via the dispatcher fallback.
+    /// This exercises the actual fallback branch (profiles = [] → uses DefaultRequiredAgentLabels).
+    /// </summary>
+    [Fact]
+    public async Task DispatchRunAsync_OldRunNullLabels_EmptyProfiles_WithDefault_UsesDefaultLabels()
+    {
+        // Arrange: empty profiles (startup race or pre-fix DB row), DefaultRequiredAgentLabels set
+        _configStore
+            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10" });
+
+        _profileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>()); // empty — startup race
+
+        _workspaceManager
+            .Setup(m => m.GetWorkspacePath(It.IsAny<RunId>()))
+            .Returns("/workspaces/test");
+
+        JobDistributionRequest? captured = null;
+        _workDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDistributionRequest, CancellationToken>((r, _) => captured = r)
+            .ReturnsAsync(new DistributionResult(true, null, null));
+
+        // An old persisted run — QueuedRequiredLabels was never set
+        var run = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.BrainConsolidation,
+            Status = ConsolidationRunStatus.Queued,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            QueuedRequiredLabels = null // pre-fix run
+        };
+
+        var sut = CreateSut();
+        await sut.DispatchRunAsync(run, CancellationToken.None);
+
+        // The fallback branch must use DefaultRequiredAgentLabels as the raw selector
+        // (no profile match possible since profiles = [], falls back to raw label strings)
+        Assert.NotNull(captured);
+        Assert.Equal(AgentSelectorKey.From(["kiro", "dotnet", "dotnet10"]), captured!.AgentSelector);
+        Assert.NotEmpty(captured.AgentSelector);
+    }
+
+    /// <summary>
+    /// When QueuedRequiredLabels is null and DefaultRequiredAgentLabels is not configured,
+    /// the dispatcher falls back to the first enabled profile's MatchLabels.
+    /// </summary>
+    [Fact]
+    public async Task DispatchRunAsync_NullRequiredLabels_NoDefault_FallsBackToFirstProfile()
+    {
+        _configStore
+            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+
+        var profile = new AgentProfile
+        {
+            Id = "profile-1",
+            DisplayName = "Kiro Dotnet",
+            Enabled = true,
+            Priority = 0,
+            MatchLabels = ["kiro", "dotnet", "dotnet10"],
+            AgentProviderConfigId = "provider-1"
+        };
+        _profileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { profile });
+
+        _workspaceManager
+            .Setup(m => m.GetWorkspacePath(It.IsAny<RunId>()))
+            .Returns("/workspaces/test");
+
+        JobDistributionRequest? captured = null;
+        _workDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDistributionRequest, CancellationToken>((r, _) => captured = r)
+            .ReturnsAsync(new DistributionResult(true, null, null));
+
+        var run = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.BrainConsolidation,
+            Status = ConsolidationRunStatus.Queued,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            QueuedRequiredLabels = null
+        };
+
+        var sut = CreateSut();
+        await sut.DispatchRunAsync(run, CancellationToken.None);
+
+        Assert.NotNull(captured);
+        Assert.Equal(AgentSelectorKey.From(profile.MatchLabels), captured!.AgentSelector);
+        Assert.NotEmpty(captured.AgentSelector);
+    }
+
+    /// <summary>
+    /// When profiles are empty (startup race) AND no DefaultRequiredAgentLabels configured,
+    /// dispatch proceeds with an empty selector — the distributor call will 409,
+    /// run stays Queued for rehydration. No throw.
+    /// </summary>
+    [Fact]
+    public async Task DispatchRunAsync_OldRunNullLabels_EmptyProfiles_NoDefault_ProducesEmptySelector()
+    {
+        // Arrange: startup race — profiles empty AND no default labels
+        _configStore
+            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration()); // DefaultRequiredAgentLabels = null
+
+        _profileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>()); // empty — startup race
+
+        _workspaceManager
+            .Setup(m => m.GetWorkspacePath(It.IsAny<RunId>()))
+            .Returns("/workspaces/test");
+
+        _workDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(false, null, "No agent selector"));
+
+        var run = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.BrainConsolidation,
+            Status = ConsolidationRunStatus.Queued,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            QueuedRequiredLabels = null
+        };
+
+        var sut = CreateSut();
+        // Must not throw — graceful degradation, run stays Queued for rehydration retry
+        await sut.DispatchRunAsync(run, CancellationToken.None);
+
+        // DistributeAsync is still called (with empty selector), the 409 is swallowed
+        _workDistributor.Verify(
+            d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// When QueuedRequiredLabels is null and DefaultRequiredAgentLabels is configured,
+    /// the dispatcher uses DefaultRequiredAgentLabels to resolve the profile.
+    /// </summary>
+    [Fact]
+    public async Task DispatchRunAsync_NullRequiredLabels_WithDefault_UsesDefaultLabels()
+    {
+        _configStore
+            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { DefaultRequiredAgentLabels = "kiro,dotnet" });
+
+        var matchingProfile = new AgentProfile
+        {
+            Id = "profile-kiro",
+            DisplayName = "Kiro Dotnet 10",
+            Enabled = true,
+            Priority = 0,
+            MatchLabels = ["kiro", "dotnet", "dotnet10"],
+            AgentProviderConfigId = "provider-1"
+        };
+        _profileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { matchingProfile });
+
+        _workspaceManager
+            .Setup(m => m.GetWorkspacePath(It.IsAny<RunId>()))
+            .Returns("/workspaces/test");
+
+        JobDistributionRequest? captured = null;
+        _workDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDistributionRequest, CancellationToken>((r, _) => captured = r)
+            .ReturnsAsync(new DistributionResult(true, null, null));
+
+        var run = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.RefactoringDetection,
+            Status = ConsolidationRunStatus.Queued,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            QueuedRequiredLabels = null
+        };
+
+        var sut = CreateSut();
+        await sut.DispatchRunAsync(run, CancellationToken.None);
+
+        Assert.NotNull(captured);
+        // Profile's full MatchLabels (superset of default) should be used
+        Assert.Equal(AgentSelectorKey.From(matchingProfile.MatchLabels), captured!.AgentSelector);
+    }
 }
