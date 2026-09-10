@@ -324,7 +324,8 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<IProjectStore>(),
                 sp.GetRequiredService<ITokenVendingService>(),
                 Log.Logger,
-                sp.GetRequiredService<IAgentProfileStore>()));
+                sp.GetRequiredService<IAgentProfileStore>(),
+                sp.GetRequiredService<IPipelineConfigStore>()));
 
         // ── DispatchInfrastructure + AssignmentEnricher (issue #2171) ────────
         // DispatchInfrastructure aggregates ITokenVendingService, IProviderFactory,
