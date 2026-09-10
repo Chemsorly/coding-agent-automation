@@ -8,7 +8,7 @@
     Usage:
         <RefreshBar OnRefresh="LoadAsync" IsLoading="_loading" />
 
-    Auto-refresh default is Off. The selected interval is session-local (field state).
+    Auto-refresh default is 1 minute. The selected interval is session-local (field state).
     The timer is cancelled and disposed on component teardown — no leaked timers.
     Invoking the EventCallback re-renders the parent, so handlers need no explicit StateHasChanged.
 *@
@@ -50,13 +50,25 @@
     /// <summary>When true, the Refresh button is disabled (the page is already loading).</summary>
     [Parameter] public bool IsLoading { get; set; }
 
-    // 0 = Off (no auto-refresh). Default is Off as per the spec.
-    private int _intervalSeconds;
+    // 60 = 1 minute (default). 0 = Off (no auto-refresh).
+    private int _intervalSeconds = 60;
 
     private PeriodicTimer? _timer;
     private CancellationTokenSource? _timerCts;
 
     private async Task HandleManualRefresh() => await OnRefresh.InvokeAsync();
+
+    // TODO [WARNING]: OnAfterRenderAsync fires once per component lifetime (firstRender==true), which
+    // is the correct hook here. If SetParametersAsync or OnParametersSetAsync triggers a synchronous
+    // re-render before this async path completes, RestartTimer can be called while the first-render
+    // timer setup is still in-flight. RestartTimer handles concurrent re-entry safely (it cancels the
+    // previous CTS before creating a new one), so the practical risk is only a redundant cancel+recreate
+    // cycle rather than a leaked timer. Low probability, but worth monitoring if timer state looks off.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            await RestartTimer();
+    }
 
     private async Task HandleIntervalChanged(ChangeEventArgs e)
     {

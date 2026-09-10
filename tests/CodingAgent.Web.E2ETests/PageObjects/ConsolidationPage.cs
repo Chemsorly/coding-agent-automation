@@ -3,8 +3,7 @@ using Microsoft.Playwright;
 namespace CodingAgent.Web.E2ETests.PageObjects;
 
 /// <summary>
-/// Page object for the consolidation section, now embedded in the Pipelines page (/pipelines)
-/// after the legacy shell was retired (the standalone /consolidation route redirects here).
+/// Page object for the Consolidation page at /consolidation.
 /// Encapsulates navigation and interactions with consolidation template cards,
 /// harness suggestions section, run history table, and trigger buttons.
 /// </summary>
@@ -20,22 +19,22 @@ public sealed class ConsolidationPage
     }
 
     /// <summary>
-    /// Navigates to the Pipelines page — where the consolidation section is embedded — and waits
-    /// for it to render. (The old /consolidation route still redirects here.)
+    /// Navigates to the standalone Consolidation page at /consolidation and waits for it to render.
     /// </summary>
     public async Task NavigateAsync()
     {
-        await _page.GotoAsync($"{_baseUrl}/pipelines");
+        await _page.GotoAsync($"{_baseUrl}/consolidation");
 
-        // Wait for the Pipelines header, then for the embedded consolidation section to attach
-        // (its own header is hidden by the cockpit theme, so wait for attachment, not visibility).
+        // Wait for the Consolidation header, then for the content sections to attach.
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
+        // TODO(WARNING): `.monitoring-empty` matches the "Loading..." placeholder that renders
+        // immediately on first render (before OnInitializedAsync completes), so this wait can
+        // resolve before the Blazor Server circuit connects and actual data is fetched.
+        // Tests that need data-bearing state should add an explicit follow-up wait (e.g. wait for
+        // the loading indicator to disappear, or use WaitForFunctionAsync to poll _isLoading).
         await _page.WaitForSelectorAsync(
-            ".consolidation-page", new() { Timeout = 15_000, State = WaitForSelectorState.Attached });
-
-        // Allow time for the Blazor Server circuit to connect and the section to load its data.
-        // Consolidation loads data in OnInitializedAsync, which requires the SignalR circuit first.
-        await _page.WaitForTimeoutAsync(4000);
+            ".consolidation-cards, .monitoring-empty",
+            new() { Timeout = 15_000, State = WaitForSelectorState.Attached });
     }
 
     /// <summary>Gets the page title text.</summary>

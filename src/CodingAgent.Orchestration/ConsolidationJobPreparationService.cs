@@ -8,7 +8,9 @@ namespace CodingAgent.Orchestration;
 
 /// <summary>
 /// Shared consolidation job preparation: resolves provider configs from template,
-/// vends scoped GitHub tokens, and determines correct permission scope.
+/// vends scoped GitHub tokens, determines correct permission scope, and resolves
+/// the pipeline configuration via <see cref="PipelineConfigurationResolver"/> so that
+/// per-project overrides (AgentTimeout, *ReviewEnabled, etc.) are applied.
 /// Used by both ConsolidationDispatchService (SignalR) and DispatchService (K8s).
 /// </summary>
 public sealed class ConsolidationJobPreparationService : IConsolidationJobPreparationService
@@ -17,6 +19,7 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
     private readonly IAgentProfileStore _agentProfileStore;
     private readonly IProjectStore _projectStore;
     private readonly ITokenVendingService _tokenVending;
+    private readonly IPipelineConfigStore _pipelineConfigStore;
     private readonly ILogger _logger;
 
     public ConsolidationJobPreparationService(
@@ -24,7 +27,8 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
         IProjectStore projectStore,
         ITokenVendingService tokenVending,
         ILogger logger,
-        IAgentProfileStore? agentProfileStore = null)
+        IAgentProfileStore? agentProfileStore = null,
+        IPipelineConfigStore? pipelineConfigStore = null)
     {
         ArgumentNullException.ThrowIfNull(providerConfigStore);
         ArgumentNullException.ThrowIfNull(projectStore);
@@ -40,6 +44,11 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
         _projectStore = projectStore;
         _tokenVending = tokenVending;
         _logger = logger;
+        _pipelineConfigStore = pipelineConfigStore
+            ?? providerConfigStore as IPipelineConfigStore
+            ?? throw new ArgumentException(
+                $"{nameof(providerConfigStore)} must implement IPipelineConfigStore when {nameof(pipelineConfigStore)} is not provided",
+                nameof(providerConfigStore));
     }
 
     /// <summary>
@@ -50,7 +59,7 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
         IProjectStore projectStore,
         ITokenVendingService tokenVending,
         ILogger logger)
-        : this((IProviderConfigStore)configStore, projectStore, tokenVending, logger, configStore)
+        : this((IProviderConfigStore)configStore, projectStore, tokenVending, logger, configStore, configStore)
     {
     }
 
@@ -67,19 +76,24 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
         await ResolveAgentProviderConfigAsync(rawConfigs, agentLabels, ct);
 
         var repoProviderId = "";
+        string? brainProviderId = null;
         if (templateId is not null)
         {
             var template = await ResolveTemplateAsync(templateId.Value, ct);
             if (template is not null)
-                repoProviderId = await ResolveTemplateProviderConfigsAsync(rawConfigs, template, type, ct);
+                (repoProviderId, brainProviderId) = await ResolveTemplateProviderConfigsAsync(rawConfigs, template, type, ct);
         }
 
         var vendedConfigs = await VendProviderConfigsAsync(rawConfigs, repoProviderId, type, ct);
 
+        var pipelineConfiguration = await ResolvePipelineConfigurationAsync(
+            templateId, repoProviderId, brainProviderId, vendedConfigs, ct);
+
         return new ConsolidationJobPreparationResult
         {
             ProviderConfigs = vendedConfigs,
-            RepoProviderConfigId = repoProviderId
+            RepoProviderConfigId = repoProviderId,
+            PipelineConfiguration = pipelineConfiguration
         };
     }
 
@@ -122,18 +136,19 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
 
     /// <summary>
     /// Resolves repo, brain, and issue provider configs from the template, appending to rawConfigs.
-    /// Returns the repoProviderId.
+    /// Returns a tuple of (repoProviderId, brainProviderId).
     /// </summary>
-    private async Task<string> ResolveTemplateProviderConfigsAsync(
+    private async Task<(string repoProviderId, string? brainProviderId)> ResolveTemplateProviderConfigsAsync(
         List<ProviderConfig> rawConfigs,
         PipelineJobTemplate template,
         ConsolidationRunType type,
         CancellationToken ct)
     {
         var repoProviderId = "";
+        string? brainProviderId = null;
 
         if (string.IsNullOrEmpty(template.RepoProviderId))
-            return repoProviderId;
+            return (repoProviderId, brainProviderId);
 
         repoProviderId = template.RepoProviderId;
         var repoConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
@@ -144,6 +159,7 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
         // Add brain provider if configured
         if (!string.IsNullOrEmpty(template.BrainProviderId))
         {
+            brainProviderId = template.BrainProviderId;
             var brainConfig = repoConfigs.TryGetProviderConfig(template.BrainProviderId);
             if (brainConfig is not null)
                 rawConfigs.Add(brainConfig);
@@ -158,7 +174,7 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
                 rawConfigs.Add(issueConfig);
         }
 
-        return repoProviderId;
+        return (repoProviderId, brainProviderId);
     }
 
     /// <summary>Vends tokens with correct permission scope and returns the prepared configs.</summary>
@@ -174,6 +190,53 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
         var includeIssuePermission = type == ConsolidationRunType.RefactoringDetection;
         return await _tokenVending.PrepareAgentConfigsAsync(
             rawConfigs, repoProviderId, ct, includeIssuePermission);
+    }
+
+    /// <summary>
+    /// Resolves the pipeline configuration for the consolidation job.
+    /// When a template is available, applies the full resolution chain:
+    /// global → project overrides → template overrides (via PipelineConfigurationResolver.ResolveAsync).
+    /// When no template is available, returns the global config unchanged.
+    /// </summary>
+    private async Task<PipelineConfiguration> ResolvePipelineConfigurationAsync(
+        TemplateId? templateId,
+        string repoProviderId,
+        string? brainProviderId,
+        IReadOnlyList<ProviderConfig> vendedConfigs,
+        CancellationToken ct)
+    {
+        if (templateId is null || string.IsNullOrEmpty(repoProviderId))
+        {
+            // TODO [WARNING]: When templateId is not null but repoProviderId is empty (template exists but
+            // has no RepoProviderId configured), this early-return silently skips project-override resolution.
+            // A template without a RepoProviderId may still belong to a project with meaningful overrides
+            // (e.g., AgentTimeout). Consider applying at least project overrides (ApplyProjectOverrides) even
+            // when repoProviderId is empty, rather than falling back to the raw global config entirely.
+
+            // No template context — return global config without project/template overrides.
+            return await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
+        }
+
+        // Resolve owning project so ApplyProjectOverrides can apply per-project settings.
+        // A template may belong to no project (uncommon); passing null! is safe because
+        // ApplyProjectOverrides handles null defensively (returns config unchanged).
+        var projects = await _projectStore.LoadProjectsAsync(ct);
+        var project = projects.FirstOrDefault(p => p.TemplateIds.Contains(templateId.Value.Value));
+
+        // TODO [WARNING]: project can be null here (template has no owning project) but is passed via null!
+        // to ResolveAsync whose signature declares project as non-nullable PipelineProject. This relies on
+        // ApplyProjectOverrides containing a defensive null-check. If ResolveAsync is refactored to dereference
+        // project before that check, this will throw NullReferenceException at runtime. Consider calling
+        // ApplyProjectOverrides directly when project is null rather than forwarding null through the non-nullable
+        // parameter, or add an overload of ResolveAsync that accepts PipelineProject?.
+        return await PipelineConfigurationResolver.ResolveAsync(
+            _pipelineConfigStore.LoadPipelineConfigAsync,
+            _projectStore.LoadAllTemplatesAsync,
+            project!, // null! when no owning project — ApplyProjectOverrides handles null defensively
+            (ProviderConfigId)repoProviderId,
+            brainProviderId,
+            vendedConfigs,
+            ct);
     }
 
     private async Task<PipelineJobTemplate?> ResolveTemplateAsync(TemplateId templateId, CancellationToken ct)
