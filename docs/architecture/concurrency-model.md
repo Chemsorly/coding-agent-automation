@@ -41,13 +41,13 @@ After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pip
          ▼                                 │
 ┌──────────────────────┐     ┌─────────────────────────────────────────────┐
 │  Job Controller      │     │  Agent Pod (CodingAgent.Agent)          │
-│  (CodingAgent.Web.  │     │  ─────────────                              │
+│  (CodingAgent.       │     │  ─────────────                              │
 │   JobController)     │     │  Ephemeral K8s Job                          │
 │  ─────────────────── │     │  caa-agent-{11 hex} (impl/review/decomp)   │
-│  K8s Job dispatch    │     │  caa-cons-{12 hex}  (consolidation)         │
+│  K8s Job dispatch    │     │  caa-cons-{12 hex}  (consolidation legacy)  │
 │  Lease: caa-{rel}-   │     │  Connects to API hub                        │
-│  Lease: caa-{rel}-   │     │  GET /api/work-items/{id}/assignment         │
-│    dispatch-lock     │     │  POST /api/work-items/{id}/status           │
+│    dispatch-lock     │     │  GET /api/work-items/{id}/assignment         │
+│                      │     │  POST /api/work-items/{id}/status           │
 └──────────────────────┘     └─────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -79,7 +79,7 @@ coordination (e.g., Postgres advisory locks, Redis `SETNX`) would be required.
 
 ## JobDeduplicationGuardService / AgentReservationService
 
-**File:** `src/CodingAgent.Orchestration/Dispatch/AgentReservationService.cs`
+**File:** `src/CodingAgent.Orchestration/Registry/AgentReservationService.cs`
 **Authoritative instance hosted in:** `CodingAgent.Api` (Pipeline API) — all actual dispatch decisions go through this process. The Orchestrator also registers a local `AgentReservationService` instance for its own routing lookups, but it does not participate in the authoritative agent-reservation path.
 
 > **Rename note (Spec 046):** `JobDeduplicationGuardService` was renamed to `AgentReservationService` (Spec 046). Both classes are defined in `AgentReservationService.cs`. All new code should reference `AgentReservationService` directly; `JobDeduplicationGuardService` is the legacy wrapper and IS marked `[Obsolete("Use AgentReservationService instead. Renamed in Spec 046.")]`.
@@ -126,7 +126,7 @@ These use `ConcurrentDictionary` atomic APIs and do NOT acquire any lock:
 
 ### Per-entry locking via `SyncRoot`
 
-Each `AgentEntry` (defined in `src/CodingAgent.Pipeline/Models/AgentEntry.cs`) has:
+Each `AgentEntry` (defined in `src/CodingAgent.Contracts/Models/AgentEntry.cs`) has:
 
 ```csharp
 public object SyncRoot => _syncRoot;
@@ -157,7 +157,7 @@ across process boundaries.
 | Service | File | Usage |
 |---------|------|-------|
 | `AgentRegistryService` | `Orchestration/Registry/AgentRegistryService.cs` | `Register()`, `UpdateHeartbeat()`, `TransitionStatus()` |
-| `JobDeduplicationGuardService` | `Orchestration/Dispatch/AgentReservationService.cs` | `SelectAgent()` — nested inside `_selectionLock` |
+| `JobDeduplicationGuardService` | `Orchestration/Registry/AgentReservationService.cs` | `SelectAgent()` — nested inside `_selectionLock` |
 | `RunLifecycleManager` | `Orchestration/RunLifecycleManager.cs` | `ActiveJobId` mutation on job assignment/completion |
 | `AgentOrphanRecoveryService` | `Hub/AgentOrphanRecoveryService.cs` | Check-and-set `ActiveJobId` on reconnect; sets `OrphanRestoredAt` when no active job reported |
 | `AgentEndpoints` | `Api/AgentEndpoints.cs` | Sets `ActiveChatSessionId` on chat-resume path |
