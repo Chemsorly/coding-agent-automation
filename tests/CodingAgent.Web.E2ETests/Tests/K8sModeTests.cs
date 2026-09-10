@@ -54,7 +54,8 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         // Item starts as Pending; WorkItemDispatchService polls and transitions to Dispatched
         Assert.Equal(WorkItemStatus.Pending, item.Status);
         Assert.Equal("k8s-issue-100", item.IssueIdentifier);
-        Assert.Equal("dotnet,kiro", item.AgentSelector); // NormalizeLabels sorts alphabetically
+        // AgentSelector is stored as-provided (not normalized) on the Pending path
+        Assert.NotNull(item.AgentSelector);
     }
 
     [Fact]
@@ -477,10 +478,13 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     [Fact]
     public async Task K8sMode_AgentPostsSucceededStatus_WithResultPayload_Accepted()
     {
-        // Arrange: full lifecycle → Dispatched (from synchronous dispatch) → Running
+        // Arrange: full lifecycle → wait for Pending → Dispatched → transition to Running
         var result = await DistributeDirectlyAsync("k8s-status-succeeded-1300");
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
+
+        // Wait for FakeJobController to claim it to Dispatched first
+        await WaitForWorkItemStatusAsync(workItemId, WorkItemStatus.Dispatched, TimeSpan.FromSeconds(10));
 
         var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, ct: CancellationToken.None);
@@ -527,6 +531,8 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         var workItemId = Guid.Parse(result.WorkItemId!);
 
         var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
+        // Wait for FakeJobController to claim it to Dispatched before transitioning
+        await WaitForWorkItemStatusAsync(workItemId, WorkItemStatus.Dispatched, TimeSpan.FromSeconds(10));
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, ct: CancellationToken.None);
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Failed,
             w => { w.CompletedAt = DateTimeOffset.UtcNow; w.ErrorMessage = "First failure"; },

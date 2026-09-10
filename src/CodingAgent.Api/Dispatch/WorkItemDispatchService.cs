@@ -44,7 +44,6 @@ internal sealed class WorkItemDispatchService : LeaderElectedPollingService
 
     private readonly DispatchLifecycleService _lifecycle;
     private readonly DispatchServiceOptions _options;
-    private readonly WorkItemTransitionService _transitionService;
     private readonly DispatchStateBuilder _stateBuilder;
 
     protected override string ServiceName => "WorkItemDispatchService";
@@ -64,7 +63,6 @@ internal sealed class WorkItemDispatchService : LeaderElectedPollingService
                (options ?? throw new ArgumentNullException(nameof(options))).RateLimitPerSecond)
     {
         _lifecycle = deps.Lifecycle;
-        _transitionService = deps.TransitionService;
         _options = options;
         ArgumentNullException.ThrowIfNull(deps.StateBuilder, nameof(deps.StateBuilder));
         _stateBuilder = deps.StateBuilder;

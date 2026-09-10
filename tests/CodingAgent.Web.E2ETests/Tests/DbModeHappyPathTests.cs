@@ -136,18 +136,18 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
         Assert.True(result.Success, $"Distribution failed: {result.ErrorMessage}");
         var workItemId = Guid.Parse(result.WorkItemId!);
 
-        // Assert: WorkItem transitions to Dispatched once FakeJobController claims it from Pending
+        // Connect the agent BEFORE waiting for Dispatched — FakeJobController needs an idle
+        // agent to claim the Pending item. Without a connected agent, the item stays Pending.
+        await using var agent = new FakeAgentClient("db-agent-drain", "db-e2e");
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+
+        // Assert: WorkItem transitions to Dispatched once FakeJobController claims it
         var dispatched = await WaitForWorkItemStatusAsync(
             workItemId, WorkItemStatus.Dispatched, TimeSpan.FromSeconds(15));
         Assert.Equal(WorkItemStatus.Dispatched, dispatched.Status);
         Assert.NotNull(dispatched.DispatchedAt);
 
-        // NOW connect a FakeAgentClient — FakeJobController will bootstrap the assignment
-        await using var agent = new FakeAgentClient("db-agent-drain", "db-e2e");
-        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
-
-        // FakeJobController polls for Dispatched items (250ms interval) and calls
-        // StartAssignedWorkItemAsync on the matching agent once it registers.
+        // FakeJobController polls for Dispatched items and calls StartAssignedWorkItemAsync
         var assignment = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
         Assert.Equal("44", assignment.IssueIdentifier);
 

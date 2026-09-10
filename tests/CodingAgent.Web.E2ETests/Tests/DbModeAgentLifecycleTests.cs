@@ -402,20 +402,30 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
             () => registry.GetByAgentId("lifecycle-busy")?.Status == AgentStatus.Busy,
             TimeSpan.FromSeconds(5));
 
-        // Act: dispatch second job — synchronous dispatch path (issue #2322):
+        // Act: dispatch second job — Pending enqueue path:
         // item is created as Pending (visible in UI queue)
         var r2 = await DispatchIssueAsync("3041");
         Assert.True(r2.Success);
         Assert.True(r2.Queued, "Pending enqueue path: item enters queue, FakeJobController dispatches when agent is idle");
 
-        // Verify WorkItem starts as Pending, FakeJobController will transition to Dispatched
+        // Verify WorkItem starts as Pending (agent is busy, can't be claimed yet)
         var workItemId2 = Guid.Parse(r2.WorkItemId!);
-        var dispatched = await WaitForWorkItemStatusAsync(workItemId2, WorkItemStatus.Dispatched, TimeSpan.FromSeconds(15));
-        Assert.Equal(WorkItemStatus.Dispatched, dispatched.Status);
+        await using (var verifyDb = Fixture.DbContextFactory.CreateDbContext())
+        {
+            var wi = await verifyDb.WorkItems.AsNoTracking()
+                .FirstOrDefaultAsync(w => w.Id == workItemId2);
+            Assert.NotNull(wi);
+            // Item is Pending because the only agent is busy
+            Assert.Equal(WorkItemStatus.Pending, wi.Status);
+        }
 
-        // Complete first job → agent becomes Idle → FakeJobController assigns second item
+        // Complete first job → agent becomes Idle → FakeJobController claims and assigns second item
         await agent.AcceptAndCompleteJobAsync(job1.JobId);
         agent.ResetJobAssigned();
+
+        // Now the second item should transition to Dispatched
+        var dispatched = await WaitForWorkItemStatusAsync(workItemId2, WorkItemStatus.Dispatched, TimeSpan.FromSeconds(15));
+        Assert.Equal(WorkItemStatus.Dispatched, dispatched.Status);
 
         var job2 = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
         Assert.Equal("3041", job2.IssueIdentifier);
