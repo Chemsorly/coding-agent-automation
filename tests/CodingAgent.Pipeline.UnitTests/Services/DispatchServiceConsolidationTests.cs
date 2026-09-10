@@ -1145,6 +1145,16 @@ public class DispatchServiceConsolidationTests : IDisposable
                 }
             });
 
+        // Project store: no owning projects (consolidation runs without project overrides in these tests)
+        // TODO [WARNING]: All dispatch tests exercise only the "no owning project" path through the resolver
+        // (empty project list → no ApplyProjectOverrides applied). None of the existing dispatch tests verify
+        // that a non-default PipelineConfiguration (with project overrides applied) is correctly propagated
+        // from the preparation result into the dispatched message. Consider adding a test with a project that
+        // has overrides (e.g., AgentTimeout) and asserting the dispatched message carries the overridden value.
+        _mockProjectStore
+            .Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>());
+
         // Pipeline config store
         _mockPipelineConfigStore
             .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
@@ -1250,8 +1260,8 @@ public class DispatchServiceConsolidationTests : IDisposable
                     _mockProjectStore.Object,
                     _mockTokenVending.Object,
                     Serilog.Log.Logger,
-                    _mockAgentProfileStore.Object),
-                _mockPipelineConfigStore.Object,
+                    _mockAgentProfileStore.Object,
+                    _mockPipelineConfigStore.Object),
                 _mockProjectStore.Object,
                 _mockAgentProfileStore.Object,
                 StateBuilder: new DispatchStateBuilder(
@@ -1290,8 +1300,8 @@ public class DispatchServiceConsolidationTests : IDisposable
                     _mockProjectStore.Object,
                     _mockTokenVending.Object,
                     Serilog.Log.Logger,
-                    _mockAgentProfileStore.Object),
-                _mockPipelineConfigStore.Object,
+                    _mockAgentProfileStore.Object,
+                    _mockPipelineConfigStore.Object),
                 _mockProjectStore.Object,
                 _mockAgentProfileStore.Object,
                 StateBuilder: new DispatchStateBuilder(
@@ -1355,8 +1365,8 @@ public class DispatchServiceConsolidationTests : IDisposable
                     _mockProjectStore.Object,
                     _mockTokenVending.Object,
                     Serilog.Log.Logger,
-                    _mockAgentProfileStore.Object),
-                _mockPipelineConfigStore.Object,
+                    _mockAgentProfileStore.Object,
+                    _mockPipelineConfigStore.Object),
                 _mockProjectStore.Object,
                 _mockAgentProfileStore.Object,
                 StateBuilder: new DispatchStateBuilder(

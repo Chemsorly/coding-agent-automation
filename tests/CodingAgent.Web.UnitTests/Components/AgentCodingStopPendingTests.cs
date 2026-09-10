@@ -107,7 +107,6 @@ public class AgentCodingStopPendingTests : BunitContext
         Services.AddScoped<IEpicDrawerService, EpicDrawerService>();
         Services.AddScoped<AgentCodingPageService>();
         Services.AddScoped<NotificationService>();
-        Services.AddEmbeddedConsolidationDeps();
     }
 
     // ── Helper: invoke StopLoop() via reflection inside InvokeAsync ───────────
