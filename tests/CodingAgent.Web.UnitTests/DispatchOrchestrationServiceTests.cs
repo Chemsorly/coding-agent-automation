@@ -1558,11 +1558,13 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
     }
 
     [Fact]
-    public async Task DistributeAndFinalizeAsync_WhenDistributeSucceedsWithQueuedTrue_SwapsLabelAtEnqueueTimeAndReturnsQueued()
+    public async Task DistributeAndFinalizeAsync_WhenQueued_KeepsAgentNextAndReturnsQueued()
     {
-        // When the distributor returns Queued=true (item enqueued as Pending), DistributeAndFinalizeAsync
-        // must swap the label to agent:in-progress immediately (so the issue shows as claimed while
-        // waiting in the queue) and return Queued=true so callers know no pod is running yet.
+        // When the distributor returns Queued=true (item enqueued as Pending), the issue is only
+        // waiting in the queue — no pod is running. Per the DistributionResult.Queued contract the
+        // label MUST stay agent:next; the swap to agent:in-progress is deferred until an agent
+        // actually picks up the run (AgentHub.RegisterAgent in K8s dispatch mode). The outcome still
+        // reports Queued=true so callers know no pod is running yet.
         _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(true, "work-1", null, Queued: true));
 
@@ -1572,11 +1574,11 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
         outcome.Queued.Should().BeTrue("when enqueued as Pending, outcome must report Queued=true");
         outcome.ErrorMessage.Should().BeNull();
 
-        // Label MUST be swapped to agent:in-progress at enqueue time so the issue is marked claimed
+        // Label MUST NOT be swapped to agent:in-progress while the item only sits Pending in the queue.
         _mockLabelService.Verify(
-            s => s.SwapLabelAsync("ipc-1", "owner/repo#42", AgentLabels.InProgress, It.IsAny<CancellationToken>()),
-            Times.Once,
-            "label swap to agent:in-progress must happen at enqueue time so the issue shows as claimed");
+            s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            Times.Never,
+            "a queued (Pending) issue must stay agent:next — the in-progress swap is deferred to actual dispatch");
     }
 
     [Fact]
