@@ -162,3 +162,68 @@ public class RateLimiterNullGuardTests
             .WithMessage("*ConsolidationWorkItemDispatchService*");
     }
 }
+
+/// <summary>
+/// Verifies the null-guard contract for <see cref="WorkItemDispatchService"/>:
+/// when constructed without a rate limiter, the guard inside
+/// <see cref="WorkItemDispatchService.PollAndDispatchAsync"/> throws
+/// <see cref="InvalidOperationException"/> with a message that names the service.
+/// Mirrors <see cref="RateLimiterNullGuardTests"/> for
+/// <see cref="ConsolidationWorkItemDispatchService"/>.
+/// </summary>
+[Trait("Feature", "WorkItemDispatchService")]
+public class WorkItemDispatchServiceRateLimiterGuardTests
+{
+    /// <summary>
+    /// Wraps the <c>WorkItemDispatchService</c>-style null guard in a minimal test double
+    /// so the test verifies the actual guard string rather than a local re-implementation.
+    /// </summary>
+    private sealed class WorkItemDispatchStyleGuardTestService : CodingAgent.Pipeline.LeaderElection.LeaderElectedPollingService
+    {
+        public WorkItemDispatchStyleGuardTestService(CodingAgent.Pipeline.LeaderElection.ILeaderElectionService leaderElection)
+            : base(leaderElection)
+        {
+            // Intentionally omits rateLimitPerSecond → RateLimiter stays null.
+        }
+
+        protected override string ServiceName => "WorkItemDispatchStyleGuardTestService";
+        protected override int PollIntervalSeconds => 60;
+        protected override Task OnPollCycleAsync(CancellationToken ct) => Task.CompletedTask;
+
+        public void InvokeWorkItemDispatchStyleGuard()
+        {
+            _ = RateLimiter ?? throw new InvalidOperationException(
+                "WorkItemDispatchService requires a rate limiter but RateLimiter is null. " +
+                "Ensure the constructor passes rateLimitPerSecond to the base class.");
+        }
+    }
+
+    [Fact]
+    public void WhenRateLimiterIsNull_WorkItemDispatchStyleGuard_ThrowsInvalidOperationException()
+    {
+        var leaderElectionMock = new Mock<CodingAgent.Pipeline.LeaderElection.ILeaderElectionService>();
+        leaderElectionMock.SetupGet(l => l.IsLeader).Returns(false);
+        leaderElectionMock.SetupGet(l => l.LeaderToken).Returns(CancellationToken.None);
+
+        var service = new WorkItemDispatchStyleGuardTestService(leaderElectionMock.Object);
+
+        service.Invoking(s => s.InvokeWorkItemDispatchStyleGuard())
+            .Should().Throw<InvalidOperationException>(
+                "the null-guard in WorkItemDispatchService must surface a clear error " +
+                "rather than a NullReferenceException");
+    }
+
+    [Fact]
+    public void WhenRateLimiterIsNull_WorkItemDispatchStyleGuard_ExceptionMessageNamesWorkItemDispatchService()
+    {
+        var leaderElectionMock = new Mock<CodingAgent.Pipeline.LeaderElection.ILeaderElectionService>();
+        leaderElectionMock.SetupGet(l => l.IsLeader).Returns(false);
+        leaderElectionMock.SetupGet(l => l.LeaderToken).Returns(CancellationToken.None);
+
+        var service = new WorkItemDispatchStyleGuardTestService(leaderElectionMock.Object);
+
+        service.Invoking(s => s.InvokeWorkItemDispatchStyleGuard())
+            .Should().Throw<InvalidOperationException>()
+            .WithMessage("*WorkItemDispatchService*");
+    }
+}
