@@ -136,7 +136,22 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         // run even when ActiveRun is not set. (#2178)
         EmitOutputLine($"❌ Pipeline failed: {reason}");
         TransitionTo(run, PipelineStep.Failed);
-        await AddRunToHistoryAsync(run, ct).ConfigureAwait(false);
+        // TODO: [WARNING] This catch block is intentionally broad (catches all Exception including
+        // OperationCanceledException). The reference implementation in RunLifecycleManager.FailRunAsync uses
+        // `catch (Exception ex) when (ex is not OperationCanceledException)` to let OCE propagate, reflecting
+        // that a cancelled token is a caller concern rather than a best-effort persistence failure. The
+        // acceptance criteria require "complete normally" on OCE, so the current broad catch satisfies them,
+        // but it diverges from the stated correct pattern. If callers rely on OCE propagating for cooperative
+        // shutdown, this silently breaks that contract. Verify intent with the issue author before narrowing.
+        // See review finding: DotNetSpecialist [WARNING] — issue #2470.
+        try
+        {
+            await AddRunToHistoryAsync(run, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "FailRunAsync: failed to persist run {RunId} to history", run.RunId);
+        }
     }
 
     /// <summary>Adds the run to persistent history.</summary>
@@ -239,7 +254,14 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         EmitOutputLine("🚫 Pipeline cancelled");
         TransitionTo(run, PipelineStep.Cancelled);
         // Fire-and-forget: called from UI-triggered cancel; no ambient token available after CTS is cancelled
-        await AddRunToHistoryAsync(run, CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            await AddRunToHistoryAsync(run, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "CancelPipelineAsync: failed to persist run {RunId} to history", run.RunId);
+        }
     }
 
     /// <summary>
