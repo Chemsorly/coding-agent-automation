@@ -5,6 +5,8 @@ using CodingAgent.Pipeline.Services;
 using CodingAgent.Web.TestUtilities;
 using Microsoft.Extensions.Hosting;
 using Moq;
+using Polly.CircuitBreaker;
+using Polly.Timeout;
 using System.Reflection;
 
 namespace CodingAgent.Pipeline.UnitTests;
@@ -1302,5 +1304,130 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
             "non-transient exceptions must still be logged at Error level and stop the loop");
 
         hostCts.Cancel();
+    }
+
+    // ── Fix 3 (widened): the whole AddStandardResilienceHandler failure surface is transient ────
+    // The first cut of Fix 3 caught only HttpRequestException. The Scheduler's API clients run through
+    // AddStandardResilienceHandler, which ALSO throws BrokenCircuitException (breaker open) and
+    // TimeoutRejectedException (attempt/total timeout) — neither derives from HttpRequestException.
+    // During a sustained outage (the rolling-restart scenario this fix targets) those are exactly the
+    // exceptions that surface, so they must be treated as transient too, or the loop dies again.
+
+    /// <summary>
+    /// Once the resilience circuit breaker opens, calls fail fast with <see cref="BrokenCircuitException"/>
+    /// — NOT <see cref="HttpRequestException"/>. This is the sustained-outage form of the production
+    /// incident and must be retried, not treated as fatal.
+    /// </summary>
+    [Fact]
+    public async Task WhenBrokenCircuitExceptionDuringSnapshot_LoopShouldRetryAndStayAlive()
+    {
+        var callCount = 0;
+        const int failuresBeforeRecovery = 3;
+
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount > 1 && callCount <= failuresBeforeRecovery + 1)
+                    throw new BrokenCircuitException("The circuit is now open and is not allowing calls.");
+                return TestPipelineConfig.Default();
+            });
+
+        var svc = CreateService(leaderGate: null);
+        using var hostCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        _ = InvokeExecuteAsync(svc, hostCts.Token);
+
+        var started = await svc.StartLoopAsync();
+        started.Should().BeTrue("loop must start successfully before the test can proceed");
+
+        await WaitUntilAsync(
+            () => svc.IsLoopActive,
+            TimeSpan.FromSeconds(5),
+            "loop must be active after StartLoopAsync");
+
+        // Wait until the loop has hit the open circuit at least once:
+        //   call 1 = StartLoopAsync validation (succeeds)
+        //   call 2 = first cycle tick (throws BrokenCircuitException → caught → null → delay+retry)
+        await WaitUntilAsync(
+            () => callCount >= 2,
+            TimeSpan.FromSeconds(10),
+            "LoadPipelineConfigAsync must be called again in the first cycle and hit the open circuit");
+
+        // The loop must have caught the transient and stayed alive rather than dying via
+        // CleanupAsync(rearm=false). Had BrokenCircuitException escaped, IsLoopActive would be false here.
+        svc.IsLoopActive.Should().BeTrue(
+            "loop must remain active after BrokenCircuitException — it should retry, not die");
+
+        _mockLogger.Verify(
+            l => l.Error(It.IsAny<Exception>(), "Pipeline loop encountered an unexpected error"),
+            Times.Never(),
+            "BrokenCircuitException is transient and must not escape to ExecuteAsync as an unexpected error");
+
+        hostCts.Cancel();
+    }
+
+    /// <summary>
+    /// A Polly <see cref="TimeoutRejectedException"/> (attempt / total-request timeout while the API is
+    /// slow to accept during a restart) is likewise transient — retry, do not permanently stop the loop.
+    /// </summary>
+    [Fact]
+    public async Task WhenTimeoutRejectedExceptionDuringSnapshot_LoopShouldRetryAndStayAlive()
+    {
+        var callCount = 0;
+        const int failuresBeforeRecovery = 3;
+
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount > 1 && callCount <= failuresBeforeRecovery + 1)
+                    throw new TimeoutRejectedException("The operation didn't complete within the allowed timeout.");
+                return TestPipelineConfig.Default();
+            });
+
+        var svc = CreateService(leaderGate: null);
+        using var hostCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        _ = InvokeExecuteAsync(svc, hostCts.Token);
+
+        (await svc.StartLoopAsync()).Should().BeTrue("loop must start successfully before the test can proceed");
+
+        await WaitUntilAsync(
+            () => svc.IsLoopActive,
+            TimeSpan.FromSeconds(5),
+            "loop must be active after StartLoopAsync");
+
+        // Wait until the loop has hit the timeout at least once (validation call + first failing cycle).
+        await WaitUntilAsync(
+            () => callCount >= 2,
+            TimeSpan.FromSeconds(10),
+            "LoadPipelineConfigAsync must be called again in the first cycle and hit the timeout");
+
+        svc.IsLoopActive.Should().BeTrue(
+            "loop must remain active after TimeoutRejectedException — it should retry, not die");
+
+        _mockLogger.Verify(
+            l => l.Error(It.IsAny<Exception>(), "Pipeline loop encountered an unexpected error"),
+            Times.Never(),
+            "TimeoutRejectedException is transient and must not escape as an unexpected error");
+
+        hostCts.Cancel();
+    }
+
+    /// <summary>
+    /// Direct classification check for <see cref="PipelineLoopService.IsTransientApiFailure"/> — pins the
+    /// exact transient set (retry) versus fatal set (stop) without any loop-timing dependence.
+    /// </summary>
+    [Fact]
+    public void IsTransientApiFailure_ClassifiesResilienceHandlerFailuresAsTransient()
+    {
+        // Transient — the full AddStandardResilienceHandler failure surface + HttpClient timeout.
+        PipelineLoopService.IsTransientApiFailure(new HttpRequestException("connection refused")).Should().BeTrue();
+        PipelineLoopService.IsTransientApiFailure(new TimeoutRejectedException("timed out")).Should().BeTrue();
+        PipelineLoopService.IsTransientApiFailure(new BrokenCircuitException("circuit open")).Should().BeTrue();
+        PipelineLoopService.IsTransientApiFailure(new TaskCanceledException("http timeout")).Should().BeTrue();
+
+        // Fatal — genuine bugs must still surface as Error and stop the loop.
+        PipelineLoopService.IsTransientApiFailure(new InvalidOperationException("real bug")).Should().BeFalse();
+        PipelineLoopService.IsTransientApiFailure(new ArgumentNullException("param")).Should().BeFalse();
     }
 }
