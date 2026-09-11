@@ -163,11 +163,7 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
                         "and cannot be validated. The agent must be re-dispatched with a valid provider configuration.");
                 }
 
-                // TODO [WARNING]: renewalBuffer is a local variable duplicating OrchestratorProxy.TokenRenewalBuffer (a static
-                // readonly field). These two values must stay in sync — extract them into a shared constant, e.g. in a
-                // TokenRefreshConstants class, to avoid silent skew between the agent proactive-renewal threshold and the
-                // server-side expiry check.
-                var renewalBuffer = TimeSpan.FromMinutes(5);
+                var renewalBuffer = TokenRefreshConstants.RenewalBuffer;
                 if (expiresAtParsed - DateTimeOffset.UtcNow <= renewalBuffer)
                 {
                     _logger.Warning(
