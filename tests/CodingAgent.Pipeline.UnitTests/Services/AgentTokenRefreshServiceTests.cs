@@ -141,6 +141,11 @@ public sealed class AgentTokenRefreshServiceTests
     public async Task RefreshTokenAsync_WithTokenField_AndTokenExpiringWithinBuffer_ThrowsHubException()
     {
         // Token expiring within the 5-minute renewal buffer should also throw.
+        // TODO [WARNING]: This literal (2 minutes) is not derived from TokenRefreshConstants.RenewalBuffer.
+        // If RenewalBuffer is reduced below 2 minutes the expiry will fall outside the buffer and
+        // the test will stop reaching the expiring-within-buffer branch. Replace with
+        // DateTimeOffset.UtcNow.Add(TokenRefreshConstants.RenewalBuffer - TimeSpan.FromMinutes(1))
+        // to keep the boundary tight relative to the constant.
         var expiresAt = DateTimeOffset.UtcNow.AddMinutes(2); // within buffer
         var run = MakeRun("github-repo");
         _facade.Setup(f => f.GetRun("run-1")).Returns(run);

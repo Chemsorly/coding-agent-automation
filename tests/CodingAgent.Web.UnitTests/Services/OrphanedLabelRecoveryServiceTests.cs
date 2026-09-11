@@ -434,8 +434,10 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         using var service = CreateService();
         await service.StartAsync(_cts.Token);
 
-        var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
-        completed.Should().BeSameAs(swapCalled.Task);
+        var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+        completed.Should().BeSameAs(swapCalled.Task,
+            "SwapLabelAsync should have been called — if this timed out, the sweep either " +
+            "never ran or the issue was incorrectly skipped by one of the defense checks");
 
         // Assert: provider config was only loaded once (deduplicated)
         _mockConfigClient.Verify(

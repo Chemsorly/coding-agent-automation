@@ -639,8 +639,8 @@ public class DispatchServiceConsolidationTests : IDisposable
 
         var result = await distributor.DistributeAsync(request, CancellationToken.None);
         result.Success.Should().BeTrue();
-        // Synchronous dispatch path: Queued=false (item is Dispatched immediately)
-        result.Queued.Should().BeFalse("synchronous dispatch always returns Queued=false");
+        // Consolidation uses synchronous DispatchAsync path: Queued=false (item is Dispatched immediately)
+        result.Queued.Should().BeFalse("Consolidation routes through synchronous DispatchAsync, not Pending queue");
 
         // DistributeAsync is now API-backed and does not insert into local DB.
         // Insert the row directly so the consolidation dispatch service can find it.
