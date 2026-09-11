@@ -122,7 +122,8 @@ public sealed class ReconciliationLoopTests
             DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(itemTimeoutSeconds + 1)),
             AgentSelector = "dotnet10,opencode",
             IssueIdentifier = "owner/repo#1",
-            TimeoutSeconds = itemTimeoutSeconds
+            TimeoutSeconds = itemTimeoutSeconds,
+            K8sJobName = jobName // stored at dispatch time — exercises the non-legacy fast path
         };
 
         // EnforceTimeoutsAsync queries with TimeoutCanaryMinAgeSeconds (60s) as the pre-filter
@@ -163,7 +164,8 @@ public sealed class ReconciliationLoopTests
             DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(itemTimeoutSeconds + 1)),
             AgentSelector = "dotnet10,opencode",
             IssueIdentifier = "owner/repo#1",
-            TimeoutSeconds = itemTimeoutSeconds
+            TimeoutSeconds = itemTimeoutSeconds,
+            K8sJobName = jobName // stored at dispatch time — exercises the non-legacy fast path
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
@@ -231,7 +233,8 @@ public sealed class ReconciliationLoopTests
             DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(globalDefaultSeconds + 1)),
             AgentSelector = "dotnet10,opencode",
             IssueIdentifier = "owner/repo#1",
-            TimeoutSeconds = 0 // legacy: field not stored
+            TimeoutSeconds = 0, // legacy: field not stored
+            K8sJobName = jobName // stored at dispatch time — exercises the non-legacy fast path
         };
 
         // TODO [WARNING]: The mock setup uses It.IsAny<int>() for the GetActiveAsync canary threshold.
@@ -611,6 +614,241 @@ public sealed class ReconciliationLoopTests
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ─── K8sJobName == null label-selector resolution (Issue #2474) ───────────
+
+    /// <summary>
+    /// AC: when K8sJobName is null, EnforceTimeoutsAsync must query by label selector and
+    /// delete the job using the resolved name, NOT the ForWorkItem fallback name.
+    /// </summary>
+    [Fact]
+    public async Task EnforceTimeout_WhenK8sJobNameIsNull_ResolvesJobViaLabelSelector_AndDeletes()
+    {
+        var id = Guid.NewGuid();
+        // API-path job name format: "caa-{first8hex}" (ForBrain)
+        var resolvedJobName = $"caa-{id:N}"[..12];
+        const int itemTimeoutSeconds = 1800;
+
+        var runningItem = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(itemTimeoutSeconds + 1)),
+            AgentSelector = "dotnet10,opencode",
+            IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = itemTimeoutSeconds,
+            K8sJobName = null // legacy — field not persisted at dispatch time
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([runningItem]);
+
+        // Label-selector lookup returns the actual API-path job
+        // TODO: tighten the label-selector predicate from Contains("caa/work-item-id") to
+        // s == $"caa/work-item-id={id}" so the mock/verify only matches the exact selector
+        // including the correct work-item Guid. The loose Contains predicate would silently match
+        // a wrong-Guid selector, hiding a copy-paste regression.
+        _k8sClient.Setup(c => c.ListJobsAsync(
+                _options.Namespace,
+                It.Is<string>(s => s.Contains("caa/work-item-id")),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [MakeJob(resolvedJobName, id, active: true)] });
+
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // Must delete using the label-resolved name, not ForWorkItem format
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            resolvedJobName, _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
+
+        // Must NOT delete using the ForWorkItem fallback name (caa-agent-{first11hex})
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            JobNameFactory.ForWorkItem(id), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        // Status must still be posted as Failed/Timeout
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // Label-selector ListJobsAsync must have been called (proves the label-lookup path was taken)
+        // TODO: tighten to s == $"caa/work-item-id={id}" (see Setup comment above)
+        _k8sClient.Verify(c => c.ListJobsAsync(
+            _options.Namespace,
+            It.Is<string>(s => s.Contains("caa/work-item-id")),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// When K8sJobName is null but the label-selector query returns no job (already cleaned up),
+    /// EnforceTimeoutsAsync must post the Failed status but skip deletion entirely.
+    /// </summary>
+    [Fact]
+    public async Task EnforceTimeout_WhenK8sJobNameIsNull_AndNoJobFoundViaLabel_SkipsDeletion()
+    {
+        var id = Guid.NewGuid();
+        const int itemTimeoutSeconds = 1800;
+
+        var runningItem = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(itemTimeoutSeconds + 1)),
+            AgentSelector = "dotnet10,opencode",
+            IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = itemTimeoutSeconds,
+            K8sJobName = null
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([runningItem]);
+
+        // Label-selector query returns nothing — job was already cleaned up
+        _k8sClient.Setup(c => c.ListJobsAsync(
+                _options.Namespace,
+                It.Is<string>(s => s.Contains("caa/work-item-id")),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [] });
+
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // Status must be posted
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // Must NOT call DeleteJobAsync at all — no job was found, nothing to delete
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// When K8sJobName is set (non-null), EnforceTimeoutsAsync must use it directly and
+    /// must NOT issue a label-selector ListJobsAsync call.
+    /// </summary>
+    [Fact]
+    public async Task EnforceTimeout_WhenK8sJobNameIsSet_DoesNotCallLabelSelector()
+    {
+        var id = Guid.NewGuid();
+        const string storedJobName = "caa-a1b2c3d4"; // stored at dispatch time
+        const int itemTimeoutSeconds = 1800;
+
+        var runningItem = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(itemTimeoutSeconds + 1)),
+            AgentSelector = "dotnet10,opencode",
+            IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = itemTimeoutSeconds,
+            K8sJobName = storedJobName // non-null — fast path
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([runningItem]);
+
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // Must delete using the stored name
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            storedJobName, _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
+
+        // Must NOT call ListJobsAsync with a caa/work-item-id label selector
+        _k8sClient.Verify(c => c.ListJobsAsync(
+            It.IsAny<string>(),
+            It.Is<string>(s => s.Contains("caa/work-item-id")),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// When K8sJobName is null and the live job list contains a job with the matching
+    /// caa/work-item-id label, EnforceDispatchedTimeoutAsync must NOT time out the item —
+    /// the job is live under a different name than ForWorkItem would compute.
+    /// Regression for the bug where ForWorkItem name wasn't in liveJobNames → false DispatchTimeout.
+    /// </summary>
+    [Fact]
+    public async Task EnforceDispatchedTimeout_WhenK8sJobNameIsNull_AndJobExistsViaLabel_DoesNotTimeOut()
+    {
+        var id = Guid.NewGuid();
+        // API-path job name: "caa-{first8hex}" — will NOT appear in liveJobNames under ForWorkItem format
+        var apiJobName = $"caa-{id:N}"[..12];
+
+        var dispatchedItem = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Dispatched,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatPodConnectTimeoutSeconds + 1)),
+            AgentSelector = "dotnet10,opencode",
+            IssueIdentifier = "owner/repo#1",
+            K8sJobName = null // legacy row
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds),
+                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dispatchedItem]);
+
+        // Live job list contains the actual API-path job with the correct caa/work-item-id label
+        // TODO: tighten the ListJobsAsync mock to assert the correct namespace and label-selector
+        // arguments. The production code issues the broad "app.kubernetes.io/managed-by=caa-orchestrator"
+        // selector here (not a per-item selector). Using It.IsAny for both args means a regression
+        // that changes the selector or namespace would still satisfy this mock, hiding the breakage.
+        // Preferred: It.Is<string>(s => s == _options.Namespace) and
+        //            It.Is<string>(s => s == "app.kubernetes.io/managed-by=caa-orchestrator").
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [MakeJob(apiJobName, id, active: true)] });
+
+        var loop = CreateLoop();
+        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+
+        // Must NOT post Failed — the job was found via label, item is NOT orphaned
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// When K8sJobName is null and the live job list is empty (no job with the matching label),
+    /// EnforceDispatchedTimeoutAsync must mark the item Failed/DispatchTimeout.
+    /// </summary>
+    [Fact]
+    public async Task EnforceDispatchedTimeout_WhenK8sJobNameIsNull_AndNoJobInLiveList_TimesOutItem()
+    {
+        var id = Guid.NewGuid();
+
+        var dispatchedItem = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Dispatched,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatPodConnectTimeoutSeconds + 1)),
+            AgentSelector = "dotnet10,opencode",
+            IssueIdentifier = "owner/repo#1",
+            K8sJobName = null
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds),
+                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dispatchedItem]);
+
+        // No live jobs at all
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [] });
+
+        var loop = CreateLoop();
+        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+
+        // Item is genuinely orphaned — must be marked Failed/DispatchTimeout
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "DispatchTimeout"),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 }
 
@@ -1042,14 +1280,15 @@ public sealed class ReconciliationLoopErrorTests
             Status = WorkItemStatus.Dispatched,
             DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatPodConnectTimeoutSeconds + 1)),
             AgentSelector = "dotnet",
-            IssueIdentifier = "owner/repo#1"
+            IssueIdentifier = "owner/repo#1",
+            K8sJobName = expectedJobName // stored — exercises the non-legacy fast path
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
                 It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([dispatchedItem]);
 
-        // K8s Job exists for this work item
+        // K8s Job exists for this work item (job name matches the stored K8sJobName)
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList
             {
@@ -1330,15 +1569,16 @@ public sealed class ReconciliationLoopErrorTests
     // ─── Null-fallback path tests (K8sJobName = null) ─────────────────────────
 
     /// <summary>
-    /// Regression guard: when K8sJobName is null (legacy WorkItem dispatched before the field was
-    /// persisted), EnforceTimeoutsAsync must fall back to <see cref="JobNameFactory.ForWorkItem"/>
-    /// and attempt to delete the job under that name.
+    /// Regression guard (Issue #2474): when K8sJobName is null (legacy WorkItem dispatched before
+    /// the field was persisted), EnforceTimeoutsAsync must resolve the actual K8s Job name via
+    /// label selector and delete it — NOT fall back to JobNameFactory.ForWorkItem.
     /// </summary>
     [Fact]
-    public async Task EnforceAgentTimeout_WhenK8sJobNameIsNull_FallsBackToForWorkItemFormat()
+    public async Task EnforceAgentTimeout_WhenK8sJobNameIsNull_ResolvesViaLabelSelector_NotForWorkItemFallback()
     {
         var id = Guid.NewGuid();
-        var expectedFallbackJobName = JobNameFactory.ForWorkItem(id);
+        // API-path job name (ForBrain format): "caa-{first8hex}"
+        var resolvedJobName = $"caa-{id:N}"[..12];
 
         var runningItem = new ActiveWorkItemDto
         {
@@ -1347,6 +1587,7 @@ public sealed class ReconciliationLoopErrorTests
             DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatPodConnectTimeoutSeconds + 1801)),
             AgentSelector = "dotnet10,opencode",
             IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = 1800,
             K8sJobName = null // legacy — field not persisted at dispatch time
         };
 
@@ -1355,24 +1596,56 @@ public sealed class ReconciliationLoopErrorTests
         _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
+        // Label-selector query returns the actual API-path job
+        _k8sClient.Setup(c => c.ListJobsAsync(
+                It.IsAny<string>(),
+                It.Is<string>(s => s.Contains("caa/work-item-id")),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList
+            {
+                Items =
+                [
+                    new V1Job
+                    {
+                        Metadata = new V1ObjectMeta
+                        {
+                            Name = resolvedJobName,
+                            Labels = new Dictionary<string, string>
+                            {
+                                ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
+                                ["caa/work-item-id"] = id.ToString()
+                            }
+                        },
+                        Status = new V1JobStatus { Active = 1 }
+                    }
+                ]
+            });
+
         var loop = CreateLoop();
         await loop.EnforceTimeoutsAsync(CancellationToken.None);
 
-        // Fallback job name is the ForWorkItem format (caa-agent-{first11hex})
+        // Must delete using the label-resolved API-path name
         _k8sClient.Verify(c => c.DeleteJobAsync(
-            expectedFallbackJobName, _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
+            resolvedJobName, _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
+
+        // Must NOT use the old ForWorkItem format (caa-agent-{first11hex}) — that was the bug
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            JobNameFactory.ForWorkItem(id), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     /// <summary>
-    /// Regression guard: when K8sJobName is null (legacy WorkItem), EnforceDispatchedTimeoutAsync
-    /// must fall back to <see cref="JobNameFactory.ForWorkItem"/> when checking whether a live K8s
-    /// Job exists for the item.
+    /// Regression guard (Issue #2474): when K8sJobName is null (legacy WorkItem), the
+    /// EnforceDispatchedTimeoutAsync must resolve job existence via the caa/work-item-id label
+    /// from the already-fetched live job list, NOT via the ForWorkItem name fallback.
+    /// When the live list contains the job under its actual API-path label, the item must NOT
+    /// be timed out (the old bug falsely marked it Failed because ForWorkItem name ∉ liveJobNames).
     /// </summary>
     [Fact]
-    public async Task EnforceDispatchedTimeout_WhenK8sJobNameIsNull_FallsBackToForWorkItemFormat()
+    public async Task EnforceDispatchedTimeout_WhenK8sJobNameIsNull_ResolvesViaLabel_NotForWorkItemFallback()
     {
         var id = Guid.NewGuid();
-        var expectedFallbackJobName = JobNameFactory.ForWorkItem(id);
+        // API-path job name: "caa-{first8hex}" — does NOT match ForWorkItem format
+        var apiJobName = $"caa-{id:N}"[..12];
 
         var dispatchedItem = new ActiveWorkItemDto
         {
@@ -1388,10 +1661,29 @@ public sealed class ReconciliationLoopErrorTests
                 It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([dispatchedItem]);
 
-        // The fallback-computed job name does NOT appear in the live job list,
-        // so the item is treated as orphaned and marked Failed.
+        // Live job list contains the API-path job with the correct caa/work-item-id label.
+        // The ForWorkItem name ("caa-agent-{first11hex}") is NOT in this list — this was the
+        // condition that triggered the false DispatchTimeout bug before the fix.
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new V1JobList { Items = [] });
+            .ReturnsAsync(new V1JobList
+            {
+                Items =
+                [
+                    new V1Job
+                    {
+                        Metadata = new V1ObjectMeta
+                        {
+                            Name = apiJobName,
+                            Labels = new Dictionary<string, string>
+                            {
+                                ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
+                                ["caa/work-item-id"] = id.ToString()
+                            }
+                        },
+                        Status = new V1JobStatus { Active = 1 }
+                    }
+                ]
+            });
 
         _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -1399,11 +1691,9 @@ public sealed class ReconciliationLoopErrorTests
         var loop = CreateLoop();
         await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
 
-        // Item should be marked Failed because no live job was found under the fallback name
+        // Job was found via label — item must NOT be marked Failed (was the bug: it WAS marked Failed)
         _workItemClient.Verify(c => c.PostStatusAsync(
-            id,
-            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed"),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
 }

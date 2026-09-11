@@ -225,19 +225,60 @@ public sealed class ReconciliationLoop
                     FailureReason = "Timeout"
                 }, ct);
 
-                // Use the stored K8sJobName when available — the API's DispatchLifecycleService uses
-                // a different naming format ("caa-{first8hex}") than the job controller's DispatchLoop
-                // ("caa-agent-{first11hex}"). Recomputing via DispatchLoop.GenerateJobName would miss
-                // jobs created by the API path (consolidation/brain runs) and leave live pods running.
+                // Resolve the K8s Job name to delete.
+                // When K8sJobName is persisted, use it directly — the API's DispatchLifecycleService
+                // uses "caa-{first8hex}" (ForBrain) while the old job-controller path used
+                // "caa-agent-{first11hex}" (ForWorkItem, removed in #2322). Using the stored name
+                // avoids recomputing the wrong format.
                 //
-                // Null-fallback: K8sJobName may be null for legacy WorkItems dispatched before the field
-                // was persisted. Falling back to JobNameFactory.ForWorkItem (caa-agent-{first11hex}) is
-                // intentional for the job-controller dispatch path only. If K8sJobName is null AND the
-                // item was dispatched by the API path (brain/consolidation), this fallback will produce
-                // the wrong name and the K8s Job will not be found or deleted — a known limitation
-                // documented here rather than silently inherited from DispatchLoop.GenerateJobName.
-                var jobName = item.K8sJobName ?? JobNameFactory.ForWorkItem(item.Id);
+                // When K8sJobName is null (legacy WorkItems created before the field was persisted),
+                // resolve the actual running Job via label selector "caa/work-item-id={id}" — the same
+                // approach CleanupOrphansAsync uses. If no Job is found (already cleaned up by
+                // CleanupOrphansAsync or never started), skip deletion rather than guessing the name.
+                string? jobName;
+                if (item.K8sJobName is not null)
+                {
+                    jobName = item.K8sJobName;
+                }
+                else
+                {
+                    V1JobList labelJobs;
+                    try
+                    {
+                        labelJobs = await _k8sClient.ListJobsAsync(
+                            _options.Namespace,
+                            $"caa/work-item-id={item.Id}",
+                            ct);
+                    }
+                    catch (Exception labelEx)
+                    {
+                        Log.Warning(labelEx, "Failed to resolve K8s Job name via label selector for WorkItem {Id} — skipping deletion", item.Id);
+                        labelJobs = new V1JobList { Items = [] };
+                    }
 
+                    // TODO: V1JobList.Items can be null when the K8s API returns an empty result
+                    // without the "items" field in the JSON body (the KubernetesClient deserialiser
+                    // leaves Items null rather than an empty list in that case). Use
+                    // (labelJobs.Items ?? []).FirstOrDefault() here to avoid a NullReferenceException
+                    // on a successful call that returns null Items. The catch above only guards the
+                    // exception path; a null Items on a successful response bypasses it entirely.
+                    var resolved = labelJobs.Items.FirstOrDefault();
+                    if (resolved?.Metadata?.Name is null)
+                    {
+                        Log.Warning("WorkItem {Id} timed out but no K8s Job found via label selector caa/work-item-id={Id} — job already deleted or never started", item.Id, item.Id);
+                        jobName = null;
+                    }
+                    else
+                    {
+                        jobName = resolved.Metadata.Name;
+                    }
+                }
+
+                // TODO: agentId is null when no K8s Job was found via the label-selector path
+                // (jobName == null). Before this fix, the ForWorkItem fallback always produced a
+                // non-null string here. Confirm that WorkDistributionTelemetry.LogTerminalStatus (and
+                // any downstream telemetry sink) tolerates a null agentId without throwing or silently
+                // dropping the record.
                 WorkDistributionTelemetry.LogTerminalStatus(
                     item.Id, WorkItemStatus.Failed,
                     duration: null, agentId: jobName,
@@ -246,7 +287,8 @@ public sealed class ReconciliationLoop
                 _agentTimeouts.Add(1,
                     new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
 
-                await SafeDeleteJobAsync(jobName, ct);
+                if (jobName is not null)
+                    await SafeDeleteJobAsync(jobName, ct);
             }
             catch (Exception ex)
             {
@@ -278,15 +320,23 @@ public sealed class ReconciliationLoop
         var dispatched = items.Where(i => i.Status == WorkItemStatus.Dispatched).ToList();
         if (dispatched.Count == 0) return;
 
-        // Build set of known job names from live K8s Jobs
+        // Build the live job list. Hoist V1JobList outside the try block so it is accessible
+        // in the foreach loop for label-based resolution when K8sJobName is null (Issue #2474).
+        V1JobList liveJobs;
         HashSet<string> liveJobNames;
         try
         {
-            var jobs = await _k8sClient.ListJobsAsync(
+            liveJobs = await _k8sClient.ListJobsAsync(
                 _options.Namespace,
                 "app.kubernetes.io/managed-by=caa-orchestrator",
                 ct);
-            liveJobNames = jobs.Items.Select(j => j.Metadata?.Name ?? "").ToHashSet(StringComparer.Ordinal);
+            // TODO: V1JobList.Items can be null when the K8s API omits the "items" field for an
+            // empty result set. Use (liveJobs.Items ?? []).Select(...) here to guard against a
+            // NullReferenceException on a successful API call that returns null Items. If Items is
+            // null the NRE is currently caught by the catch below, which returns early — a spurious
+            // skip on an otherwise-successful API call. (Same pattern needed at the liveJobs.Items
+            // dereference further below in the foreach for the label-based null-K8sJobName branch.)
+            liveJobNames = liveJobs.Items.Select(j => j.Metadata?.Name ?? "").ToHashSet(StringComparer.Ordinal);
         }
         catch (Exception ex)
         {
@@ -298,20 +348,39 @@ public sealed class ReconciliationLoop
         {
             if (ct.IsCancellationRequested) break;
 
-            // Use the stored K8sJobName when available — the API's DispatchLifecycleService uses
-            // a different naming format ("caa-{first8hex}") than the job controller's DispatchLoop
-            // ("caa-agent-{first11hex}"). Recomputing via DispatchLoop.GenerateJobName would miss
-            // jobs created by the API path (consolidation/brain runs) and kill live pods.
+            // Determine whether a live K8s Job exists for this WorkItem.
             //
-            // Null-fallback: K8sJobName may be null for legacy WorkItems dispatched before the field
-            // was persisted. Falling back to JobNameFactory.ForWorkItem (caa-agent-{first11hex}) is
-            // intentional for the job-controller dispatch path only. If K8sJobName is null AND the
-            // item was dispatched by the API path (brain/consolidation), this fallback will produce
-            // the wrong name; the item will be treated as having no live Job and incorrectly marked
-            // Failed — a known limitation documented here rather than silently inherited from
-            // DispatchLoop.GenerateJobName.
-            var expectedJobName = item.K8sJobName ?? JobNameFactory.ForWorkItem(item.Id);
-            if (liveJobNames.Contains(expectedJobName)) continue; // job exists, not orphaned
+            // When K8sJobName is stored, use it for a direct name lookup in liveJobNames —
+            // the API's DispatchLifecycleService uses "caa-{first8hex}" (ForBrain) while the old
+            // job-controller path used "caa-agent-{first11hex}" (ForWorkItem, removed in #2322).
+            //
+            // When K8sJobName is null (legacy WorkItems created before the field was persisted),
+            // resolve via caa/work-item-id label from the already-fetched liveJobs list — no extra
+            // API call. JobNameFactory.ForWorkItem would produce the wrong name for API-path items
+            // and was the root cause of false DispatchTimeout transitions (Issue #2474).
+            bool isLive;
+            if (item.K8sJobName is not null)
+            {
+                isLive = liveJobNames.Contains(item.K8sJobName);
+            }
+            else
+            {
+                // TODO: If the TODO at the liveJobNames assignment above is resolved by using
+                // (liveJobs.Items ?? []).Select(...), apply the same null-guard here:
+                // (liveJobs.Items ?? []).FirstOrDefault(j => ...) to ensure consistency. Currently
+                // if Items is null, the NRE would have already fired at the Select() call above,
+                // so this is a secondary concern — but both sites should be fixed together.
+                var resolvedJob = liveJobs.Items.FirstOrDefault(j =>
+                {
+                    var labels = j.Metadata?.Labels;
+                    return labels is not null
+                        && labels.TryGetValue("caa/work-item-id", out var idStr)
+                        && idStr == item.Id.ToString();
+                });
+                isLive = resolvedJob is not null;
+            }
+
+            if (isLive) continue; // job exists — item is not orphaned
 
             Log.Warning("WorkItem {Id} stuck in Dispatched for >{Seconds}s with no K8s Job (issue={IssueIdentifier}) — marking Failed",
                 item.Id, _options.ChatPodConnectTimeoutSeconds, item.IssueIdentifier ?? "unknown");
