@@ -265,7 +265,7 @@ public sealed class ReconciliationLoop
                     var resolved = labelJobs.Items.FirstOrDefault();
                     if (resolved?.Metadata?.Name is null)
                     {
-                        Log.Warning("WorkItem {Id} timed out but no K8s Job found via label selector caa/work-item-id={Id} — job already deleted or never started", item.Id, item.Id);
+                        Log.Warning("WorkItem {Id} timed out but no K8s Job found via label selector caa/work-item-id={WorkItemId} — job already deleted or never started", item.Id, item.Id);
                         jobName = null;
                     }
                     else
