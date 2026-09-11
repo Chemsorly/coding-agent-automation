@@ -861,15 +861,13 @@ public sealed class AgentJobLifecycleServiceTests
 
         // Allow the thread-pool continuation to run before asserting.
         // Task.FromException produces an already-faulted task, so ContinueWith schedules
-        // the continuation immediately. A single yield is sufficient to let it execute.
-        // TODO: [WARNING] await Task.Yield() is not a reliable synchronization barrier for
-        // thread-pool continuations scheduled via ContinueWith(..., TaskScheduler.Default).
-        // The continuation is queued on the pool but may not have executed before this await
-        // resumes, causing sporadic failures under load or on constrained CI agents.
-        // Replace with a deterministic approach: capture the ContinueWith Task from the SUT
-        // (requires surfacing it from the fire-and-forget site) and await it here, or use a
-        // bounded polling loop (e.g. SpinWait / Task.Delay up to ~100 ms) instead of a single yield.
-        await Task.Yield();
+        // the continuation on the thread pool immediately. Task.Yield() is NOT a reliable
+        // barrier here — it only yields the test method's own continuation and races with
+        // the separately-queued ContinueWith callback. Task.Delay gives the thread pool
+        // enough wall-clock time to execute the already-queued continuation reliably,
+        // even on a loaded CI agent. The fire-and-forget design means we cannot await the
+        // ContinueWith task directly without production-code changes.
+        await Task.Delay(100);
 
         // Assert: a Warning is logged with the exception, method context, AgentId, and field name.
         // Serilog's Warning<T0,T1>(Exception?, string, T0, T1) overload is selected by the compiler
@@ -885,9 +883,6 @@ public sealed class AgentJobLifecycleServiceTests
                 It.Is<string>(s => s.Contains("HandleJobRejectedAsync") && s.Contains("{AgentId}") && s.Contains("{Field}")),
                 It.IsAny<AgentId>(),    // T0 = AgentId
                 It.IsAny<string>()),    // T1 = string (field name)
-            // TODO: [WARNING] Times.AtLeastOnce allows the warning to fire multiple times and still
-            // pass. Use Times.Once for a tighter assertion — there is no code path that should log
-            // this warning more than once per faulted task in this scenario.
-            Times.AtLeastOnce);
+            Times.Once);
     }
 }
