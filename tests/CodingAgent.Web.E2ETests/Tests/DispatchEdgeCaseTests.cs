@@ -66,16 +66,20 @@ public sealed class DispatchEdgeCaseTests : E2ETestBase
         await codingPage.SelectIssueAsync("50");
         await codingPage.ClickStartPipelineAsync();
 
-        // Assert: dispatch succeeds synchronously (issue #2322 — no Pending queue).
+        // Assert: dispatch succeeds (Pending enqueue path — item enters visible queue).
         await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
 
         var statusText = await Page.TextContentAsync(".settings-status.status-success");
         Assert.NotNull(statusText);
-        Assert.Contains("Dispatched", statusText, StringComparison.OrdinalIgnoreCase);
+        // Pending enqueue path: queuedMessage is shown ("⏳ Queued #N...")
+        Assert.Contains("Queued", statusText, StringComparison.OrdinalIgnoreCase);
 
-        // WorkItem is created as Dispatched immediately — verify it exists in active items.
+        // WorkItem is created as Pending — verify it exists (pending or already claimed)
         var active = await Fixture.WorkItems.GetActiveAsync(olderThanSeconds: -3600, ct: CancellationToken.None);
-        Assert.Contains(active, w => w.IssueIdentifier == "50");
+        var pending = await Fixture.WorkItems.GetPendingAsync(maxResults: 50, ct: CancellationToken.None);
+        Assert.True(
+            active.Any(w => w.IssueIdentifier == "50") || pending.Any(w => w.IssueIdentifier == "50"),
+            "Issue #50 must appear in active or pending items after dispatch");
     }
 
     [Fact]

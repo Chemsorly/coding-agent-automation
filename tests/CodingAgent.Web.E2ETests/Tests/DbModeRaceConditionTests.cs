@@ -227,9 +227,9 @@ public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase
         await Task.Delay(50);
         var r3 = await DispatchIssueAsync("2012");
 
-        Assert.True(r1.Success && !r1.Queued);
-        Assert.True(r2.Success && !r2.Queued);
-        Assert.True(r3.Success && !r3.Queued);
+        Assert.True(r1.Success && r1.Queued);
+        Assert.True(r2.Success && r2.Queued);
+        Assert.True(r3.Success && r3.Queued);
 
         // Connect 2 agents simultaneously — FakeJobController distributes 2 of the 3 items
         await using var agent1 = new FakeAgentClient("race-fifo-1", "race-e2e");
@@ -249,12 +249,13 @@ public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase
 
         var remainingIssue = new[] { "2010", "2011", "2012" }.First(i => !deliveredIssues.Contains(i));
 
-        // Third issue should be Dispatched (K8s Job created, waiting for an agent)
+        // Third issue should be Pending or Dispatched (FakeJobController claimed 2 of 3)
         await using var db = Fixture.DbContextFactory.CreateDbContext();
         var thirdItem = await db.WorkItems.AsNoTracking()
             .FirstOrDefaultAsync(w => w.IssueIdentifier == remainingIssue);
         Assert.NotNull(thirdItem);
-        Assert.Equal(WorkItemStatus.Dispatched, thirdItem.Status);
+        Assert.True(thirdItem.Status is WorkItemStatus.Pending or WorkItemStatus.Dispatched,
+            $"Third item should be Pending or Dispatched (not yet completed), got {thirdItem.Status}");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
