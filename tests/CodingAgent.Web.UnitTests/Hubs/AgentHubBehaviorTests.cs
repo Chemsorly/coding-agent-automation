@@ -590,7 +590,10 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var repoConfig = new ProviderConfig
         {
-            Id = "repo-cfg-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Id = "repo-cfg-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string> { ["privateKeyBase64"] = "key123", ["clientId"] = "c", ["installationId"] = "1" }
         };
         _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("repo-cfg-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
@@ -616,7 +619,10 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var repoConfig = new ProviderConfig
         {
-            Id = "repo-from-payload", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Id = "repo-from-payload",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string> { ["privateKeyBase64"] = "key", ["clientId"] = "c", ["installationId"] = "1" }
         };
         _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("repo-from-payload", ProviderKind.Repository, It.IsAny<CancellationToken>()))
@@ -655,7 +661,10 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var brainConfig = new ProviderConfig
         {
-            Id = "brain-cfg", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Brain",
+            Id = "brain-cfg",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Brain",
             Settings = new Dictionary<string, string> { ["privateKeyBase64"] = "brainkey", ["clientId"] = "c", ["installationId"] = "1" }
         };
         _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("brain-cfg", ProviderKind.Repository, It.IsAny<CancellationToken>()))

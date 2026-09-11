@@ -66,15 +66,15 @@ public sealed class AgentHubMethodTests
 
     private static AgentEntry CreateAgentEntry(string agentId, string connectionId,
         string? activeChatSessionId = null, string? activeJobId = null) => new()
-    {
-        AgentId = agentId,
-        ConnectionId = connectionId,
-        Hostname = "k8s-pod",
-        Labels = [],
-        RegisteredAt = DateTimeOffset.UtcNow,
-        ActiveChatSessionId = activeChatSessionId,
-        ActiveJobId = activeJobId,
-    };
+        {
+            AgentId = agentId,
+            ConnectionId = connectionId,
+            Hostname = "k8s-pod",
+            Labels = [],
+            RegisteredAt = DateTimeOffset.UtcNow,
+            ActiveChatSessionId = activeChatSessionId,
+            ActiveJobId = activeJobId,
+        };
 
     // ── AgentHub.Chat ──────────────────────────────────────────────────
 
