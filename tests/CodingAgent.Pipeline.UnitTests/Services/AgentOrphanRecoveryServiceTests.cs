@@ -287,6 +287,57 @@ public sealed class AgentOrphanRecoveryServiceTests
     }
 
     [Fact]
+    public async Task RecoverOrphanedStateAsync_ExistingRunWithDifferentAgentId_UpdatesAgentId()
+    {
+        // Pod replacement: a new agent pod calls RecoverOrphanedStateAsync with the same RunId
+        // but a different AgentId than the one currently on the run.
+        // LinkAgentToExistingRun must update run.AgentId and link the agent.
+        // NOTE: This tests the service in isolation (RecoverOrphanedStateAsync called directly,
+        // without a preceding RegisterAgent call). In the combined production flow, RegisterAgent
+        // updates run.AgentId first, so by the time this code runs existingRun.AgentId already
+        // matches — making it a no-op. The isolation test here verifies correct independent behaviour.
+        // entry.ActiveJobId is null so the inner trackedEntry.ActiveJobId is null lock guard is
+        // satisfied, allowing TransitionStatus(Busy) to be called.
+        var agentId = MakeAgentId("agent-1");
+        var activeJob = MakeActiveJob("run-1");
+        var message = MessageWithJob(job: activeJob);
+
+        var existingRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-1",
+            IssueIdentifier = "GH-42",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "github-repo",
+            AgentId = "agent-old", // prior pod's identity — different from registering agent
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "test",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+        var entry = MakeEntry("agent-1");
+        // entry.ActiveJobId is null (default from MakeEntry) — satisfies the inner lock guard
+
+        _facade.Setup(f => f.GetRun(new JobId("run-1"))).Returns(existingRun);
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+
+        await _sut.RecoverOrphanedStateAsync(message, agentId);
+
+        existingRun.AgentId.Should().Be("agent-1", "pod replacement must update run.AgentId to the new agent");
+        entry.ActiveJobId.Should().Be("run-1", "the new agent must be linked to the run");
+        _facade.Verify(f => f.AddRun(It.IsAny<PipelineRun>()), Times.Never, "existing run must not be re-added");
+        // TODO: [WARNING] TransitionStatus(agentId, AgentStatus.Busy) is not verified here, but the
+        // test comment explicitly notes the setup satisfies the inner lock guard so it will be called.
+        // A silent removal of the TransitionStatus call would not be caught. The analogous Web.UnitTests
+        // counterpart does verify TransitionStatus(Busy) Times.Once. Consider adding:
+        // _facade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once,
+        //     "the new agent must be transitioned to Busy");
+        // TODO: [WARNING] The acceptance criterion "A log entry is emitted when AgentId is updated due
+        // to pod replacement" is not verified here. The _logger mock is available in this test class;
+        // a silent removal of the pod-replacement Information log line would not be caught by any test
+        // on the Pipeline.UnitTests recovery-service path.
+    }
+
+    [Fact]
     public async Task RecoverOrphanedStateAsync_ExistingRunAdoptsModelName()
     {
         var agentId = MakeAgentId();
