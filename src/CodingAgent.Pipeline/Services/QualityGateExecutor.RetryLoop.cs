@@ -371,12 +371,8 @@ public partial class QualityGateExecutor
         catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
         {
             // Timeout on the feedback call itself (not pipeline cancellation)
-            // NOTE [WARNING]: FeedbackConstraints.FailureFeedbackTimeoutSeconds is used here but the actual
-            // CancellationTokenSource was created with context.Config.FeedbackTimeoutSeconds (above).
-            // If the operator configures a non-default FeedbackTimeoutSeconds the logged value will
-            // be wrong, making log-based diagnosis misleading. Change to context.Config.FeedbackTimeoutSeconds.
             _logger.Warning(ex, "Pipeline {RunId} failure feedback collection timed out after {Timeout}s",
-                run.RunId, FeedbackConstraints.FailureFeedbackTimeoutSeconds);
+                run.RunId, context.Config.FeedbackTimeoutSeconds);
             run.Feedback = _feedbackService.CreateFallbackFeedback(
                 FeedbackOutcome.Failure, "Feedback collection timed out", DateTime.UtcNow);
         }
