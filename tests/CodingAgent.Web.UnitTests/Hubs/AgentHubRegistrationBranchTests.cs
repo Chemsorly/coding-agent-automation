@@ -516,6 +516,51 @@ public sealed class AgentHubRegistrationBranchTests
             "a reconnect where the run already has an assigned agent must not re-swap the label");
     }
 
+    [Fact]
+    public async Task RegisterAgent_WithActiveJob_LabelSwapThrows_DoesNotBreakRegistration()
+    {
+        // The in-progress swap is best-effort: a provider failure must NOT break registration or
+        // force-disconnect the agent (the agent already has the job and must keep working).
+        var ctx = BuildContext("conn-1", agentIdQueryParam: "agent-1", user: null);
+        var hub = CreateHub(ctx);
+
+        var runId = Guid.NewGuid().ToString();
+        var run = new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "issue-cfg-1",
+            RepoProviderConfigId = "repo-cfg-1"
+        };
+
+        _facade.Setup(f => f.GetByAgentId(It.IsAny<AgentId>())).Returns((AgentEntry?)null);
+        _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(CreateEntry("agent-1", "conn-1"));
+        _facade.Setup(f => f.GetRun(runId)).Returns(run);
+        _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()))
+            .ThrowsAsync(new InvalidOperationException("issue provider unreachable"));
+        _orphanRecoveryService
+            .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
+            .Returns(Task.CompletedTask);
+
+        var message = new AgentRegistrationMessage
+        {
+            AgentId = "agent-1",
+            Hostname = "host",
+            Labels = [],
+            ActiveJob = MakeActiveJob(runId)
+        };
+
+        var ex = await Record.ExceptionAsync(() => hub.RegisterAgent(message));
+
+        ex.Should().BeNull("a label-swap failure must be swallowed — registration must still complete");
+        _facade.Verify(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1"), Times.Once);
+        _orphanRecoveryService.Verify(
+            s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()),
+            Times.Once,
+            "registration must run to completion (orphan recovery) despite the label-swap failure");
+    }
+
     // ── Test helpers ──────────────────────────────────────────────────────
 
     private sealed class TestHttpContextFeature : IHttpContextFeature
