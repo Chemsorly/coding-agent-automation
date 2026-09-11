@@ -85,6 +85,22 @@ public sealed partial class AgentHub
                 run.AgentId = message.AgentId.Value;
                 _facade.ReplaceRun(run);
                 _logger.Debug("RegisterAgent: set AgentId={AgentId} on run {RunId}", message.AgentId, jobId);
+
+                // K8s dispatch mode: the agent has now actually picked up the run, so this is the
+                // correct moment to move the issue (or PR, for reviews) agent:next → agent:in-progress.
+                // Until now it stayed agent:next while the WorkItem sat Pending in the queue
+                // (DistributionResult.Queued contract). Gated on the first pickup (AgentId was empty)
+                // so a reconnect does not re-swap. Best-effort: a label-swap failure must not break
+                // registration or force-disconnect the agent.
+                try
+                {
+                    await SwapLabelAsync(run, AgentLabels.InProgress);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex,
+                        "RegisterAgent: failed to swap label to agent:in-progress for run {RunId} (non-fatal)", jobId);
+                }
             }
         }
 
