@@ -21,6 +21,8 @@ public class WorkComponentTests : BunitContext
 {
     private readonly Mock<IPipelineApiWorkItemClient> _mockWorkItems = new();
     private readonly Mock<IPipelineApiConfigClient> _mockConfigClient = new();
+    private readonly Mock<IProviderFactory> _mockProviderFactory = new();
+    private readonly Mock<IDependencyChecker> _mockDependencyChecker = new();
 
     /// <summary>
     /// Builds a minimal <see cref="PendingWorkItemDto"/> suitable for queue-table rendering tests.
@@ -59,8 +61,8 @@ public class WorkComponentTests : BunitContext
 
         Services.AddSingleton<IPipelineApiWorkItemClient>(_mockWorkItems.Object);
         Services.AddSingleton<IPipelineApiConfigClient>(_mockConfigClient.Object);
-        Services.AddSingleton(Mock.Of<IProviderFactory>());
-        Services.AddSingleton(Mock.Of<IDependencyChecker>());
+        Services.AddSingleton(_mockProviderFactory.Object);
+        Services.AddSingleton(_mockDependencyChecker.Object);
         // BlockedIssuesService is sealed — let DI construct the real instance from the mocks above.
         Services.AddSingleton<BlockedIssuesService>();
         Services.AddSingleton(new CockpitState());
@@ -400,4 +402,154 @@ public class WorkComponentTests : BunitContext
     // Overview.razor that: (1) mocks IPipelineApiRunHistoryClient to return an active run, (2) renders
     // Overview, (3) clicks the cockpit-run-row element, and (4) asserts NavigationManager.Uri ends with
     // "runs/{runId}" — matching the pattern of InFlightRow_Click_NavigatesToRunDetailPage above.
+
+    // ── Provider backlog card (issue #2487) ───────────────────────────────────
+
+    /// <summary>
+    /// Sets up config+provider+dep mocks so GetBacklogAsync returns the given issues
+    /// with HasMore=false (not truncated).
+    /// </summary>
+    private void SetupBacklogProvider(IReadOnlyList<IssueSummary> issues)
+    {
+        var template = new PipelineJobTemplate
+        {
+            Id = "t1", Name = "T", IssueProviderId = "prov1", RepoProviderId = "repo1", Enabled = true
+        };
+        _mockConfigClient
+            .Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { template });
+        _mockConfigClient
+            .Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new ProviderConfig { Id = "prov1", DisplayName = "P", Kind = ProviderKind.Issue, ProviderType = "GitHub" } });
+
+        var pagedResult = new PagedResult<IssueSummary>
+        {
+            Items = issues,
+            Page = 1,
+            PageSize = 50,
+            HasMore = false
+        };
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(pagedResult);
+        mockProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(pagedResult);
+
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockProvider.Object);
+
+        _mockDependencyChecker
+            .Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(),
+                It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+    }
+
+    [Fact]
+    public async Task BacklogCard_ShowsExactCount_WhenNotTruncated()
+    {
+        // 2 ready issues, 1 blocked — provider returns HasMore=false so IsTruncated=false.
+        SetupBacklogProvider(new[]
+        {
+            new IssueSummary { Identifier = "10", Title = "Ready one", Labels = Array.Empty<string>(), Description = "", Url = null },
+            new IssueSummary { Identifier = "11", Title = "Ready two", Labels = Array.Empty<string>(), Description = "", Url = null },
+        });
+
+        var cut = Render<Work>();
+
+        // Wait for the backlog to finish loading (OnAfterRenderAsync sets _backlogLoading=false).
+        await cut.WaitForStateAsync(
+            () => !cut.Markup.Contains("checking…"),
+            TimeSpan.FromSeconds(5));
+
+        // The backlog card is the last .cockpit-card on the page. The header span shows the count.
+        // TODO: [WARNING] Using .Last() on .cockpit-card-header span is fragile: if a new cockpit-card
+        // is added after the backlog card, .Last() will target the wrong span and the assertion may
+        // pass on unrelated content while the actual backlog header is never checked. Consider finding
+        // the cockpit-card that contains "Provider backlog" text and then locating its span within.
+        var headerSpan = cut.FindAll(".cockpit-card-header span").Last();
+        // Header should show exact "N ready · M open" without a "+" suffix.
+        headerSpan.TextContent.Should().MatchRegex(@"\d+ ready · \d+ open$",
+            "non-truncated header must show exact counts without a + suffix");
+        headerSpan.TextContent.Should().NotContain("+",
+            "non-truncated header must not contain a + indicator");
+    }
+
+    [Fact]
+    public async Task BacklogCard_ShowsTruncationIndicator_WhenResultIsTruncated()
+    {
+        // Set up provider to always return HasMore=true (service hits MaxIssuesPerProvider cap).
+        var template = new PipelineJobTemplate
+        {
+            Id = "t1", Name = "T", IssueProviderId = "prov1", RepoProviderId = "repo1", Enabled = true
+        };
+        _mockConfigClient
+            .Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { template });
+        _mockConfigClient
+            .Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new ProviderConfig { Id = "prov1", DisplayName = "P", Kind = ProviderKind.Issue, ProviderType = "GitHub" } });
+
+        // Derive page content from the 'page' argument so both overloads produce the same
+        // deterministic result without a shared mutable counter that could be double-incremented
+        // when both the 3-arg and 4-arg Moq setups are live simultaneously.
+        PagedResult<IssueSummary> MakeInfinitePage(int pageArg) => new PagedResult<IssueSummary>
+        {
+            Items = Enumerable.Range((pageArg - 1) * 50 + 1, 50)
+                .Select(i => new IssueSummary { Identifier = i.ToString(), Title = $"I{i}", Labels = Array.Empty<string>(), Description = "", Url = null })
+                .ToArray(),
+            Page = pageArg,
+            PageSize = 50,
+            HasMore = true
+        };
+
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider
+            .Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((int pg, int _, CancellationToken _) => MakeInfinitePage(pg));
+        mockProvider
+            .Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((int pg, int _, IReadOnlyList<string>? _, CancellationToken _) => MakeInfinitePage(pg));
+
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockProvider.Object);
+
+        _mockDependencyChecker
+            .Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(),
+                It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+
+        var cut = Render<Work>();
+
+        // Wait for the backlog to finish loading (OnAfterRenderAsync sets _backlogLoading=false).
+        await cut.WaitForStateAsync(
+            () => !cut.Markup.Contains("checking…"),
+            TimeSpan.FromSeconds(30)); // 200 dep-check calls are mocked but may take time
+
+        var headerSpan = cut.FindAll(".cockpit-card-header span").Last();
+        // Header should contain a "+" to indicate truncation.
+        headerSpan.TextContent.Should().Contain("+",
+            "truncated header must contain a + indicator when IsTruncated is true");
+        // The table must still render the fetched issues.
+        var rows = cut.FindAll(".monitoring-table tbody tr");
+        rows.Should().HaveCountGreaterThanOrEqualTo(1, "truncated backlog must still render fetched issues");
+    }
+
+    [Fact]
+    public async Task BacklogCard_ShowsEmptyMessage_WhenNoIssuesFound()
+    {
+        // Default config setup: empty templates → GetBacklogAsync returns empty Issues, IsTruncated=false.
+        // The constructor already stubs GetAllTemplatesAsync with empty templates; this confirms the
+        // empty-state div is shown.
+        var cut = Render<Work>();
+
+        // Wait for the backlog to finish loading.
+        await cut.WaitForStateAsync(
+            () => !cut.Markup.Contains("checking…"),
+            TimeSpan.FromSeconds(5));
+
+        cut.Markup.Should().Contain("No open issues found",
+            "the empty-state message must be shown when no issues are returned");
+    }
 }
