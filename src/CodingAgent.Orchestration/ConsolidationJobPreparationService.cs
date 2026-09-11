@@ -205,34 +205,30 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
         IReadOnlyList<ProviderConfig> vendedConfigs,
         CancellationToken ct)
     {
-        if (templateId is null || string.IsNullOrEmpty(repoProviderId))
-        {
-            // TODO [WARNING]: When templateId is not null but repoProviderId is empty (template exists but
-            // has no RepoProviderId configured), this early-return silently skips project-override resolution.
-            // A template without a RepoProviderId may still belong to a project with meaningful overrides
-            // (e.g., AgentTimeout). Consider applying at least project overrides (ApplyProjectOverrides) even
-            // when repoProviderId is empty, rather than falling back to the raw global config entirely.
-
-            // No template context — return global config without project/template overrides.
+        // No template context — return global config without project/template overrides.
+        if (templateId is null)
             return await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
-        }
 
-        // Resolve owning project so ApplyProjectOverrides can apply per-project settings.
-        // A template may belong to no project (uncommon); passing null! is safe because
-        // ApplyProjectOverrides handles null defensively (returns config unchanged).
+        // Resolve owning project so per-project overrides (AgentTimeout, *ReviewEnabled, etc.) apply.
+        // A template may belong to no project (uncommon); both ApplyProjectOverrides and ResolveAsync
+        // accept a null project and return the config unchanged in that case.
         var projects = await _projectStore.LoadProjectsAsync(ct);
         var project = projects.FirstOrDefault(p => p.TemplateIds.Contains(templateId.Value.Value));
 
-        // TODO [WARNING]: project can be null here (template has no owning project) but is passed via null!
-        // to ResolveAsync whose signature declares project as non-nullable PipelineProject. This relies on
-        // ApplyProjectOverrides containing a defensive null-check. If ResolveAsync is refactored to dereference
-        // project before that check, this will throw NullReferenceException at runtime. Consider calling
-        // ApplyProjectOverrides directly when project is null rather than forwarding null through the non-nullable
-        // parameter, or add an overload of ResolveAsync that accepts PipelineProject?.
+        if (string.IsNullOrEmpty(repoProviderId))
+        {
+            // Template has no repo provider. Template-level overrides (blacklist, brain read-only) need a
+            // repoProviderId, but project overrides do not — apply those directly so per-project settings
+            // are not silently dropped. ProviderConfigId rejects an empty value, so the full ResolveAsync
+            // chain cannot run here.
+            var globalConfig = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
+            return PipelineConfigurationResolver.ApplyProjectOverrides(globalConfig, project);
+        }
+
         return await PipelineConfigurationResolver.ResolveAsync(
             _pipelineConfigStore.LoadPipelineConfigAsync,
             _projectStore.LoadAllTemplatesAsync,
-            project!, // null! when no owning project — ApplyProjectOverrides handles null defensively
+            project,
             (ProviderConfigId)repoProviderId,
             brainProviderId,
             vendedConfigs,
