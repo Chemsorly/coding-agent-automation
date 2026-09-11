@@ -66,11 +66,11 @@ public sealed class QualityGateRetryTests : E2ETestBase
             ".settings-status.status-success",
             new() { Timeout = 10_000 });
         var successText = await Page.TextContentAsync(".settings-status.status-success");
-        // Synchronous dispatch path (issue #2322): KubernetesWorkDistributor.DistributeAsync
-        // returns Queued=false because the work item is created as Dispatched immediately.
-        // DispatchOrchestrationService.DistributeAndFinalizeAsync always returns Queued=false,
-        // so DrawerDispatchHelper selects the dispatchedMessage branch: "✅ Dispatched #N".
-        Assert.Contains("Dispatched #42", successText);
+        // Pending enqueue path: KubernetesWorkDistributor.DistributeAsync
+        // returns Queued=true because the work item is created as Pending first.
+        // DispatchOrchestrationService.DistributeAndFinalizeAsync returns Queued=true,
+        // so DrawerDispatchHelper selects the queuedMessage branch: "⏳ Queued #N".
+        Assert.Contains("Queued #42", successText);
 
         // Wait for the agent to receive the job assignment
         var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
@@ -156,11 +156,11 @@ public sealed class QualityGateRetryTests : E2ETestBase
             ".settings-status.status-success",
             new() { Timeout = 10_000 });
         var successText = await Page.TextContentAsync(".settings-status.status-success");
-        // Synchronous dispatch path (issue #2322): KubernetesWorkDistributor.DistributeAsync
-        // returns Queued=false because the work item is created as Dispatched immediately.
-        // DispatchOrchestrationService.DistributeAndFinalizeAsync always returns Queued=false,
-        // so DrawerDispatchHelper selects the dispatchedMessage branch: "✅ Dispatched #N".
-        Assert.Contains("Dispatched #42", successText);
+        // Pending enqueue path: KubernetesWorkDistributor.DistributeAsync
+        // returns Queued=true because the work item is created as Pending first.
+        // DispatchOrchestrationService.DistributeAndFinalizeAsync returns Queued=true,
+        // so DrawerDispatchHelper selects the queuedMessage branch: "⏳ Queued #N".
+        Assert.Contains("Queued #42", successText);
 
         // Wait for the agent to receive the job assignment
         var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));

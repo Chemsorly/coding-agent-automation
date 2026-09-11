@@ -453,8 +453,20 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             return new DispatchOutcome(false, false, result.ErrorMessage);
         }
 
-        // Synchronous dispatch path: every successful distribution is immediately Dispatched
-        // (no Pending queue). The label swap to agent:in-progress is always unconditional.
+        if (result.Queued)
+        {
+            // Pending enqueue path: the WorkItem is queued, not yet dispatched — no K8s Job running.
+            // Per the DistributionResult.Queued contract the issue MUST stay agent:next: swapping to
+            // agent:in-progress here would mark every queued issue in-progress while it only waits in
+            // the queue. The swap is deferred until an agent actually picks up the run — in K8s
+            // dispatch mode that is AgentHub.RegisterAgent (the agent connecting with an ActiveJob).
+            // Dedup is unaffected: a Pending WorkItem already counts as active
+            // (PipelineConstants.ActiveWorkItemStatuses), so the loop will not re-dispatch the issue.
+            return new DispatchOutcome(true, true, null);
+        }
+
+        // Synchronous dispatch path (non-Pending): item is already Dispatched (K8s Job running).
+        // Confirm the label swap to agent:in-progress.
         await ConfirmDistributionLabelAsync(request, ct);
 
         return new DispatchOutcome(true, false, null);
@@ -462,6 +474,15 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 
     /// <inheritdoc />
     public async Task ConfirmDistributionLabelAsync(JobDistributionRequest request, CancellationToken ct)
+        => await ConfirmDistributionLabelAsync(request, ct, swallowCancellation: false);
+
+    /// <param name="swallowCancellation">
+    /// When <c>true</c>, <see cref="OperationCanceledException"/> is also swallowed.
+    /// Use on the Pending-enqueue path where the WorkItem is already committed to the DB —
+    /// the best-effort reasoning applies fully (there is nothing safe to revert).
+    /// </param>
+    private async Task ConfirmDistributionLabelAsync(
+        JobDistributionRequest request, CancellationToken ct, bool swallowCancellation)
     {
         ArgumentNullException.ThrowIfNull(request);
 
@@ -478,6 +499,15 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                 request.IssueIdentifier);
             await _infra.LabelService.SwapLabelAsync(
                 request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.InProgress, ct);
+        }
+        catch (OperationCanceledException) when (swallowCancellation)
+        {
+            // Queued path: WorkItem already committed — swallow OCE so the item is not
+            // stranded by a cancellation that arrives after the DB write.
+            _logger.Warning(
+                "Orchestration: label swap to agent:in-progress cancelled for issue {IssueIdentifier} " +
+                "(WorkItem already Pending — label will be wrong until next cycle)",
+                request.IssueIdentifier);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

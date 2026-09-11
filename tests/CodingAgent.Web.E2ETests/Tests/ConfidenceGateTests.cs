@@ -67,9 +67,8 @@ public sealed class ConfidenceGateTests : E2ETestBase
             ".settings-status.status-success",
             new() { Timeout = 10_000 });
         var successText = await Page.TextContentAsync(".settings-status.status-success");
-        // Kubernetes dispatch always queues: KubernetesWorkDistributor.DistributeAsync returns
-        // Synchronous dispatch path (issue #2322): always returns "✅ Dispatched #N".
-        Assert.Contains("Dispatched #42", successText);
+        // Pending enqueue path: always returns "⏳ Queued #N".
+        Assert.Contains("Queued #42", successText);
 
         // Wait for the agent to receive the job assignment
         var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
@@ -157,9 +156,8 @@ public sealed class ConfidenceGateTests : E2ETestBase
             ".settings-status.status-success",
             new() { Timeout = 10_000 });
         var successText = await Page.TextContentAsync(".settings-status.status-success");
-        // Kubernetes dispatch always queues: KubernetesWorkDistributor.DistributeAsync returns
-        // Synchronous dispatch path (issue #2322): always returns "✅ Dispatched #N".
-        Assert.Contains("Dispatched #42", successText);
+        // Pending enqueue path: always returns "⏳ Queued #N".
+        Assert.Contains("Queued #42", successText);
 
         // Wait for the agent to receive the job assignment
         var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));

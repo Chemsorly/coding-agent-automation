@@ -626,6 +626,51 @@ public sealed class ConsolidationJobPreparationServiceTests
     }
 
     [Fact]
+    public async Task WhenTemplateHasNoRepoProvider_PrepareAsync_StillAppliesProjectOverrides()
+    {
+        // Regression: a template with no RepoProviderId still belongs to a project whose overrides
+        // (e.g. AgentTimeout) must be applied. Template-level overrides need a repoProviderId, but
+        // project overrides do not — the empty-repo path applies them via ApplyProjectOverrides
+        // instead of falling back to the raw global config.
+        var expectedTimeout = TimeSpan.FromMinutes(77);
+
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+
+        var templateId = "t-no-repo";
+        var project = new PipelineProject
+        {
+            Id = "proj-no-repo",
+            Name = "No-Repo Project",
+            TemplateIds = [templateId],
+            AgentTimeout = expectedTimeout
+        };
+        _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject> { project });
+
+        var template = new PipelineJobTemplate
+        {
+            Id = templateId,
+            Name = "No-Repo Template",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "" // no repo provider configured
+        };
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate> { template });
+
+        var svc = CreateService();
+
+        var result = await svc.PrepareAsync(
+            ConsolidationRunType.BrainConsolidation,
+            templateId,
+            E2ELabels,
+            CancellationToken.None);
+
+        result.PipelineConfiguration.AgentTimeout.Should().Be(expectedTimeout,
+            "project overrides must apply even when the template has no RepoProviderId");
+    }
+
+    [Fact]
     public async Task WhenTemplateIdIsNull_PrepareAsync_PipelineConfigurationReflectsGlobalConfig()
     {
         // When no templateId is provided, PrepareAsync falls back to the global config load

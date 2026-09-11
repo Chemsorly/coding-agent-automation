@@ -1558,26 +1558,27 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
     }
 
     [Fact]
-    public async Task DistributeAndFinalizeAsync_WhenDistributeSucceedsWithQueuedTrue_StillConfirmsLabel()
+    public async Task DistributeAndFinalizeAsync_WhenQueued_KeepsAgentNextAndReturnsQueued()
     {
-        // DistributeAndFinalizeAsync always calls ConfirmDistributionLabelAsync on success
-        // regardless of the Queued flag — the synchronous dispatch path means the item is always
-        // Dispatched immediately. This test verifies that even if a distributor returns Queued=true
-        // (e.g., a legacy or alternative implementation), the label swap still fires unconditionally.
+        // When the distributor returns Queued=true (item enqueued as Pending), the issue is only
+        // waiting in the queue — no pod is running. Per the DistributionResult.Queued contract the
+        // label MUST stay agent:next; the swap to agent:in-progress is deferred until an agent
+        // actually picks up the run (AgentHub.RegisterAgent in K8s dispatch mode). The outcome still
+        // reports Queued=true so callers know no pod is running yet.
         _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(true, "work-1", null, Queued: true));
 
         var outcome = await _service.DistributeAndFinalizeAsync(TestRequest, CancellationToken.None);
 
         outcome.Success.Should().BeTrue();
-        // DistributeAndFinalizeAsync now always returns Queued=false (synchronous dispatch path)
-        outcome.Queued.Should().BeFalse("DistributeAndFinalizeAsync always returns Queued=false on success");
+        outcome.Queued.Should().BeTrue("when enqueued as Pending, outcome must report Queued=true");
         outcome.ErrorMessage.Should().BeNull();
 
-        // Label IS now swapped unconditionally on success — the drain service no longer defers it
+        // Label MUST NOT be swapped to agent:in-progress while the item only sits Pending in the queue.
         _mockLabelService.Verify(
-            s => s.SwapLabelAsync("ipc-1", "owner/repo#42", AgentLabels.InProgress, It.IsAny<CancellationToken>()),
-            Times.Once);
+            s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            Times.Never,
+            "a queued (Pending) issue must stay agent:next — the in-progress swap is deferred to actual dispatch");
     }
 
     [Fact]

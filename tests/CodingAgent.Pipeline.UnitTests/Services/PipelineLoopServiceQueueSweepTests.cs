@@ -304,22 +304,20 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         CounterValue("pipeline.queue_sweep.cancelled").Should().Be(0);
     }
 
-    // ── TaskType != Implementation ────────────────────────────────────────────
+    // ── TaskType == Consolidation skipped; Review/Decomposition swept ────────────
 
-    [Theory]
-    [InlineData(WorkItemTaskType.Review)]
-    [InlineData(WorkItemTaskType.Decomposition)]
-    [InlineData(WorkItemTaskType.Consolidation)]
-    public async Task SweepPendingWorkItemsAsync_WhenTaskTypeIsNotImplementation_IsSkipped(
-        WorkItemTaskType taskType)
+    [Fact]
+    public async Task SweepPendingWorkItemsAsync_WhenTaskTypeIsConsolidation_IsSkipped()
     {
-        var item = MakePendingItem("42", "ip-1", taskType: taskType);
+        // Consolidation WorkItems are managed by ConsolidationWorkItemDispatchService and
+        // must never be cancelled by the queue sweep.
+        var item = MakePendingItem("42", "ip-1", taskType: WorkItemTaskType.Consolidation);
         _sweepClientMock
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([item]);
 
         var svc = CreateService(_sweepClientMock.Object);
-        // Provider present, issue NOT in set — but TaskType is not Implementation
+        // Provider present, issue NOT in set — but TaskType is Consolidation
         var eligibility = EligibilityMap("ip-1", "99");
 
         await svc.SweepPendingWorkItemsAsync(eligibility, sweepEnabled: true, CancellationToken.None);
@@ -328,6 +326,35 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
             Times.Never);
         CounterValue("pipeline.queue_sweep.skipped").Should().Be(1);
+    }
+
+    [Theory]
+    [InlineData(WorkItemTaskType.Review)]
+    [InlineData(WorkItemTaskType.Decomposition)]
+    [InlineData(WorkItemTaskType.Implementation)]
+    public async Task SweepPendingWorkItemsAsync_WhenTaskTypeIsNotConsolidation_EligibilityCheckApplies(
+        WorkItemTaskType taskType)
+    {
+        // Review, Decomposition, and Implementation WorkItems are all dispatched by
+        // WorkItemDispatchService and must be swept when their issue is no longer eligible.
+        var item = MakePendingItem("42", "ip-1", taskType: taskType);
+        _sweepClientMock
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+        _sweepClientMock
+            .Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var svc = CreateService(_sweepClientMock.Object);
+        // Provider present, issue NOT in eligibility set → should cancel
+        var eligibility = EligibilityMap("ip-1", "99");
+
+        await svc.SweepPendingWorkItemsAsync(eligibility, sweepEnabled: true, CancellationToken.None);
+
+        _sweepClientMock.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+            Times.Once, $"{taskType} items must be cancelled by the sweep when no longer eligible");
+        CounterValue("pipeline.queue_sweep.cancelled").Should().Be(1);
     }
 
     // ── GetPendingAsync failure ───────────────────────────────────────────────

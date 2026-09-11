@@ -10,11 +10,33 @@ namespace CodingAgent.Orchestration.Dispatch;
 /// (<see cref="IPipelineApiWorkItemClient"/>). No direct database access.
 /// </summary>
 /// <remarks>
-/// <see cref="DistributeAsync"/> calls the synchronous <c>POST /api/work-items/dispatch</c>
-/// endpoint, which atomically performs PVC selection, K8s Job creation, and <c>Dispatched</c>
-/// state write in the API. On 409/503 (no capacity), the distributor returns
-/// <c>Success=false</c> so the caller can revert the GitHub label to <c>agent:next</c>
-/// and the Scheduler re-queues the issue on the next poll cycle.
+/// <see cref="DistributeAsync"/> routes by task type:
+/// <list type="bullet">
+///   <item>
+///     <c>Consolidation</c> — calls <c>POST /api/work-items/dispatch</c> (synchronous path,
+///     creates the WorkItem as <c>Dispatched</c> and starts the K8s Job immediately). This
+///     preserves the pre-existing consolidation dispatch behaviour:
+///     <c>ConsolidationWorkItemDispatchService</c> in the API polls <c>Pending</c> consolidation
+///     items and dispatches them, but <c>ConsolidationDispatcher</c> in the monolith uses
+///     <see cref="IWorkDistributor"/> and bypasses that poller — so consolidation must continue
+///     to go through the synchronous endpoint.
+///   </item>
+///   <item>
+///     All other task types (Implementation, Review, Decomposition) — calls
+///     <c>POST /api/work-items</c> to create a <c>Pending</c> WorkItem visible in the UI queue.
+///     <c>WorkItemDispatchService</c> in the API polls those items ordered by
+///     <c>PriorityWeight DESC, CreatedAt ASC</c> and creates the K8s Job when capacity is
+///     available. This preserves the UI queue so operators can reorder work via
+///     <c>PriorityWeight</c> before pods are created.
+///   </item>
+/// </list>
+/// <para>
+/// 409 from <c>CreateAsync</c> is treated as idempotent success (<c>Queued=true</c>) rather
+/// than a failure: it means a live WorkItem already exists for the issue (the partial unique
+/// index on non-terminal rows prevented a duplicate insert). The Scheduler's dedup guard should
+/// prevent this case, but returning success avoids a label-revert loop when the guard has a
+/// stale snapshot.
+/// </para>
 /// <para>
 /// Cancel, status-query, and dedup operations route through the same API client.
 /// This class no longer inherits <c>DbWorkDistributorBase</c> — all DB coupling is removed.
@@ -40,30 +62,91 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        // Consolidation WorkItems are dispatched synchronously (Dispatched directly).
+        // ConsolidationWorkItemDispatchService owns the Pending→Dispatched poll for consolidation;
+        // ConsolidationDispatcher bypasses it and goes through IWorkDistributor, so we must use
+        // the synchronous DispatchAsync path to avoid orphaning the item in a Pending state with
+        // no poller to claim it.
+        if (request.TaskType == WorkItemTaskType.Consolidation)
+            return await DispatchSynchronouslyAsync(request, ct);
+
+        return await EnqueueAsPendingAsync(request, ct);
+    }
+
+    /// <summary>
+    /// Calls <c>POST /api/work-items/dispatch</c> — creates the WorkItem as <c>Dispatched</c>
+    /// and starts the K8s Job atomically. Used for Consolidation task types.
+    /// </summary>
+    private async Task<DistributionResult> DispatchSynchronouslyAsync(
+        JobDistributionRequest request, CancellationToken ct)
+    {
         try
         {
             var workItemId = await _apiClient.DispatchAsync(request, ct);
             _logger.LogInformation(
-                "WorkItem {WorkItemId} dispatched synchronously via Pipeline API for issue {IssueIdentifier}",
+                "WorkItem {WorkItemId} dispatched synchronously (Consolidation) via Pipeline API for issue {IssueIdentifier}",
                 workItemId, request.IssueIdentifier);
-            // Queued=false: the item is already Dispatched (K8s Job running), not in the Pending queue.
             return new DistributionResult(true, workItemId.ToString(), null, Queued: false);
         }
         catch (HttpRequestException ex) when (
             ex.StatusCode == System.Net.HttpStatusCode.Conflict ||
             ex.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
         {
-            // 409 = concurrency limit or issue ineligible; 503 = no PVC or K8s failure.
-            // These are expected "no capacity" responses. Return failure so the orchestrator
-            // reverts the label back to agent:next and re-queues on the next Scheduler cycle.
             _logger.LogInformation(
-                "Dispatch endpoint returned {StatusCode} for issue {IssueIdentifier} — no capacity, will revert label",
+                "Dispatch endpoint returned {StatusCode} for consolidation {IssueIdentifier} — no capacity",
                 ex.StatusCode, request.IssueIdentifier);
             return new DistributionResult(false, null, $"No capacity ({ex.StatusCode}): {ex.Message}");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to dispatch WorkItem via Pipeline API for issue {IssueIdentifier}",
+            _logger.LogError(ex,
+                "Failed to dispatch consolidation WorkItem via Pipeline API for issue {IssueIdentifier}",
+                request.IssueIdentifier);
+            return new DistributionResult(false, null, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Calls <c>POST /api/work-items</c> — creates the WorkItem as <c>Pending</c> (visible
+    /// in the UI queue). Used for Implementation, Review, and Decomposition task types.
+    /// </summary>
+    private async Task<DistributionResult> EnqueueAsPendingAsync(
+        JobDistributionRequest request, CancellationToken ct)
+    {
+        try
+        {
+            var workItemId = await _apiClient.CreateAsync(request, ct);
+            _logger.LogInformation(
+                "WorkItem {WorkItemId} enqueued as Pending via Pipeline API for issue {IssueIdentifier}",
+                workItemId, request.IssueIdentifier);
+            // Queued=true: the item is in the Pending queue (visible in the UI).
+            // WorkItemDispatchService in the API will pick it up, apply PriorityWeight ordering,
+            // and create the K8s Job when a slot is available.
+            return new DistributionResult(true, workItemId.ToString(), null, Queued: true);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            // 409 = a live WorkItem already exists for this issue (partial unique index on
+            // non-terminal rows). This is treated as idempotent success rather than a failure
+            // to avoid a label-revert loop: reverting the label to agent:next would cause the
+            // Scheduler to re-pick the issue next cycle, which would 409 again indefinitely
+            // while the existing WorkItem is still active.
+            _logger.LogInformation(
+                "CreateAsync returned 409 for issue {IssueIdentifier} — live WorkItem already exists; treating as already-queued",
+                request.IssueIdentifier);
+            return new DistributionResult(true, null, null, Queued: true);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogInformation(
+                "CreateAsync returned {StatusCode} for issue {IssueIdentifier} — enqueue failed",
+                ex.StatusCode, request.IssueIdentifier);
+            return new DistributionResult(false, null, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Failed to enqueue WorkItem via Pipeline API for issue {IssueIdentifier}",
                 request.IssueIdentifier);
             return new DistributionResult(false, null, ex.Message);
         }

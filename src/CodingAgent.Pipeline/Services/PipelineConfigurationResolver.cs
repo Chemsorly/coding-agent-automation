@@ -227,7 +227,7 @@ public static class PipelineConfigurationResolver
     public static async Task<PipelineConfiguration> ResolveAsync(
         Func<CancellationToken, Task<PipelineConfiguration>> loadConfig,
         Func<CancellationToken, Task<IReadOnlyList<PipelineJobTemplate>>> loadTemplates,
-        PipelineProject project,
+        PipelineProject? project,
         ProviderConfigId repoProviderId,
         string? brainProviderId,
         IReadOnlyList<ProviderConfig> providerConfigs,
@@ -248,7 +248,7 @@ public static class PipelineConfigurationResolver
     public static async Task<PipelineConfiguration> ResolveAsync(
         PipelineConfiguration preLoaded,
         Func<CancellationToken, Task<IReadOnlyList<PipelineJobTemplate>>> loadTemplates,
-        PipelineProject project,
+        PipelineProject? project,
         ProviderConfigId repoProviderId,
         string? brainProviderId,
         IReadOnlyList<ProviderConfig> providerConfigs,

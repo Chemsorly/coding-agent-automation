@@ -48,9 +48,20 @@ public class ActiveWorkItemUniquenessPropertyTests : IDisposable
             ctx.Database.EnsureCreated();
         _dbFactory = new InMemoryDbContextFactory(_dbOptions);
 
-        // API client: DispatchAsync inserts into InMemory DB as Dispatched (new synchronous dispatch path).
-        // IsIssueDistributedAsync and GetActiveIdentifiersAsync delegate to the DB.
+        // API client: routes by TaskType.
+        // Implementation/Review → CreateAsync (Pending enqueue path).
+        // Consolidation → DispatchAsync (synchronous path).
         var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
+        mockApiClient
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(async (JobDistributionRequest req, CancellationToken ct) =>
+            {
+                var newId = Guid.NewGuid();
+                await using var db = await _dbFactory.CreateDbContextAsync(ct);
+                db.WorkItems.Add(new WorkItemEntity { Id = newId, IssueIdentifier = req.IssueIdentifier, IssueProviderConfigId = req.IssueProviderConfigId, Status = WorkItemStatus.Pending, CreatedAt = DateTimeOffset.UtcNow, AgentSelector = req.AgentSelector, TimeoutSeconds = req.TimeoutSeconds });
+                await db.SaveChangesAsync(ct);
+                return newId;
+            });
         mockApiClient
             .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .Returns(async (JobDistributionRequest req, CancellationToken ct) =>
