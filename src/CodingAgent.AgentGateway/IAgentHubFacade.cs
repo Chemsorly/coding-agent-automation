@@ -13,7 +13,6 @@ namespace CodingAgent.AgentGateway;
 /// <para>
 /// The facade absorbs: <see cref="CodingAgent.Orchestration.Registry.AgentRegistryService"/>,
 /// <see cref="CodingAgent.Orchestration.OrchestratorRunService"/>,
-/// <see cref="CodingAgent.Orchestration.Dispatch.JobDeduplicationGuardService"/>,
 /// <see cref="IPipelineRunHistoryService"/>, <see cref="IConfigurationStore"/>,
 /// and <see cref="IProviderFactory"/>.
 /// </para>
