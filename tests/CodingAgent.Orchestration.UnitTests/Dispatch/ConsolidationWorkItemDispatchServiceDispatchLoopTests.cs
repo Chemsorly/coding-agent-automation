@@ -248,7 +248,8 @@ public class ConsolidationWorkItemDispatchServiceDispatchLoopTests : IDisposable
             .ReturnsAsync(new ConsolidationJobPreparationResult
             {
                 ProviderConfigs = new List<ProviderConfig>(),
-                RepoProviderConfigId = "repo-provider-1"
+                RepoProviderConfigId = "repo-provider-1",
+                PipelineConfiguration = new PipelineConfiguration()
             });
     }
 
