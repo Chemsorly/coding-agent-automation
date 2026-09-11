@@ -24,53 +24,34 @@ public sealed partial class PipelineLoopService
 
         while (!_stopRequested && !ct.IsCancellationRequested)
         {
-            try
+            var snapshot = await SnapshotCycleConfigAsync(ct);
+            if (snapshot is null)
             {
-                var snapshot = await SnapshotCycleConfigAsync(ct);
-                if (snapshot is null)
-                {
-                    PipelineTelemetry.LoopPolls.Add(1, new KeyValuePair<string, object?>("result", "failure"));
-                    await DelayOrStop(TimeSpan.FromSeconds(5), ct);
-                    continue;
-                }
-
-                // Detect DB-level stop: another pod (or a restart) persisted ClosedLoopAutoStart=false.
-                // Calling StopLoop() ensures CleanupAsync fires, IsLoopActive becomes false, and
-                // NotifyChange() propagates the stopped state — identical to a direct stop request.
-                if (!snapshot.Config.ClosedLoopAutoStart)
-                {
-                    _logger.Information("Pipeline loop stopping — ClosedLoopAutoStart=false read from config");
-                    StopLoop();
-                    break;
-                }
-
-                if (!await ExecuteCycleAsync(snapshot, stoppingToken, ct))
-                    break;
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                // Intentional shutdown (host stop, leadership loss, or StopLoop cancelling _loopCts).
-                // Propagate so ExecuteAsync applies its existing stop/leadership re-arm semantics.
-                throw;
-            }
-            catch (Exception ex) when (IsTransientApiFailure(ex))
-            {
-                // Defense-in-depth net for the poll/dispatch/housekeeping steps of a cycle
-                // (SnapshotCycleConfigAsync already handles its own transients by returning null).
-                // A transient API failure escaping any cycle step must NOT reach ExecuteAsync, where
-                // CleanupAsync(rearm=false) would park the loop dormant until a pod restart. Record a
-                // failed poll, wait, and retry — the loop stays alive across a transient outage.
-                _logger.Warning(ex, "Pipeline loop: transient API failure during cycle — will retry");
                 PipelineTelemetry.LoopPolls.Add(1, new KeyValuePair<string, object?>("result", "failure"));
                 await DelayOrStop(TimeSpan.FromSeconds(5), ct);
+                continue;
             }
+
+            // Detect DB-level stop: another pod (or a restart) persisted ClosedLoopAutoStart=false.
+            // Calling StopLoop() ensures CleanupAsync fires, IsLoopActive becomes false, and
+            // NotifyChange() propagates the stopped state — identical to a direct stop request.
+            if (!snapshot.Config.ClosedLoopAutoStart)
+            {
+                _logger.Information("Pipeline loop stopping — ClosedLoopAutoStart=false read from config");
+                StopLoop();
+                break;
+            }
+
+            if (!await ExecuteCycleAsync(snapshot, stoppingToken, ct))
+                break;
         }
     }
 
     /// <summary>
     /// Classifies an exception as a transient API/connectivity failure that should trigger a retry
-    /// rather than permanently stopping the loop. Covers the full failure surface of the
-    /// <c>AddStandardResilienceHandler</c> pipeline the Scheduler's API clients are registered with:
+    /// (return null → the caller waits and re-polls) rather than permanently stopping the loop.
+    /// Covers the full failure surface of the <c>AddStandardResilienceHandler</c> pipeline the
+    /// Scheduler's API clients are registered with:
     /// <list type="bullet">
     ///   <item><see cref="HttpRequestException"/> — connection refused / DNS / socket errors and non-success status.</item>
     ///   <item><see cref="TimeoutRejectedException"/> — Polly attempt / total-request timeout.</item>
@@ -78,8 +59,9 @@ public sealed partial class PipelineLoopService
     ///         outage (e.g. a rolling restart long enough to trip the breaker) — the exact scenario this
     ///         guard exists for, and one that does NOT surface as <see cref="HttpRequestException"/>.</item>
     ///   <item><see cref="TaskCanceledException"/> — HttpClient timeout surfaced as cancellation. Genuine loop
-    ///         cancellation is peeled off by the caller's <c>when (ct.IsCancellationRequested)</c> filter that
-    ///         runs before this predicate, so any remainder is a timeout, not a shutdown.</item>
+    ///         cancellation is peeled off by <see cref="SnapshotCycleConfigAsync"/>'s
+    ///         <c>when (ct.IsCancellationRequested)</c> filter that runs before this predicate, so any
+    ///         remainder is a timeout, not a shutdown.</item>
     /// </list>
     /// Non-transient exceptions (e.g. <see cref="InvalidOperationException"/>) are intentionally excluded so
     /// genuine bugs still surface as an Error and stop the loop rather than being retried forever.

@@ -1430,4 +1430,46 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         PipelineLoopService.IsTransientApiFailure(new InvalidOperationException("real bug")).Should().BeFalse();
         PipelineLoopService.IsTransientApiFailure(new ArgumentNullException("param")).Should().BeFalse();
     }
+
+    /// <summary>
+    /// When the loop's own token is cancelled while <c>SnapshotCycleConfigAsync</c> is loading config,
+    /// the resulting <see cref="OperationCanceledException"/> must be treated as an intentional shutdown
+    /// (re-thrown by the <c>when (ct.IsCancellationRequested)</c> filter), NOT swallowed as transient and
+    /// NOT logged as an unexpected error. The loop exits cleanly.
+    /// </summary>
+    [Fact]
+    public async Task WhenTokenCancelledDuringSnapshot_LoopExitsCleanlyWithoutError()
+    {
+        using var hostCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var callCount = 0;
+
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount == 1)
+                    return TestPipelineConfig.Default(); // StartLoopAsync validation succeeds
+                // First real cycle: cancel the loop token, then surface cancellation from the config load.
+                // The loop's ct is now cancelled, so SnapshotCycleConfigAsync must re-throw (intentional stop).
+                hostCts.Cancel();
+                throw new OperationCanceledException(hostCts.Token);
+            });
+
+        var svc = CreateService(leaderGate: null);
+        _ = InvokeExecuteAsync(svc, hostCts.Token);
+
+        (await svc.StartLoopAsync()).Should().BeTrue("loop must start successfully before the test can proceed");
+
+        // The loop must exit cleanly once cancellation surfaces mid-snapshot — IsLoopActive returns to false.
+        await WaitUntilAsync(
+            () => !svc.IsLoopActive,
+            TimeSpan.FromSeconds(10),
+            "loop must exit cleanly after cancellation surfaces during snapshot");
+
+        // Intentional cancellation must NOT be swallowed-and-retried, and must NOT be logged as an error.
+        _mockLogger.Verify(
+            l => l.Error(It.IsAny<Exception>(), "Pipeline loop encountered an unexpected error"),
+            Times.Never(),
+            "cancellation during snapshot is an intentional shutdown, not an unexpected error");
+    }
 }
