@@ -176,6 +176,77 @@ public class KubernetesWorkDistributorApiTests
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
 
+    // ── Consolidation (synchronous dispatch) error paths ─────────────────
+
+    [Fact]
+    public async Task DistributeAsync_ConsolidationRequest_When409Conflict_ReturnsFailureNoCapacity()
+    {
+        // The synchronous dispatch endpoint returns 409 when the concurrency cap is reached.
+        // This is surfaced as a failure result (no capacity), not a thrown exception.
+        var request = CreateConsolidationRequest();
+
+        _mockClient
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("conflict", null, HttpStatusCode.Conflict));
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.Queued.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("No capacity", "409 on the consolidation dispatch path means no capacity");
+    }
+
+    [Fact]
+    public async Task DistributeAsync_ConsolidationRequest_When503ServiceUnavailable_ReturnsFailureNoCapacity()
+    {
+        // 503 (no PVC available / K8s failure) on the synchronous dispatch path is also treated
+        // as a no-capacity failure so the Scheduler can retry the issue next cycle.
+        var request = CreateConsolidationRequest();
+
+        _mockClient
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("server error", null, HttpStatusCode.ServiceUnavailable));
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("No capacity");
+    }
+
+    [Fact]
+    public async Task DistributeAsync_ConsolidationRequest_WhenDispatchThrowsUnexpected_ReturnsFailure()
+    {
+        // A non-HTTP error from the dispatch endpoint is caught by the general handler and
+        // returned as a failure result rather than propagating out of DistributeAsync.
+        var request = CreateConsolidationRequest();
+
+        _mockClient
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("unexpected dispatch error"));
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("unexpected dispatch error");
+    }
+
+    [Fact]
+    public async Task DistributeAsync_ImplementationRequest_WhenCreateThrowsUnexpected_ReturnsFailure()
+    {
+        // A non-HttpRequestException from CreateAsync (e.g. a serialization or programming error)
+        // is caught by the general handler on the enqueue path and returned as a failure result.
+        var request = CreateMinimalRequest();
+
+        _mockClient
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("unexpected enqueue error"));
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("unexpected enqueue error");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static JobDistributionRequest CreateMinimalRequest() => new()

@@ -288,6 +288,57 @@ public class WorkItemDispatchServiceDispatchLoopTests : IDisposable
             "lower-priority item must stay Pending when concurrency limit is reached");
     }
 
+    // ── Project secrets / failure callbacks ───────────────────────────────
+
+    /// <summary>
+    /// An item carrying a ProjectId exercises the project-secret lookup in prepareVariant.
+    /// With no matching project row, the lookup returns no secrets and the dispatch proceeds
+    /// normally — the item must still transition to Dispatched.
+    /// </summary>
+    [Fact]
+    public async Task PollAndDispatch_ItemWithProjectId_LoadsProjectSecretsAndDispatches()
+    {
+        var id = Guid.NewGuid();
+        await InsertWorkItem(id, WorkItemTaskType.Implementation, projectId: Guid.NewGuid());
+
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(
+                It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var handler = CreateHandler(pvcPool: ["pvc-1"]);
+        await handler.PollAndDispatchAsync(CancellationToken.None);
+
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(id);
+        item!.Status.Should().Be(WorkItemStatus.Dispatched,
+            "an item with a ProjectId must still dispatch when the project has no secrets to inject");
+    }
+
+    /// <summary>
+    /// When K8s Job creation throws, the dispatch lifecycle fails the item and invokes the
+    /// service's onFailure callback. The item must land in Failed rather than Dispatched.
+    /// </summary>
+    [Fact]
+    public async Task PollAndDispatch_WhenK8sJobCreationThrows_InvokesOnFailureAndFailsItem()
+    {
+        var id = Guid.NewGuid();
+        await InsertWorkItem(id, WorkItemTaskType.Implementation);
+
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(
+                It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("k8s api unavailable"));
+
+        var handler = CreateHandler(pvcPool: ["pvc-1"]);
+        await handler.PollAndDispatchAsync(CancellationToken.None);
+
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(id);
+        item!.Status.Should().Be(WorkItemStatus.Failed,
+            "a K8s Job creation failure must transition the item to Failed via the dispatch lifecycle");
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────
 
     private WorkItemDispatchService CreateHandler(
@@ -344,7 +395,8 @@ public class WorkItemDispatchServiceDispatchLoopTests : IDisposable
         string issueProviderConfigId = "github",
         WorkItemStatus status = WorkItemStatus.Pending,
         DateTimeOffset? createdAt = null,
-        int priorityWeight = 0)
+        int priorityWeight = 0,
+        Guid? projectId = null)
     {
         var payload = new JobDistributionRequest
         {
@@ -370,6 +422,7 @@ public class WorkItemDispatchServiceDispatchLoopTests : IDisposable
             CreatedAt = createdAt ?? DateTimeOffset.UtcNow,
             TimeoutSeconds = 300,
             PriorityWeight = priorityWeight,
+            ProjectId = projectId,
             Payload = JsonSerializer.Serialize(payload, PipelineJsonOptions.Default)
         });
         await db.SaveChangesAsync();
