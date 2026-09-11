@@ -202,7 +202,7 @@ public static class ConsolidationWorkItemEndpoints
         {
             ProviderConfigs = preparation.ProviderConfigs ?? [],
             RepoProviderConfigId = preparation.RepoProviderConfigId,
-            PipelineConfiguration = preparation.PipelineConfiguration ?? new Pipeline.Models.PipelineConfiguration()
+            PipelineConfiguration = preparation.PipelineConfiguration
         };
 
         var enrichedJson = JsonSerializer.Serialize(enrichedRequest, PipelineJsonOptions.Default);
