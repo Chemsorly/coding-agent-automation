@@ -1,6 +1,8 @@
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
+using Polly.CircuitBreaker;
+using Polly.Timeout;
 
 namespace CodingAgent.Pipeline.Services;
 
@@ -44,6 +46,31 @@ public sealed partial class PipelineLoopService
                 break;
         }
     }
+
+    /// <summary>
+    /// Classifies an exception as a transient API/connectivity failure that should trigger a retry
+    /// (return null → the caller waits and re-polls) rather than permanently stopping the loop.
+    /// Covers the full failure surface of the <c>AddStandardResilienceHandler</c> pipeline the
+    /// Scheduler's API clients are registered with:
+    /// <list type="bullet">
+    ///   <item><see cref="HttpRequestException"/> — connection refused / DNS / socket errors and non-success status.</item>
+    ///   <item><see cref="TimeoutRejectedException"/> — Polly attempt / total-request timeout.</item>
+    ///   <item><see cref="BrokenCircuitException"/> — Polly circuit breaker open, raised under a sustained
+    ///         outage (e.g. a rolling restart long enough to trip the breaker) — the exact scenario this
+    ///         guard exists for, and one that does NOT surface as <see cref="HttpRequestException"/>.</item>
+    ///   <item><see cref="TaskCanceledException"/> — HttpClient timeout surfaced as cancellation. Genuine loop
+    ///         cancellation is peeled off by <see cref="SnapshotCycleConfigAsync"/>'s
+    ///         <c>when (ct.IsCancellationRequested)</c> filter that runs before this predicate, so any
+    ///         remainder is a timeout, not a shutdown.</item>
+    /// </list>
+    /// Non-transient exceptions (e.g. <see cref="InvalidOperationException"/>) are intentionally excluded so
+    /// genuine bugs still surface as an Error and stop the loop rather than being retried forever.
+    /// </summary>
+    internal static bool IsTransientApiFailure(Exception ex) => ex is
+        HttpRequestException or
+        TimeoutRejectedException or
+        BrokenCircuitException or
+        TaskCanceledException;
 
     /// <summary>
     /// Executes a single pipeline loop cycle: poll → circuit-breaker → dispatch → wait.
@@ -396,31 +423,51 @@ public sealed partial class PipelineLoopService
     /// Operations execute in the same order as the original SnapshotAndReconcileAsync:
     /// LoadConfig → LoadTemplates → ReconcileIssueCache → ReconcileRepoCache
     ///   → LoadActiveIssueIdentifiers → ReconcileStuckWorkItems.
-    /// Always returns a non-null CycleSnapshot (even when template lists are empty).
+    /// Returns <see langword="null"/> on transient connectivity failures (e.g. API pod not yet ready
+    /// during a rolling restart) so the caller can retry after a short delay rather than killing
+    /// the loop permanently. Non-transient exceptions still propagate to the caller.
     /// </summary>
     private async Task<CycleSnapshot?> SnapshotCycleConfigAsync(CancellationToken ct)
     {
-        // Step 1: Load config and templates (pure query)
-        var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
+        try
+        {
+            // Step 1: Load config and templates (pure query)
+            var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
 
-        var (projects, flattenedTemplates, enabledTemplates, pollableTemplates, templateLookup) =
-            await LoadAndFlattenTemplatesAsync(ct);
+            var (projects, flattenedTemplates, enabledTemplates, pollableTemplates, templateLookup) =
+                await LoadAndFlattenTemplatesAsync(ct);
 
-        CurrentCycleTemplateCount = enabledTemplates.Count;
+            CurrentCycleTemplateCount = enabledTemplates.Count;
 
-        // Step 2: Reconcile provider caches (side effects — order preserved from original)
-        await ReconcileCachesAsync(enabledTemplates, projects, ct);
+            // Step 2: Reconcile provider caches (side effects — order preserved from original)
+            await ReconcileCachesAsync(enabledTemplates, projects, ct);
 
-        // Step 2b: Load active issue identifiers (after cache reconciliation, per original order)
-        var activeIssueIdentifiers = await LoadActiveIssueIdentifiersAsync(ct);
+            // Step 2b: Load active issue identifiers (after cache reconciliation, per original order)
+            var activeIssueIdentifiers = await LoadActiveIssueIdentifiersAsync(ct);
 
-        // Step 2c: Reconcile stuck work items (after active issue identifier load, per original order)
-        await ReconcileStuckWorkItemsAsync(ct);
+            // Step 2c: Reconcile stuck work items (after active issue identifier load, per original order)
+            await ReconcileStuckWorkItemsAsync(ct);
 
-        return new CycleSnapshot(
-            config, projects, flattenedTemplates, enabledTemplates.AsReadOnly(), pollableTemplates.AsReadOnly(),
-            templateLookup.AsReadOnly(),
-            activeIssueIdentifiers);
+            return new CycleSnapshot(
+                config, projects, flattenedTemplates, enabledTemplates.AsReadOnly(), pollableTemplates.AsReadOnly(),
+                templateLookup.AsReadOnly(),
+                activeIssueIdentifiers);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Cancellation is intentional — re-throw so the loop exits cleanly.
+            throw;
+        }
+        catch (Exception ex) when (IsTransientApiFailure(ex))
+        {
+            // Transient connectivity failure (connection refused / timeout / open circuit) during a
+            // rolling restart when the API pod is briefly unavailable. Return null so
+            // RunMultiTemplateLoopAsync retries after a short delay instead of letting the exception
+            // escape to ExecuteAsync where it would permanently stop the loop via CleanupAsync(rearm=false).
+            _logger.Warning(ex,
+                "Pipeline loop: transient API failure in SnapshotCycleConfigAsync — will retry");
+            return null;
+        }
     }
 
     /// <summary>
