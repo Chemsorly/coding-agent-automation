@@ -515,9 +515,13 @@ public class DispatchSchedulerTests
 
         var template = new PipelineJobTemplate
         {
-            Id = "t1", Name = "Template t1",
-            IssueProviderId = "provider-t1", RepoProviderId = "repo-t1",
-            ImplementationEnabled = true, ReviewEnabled = true, DecompositionEnabled = true
+            Id = "t1",
+            Name = "Template t1",
+            IssueProviderId = "provider-t1",
+            RepoProviderId = "repo-t1",
+            ImplementationEnabled = true,
+            ReviewEnabled = true,
+            DecompositionEnabled = true
         };
         var project = new PipelineProject { Id = "p1", Name = "Project p1" };
 
@@ -525,16 +529,24 @@ public class DispatchSchedulerTests
         {
             ["t1"] = Enumerable.Range(1, issues).Select(i => new IssueSummary
             {
-                Identifier = $"issue-{i}", Title = $"Issue {i}", Labels = new List<string>()
+                Identifier = $"issue-{i}",
+                Title = $"Issue {i}",
+                Labels = new List<string>()
             }).ToList()
         };
         var prQueues = new Dictionary<string, List<PullRequestSummary>>
         {
             ["t1"] = Enumerable.Range(1, prs).Select(i => new PullRequestSummary
             {
-                Identifier = $"pr-{i}", Title = $"PR {i}", Description = "", Labels = new List<string>(),
-                BranchName = $"feat/pr-{i}", TargetBranch = "main",
-                Url = $"https://github.com/owner/repo/pull/{i}", Number = i, IsDraft = false
+                Identifier = $"pr-{i}",
+                Title = $"PR {i}",
+                Description = "",
+                Labels = new List<string>(),
+                BranchName = $"feat/pr-{i}",
+                TargetBranch = "main",
+                Url = $"https://github.com/owner/repo/pull/{i}",
+                Number = i,
+                IsDraft = false
             }).ToList()
         };
         var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
