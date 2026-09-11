@@ -363,6 +363,41 @@ public static class WorkItemEndpoints
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1068", Justification = "Test seam bool appended after ct intentionally")]
         bool awaitTelemetry = false)
     {
+        // Recovery-first path: when the agent sends Running, attempt infrastructure recovery
+        // *before* TransitionDetailedAsync so that the "Invalid transition" warning in
+        // TransitionCoreAsync is never emitted for a recoverable race (issue #2459).
+        //
+        // TryRecoverFromInfrastructureFailureAsync issues a real DB read on every call, including
+        // the normal Pending→Running path (where the item is not in Failed state and it returns false
+        // immediately). This doubles DB reads for the happy-path Running transition.
+        // TODO: Consider caching the item's current status in a lightweight pre-check (e.g. a
+        // direct scalar query) to avoid the full entity load on the non-Failed hot path. The extra
+        // round-trip is acceptable at current throughput but may need revisiting under high load.
+        //   • Failed/Timeout or Failed/InfrastructureFailure → recovery succeeds → return 200
+        //   • Failed/AgentError or non-Failed item            → recovery returns false → fall through
+        //     to TransitionDetailedAsync (which handles the normal transition or emits 400)
+        if (request.Status == WorkItemStatus.Running)
+        {
+            var recovered = await transitionService.TryRecoverFromInfrastructureFailureAsync(
+                id, WorkItemStatus.Running,
+                mutate: entity => ApplyStatusMutation(entity, request),
+                ct: ct);
+            if (recovered)
+            {
+                // TODO: When TryRecoverFromInfrastructureFailureCoreAsync takes the idempotent
+                // early-return path (item is already Running), it returns true without invoking
+                // mutate — so fields set by ApplyStatusMutation (AgentId, StartedAt, etc.) are
+                // silently skipped for duplicate Running posts on an already-recovered item.
+                // This is pre-existing behaviour in TryRecoverFromInfrastructureFailureCoreAsync
+                // (not introduced here), but this call site is the first to make that idempotent
+                // path reachable from PostStatus. Assess whether a second PostStatus(Running) on
+                // an already-Running item should re-apply the mutation fields (e.g. to update
+                // AgentId on a re-dispatch). If so, the idempotent branch in
+                // TryRecoverFromInfrastructureFailureCoreAsync should invoke mutate before returning.
+                return TypedResults.Ok();
+            }
+        }
+
         var transitionResult = await transitionService.TransitionDetailedAsync(
             id, request.Status,
             mutate: entity => ApplyStatusMutation(entity, request),
