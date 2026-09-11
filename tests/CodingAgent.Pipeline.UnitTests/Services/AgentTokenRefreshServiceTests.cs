@@ -185,6 +185,17 @@ public sealed class AgentTokenRefreshServiceTests
 
         // Must throw with the malformed-expiry message, distinct from the expired/expiring throw.
         await act.Should().ThrowAsync<HubException>().WithMessage("*malformed*");
+
+        // Security regression guard: verify the Warning log uses len= and prefix= format,
+        // and does NOT emit the raw value. If this fix is reverted to log expiresAtStr verbatim,
+        // this assertion will fail and catch the regression before it ships.
+        _logger.Verify(l => l.Warning(
+            It.Is<string>(msg => msg.Contains("{Length}") && msg.Contains("{Prefix}")),
+            It.IsAny<string>(),           // jobId
+            It.IsAny<ProviderKind>(),     // providerKind
+            It.IsAny<int>(),              // expiresAtStr.Length
+            It.Is<string>(prefix => !prefix.Contains("not-a-date"))), // preview must not be the raw value
+            Times.Once);
     }
 
     // ── GitHub App JWT path ───────────────────────────────────────────────
