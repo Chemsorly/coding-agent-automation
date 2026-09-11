@@ -396,31 +396,51 @@ public sealed partial class PipelineLoopService
     /// Operations execute in the same order as the original SnapshotAndReconcileAsync:
     /// LoadConfig → LoadTemplates → ReconcileIssueCache → ReconcileRepoCache
     ///   → LoadActiveIssueIdentifiers → ReconcileStuckWorkItems.
-    /// Always returns a non-null CycleSnapshot (even when template lists are empty).
+    /// Returns <see langword="null"/> on transient connectivity failures (e.g. API pod not yet ready
+    /// during a rolling restart) so the caller can retry after a short delay rather than killing
+    /// the loop permanently. Non-transient exceptions still propagate to the caller.
     /// </summary>
     private async Task<CycleSnapshot?> SnapshotCycleConfigAsync(CancellationToken ct)
     {
-        // Step 1: Load config and templates (pure query)
-        var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
+        try
+        {
+            // Step 1: Load config and templates (pure query)
+            var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
 
-        var (projects, flattenedTemplates, enabledTemplates, pollableTemplates, templateLookup) =
-            await LoadAndFlattenTemplatesAsync(ct);
+            var (projects, flattenedTemplates, enabledTemplates, pollableTemplates, templateLookup) =
+                await LoadAndFlattenTemplatesAsync(ct);
 
-        CurrentCycleTemplateCount = enabledTemplates.Count;
+            CurrentCycleTemplateCount = enabledTemplates.Count;
 
-        // Step 2: Reconcile provider caches (side effects — order preserved from original)
-        await ReconcileCachesAsync(enabledTemplates, projects, ct);
+            // Step 2: Reconcile provider caches (side effects — order preserved from original)
+            await ReconcileCachesAsync(enabledTemplates, projects, ct);
 
-        // Step 2b: Load active issue identifiers (after cache reconciliation, per original order)
-        var activeIssueIdentifiers = await LoadActiveIssueIdentifiersAsync(ct);
+            // Step 2b: Load active issue identifiers (after cache reconciliation, per original order)
+            var activeIssueIdentifiers = await LoadActiveIssueIdentifiersAsync(ct);
 
-        // Step 2c: Reconcile stuck work items (after active issue identifier load, per original order)
-        await ReconcileStuckWorkItemsAsync(ct);
+            // Step 2c: Reconcile stuck work items (after active issue identifier load, per original order)
+            await ReconcileStuckWorkItemsAsync(ct);
 
-        return new CycleSnapshot(
-            config, projects, flattenedTemplates, enabledTemplates.AsReadOnly(), pollableTemplates.AsReadOnly(),
-            templateLookup.AsReadOnly(),
-            activeIssueIdentifiers);
+            return new CycleSnapshot(
+                config, projects, flattenedTemplates, enabledTemplates.AsReadOnly(), pollableTemplates.AsReadOnly(),
+                templateLookup.AsReadOnly(),
+                activeIssueIdentifiers);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Cancellation is intentional — re-throw so the loop exits cleanly.
+            throw;
+        }
+        catch (HttpRequestException ex)
+        {
+            // Transient connectivity failure (e.g. "Connection refused" during a rolling restart
+            // when the API pod is briefly unavailable). Return null so RunMultiTemplateLoopAsync
+            // retries after a short delay instead of letting the exception escape to ExecuteAsync
+            // where it would permanently stop the loop via CleanupAsync(rearm=false).
+            _logger.Warning(ex,
+                "Pipeline loop: transient API connectivity failure in SnapshotCycleConfigAsync — will retry");
+            return null;
+        }
     }
 
     /// <summary>

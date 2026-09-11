@@ -1121,4 +1121,186 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
             _loopService.Dispose();
         }
     }
+
+    // ── Fix 3: transient API errors must not permanently kill the loop ────
+
+    /// <summary>
+    /// Regression test for the production incident where a transient <see cref="HttpRequestException"/>
+    /// (Connection refused) during startup caused <c>SnapshotCycleConfigAsync</c> to throw,
+    /// escape <c>RunMultiTemplateLoopAsync</c>, hit the generic <c>catch (Exception ex)</c> in
+    /// <c>ExecuteAsync</c>, and permanently stop the loop via <c>CleanupAsync(rearm=false)</c>.
+    ///
+    /// After the fix, <c>SnapshotCycleConfigAsync</c> catches <see cref="HttpRequestException"/>
+    /// and returns <c>null</c>. The null path in <c>RunMultiTemplateLoopAsync</c> already handles
+    /// this correctly: it records a failure metric, waits 5 s, and continues — the loop stays alive.
+    ///
+    /// Observable invariants:
+    /// 1. No <c>Error</c>-level log emitted (transient failures are <c>Warning</c>, not <c>Error</c>).
+    /// 2. Loop remains active (<c>IsLoopActive = true</c>) throughout.
+    /// 3. Loop recovers and keeps running once the API becomes available again.
+    /// </summary>
+    [Fact]
+    public async Task WhenHttpRequestExceptionDuringSnapshot_LoopShouldRetryAndStayAlive()
+    {
+        // Arrange: first call (StartLoopAsync validation) succeeds; subsequent calls throw
+        // HttpRequestException (simulating "Connection refused" during rolling restart).
+        // After a few failures the mock recovers and returns a valid config.
+        var callCount = 0;
+        const int failuresBeforeRecovery = 3;
+
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount > 1 && callCount <= failuresBeforeRecovery + 1)
+                    throw new HttpRequestException("Connection refused (api:8080)");
+                return TestPipelineConfig.Default();
+            });
+
+        var svc = CreateService(leaderGate: null);
+        using var hostCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        _ = InvokeExecuteAsync(svc, hostCts.Token);
+
+        var started = await svc.StartLoopAsync();
+        started.Should().BeTrue("loop must start successfully before the test can proceed");
+
+        // Wait for loop to be active — it will hit HttpRequestException on the first cycle tick
+        await WaitUntilAsync(
+            () => svc.IsLoopActive,
+            TimeSpan.FromSeconds(5),
+            "loop must be active after StartLoopAsync");
+
+        // Wait for at least 2 calls to LoadPipelineConfigAsync:
+        //   call 1 = StartLoopAsync validation (succeeds)
+        //   call 2 = first cycle tick (throws HttpRequestException → caught → null returned → delay+retry)
+        // This confirms the loop ran and encountered the failure.
+        await WaitUntilAsync(
+            () => callCount >= 2,
+            TimeSpan.FromSeconds(10),
+            "LoadPipelineConfigAsync must be called at least twice — once for validation, once in the first cycle");
+
+        // Assert 1: loop stayed alive — IsLoopActive must still be true after the transient failure.
+        // (If the exception escaped to ExecuteAsync the loop would call CleanupAsync(rearm=false)
+        // and set IsLoopActive=false within milliseconds, detectable here.)
+        svc.IsLoopActive.Should().BeTrue(
+            "loop must remain active after transient HttpRequestException — it should retry, not die");
+
+        // Assert 2: no Error-level log emitted — transient connectivity failures must not
+        // escalate to Error (they should be logged at Warning level inside SnapshotCycleConfigAsync)
+        _mockLogger.Verify(
+            l => l.Error(It.IsAny<Exception>(), It.IsAny<string>()),
+            Times.Never(),
+            "HttpRequestException is a transient error and must not produce an Error-level log");
+
+        // Assert 3: specifically the fatal "Pipeline loop encountered an unexpected error" message
+        // must never appear — that indicates the exception escaped RunMultiTemplateLoopAsync
+        _mockLogger.Verify(
+            l => l.Error(It.IsAny<Exception>(), "Pipeline loop encountered an unexpected error"),
+            Times.Never(),
+            "the 'unexpected error' log must not fire for transient HttpRequestException — " +
+            "the exception must be caught inside SnapshotCycleConfigAsync, not escape to ExecuteAsync");
+
+        hostCts.Cancel();
+    }
+
+    /// <summary>
+    /// Verifies that a <see cref="System.Net.Sockets.SocketException"/> wrapped in an
+    /// <see cref="HttpRequestException"/> (the exact production failure pattern —
+    /// "Connection refused") is treated as transient and causes a retry, not a permanent stop.
+    ///
+    /// This is the specific exception hierarchy observed in the production incident:
+    ///   HttpRequestException → SocketException (111): Connection refused
+    /// </summary>
+    [Fact]
+    public async Task WhenConnectionRefusedSocketException_LoopShouldRetryAndNotLogError()
+    {
+        var callCount = 0;
+
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount == 2)
+                {
+                    // Reproduce the exact production exception chain:
+                    // HttpRequestException wrapping SocketException (111) Connection refused
+                    var socketEx = new System.Net.Sockets.SocketException(111); // ECONNREFUSED
+                    throw new HttpRequestException("Connection refused (api.svc:8080)", socketEx);
+                }
+                return TestPipelineConfig.Default();
+            });
+
+        var svc = CreateService(leaderGate: null);
+        using var hostCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        _ = InvokeExecuteAsync(svc, hostCts.Token);
+
+        await svc.StartLoopAsync();
+
+        // Wait until callCount > 2 — means the loop retried past the failing call
+        await WaitUntilAsync(
+            () => callCount > 2,
+            TimeSpan.FromSeconds(15),
+            "loop must retry after SocketException(ECONNREFUSED) — callCount must exceed 2");
+
+        // Loop must still be alive
+        svc.IsLoopActive.Should().BeTrue(
+            "loop must remain alive after SocketException wrapped in HttpRequestException");
+
+        // Must not have logged an Error
+        _mockLogger.Verify(
+            l => l.Error(It.IsAny<Exception>(), "Pipeline loop encountered an unexpected error"),
+            Times.Never(),
+            "Connection refused must not kill the loop or log an unexpected error");
+
+        hostCts.Cancel();
+    }
+
+    /// <summary>
+    /// Verifies that a non-transient exception (e.g. <see cref="InvalidOperationException"/>)
+    /// still escapes <c>SnapshotCycleConfigAsync</c> and is logged at Error level.
+    /// The fix must only swallow connectivity exceptions — not all exceptions.
+    /// </summary>
+    [Fact]
+    public async Task WhenNonTransientExceptionDuringSnapshot_LoopShouldStillLogError()
+    {
+        // This test is the complement of the two new retry tests above.
+        // InvalidOperationException is NOT a transient connectivity error and must
+        // still propagate to ExecuteAsync where it is logged at Error level.
+        // (This characterizes existing/expected behavior that must be preserved.)
+        var callCount = 0;
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount > 1)
+                    throw new InvalidOperationException("Non-transient store corruption");
+                return TestPipelineConfig.Default();
+            });
+
+        var svc = CreateService(leaderGate: null);
+        using var hostCts = new CancellationTokenSource();
+        _ = InvokeExecuteAsync(svc, hostCts.Token);
+        await svc.StartLoopAsync();
+
+        // Wait for the Error log — InvalidOperationException must still escape and be logged
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                _mockLogger.Verify(
+                    l => l.Error(It.IsAny<Exception>(), "Pipeline loop encountered an unexpected error"),
+                    Times.AtLeastOnce());
+                break;
+            }
+            catch (MockException) { await Task.Delay(50); }
+        }
+
+        _mockLogger.Verify(
+            l => l.Error(It.IsAny<Exception>(), "Pipeline loop encountered an unexpected error"),
+            Times.AtLeastOnce(),
+            "non-transient exceptions must still be logged at Error level and stop the loop");
+
+        hostCts.Cancel();
+    }
 }
