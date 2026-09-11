@@ -216,52 +216,14 @@ internal sealed partial class DispatchScheduler
 
         // Floor pass: if Issues were present but never dispatched in the priority loop,
         // spend the reserved floor slots exclusively for Issues.
-        if (floorEnabled && !issueDispatchedThisCycle && !ct.IsCancellationRequested)
-        {
-            var (hasIssues, _, _) = ComputeQueueAvailability(request, activeDecompositionCount);
-            if (hasIssues)
-            {
-                // Floor budget = reserved slots, capped to the actual remaining cycle budget.
-                // For unlimited budgets: use issueFloor directly (no reservation was applied).
-                // For finite budgets: cap at (totalBudget - slotsAlreadyUsed) so that the floor
-                // pass can never cause total dispatches to exceed MaxRunsPerCycle. Using
-                // `issueFloor + remaining` alone would overflow when MinIssueSlots >= MaxRunsPerCycle:
-                // the Math.Max(..., 1) clamp forces priorityBudget=1, consuming 1 slot, leaving
-                // remaining=0, then floorBudget=issueFloor+0=issueFloor resurrects slots that
-                // were never legitimately available (e.g. MinIssueSlots=2, MaxRunsPerCycle=2
-                // → priority dispatches 1, floor dispatches 2 → 3 total against a budget of 2).
-                int floorBudget = totalBudget == int.MaxValue
-                    ? issueFloor
-                    : Math.Min(issueFloor, totalBudget - processedCount - failedCount);
-
-                if (floorBudget > 0)
-                {
-                    var floorCtx = new RoundDispatchContext
-                    {
-                        PollableTemplates = request.PollableTemplates,
-                        ActiveIssueIdentifiers = request.ActiveIssueIdentifiers,
-                        TemplateProjectLookup = templateProjectLookup,
-                        TrackingReportIssue = trackingReportIssue,
-                        ReportStatus = request.ReportStatus,
-                        NotifyChange = request.NotifyChange,
-                        RemainingBudget = floorBudget,
-                        GetCurrentIssueIdentifier = () => lastReportedIssue
-                    };
-                    var (_, count, p, f) = await DispatchIssueRoundAsync(
-                        floorCtx, request.IssueQueues, cycleStateCache, stoppingToken, ct);
-                    // TODO: [WARNING] In the unlimited-budget path, `remaining` here is
-                    // `int.MaxValue - n` (still effectively int.MaxValue), so `remaining -= count`
-                    // does not change the observable value. For telemetry, `totalRemaining` in the
-                    // unlimited-budget branch uses `remaining` directly, which is not meaningful
-                    // after the floor pass — it does not reflect floor-dispatched items. The
-                    // `remaining` variable is the wrong source of truth for unlimited-budget
-                    // telemetry; consider tracking floor-dispatched items separately.
-                    remaining -= count;
-                    processedCount += p;
-                    failedCount += f;
-                }
-            }
-        }
+        var floorResult = await RunFloorPassAsync(
+            request, floorEnabled, issueDispatchedThisCycle, issueFloor,
+            totalBudget, processedCount, failedCount, activeDecompositionCount,
+            templateProjectLookup, trackingReportIssue, cycleStateCache,
+            stoppingToken, ct);
+        remaining -= floorResult.Consumed;
+        processedCount += floorResult.Processed;
+        failedCount += floorResult.Failed;
 
         // Compute total budget remaining for telemetry (accounts for both priority loop and floor pass)
         // TODO: totalRemaining can be negative if processedCount+failedCount somehow exceeds totalBudget
@@ -275,6 +237,71 @@ internal sealed partial class DispatchScheduler
         EmitSkippedMaxRunsTelemetry(request, totalRemaining);
 
         return new DispatchResult(processedCount, failedCount);
+    }
+
+    /// <summary>
+    /// Runs the issue floor pass after the priority loop. If issues were present but never dispatched
+    /// in the priority loop, dispatches up to <paramref name="issueFloor"/> additional issue items to
+    /// ensure the minimum allocation guarantee is met.
+    /// </summary>
+    private async Task<(int Consumed, int Processed, int Failed)> RunFloorPassAsync(
+        DispatchRoundRobinRequest request,
+        bool floorEnabled,
+        bool issueDispatchedThisCycle,
+        int issueFloor,
+        int totalBudget,
+        int processedCount,
+        int failedCount,
+        int activeDecompositionCount,
+        Dictionary<string, PipelineProject> templateProjectLookup,
+        Action<string?> trackingReportIssue,
+        Dictionary<int, bool> cycleStateCache,
+        CancellationToken stoppingToken,
+        CancellationToken ct)
+    {
+        if (!floorEnabled || issueDispatchedThisCycle || ct.IsCancellationRequested)
+            return (0, 0, 0);
+
+        var (hasIssues, _, _) = ComputeQueueAvailability(request, activeDecompositionCount);
+        if (!hasIssues) return (0, 0, 0);
+
+        // Floor budget = reserved slots, capped to the actual remaining cycle budget.
+        // For unlimited budgets: use issueFloor directly (no reservation was applied).
+        // For finite budgets: cap at (totalBudget - slotsAlreadyUsed) so that the floor
+        // pass can never cause total dispatches to exceed MaxRunsPerCycle. Using
+        // `issueFloor + remaining` alone would overflow when MinIssueSlots >= MaxRunsPerCycle:
+        // the Math.Max(..., 1) clamp forces priorityBudget=1, consuming 1 slot, leaving
+        // remaining=0, then floorBudget=issueFloor+0=issueFloor resurrects slots that
+        // were never legitimately available (e.g. MinIssueSlots=2, MaxRunsPerCycle=2
+        // → priority dispatches 1, floor dispatches 2 → 3 total against a budget of 2).
+        int floorBudget = totalBudget == int.MaxValue
+            ? issueFloor
+            : Math.Min(issueFloor, totalBudget - processedCount - failedCount);
+
+        if (floorBudget <= 0) return (0, 0, 0);
+
+        string? lastReportedIssue = null;
+        var floorCtx = new RoundDispatchContext
+        {
+            PollableTemplates = request.PollableTemplates,
+            ActiveIssueIdentifiers = request.ActiveIssueIdentifiers,
+            TemplateProjectLookup = templateProjectLookup,
+            TrackingReportIssue = id => { lastReportedIssue = id; trackingReportIssue(id); },
+            ReportStatus = request.ReportStatus,
+            NotifyChange = request.NotifyChange,
+            RemainingBudget = floorBudget,
+            GetCurrentIssueIdentifier = () => lastReportedIssue
+        };
+        var (_, count, p, f) = await DispatchIssueRoundAsync(
+            floorCtx, request.IssueQueues, cycleStateCache, stoppingToken, ct);
+        // TODO: [WARNING] In the unlimited-budget path, `remaining` in the caller is
+        // `int.MaxValue - n` (still effectively int.MaxValue), so subtracting `count`
+        // does not change the observable value. For telemetry, `totalRemaining` in the
+        // unlimited-budget branch uses `remaining` directly, which is not meaningful
+        // after the floor pass — it does not reflect floor-dispatched items. The
+        // `remaining` variable is the wrong source of truth for unlimited-budget
+        // telemetry; consider tracking floor-dispatched items separately.
+        return (count, p, f);
     }
 
     private readonly record struct TurnResult(
