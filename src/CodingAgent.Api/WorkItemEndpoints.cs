@@ -701,14 +701,20 @@ public static class WorkItemEndpoints
 
         // PVC gate: kiro agents require an available credential PVC
         // TODO [WARNING]: This PVC availability snapshot is taken OUTSIDE _pvcSelectLock. Two concurrent
-        // requests can both observe availablePvcs.Count > 0, pass the gate, create their Pending rows,
-        // and then both enter ExecuteDispatchLifecycleAsync. Inside the lock, SelectPvcAsync re-queries
-        // and the second caller will find zero PVCs (correct), but its Pending row has already been
-        // committed. SafelyCancelOrphanedPendingWorkItemAsync handles cleanup of the Pending row in
-        // that case. In a single-process deployment _pvcSelectLock ensures exactly one 200 and one 503.
-        // In a multi-replica deployment no cross-process lock exists; both replicas may dispatch
-        // simultaneously. A distributed lock (Postgres advisory lock) would be required to guarantee
-        // the one-200/one-503 invariant across replicas.
+        // requests can both observe availablePvcs.Count > 0, pass the gate, create their Dispatched rows,
+        // and both enter ExecuteDispatchLifecycleAsync. SelectPvcAsync (inside the lock) dequeues from
+        // each caller's in-memory availablePvcs list — it does NOT re-query the database. In a
+        // single-process deployment _pvcSelectLock ensures exactly one 200 and one 503, because all
+        // callers share the same in-memory list. In a multi-replica deployment each pod holds its own
+        // list; _pvcSelectLock cannot serialise across replicas. Both replicas can dequeue the same PVC
+        // and create a K8s Job. The race is detected by HandleOrphanedJobIfRaceDetectedAsync (status
+        // mismatch after K8s Job creation) or a DbUpdateConcurrencyException in FinalizeDispatchAsync.
+        // SafelyCancelOrphanedDispatchedWorkItemAsync transitions the orphaned Dispatched row to Failed.
+        // The 503 is self-healing: the issue label never advanced to agent:in-progress on this path,
+        // so it stays agent:next and the Scheduler re-picks it on the next poll (default 60s).
+        // See docs/architecture/concurrency-model.md — "PVC Dispatch Race in Multi-Replica Deployments".
+        // A distributed lock (Postgres advisory lock) would be required to guarantee the one-200/one-503
+        // invariant across replicas.
         var pvcPool = lifecycle.GetPvcPool();
         var pvcResult = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, pvcPool, ct);
         var availablePvcs = pvcResult.AvailablePvcs;

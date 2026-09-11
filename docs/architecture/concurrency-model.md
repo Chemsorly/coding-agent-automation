@@ -265,3 +265,63 @@ distributed implementations automatically: `AgentRegistryService` -> `Distribute
 Redis locks (`lock:agent:{id}`, 5-second TTL) instead of the in-process `_selectionLock`,
 enabling safe agent selection across API replicas.
 
+
+
+---
+
+## PVC Dispatch Race in Multi-Replica Deployments
+
+**Affected endpoint:** `POST /api/work-items/dispatch` (`DispatchWorkItem` in `WorkItemEndpoints.cs`)  
+**Affected task type:** Consolidation only (Implementation, Review, and Decomposition use the `Pending` enqueue path — see below)
+
+### Background
+
+`DispatchLifecycleService` owns two PVC-related methods:
+
+- **`QueryAvailablePvcsAsync`** (static) — queries the database for in-flight `ClaimedPvcName` values across `Pending`, `Dispatched`, and `Running` WorkItems, then computes the available subset of the configured PVC pool.
+- **`SelectPvcAsync`** (private, instance) — acquires `_pvcSelectLock` (`SemaphoreSlim(1, 1)`) and dequeues the first entry from the caller's in-memory `availablePvcs` list.
+
+`DispatchWorkItem` calls `QueryAvailablePvcsAsync` as a fast availability pre-check **outside** the lock, then passes the resulting in-memory list into `ExecuteDispatchLifecycleAsync`, which calls `SelectPvcAsync` under `_pvcSelectLock`.
+
+### Why `_pvcSelectLock` Does Not Help Across Replicas
+
+`_pvcSelectLock` is an in-process `SemaphoreSlim` — it serialises concurrent requests within a single API pod. In a multi-replica deployment each pod holds its own independent `DispatchLifecycleService` instance with its own `_pvcSelectLock` and its own in-memory PVC list. The lock has no visibility across pod boundaries.
+
+> **Important:** Redis (configured via `signalr.redis.connectionString`) enables safe agent selection and run tracking across replicas by switching `AgentRegistryService`, `OrchestratorRunService`, and `AgentReservationService` to distributed implementations. **Redis does not fix the PVC dispatch race.** The two mechanisms address different singletons. Eliminating the PVC race requires a separate Postgres advisory lock (see "Known Improvement Path" below).
+
+### Race Sequence
+
+1. Two API replicas (A and B) both receive a `POST /api/work-items/dispatch` request for a Consolidation issue at approximately the same time.
+2. Both replicas independently call `QueryAvailablePvcsAsync`. Because neither has committed a `Dispatched` WorkItem row yet, both see the same DB state and both compute a non-empty `availablePvcs` list (e.g., `["kiro-pvc-1"]`).
+3. Both replicas commit their `Dispatched` WorkItem rows to the database (with distinct `WorkItemId` values, or with the same `RunId`-derived ID — the second insert triggers the idempotency-retry path).
+4. Both enter `ExecuteDispatchLifecycleAsync` with non-empty in-memory lists.
+5. Each replica calls `SelectPvcAsync` under its own in-process `_pvcSelectLock`. Because the lock is per-pod, **both replicas successfully dequeue the same PVC name** from their respective in-memory lists.
+6. Both replicas proceed to create a K8s Job.
+
+### How the Race Is Detected and Cleaned Up
+
+After K8s Job creation, `HandleOrphanedJobIfRaceDetectedAsync` clears the EF change tracker and reloads the WorkItem from the database. One of two outcomes occurs:
+
+**Path A — status mismatch:** The winning replica's `FinalizeDispatchAsync` already transitioned the WorkItem to `Dispatched` (or to a further status). The losing replica finds the WorkItem in an unexpected state, releases the PVC back to its in-memory list, deletes its orphaned K8s Job (best-effort), and returns early without dispatching.
+
+**Path B — concurrency conflict:** Both replicas reach `FinalizeDispatchAsync` simultaneously. The EF concurrency token causes one `SaveChangesAsync` call to throw `DbUpdateConcurrencyException`. The winner's row is preserved; the loser's save is discarded. The K8s Job created by the losing replica is orphaned in Kubernetes and will be cleaned up by the ReconciliationService on its next cycle.
+
+In both paths, `DispatchWorkItem` detects `dispatched == false` and:
+1. Calls `SafelyCancelOrphanedDispatchedWorkItemAsync` → `FailWorkItemAsync`, which transitions the orphaned `Dispatched` WorkItem row to `Failed` (`FailureReason.InfrastructureFailure`).
+2. Returns HTTP `503 Service Unavailable`.
+
+### Why the 503 Is Self-Healing
+
+`KubernetesWorkDistributor.DispatchSynchronouslyAsync` (in the Orchestrator / Scheduler process) calls the dispatch endpoint and catches `ServiceUnavailable`, returning `DistributionResult(Success: false, ...)`.
+
+`DispatchOrchestrationService.DistributeAndFinalizeAsync` receives the failed result and calls `RevertFailedDistributionAsync`, which calls `SwapLabelAsync(..., AgentLabels.Next, ...)`.
+
+**Crucially**, on the 503 path `ConfirmDistributionLabelAsync` was never reached — that method swaps the label to `agent:in-progress` only after a successful dispatch. The issue label was still `agent:next` when `RevertFailedDistributionAsync` runs; re-applying `agent:next` is a defensive no-op. The issue naturally stays `agent:next` and the Scheduler re-picks it on its next poll cycle (default: 60 seconds). **No data is lost; the race adds at most one poll-interval of latency.**
+
+### Scope of Impact
+
+This race applies **only to the Consolidation task type**. Implementation, Review, and Decomposition work items are created as `Pending` via `EnqueueAsPendingAsync` (`POST /api/work-items`). That path does not perform a PVC pre-check in `DispatchWorkItem` — PVC allocation happens later inside `WorkItemDispatchService`, which runs on a single elected leader and is not subject to the cross-replica race described here.
+
+### Known Improvement Path
+
+Moving `QueryAvailablePvcsAsync` inside `_pvcSelectLock` would reduce the race window but would increase lock hold time on every request. The definitive fix is a **Postgres advisory lock** on the PVC slot ID (`SELECT pg_try_advisory_xact_lock(hash_of_pvc_name)`) taken at the start of `DispatchWorkItem`, ensuring only one replica enters the PVC-claim path at a time. This is tracked as a known improvement and is out of scope for the current change.
