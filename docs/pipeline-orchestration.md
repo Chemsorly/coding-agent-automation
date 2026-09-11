@@ -102,7 +102,8 @@ stateDiagram-v2
     end note
     note left of CreatingPullRequest
         Draft PR leaves issue as agent:in-progress. Normal PR swaps to agent:done.
-        agent:error label is set only on unexpected exceptions, not retry exhaustion.
+        agent:error is applied both when retries are exhausted (draft PR path)
+        and when an unexpected exception escapes the pipeline boundary.
     end note
     note left of ReflectingOnRun
         Only if brain repo configured and not read-only.
