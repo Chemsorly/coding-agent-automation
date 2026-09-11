@@ -885,4 +885,140 @@ public sealed class AgentJobLifecycleServiceTests
                 It.IsAny<string>()),    // T1 = string (field name)
             Times.Once);
     }
+
+    [Fact]
+    public async Task HandleJobRejectedAsync_WhenLastJobCompletedAtUpdateFaults_LogsWarning()
+    {
+        // Arrange: the lastJobCompletedAt Redis write fails
+        var agent = MakeAgent();
+        var jobId = new JobId("job-1");
+        _facade.Setup(f => f.GetRun(jobId)).Returns((PipelineRun?)null);
+        _facade.Setup(f => f.UpdateAgentFieldAsync(agent.AgentId, "lastJobCompletedAt", It.IsAny<string?>()))
+            .Returns(Task.FromException(new InvalidOperationException("Redis down")));
+
+        // Act
+        await _sut.HandleJobRejectedAsync(jobId, agent, "reason", CancellationToken.None);
+        await Task.Delay(100);
+
+        // Assert: a Warning is logged for the lastJobCompletedAt fault path
+        _logger.Verify(
+            l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("HandleJobRejectedAsync") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleJobCompletedAsync_WhenActiveJobIdUpdateFaults_LogsWarning()
+    {
+        // Arrange: the activeJobId Redis write fails in HandleJobCompletedAsync (agent path)
+        var agent = MakeAgent();
+        var jobId = new JobId("job-1");
+        var run = MakeRun("job-1");
+        _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+        _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>()))
+            .Returns(Task.CompletedTask);
+        _facade.Setup(f => f.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", null))
+            .Returns(Task.FromException(new InvalidOperationException("Redis down")));
+
+        // Act
+        await _sut.HandleJobCompletedAsync(jobId, agent, MakePayload(), CancellationToken.None);
+        await Task.Delay(100);
+
+        // Assert: a Warning is logged for the activeJobId fault path
+        _logger.Verify(
+            l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("HandleJobCompletedAsync") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleJobCompletedAsync_WhenOrphanRestoredAtUpdateFaults_LogsWarning()
+    {
+        // Arrange: the orphanRestoredAt Redis write fails in HandleJobCompletedAsync (agent path)
+        var agent = MakeAgent();
+        var jobId = new JobId("job-1");
+        var run = MakeRun("job-1");
+        _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+        _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>()))
+            .Returns(Task.CompletedTask);
+        _facade.Setup(f => f.UpdateAgentFieldAsync(agent.AgentId, "orphanRestoredAt", null))
+            .Returns(Task.FromException(new InvalidOperationException("Redis down")));
+
+        // Act
+        await _sut.HandleJobCompletedAsync(jobId, agent, MakePayload(), CancellationToken.None);
+        await Task.Delay(100);
+
+        // Assert: a Warning is logged for the orphanRestoredAt fault path
+        _logger.Verify(
+            l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("HandleJobCompletedAsync") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleJobCompletedAsync_WhenLastJobCompletedAtUpdateFaults_LogsWarning()
+    {
+        // Arrange: the lastJobCompletedAt Redis write fails in HandleJobCompletedAsync (agent path)
+        var agent = MakeAgent();
+        var jobId = new JobId("job-1");
+        var run = MakeRun("job-1");
+        _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+        _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>()))
+            .Returns(Task.CompletedTask);
+        _facade.Setup(f => f.UpdateAgentFieldAsync(agent.AgentId, "lastJobCompletedAt", It.IsAny<string?>()))
+            .Returns(Task.FromException(new InvalidOperationException("Redis down")));
+
+        // Act
+        await _sut.HandleJobCompletedAsync(jobId, agent, MakePayload(), CancellationToken.None);
+        await Task.Delay(100);
+
+        // Assert: a Warning is logged for the lastJobCompletedAt fault path
+        _logger.Verify(
+            l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("HandleJobCompletedAsync") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleJobCompletedAsync_WhenRunFallbackActiveJobIdUpdateFaults_LogsWarning()
+    {
+        // Arrange: agent is null (connection dropped), run fallback path — activeJobId Redis write fails
+        var jobId = new JobId("job-1");
+        var run = MakeRun("job-1");
+        var fallbackAgentId = new AgentId(run.AgentId!);
+        _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+        _facade.Setup(f => f.UpdateAgentFieldAsync(fallbackAgentId, "activeJobId", null))
+            .Returns(Task.FromException(new InvalidOperationException("Redis down")));
+
+        // Act: agent=null triggers the run-fallback path
+        await _sut.HandleJobCompletedAsync(jobId, agent: null, MakePayload(), CancellationToken.None);
+        await Task.Delay(100);
+
+        // Assert: a Warning is logged for the run-fallback activeJobId fault path
+        _logger.Verify(
+            l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("HandleJobCompletedAsync") && s.Contains("{AgentId}") && s.Contains("{Field}") && s.Contains("run fallback")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()),
+            Times.Once);
+    }
 }
