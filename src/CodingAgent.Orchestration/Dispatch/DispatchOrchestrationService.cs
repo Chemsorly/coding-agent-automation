@@ -455,18 +455,13 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 
         if (result.Queued)
         {
-            // Pending enqueue path: item is in the Pending queue, no K8s Job running yet.
-            // Swap the label to agent:in-progress immediately so the issue is marked as claimed
-            // while it waits for WorkItemDispatchService to create the pod. The label stays
-            // agent:in-progress for the lifetime of the run — WorkItemDispatchService does not
-            // perform any additional label swap.
-            //
-            // Best-effort — fully swallow ALL exceptions including OperationCanceledException.
-            // The WorkItem is already durably Pending in the DB; reverting here would leave
-            // the item stranded (WorkItemDispatchService will pick it up and dispatch). A failed
-            // label swap means the GitHub label stays agent:next, but the item will still be
-            // dispatched correctly. This is preferable to reverting the DB row.
-            await ConfirmDistributionLabelAsync(request, ct, swallowCancellation: true);
+            // Pending enqueue path: the WorkItem is queued, not yet dispatched — no K8s Job running.
+            // Per the DistributionResult.Queued contract the issue MUST stay agent:next: swapping to
+            // agent:in-progress here would mark every queued issue in-progress while it only waits in
+            // the queue. The swap is deferred until an agent actually picks up the run — in K8s
+            // dispatch mode that is AgentHub.RegisterAgent (the agent connecting with an ActiveJob).
+            // Dedup is unaffected: a Pending WorkItem already counts as active
+            // (PipelineConstants.ActiveWorkItemStatuses), so the loop will not re-dispatch the issue.
             return new DispatchOutcome(true, true, null);
         }
 

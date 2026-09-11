@@ -389,6 +389,133 @@ public sealed class AgentHubRegistrationBranchTests
             AgentStatus.Disconnected), Times.Once);
     }
 
+    // ── RegisterAgent — K8s-mode in-progress label swap on actual pickup ──────
+
+    private static ActiveJobState MakeActiveJob(string runId) => new()
+    {
+        RunId = runId,
+        IssueIdentifier = "org/repo#42",
+        IssueTitle = "Test Issue",
+        IssueProviderConfigId = "issue-cfg-1",
+        RepoProviderConfigId = "repo-cfg-1",
+        AgentProviderConfigId = "agent-cfg-1",
+        InitiatedBy = "loop",
+        CurrentStep = PipelineStep.ExploringCodebase,
+        StartedAt = DateTimeOffset.UtcNow
+    };
+
+    [Fact]
+    public async Task RegisterAgent_WithActiveJob_FirstPickup_SwapsLabelToInProgress()
+    {
+        // The desired behavior: while queued (Pending) the issue stays agent:next. Only when an
+        // agent actually picks up the dispatched run — which in K8s mode is signalled by the agent
+        // registering with an ActiveJob — does the issue move to agent:in-progress.
+        var ctx = BuildContext("conn-1", agentIdQueryParam: "agent-1", user: null);
+        var hub = CreateHub(ctx);
+
+        var runId = Guid.NewGuid().ToString();
+        var run = new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "issue-cfg-1",
+            RepoProviderConfigId = "repo-cfg-1"
+            // AgentId empty → this is the first pickup
+        };
+
+        _facade.Setup(f => f.GetByAgentId(It.IsAny<AgentId>())).Returns((AgentEntry?)null);
+        _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(CreateEntry("agent-1", "conn-1"));
+        _facade.Setup(f => f.GetRun(runId)).Returns(run);
+        _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>())).Returns(Task.CompletedTask);
+        _orphanRecoveryService
+            .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
+            .Returns(Task.CompletedTask);
+
+        var message = new AgentRegistrationMessage
+        {
+            AgentId = "agent-1",
+            Hostname = "host",
+            Labels = [],
+            ActiveJob = MakeActiveJob(runId)
+        };
+
+        await hub.RegisterAgent(message);
+
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.InProgress), Times.Once,
+            "when the agent actually picks up a dispatched run, the issue must move agent:next → agent:in-progress");
+    }
+
+    [Fact]
+    public async Task RegisterAgent_WithoutActiveJob_DoesNotSwapLabel()
+    {
+        // An agent registering without an active job (idle worker joining the pool) must not
+        // touch any issue label.
+        var ctx = BuildContext("conn-1", agentIdQueryParam: "agent-1", user: null);
+        var hub = CreateHub(ctx);
+
+        _facade.Setup(f => f.GetByAgentId(It.IsAny<AgentId>())).Returns((AgentEntry?)null);
+        _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(CreateEntry("agent-1", "conn-1"));
+        _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>())).Returns(Task.CompletedTask);
+        _orphanRecoveryService
+            .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
+            .Returns(Task.CompletedTask);
+
+        var message = new AgentRegistrationMessage
+        {
+            AgentId = "agent-1",
+            Hostname = "host",
+            Labels = []
+            // no ActiveJob
+        };
+
+        await hub.RegisterAgent(message);
+
+        _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never,
+            "an agent registering without an active job must not swap any issue label");
+    }
+
+    [Fact]
+    public async Task RegisterAgent_ActiveJobRunAlreadyHasAgentId_DoesNotReSwapLabel()
+    {
+        // Reconnect: the run already has an assigned agent, so the label is already agent:in-progress.
+        // Re-registering must NOT re-swap (avoids redundant provider calls and label churn).
+        var ctx = BuildContext("conn-1", agentIdQueryParam: "agent-1", user: null);
+        var hub = CreateHub(ctx);
+
+        var runId = Guid.NewGuid().ToString();
+        var run = new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "issue-cfg-1",
+            RepoProviderConfigId = "repo-cfg-1",
+            AgentId = "agent-1" // already assigned → not a first pickup
+        };
+
+        _facade.Setup(f => f.GetByAgentId(It.IsAny<AgentId>())).Returns((AgentEntry?)null);
+        _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(CreateEntry("agent-1", "conn-1"));
+        _facade.Setup(f => f.GetRun(runId)).Returns(run);
+        _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>())).Returns(Task.CompletedTask);
+        _orphanRecoveryService
+            .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
+            .Returns(Task.CompletedTask);
+
+        var message = new AgentRegistrationMessage
+        {
+            AgentId = "agent-1",
+            Hostname = "host",
+            Labels = [],
+            ActiveJob = MakeActiveJob(runId)
+        };
+
+        await hub.RegisterAgent(message);
+
+        _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never,
+            "a reconnect where the run already has an assigned agent must not re-swap the label");
+    }
+
     // ── Test helpers ──────────────────────────────────────────────────────
 
     private sealed class TestHttpContextFeature : IHttpContextFeature
