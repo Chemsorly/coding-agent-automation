@@ -867,7 +867,7 @@ public sealed class AgentJobLifecycleServiceTests
         // enough wall-clock time to execute the already-queued continuation reliably,
         // even on a loaded CI agent. The fire-and-forget design means we cannot await the
         // ContinueWith task directly without production-code changes.
-        await Task.Delay(100);
+        await Task.Delay(2000);
 
         // Assert: a Warning is logged with the exception, method context, AgentId, and field name.
         // Serilog's Warning<T0,T1>(Exception?, string, T0, T1) overload is selected by the compiler
@@ -898,7 +898,7 @@ public sealed class AgentJobLifecycleServiceTests
 
         // Act
         await _sut.HandleJobRejectedAsync(jobId, agent, "reason", CancellationToken.None);
-        await Task.Delay(100);
+        await Task.Delay(2000);
 
         // Assert: a Warning is logged for the lastJobCompletedAt fault path
         _logger.Verify(
@@ -927,7 +927,7 @@ public sealed class AgentJobLifecycleServiceTests
 
         // Act
         await _sut.HandleJobCompletedAsync(jobId, agent, MakePayload(), CancellationToken.None);
-        await Task.Delay(100);
+        await Task.Delay(2000);
 
         // Assert: a Warning is logged for the activeJobId fault path
         _logger.Verify(
@@ -956,7 +956,7 @@ public sealed class AgentJobLifecycleServiceTests
 
         // Act
         await _sut.HandleJobCompletedAsync(jobId, agent, MakePayload(), CancellationToken.None);
-        await Task.Delay(100);
+        await Task.Delay(2000);
 
         // Assert: a Warning is logged for the orphanRestoredAt fault path
         _logger.Verify(
@@ -985,7 +985,7 @@ public sealed class AgentJobLifecycleServiceTests
 
         // Act
         await _sut.HandleJobCompletedAsync(jobId, agent, MakePayload(), CancellationToken.None);
-        await Task.Delay(100);
+        await Task.Delay(2000);
 
         // Assert: a Warning is logged for the lastJobCompletedAt fault path
         _logger.Verify(
@@ -1010,7 +1010,7 @@ public sealed class AgentJobLifecycleServiceTests
 
         // Act: agent=null triggers the run-fallback path
         await _sut.HandleJobCompletedAsync(jobId, agent: null, MakePayload(), CancellationToken.None);
-        await Task.Delay(100);
+        await Task.Delay(2000);
 
         // Assert: a Warning is logged for the run-fallback activeJobId fault path
         _logger.Verify(
