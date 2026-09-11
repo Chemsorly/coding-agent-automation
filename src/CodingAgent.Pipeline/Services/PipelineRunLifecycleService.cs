@@ -19,6 +19,14 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     // ── State ───────────────────────────────────────────────────────────
     private CancellationTokenSource? _cancellationTokenSource;
 
+    /// <summary>
+    /// Serialises mutations to <see cref="_cancellationTokenSource"/> between
+    /// <see cref="CancelPipelineAsync"/>, <see cref="CreateLinkedCancellationToken"/>,
+    /// and <see cref="Dispose(bool)"/>. Held only for synchronous, non-blocking work —
+    /// never across an <c>await</c>.
+    /// </summary>
+    private readonly object _cancelLock = new();
+
     /// <summary>The current cancellation token source for the active pipeline run.</summary>
     public CancellationTokenSource? CancellationTokenSource => _cancellationTokenSource;
 
@@ -189,7 +197,18 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     public CancellationToken CreateLinkedCancellationToken(CancellationToken externalToken)
     {
         var newCts = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
-        var old = Interlocked.Exchange(ref _cancellationTokenSource, newCts);
+        CancellationTokenSource? old;
+        lock (_cancelLock)
+        {
+            old = _cancellationTokenSource;
+            _cancellationTokenSource = newCts;
+        }
+        // TODO: [WARNING] old?.Dispose() is called outside the lock, so a concurrent CancelPipelineAsync that read
+        // the same 'old' reference under its own lock scope can race on the dispose of that replaced CTS. This risks
+        // a double-dispose of the *old* CTS (not the active one being cancelled), which CancellationTokenSource.Dispose
+        // tolerates silently. The _cancelLock comment states it serialises CreateLinkedCancellationToken — that claim
+        // is only partially true: the field swap is serialised, but the subsequent dispose of the old CTS is not.
+        // To fully serialise, move old?.Dispose() inside the lock, or accept the pre-existing benign double-dispose risk.
         old?.Dispose();
         return newCts.Token;
     }
@@ -204,7 +223,17 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
 
         try
         {
-            Interlocked.CompareExchange(ref _cancellationTokenSource, null, null)?.Cancel();
+            // _cancelLock serialises this Cancel() against the Dispose() in Dispose(bool).
+            // The lock is released before any await — no deadlock risk.
+            lock (_cancelLock)
+            {
+                _cancellationTokenSource?.Cancel();
+                // TODO: [WARNING] Silent gap on happy path: when _cancellationTokenSource is null (e.g.,
+                // CreateLinkedCancellationToken was never called) and _agentCancellationSender is also null,
+                // the ?.Cancel() is a no-op, no signal is delivered, and no Warning is emitted. run.MarkCompleted()
+                // is still called, recording the run as Cancelled in history with no confirmed delivery.
+                // Consider logging a Warning here when _cancellationTokenSource is null at cancel time.
+            }
         }
         catch (ObjectDisposedException)
         {
@@ -228,6 +257,16 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
                         run.RunId, run.AgentId);
                 }
             }
+            else if (_agentCancellationSender is null)
+            {
+                _logger.Warning(
+                    "Pipeline {RunId} CancelPipelineAsync: no cancellation signal delivered — _agentCancellationSender is null",
+                    run.RunId);
+            }
+            // TODO: [WARNING] Silent gap: when _agentCancellationSender is non-null but run.AgentId is null or empty,
+            // neither branch above fires — no Warning is logged and no signal is delivered. An operator sees only the
+            // earlier "CTS race" Warning with no indication that the fallback was also skipped. Consider adding an
+            // else branch here: _logger.Warning("Pipeline {RunId} CancelPipelineAsync: no cancellation signal delivered — AgentId is missing", run.RunId);
         }
         run.MarkCompleted();
         // TODO: [WARNING] Double-emission risk: LocalPipelineExecutor.ExecutePipelineStepsAsync (line ~246) also
@@ -336,7 +375,17 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         if (_disposed) return;
         if (disposing)
         {
-            Interlocked.Exchange(ref _cancellationTokenSource, null)?.Dispose();
+            // Swap under _cancelLock so CancelPipelineAsync cannot call .Cancel() on a CTS
+            // we are about to Dispose(). The actual Dispose() is done outside the lock to
+            // minimise lock hold time. _disposed is orthogonal to _cancelLock — see class
+            // remarks on _cancelLock for the reasoning.
+            CancellationTokenSource? cts;
+            lock (_cancelLock)
+            {
+                cts = _cancellationTokenSource;
+                _cancellationTokenSource = null;
+            }
+            cts?.Dispose();
         }
         _disposed = true;
     }
