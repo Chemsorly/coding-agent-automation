@@ -406,15 +406,27 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = MakeEntry();
         var orphan1 = PipelineRun.CreateImplementation(new PipelineRunCreationParams
         {
-            RunId = "run-1", IssueIdentifier = "GH-1", IssueTitle = "T", IssueProviderConfigId = "github",
-            RepoProviderConfigId = "r", AgentId = "agent-1", AgentProviderConfigId = "kiro",
-            InitiatedBy = "x", StartedAt = DateTimeOffset.UtcNow.AddMinutes(-10)
+            RunId = "run-1",
+            IssueIdentifier = "GH-1",
+            IssueTitle = "T",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow.AddMinutes(-10)
         });
         var orphan2 = PipelineRun.CreateImplementation(new PipelineRunCreationParams
         {
-            RunId = "run-2", IssueIdentifier = "GH-2", IssueTitle = "T", IssueProviderConfigId = "github",
-            RepoProviderConfigId = "r", AgentId = "agent-1", AgentProviderConfigId = "kiro",
-            InitiatedBy = "x", StartedAt = DateTimeOffset.UtcNow
+            RunId = "run-2",
+            IssueIdentifier = "GH-2",
+            IssueTitle = "T",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow
         });
 
         _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
@@ -435,9 +447,15 @@ public sealed class AgentOrphanRecoveryServiceTests
         var entry = MakeEntry();
         var orphan = PipelineRun.CreateImplementation(new PipelineRunCreationParams
         {
-            RunId = "run-1", IssueIdentifier = "GH-1", IssueTitle = "T", IssueProviderConfigId = "github",
-            RepoProviderConfigId = "r", AgentId = "agent-1", AgentProviderConfigId = "kiro",
-            InitiatedBy = "x", StartedAt = DateTimeOffset.UtcNow
+            RunId = "run-1",
+            IssueIdentifier = "GH-1",
+            IssueTitle = "T",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow
         });
 
         _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
@@ -459,9 +477,15 @@ public sealed class AgentOrphanRecoveryServiceTests
         entry.ActiveJobId = "already-assigned";
         var orphan = PipelineRun.CreateImplementation(new PipelineRunCreationParams
         {
-            RunId = "orphan-1", IssueIdentifier = "GH-1", IssueTitle = "T", IssueProviderConfigId = "github",
-            RepoProviderConfigId = "r", AgentId = "agent-1", AgentProviderConfigId = "kiro",
-            InitiatedBy = "x", StartedAt = DateTimeOffset.UtcNow
+            RunId = "orphan-1",
+            IssueIdentifier = "GH-1",
+            IssueTitle = "T",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow
         });
 
         _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
