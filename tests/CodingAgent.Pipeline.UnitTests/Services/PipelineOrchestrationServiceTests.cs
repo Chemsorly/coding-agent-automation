@@ -527,7 +527,10 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
-        run.CodeReviewIterationsCompleted.Should().Be(1);
+        // After the fault isolation fix, a crashing agent produces a Failure result rather than
+        // breaking the iteration loop. All 3 iterations complete (crashed agents have no findings,
+        // no fix prompt configured, so Skip decision continues each iteration).
+        run.CodeReviewIterationsCompleted.Should().Be(3);
     }
 
     [Fact]
@@ -1234,8 +1237,13 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CodeReviewCriticalCount.Should().Be(1);
         run.CodeReviewWarningCount.Should().Be(1);
-        run.CodeReviewAgentsRun.Should().BeEquivalentTo(new[] { "Agent1" });
+        // Both agents are recorded — agentsRun.Add is unconditional even for crashed agents.
+        // Agent1 ran and wrote findings; Agent2 crashed and produced a Failure result.
+        run.CodeReviewAgentsRun.Should().BeEquivalentTo(new[] { "Agent1", "Agent2" });
         run.CurrentStep.Should().Be(PipelineStep.Completed);
+        // TODO: Consider asserting that Agent2's crash was logged (e.g., via a mock logger or log capture)
+        // to verify the fault-isolation warning path is actually taken in this integration scenario,
+        // rather than only asserting that the agent name was added to agentsRun.
     }
 
     [Fact]
