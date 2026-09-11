@@ -57,7 +57,7 @@ public sealed class AgentIssueOperationsTests
             run.IssueIdentifier,
             AgentLabels.Done,
             run.LabelTargetKind,
-            CancellationToken.None), Times.Once);
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ── PostCommentViaIssueProviderAsync — null config ─────────────────────

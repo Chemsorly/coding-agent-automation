@@ -6,6 +6,7 @@ using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Services;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Hosting;
 using Moq;
 using ILogger = Serilog.ILogger;
 
@@ -1048,12 +1049,15 @@ public sealed class AgentHubBehaviorTests : IDisposable
             _mockFacade.Object,
             _mockLabelService.Object,
             _mockLogger.Object);
+        var appLifetime = new Mock<IHostApplicationLifetime>();
+        appLifetime.SetupGet(l => l.ApplicationStopping).Returns(CancellationToken.None);
         return new AgentJobLifecycleService(
             _mockFacade.Object,
             _mockLifecycleManager.Object,
             _mockLabelService.Object,
             issueOps,
             changeNotifier,
+            appLifetime.Object,
             _mockLogger.Object);
     }
 

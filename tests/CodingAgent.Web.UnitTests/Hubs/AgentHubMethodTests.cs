@@ -378,12 +378,12 @@ public sealed class AgentHubMethodTests
         _facade.Setup(f => f.GetByConnectionId("agent-conn-1")).Returns(
             CreateAgentEntry("agent-1", "agent-conn-1", activeJobId: "job-10"));
         _facade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "job-10"))).Returns(run);
-        _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.InProgress)).Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.InProgress, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var hub = CreateHub();
         await hub.RequestLabelChange(jobId, AgentLabels.InProgress);
 
-        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.InProgress), Times.Once);
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.InProgress, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -398,7 +398,7 @@ public sealed class AgentHubMethodTests
         var hub = CreateHub();
         await hub.RequestLabelChange(jobId, AgentLabels.InProgress);
 
-        _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never);
+        _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -414,7 +414,7 @@ public sealed class AgentHubMethodTests
         var hub = CreateHub();
         await hub.RequestLabelChange(jobId, "not-a-real-label");
 
-        _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never);
+        _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -431,6 +431,6 @@ public sealed class AgentHubMethodTests
         var hub = CreateHub();
         await hub.RequestLabelChange(jobId, AgentLabels.EpicApproved);
 
-        _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never);
+        _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }
