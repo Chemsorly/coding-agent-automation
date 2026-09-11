@@ -270,6 +270,43 @@ public class QualityGateExecutorFeedbackTests
             _run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task FeedbackTimeout_LogsConfiguredTimeoutSeconds_NotHardcodedConstant()
+    {
+        // Arrange: set FeedbackTimeoutSeconds = 120 (non-default; default is 60 which equals the
+        // old hardcoded constant, so only a non-60 value distinguishes the bug from the fix)
+        var configWithCustomTimeout = _config with { FeedbackTimeoutSeconds = 120 };
+        SetupValidatorAlwaysFails();
+
+        _mockAgent.Setup(a => a.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Pipeline Failure Feedback")),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new OperationCanceledException("The operation was canceled."));
+
+        var context = BuildContext(configWithCustomTimeout);
+
+        // Act — outer pipeline token is CancellationToken.None, so IsCancellationRequested == false,
+        // routing the OperationCanceledException into the timeout catch block
+        await _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
+
+        // Assert: the Warning log must record the operator-configured timeout (120), not the
+        // hardcoded constant FeedbackConstraints.FailureFeedbackTimeoutSeconds (60).
+        // Serilog resolves this to Warning<string, int>(Exception, string, string, int);
+        // match with exactly two typed positional matchers to hit the same generic overload.
+        // TODO: If PipelineConfiguration.FeedbackTimeoutSeconds is ever changed from int to
+        // another numeric type (e.g. double), update the verify literal here (120 → 120.0) so
+        // the generic overload resolution matches the actual call-site type argument; otherwise
+        // the Moq Verify may silently target a different Warning<T0,T1> instantiation and pass
+        // vacuously even when the log is not emitted with the expected value.
+        _mockLogger.Verify(l => l.Warning(
+            It.IsAny<OperationCanceledException>(),
+            "Pipeline {RunId} failure feedback collection timed out after {Timeout}s",
+            It.IsAny<string>(),  // {RunId}
+            120),                // {Timeout} — must be 120, not 60
+            Times.Once);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private void SetupValidatorAlwaysFails()
