@@ -53,7 +53,11 @@ public class BlockedIssuesServiceTests
     {
         var template = new PipelineJobTemplate
         {
-            Id = "t1", Name = "T", IssueProviderId = "prov1", RepoProviderId = "repo1", Enabled = true
+            Id = "t1",
+            Name = "T",
+            IssueProviderId = "prov1",
+            RepoProviderId = "repo1",
+            Enabled = true
         };
 
         var config = new Mock<IPipelineApiConfigClient>();
@@ -96,7 +100,11 @@ public class BlockedIssuesServiceTests
     {
         var template = new PipelineJobTemplate
         {
-            Id = "t1", Name = "T", IssueProviderId = "prov1", RepoProviderId = "repo1", Enabled = true
+            Id = "t1",
+            Name = "T",
+            IssueProviderId = "prov1",
+            RepoProviderId = "repo1",
+            Enabled = true
         };
 
         var config = new Mock<IPipelineApiConfigClient>();
@@ -249,7 +257,11 @@ public class BlockedIssuesServiceTests
     {
         var template = new PipelineJobTemplate
         {
-            Id = "t1", Name = "T", IssueProviderId = "prov1", RepoProviderId = "repo1", Enabled = true
+            Id = "t1",
+            Name = "T",
+            IssueProviderId = "prov1",
+            RepoProviderId = "repo1",
+            Enabled = true
         };
 
         var config = new Mock<IPipelineApiConfigClient>();
@@ -264,7 +276,9 @@ public class BlockedIssuesServiceTests
             {
                 new IssueSummary { Identifier = "42", Title = "Bug fix", Labels = new[] { "bug", "agent:next" }, Description = "", Url = null },
             },
-            Page = 1, PageSize = 50, HasMore = false
+            Page = 1,
+            PageSize = 50,
+            HasMore = false
         };
 
         var provider = new Mock<IIssueProvider>();
@@ -344,7 +358,9 @@ public class BlockedIssuesServiceTests
                 new IssueSummary { Identifier = "2", Title = "I2", Labels = Array.Empty<string>(), Description = "", Url = null },
                 new IssueSummary { Identifier = "3", Title = "I3", Labels = Array.Empty<string>(), Description = "", Url = null },
             },
-            Page = 1, PageSize = 50, HasMore = true
+            Page = 1,
+            PageSize = 50,
+            HasMore = true
         };
         var page2 = new PagedResult<IssueSummary>
         {
@@ -352,7 +368,9 @@ public class BlockedIssuesServiceTests
             {
                 new IssueSummary { Identifier = "4", Title = "I4", Labels = Array.Empty<string>(), Description = "", Url = null },
             },
-            Page = 2, PageSize = 50, HasMore = false
+            Page = 2,
+            PageSize = 50,
+            HasMore = false
         };
 
         var template = new PipelineJobTemplate { Id = "t1", Name = "T", IssueProviderId = "prov1", RepoProviderId = "repo1", Enabled = true };
@@ -530,12 +548,16 @@ public class BlockedIssuesServiceTests
         var prov1Page1 = new PagedResult<IssueSummary>
         {
             Items = new[] { new IssueSummary { Identifier = "10", Title = "I10", Labels = Array.Empty<string>(), Description = "", Url = null } },
-            Page = 1, PageSize = 50, HasMore = true
+            Page = 1,
+            PageSize = 50,
+            HasMore = true
         };
         var prov1Page2 = new PagedResult<IssueSummary>
         {
             Items = new[] { new IssueSummary { Identifier = "12", Title = "I12", Labels = Array.Empty<string>(), Description = "", Url = null } },
-            Page = 2, PageSize = 50, HasMore = false
+            Page = 2,
+            PageSize = 50,
+            HasMore = false
         };
         var prov2Page1 = new PagedResult<IssueSummary>
         {
@@ -544,7 +566,9 @@ public class BlockedIssuesServiceTests
                 new IssueSummary { Identifier = "10", Title = "I10-dup", Labels = Array.Empty<string>(), Description = "", Url = null },
                 new IssueSummary { Identifier = "11", Title = "I11", Labels = Array.Empty<string>(), Description = "", Url = null },
             },
-            Page = 1, PageSize = 50, HasMore = false
+            Page = 1,
+            PageSize = 50,
+            HasMore = false
         };
 
         var prov1 = new Mock<IIssueProvider>();
@@ -601,7 +625,9 @@ public class BlockedIssuesServiceTests
                 {
                     new IssueSummary { Identifier = "10", Title = "Page1Issue", Labels = Array.Empty<string>(), Description = "", Url = null }
                 },
-                Page = 1, PageSize = 50, HasMore = true
+                Page = 1,
+                PageSize = 50,
+                HasMore = true
             })
             .ThrowsAsync(new InvalidOperationException("provider failed on page 2"));
         provider.SetupSequence(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
@@ -611,7 +637,9 @@ public class BlockedIssuesServiceTests
                 {
                     new IssueSummary { Identifier = "10", Title = "Page1Issue", Labels = Array.Empty<string>(), Description = "", Url = null }
                 },
-                Page = 1, PageSize = 50, HasMore = true
+                Page = 1,
+                PageSize = 50,
+                HasMore = true
             })
             .ThrowsAsync(new InvalidOperationException("provider failed on page 2"));
 

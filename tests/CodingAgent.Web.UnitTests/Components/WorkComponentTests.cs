@@ -413,7 +413,11 @@ public class WorkComponentTests : BunitContext
     {
         var template = new PipelineJobTemplate
         {
-            Id = "t1", Name = "T", IssueProviderId = "prov1", RepoProviderId = "repo1", Enabled = true
+            Id = "t1",
+            Name = "T",
+            IssueProviderId = "prov1",
+            RepoProviderId = "repo1",
+            Enabled = true
         };
         _mockConfigClient
             .Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
@@ -481,7 +485,11 @@ public class WorkComponentTests : BunitContext
         // Set up provider to always return HasMore=true (service hits MaxIssuesPerProvider cap).
         var template = new PipelineJobTemplate
         {
-            Id = "t1", Name = "T", IssueProviderId = "prov1", RepoProviderId = "repo1", Enabled = true
+            Id = "t1",
+            Name = "T",
+            IssueProviderId = "prov1",
+            RepoProviderId = "repo1",
+            Enabled = true
         };
         _mockConfigClient
             .Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
