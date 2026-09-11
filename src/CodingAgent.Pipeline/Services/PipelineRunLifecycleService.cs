@@ -235,9 +235,9 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
                 // Consider logging a Warning here when _cancellationTokenSource is null at cancel time.
             }
         }
-        catch (ObjectDisposedException)
+        catch (ObjectDisposedException ode)
         {
-            _logger.Warning(
+            _logger.Warning(ode,
                 "Pipeline {RunId} cancellation encountered disposed CancellationTokenSource — " +
                 "CTS race between cancel and dispose. Attempting fallback cancel signal",
                 run.RunId);

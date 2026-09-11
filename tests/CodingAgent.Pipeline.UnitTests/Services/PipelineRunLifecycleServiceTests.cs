@@ -570,7 +570,8 @@ public class PipelineRunLifecycleServiceTests
             });
 
             gate.Set(); // release both simultaneously
-            await Task.WhenAll(cancelTask, disposeTask); // must not throw
+            var ex = await Record.ExceptionAsync(() => Task.WhenAll(cancelTask, disposeTask));
+            ex.Should().BeNull("concurrent CancelPipelineAsync and Dispose must not throw");
 
             externalCts.Dispose();
         }
