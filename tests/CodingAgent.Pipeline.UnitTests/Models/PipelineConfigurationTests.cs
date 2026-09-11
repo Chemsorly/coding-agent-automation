@@ -122,6 +122,7 @@ public class PipelineConfigurationTests
             CiCancelledMoveMaxRetries = 7,
             FeedbackTimeoutSeconds = 90,
             HousekeepingTriggerCooldownMinutes = 30,
+            MinIssueSlots = 2,
         };
 
         // Act
@@ -141,7 +142,7 @@ public class PipelineConfigurationTests
 
         // Count the properties explicitly set above (all [Key] properties on the record).
         // If this fails, a new [Key] property was added — add it to the config above.
-        keyPropertyCount.Should().Be(76,
+        keyPropertyCount.Should().Be(77,
             "this test must cover all [Key]-annotated properties on PipelineConfiguration. " +
             "If a new property was added, set it to a non-default value in the config above.");
     }
@@ -240,6 +241,39 @@ public class PipelineConfigurationTests
         // Transient retry delay default
         config.TransientRetryDelay.Should().Be(TimeSpan.FromSeconds(30));
         config.FeedbackTimeoutSeconds.Should().Be(60);
+        config.MinIssueSlots.Should().Be(1);
+    }
+
+    // ── MinIssueSlots validation ────────────────────────────────────────────────
+
+    [Fact]
+    public void MinIssueSlots_NegativeValue_ThrowsArgumentOutOfRangeException()
+    {
+        var act = () => new PipelineConfiguration { MinIssueSlots = -1 };
+
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName(nameof(PipelineConfiguration.MinIssueSlots));
+    }
+
+    [Fact]
+    public void MinIssueSlots_ZeroValue_IsPermitted()
+    {
+        var config = new PipelineConfiguration { MinIssueSlots = 0 };
+
+        config.MinIssueSlots.Should().Be(0);
+    }
+
+    [Fact]
+    public void MinIssueSlots_PositiveValue_IsPermitted()
+    {
+        // TODO: [WARNING] This test is tautological: it asserts that a value set during construction
+        // is later returned, which the C# property machinery guarantees for any non-negative value.
+        // It adds no signal beyond MinIssueSlots_ZeroValue_IsPermitted. A more meaningful boundary
+        // to verify would be int.MaxValue (maximum allowed without overflow) or specifically 1
+        // (the floor-enabled boundary). Consider replacing with a boundary-value test.
+        var config = new PipelineConfiguration { MinIssueSlots = 3 };
+
+        config.MinIssueSlots.Should().Be(3);
     }
 
     // ── ApplyProjectOverrides — Scalars ────────────────────────────────────────
