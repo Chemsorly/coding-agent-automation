@@ -363,6 +363,31 @@ public static class WorkItemEndpoints
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1068", Justification = "Test seam bool appended after ct intentionally")]
         bool awaitTelemetry = false)
     {
+        // Infrastructure recovery path (issue #2459): when the agent reports Running, attempt to
+        // recover a Failed/Timeout or Failed/InfrastructureFailure item back to Running before
+        // reaching TransitionDetailedAsync (which would reject Failed→Running as invalid).
+        //
+        // This covers the race where ReconciliationLoop's EnforceTimeoutsAsync timed out the item
+        // while the agent was still executing — the agent's in-flight PostStatus(Running) arrives
+        // after the timeout write and must succeed rather than returning 400.
+        //
+        // TryRecoverFromInfrastructureFailureAsync returns:
+        //   true  — recovery succeeded (or item already at Running) → return 200 immediately.
+        //   false — item not found, wrong state, or non-recoverable FailureReason (AgentError etc.)
+        //           → fall through to TransitionDetailedAsync for normal handling.
+        //
+        // When recovery succeeds, we do NOT call lifecycle events (FailRunAsync / CancelRunAsync)
+        // because the item is transitioning BACK to an active state, not completing — lifecycle
+        // events are only appropriate for terminal transitions below.
+        if (request.Status == WorkItemStatus.Running)
+        {
+            var recovered = await transitionService.TryRecoverFromInfrastructureFailureAsync(
+                id, WorkItemStatus.Running, ct: ct);
+            if (recovered)
+                return TypedResults.Ok();
+            // false → not a recoverable race; fall through to TransitionDetailedAsync.
+        }
+
         // Pre-read guard: if the incoming status is terminal and the item is already in a
         // "stronger" terminal state (Cancelled or Succeeded), return Ok silently without calling
         // TransitionDetailedAsync. This suppresses the "Invalid transition" LogWarning that
@@ -406,7 +431,19 @@ public static class WorkItemEndpoints
         {
             var currentStatus = await transitionService.GetCurrentStatusAsync(id, ct);
             if (currentStatus is WorkItemStatus.Cancelled or WorkItemStatus.Succeeded)
+            {
+                // TODO: Narrow deleted-item TOCTOU race — GetCurrentStatusAsync returned Cancelled/Succeeded
+                // so we return Ok() without calling TransitionDetailedAsync. If the WorkItem was
+                // hard-deleted between the GetCurrentStatusAsync read and this return (e.g. in a
+                // test/cleanup scenario), the caller receives HTTP 200 for a now-nonexistent item
+                // rather than 404. The post-read approach (check after Rejected) would not have this
+                // property for the already-terminal case, so this is an accepted trade-off of the
+                // pre-read design. To close it, TransitionDetailedAsync would need to return a
+                // TerminalConflict result type so the endpoint can distinguish "wrong direction" from
+                // "already terminal" without a prior read. See review finding #2 (Correctness) for
+                // issue #2461.
                 return TypedResults.Ok();
+            }
             // null  → item not found; fall through so TransitionDetailedAsync returns NotFound.
             // Any non-terminal current status → fall through for normal processing.
         }

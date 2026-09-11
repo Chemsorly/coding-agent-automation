@@ -695,6 +695,12 @@ public sealed class PostStatusIdempotencyTests
             item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory);
 
         // Assert 1: endpoint returns 200
+        // TODO: This assertion confirms the result type but does not verify that GetCurrentStatusAsync
+        // was the mechanism (i.e. the pre-read guard fired). A mock/spy on transitionService asserting
+        // GetCurrentStatusAsync was called exactly once and TransitionDetailedAsync was never called
+        // would make the structural claim in the doc-comment verifiable. As-is, a regression that
+        // bypasses the guard and reaches Ok() via another code path would not be caught.
+        // See review finding #1 (TestQualityReviewer) for issue #2461.
         result.Should().BeOfType<Ok>(
             "PostStatus(Failed) on a Cancelled WorkItem must return 200 (silent idempotent success)");
 
@@ -705,11 +711,20 @@ public sealed class PostStatusIdempotencyTests
         // This is the definitive structural proof the pre-read guard fired and short-circuited
         // before TransitionDetailedAsync was entered (which would have written nothing anyway,
         // but returning Ok proves the guard path was taken rather than the Rejected/BadRequest path).
+        //
+        // TODO: Consider a pre-assertion here that reads the item and confirms GetCurrentStatusAsync
+        // would return Cancelled for it (e.g. assert item status from DB before calling PostStatus).
+        // This makes failure messages more actionable if the seeded state is ever incorrect.
+        // See review finding #2 (TestQualityReviewer) for issue #2461.
         await using var verifyCtx = new TestPipelineDbContext(opts);
         var persisted = await verifyCtx.WorkItems.FindAsync(item.Id);
         persisted.Should().NotBeNull();
         persisted!.Status.Should().Be(WorkItemStatus.Cancelled,
             "the WorkItem must remain Cancelled — no transition was performed");
+        // TODO: Weak assertion — NotBe("Late K8s callback") passes if ErrorMessage was written as any
+        // other value (e.g. null cleared to empty string, or a different mutation value). Replace with
+        // a stronger assertion against the original seeded value (or BeNull() if seeded as null) to
+        // directly verify no mutation occurred. See review finding #3 (TestQualityReviewer) for issue #2461.
         persisted.ErrorMessage.Should().NotBe("Late K8s callback",
             "ErrorMessage must not have been written because the guard returned before ApplyStatusMutation ran");
     }
@@ -737,6 +752,10 @@ public sealed class PostStatusIdempotencyTests
             item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory);
 
         // Assert 1: endpoint returns 200
+        // TODO: Same guard-mechanism verification gap as WhenItemIsCancelled_PostStatusFailed_ReturnOkWithoutTransition —
+        // a mock/spy asserting GetCurrentStatusAsync was called and TransitionDetailedAsync was not
+        // would make the pre-read guard claim structurally verifiable. See review finding #1
+        // (TestQualityReviewer) for issue #2461.
         result.Should().BeOfType<Ok>(
             "PostStatus(Failed) on a Succeeded WorkItem must return 200 (silent idempotent success)");
 
@@ -749,6 +768,9 @@ public sealed class PostStatusIdempotencyTests
         persisted.Should().NotBeNull();
         persisted!.Status.Should().Be(WorkItemStatus.Succeeded,
             "the WorkItem must remain Succeeded — no transition was performed");
+        // TODO: Weak assertion — NotBe("Late K8s callback") passes if ErrorMessage was set to any other
+        // value. Replace with a stronger assertion against the original seeded value (or BeNull()).
+        // See review finding #3 (TestQualityReviewer) for issue #2461.
         persisted.ErrorMessage.Should().NotBe("Late K8s callback",
             "ErrorMessage must not have been written because the guard returned before ApplyStatusMutation ran");
     }
