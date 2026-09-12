@@ -30,7 +30,8 @@ internal sealed class TemplatePoller
     internal async Task<(Dictionary<string, List<IssueSummary>> IssueQueues,
                           Dictionary<string, List<PullRequestSummary>> PrQueues,
                           Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> DecompositionQueues,
-                          Dictionary<string, List<PullRequestSummary>> AgentDonePrQueues)>
+                          Dictionary<string, List<PullRequestSummary>> AgentDonePrQueues,
+                          HashSet<string> PrPollFailedTemplateIds)>
         PollTemplateQueuesAsync(
             IReadOnlyList<PipelineJobTemplate> pollableTemplates,
             int maxPagesToFetch,
@@ -44,6 +45,9 @@ internal sealed class TemplatePoller
         var prQueues = new Dictionary<string, List<PullRequestSummary>>();
         var decompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
         var agentDonePrQueues = new Dictionary<string, List<PullRequestSummary>>();
+        // Tracks templates whose PR poll failed (network/API error or provider not found).
+        // Used by BuildPrEligibilityMap to fail-open (omit provider) for those templates.
+        var prPollFailedTemplateIds = new HashSet<string>(StringComparer.Ordinal);
 
         for (int i = 0; i < pollableTemplates.Count; i++)
         {
@@ -60,7 +64,7 @@ internal sealed class TemplatePoller
 
             try
             {
-                await PollSingleTemplateAsync(template, maxPagesToFetch, templateStatuses, issueQueues, prQueues, decompositionQueues, agentDonePrQueues, ct);
+                await PollSingleTemplateAsync(template, maxPagesToFetch, templateStatuses, issueQueues, prQueues, decompositionQueues, agentDonePrQueues, prPollFailedTemplateIds, ct);
             }
             catch (OperationCanceledException)
             {
@@ -80,7 +84,7 @@ internal sealed class TemplatePoller
             }
         }
 
-        return (issueQueues, prQueues, decompositionQueues, agentDonePrQueues);
+        return (issueQueues, prQueues, decompositionQueues, agentDonePrQueues, prPollFailedTemplateIds);
     }
 
     /// <summary>
@@ -95,10 +99,11 @@ internal sealed class TemplatePoller
         Dictionary<string, List<PullRequestSummary>> prQueues,
         Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
         Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
+        HashSet<string> prPollFailedTemplateIds,
         CancellationToken ct)
     {
         await PollIssueQueueAsync(template, maxPagesToFetch, templateStatuses, issueQueues, ct);
-        await PollPrQueueAsync(template, maxPagesToFetch, prQueues, ct);
+        await PollPrQueueAsync(template, maxPagesToFetch, prQueues, prPollFailedTemplateIds, ct);
         await PollDecompositionQueueAsync(template, maxPagesToFetch, decompositionQueues, ct);
         await PollAgentDonePrQueueAsync(template, maxPagesToFetch, agentDonePrQueues, ct);
 
@@ -153,33 +158,55 @@ internal sealed class TemplatePoller
     /// <summary>
     /// Polls the PR queue for a template (only when ReviewEnabled).
     /// Wrapped in its own try-catch so that a PR polling failure does not discard the issue queue.
+    /// <para>
+    /// The key for <paramref name="template"/>.Id is ALWAYS written to <paramref name="prQueues"/>
+    /// (either empty list or fetched list), ensuring <see cref="PollSingleTemplateAsync"/> can
+    /// safely read the count. Whether the poll succeeded is signalled via
+    /// <paramref name="prPollFailedTemplateIds"/>.
+    /// </para>
+    /// <para>
+    /// Callers must pass <paramref name="prPollFailedTemplateIds"/> to
+    /// <see cref="PipelineLoopService.BuildPrEligibilityMap"/> so it can omit providers
+    /// whose PR poll failed (fail-open, analogous to the ConsecutiveFailures check for
+    /// issue-poll failures in <see cref="PipelineLoopService.BuildEligibilityMap"/>).
+    /// </para>
     /// </summary>
     private async Task PollPrQueueAsync(
         PipelineJobTemplate template,
         int maxPagesToFetch,
         Dictionary<string, List<PullRequestSummary>> prQueues,
+        HashSet<string> prPollFailedTemplateIds,
         CancellationToken ct)
     {
+        // Always initialise — PollSingleTemplateAsync reads prQueues[template.Id].Count after this returns.
         prQueues[template.Id] = new List<PullRequestSummary>();
+
         if (!template.ReviewEnabled) return;
+
+        if (!_cacheManager.RepoProviders.TryGetValue(template.RepoProviderId, out var repoProvider)
+            || repoProvider is null)
+        {
+            _logger.Warning("Template '{TemplateName}': repo provider '{RepoProviderId}' not found in cache, skipping PR polling",
+                template.Name, template.RepoProviderId);
+            // Mark as failed so BuildPrEligibilityMap can omit this provider (fail-open).
+            prPollFailedTemplateIds.Add(template.Id);
+            return;
+        }
 
         try
         {
-            if (!_cacheManager.RepoProviders.TryGetValue(template.RepoProviderId, out var repoProvider))
-            {
-                _logger.Warning("Template '{TemplateName}': repo provider '{RepoProviderId}' not found in cache, skipping PR polling",
-                    template.Name, template.RepoProviderId);
-                return;
-            }
-
             var prs = await FetchAgentNextPullRequestsAsync(repoProvider, maxPagesToFetch, ct);
             prQueues[template.Id] = prs;
+            // Success — template NOT added to failed set
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             _logger.Warning(ex, "Template '{TemplateName}' PR polling failed, issue polling unaffected: {Error}",
                 template.Name, ex.Message);
+            // Mark as failed so BuildPrEligibilityMap can omit this provider (fail-open).
+            // prQueues[template.Id] remains empty (written above) — safe for callers that read the count.
+            prPollFailedTemplateIds.Add(template.Id);
         }
     }
 

@@ -168,7 +168,7 @@ public class HousekeepingPollCycleIntegrationTests
         var template = MakeTemplate(housekeepingEnabled: true);
         var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
 
-        var (_, _, _, agentDonePrQueues) = await poller.PollTemplateQueuesAsync(
+        var (_, _, _, agentDonePrQueues, _) = await poller.PollTemplateQueuesAsync(
             [template], 3, statuses, reportIdx, reportStatus, notifyChange,
             CancellationToken.None);
 
@@ -186,7 +186,7 @@ public class HousekeepingPollCycleIntegrationTests
         var template = MakeTemplate(housekeepingEnabled: true);
         var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
 
-        var (_, _, _, agentDonePrQueues) = await poller.PollTemplateQueuesAsync(
+        var (_, _, _, agentDonePrQueues, _) = await poller.PollTemplateQueuesAsync(
             [template], 3, statuses, reportIdx, reportStatus, notifyChange,
             CancellationToken.None);
 
@@ -202,7 +202,7 @@ public class HousekeepingPollCycleIntegrationTests
         var template = MakeTemplate(housekeepingEnabled: false);
         var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
 
-        var (_, _, _, agentDonePrQueues) = await poller.PollTemplateQueuesAsync(
+        var (_, _, _, agentDonePrQueues, _) = await poller.PollTemplateQueuesAsync(
             [template], 3, statuses, reportIdx, reportStatus, notifyChange,
             CancellationToken.None);
 
