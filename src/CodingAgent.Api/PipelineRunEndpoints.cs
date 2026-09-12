@@ -1,6 +1,9 @@
+using CodingAgent.Infrastructure.Persistence;
+using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using Microsoft.EntityFrameworkCore;
 
 namespace CodingAgent.Api;
 
@@ -59,6 +62,7 @@ public static class PipelineRunEndpoints
     internal static async Task<IResult> GetRunHistory(
         IPipelineRunHistoryService history,
         IOrchestratorRunService runService,
+        IDbContextFactory<PipelineDbContext> dbFactory,
         int page = 1,
         int pageSize = 50,
         bool feedbackOnly = false,
@@ -82,8 +86,43 @@ public static class PipelineRunEndpoints
             .Select(r => r.RunId)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        var inFlightSummaries = runService.GetActiveRuns()
-            .Where(r => !activeRunIds.Contains(r.RunId))   // not already in history page
+        // Capture the active-run snapshot once — DistributedRunService.GetActiveRuns() blocks
+        // on Redis internally, so calling it once avoids a second blocking round-trip.
+        var activeRuns = runService.GetActiveRuns();
+
+        // Resolve WorkItem status for active runs to exclude Pending (queued) items from the
+        // merge. RunId == WorkItem.Id.ToString() by contract (enforced in CreateWorkItem and
+        // DispatchWorkItem). Runs with no matching WorkItem row (rehydrated/orphaned) are
+        // treated conservatively as non-Pending and included. See issue #2528.
+        // TODO [WARNING]: The LINQ chain below parses each GUID string twice — once in the
+        // Where predicate (result discarded) and once in the Select projection. Consider
+        // collapsing to a single Select: .Select(id => Guid.TryParse(id, out var g) ? (Guid?)g : null)
+        // .Where(g => g.HasValue).Select(g => g!.Value) to avoid the redundant parse.
+        var runIdGuids = activeRuns
+            .Select(r => r.RunId)
+            .Where(id => Guid.TryParse(id, out _))
+            .Select(Guid.Parse)
+            .ToList();
+
+        HashSet<string> pendingIds;
+        if (runIdGuids.Count > 0)
+        {
+            await using var db = await dbFactory.CreateDbContextAsync(ct);
+            pendingIds = (await db.WorkItems
+                .AsNoTracking()
+                .Where(w => runIdGuids.Contains(w.Id) && w.Status == WorkItemStatus.Pending)
+                .Select(w => w.Id.ToString())
+                .ToListAsync(ct))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+        else
+        {
+            pendingIds = [];
+        }
+
+        var inFlightSummaries = activeRuns
+            .Where(r => !pendingIds.Contains(r.RunId))          // exclude Pending (queued) runs
+            .Where(r => !activeRunIds.Contains(r.RunId))        // not already in history page
             .Select(r => r.ToSummary())
             .Where(s => string.IsNullOrEmpty(projectId) || s.ProjectId == projectId)  // honor the project scope
             .ToList();

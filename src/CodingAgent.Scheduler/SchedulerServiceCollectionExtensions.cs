@@ -222,18 +222,18 @@ public static class SchedulerServiceCollectionExtensions
         // ── PipelineLoopService ───────────────────────────────────────────────
         services.AddSingleton<PipelineLoopServiceDependencies>(sp => new PipelineLoopServiceDependencies
         {
-            Orchestration         = sp.GetRequiredService<IDispatchRunCreator>(),
-            ProviderFactory       = sp.GetRequiredService<IProviderFactory>(),
-            PipelineConfigStore   = sp.GetRequiredService<IPipelineConfigStore>(),
-            ProviderConfigStore   = sp.GetRequiredService<IProviderConfigStore>(),
-            ProjectStore          = sp.GetRequiredService<IProjectStore>(),
-            Logger                = Log.Logger,
-            WorkDistributor       = sp.GetRequiredService<IWorkDistributor>(),
+            Orchestration = sp.GetRequiredService<IDispatchRunCreator>(),
+            ProviderFactory = sp.GetRequiredService<IProviderFactory>(),
+            PipelineConfigStore = sp.GetRequiredService<IPipelineConfigStore>(),
+            ProviderConfigStore = sp.GetRequiredService<IProviderConfigStore>(),
+            ProjectStore = sp.GetRequiredService<IProjectStore>(),
+            Logger = Log.Logger,
+            WorkDistributor = sp.GetRequiredService<IWorkDistributor>(),
             DispatchOrchestration = sp.GetRequiredService<IDispatchOrchestrationService>(),
-            DependencyChecker     = sp.GetRequiredService<IDependencyChecker>(),
-            HousekeepingService   = sp.GetRequiredService<IHousekeepingService>(),
-            LeaderElection        = sp.GetService<ILeaderElectionService>(),
-            WorkItemClient        = sp.GetRequiredService<IPipelineApiWorkItemClient>(),
+            DependencyChecker = sp.GetRequiredService<IDependencyChecker>(),
+            HousekeepingService = sp.GetRequiredService<IHousekeepingService>(),
+            LeaderElection = sp.GetService<ILeaderElectionService>(),
+            WorkItemClient = sp.GetRequiredService<IPipelineApiWorkItemClient>(),
         });
         services.AddSingleton<PipelineLoopService>();
         services.AddSingleton<IPipelineLoopService>(sp => sp.GetRequiredService<PipelineLoopService>());
@@ -246,6 +246,26 @@ public static class SchedulerServiceCollectionExtensions
         // Inject ILeaderElectionService so non-leader pods skip the stale local fast-path in ReadAsync.
         services.AddSingleton<LoopStatusCache>(sp =>
             new LoopStatusCache(sp.GetService<IRedisStore>(), sp.GetService<ILeaderElectionService>(), Log.Logger));
+
+        // ── LoopWatchdogService — self-heals a dormant-but-leader loop ────────
+        // Polls IsLoopActive every 2 minutes and calls StartLoopAsync() when the loop
+        // is dormant, this pod is the leader, and ClosedLoopAutoStart=true in config.
+        // Covers both the exception-killed-loop scenario and hangs (which no exception
+        // handler can catch). A null leader gate (dev/single-replica mode) causes the
+        // watchdog to treat this instance as the leader — matching WorkItemCountsPoller.
+        // TODO: DI lifetime skew — IPipelineApiConfigClient is registered as transient (AddHttpClient),
+        //   but LoopWatchdogService is a singleton, so the transient instance is captured for the
+        //   process lifetime. This prevents socket recycling and bypasses IHttpClientFactory's
+        //   managed connection-pool refresh. Other singletons here exhibit the same pattern
+        //   (e.g. ApiPipelineConfigStore), so this is consistent with existing practice. If
+        //   IHttpClientFactory lifetime management becomes important, refactor to resolve the
+        //   client per-call via IServiceScopeFactory instead of constructor injection.
+        services.AddSingleton<LoopWatchdogService>(sp => new LoopWatchdogService(
+            sp.GetRequiredService<IPipelineLoopService>(),
+            sp.GetRequiredService<IPipelineApiConfigClient>(),
+            sp.GetService<ILeaderElectionService>(),
+            Log.Logger));
+        services.AddHostedService(sp => sp.GetRequiredService<LoopWatchdogService>());
 
         // ── OrphanedLabelRecoveryService ──────────────────────────────────────
         services.AddHostedService(sp => new OrphanedLabelRecoveryService(
