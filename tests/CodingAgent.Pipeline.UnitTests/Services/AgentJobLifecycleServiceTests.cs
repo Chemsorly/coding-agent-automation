@@ -1115,7 +1115,11 @@ public sealed class AgentJobLifecycleServiceTests
 
         // Act: agent=null triggers the run-fallback path
         await _sut.HandleJobCompletedAsync(jobId, agent: null, MakePayload(), CancellationToken.None);
-        WaitForLoggerWarningContaining(_logger, "run fallback");
+        // Wait for the specific ContinueWith warning template that contains "run fallback path)"
+        // (the unconditional warning at the bottom of the else-if block contains "run fallback"
+        // but not "run fallback path)" — using the more specific fragment prevents the SpinWait
+        // from exiting early on the wrong warning and causing a race under parallel load).
+        WaitForLoggerWarningContaining(_logger, "run fallback path)");
 
         // Assert: a Warning is logged for the run-fallback activeJobId fault path
         _logger.Verify(

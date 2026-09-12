@@ -368,11 +368,13 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
 
     private async Task TransitionStatusAsync(string agentId, AgentStatus newStatus)
     {
-        // NOTE: This does NOT acquire lock:agent:{id}. SelectAgent uses the per-agent lock to prevent
-        // double-booking, but TransitionStatus writes status without that lock — creating a microsecond
-        // race window where an agent could be dispatched to after disconnecting. This is accepted:
-        // the race window is tiny and ReconciliationService recovers within its reconciliation interval.
-        // Acquiring the lock here would add a Redis round-trip to every heartbeat-related status change.
+        // NOTE: This does NOT acquire a per-agent distributed lock (lock:agent:{id} was never implemented).
+        // There is no SelectAgent mechanism in this path — agent selection uses Kubernetes job dispatch,
+        // and double-booking prevention relies on the DB partial unique index on WorkItems and the
+        // IsIssueBeingProcessed guard. TransitionStatus writes status directly to Redis without a lock,
+        // creating a small race window where an agent could be dispatched to after disconnecting.
+        // This is accepted: ReconciliationService recovers within its reconciliation interval.
+        // See concurrency-model.md § "Known gap — no per-agent selection lock" for full context.
 
         var key = AgentKey(agentId);
         var existing = await _store.HashGetAllAsync(key);
