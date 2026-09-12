@@ -1099,10 +1099,15 @@ public sealed class AgentJobLifecycleServiceTests
         _facade.Setup(f => f.GetRun(jobId)).Returns(run);
         _facade.Setup(f => f.UpdateAgentFieldAsync(fallbackAgentId, "activeJobId", null))
             .Returns(Task.FromException(new InvalidOperationException("Redis down")));
+        // PostCompletionBookkeepingAsync also runs (run is non-null, non-consolidation) — set up its deps
+        _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
         // Act: agent=null triggers the run-fallback path
         await _sut.HandleJobCompletedAsync(jobId, agent: null, MakePayload(), CancellationToken.None);
-        WaitForLoggerWarningContaining(_logger, "HandleJobCompletedAsync");
+        WaitForLoggerWarningContaining(_logger, "run fallback");
 
         // Assert: a Warning is logged for the run-fallback activeJobId fault path
         _logger.Verify(
