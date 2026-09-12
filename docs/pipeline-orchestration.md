@@ -102,7 +102,8 @@ stateDiagram-v2
     end note
     note left of CreatingPullRequest
         Draft PR leaves issue as agent:in-progress. Normal PR swaps to agent:done.
-        agent:error label is set only on unexpected exceptions, not retry exhaustion.
+        agent:error is applied both when retries are exhausted (draft PR path)
+        and when an unexpected exception escapes the pipeline boundary.
     end note
     note left of ReflectingOnRun
         Only if brain repo configured and not read-only.
@@ -325,11 +326,12 @@ flowchart TD
         S1d[4. WriteSteering]
         S2[5. CreateBranch]
         S3[6. SyncBrainPreRun]
-        S4[7. ExtractLinkedIssues]
-        S5[8. ReviewCode]
-        S6[9. PostReviewFindings]
+        S3b[7. DownloadIssueImages]
+        S4[8. ExtractLinkedIssues]
+        S5[9. ReviewCode]
+        S6[10. PostReviewFindings]
 
-        S1 --> S1b --> S1c --> S1d --> S2 --> S3 --> S4 --> S5 --> S6
+        S1 --> S1b --> S1c --> S1d --> S2 --> S3 --> S3b --> S4 --> S5 --> S6
     end
 ```
 
@@ -343,9 +345,10 @@ flowchart TD
 | 4 | `WriteSteeringStep` | Write pipeline steering content to the workspace |
 | 5 | `CreateBranchStep` | Check out the PR branch (rework path, skip merge from base) |
 | 6 | `SyncBrainPreRunStep` | Sync brain repository if configured (non-fatal on failure) |
-| 7 | `ExtractLinkedIssuesStep` | Extract linked issues, write context files, write PR conversation context |
-| 8 | `ReviewCodeStep` | Resolve reviewer configs and execute multi-agent code review |
-| 9 | `PostReviewFindingsStep` | Format findings and post as PR review comment |
+| 7 | `DownloadIssueImagesStep` | Download images from the PR body and linked issues for review agents |
+| 8 | `ExtractLinkedIssuesStep` | Extract linked issues, write context files, write PR conversation context |
+| 9 | `ReviewCodeStep` | Resolve reviewer configs and execute multi-agent code review |
+| 10 | `PostReviewFindingsStep` | Format findings and post as PR review comment |
 
 ### Review Run State Machine
 

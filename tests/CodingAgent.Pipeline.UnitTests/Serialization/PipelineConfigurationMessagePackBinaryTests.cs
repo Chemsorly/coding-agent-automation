@@ -132,6 +132,7 @@ public class PipelineConfigurationMessagePackBinaryTests
         deserialized.TransientRetryDelay.Should().Be(TimeSpan.FromSeconds(15));
         deserialized.CiCancelledMoveMaxRetries.Should().Be(7);
         deserialized.HousekeepingTriggerCooldownMinutes.Should().Be(30);
+        deserialized.MinIssueSlots.Should().Be(2);
     }
 
     private static PipelineConfiguration CreateFullyPopulatedConfig() => new()
@@ -221,5 +222,6 @@ public class PipelineConfigurationMessagePackBinaryTests
         TransientRetryDelay = TimeSpan.FromSeconds(15),
         CiCancelledMoveMaxRetries = 7,
         HousekeepingTriggerCooldownMinutes = 30,
+        MinIssueSlots = 2,
     };
 }

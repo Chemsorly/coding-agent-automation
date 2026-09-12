@@ -459,6 +459,7 @@
 
 /* Links cell: prevent row click propagation visually; flex layout for icon links. */
 .cockpit .runs-links-cell { display: flex; align-items: center; gap: 5px; overflow: visible; white-space: nowrap; }
+.cockpit .fleet-work-cell { display: flex; align-items: center; gap: 5px; overflow: visible; white-space: nowrap; }
 .cockpit .runs-link {
     display: inline-flex;
     align-items: center;

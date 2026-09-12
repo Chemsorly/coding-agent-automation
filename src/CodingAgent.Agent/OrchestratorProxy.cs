@@ -21,9 +21,8 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
     private readonly ResiliencePipeline _signalRPipeline;
 
     // ── Proactive token renewal cache ────────────────────────────────────
-    // Mirrors the 5-minute renewal buffer used by GitHubAppAuthService on the server side.
     // Keyed by ProviderKind so the repo and brain tokens are cached independently.
-    private static readonly TimeSpan TokenRenewalBuffer = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan TokenRenewalBuffer = TokenRefreshConstants.RenewalBuffer;
     private readonly Dictionary<ProviderKind, (string Token, DateTimeOffset ExpiresAt)> _tokenCache = new();
     // TODO [WARNING]: _tokenCacheLock is never disposed. OrchestratorProxy does not implement IDisposable/IAsyncDisposable,
     // so the SemaphoreSlim's underlying WaitHandle leaks on each job. Implement IDisposable and call

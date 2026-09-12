@@ -87,6 +87,28 @@ public class CodeReviewIsolationRetiredKeyTests
         config!.ReviewIsolation.Should().Be(ReviewIsolation.Isolated);
     }
 
+    // ── JSON deserialization — integer token ──────────────────────────────────
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    // TODO: Extend InlineData to cover values outside the 0/1 domain (e.g. -1, 2, int.MaxValue)
+    // to confirm that any integer input maps to Isolated and to expose any future range-guard that
+    // incorrectly throws on out-of-range values. See review finding: Test Quality Review warning
+    // at CodeReviewIsolationRetiredKeyTests.cs:93.
+    public void Read_WhenTokenIsInteger_ReturnsIsolated(int intValue)
+    {
+        // Regression guard for integer-valued reviewIsolation tokens produced by
+        // MessagePack-to-JSON round-trips or old JsonStringEnumConverter payloads
+        // with allowIntegerValues:true. ReviewIsolationJsonConverter.Read used to call
+        // reader.GetString() without checking TokenType, throwing InvalidOperationException
+        // when the token was a number.
+        var json = $"{{\"ReviewIsolation\": {intValue}}}";
+        var config = JsonSerializer.Deserialize<CodeReviewConfiguration>(json);
+        config.Should().NotBeNull();
+        config!.ReviewIsolation.Should().Be(ReviewIsolation.Isolated);
+    }
+
     // ── MessagePack — retired Key(3) ─────────────────────────────────────────
 
     [Fact]

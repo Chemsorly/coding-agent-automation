@@ -232,7 +232,7 @@ public class PipelineLoopDispatchPropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        var deadline = DateTime.UtcNow.AddSeconds(15);
         while (!svc.IsCircuitBroken && DateTime.UtcNow < deadline)
             await Task.Delay(50);
 

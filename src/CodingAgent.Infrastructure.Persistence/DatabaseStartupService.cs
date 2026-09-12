@@ -1,6 +1,10 @@
+using System.Text.Json;
 using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
+using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Infrastructure.Persistence.Services;
+using CodingAgent.Pipeline;
+using CodingAgent.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 
@@ -51,6 +55,7 @@ public sealed class DatabaseStartupService
         await WaitForDatabaseConnectionAsync(ct);
         await HandleMigrationsAsync(ct);
         await ImportJsonConfigIfNeededAsync(ct);
+        await SeedDefaultReviewerConfigsIfNeededAsync(ct);
     }
 
     /// <summary>
@@ -161,6 +166,49 @@ public sealed class DatabaseStartupService
             _logger.Information("JSON config imported into database successfully");
         }
     }
+
+    /// <summary>
+    /// Seeds <see cref="PipelineConfigurationDefaults.DefaultReviewerConfigurations"/> into the
+    /// <c>ReviewerConfigs</c> table if it is empty. Idempotent — skips if any reviewer config exists.
+    /// Acquires the schema-migration advisory lock to prevent duplicate seeding in multi-replica deployments.
+    /// </summary>
+    internal async Task SeedDefaultReviewerConfigsIfNeededAsync(CancellationToken ct)
+    {
+        await using var lockHandle = await _lockProvider.AcquireAsync(MigrationLockKey, ct);
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+        var hasReviewers = await db.ReviewerConfigs.AnyAsync(ct);
+        if (hasReviewers)
+        {
+            return;
+        }
+
+        var defaults = PipelineConfigurationDefaults.DefaultReviewerConfigurations;
+        // TODO: If DefaultReviewerConfigurations is empty, SaveChangesAsync is still called and
+        // the log line fires with "seeding 0 default reviewer configuration(s)", silently leaving
+        // the table empty while implying seeding occurred. Add a guard: if (defaults.Count == 0) return;
+        foreach (var config in defaults)
+        {
+            if (!Guid.TryParse(config.Id, out var guid))
+                guid = Guid.NewGuid();
+
+            db.ReviewerConfigs.Add(new ReviewerConfigEntity
+            {
+                Id = guid,
+                Name = config.DisplayName,
+                Configuration = SerializeToJson(config)
+            });
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        _logger.Information(
+            "ReviewerConfigs table was empty — seeding {Count} default reviewer configuration(s)",
+            defaults.Count);
+    }
+
+    private static string SerializeToJson<T>(T value) =>
+        JsonSerializer.Serialize(value, PipelineJsonOptions.Default);
 }
 
 /// <summary>

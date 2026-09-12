@@ -201,13 +201,13 @@
         <div class="cockpit-card">
             <div class="cockpit-card-header">
                 <h2>Provider backlog</h2>
-                <span style="font-size: 12px; color: var(--text-muted);">@(_backlogLoading ? "checking…" : $"{_backlog.Count(b => b.IsReady)} ready · {_backlog.Count} open")</span>
+                <span style="font-size: 12px; color: var(--text-muted);">@(_backlogLoading ? "checking…" : $"{_backlog.Issues.Count(b => b.IsReady)} ready · {(_backlog.IsTruncated ? $"{_backlog.Issues.Count}+" : $"{_backlog.Issues.Count}")} open")</span>
             </div>
             @if (_backlogLoading)
             {
                 <div class="cockpit-empty" style="padding: 24px;">Checking the provider backlog…</div>
             }
-            else if (_backlog.Count == 0)
+            else if (_backlog.Issues.Count == 0)
             {
                 <div class="cockpit-empty" style="padding: 24px;">No open issues found (or no issue provider configured).</div>
             }
@@ -217,7 +217,7 @@
                     <table class="monitoring-table">
                         <thead><tr><th>Issue</th><th>Labels</th><th>Readiness</th><th></th></tr></thead>
                         <tbody>
-                            @foreach (var b in _backlog)
+                            @foreach (var b in _backlog.Issues)
                             {
                                 <tr>
                                     <td>
@@ -260,6 +260,15 @@
                         </tbody>
                     </table>
                 </div>
+                @if (_backlog.IsTruncated)
+                {
+                    @* TODO: [WARNING] BacklogResult carries no TotalCount field so we cannot show
+                       "Showing top N of M" — the provider API does not expose a total count directly.
+                       The text below signals truncation without a misleading "N of N" redundancy. *@
+                    <div style="padding: 8px 16px; font-size: 12px; color: var(--text-muted);">
+                        Showing top @_backlog.Issues.Count issues — more open issues exist in the provider.
+                    </div>
+                }
             }
         </div>
     }
@@ -279,7 +288,7 @@
     private readonly HashSet<Guid> _cancelling = new();
 
     // Provider backlog is a LIVE query (issue provider + dependency checker) — loaded after first render.
-    private IReadOnlyList<BacklogIssue> _backlog = [];
+    private BacklogResult _backlog = new([], IsTruncated: false);
     private bool _backlogLoading = true;
 
     protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
