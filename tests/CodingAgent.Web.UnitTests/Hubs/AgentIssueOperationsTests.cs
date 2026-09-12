@@ -57,7 +57,7 @@ public sealed class AgentIssueOperationsTests
             run.IssueIdentifier,
             AgentLabels.Done,
             run.LabelTargetKind,
-            CancellationToken.None), Times.Once);
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ── PostCommentViaIssueProviderAsync — null config ─────────────────────
@@ -83,7 +83,10 @@ public sealed class AgentIssueOperationsTests
         var run = MakeRun();
         var config = new ProviderConfig
         {
-            Id = "issue-cfg-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test"
+            Id = "issue-cfg-1",
+            Kind = ProviderKind.Issue,
+            ProviderType = "GitHub",
+            DisplayName = "Test"
         };
         _facade.Setup(f => f.GetProviderConfigByIdAsync(run.IssueProviderConfigId, ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(config);
@@ -109,7 +112,10 @@ public sealed class AgentIssueOperationsTests
         var run = MakeRun();
         var config = new ProviderConfig
         {
-            Id = "issue-cfg-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test"
+            Id = "issue-cfg-1",
+            Kind = ProviderKind.Issue,
+            ProviderType = "GitHub",
+            DisplayName = "Test"
         };
         _facade.Setup(f => f.GetProviderConfigByIdAsync(run.IssueProviderConfigId, ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(config);

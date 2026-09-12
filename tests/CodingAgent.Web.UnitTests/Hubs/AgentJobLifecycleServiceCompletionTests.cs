@@ -4,6 +4,7 @@ using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Orchestration;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using Microsoft.Extensions.Hosting;
 using Moq;
 using ILogger = Serilog.ILogger;
 
@@ -29,15 +30,21 @@ public sealed class AgentJobLifecycleServiceCompletionTests
     private readonly Mock<ILabelService> _labelService = new();
     private readonly Mock<IHubIssueOperations> _issueOps = new();
     private readonly Mock<IChangeNotifier> _changeNotifier = new();
+    private readonly Mock<IHostApplicationLifetime> _appLifetime = new();
     private readonly Mock<ILogger> _logger = new();
 
-    private AgentJobLifecycleService CreateService() => new(
-        _facade.Object,
-        _lifecycleManager.Object,
-        _labelService.Object,
-        _issueOps.Object,
-        _changeNotifier.Object,
-        _logger.Object);
+    private AgentJobLifecycleService CreateService()
+    {
+        _appLifetime.SetupGet(l => l.ApplicationStopping).Returns(CancellationToken.None);
+        return new AgentJobLifecycleService(
+            _facade.Object,
+            _lifecycleManager.Object,
+            _labelService.Object,
+            _issueOps.Object,
+            _changeNotifier.Object,
+            _appLifetime.Object,
+            _logger.Object);
+    }
 
     private static PipelineRun MakeRun(string jobId = "job-1", string? providerConfigId = null) => new()
     {
@@ -350,7 +357,7 @@ public sealed class AgentJobLifecycleServiceCompletionTests
         var svc = CreateService();
         await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
 
-        _issueOps.Verify(i => i.PostIssueFeedbackCommentAsync(run), Times.Once);
+        _issueOps.Verify(i => i.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -364,7 +371,7 @@ public sealed class AgentJobLifecycleServiceCompletionTests
         var svc = CreateService();
         await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
 
-        _issueOps.Verify(i => i.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>()), Times.Never);
+        _issueOps.Verify(i => i.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -378,7 +385,7 @@ public sealed class AgentJobLifecycleServiceCompletionTests
         var svc = CreateService();
         await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
 
-        _issueOps.Verify(i => i.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never);
+        _issueOps.Verify(i => i.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
