@@ -216,6 +216,22 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         return await response.Content.ReadFromJsonAsync<Guid>(cancellationToken: ct);
     }
 
+    public async Task DispatchPendingAsync(Guid workItemId, CancellationToken ct = default)
+    {
+        var response = await _http.PostAsync(
+            $"/api/work-items/{workItemId}/dispatch",
+            null,
+            ct);
+        // TODO [WARNING]: EnsureSuccessStatusCode() collapses the endpoint's intentional 409/503 distinction.
+        // The endpoint contract is: 409 = permanent rejection (item not Pending, no template, concurrency limit —
+        // do NOT retry); 503 = transient failure (PVC exhausted, lock timeout, K8s failure — retry next poll).
+        // Both codes throw an undifferentiated HttpRequestException here, so the Scheduler consumer (issue #2541)
+        // cannot distinguish "stop retrying" from "retry next cycle", risking tight loops on permanent 409s or
+        // premature abandonment on transient 503s. Replace with a manual status-code check that preserves the
+        // distinction (e.g. throw a typed exception or return a discriminated union) when the Scheduler is wired up.
+        response.EnsureSuccessStatusCode();
+    }
+
     // Internal DTOs for response deserialization
     /// <summary>Shape of <c>GET /api/work-items/{id}/retry-count</c>. Positional so the
     /// deserializer assigns through the constructor — an init-only property looks unassigned to

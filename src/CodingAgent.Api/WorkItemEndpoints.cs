@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Claims;
 using System.Text.Json;
 using CodingAgent.Api.Dispatch;
+using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Infrastructure.Persistence.Services;
@@ -74,6 +75,7 @@ public static class WorkItemEndpoints
         group.MapGet("/pending", GetPendingWorkItems).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapGet("/active", GetActiveWorkItems).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapPost("/{id:guid}/claim", ClaimWorkItem).RequireAuthorization(ApiAuthPolicies.Operator);
+        group.MapPost("/{id:guid}/dispatch", DispatchPendingWorkItem).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapPost("/{id:guid}/requeue", RequeueWorkItem).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapGet("/{id:guid}/retry-count", GetRetryCount).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapGet("/staleness", GetStaleness).RequireAuthorization(ApiAuthPolicies.Operator);
@@ -680,6 +682,295 @@ public static class WorkItemEndpoints
             // are left at their default null values and re-fetched at assignment time by AssignmentEnricher.
             PayloadSchemaVersion = 1,
         };
+    }
+
+    // ── POST /{id}/dispatch — claim-by-CAS dispatch for a single-owner Scheduler ──
+
+    /// <summary>
+    /// POST /api/work-items/{id}/dispatch
+    /// Claims an existing <c>Pending</c> WorkItem by CAS and creates the K8s Job atomically.
+    /// Designed for the leader-elected Scheduler poller (issue #2541) which enqueues items as
+    /// <c>Pending</c> via <c>POST /api/work-items</c> and then dispatches them via this endpoint.
+    ///
+    /// <para>
+    /// Wraps the snapshot → gate → CAS in a Postgres advisory lock keyed on the normalized
+    /// agent selector to prevent the over-dispatch window where two concurrent calls for
+    /// different Pending items of the same selector both observe capacity available.
+    /// </para>
+    ///
+    /// <para>
+    /// Unlike <c>POST /api/work-items/dispatch</c> (<see cref="DispatchWorkItem"/>), this endpoint
+    /// does NOT create a new WorkItem — it claims an already-Pending row.
+    /// </para>
+    ///
+    /// Returns:
+    /// <list type="bullet">
+    ///   <item>200 — dispatch succeeded (K8s Job running, WorkItem=Dispatched)</item>
+    ///   <item>404 Not Found — no WorkItem with this ID</item>
+    ///   <item>409 Conflict — item not Pending, concurrency limit reached, or no template for selector</item>
+    ///   <item>503 Service Unavailable — no PVC available, advisory lock timeout, or K8s Job creation failed</item>
+    /// </list>
+    /// </summary>
+    internal static async Task<IResult> DispatchPendingWorkItem(
+        Guid id,
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        DispatchLifecycleService lifecycle,
+        JobTemplateStore templateStore,
+        DispatchTemplateResolver templateResolver,
+        IDistributedLockProvider lockProvider,
+        CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+
+        // Fast path: check status before acquiring the lock.
+        // Not an atomic guarantee — the CAS inside ExecuteDispatchLifecycleAsync is the
+        // correctness guard. This check avoids unnecessary lock contention for items that
+        // are already Dispatched or in a terminal state.
+        var quickCheck = await db.WorkItems.AsNoTracking()
+            .Select(w => new { w.Id, w.Status, w.AgentSelector, w.TimeoutSeconds, w.TaskType, w.ProjectId, w.IssueIdentifier, w.IssueProviderConfigId, w.PriorityWeight, w.CreatedAt })
+            .FirstOrDefaultAsync(w => w.Id == id, ct);
+
+        if (quickCheck is null)
+            return TypedResults.NotFound();
+
+        if (quickCheck.Status != WorkItemStatus.Pending)
+        {
+            Log.Information("DispatchPendingWorkItem: WorkItem {WorkItemId} is not Pending (status={Status}) — returning 409",
+                id, quickCheck.Status);
+            return TypedResults.Conflict($"Work item {id} is not in Pending state (current status: {quickCheck.Status}).");
+        }
+
+        var agentSelector = quickCheck.AgentSelector;
+        var normalizedSelector = JobTemplateStore.NormalizeLabels(agentSelector);
+
+        // TODO [WARNING]: agentSelector originates from a database column set by POST /api/work-items callers.
+        // It is embedded verbatim in Conflict response bodies (e.g. "No job template for agent selector: {value}")
+        // and passed directly to Log.Warning / Log.Information calls below. A crafted selector containing
+        // newline characters (\r\n) can inject fake log lines, obscuring audit trails. A selector containing
+        // HTML/script markup is reflected in the 409 response body (Content-Type is text/plain for minimal-API
+        // Conflict<string>, which reduces XSS risk, but does not eliminate it for browser-side consumers).
+        // Validate and/or sanitize agentSelector at the WorkItem write boundary, or at minimum truncate/escape
+        // the value before embedding it in log messages and response strings.
+
+        // Acquire advisory lock keyed on the normalized selector.
+        // This serialises all concurrent calls to this endpoint for the same selector,
+        // preventing the over-dispatch window where two callers both see capacity available
+        // and each dispatch a different Pending item for the same selector.
+        //
+        // Lock scope: snapshot → gate → CAS (inside ExecuteDispatchLifecycleAsync).
+        // The label swap to agent:in-progress is NOT in scope — it happens in AgentHub.RegisterAgent.
+        //
+        // Note: this lock only protects concurrent calls to THIS endpoint. DispatchWorkItem
+        // (collection-level) and WorkItemDispatchService (background poller) do NOT acquire
+        // this lock. Cross-path correctness is provided by the CAS in ExecuteDispatchLifecycleAsync.
+        // TODO [WARNING]: The two-variable lock pattern (IAsyncDisposable lockHandle; ... await using var _ = lockHandle)
+        // is non-idiomatic. Prefer a try/finally or helper wrapper if this method is refactored, to
+        // ensure the handle is always disposed even under unexpected async state-machine faults.
+        IAsyncDisposable lockHandle;
+        try
+        {
+            lockHandle = await lockProvider.AcquireAsync($"dispatch-selector:{normalizedSelector}", ct);
+        }
+        catch (TimeoutException)
+        {
+            // PostgresDistributedLockProvider retries with pg_try_advisory_lock for up to 60s.
+            // A timeout means another call has held the lock for that entire window (e.g. a slow
+            // K8s API response). Return 503 — transient, the Scheduler should retry next cycle.
+            Log.Warning("DispatchPendingWorkItem: advisory lock acquisition timed out for selector {Selector} — returning 503", normalizedSelector);
+            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        await using var _ = lockHandle;
+
+        // TODO [WARNING]: The item's status is not re-read after acquiring the lock. If another
+        // dispatch path (WorkItemDispatchService or DispatchWorkItem) transitioned the item from
+        // Pending to Dispatched between the fast-path check and lock acquisition, the gates may
+        // pass and the lifecycle CAS will then abort (returning !dispatched → 503). The CAS
+        // preserves correctness, but callers receive a transient 503 instead of a permanent 409,
+        // which may cause unnecessary Scheduler retries. Consider re-checking Status inside the
+        // lock and returning 409 immediately if the item is no longer Pending.
+
+        // Build concurrency map inside the lock with normalised keys.
+        // NOTE: do NOT use DispatchStateBuilder.BuildStateAsync here — it does NOT normalise
+        // keys (uses raw x.Selector). Follow the DispatchWorkItem pattern (NormalizeLabels on
+        // each key) so active items stored by any path are counted correctly.
+        var activeCounts = await db.WorkItems
+            .Where(w => w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
+            .GroupBy(w => w.AgentSelector)
+            .Select(g => new { Selector = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
+        var concurrencyBySelector = activeCounts.ToDictionary(
+            x => JobTemplateStore.NormalizeLabels(x.Selector),
+            x => x.Count,
+            StringComparer.Ordinal);
+
+        // Query PVC availability.
+        var pvcPool = lifecycle.GetPvcPool();
+        var pvcResult = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, pvcPool, ct);
+        // TODO [WARNING]: pvcResult.AvailablePvcs is the mutable list passed into DispatchLifecycleContext below.
+        // The lifecycle may mutate it internally (re-adding a PVC on a race). This is the same contract as
+        // DispatchWorkItem. If the PVC gate or metric call is ever moved *after* the lifecycle call, the count
+        // would be stale. Keep the PVC gate and metric emission before the lifecycle call.
+
+        // Emit credential-pool gauge BEFORE the PVC gate so the metric is always updated
+        // whenever the PVC query runs (including on PVC-exhaustion 503).
+        // Deliberate exception to the BuildStateAsync restriction: this endpoint is the
+        // Scheduler-driven dispatch path and is the appropriate emitter for this metric.
+        WorkDistributionTelemetry.UpdateCredentialPoolMetrics(pvcResult.AvailablePvcs.Count, pvcResult.ClaimedCount);
+
+        // Template gate — try direct resolve first, then profile-based fallback.
+        // TODO [WARNING]: Mixed agentSelector (raw) vs normalizedSelector usage below is intentional —
+        // the profile lookup uses the raw selector to match MatchLabels, while template store uses the
+        // normalized form. If the profile fallback resolves a template, projection.AgentSelector will be
+        // normalizedSelector (the raw item selector, normalized) rather than the template's canonical
+        // labels (e.g. "dotnet" vs "dotnet,kiro"). This causes the concurrency map key to differ from
+        // keys stored for items dispatched via the direct-resolve path, potentially under-counting
+        // active items in the concurrency gate on the profile-fallback path. See also the concurrency
+        // tracking mismatch note on projection.AgentSelector below.
+        var template = templateStore.Resolve(normalizedSelector);
+        if (template is null)
+        {
+            var (fallbackTemplate, _) = await templateResolver.ResolveTemplateViaProfileAsync(
+                agentSelector, "DispatchPendingWorkItem", ct);
+            template = fallbackTemplate;
+        }
+
+        if (template is null)
+        {
+            Log.Warning("DispatchPendingWorkItem: no job template for selector {Selector} — returning 409", agentSelector);
+            return TypedResults.Conflict($"No job template for agent selector: {agentSelector}");
+        }
+
+        // Concurrency gate.
+        if (DispatchStateBuilder.IsAtConcurrencyLimit(normalizedSelector, concurrencyBySelector, template.MaxConcurrent))
+        {
+            var currentCount = concurrencyBySelector.GetValueOrDefault(normalizedSelector, 0);
+            Log.Information("DispatchPendingWorkItem: concurrency limit reached for selector {Selector} ({Current}/{Max}) — returning 409",
+                agentSelector, currentCount, template.MaxConcurrent);
+            return TypedResults.Conflict($"Concurrency limit reached for selector '{agentSelector}' ({currentCount}/{template.MaxConcurrent}).");
+        }
+
+        // PVC gate.
+        var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
+        if (isKiroAgent && pvcResult.AvailablePvcs.Count == 0)
+        {
+            WorkDistributionTelemetry.PvcPoolExhaustions.Add(1);
+            Log.Information("DispatchPendingWorkItem: no PVC available for kiro agent selector {Selector} — returning 503", agentSelector);
+            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        // Build the projection for ExecuteDispatchLifecycleAsync.
+        // TODO [WARNING]: When the profile fallback resolves the template, projection.AgentSelector is
+        // set to normalizedSelector (e.g. "dotnet"), not to the template's canonical labels (e.g. "dotnet,kiro").
+        // FinalizeDispatchAsync will increment concurrencyBySelector["dotnet"] rather than ["dotnet,kiro"].
+        // Active items stored with selector "kiro,dotnet" are counted under a different normalized key
+        // ("dotnet,kiro"), so IsAtConcurrencyLimit may under-count on the profile-fallback path and
+        // allow over-dispatch when maxConcurrent is tight. The same gap exists in FinalizeDispatchAsync
+        // (see its // TODO: Use effectiveSelector comment). Fix both together when the effectiveSelector
+        // propagation is resolved.
+        var projection = new PendingWorkItemProjection
+        {
+            Id = id,
+            AgentSelector = normalizedSelector,
+            CreatedAt = quickCheck.CreatedAt,
+            TimeoutSeconds = quickCheck.TimeoutSeconds,
+            TaskType = quickCheck.TaskType,
+            ProjectId = quickCheck.ProjectId,
+            IssueIdentifier = quickCheck.IssueIdentifier,
+            IssueProviderConfigId = quickCheck.IssueProviderConfigId,
+            PriorityWeight = quickCheck.PriorityWeight
+        };
+
+        // ExpectedInitialStatus is left at the default (Pending) — do NOT copy the
+        // "ExpectedInitialStatus = WorkItemStatus.Dispatched" override from DispatchWorkItem.
+        // That override applies because DispatchWorkItem creates items directly as Dispatched.
+        // Here the item already exists as Pending; the lifecycle race-guard must see Pending
+        // after K8s Job creation to proceed — setting it to Dispatched would cause the guard
+        // to treat the Pending row as a race and delete the K8s Job silently.
+        var ctx = new DispatchLifecycleContext(
+            db,
+            projection,
+            template,
+            isKiroAgent,
+            pvcResult.AvailablePvcs,
+            concurrencyBySelector,
+            "pending-dispatch ");
+
+        bool dispatched = false;
+        try
+        {
+            await lifecycle.ExecuteDispatchLifecycleAsync(
+                ctx,
+                prepareVariant: async workItem =>
+                {
+                    // TODO [WARNING]: The outer endpoint CancellationToken ct is captured by this lambda.
+                    // If the HTTP client disconnects and cancels ct while ExecuteDispatchLifecycleAsync is
+                    // mid-flight, LoadProjectSecretsAsync will throw OperationCanceledException. The lifecycle's
+                    // outer catch (when ex is not OperationCanceledException) correctly re-throws it, and
+                    // the advisory lock handle is still disposed via await using var _ = lockHandle on the
+                    // stack — no deadlock or resource leak. This comment documents the cancellation contract:
+                    // ct cancellation propagates as OperationCanceledException to the caller, not as 503.
+                    // Load project secrets if a project is configured — mirrors WorkItemDispatchService.
+                    Dictionary<string, string>? projectSecrets = null;
+                    if (workItem.ProjectId.HasValue)
+                        projectSecrets = await DispatchLifecycleService.LoadProjectSecretsAsync(
+                            db, workItem.ProjectId.Value.ToString(), ct);
+                    return (shouldContinue: true, projectSecrets);
+                },
+                onDispatchSuccess: _ =>
+                {
+                    dispatched = true;
+                    // Label swap to agent:in-progress is handled by AgentHub.RegisterAgent when
+                    // the agent connects. No action needed here — same as WorkItemDispatchService.
+                    return Task.CompletedTask;
+                },
+                ct,
+                onFailure: null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Error(ex, "DispatchPendingWorkItem: unhandled exception during dispatch lifecycle for {WorkItemId}", id);
+            // TODO [WARNING]: This catch swallows all non-cancellation exceptions from ExecuteDispatchLifecycleAsync,
+            // including ObjectDisposedException (PipelineDbContext disposed prematurely) and ArgumentNullException
+            // (programming errors in the lifecycle), returning 503 for all of them. This masks bugs that would
+            // otherwise surface as 500s during development. This pattern is consistent with DispatchWorkItem but
+            // is a correctness concern for observability — consider narrowing the catch to known transient
+            // exceptions (HttpRequestException, DbException) and re-throwing programming errors.
+            // TODO [WARNING]: The lifecycle item state after an exception here is not always Failed.
+            // If the exception fires after K8s Job creation but before the Dispatched-status save,
+            // the K8s Job may be running while the item is still Pending, enabling a double-dispatch
+            // on the next Scheduler poll cycle. This window is inherited from the lifecycle service
+            // itself (not introduced by this endpoint) but is worth fixing when the lifecycle's
+            // orphan-detection is hardened. For now, return 503 — the Scheduler retry will re-enter
+            // the CAS which will correctly detect the now-Dispatched item and abort.
+            // The lifecycle may have already transitioned the item to Failed.
+            // Do NOT call SafelyCancelOrphanedDispatchedWorkItemAsync here — the item started
+            // as Pending, not Dispatched, so there is no orphaned Dispatched row to cancel.
+            // FailWorkItemAsync (Pending→Failed) was already called internally on K8s failure.
+            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        if (!dispatched)
+        {
+            // ExecuteDispatchLifecycleAsync returned without dispatching.
+            // TODO [WARNING]: The item state here is not always Failed. Two additional !dispatched
+            // paths leave the item Pending: (1) SelectPvcAsync returned null under _pvcSelectLock
+            // (PVC race — item untouched), and (2) DbUpdateConcurrencyException on the pre-write
+            // save (item untouched). In those cases the 503 is correct (item remains Pending for
+            // the next poll cycle), but the comment below overstates the guarantee.
+            // Additionally, on path (2) if the pre-write wrote ClaimedPvcName to the Pending row,
+            // QueryAvailablePvcsAsync will report that PVC as claimed on all subsequent calls until
+            // ReconciliationService reconciles the item, potentially exhausting the PVC pool.
+            // For a Pending-initial item this means: PVC race (another replica claimed the PVC
+            // under _pvcSelectLock) or K8s Job creation failed (lifecycle already called
+            // FailWorkItemAsync, transitioning the item to Failed).
+            // Unlike DispatchWorkItem, there is no orphaned Dispatched row to clean up here —
+            // the item was never written as Dispatched before the K8s call.
+            Log.Warning("DispatchPendingWorkItem: lifecycle did not dispatch WorkItem {WorkItemId} (PVC race or K8s failure) — returning 503", id);
+            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        return TypedResults.Ok(id);
     }
 
     // ── POST /dispatch — synchronous dispatch endpoint ────────────────────
