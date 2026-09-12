@@ -133,6 +133,7 @@ public class PipelineConfigurationMessagePackBinaryTests
         deserialized.CiCancelledMoveMaxRetries.Should().Be(7);
         deserialized.HousekeepingTriggerCooldownMinutes.Should().Be(30);
         deserialized.MinIssueSlots.Should().Be(2);
+        deserialized.HousekeepingMaxSlotAgeMinutes.Should().Be(120);
     }
 
     private static PipelineConfiguration CreateFullyPopulatedConfig() => new()
@@ -223,5 +224,6 @@ public class PipelineConfigurationMessagePackBinaryTests
         CiCancelledMoveMaxRetries = 7,
         HousekeepingTriggerCooldownMinutes = 30,
         MinIssueSlots = 2,
+        HousekeepingMaxSlotAgeMinutes = 120,
     };
 }

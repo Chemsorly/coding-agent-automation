@@ -20,7 +20,8 @@ public sealed partial class AgentHub
     /// <summary>
     /// Agent rejects a job. Cleans up the orphaned run and reverts the label so the
     /// pipeline loop can re-discover and re-dispatch the issue.
-    /// This should be rare after the atomic agent reservation fix in SelectAgent.
+    /// This should be rare; the dispatch path prevents double-booking via the DB unique
+    /// constraint and the IsIssueBeingProcessed guard.
     /// </summary>
     [RequiresActiveJob]
     public async Task JobRejected(JobId jobId, string reason)

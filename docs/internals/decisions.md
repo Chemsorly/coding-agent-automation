@@ -1813,7 +1813,7 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 
 **Decision:** Extracted `AgentSelectorKey.From(IEnumerable<string>? labels)` into `CodingAgent.Pipeline.Models.AgentSelectorKey`. It normalises a label list into the comma-separated, ordinally-sorted string stored in `WorkItemEntity.AgentSelector` and `JobDistributionRequest.AgentSelector`.
 
-**Rationale:** Two callers (`ConsolidationDispatchService.cs` and `ConsolidationRehydrationExtensions.cs`) had byte-identical logic that had already co-changed 4 times. Divergence in sort order or separator would cause agent selection to silently return `null` — the lookup in `JobDeduplicationGuardService.SelectAgent` uses the same serialization to build the candidate key. A difference causes a silent no-match rather than a compile error. Centralising makes the invariant visible.
+**Rationale:** Two callers (`ConsolidationDispatchService.cs` and `ConsolidationRehydrationExtensions.cs`) had byte-identical logic that had already co-changed 4 times. Divergence in sort order or separator would cause agent selection to silently return `null` — the `AgentSelector` field on `WorkItemEntity` and `JobDistributionRequest` uses the same serialization for candidate matching. A difference causes a silent no-match rather than a compile error. Centralising makes the invariant visible.
 
 **Reassess when:** A third call site appears, or the separator changes (both must move together).
 

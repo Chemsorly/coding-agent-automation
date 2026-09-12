@@ -38,7 +38,9 @@ public class HousekeepingPollCycleIntegrationTests
             .ReturnsAsync(new PagedResult<PullRequestSummary>
             {
                 Items = (returnedPrs ?? []).ToList().AsReadOnly(),
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
             });
 
         var mockFactory = new Mock<IProviderFactory>();
@@ -51,7 +53,7 @@ public class HousekeepingPollCycleIntegrationTests
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 

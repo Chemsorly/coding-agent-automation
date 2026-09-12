@@ -95,7 +95,7 @@
             {
                 <div class="monitoring-table-wrap">
                     <table class="monitoring-table">
-                        <thead><tr><th>Issue</th><th>Status</th><th>Step</th><th>Agent selector</th><th>Dispatched</th><th></th></tr></thead>
+                        <thead><tr><th>Issue</th><th>Status</th><th>Step</th><th>Agent selector</th><th>Initiated by</th><th>Dispatched</th><th></th></tr></thead>
                         <tbody>
                             @foreach (var a in _active)
                             {
@@ -122,6 +122,16 @@
                                         }
                                     </td>
                                     <td class="monitoring-mono monitoring-muted">@a.AgentSelector</td>
+                                    <td>
+                                        @if (!string.IsNullOrEmpty(a.InitiatedBy))
+                                        {
+                                            <span class="cockpit-chip">@a.InitiatedBy</span>
+                                        }
+                                        else
+                                        {
+                                            <text>—</text>
+                                        }
+                                    </td>
                                     <td>@(a.DispatchedAt is null ? "—" : Ago(a.DispatchedAt.Value))</td>
                                     <td style="text-align: right;">
                                         <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
@@ -166,7 +176,16 @@
                                     </td>
                                     <td><span class="cockpit-chip">@p.TaskType</span></td>
                                     <td>@(string.IsNullOrEmpty(p.ProjectName) ? "—" : p.ProjectName)</td>
-                                    <td>@(string.IsNullOrEmpty(p.InitiatedBy) ? "—" : p.InitiatedBy)</td>
+                                    <td>
+                                        @if (!string.IsNullOrEmpty(p.InitiatedBy))
+                                        {
+                                            <span class="cockpit-chip">@p.InitiatedBy</span>
+                                        }
+                                        else
+                                        {
+                                            <text>—</text>
+                                        }
+                                    </td>
                                     <td>@(p.RetryCount > 0 ? p.RetryCount.ToString() : "—")</td>
                                     <td title="@p.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")">@Ago(p.CreatedAt)</td>
                                     <td>

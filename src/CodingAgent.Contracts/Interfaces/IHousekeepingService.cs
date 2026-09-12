@@ -35,6 +35,10 @@ public interface IHousekeepingService
     /// <param name="cleanupIntervalMinutes">Minimum minutes between cleanup passes. 0 = every tick.</param>
     /// <param name="triggerCooldownMinutes">Minimum minutes between consecutive branch-update triggers
     /// for the same PR. Clamped to ≥ 1. Sourced from <see cref="PipelineConfiguration.HousekeepingTriggerCooldownMinutes"/>.</param>
+    /// <param name="maxSlotAgeMinutes">Maximum minutes a PR may hold the in-flight slot before being
+    /// evicted regardless of mergeability status. Prevents a single PR stuck at Blocked/Unknown from
+    /// monopolising the slot indefinitely. Clamped to ≥ 1. A value of 0 disables time-based eviction.
+    /// Sourced from <see cref="PipelineConfiguration.HousekeepingMaxSlotAgeMinutes"/>.</param>
     /// <param name="ct">Cancellation token for the mergeability checks. The update HTTP calls
     /// use <see cref="CancellationToken.None"/> internally so they complete independently.</param>
     Task ExecuteAsync(
@@ -47,5 +51,6 @@ public interface IHousekeepingService
         bool branchCleanupEnabled,
         int cleanupIntervalMinutes,
         int triggerCooldownMinutes,
+        int maxSlotAgeMinutes,
         CancellationToken ct);
 }

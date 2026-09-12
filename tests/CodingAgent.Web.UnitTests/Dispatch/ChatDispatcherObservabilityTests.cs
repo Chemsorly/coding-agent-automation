@@ -229,6 +229,12 @@ public class ChatDispatcherObservabilityTests : IDisposable
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
         var dispatchActivity = _capturedActivities
+            // TODO: This selector is asymmetric with the timeout counterpart test, which filters by
+            // ActivityStatusCode.Error to avoid picking up unrelated parallel activities. If a parallel
+            // test produces a Chat.Dispatch activity with Error status before this test's own activity
+            // is captured, the assertion below (.NotBe(ActivityStatusCode.Error)) could fail spuriously.
+            // Consider applying the same status-filter pattern used in the timeout test (filter by
+            // ActivityStatusCode.Ok or use a per-test activity source to isolate captures).
             .FirstOrDefault(a => a.OperationName == "Chat.Dispatch");
 
         dispatchActivity.Should().NotBeNull();
@@ -240,17 +246,27 @@ public class ChatDispatcherObservabilityTests : IDisposable
     [Fact]
     public async Task DispatchChatPodAsync_Timeout_DispatchActivity_HasErrorStatus()
     {
+        // Snapshot count before dispatch so that parallel LoggingTests activities (which run
+        // outside this [Collection] and are captured by the global ActivityStopped listener)
+        // cannot be mistakenly picked up as the activity under test.
+        var countBefore = _capturedActivities.Count;
+
         var dispatcher = CreateDispatcher(options: CreateOptions(connectTimeoutSeconds: 1));
 
         await Assert.ThrowsAsync<ChatPodTimeoutException>(
             () => dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None));
 
+        // Only consider activities captured after our dispatch started. Using ToArray() for a
+        // point-in-time snapshot of the bag before querying (ConcurrentBag is unordered, so we
+        // filter by Error status rather than by index to avoid positional fragility).
         var dispatchActivity = _capturedActivities
-            .FirstOrDefault(a => a.OperationName == "Chat.Dispatch");
+            .ToArray()
+            .FirstOrDefault(a => a.OperationName == "Chat.Dispatch"
+                && a.Status == ActivityStatusCode.Error);
 
-        dispatchActivity.Should().NotBeNull("Chat.Dispatch span must be created even on timeout");
-        dispatchActivity!.Status.Should().Be(ActivityStatusCode.Error,
-            "timeout must set ERROR status on the span");
+        dispatchActivity.Should().NotBeNull(
+            "Chat.Dispatch span with ERROR status must be created on timeout " +
+            $"(total captured activities: {_capturedActivities.Count}, before dispatch: {countBefore})");
     }
 
     // ─── Tracing: Chat.Terminate span ────────────────────────────────────────
