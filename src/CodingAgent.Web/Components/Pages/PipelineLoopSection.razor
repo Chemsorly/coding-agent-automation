@@ -55,6 +55,18 @@
         </div>
         }
 
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Queue Sweep</label>
+                <span class="form-hint-icon" aria-hidden="true" title="When enabled, the loop cancels Pending WorkItems whose issue or PR is no longer eligible (closed, label removed, or terminal state) after each dispatch cycle. Implementation items are checked against the issue queue; Review items are checked against the PR queue. Default: on (opt-out).">?</span>
+            </div>
+            <label class="toggle-switch">
+                <input type="checkbox" @bind="_queueSweepEnabled" />
+                <span class="toggle-slider"></span>
+            </label>
+            <span class="form-hint">@(_queueSweepEnabled ? "Enabled — stale Pending items are cancelled each cycle" : "Disabled — stale Pending items remain queued until dispatch")</span>
+        </div>
+
         <div class="pipeline-form-actions">
             <button class="btn-save" @onclick="SaveAsync">Save Pipeline Loop Settings</button>
         </div>
@@ -71,6 +83,7 @@
     private int _closedLoopMaxConsecutivePollFailures = 5;
     private int _closedLoopMaxBackoffIntervalSeconds = 900;
     private int _closedLoopCircuitBreakerCooldownSeconds = 300;
+    private bool _queueSweepEnabled = true;
     private bool _showAdvanced;
 
     protected override async Task OnInitializedAsync()
@@ -82,6 +95,7 @@
         _closedLoopMaxConsecutivePollFailures = config.ClosedLoopMaxConsecutivePollFailures;
         _closedLoopMaxBackoffIntervalSeconds = (int)config.ClosedLoopMaxBackoffInterval.TotalSeconds;
         _closedLoopCircuitBreakerCooldownSeconds = (int)config.ClosedLoopCircuitBreakerCooldown.TotalSeconds;
+        _queueSweepEnabled = config.QueueSweepEnabled;
     }
 
     private async Task SaveAsync()
@@ -96,7 +110,8 @@
                     ClosedLoopMaxPagesToFetch = _closedLoopMaxPagesToFetch,
                     ClosedLoopMaxConsecutivePollFailures = _closedLoopMaxConsecutivePollFailures,
                     ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(_closedLoopMaxBackoffIntervalSeconds),
-                    ClosedLoopCircuitBreakerCooldown = TimeSpan.FromSeconds(_closedLoopCircuitBreakerCooldownSeconds)
+                    ClosedLoopCircuitBreakerCooldown = TimeSpan.FromSeconds(_closedLoopCircuitBreakerCooldownSeconds),
+                    QueueSweepEnabled = _queueSweepEnabled
                 },
                 CancellationToken.None);
             await OnShowStatus.InvokeAsync(("Pipeline loop settings saved.", false));

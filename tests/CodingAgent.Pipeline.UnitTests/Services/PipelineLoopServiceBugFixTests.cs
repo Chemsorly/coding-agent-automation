@@ -857,7 +857,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         // as a full-loop integration test (start loop without StopLoop, let one cycle complete,
         // verify both mocks were invoked) to close this gap.
         await svc.RunHousekeepingAsync(snapshot, emptyQueues, CancellationToken.None);
-        await svc.SweepPendingWorkItemsAsync(new Dictionary<string, HashSet<string>>(), sweepEnabled: true, CancellationToken.None);
+        await svc.SweepPendingWorkItemsAsync(new Dictionary<string, HashSet<string>>(), new Dictionary<string, HashSet<string>>(), sweepEnabled: true, CancellationToken.None);
 
         // Assert: housekeeping service was invoked once — normal path is unaffected by the fix
         housekeepingMock.Verify(h => h.ExecuteAsync(

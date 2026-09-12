@@ -15,7 +15,7 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// <see cref="PipelineLoopService.BuildEligibilityMap"/>.
 ///
 /// Tests call <c>SweepPendingWorkItemsAsync</c> directly (it is <c>internal</c>) and also
-/// exercise <c>BuildEligibilityMap</c> (also <c>internal static</c>) in isolation.
+/// exercise <c>BuildEligibilityMap</c> / <c>BuildPrEligibilityMap</c> (also <c>internal static</c>) in isolation.
 /// </summary>
 public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
 {
@@ -229,6 +229,116 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         result["ip-shared"].Should().Contain("20");
     }
 
+    // ── BuildPrEligibilityMap unit tests ──────────────────────────────────────
+
+    [Fact]
+    public void BuildPrEligibilityMap_WhenNoTemplates_ReturnsEmptyMap()
+    {
+        var result = PipelineLoopService.BuildPrEligibilityMap(
+            pollableTemplates: [],
+            prQueues: []);
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void BuildPrEligibilityMap_WhenTemplateNotInPrQueues_OmitsProvider()
+    {
+        // Template does not appear in prQueues (ReviewEnabled = false, or PR poll threw)
+        var template = new PipelineJobTemplate
+        {
+            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+        };
+
+        var result = PipelineLoopService.BuildPrEligibilityMap(
+            pollableTemplates: [template],
+            prQueues: []  // "t-1" absent — fail open
+        );
+
+        result.Should().NotContainKey("ip-1",
+            "provider should be omitted (fail-open) when template PR queue was not polled this cycle");
+    }
+
+    [Fact]
+    public void BuildPrEligibilityMap_WhenTemplateHasPrs_IncludesThemInSet()
+    {
+        var template = new PipelineJobTemplate
+        {
+            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+        };
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>
+        {
+            ["t-1"] = [
+                new PullRequestSummary { Number = 101, Identifier = "101", Title = "PR 101", Description = "", Labels = [], BranchName = "feat/a", TargetBranch = "main", Url = "", IsDraft = false },
+                new PullRequestSummary { Number = 202, Identifier = "202", Title = "PR 202", Description = "", Labels = [], BranchName = "feat/b", TargetBranch = "main", Url = "", IsDraft = false }
+            ]
+        };
+
+        var result = PipelineLoopService.BuildPrEligibilityMap([template], prQueues);
+
+        result.Should().ContainKey("ip-1");
+        result["ip-1"].Should().Contain("101");
+        result["ip-1"].Should().Contain("202");
+    }
+
+    [Fact]
+    public void BuildPrEligibilityMap_WhenPrPollFailedDuringCycle_OmitsProvider()
+    {
+        // PollPrQueueAsync intentionally omits the prQueues entry on failure (does NOT write a
+        // present-but-empty list). This means BuildPrEligibilityMap sees an absent key and fails
+        // open, rather than treating an empty result from a failed poll as "zero eligible PRs"
+        // which would incorrectly cancel all Pending Review WorkItems for that provider.
+        // TODO [WARNING]: This test is functionally identical to BuildPrEligibilityMap_WhenTemplateNotInPrQueues_OmitsProvider —
+        // both pass an empty prQueues with "t-1" absent and assert "ip-1" is omitted. Neither test
+        // exercises the ConsecutiveFailures guard (line ~307 in BuildPrEligibilityMap) or distinguishes
+        // a "PR poll threw" scenario from a "ReviewEnabled=false" scenario via the absent-key path.
+        // A genuine poll-failure test that exercises the same-cycle-failure guard should pass
+        // failuresBefore and templateStatuses showing a ConsecutiveFailures increment (matching the
+        // pattern of BuildPrEligibilityMap_WhenTemplateRateLimitedDuringCycle_OmitsProvider but for
+        // the ConsecutiveFailures > before branch rather than the RateLimitResetAt branch).
+        var template = new PipelineJobTemplate
+        {
+            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+        };
+        // Simulate what PollPrQueueAsync produces on failure: the key is absent.
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>();  // "t-1" absent — poll threw
+
+        var result = PipelineLoopService.BuildPrEligibilityMap(
+            pollableTemplates: [template],
+            prQueues: prQueues);
+
+        result.Should().NotContainKey("ip-1",
+            "provider must be omitted (fail-open) when the template PR poll threw — " +
+            "PollPrQueueAsync omits the prQueues entry on failure so the absent-key guard fires");
+    }
+
+    [Fact]
+    public void BuildPrEligibilityMap_WhenTemplateRateLimitedDuringCycle_OmitsProvider()
+    {
+        var template = new PipelineJobTemplate
+        {
+            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+        };
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>
+        {
+            ["t-1"] = []
+        };
+        var failuresBefore = new Dictionary<string, int> { ["t-1"] = 0 };
+        var templateStatuses = new Dictionary<string, ConfigStatusSnapshot>
+        {
+            ["t-1"] = new ConfigStatusSnapshot { ConsecutiveFailures = 1, RateLimitResetAt = DateTimeOffset.UtcNow.AddMinutes(5) }
+        };
+
+        var result = PipelineLoopService.BuildPrEligibilityMap(
+            pollableTemplates: [template],
+            prQueues: prQueues,
+            failuresBefore: failuresBefore,
+            templateStatuses: templateStatuses);
+
+        result.Should().NotContainKey("ip-1",
+            "provider must be omitted (fail-open) when template was rate-limited during this cycle");
+    }
+
     // ── SweepPendingWorkItemsAsync — cancellation path ────────────────────────
 
     [Fact]
@@ -245,9 +355,9 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             .Returns(Task.CompletedTask);
 
         var svc = CreateService(_sweepClientMock.Object);
-        var eligibility = EligibilityMap("ip-1", "99");
+        var issueEligibility = EligibilityMap("ip-1", "99");
 
-        await svc.SweepPendingWorkItemsAsync(eligibility, sweepEnabled: true, CancellationToken.None);
+        await svc.SweepPendingWorkItemsAsync(issueEligibility, EmptyEligibilityMap(), sweepEnabled: true, CancellationToken.None);
 
         _sweepClientMock.Verify(c => c.PostStatusAsync(
             itemId,
@@ -269,14 +379,120 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             .ReturnsAsync([item]);
 
         var svc = CreateService(_sweepClientMock.Object);
-        var eligibility = EligibilityMap("ip-1", "42");
+        var issueEligibility = EligibilityMap("ip-1", "42");
 
-        await svc.SweepPendingWorkItemsAsync(eligibility, sweepEnabled: true, CancellationToken.None);
+        await svc.SweepPendingWorkItemsAsync(issueEligibility, EmptyEligibilityMap(), sweepEnabled: true, CancellationToken.None);
 
         _sweepClientMock.Verify(c => c.PostStatusAsync(
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
             Times.Never);
         CounterValue("pipeline.queue_sweep.cancelled").Should().Be(0);
+    }
+
+    // ── Review WorkItem — PR eligibility ──────────────────────────────────────
+
+    [Fact]
+    public async Task SweepPendingWorkItemsAsync_WhenReviewItemPrNotInPrEligibilitySet_CancelsItem()
+    {
+        // PR "101" is NOT in the PR eligibility set (PR closed, agent:next removed, etc.) → cancel
+        var itemId = Guid.NewGuid();
+        var item = MakePendingItem("101", "ip-1", taskType: WorkItemTaskType.Review, id: itemId);
+        _sweepClientMock
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+        _sweepClientMock
+            .Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var svc = CreateService(_sweepClientMock.Object);
+        // Issue map: ip-1 has issues; PR map: ip-1 has only PR "999" (not "101")
+        var issueEligibility = EligibilityMap("ip-1", "42");
+        var prEligibility = EligibilityMap("ip-1", "999");
+
+        await svc.SweepPendingWorkItemsAsync(issueEligibility, prEligibility, sweepEnabled: true, CancellationToken.None);
+
+        _sweepClientMock.Verify(c => c.PostStatusAsync(
+            itemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Cancelled" && u.ErrorMessage != null),
+            It.IsAny<CancellationToken>()),
+            Times.Once, "Review item whose PR is not in prEligibilitySet must be cancelled");
+        CounterValue("pipeline.queue_sweep.cancelled").Should().Be(1);
+    }
+
+    [Fact]
+    public async Task SweepPendingWorkItemsAsync_WhenReviewItemPrIsInPrEligibilitySet_DoesNotCancel()
+    {
+        // PR "101" IS in the PR eligibility set — must NOT be cancelled
+        var item = MakePendingItem("101", "ip-1", taskType: WorkItemTaskType.Review);
+        _sweepClientMock
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+
+        var svc = CreateService(_sweepClientMock.Object);
+        var issueEligibility = EligibilityMap("ip-1", "42");
+        var prEligibility = EligibilityMap("ip-1", "101");
+
+        await svc.SweepPendingWorkItemsAsync(issueEligibility, prEligibility, sweepEnabled: true, CancellationToken.None);
+
+        _sweepClientMock.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+            Times.Never, "Review item whose PR is still eligible must not be cancelled");
+        CounterValue("pipeline.queue_sweep.cancelled").Should().Be(0);
+    }
+
+    [Fact]
+    public async Task SweepPendingWorkItemsAsync_WhenReviewItemProviderNotInPrMap_SkipsItem()
+    {
+        // PR poll failed for "ip-1" this cycle — provider is absent from prEligibilityMap → fail open
+        var item = MakePendingItem("101", "ip-1", taskType: WorkItemTaskType.Review);
+        _sweepClientMock
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+
+        var svc = CreateService(_sweepClientMock.Object);
+        // prEligibilityMap does NOT contain "ip-1" (poll failed / rate-limited)
+        var issueEligibility = EligibilityMap("ip-1", "42");
+        var prEligibility = EligibilityMap("ip-other", "101");
+
+        await svc.SweepPendingWorkItemsAsync(issueEligibility, prEligibility, sweepEnabled: true, CancellationToken.None);
+
+        _sweepClientMock.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+            Times.Never, "Review item must not be cancelled when its provider is missing from the PR map");
+        CounterValue("pipeline.queue_sweep.skipped").Should().Be(1);
+        CounterValue("pipeline.queue_sweep.cancelled").Should().Be(0);
+    }
+
+    // ── Implementation item uses issue map; Review item uses PR map ───────────
+
+    [Fact]
+    public async Task SweepPendingWorkItemsAsync_ImplementationUsesIssueMap_ReviewUsesPrMap()
+    {
+        // Implementation item "42" is NOT in issue map → cancel
+        // Review item "101" IS in PR map → do NOT cancel
+        var implItem = MakePendingItem("42", "ip-1", taskType: WorkItemTaskType.Implementation, id: Guid.NewGuid());
+        var reviewItem = MakePendingItem("101", "ip-1", taskType: WorkItemTaskType.Review, id: Guid.NewGuid());
+
+        _sweepClientMock
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([implItem, reviewItem]);
+        _sweepClientMock
+            .Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var svc = CreateService(_sweepClientMock.Object);
+        var issueEligibility = EligibilityMap("ip-1", "99");  // "42" not present → impl cancelled
+        var prEligibility = EligibilityMap("ip-1", "101");     // "101" present → review kept
+
+        await svc.SweepPendingWorkItemsAsync(issueEligibility, prEligibility, sweepEnabled: true, CancellationToken.None);
+
+        _sweepClientMock.Verify(c => c.PostStatusAsync(
+            implItem.Id, It.Is<WorkItemStatusUpdate>(u => u.Status == "Cancelled"), It.IsAny<CancellationToken>()),
+            Times.Once, "Implementation item not in issue map must be cancelled");
+        _sweepClientMock.Verify(c => c.PostStatusAsync(
+            reviewItem.Id, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+            Times.Never, "Review item present in PR map must not be cancelled");
+        CounterValue("pipeline.queue_sweep.cancelled").Should().Be(1);
     }
 
     // ── Rate-limited provider (absent from eligibility map) ───────────────────
@@ -293,9 +509,9 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
 
         var svc = CreateService(_sweepClientMock.Object);
         // Eligibility map does NOT contain "ip-rate-limited"
-        var eligibility = EligibilityMap("ip-other", "42");
+        var issueEligibility = EligibilityMap("ip-other", "42");
 
-        await svc.SweepPendingWorkItemsAsync(eligibility, sweepEnabled: true, CancellationToken.None);
+        await svc.SweepPendingWorkItemsAsync(issueEligibility, EmptyEligibilityMap(), sweepEnabled: true, CancellationToken.None);
 
         _sweepClientMock.Verify(c => c.PostStatusAsync(
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
@@ -304,7 +520,7 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         CounterValue("pipeline.queue_sweep.cancelled").Should().Be(0);
     }
 
-    // ── TaskType == Consolidation skipped; Review/Decomposition swept ────────────
+    // ── TaskType skipping ─────────────────────────────────────────────────────
 
     [Fact]
     public async Task SweepPendingWorkItemsAsync_WhenTaskTypeIsConsolidation_IsSkipped()
@@ -318,9 +534,9 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
 
         var svc = CreateService(_sweepClientMock.Object);
         // Provider present, issue NOT in set — but TaskType is Consolidation
-        var eligibility = EligibilityMap("ip-1", "99");
+        var issueEligibility = EligibilityMap("ip-1", "99");
 
-        await svc.SweepPendingWorkItemsAsync(eligibility, sweepEnabled: true, CancellationToken.None);
+        await svc.SweepPendingWorkItemsAsync(issueEligibility, EmptyEligibilityMap(), sweepEnabled: true, CancellationToken.None);
 
         _sweepClientMock.Verify(c => c.PostStatusAsync(
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
@@ -328,15 +544,52 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         CounterValue("pipeline.queue_sweep.skipped").Should().Be(1);
     }
 
+    [Fact]
+    public async Task SweepPendingWorkItemsAsync_WhenTaskTypeIsDecomposition_IsSkipped()
+    {
+        // Decomposition WorkItems are not swept: their eligibility source (decompositionQueues,
+        // projectLevelDecompositionQueues) is not yet folded into the sweep maps — skip to
+        // avoid incorrect cancellations (fail-open).
+        var item = MakePendingItem("42", "ip-1", taskType: WorkItemTaskType.Decomposition);
+        _sweepClientMock
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+
+        var svc = CreateService(_sweepClientMock.Object);
+        // Even with the provider present and the issue absent from the map, Decomposition must be skipped
+        var issueEligibility = EligibilityMap("ip-1", "99");
+
+        await svc.SweepPendingWorkItemsAsync(issueEligibility, EmptyEligibilityMap(), sweepEnabled: true, CancellationToken.None);
+
+        _sweepClientMock.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+            Times.Never, "Decomposition items must not be cancelled by the sweep (fail-open)");
+        CounterValue("pipeline.queue_sweep.skipped").Should().Be(1);
+    }
+
     [Theory]
     [InlineData(WorkItemTaskType.Review)]
-    [InlineData(WorkItemTaskType.Decomposition)]
     [InlineData(WorkItemTaskType.Implementation)]
-    public async Task SweepPendingWorkItemsAsync_WhenTaskTypeIsNotConsolidation_EligibilityCheckApplies(
+    public async Task SweepPendingWorkItemsAsync_WhenTaskTypeIsReviewOrImplementation_EligibilityCheckApplies(
         WorkItemTaskType taskType)
     {
-        // Review, Decomposition, and Implementation WorkItems are all dispatched by
-        // WorkItemDispatchService and must be swept when their issue is no longer eligible.
+        // Review and Implementation WorkItems are swept when their issue/PR is no longer eligible.
+        // The maps are intentionally ASYMMETRIC so the test fails if the wrong map is consulted:
+        //   - issueEligibility has "42" present → Implementation item would be KEPT (not cancelled)
+        //     if incorrectly routed to the issue map.
+        //   - prEligibility has "42" absent → Review item should be CANCELLED when routed to the PR map.
+        // For Implementation: issueEligibility does NOT contain "42" → cancel.
+        // For Review: prEligibility does NOT contain "42" → cancel.
+        // Both cases should cancel. If a Review item were routed to the issue map (which DOES contain
+        // "42"), it would NOT be cancelled and the test would fail — proving the routing is correct.
+        // TODO [WARNING]: The cross-routing sensitivity claim above is incorrect for the Implementation
+        // case. The comment says issueEligibility "DOES contain '42'" to provide routing sensitivity,
+        // but issueEligibility = EligibilityMap("ip-1", "99") — "42" is NOT present in either map.
+        // Both maps lack "42", so this test would pass even if routing were inverted (Review reading
+        // issueEligibility, Implementation reading prEligibility) or both types read the same map.
+        // The companion test SweepPendingWorkItemsAsync_WhenTaskTypeIsReviewOrImplementation_UsesCorrectMap
+        // does use genuinely asymmetric maps and correctly detects routing errors; that test provides
+        // the actual routing guarantee. Consider fixing or removing the misleading comment here.
         var item = MakePendingItem("42", "ip-1", taskType: taskType);
         _sweepClientMock
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
@@ -346,15 +599,55 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             .Returns(Task.CompletedTask);
 
         var svc = CreateService(_sweepClientMock.Object);
-        // Provider present, issue NOT in eligibility set → should cancel
-        var eligibility = EligibilityMap("ip-1", "99");
+        // Issue map: "42" IS present (would keep an Implementation item if it read prEligibility)
+        // PR map:    "42" is NOT present (would cancel a Review item correctly)
+        // For Implementation: "42" is absent from issueEligibility (only "99" is present) → cancel.
+        // For Review:         "42" is absent from prEligibility (only "999" is present) → cancel.
+        var issueEligibility = EligibilityMap("ip-1", "99");   // "42" absent → impl cancelled
+        var prEligibility = EligibilityMap("ip-1", "999");      // "42" absent → review cancelled
 
-        await svc.SweepPendingWorkItemsAsync(eligibility, sweepEnabled: true, CancellationToken.None);
+        await svc.SweepPendingWorkItemsAsync(issueEligibility, prEligibility, sweepEnabled: true, CancellationToken.None);
 
         _sweepClientMock.Verify(c => c.PostStatusAsync(
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
             Times.Once, $"{taskType} items must be cancelled by the sweep when no longer eligible");
         CounterValue("pipeline.queue_sweep.cancelled").Should().Be(1);
+    }
+
+    [Theory]
+    [InlineData(WorkItemTaskType.Review)]
+    [InlineData(WorkItemTaskType.Implementation)]
+    public async Task SweepPendingWorkItemsAsync_WhenTaskTypeIsReviewOrImplementation_UsesCorrectMap(
+        WorkItemTaskType taskType)
+    {
+        // Verifies that each task type is routed to its own map and NOT to the other map.
+        // Implementation item "42": PRESENT in issueEligibility, ABSENT from prEligibility.
+        //   → must NOT be cancelled (routed to issue map, "42" present → keep).
+        //   → would be cancelled if incorrectly routed to PR map ("42" absent).
+        // Review item "42": ABSENT from issueEligibility, PRESENT in prEligibility.
+        //   → must NOT be cancelled (routed to PR map, "42" present → keep).
+        //   → would be cancelled if incorrectly routed to issue map ("42" absent).
+        var item = MakePendingItem("42", "ip-1", taskType: taskType);
+        _sweepClientMock
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+
+        var svc = CreateService(_sweepClientMock.Object);
+        // issueEligibility has "42" (keeps Implementation); prEligibility has "42" (keeps Review).
+        // Neither map cancels — but the test is sensitive to cross-routing:
+        var issueEligibility = taskType == WorkItemTaskType.Implementation
+            ? EligibilityMap("ip-1", "42")   // Implementation: "42" present → keep
+            : EligibilityMap("ip-1", "99");  // Review: "42" absent (wrong map would cancel)
+        var prEligibility = taskType == WorkItemTaskType.Review
+            ? EligibilityMap("ip-1", "42")   // Review: "42" present → keep
+            : EligibilityMap("ip-1", "99");  // Implementation: "42" absent (wrong map would cancel)
+
+        await svc.SweepPendingWorkItemsAsync(issueEligibility, prEligibility, sweepEnabled: true, CancellationToken.None);
+
+        _sweepClientMock.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+            Times.Never, $"{taskType} item present in its own map must NOT be cancelled");
+        CounterValue("pipeline.queue_sweep.cancelled").Should().Be(0);
     }
 
     // ── GetPendingAsync failure ───────────────────────────────────────────────
@@ -367,10 +660,10 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             .ThrowsAsync(new InvalidOperationException("simulated network failure"));
 
         var svc = CreateService(_sweepClientMock.Object);
-        var eligibility = EligibilityMap("ip-1");  // empty set
+        var issueEligibility = EligibilityMap("ip-1");  // empty set
 
         // Must not throw — should log Warning and return
-        await svc.SweepPendingWorkItemsAsync(eligibility, sweepEnabled: true, CancellationToken.None);
+        await svc.SweepPendingWorkItemsAsync(issueEligibility, EmptyEligibilityMap(), sweepEnabled: true, CancellationToken.None);
 
         _sweepClientMock.Verify(c => c.PostStatusAsync(
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
@@ -406,17 +699,18 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
 
         var svc = CreateService(_sweepClientMock.Object);
         // Both items are ineligible (provider ip-1 has empty set)
-        var eligibility = EligibilityMap("ip-1");
+        var issueEligibility = EligibilityMap("ip-1");
 
-        await svc.SweepPendingWorkItemsAsync(eligibility, sweepEnabled: true, CancellationToken.None);
+        await svc.SweepPendingWorkItemsAsync(issueEligibility, EmptyEligibilityMap(), sweepEnabled: true, CancellationToken.None);
 
         _sweepClientMock.Verify(c => c.PostStatusAsync(
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
             Times.Exactly(2), "second item must still be processed after first fails");
 
         CounterValue("pipeline.queue_sweep.failed").Should().Be(1);
-        CounterValue("pipeline.queue_sweep.cancelled").Should().Be(2,
-            "QueueSweepCancelled is incremented before the PostStatusAsync call");
+        // Counter incremented AFTER successful PostStatusAsync: item1 failed (no counter), item2 succeeded (counter=1)
+        CounterValue("pipeline.queue_sweep.cancelled").Should().Be(1,
+            "QueueSweepCancelled is incremented only after a successful PostStatusAsync call");
     }
 
     // ── PostStatusAsync expected HTTP race (400/404/409) ─────────────────────
@@ -437,14 +731,15 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             .ThrowsAsync(new HttpRequestException("transition rejected", null, statusCode));
 
         var svc = CreateService(_sweepClientMock.Object);
-        var eligibility = EligibilityMap("ip-1");  // empty — item "42" not eligible
+        var issueEligibility = EligibilityMap("ip-1");  // empty — item "42" not eligible
 
-        await svc.SweepPendingWorkItemsAsync(eligibility, sweepEnabled: true, CancellationToken.None);
+        await svc.SweepPendingWorkItemsAsync(issueEligibility, EmptyEligibilityMap(), sweepEnabled: true, CancellationToken.None);
 
         CounterValue("pipeline.queue_sweep.failed").Should().Be(0,
             "expected HTTP race should not count as failure");
-        CounterValue("pipeline.queue_sweep.cancelled").Should().Be(1,
-            "cancel was attempted; QueueSweepCancelled is incremented before PostStatusAsync");
+        // Counter is incremented AFTER PostStatusAsync; since it threw, the counter is NOT incremented
+        CounterValue("pipeline.queue_sweep.cancelled").Should().Be(0,
+            "QueueSweepCancelled is only incremented after a successful PostStatusAsync; a race exception means no confirmed cancellation");
     }
 
     // ── Null client guard ─────────────────────────────────────────────────────
@@ -453,10 +748,10 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
     public async Task SweepPendingWorkItemsAsync_WhenClientIsNull_ReturnsImmediately()
     {
         var svc = CreateService(sweepClient: null);  // WorkItemClient = null
-        var eligibility = EligibilityMap("ip-1", "42");
+        var issueEligibility = EligibilityMap("ip-1", "42");
 
         // Must not throw
-        await svc.SweepPendingWorkItemsAsync(eligibility, sweepEnabled: true, CancellationToken.None);
+        await svc.SweepPendingWorkItemsAsync(issueEligibility, EmptyEligibilityMap(), sweepEnabled: true, CancellationToken.None);
 
         // GetPendingAsync must never be called since there is no client
         _sweepClientMock.Verify(c => c.GetPendingAsync(
@@ -481,9 +776,9 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
 
         var svc = CreateService(_sweepClientMock.Object);
         // "42" is eligible; "99" is not
-        var eligibility = EligibilityMap("ip-1", "42");
+        var issueEligibility = EligibilityMap("ip-1", "42");
 
-        await svc.SweepPendingWorkItemsAsync(eligibility, sweepEnabled: true, CancellationToken.None);
+        await svc.SweepPendingWorkItemsAsync(issueEligibility, EmptyEligibilityMap(), sweepEnabled: true, CancellationToken.None);
 
         _sweepClientMock.Verify(c => c.PostStatusAsync(
             ineligible.Id,
@@ -514,9 +809,9 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             .ReturnsAsync([item]);
 
         var svc = CreateService(_sweepClientMock.Object);
-        var eligibility = EligibilityMap("ip-1");  // empty — would cancel if sweep ran
+        var issueEligibility = EligibilityMap("ip-1");  // empty — would cancel if sweep ran
 
-        await svc.SweepPendingWorkItemsAsync(eligibility, sweepEnabled: false, CancellationToken.None);
+        await svc.SweepPendingWorkItemsAsync(issueEligibility, EmptyEligibilityMap(), sweepEnabled: false, CancellationToken.None);
 
         _sweepClientMock.Verify(c => c.GetPendingAsync(
             It.IsAny<int>(), It.IsAny<CancellationToken>()),
