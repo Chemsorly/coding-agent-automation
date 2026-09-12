@@ -17,6 +17,10 @@ namespace CodingAgent.AgentGateway;
 /// </summary>
 public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 {
+    private const string FieldActiveJobId = "activeJobId";
+    private const string FieldLastJobCompletedAt = "lastJobCompletedAt";
+    private const string FieldOrphanRestoredAt = "orphanRestoredAt";
+
     private readonly IAgentHubFacade _facade;
     private readonly ILabelService _labelService;
     private readonly IHubIssueOperations _issueOps;
@@ -106,8 +110,20 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         {
             agent.ActiveJobId = null;
             agent.LastJobCompletedAt = DateTimeOffset.UtcNow; // Push to back of FIFO queue to prevent same-agent re-dispatch loop
-            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", null);
-            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "lastJobCompletedAt", DateTimeOffset.UtcNow.ToString("O"));
+            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldActiveJobId, null)
+                .ContinueWith(t => _logger.Warning(t.Exception,
+                        "HandleJobRejectedAsync: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
+                        agent.AgentId, FieldActiveJobId),
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted,
+                    TaskScheduler.Default);
+            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldLastJobCompletedAt, DateTimeOffset.UtcNow.ToString("O"))
+                .ContinueWith(t => _logger.Warning(t.Exception,
+                        "HandleJobRejectedAsync: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
+                        agent.AgentId, FieldLastJobCompletedAt),
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted,
+                    TaskScheduler.Default);
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
         }
     }
@@ -218,9 +234,27 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             agent.ActiveJobId = null;
             agent.OrphanRestoredAt = null;
             agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
-            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", null);
-            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "orphanRestoredAt", null);
-            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "lastJobCompletedAt", DateTimeOffset.UtcNow.ToString("O"));
+            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldActiveJobId, null)
+                .ContinueWith(t => _logger.Warning(t.Exception,
+                        "HandleJobCompletedAsync: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
+                        agent.AgentId, FieldActiveJobId),
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted,
+                    TaskScheduler.Default);
+            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldOrphanRestoredAt, null)
+                .ContinueWith(t => _logger.Warning(t.Exception,
+                        "HandleJobCompletedAsync: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
+                        agent.AgentId, FieldOrphanRestoredAt),
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted,
+                    TaskScheduler.Default);
+            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldLastJobCompletedAt, DateTimeOffset.UtcNow.ToString("O"))
+                .ContinueWith(t => _logger.Warning(t.Exception,
+                        "HandleJobCompletedAsync: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
+                        agent.AgentId, FieldLastJobCompletedAt),
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted,
+                    TaskScheduler.Default);
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
         }
         else if (run?.AgentId is not null)
@@ -229,7 +263,13 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             // AgentId from the run. Attempt to clear agent state to prevent it from being locked in
             // Busy indefinitely until ReconciliationService.EnforceTimeoutsAsync times it out.
             var agentId = new AgentId(run.AgentId);
-            _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", null);
+            _ = _facade.UpdateAgentFieldAsync(agentId, FieldActiveJobId, null)
+                .ContinueWith(t => _logger.Warning(t.Exception,
+                        "HandleJobCompletedAsync: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}' (run fallback path)",
+                        agentId, FieldActiveJobId),
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted,
+                    TaskScheduler.Default);
             _facade.TransitionStatus(agentId, AgentStatus.Idle);
             _logger.Warning(
                 "HandleJobCompletedAsync: agent lookup returned null for job {JobId} (agentId={AgentId}) — clearing state via run fallback to prevent Busy lock",
