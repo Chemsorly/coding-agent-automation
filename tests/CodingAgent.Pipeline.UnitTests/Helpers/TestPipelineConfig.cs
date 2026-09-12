@@ -66,6 +66,7 @@ public static class TestPipelineConfig
         HousekeepingTriggerCooldownMinutes = 25,
         ClosedLoopAutoStart = true,
         QueueSweepEnabled = true,
+        MinIssueSlots = 1,
     };
 
     /// <summary>
@@ -123,5 +124,6 @@ public static class TestPipelineConfig
         HousekeepingTriggerCooldownMinutes = 25,
         ClosedLoopAutoStart = true,
         QueueSweepEnabled = true,
+        MinIssueSlots = 1,
     };
 }

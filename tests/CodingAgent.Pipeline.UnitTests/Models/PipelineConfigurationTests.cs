@@ -122,6 +122,7 @@ public class PipelineConfigurationTests
             CiCancelledMoveMaxRetries = 7,
             FeedbackTimeoutSeconds = 90,
             HousekeepingTriggerCooldownMinutes = 30,
+            MinIssueSlots = 2,
         };
 
         // Act
@@ -141,7 +142,7 @@ public class PipelineConfigurationTests
 
         // Count the properties explicitly set above (all [Key] properties on the record).
         // If this fails, a new [Key] property was added — add it to the config above.
-        keyPropertyCount.Should().Be(76,
+        keyPropertyCount.Should().Be(77,
             "this test must cover all [Key]-annotated properties on PipelineConfiguration. " +
             "If a new property was added, set it to a non-default value in the config above.");
     }
