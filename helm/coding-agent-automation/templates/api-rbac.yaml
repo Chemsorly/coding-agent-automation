@@ -18,8 +18,7 @@ metadata:
 # (for ModelFetchJobService + ChatJobDispatcher moved into the API).
 # 042 Req 9.4 specified empty rules — this spec reverses that. Do not narrow back to empty.
 # 044 adds ChatJobDispatcher to the API, which also needs batch/jobs.
-# Spec 049: ConsolidationWorkItemDispatchService moved to JobController — batch/jobs verbs
-# stay here for ModelFetchJobService and ChatJobDispatcher.
+# batch/jobs verbs stay here for ModelFetchJobService and ChatJobDispatcher.
 rules:
   # Job management for model fetch and consolidation dispatch
   - apiGroups: ["batch"]

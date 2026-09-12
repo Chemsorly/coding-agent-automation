@@ -304,9 +304,8 @@ public sealed partial class PipelineLoopService
         {
             if (item.TaskType == WorkItemTaskType.Consolidation)
             {
-                // Consolidation WorkItems are managed by ConsolidationWorkItemDispatchService
-                // which has its own lifecycle. Skip them — the eligibility map is built from
-                // issue-provider poll results and does not cover consolidation runs.
+                // Consolidation WorkItems are dispatched synchronously via KubernetesWorkDistributor
+                // and have no eligibility map entry — skip them here.
                 _queueSweepSkipped.Add(1);
                 continue;
             }

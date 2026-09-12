@@ -14,12 +14,10 @@ namespace CodingAgent.Orchestration.Dispatch;
 /// <list type="bullet">
 ///   <item>
 ///     <c>Consolidation</c> — calls <c>POST /api/work-items/dispatch</c> (synchronous path,
-///     creates the WorkItem as <c>Dispatched</c> and starts the K8s Job immediately). This
-///     preserves the pre-existing consolidation dispatch behaviour:
-///     <c>ConsolidationWorkItemDispatchService</c> in the API polls <c>Pending</c> consolidation
-///     items and dispatches them, but <c>ConsolidationDispatcher</c> in the monolith uses
-///     <see cref="IWorkDistributor"/> and bypasses that poller — so consolidation must continue
-///     to go through the synchronous endpoint.
+///     creates the WorkItem as <c>Dispatched</c> and starts the K8s Job immediately).
+///     <c>ConsolidationDispatcher</c> in the monolith uses <see cref="IWorkDistributor"/> and
+///     must go through the synchronous endpoint to avoid leaving the item in a Pending state
+///     with no poller to claim it.
 ///   </item>
 ///   <item>
 ///     All other task types (Implementation, Review, Decomposition) — calls
@@ -63,10 +61,9 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
         ArgumentNullException.ThrowIfNull(request);
 
         // Consolidation WorkItems are dispatched synchronously (Dispatched directly).
-        // ConsolidationWorkItemDispatchService owns the Pending→Dispatched poll for consolidation;
-        // ConsolidationDispatcher bypasses it and goes through IWorkDistributor, so we must use
-        // the synchronous DispatchAsync path to avoid orphaning the item in a Pending state with
-        // no poller to claim it.
+        // ConsolidationDispatcher bypasses the poll queue and goes through IWorkDistributor,
+        // so we must use the synchronous DispatchAsync path to avoid orphaning the item in a
+        // Pending state with no poller to claim it.
         if (request.TaskType == WorkItemTaskType.Consolidation)
             return await DispatchSynchronouslyAsync(request, ct);
 

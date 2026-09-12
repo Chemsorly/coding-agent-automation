@@ -4,9 +4,9 @@ namespace CodingAgent.Kubernetes;
 
 /// <summary>
 /// Static factory for building <see cref="DispatchServiceOptions"/> from <see cref="IConfiguration"/>.
-/// Eliminates the duplicated InitializeOptions logic across DispatchService,
-/// ConsolidationWorkItemDispatchService, and WorkDistributionRegistration.Kubernetes.cs.
-/// Made public (was internal) because three assemblies consume it: JobController, Api, and Orchestration.
+/// Eliminates the duplicated InitializeOptions logic across DispatchService
+/// and WorkDistributionRegistration.Kubernetes.cs.
+/// Made public (was internal) because multiple assemblies consume it: JobController, Api, and Orchestration.
 /// </summary>
 public static class DispatchServiceOptionsFactory
 {

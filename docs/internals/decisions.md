@@ -71,7 +71,7 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 
 **Status (2026-08-20):** Implemented. `PipelineLoopService` uses a `_leaderGate` field (`ILeaderGate?`) sourced from `deps.LeaderElection` (= `sp.GetService<ILeaderElectionService>()`). On startup, the loop spins on `_leaderGate is { IsLeader: false }` before entering the activation loop, and links `_leaderGate.LeaderToken` into the run's `CancellationTokenSource` so the loop stops immediately on leadership loss. When `ILeaderElectionService` is not registered (test environments), `_leaderGate` is null and the loop runs unconditionally as before. Issue #1987 is complete.
 
-**Context:** `PipelineLoopService` predates the multi-replica deployment model. `LeaderElectedPollingService` was extracted in #1912 and is used by `DispatchService`, `ConsolidationWorkItemDispatchService`, and `ReconciliationService`. `PipelineLoopService` was not migrated to use `LeaderElectedPollingService` as its base — it has its own `_leaderGate` integration instead.
+**Context:** `PipelineLoopService` predates the multi-replica deployment model. `LeaderElectedPollingService` was extracted in #1912 and is used by `DispatchService` and `ReconciliationService`. `PipelineLoopService` was not migrated to use `LeaderElectedPollingService` as its base — it has its own `_leaderGate` integration instead.
 
 **Alternatives considered:** Gate only direct API callers like housekeeping (partial gating) — rejected because WorkItem dedup is not a hard guarantee and auto-resume makes full loop gating necessary.
 

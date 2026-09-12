@@ -352,10 +352,9 @@ public partial class LayerBoundaryTests
 
     // ── Dispatch duplication guard ──────────────────────────────────────
     // Prevents finding 01 from recurring after the cleanup lands.
-    // The Api copies of ConsolidationWorkItemDispatchService and the shared dispatch
-    // types (DispatchStateBuilder, DispatchLifecycleService, DispatchTemplateResolver,
-    // PvcAvailabilityResult) are canonical. K8sJobCreationContext is a private nested
-    // record inside DispatchLifecycleService — it appears in reflection but is not
+    // The Api copies of the shared dispatch types (DispatchStateBuilder, DispatchLifecycleService,
+    // DispatchTemplateResolver, PvcAvailabilityResult) are canonical. K8sJobCreationContext is a
+    // private nested record inside DispatchLifecycleService — it appears in reflection but is not
     // a public type and not a duplication concern.
     //
     // All Orchestration copies have been deleted (arch-audit 2026-08-22).
@@ -763,16 +762,6 @@ public partial class LayerBoundaryTests
             // with a cast: AddHostedService(sp => (LoopStatusPollingService)sp.GetRequiredService<ILoopStatusService>()).
             // The T4 scanner does not detect the cast pattern — service is actively registered.
             "LoopStatusPollingService",
-
-            // Issue #2323: ConsolidationWorkItemDispatchService was moved from CodingAgent.Api
-            // to the JobController (as ConsolidationDispatchService + ConsolidationDispatchLoop).
-            // Both the JobController dispatch service and its loop were subsequently removed in
-            // issue #2323 (they were already no-ops in production — consolidation items are
-            // dispatched synchronously via POST /api/work-items/dispatch).
-            // The Api project source file is retained only for existing unit test coverage
-            // (CodingAgent.Orchestration.UnitTests); it is not registered as a hosted service
-            // anywhere in production and will be deleted once those tests are migrated.
-            "ConsolidationWorkItemDispatchService",
 
             // WorkItemDispatchService is registered via AddHostedService lambda pattern:
             //   services.AddHostedService(sp => sp.GetRequiredService<WorkItemDispatchService>())
