@@ -117,7 +117,7 @@ public class PullRequestFinalizationServiceTests
         agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"testing","comment":"good"},"issue":{"rating":5,"category":"feature","comment":"clear"}}"""] });
 
-        await _sut.CollectFeedbackAsync(run, agentProvider.Object, feedbackService, historyService.Object, emitted.Add, CancellationToken.None);
+        await _sut.CollectFeedbackAsync(run, agentProvider.Object, feedbackService, historyService.Object, emitted.Add, CancellationToken.None, new PipelineConfiguration());
 
         run.Feedback.Should().NotBeNull();
         emitted.Should().Contain("📋 Collecting run feedback...");
@@ -133,7 +133,7 @@ public class PullRequestFinalizationServiceTests
         agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
             .ThrowsAsync(new InvalidOperationException("timeout"));
 
-        await _sut.CollectFeedbackAsync(run, agentProvider.Object, feedbackService, null, _ => { }, CancellationToken.None);
+        await _sut.CollectFeedbackAsync(run, agentProvider.Object, feedbackService, null, _ => { }, CancellationToken.None, new PipelineConfiguration());
 
         run.Feedback.Should().NotBeNull();
         run.Feedback!.Outcome.Should().Be(FeedbackOutcome.Success);
@@ -149,18 +149,14 @@ public class PullRequestFinalizationServiceTests
         agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":3,"category":"infra","comment":"ok"}}"""] });
 
-        await _sut.CollectFeedbackAsync(run, agentProvider.Object, feedbackService, null, _ => { }, CancellationToken.None);
+        await _sut.CollectFeedbackAsync(run, agentProvider.Object, feedbackService, null, _ => { }, CancellationToken.None, new PipelineConfiguration());
 
         run.Feedback.Should().NotBeNull();
     }
 
     [Fact]
-    public async Task CollectFeedbackAsync_UsesConfiguredTimeout()
+    public async Task WhenConfigFeedbackTimeoutSecondsIsNonDefault_UsesConfiguredTimeout()
     {
-        // TODO: Add a test passing config: null and asserting Timeout == TimeSpan.FromSeconds(60).
-        // The null-coalescing branch (config?.FeedbackTimeoutSeconds ?? FeedbackConstraints.FailureFeedbackTimeoutSeconds)
-        // is not covered by the two tests below because both pass a non-null config. If the branch were accidentally
-        // broken (e.g., changed to config!.FeedbackTimeoutSeconds), these tests would still pass. (Warning from review #2225)
         var run = CreateRun();
         var agentProvider = new Mock<IAgentProvider>();
         var feedbackService = new FeedbackService(_logger.Object);
@@ -177,6 +173,12 @@ public class PullRequestFinalizationServiceTests
         capturedRequest!.Timeout.Should().Be(TimeSpan.FromSeconds(180));
     }
 
+    // TODO: This test asserts the numeric value (60s) but cannot distinguish between "config.FeedbackTimeoutSeconds
+    // is read" and "60s hardcoded constant is used" — both produce the same result when using the default config.
+    // If WhenConfigFeedbackTimeoutSecondsIsNonDefault_UsesConfiguredTimeout is ever deleted, a regression back to
+    // null-coalescing (config?.FeedbackTimeoutSeconds ?? FeedbackConstraints.FailureFeedbackTimeoutSeconds) would
+    // not be caught by this test alone. Consider keeping both tests, or strengthen this one by setting an explicit
+    // non-default value. (Warning from test quality review)
     [Fact]
     public async Task CollectFeedbackAsync_DefaultConfig_Uses60SecondTimeout()
     {
