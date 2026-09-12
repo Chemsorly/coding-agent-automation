@@ -901,22 +901,14 @@ public static class WorkItemEndpoints
         {
             await lifecycle.ExecuteDispatchLifecycleAsync(
                 ctx,
-                prepareVariant: async workItem =>
-                {
-                    // TODO [WARNING]: The outer endpoint CancellationToken ct is captured by this lambda.
-                    // If the HTTP client disconnects and cancels ct while ExecuteDispatchLifecycleAsync is
-                    // mid-flight, LoadProjectSecretsAsync will throw OperationCanceledException. The lifecycle's
-                    // outer catch (when ex is not OperationCanceledException) correctly re-throws it, and
-                    // the advisory lock handle is still disposed via await using var _ = lockHandle on the
-                    // stack — no deadlock or resource leak. This comment documents the cancellation contract:
-                    // ct cancellation propagates as OperationCanceledException to the caller, not as 503.
-                    // Load project secrets if a project is configured — mirrors WorkItemDispatchService.
-                    Dictionary<string, string>? projectSecrets = null;
-                    if (workItem.ProjectId.HasValue)
-                        projectSecrets = await DispatchLifecycleService.LoadProjectSecretsAsync(
-                            db, workItem.ProjectId.Value.ToString(), ct);
-                    return (shouldContinue: true, projectSecrets);
-                },
+                // TODO [WARNING]: The outer endpoint CancellationToken ct is captured by this lambda.
+                // If the HTTP client disconnects and cancels ct while ExecuteDispatchLifecycleAsync is
+                // mid-flight, LoadProjectSecretsAsync will throw OperationCanceledException. The lifecycle's
+                // outer catch (when ex is not OperationCanceledException) correctly re-throws it, and
+                // the advisory lock handle is still disposed via await using var _ = lockHandle on the
+                // stack — no deadlock or resource leak. This comment documents the cancellation contract:
+                // ct cancellation propagates as OperationCanceledException to the caller, not as 503.
+                prepareVariant: workItem => PrepareDispatchVariantAsync(db, workItem, ct),
                 onDispatchSuccess: _ =>
                 {
                     dispatched = true;
@@ -1171,16 +1163,7 @@ public static class WorkItemEndpoints
         {
             await lifecycle.ExecuteDispatchLifecycleAsync(
                 ctx,
-                prepareVariant: async workItem =>
-                {
-                    // Load project secrets if a project is configured — mirrors what the
-                    // DispatchService's regular dispatch path does.
-                    Dictionary<string, string>? projectSecrets = null;
-                    if (workItem.ProjectId.HasValue)
-                        projectSecrets = await DispatchLifecycleService.LoadProjectSecretsAsync(
-                            db, workItem.ProjectId.Value.ToString(), ct);
-                    return (shouldContinue: true, projectSecrets);
-                },
+                prepareVariant: workItem => PrepareDispatchVariantAsync(db, workItem, ct),
                 onDispatchSuccess: _ =>
                 {
                     dispatched = true;
@@ -1218,6 +1201,23 @@ public static class WorkItemEndpoints
         }
 
         return TypedResults.Ok(workItemId);
+    }
+
+    /// <summary>
+    /// Loads project secrets for a work item if a project is configured.
+    /// Shared by <see cref="DispatchPendingWorkItem"/> and <see cref="DispatchWorkItem"/> to
+    /// eliminate the duplicated prepareVariant lambda body.
+    /// </summary>
+    private static async Task<(bool shouldContinue, Dictionary<string, string>? projectSecrets)> PrepareDispatchVariantAsync(
+        PipelineDbContext db,
+        WorkItemEntity workItem,
+        CancellationToken ct)
+    {
+        Dictionary<string, string>? projectSecrets = null;
+        if (workItem.ProjectId.HasValue)
+            projectSecrets = await DispatchLifecycleService.LoadProjectSecretsAsync(
+                db, workItem.ProjectId.Value.ToString(), ct);
+        return (shouldContinue: true, projectSecrets);
     }
 
     /// <summary>
