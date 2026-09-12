@@ -19,13 +19,21 @@ using Moq;
 namespace CodingAgent.Pipeline.UnitTests.Services;
 
 /// <summary>
-/// Tests for the synchronous dispatch path introduced by issue #2322.
+/// Tests for the synchronous <c>POST /api/work-items/dispatch</c> endpoint
+/// (<see cref="WorkItemEndpoints.DispatchWorkItem"/>).
+///
+/// <para>
+/// As of the Pending-queue restore (fix/restore-pending-queue), this endpoint is called by
+/// <see cref="WorkItemDispatchService"/> (not the Scheduler directly). The Scheduler now calls
+/// <c>POST /api/work-items</c> to create a <c>Pending</c> WorkItem; <c>WorkItemDispatchService</c>
+/// polls those items and calls <c>POST /api/work-items/dispatch</c> when capacity is available.
+/// </para>
+///
 /// Covers:
-/// 1. <c>POST /api/work-items/dispatch</c> endpoint handler (<see cref="WorkItemEndpoints.DispatchWorkItem"/>)
-///    — priority ordering, concurrency gating, PVC gating, success path.
-/// 2. <c>DispatchOrchestrationService.DistributeAndFinalizeAsync</c>
-///    — label is reverted on 503/409 (no capacity), label is confirmed on success.
-/// 3. Transition state machine: Pending→Dispatched and Dispatched→Pending removed.
+/// <list type="number">
+///   <item><c>POST /api/work-items/dispatch</c> endpoint handler — concurrency gating, PVC gating, success path.</item>
+///   <item>Transition state machine: <c>Pending→Dispatched</c> remains valid (used by this endpoint).</item>
+/// </list>
 /// </summary>
 public sealed class SynchronousDispatchEndpointTests
 {

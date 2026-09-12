@@ -40,6 +40,11 @@ public sealed partial class AgentHub
         ArgumentNullException.ThrowIfNull(payload);
 
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
+        // TODO: Pass Context.ConnectionAborted instead of CancellationToken.None so that
+        // PostCompletionBookkeepingAsync is also cancellable on connection abort (not only on
+        // host shutdown via IHostApplicationLifetime.ApplicationStopping). Currently, the linked
+        // CancellationTokenSource inside PostCompletionBookkeepingAsync only uses ApplicationStopping
+        // as its effective cancellation source — the connection-abort path is unguarded.
         await _lifecycleService.HandleJobCompletedAsync(jobId, agent, payload, CancellationToken.None);
 
         // Push completion event to subscribed UI circuits (Req 4.1, 5.2)

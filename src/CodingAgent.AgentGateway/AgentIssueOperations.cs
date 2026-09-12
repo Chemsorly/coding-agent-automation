@@ -28,17 +28,17 @@ public sealed class AgentIssueOperations : IHubIssueOperations
     }
 
     /// <inheritdoc />
-    public Task SwapLabelAsync(PipelineRun run, string newLabel)
+    public Task SwapLabelAsync(PipelineRun run, string newLabel, CancellationToken ct = default)
     {
-        return _labelService.SwapLabelAsync(run.ProviderConfigIdForLabel, run.IssueIdentifier, newLabel, run.LabelTargetKind, CancellationToken.None);
+        return _labelService.SwapLabelAsync(run.ProviderConfigIdForLabel, run.IssueIdentifier, newLabel, run.LabelTargetKind, ct);
     }
 
     /// <inheritdoc />
-    public async Task<string?> PostCommentViaIssueProviderAsync(PipelineRun run, string body)
+    public async Task<string?> PostCommentViaIssueProviderAsync(PipelineRun run, string body, CancellationToken ct = default)
     {
         try
         {
-            var issueConfig = await _facade.GetProviderConfigByIdAsync(run.IssueProviderConfigId, ProviderKind.Issue, CancellationToken.None);
+            var issueConfig = await _facade.GetProviderConfigByIdAsync(run.IssueProviderConfigId, ProviderKind.Issue, ct);
             if (issueConfig is null)
             {
                 _logger.Warning("Issue provider config '{ConfigId}' not found for run {RunId}", run.IssueProviderConfigId, run.RunId);
@@ -47,8 +47,8 @@ public sealed class AgentIssueOperations : IHubIssueOperations
 
             await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
             // Validate initializes provider state (e.g., GitLab PathWithNamespace) needed for URL construction
-            await issueProvider.ValidateAsync(CancellationToken.None);
-            return await issueProvider.PostCommentAsync(run.IssueIdentifier, body, CancellationToken.None);
+            await issueProvider.ValidateAsync(ct);
+            return await issueProvider.PostCommentAsync(run.IssueIdentifier, body, ct);
         }
         catch (Exception ex)
         {
@@ -58,7 +58,7 @@ public sealed class AgentIssueOperations : IHubIssueOperations
     }
 
     /// <inheritdoc />
-    public async Task PostIssueFeedbackCommentAsync(PipelineRun run)
+    public async Task PostIssueFeedbackCommentAsync(PipelineRun run, CancellationToken ct = default)
     {
         try
         {
@@ -66,14 +66,14 @@ public sealed class AgentIssueOperations : IHubIssueOperations
             if (comment is null)
                 return;
 
-            var commentUrl = await PostCommentViaIssueProviderAsync(run, comment);
+            var commentUrl = await PostCommentViaIssueProviderAsync(run, comment, ct);
             _logger.Information("Posted issue feedback comment for run {RunId} on issue {IssueIdentifier}",
                 run.RunId, run.IssueIdentifier);
 
             // Append feedback link to PR body if we have both a URL and a PR
             if (commentUrl is not null && !string.IsNullOrEmpty(run.PullRequestNumber))
             {
-                await AppendFeedbackLinkToPrBodyAsync(run, commentUrl);
+                await AppendFeedbackLinkToPrBodyAsync(run, commentUrl, ct);
             }
         }
         catch (Exception ex)
@@ -89,7 +89,7 @@ public sealed class AgentIssueOperations : IHubIssueOperations
     /// Idempotent: skips if feedback section already present.
     /// Non-fatal: logs warning on failure.
     /// </summary>
-    private async Task AppendFeedbackLinkToPrBodyAsync(PipelineRun run, string commentUrl)
+    private async Task AppendFeedbackLinkToPrBodyAsync(PipelineRun run, string commentUrl, CancellationToken ct)
     {
         try
         {
@@ -100,7 +100,7 @@ public sealed class AgentIssueOperations : IHubIssueOperations
                 return;
             }
 
-            var repoConfig = await _facade.GetProviderConfigByIdAsync(run.RepoProviderConfigId, ProviderKind.Repository, CancellationToken.None);
+            var repoConfig = await _facade.GetProviderConfigByIdAsync(run.RepoProviderConfigId, ProviderKind.Repository, ct);
             if (repoConfig is null)
             {
                 _logger.Warning("Repo provider config '{ConfigId}' not found for run {RunId}, skipping feedback link", run.RepoProviderConfigId, run.RunId);
@@ -113,7 +113,7 @@ public sealed class AgentIssueOperations : IHubIssueOperations
             await using var repoProvider = _facade.CreateRepositoryProvider(repoConfig);
 
             // Fetch current body from provider to avoid overwriting external edits
-            var currentBody = await repoProvider.GetPullRequestBodyAsync(prNumber, CancellationToken.None)
+            var currentBody = await repoProvider.GetPullRequestBodyAsync(prNumber, ct)
                               ?? run.PullRequestBody
                               ?? "";
 
@@ -124,7 +124,7 @@ public sealed class AgentIssueOperations : IHubIssueOperations
             var feedbackSection = $"\n\n## Agent Feedback\n⚠️ Agent posted feedback on the issue [here]({commentUrl}). Read before merging.";
             var newBody = currentBody + feedbackSection;
 
-            await repoProvider.UpdatePullRequestAsync(prNumber, newBody, null, CancellationToken.None);
+            await repoProvider.UpdatePullRequestAsync(prNumber, newBody, null, ct);
             run.PullRequestBody = newBody;
 
             _logger.Information("Appended feedback link to PR #{PrNumber} for run {RunId}", run.PullRequestNumber, run.RunId);
