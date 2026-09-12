@@ -249,7 +249,7 @@ public class PullRequestFinalizationMetricsTests : IDisposable
         agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
 
-        await _sut.CollectFeedbackAsync(run, agentProvider.Object, feedbackService, historyService.Object, _ => { }, CancellationToken.None);
+        await _sut.CollectFeedbackAsync(run, agentProvider.Object, feedbackService, historyService.Object, _ => { }, CancellationToken.None, new PipelineConfiguration());
 
         _histograms.Should().Contain(h =>
             h.Name == "pipeline.step.duration"
@@ -275,7 +275,7 @@ public class PullRequestFinalizationMetricsTests : IDisposable
         agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
             .ThrowsAsync(new InvalidOperationException("feedback agent failed"));
 
-        await _sut.CollectFeedbackAsync(run, agentProvider.Object, feedbackService, null, _ => { }, CancellationToken.None);
+        await _sut.CollectFeedbackAsync(run, agentProvider.Object, feedbackService, null, _ => { }, CancellationToken.None, new PipelineConfiguration());
 
         _histograms.Should().Contain(h =>
             h.Name == "pipeline.step.duration"
