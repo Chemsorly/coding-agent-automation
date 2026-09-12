@@ -150,24 +150,17 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
             {
                 if (!DateTimeOffset.TryParse(expiresAtStr, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var expiresAtParsed))
                 {
-                    // TODO [WARNING]: The raw expiresAtStr value is included in the log. If a misconfigured
-                    // provider accidentally stores a partial credential or sensitive string in the 'tokenExpiresAt'
-                    // field, it will appear in the log in plaintext. Consider logging only the string length and
-                    // first few characters rather than the full value. (Security review finding)
+                    var preview = expiresAtStr.Length > 8 ? expiresAtStr[..8] + "..." : expiresAtStr;
                     _logger.Warning(
-                        "Pre-vended token for job {JobId} (kind: {ProviderKind}) has a malformed 'tokenExpiresAt' value '{Value}'. " +
-                        "Cannot determine expiry — treating as expired to prevent stale-token use.",
-                        jobId, providerKind, expiresAtStr);
+                        "Pre-vended token for job {JobId} (kind: {ProviderKind}) has a malformed 'tokenExpiresAt' value " +
+                        "(len={Length}, prefix='{Prefix}'). Cannot determine expiry — treating as expired to prevent stale-token use.",
+                        jobId, providerKind, expiresAtStr.Length, preview);
                     throw new HubException(
                         $"Pre-vended token for job {jobId} (kind: {providerKind}) has a malformed 'tokenExpiresAt' value " +
                         "and cannot be validated. The agent must be re-dispatched with a valid provider configuration.");
                 }
 
-                // TODO [WARNING]: renewalBuffer is a local variable duplicating OrchestratorProxy.TokenRenewalBuffer (a static
-                // readonly field). These two values must stay in sync — extract them into a shared constant, e.g. in a
-                // TokenRefreshConstants class, to avoid silent skew between the agent proactive-renewal threshold and the
-                // server-side expiry check.
-                var renewalBuffer = TimeSpan.FromMinutes(5);
+                var renewalBuffer = TokenRefreshConstants.RenewalBuffer;
                 if (expiresAtParsed - DateTimeOffset.UtcNow <= renewalBuffer)
                 {
                     _logger.Warning(

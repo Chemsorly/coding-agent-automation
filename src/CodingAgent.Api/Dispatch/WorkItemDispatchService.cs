@@ -25,8 +25,10 @@ namespace CodingAgent.Api.Dispatch;
 /// <c>POST /api/work-items/{id}/priority</c> before the item is claimed.
 /// </para>
 /// <para>
-/// The label is already <c>agent:in-progress</c> when items reach this service — it was swapped
-/// by <c>DistributeAndFinalizeAsync</c> at enqueue time. No additional label swap is performed here.
+/// This service does NOT swap the issue label. While an item is Pending (queued) the issue stays
+/// <c>agent:next</c> (see the <c>DistributionResult.Queued</c> contract); it moves to
+/// <c>agent:in-progress</c> only when an agent actually picks up the run — in K8s dispatch mode that
+/// is <c>AgentHub.RegisterAgent</c>, when the agent connects reporting the run as its active job.
 /// </para>
 /// <para>
 /// <b>Multi-replica note:</b> all API replicas run this service simultaneously (via
@@ -127,8 +129,9 @@ internal sealed class WorkItemDispatchService : LeaderElectedPollingService
             },
             onDispatchSuccess: _ =>
             {
-                // Label is already agent:in-progress (swapped at enqueue time by
-                // DistributeAndFinalizeAsync). No label swap needed here.
+                // No label swap here. The issue stays agent:next until an agent actually picks up the
+                // run and registers (AgentHub.RegisterAgent swaps it to agent:in-progress). Creating
+                // the K8s Job does not by itself mean an agent has started working.
                 Log.Information(
                     "WorkItemDispatchService: K8s Job created for WorkItem {WorkItemId} (issue {IssueIdentifier})",
                     item.Id, item.IssueIdentifier);

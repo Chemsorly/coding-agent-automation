@@ -5,6 +5,7 @@ using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
+using Microsoft.Extensions.Hosting;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.AgentGateway;
@@ -20,6 +21,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     private readonly ILabelService _labelService;
     private readonly IHubIssueOperations _issueOps;
     private readonly IChangeNotifier _changeNotifier;
+    private readonly IHostApplicationLifetime _appLifetime;
     private readonly ILogger _logger;
 
     private readonly IJobCompletionStrategy _regularStrategy;
@@ -31,12 +33,14 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         ILabelService labelService,
         IHubIssueOperations issueOps,
         IChangeNotifier changeNotifier,
+        IHostApplicationLifetime appLifetime,
         ILogger logger)
     {
         _facade = facade;
         _labelService = labelService;
         _issueOps = issueOps;
         _changeNotifier = changeNotifier;
+        _appLifetime = appLifetime;
         _logger = logger;
 
         _regularStrategy = new RegularJobCompletionStrategy(facade, lifecycleManager, changeNotifier, logger);
@@ -170,7 +174,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         {
             _logger.Warning("JobRejected: swapping label to agent:error for issue {IssueIdentifier} (jobId={JobId}, retries exhausted)",
                 run.IssueIdentifier, jobId.Value);
-            await _issueOps.SwapLabelAsync(run, AgentLabels.Error);
+            await _issueOps.SwapLabelAsync(run, AgentLabels.Error, ct);
         }
         catch (Exception ex)
         {
@@ -241,7 +245,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // Consolidation runs skip bookkeeping — they have no associated issue labels or feedback comments.
         if (run is not null && run.IssueProviderConfigId != ConsolidationConstants.ProviderConfigId)
         {
-            await PostCompletionBookkeepingAsync(jobId, run, payload);
+            await PostCompletionBookkeepingAsync(jobId, run, payload, ct);
         }
     }
 
@@ -297,8 +301,19 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         }
     }
 
-    private async Task PostCompletionBookkeepingAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload)
+    private async Task PostCompletionBookkeepingAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload, CancellationToken ct)
     {
+        // Link the caller's token with the host's ApplicationStopping token.
+        // This ensures bookkeeping is aborted on graceful pod shutdown even when the hub
+        // calls in with CancellationToken.None (the caller-supplied token is not yet meaningful).
+        // TODO: When the hub call site passes Context.ConnectionAborted instead of CancellationToken.None,
+        // the ct leg of the linked source will become meaningful (connection-abort cancellation).
+        // Currently only _appLifetime.ApplicationStopping is an effective cancellation source here.
+        // Note: cts is disposed after PostCompletionBookkeepingAsync returns. Both awaited call sites
+        // (SwapLabelAsync and PostIssueFeedbackCommentAsync) pass cts.Token directly and do not store
+        // it beyond their own await scope, so disposal is safe in the current implementation.
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct, _appLifetime.ApplicationStopping);
+
         // Swap label based on final outcome (non-fatal).
         // The agent may also attempt a label swap via RequestLabelChange during its own
         // error handling, but that call can race with this handler (run already removed).
@@ -315,20 +330,37 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             _ => null
         };
 
-        if (label is not null)
+        try
         {
-            _logger.Information(
-                "Job {JobId} ReportJobCompleted swapping label to {Label} for issue {IssueIdentifier} (finalStep={FinalStep}, finalLabel={FinalLabel})",
-                jobId.Value, label, run.IssueIdentifier, payload.FinalStep, payload.FinalLabel ?? "null");
-            var swLabel = Stopwatch.StartNew();
-            await _issueOps.SwapLabelAsync(run, label);
-            _logger.Information("Job {JobId} SwapLabelAsync completed in {ElapsedMs}ms", jobId.Value, swLabel.ElapsedMilliseconds);
-        }
+            if (label is not null)
+            {
+                _logger.Information(
+                    "Job {JobId} ReportJobCompleted swapping label to {Label} for issue {IssueIdentifier} (finalStep={FinalStep}, finalLabel={FinalLabel})",
+                    jobId.Value, label, run.IssueIdentifier, payload.FinalStep, payload.FinalLabel ?? "null");
+                var swLabel = Stopwatch.StartNew();
+                await _issueOps.SwapLabelAsync(run, label, cts.Token);
+                _logger.Information("Job {JobId} SwapLabelAsync completed in {ElapsedMs}ms", jobId.Value, swLabel.ElapsedMilliseconds);
+            }
 
-        // Post issue feedback comment if present (non-fatal)
-        var swComment = Stopwatch.StartNew();
-        await _issueOps.PostIssueFeedbackCommentAsync(run);
-        _logger.Information("Job {JobId} PostIssueFeedbackCommentAsync completed in {ElapsedMs}ms", jobId.Value, swComment.ElapsedMilliseconds);
+            // Post issue feedback comment if present (non-fatal)
+            var swComment = Stopwatch.StartNew();
+            await _issueOps.PostIssueFeedbackCommentAsync(run, cts.Token);
+            _logger.Information("Job {JobId} PostIssueFeedbackCommentAsync completed in {ElapsedMs}ms", jobId.Value, swComment.ElapsedMilliseconds);
+        }
+        catch (OperationCanceledException)
+        {
+            // Graceful shutdown or connection abort — bookkeeping aborted cleanly.
+            // OrphanedLabelRecoveryService will correct any stuck agent:in-progress label
+            // on its next sweep (default interval: ~30 min).
+            // TODO: A feedback comment that was in-flight when cancellation occurred is permanently
+            // lost — there is no equivalent recovery mechanism for comments (unlike labels). If the
+            // label swap had not yet started, the comment is also skipped. Consider splitting the
+            // try block into two separate catches if feedback comment loss should be logged distinctly
+            // or if a retry strategy for comments is introduced.
+            _logger.Information(
+                "PostCompletionBookkeepingAsync cancelled for job {JobId} — OrphanedLabelRecoveryService will handle label cleanup",
+                jobId.Value);
+        }
     }
 
     /// <inheritdoc />

@@ -148,6 +148,11 @@ public class OrchestratorProxyTests
             // Return a different token on each call so we can verify which one was returned.
             var token = callCount == 1 ? "stale-tok" : "fresh-tok";
             var expiresAt = callCount == 1
+                // TODO [WARNING]: This literal (2 minutes) is not derived from TokenRefreshConstants.RenewalBuffer.
+                // If RenewalBuffer is reduced below 2 minutes the expiry will fall outside the buffer and
+                // this test will stop exercising the intended code path. Replace with
+                // DateTimeOffset.UtcNow.Add(TokenRefreshConstants.RenewalBuffer - TimeSpan.FromMinutes(1))
+                // to keep the boundary tight relative to the constant.
                 ? DateTimeOffset.UtcNow.AddMinutes(2)   // within 5-min buffer
                 : DateTimeOffset.UtcNow.AddMinutes(30); // well beyond buffer
             return Task.FromResult(new TokenRefreshResponse { Token = token, ExpiresAt = expiresAt });
