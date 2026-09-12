@@ -1115,7 +1115,12 @@ public sealed class AgentJobLifecycleServiceTests
 
         // Act: agent=null triggers the run-fallback path
         await _sut.HandleJobCompletedAsync(jobId, agent: null, MakePayload(), CancellationToken.None);
-        WaitForLoggerWarningContaining(_logger, "run fallback");
+        // Wait specifically for the faulted-task continuation warning (contains both "{Field}" and
+        // "run fallback") rather than the synchronous warning that also contains "run fallback" but
+        // is logged before the ContinueWith fires. Using the more-specific fragment prevents
+        // SpinWait from exiting prematurely on the synchronous warning, which caused a flaky
+        // failure on loaded CI hosts where 50 ms was insufficient for the continuation to run.
+        WaitForLoggerWarningContaining(_logger, "run fallback path");
 
         // Assert: a Warning is logged for the run-fallback activeJobId fault path
         _logger.Verify(
