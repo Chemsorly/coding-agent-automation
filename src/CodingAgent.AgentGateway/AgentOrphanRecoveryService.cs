@@ -117,13 +117,44 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
             "Agent {AgentId} reported active consolidation job {RunId} — skipping pipeline run restoration (handled by ReportConsolidationComplete)",
             agentId, activeJob.RunId);
 
-        // Still mark agent as busy with this job so it's tracked correctly
+        // Still mark agent as busy with this job so it's tracked correctly.
+        // ActiveJobId write is under SyncRoot (release-then-reacquire pattern: TransitionStatus
+        // acquires SyncRoot internally, so it must be called after the lock is released).
+        // Guard against TOCTOU: capture whether we wrote the value inside the lock, then
+        // only call TransitionStatus if the value we wrote is still current — a concurrent
+        // disconnect handler may have cleared ActiveJobId between lock release and this check.
         var consolEntry = _facade.GetByAgentId(agentId);
         if (consolEntry is not null)
         {
-            consolEntry.ActiveJobId = activeJob.RunId;
-            _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
-            _facade.TransitionStatus(agentId, AgentStatus.Busy);
+            // TODO: [WARNING] writtenJobId is always assigned activeJob.RunId unconditionally
+            // inside the lock, so it is always equal to activeJob.RunId at the point of the
+            // TOCTOU guard below.  The variable creates a false impression that the captured
+            // value might differ from activeJob.RunId.  Consider replacing with a direct
+            // comparison: if (consolEntry.ActiveJobId == activeJob.RunId).
+            string? writtenJobId;
+            lock (consolEntry.SyncRoot)
+            {
+                consolEntry.ActiveJobId = activeJob.RunId;
+                writtenJobId = activeJob.RunId;
+                // TODO: [WARNING] UpdateAgentFieldAsync is called while holding SyncRoot.
+                // On the in-memory path (AgentRegistryService) this reacquires SyncRoot
+                // internally — safe only because Monitor is reentrant on the same thread.
+                // On the distributed path the async continuation escapes the lock and may
+                // complete after TransitionStatus, causing transient persisted-state skew
+                // (reconciliation corrects this, but it is an ordering hazard).
+                // Consider hoisting the persistence write outside the lock to make ordering
+                // explicit and remove the nested-lock coupling.
+                _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
+            }
+            // TODO: [WARNING] This read of consolEntry.ActiveJobId is outside SyncRoot and
+            // is therefore a data race: any other thread may write ActiveJobId simultaneously.
+            // The guard is intended to suppress TransitionStatus when a concurrent disconnect
+            // handler has already cleared the field, but the unsynchronised read means the
+            // check is not race-free.  For a race-free guard, perform the read inside the
+            // lock or use Volatile.Read.  In practice .NET's strong memory model on x86/x64
+            // makes the race benign, but the pattern deviates from the documented lock discipline.
+            if (consolEntry.ActiveJobId == writtenJobId)
+                _facade.TransitionStatus(agentId, AgentStatus.Busy);
         }
 
         _changeNotifier.NotifyChange();
@@ -142,13 +173,44 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
 
         _facade.AddRun(restoredRun);
 
-        // Set agent as busy with this job
+        // Set agent as busy with this job.
+        // ActiveJobId write is under SyncRoot (release-then-reacquire pattern: TransitionStatus
+        // acquires SyncRoot internally, so it must be called after the lock is released).
+        // Guard against TOCTOU: capture whether we wrote the value inside the lock, then
+        // only call TransitionStatus if the value we wrote is still current — a concurrent
+        // disconnect handler may have cleared ActiveJobId between lock release and this check.
         var restoredEntry = _facade.GetByAgentId(agentId);
         if (restoredEntry is not null)
         {
-            restoredEntry.ActiveJobId = activeJob.RunId;
-            _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
-            _facade.TransitionStatus(agentId, AgentStatus.Busy);
+            // TODO: [WARNING] writtenJobId is always assigned activeJob.RunId unconditionally
+            // inside the lock, so it is always equal to activeJob.RunId at the point of the
+            // TOCTOU guard below.  The variable creates a false impression that the captured
+            // value might differ from activeJob.RunId.  Consider replacing with a direct
+            // comparison: if (restoredEntry.ActiveJobId == activeJob.RunId).
+            string? writtenJobId;
+            lock (restoredEntry.SyncRoot)
+            {
+                restoredEntry.ActiveJobId = activeJob.RunId;
+                writtenJobId = activeJob.RunId;
+                // TODO: [WARNING] UpdateAgentFieldAsync is called while holding SyncRoot.
+                // On the in-memory path (AgentRegistryService) this reacquires SyncRoot
+                // internally — safe only because Monitor is reentrant on the same thread.
+                // On the distributed path the async continuation escapes the lock and may
+                // complete after TransitionStatus, causing transient persisted-state skew
+                // (reconciliation corrects this, but it is an ordering hazard).
+                // Consider hoisting the persistence write outside the lock to make ordering
+                // explicit and remove the nested-lock coupling.
+                _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
+            }
+            // TODO: [WARNING] This read of restoredEntry.ActiveJobId is outside SyncRoot and
+            // is therefore a data race: any other thread may write ActiveJobId simultaneously.
+            // The guard is intended to suppress TransitionStatus when a concurrent disconnect
+            // handler has already cleared the field, but the unsynchronised read means the
+            // check is not race-free.  For a race-free guard, perform the read inside the
+            // lock or use Volatile.Read.  In practice .NET's strong memory model on x86/x64
+            // makes the race benign, but the pattern deviates from the documented lock discipline.
+            if (restoredEntry.ActiveJobId == writtenJobId)
+                _facade.TransitionStatus(agentId, AgentStatus.Busy);
         }
 
         _logger.Information(

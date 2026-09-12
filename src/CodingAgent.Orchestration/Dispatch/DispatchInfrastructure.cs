@@ -253,9 +253,24 @@ public class DispatchInfrastructure
                 : allComments;
         }
 
-        // Extract images from body + comments (mirrors FetchIssueStep pattern)
-        var imageExtractor = new IssueImageExtractor();
-        var images = imageExtractor.Extract(issueDetail.Description, issueComments, issueIdentifier, ImageSourceKind.Issue);
+        // Extract images from body + comments (mirrors FetchIssueStep pattern).
+        // Non-fatal: a malformed attachment must not permanently block dispatch.
+        IReadOnlyList<ImageReference> images = [];
+        try
+        {
+            images = ExtractImages(issueDetail.Description, issueComments, issueIdentifier);
+        }
+        catch (Exception ex)
+        {
+            // TODO: use injected ILogger instead of the global static Serilog.Log.Warning — the
+            // static call makes this untestable without swapping Log.Logger globally, and silently
+            // drops the warning in contexts where Log.Logger has not been configured. All other
+            // callers in this class accept ILogger as a parameter; align this catch block once
+            // BuildIssueContextAsync receives an ILogger parameter.
+            Serilog.Log.Warning(ex,
+                "BuildIssueContextAsync: image extraction failed for {IssueIdentifier} — continuing with empty image list",
+                issueIdentifier);
+        }
         issueDetail = new IssueDetail
         {
             Description = issueDetail.Description,
@@ -321,6 +336,19 @@ public class DispatchInfrastructure
         return new IssueContextResult(
             issueDetail, parsedIssue, issueComments,
             existingAnalysis, forceRefreshAnalysis, stalenessSignal, 0);
+    }
+
+    /// <summary>
+    /// Extracts image references from an issue body and its comments.
+    /// Virtual so that test subclasses can override it to simulate extraction failure
+    /// without requiring <see cref="IssueImageExtractor"/> to be mockable.
+    /// </summary>
+    protected virtual IReadOnlyList<ImageReference> ExtractImages(
+        string description,
+        IReadOnlyList<IssueComment> comments,
+        IssueIdentifier issueIdentifier)
+    {
+        return new IssueImageExtractor().Extract(description, comments, issueIdentifier, ImageSourceKind.Issue);
     }
 
     /// <summary>

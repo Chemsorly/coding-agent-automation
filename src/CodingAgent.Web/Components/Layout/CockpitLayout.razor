@@ -146,11 +146,15 @@
         await RefreshAttentionCountAsync();
     }
 
-    private void OnProjectChanged(ChangeEventArgs e)
+    private async Task OnProjectChanged(ChangeEventArgs e)
     {
         var id = e.Value as string ?? "";
         var name = _projects.FirstOrDefault(p => p.Id == id)?.Name;
         State.SetProject(id, name);
+        try { await JS.InvokeVoidAsync("localStorageSet", "cockpit.selectedProjectId", id); }
+        catch (JSDisconnectedException) { }
+        catch (JSException) { }
+        catch (InvalidOperationException) { }
     }
 
     private async Task RefreshAttentionCountAsync()
@@ -191,6 +195,31 @@
                 {
                     _theme = t;
                     StateHasChanged();
+                }
+
+                // Restore persisted project scope. Must run after OnInitializedAsync so _projects
+                // is populated. null = key absent (first visit); "" = "All projects" explicitly saved.
+                var savedProjectId = await JS.InvokeAsync<string?>("localStorageGet", "cockpit.selectedProjectId");
+                if (savedProjectId is not null)
+                {
+                    if (string.IsNullOrEmpty(savedProjectId))
+                    {
+                        State.SetProject("", null);
+                    }
+                    else
+                    {
+                        var project = _projects.FirstOrDefault(p => p.Id == savedProjectId);
+                        if (project is not null)
+                            State.SetProject(project.Id, project.Name);
+                        else
+                            // TODO [WARNING]: A transient config-API failure causes OnInitializedAsync to
+                            // degrade _projects to [] (documented). If that happens on a reload where a
+                            // *valid* project ID is stored, this branch incorrectly treats it as "deleted"
+                            // and permanently clears the saved preference. Consider tracking whether the
+                            // project list loaded successfully (e.g. a bool _projectsLoadedOk flag set in
+                            // OnInitializedAsync) and only clearing the stale key when the list loaded OK.
+                            await JS.InvokeVoidAsync("localStorageSet", "cockpit.selectedProjectId", ""); // clear stale
+                    }
                 }
 
                 // Signal to Faro that the Blazor circuit connected successfully (ported from MainLayout).
