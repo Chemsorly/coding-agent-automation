@@ -47,6 +47,7 @@ public static class AgentHubServiceCollectionExtensions
             sp.GetRequiredService<ILabelService>(),
             sp.GetRequiredService<IHubIssueOperations>(),
             sp.GetRequiredService<IChangeNotifier>(),
+            sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
             Log.Logger));
 
         services.AddSingleton<IAgentTokenRefreshService>(sp => new AgentTokenRefreshService(

@@ -99,6 +99,7 @@ public class ApplyProjectOverridesTests
         result.MaxConsolidationDispatchRetries.Should().Be(config.MaxConsolidationDispatchRetries);
         result.CiCancelledMoveMaxRetries.Should().Be(config.CiCancelledMoveMaxRetries);
         result.FeedbackTimeoutSeconds.Should().Be(config.FeedbackTimeoutSeconds);
+        result.MinIssueSlots.Should().Be(config.MinIssueSlots);
     }
 
     // ── Non-null fields → override global values ───────────────────────────────
@@ -355,6 +356,29 @@ public class ApplyProjectOverridesTests
         var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.BrainReadOnly.Should().BeTrue();
+    }
+
+    [Fact]
+    public void MinIssueSlots_NonNull_OverridesGlobal()
+    {
+        var config = TestPipelineConfig.Default() with { MinIssueSlots = 1 };
+        var project = TestPipelineConfig.WithProject() with { MinIssueSlots = 3 };
+
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
+
+        result.MinIssueSlots.Should().Be(3);
+    }
+
+    [Fact]
+    public void MinIssueSlots_NullProjectOverride_InheritsGlobalDefault()
+    {
+        var config = TestPipelineConfig.Default() with { MinIssueSlots = 2 };
+        // Project has MinIssueSlots = null — inherits global
+        var project = TestPipelineConfig.WithProject();
+
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
+
+        result.MinIssueSlots.Should().Be(2);
     }
 
     // ── CodeReview deep-merge semantics ──────────────────────────────────────────
