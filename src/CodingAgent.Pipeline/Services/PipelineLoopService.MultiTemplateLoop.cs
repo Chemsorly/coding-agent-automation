@@ -238,24 +238,10 @@ public sealed partial class PipelineLoopService
             // a provider whose poll data is unreliable. In practice failuresBefore is always built
             // from the same _templateStatuses snapshot before polling, so the two should always be
             // in sync — but this is not enforced by the type system.
-            if (templateStatuses is not null && templateStatuses.TryGetValue(template.Id, out var status))
-            {
-                if (status.RateLimitResetAt.HasValue)
-                    continue; // rate-limited during (or before) this cycle — fail open
+            if (IsSameEligibilityShouldSkip(template.Id, failuresBefore, templateStatuses))
+                continue;
 
-                if (failuresBefore is not null &&
-                    failuresBefore.TryGetValue(template.Id, out var before) &&
-                    status.ConsecutiveFailures > before)
-                    continue; // poll failed during this cycle — fail open
-            }
-
-            if (!result.TryGetValue(template.IssueProviderId, out var set))
-            {
-                set = new HashSet<string>(StringComparer.Ordinal);
-                result[template.IssueProviderId] = set;
-            }
-            foreach (var issue in issues)
-                set.Add(issue.Identifier);
+            AddToEligibilityMap(result, template.IssueProviderId, issues.Select(i => i.Identifier));
         }
         return result;
     }
@@ -304,26 +290,54 @@ public sealed partial class PipelineLoopService
             // increases and this guard fires too — which is redundant but harmless (still fail-open).
             // The XML doc comment for this guard should say "issue polling failed this cycle (PR polling
             // failure is already handled by the absent-key guard above)" rather than just "poll failed".
-            if (templateStatuses is not null && templateStatuses.TryGetValue(template.Id, out var status))
-            {
-                if (status.RateLimitResetAt.HasValue)
-                    continue; // rate-limited during (or before) this cycle — fail open
+            if (IsSameEligibilityShouldSkip(template.Id, failuresBefore, templateStatuses))
+                continue;
 
-                if (failuresBefore is not null &&
-                    failuresBefore.TryGetValue(template.Id, out var before) &&
-                    status.ConsecutiveFailures > before)
-                    continue; // poll failed during this cycle — fail open
-            }
-
-            if (!result.TryGetValue(template.IssueProviderId, out var set))
-            {
-                set = new HashSet<string>(StringComparer.Ordinal);
-                result[template.IssueProviderId] = set;
-            }
-            foreach (var pr in prs)
-                set.Add(pr.Identifier);
+            AddToEligibilityMap(result, template.IssueProviderId, prs.Select(pr => pr.Identifier));
         }
         return result;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when a template should be skipped from eligibility maps because
+    /// it was rate-limited or failed during the current cycle (poll data is unreliable).
+    /// Shared by <see cref="BuildEligibilityMap"/> and <see cref="BuildPrEligibilityMap"/>.
+    /// </summary>
+    private static bool IsSameEligibilityShouldSkip(
+        string templateId,
+        IReadOnlyDictionary<string, int>? failuresBefore,
+        IReadOnlyDictionary<string, ConfigStatusSnapshot>? templateStatuses)
+    {
+        if (templateStatuses is null || !templateStatuses.TryGetValue(templateId, out var status))
+            return false;
+
+        if (status.RateLimitResetAt.HasValue)
+            return true; // rate-limited during (or before) this cycle — fail open
+
+        if (failuresBefore is not null &&
+            failuresBefore.TryGetValue(templateId, out var before) &&
+            status.ConsecutiveFailures > before)
+            return true; // poll failed during this cycle — fail open
+
+        return false;
+    }
+
+    /// <summary>
+    /// Unions <paramref name="identifiers"/> into the provider-keyed set for <paramref name="providerId"/>.
+    /// Creates the set if it does not yet exist. Shared by build-eligibility-map methods.
+    /// </summary>
+    private static void AddToEligibilityMap(
+        Dictionary<string, HashSet<string>> result,
+        string providerId,
+        IEnumerable<string> identifiers)
+    {
+        if (!result.TryGetValue(providerId, out var set))
+        {
+            set = new HashSet<string>(StringComparer.Ordinal);
+            result[providerId] = set;
+        }
+        foreach (var id in identifiers)
+            set.Add(id);
     }
 
     /// <summary>
@@ -416,7 +430,7 @@ public sealed partial class PipelineLoopService
 
             _logger.Information(
                 "QueueSweep: cancelling WorkItem {WorkItemId} ({TaskType}) for {ItemKind} {IssueIdentifier} " +
-                "(provider {IssueProviderConfigId}) — {ItemKind} no longer eligible",
+                "(provider {IssueProviderConfigId}) — {ItemKind2} no longer eligible",
                 item.Id, item.TaskType, itemKind, item.IssueIdentifier, item.IssueProviderConfigId, itemKind);
 
             try
