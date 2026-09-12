@@ -68,7 +68,7 @@ public sealed class AgentHubIssueOpsPartialTests
             new CommentPayload { AnalysisMarkdown = "some text" });
 
         await act.Should().NotThrowAsync("unknown run must be silently ignored");
-        _issueOps.Verify(o => o.PostCommentViaIssueProviderAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never);
+        _issueOps.Verify(o => o.PostCommentViaIssueProviderAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── RequestPostComment — CommentType.Analysis ─────────────────────────
@@ -78,7 +78,7 @@ public sealed class AgentHubIssueOpsPartialTests
     {
         var run = CreateRun();
         _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(run);
-        _issueOps.Setup(o => o.PostCommentViaIssueProviderAsync(run, It.IsAny<string>()))
+        _issueOps.Setup(o => o.PostCommentViaIssueProviderAsync(run, It.IsAny<string>(), It.IsAny<CancellationToken>()))
                  .ReturnsAsync((string?)null);
 
         var hub = CreateHub();
@@ -87,7 +87,7 @@ public sealed class AgentHubIssueOpsPartialTests
             new CommentPayload { AnalysisMarkdown = "# Analysis\nContent here" });
 
         _issueOps.Verify(
-            o => o.PostCommentViaIssueProviderAsync(run, "# Analysis\nContent here"),
+            o => o.PostCommentViaIssueProviderAsync(run, "# Analysis\nContent here", It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -96,7 +96,7 @@ public sealed class AgentHubIssueOpsPartialTests
     {
         var run = CreateRun();
         _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(run);
-        _issueOps.Setup(o => o.PostCommentViaIssueProviderAsync(run, It.IsAny<string>()))
+        _issueOps.Setup(o => o.PostCommentViaIssueProviderAsync(run, It.IsAny<string>(), It.IsAny<CancellationToken>()))
                  .ReturnsAsync((string?)null);
 
         var hub = CreateHub();
@@ -105,7 +105,7 @@ public sealed class AgentHubIssueOpsPartialTests
             new CommentPayload { AnalysisMarkdown = null });
 
         _issueOps.Verify(
-            o => o.PostCommentViaIssueProviderAsync(run, string.Empty),
+            o => o.PostCommentViaIssueProviderAsync(run, string.Empty, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -118,7 +118,7 @@ public sealed class AgentHubIssueOpsPartialTests
         _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(run);
         _gateCommentFormatter.Setup(f => f.FormatGateComment(It.IsAny<string?>(), false))
                               .Returns("formatted-rejection");
-        _issueOps.Setup(o => o.PostCommentViaIssueProviderAsync(run, "formatted-rejection"))
+        _issueOps.Setup(o => o.PostCommentViaIssueProviderAsync(run, "formatted-rejection", It.IsAny<CancellationToken>()))
                  .ReturnsAsync((string?)null);
 
         var hub = CreateHub();
@@ -127,7 +127,7 @@ public sealed class AgentHubIssueOpsPartialTests
             new CommentPayload { AssessmentJson = "{}" });
 
         _gateCommentFormatter.Verify(f => f.FormatGateComment("{}", false), Times.Once);
-        _issueOps.Verify(o => o.PostCommentViaIssueProviderAsync(run, "formatted-rejection"), Times.Once);
+        _issueOps.Verify(o => o.PostCommentViaIssueProviderAsync(run, "formatted-rejection", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ── RequestPostComment — CommentType.GateWontDo ──────────────────────
@@ -139,7 +139,7 @@ public sealed class AgentHubIssueOpsPartialTests
         _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(run);
         _gateCommentFormatter.Setup(f => f.FormatGateComment(It.IsAny<string?>(), true))
                               .Returns("formatted-wontdo");
-        _issueOps.Setup(o => o.PostCommentViaIssueProviderAsync(run, "formatted-wontdo"))
+        _issueOps.Setup(o => o.PostCommentViaIssueProviderAsync(run, "formatted-wontdo", It.IsAny<CancellationToken>()))
                  .ReturnsAsync((string?)null);
 
         var hub = CreateHub();
@@ -148,7 +148,7 @@ public sealed class AgentHubIssueOpsPartialTests
             new CommentPayload { AssessmentJson = "{wont}" });
 
         _gateCommentFormatter.Verify(f => f.FormatGateComment("{wont}", true), Times.Once);
-        _issueOps.Verify(o => o.PostCommentViaIssueProviderAsync(run, "formatted-wontdo"), Times.Once);
+        _issueOps.Verify(o => o.PostCommentViaIssueProviderAsync(run, "formatted-wontdo", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ── RequestPostComment — unknown CommentType → silent return ──────────
@@ -165,7 +165,7 @@ public sealed class AgentHubIssueOpsPartialTests
             new CommentPayload());
 
         await act.Should().NotThrowAsync("unknown comment type must be silently ignored");
-        _issueOps.Verify(o => o.PostCommentViaIssueProviderAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never);
+        _issueOps.Verify(o => o.PostCommentViaIssueProviderAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -187,7 +187,7 @@ public sealed class AgentHubIssueOpsPartialTests
         var act = () => hub.RequestLabelChange(new JobId("ghost"), "agent:done");
 
         await act.Should().NotThrowAsync("unknown run must be silently ignored");
-        _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never);
+        _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── RequestLabelChange — invalid label → silent return ────────────────
@@ -202,7 +202,7 @@ public sealed class AgentHubIssueOpsPartialTests
         var act = () => hub.RequestLabelChange(new JobId("job-1"), "hacker:label");
 
         await act.Should().NotThrowAsync("invalid label must be silently rejected");
-        _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never);
+        _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── RequestLabelChange — gated label → silent return ─────────────────
@@ -217,7 +217,7 @@ public sealed class AgentHubIssueOpsPartialTests
         var act = () => hub.RequestLabelChange(new JobId("job-1"), AgentLabels.EpicApproved);
 
         await act.Should().NotThrowAsync("gated label must be silently rejected");
-        _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never);
+        _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── RequestLabelChange — valid, non-gated label → delegates to issueOps
@@ -227,13 +227,13 @@ public sealed class AgentHubIssueOpsPartialTests
     {
         var run = CreateRun();
         _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(run);
-        _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.Done))
+        _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.Done, It.IsAny<CancellationToken>()))
                  .Returns(Task.CompletedTask);
 
         var hub = CreateHub();
         await hub.RequestLabelChange(new JobId("job-1"), AgentLabels.Done);
 
-        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Done), Times.Once);
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Done, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

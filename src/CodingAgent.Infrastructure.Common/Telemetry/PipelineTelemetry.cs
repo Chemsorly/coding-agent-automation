@@ -151,6 +151,17 @@ public static class PipelineTelemetry
         "pipeline.housekeeping.branch_deleted", "{branch}",
         "Stale agent branches deleted (no open PR, inactive issue label)");
 
+    // Label swap metrics
+    // TODO: The unit string "{exhaustion}" is inconsistent with the "{item}", "{retry}", "{failure}", "{event}"
+    // convention used by every other counter in this file. UCUM annotation strings are free-form so this is not
+    // a runtime defect, but OTLP backends that normalise unit labels may render it differently from surrounding
+    // counters. Consider renaming to "{event}" or "{exhaustion_event}" to align with project conventions.
+    public static readonly Counter<long> LabelSwapRemoveExhausted = Meter.CreateCounter<long>(
+        "label_swap_remove_exhausted_total", "{exhaustion}",
+        "Count of remove-phase retry exhaustions in AgentLabelOperations.SwapAsync (throwOnRemoveExhaustion=false path). " +
+        "Indicates a dual-label state requiring operator attention. " +
+        "The identifier tag carries issue/PR identifiers (e.g. org/repo#123); cardinality is bounded in practice since the counter fires only on error paths.");
+
     // Queue sweep metrics
     public static readonly Counter<long> QueueSweepCancelled = Meter.CreateCounter<long>(
         "pipeline.queue_sweep.cancelled", "{item}", "WorkItems cancelled as stale by the queue sweep");

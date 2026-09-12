@@ -247,24 +247,19 @@ public sealed class PipelineSignalRReporter : IAsyncDisposable
         return metadata;
     }
 
-    // TODO: These helper methods use raw enum-ordinal comparisons (e.g. newStep > PipelineStep.CreatingBranch).
-    // This is the same class of bug fixed in TransitionToInternalAsync (issue #2229): if a PipelineStep with an
-    // out-of-order ordinal (like RunningEnvironmentSetup = 29) is the current step, these threshold guards yield
-    // wrong results. Replace all raw ordinal comparisons here with StepOrder.GetOrder calls to be consistent.
-    // Tracked as a follow-up to issue #2229.
     private static void AddBranchAndBaselineMetadata(PipelineRun run, PipelineStep newStep, Action<string, string?> add)
     {
-        if (newStep > PipelineStep.CreatingBranch && !string.IsNullOrEmpty(run.BranchName))
+        if (StepOrder.GetOrder(newStep) > StepOrder.GetOrder(PipelineStep.CreatingBranch) && !string.IsNullOrEmpty(run.BranchName))
             add("BranchName", run.BranchName);
-        if (newStep > PipelineStep.VerifyingBaseline && run.BaselineHealthPassed.HasValue)
+        if (StepOrder.GetOrder(newStep) > StepOrder.GetOrder(PipelineStep.VerifyingBaseline) && run.BaselineHealthPassed.HasValue)
             add("BaselineHealthPassed", run.BaselineHealthPassed.Value.ToString());
-        if (newStep > PipelineStep.AnalyzingCode && run.AnalysisSkipped)
+        if (StepOrder.GetOrder(newStep) > StepOrder.GetOrder(PipelineStep.AnalyzingCode) && run.AnalysisSkipped)
             add("AnalysisSkipped", "true");
     }
 
     private static void AddCodeChangeMetadata(PipelineRun run, PipelineStep newStep, Action<string, string?> add)
     {
-        if (newStep > PipelineStep.GeneratingCode && run.FilesChangedCount > 0)
+        if (StepOrder.GetOrder(newStep) > StepOrder.GetOrder(PipelineStep.GeneratingCode) && run.FilesChangedCount > 0)
         {
             add("FilesChangedCount", run.FilesChangedCount.ToString());
             add("LinesAdded", run.LinesAdded.ToString());
@@ -274,7 +269,11 @@ public sealed class PipelineSignalRReporter : IAsyncDisposable
 
     private static void AddCodeReviewMetadata(PipelineRun run, PipelineStep newStep, Action<string, string?> add)
     {
-        if (newStep >= PipelineStep.ReviewingCode)
+        // TODO: AddCodeReviewMetadata was converted to StepOrder.GetOrder in the same pass as the three
+        // methods named in issue #2460, but it was out of scope and has no RunningEnvironmentSetup-edge-case
+        // test. ReviewingCode has ordinal 9 and logical order 10 (they differ). Verify that no out-of-order
+        // step can fire at the ReviewingCode logical position, and add a regression test if needed.
+        if (StepOrder.GetOrder(newStep) >= StepOrder.GetOrder(PipelineStep.ReviewingCode))
         {
             if (run.CodeReviewIterationsTotal > 0)
                 add("CodeReviewIterationsTotal", run.CodeReviewIterationsTotal.ToString());
@@ -296,9 +295,9 @@ public sealed class PipelineSignalRReporter : IAsyncDisposable
 
     private static void AddDecompositionMetadata(PipelineRun run, PipelineStep newStep, Action<string, string?> add)
     {
-        if (newStep > PipelineStep.DownloadingOpenIssues && run.OpenIssuesDownloaded > 0)
+        if (StepOrder.GetOrder(newStep) > StepOrder.GetOrder(PipelineStep.DownloadingOpenIssues) && run.OpenIssuesDownloaded > 0)
             add("OpenIssuesDownloaded", run.OpenIssuesDownloaded.ToString());
-        if (newStep > PipelineStep.CreatingIssues && run.DecompositionSubIssuesAttempted > 0)
+        if (StepOrder.GetOrder(newStep) > StepOrder.GetOrder(PipelineStep.CreatingIssues) && run.DecompositionSubIssuesAttempted > 0)
         {
             add("DecompositionSubIssuesCreated", run.DecompositionSubIssuesCreated.ToString());
             add("DecompositionSubIssuesAttempted", run.DecompositionSubIssuesAttempted.ToString());
