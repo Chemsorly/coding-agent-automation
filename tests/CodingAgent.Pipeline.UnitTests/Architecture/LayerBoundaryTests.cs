@@ -510,7 +510,7 @@ public partial class LayerBoundaryTests
             // job-rejection path in AgentJobLifecycleService (two identical call sites)
             ["AgentJobLifecycleService.cs"] = new(StringComparer.Ordinal) { "agent.ActiveJobId = null;" },
             // consolidation-complete path in AgentHub.Consolidation
-            ["AgentHub.Consolidation.cs"]   = new(StringComparer.Ordinal) { "agent.ActiveJobId = null; // local snapshot update" },
+            ["AgentHub.Consolidation.cs"] = new(StringComparer.Ordinal) { "agent.ActiveJobId = null; // local snapshot update" },
             // duplicate local snapshot clear in HubConsolidationOperations
             ["HubConsolidationOperations.cs"] = new(StringComparer.Ordinal) { "agent.ActiveJobId = null;" },
         };
