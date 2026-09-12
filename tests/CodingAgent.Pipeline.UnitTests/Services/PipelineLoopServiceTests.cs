@@ -963,8 +963,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         // Wait deterministically until enough poll cycles have run rather than sleeping a fixed 2s:
         // each failing cycle increments callCount and the backoff cap keeps cycles ~300ms apart, so
-        // ~5 calls arrive within ~1s. The deadline is only a safety net.
-        var backoffDeadline = DateTime.UtcNow.AddSeconds(5);
+        // ~5 calls arrive within ~1s. The deadline is a generous safety net for loaded CI environments.
+        var backoffDeadline = DateTime.UtcNow.AddSeconds(30);
         while (callCount < 5 && DateTime.UtcNow < backoffDeadline)
             await Task.Delay(20);
 

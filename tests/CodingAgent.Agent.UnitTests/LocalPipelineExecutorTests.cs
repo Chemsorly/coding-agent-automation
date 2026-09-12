@@ -1396,6 +1396,77 @@ public class LocalPipelineExecutorTests : IDisposable
         metadata?.ContainsKey("TotalTokens").Should().NotBe(true);
     }
 
+    /// <summary>
+    /// Regression test for issue #2460.
+    /// RunningEnvironmentSetup has ordinal 29 but logical order 2, so it logically precedes
+    /// CreatingBranch (logical order 4). With the broken raw-ordinal comparison,
+    /// (int)29 > (int)3 = TRUE causes BranchName to be incorrectly included in metadata.
+    /// With the fix, StepOrder.GetOrder(2) > StepOrder.GetOrder(4) = FALSE — correctly excluded.
+    /// RetryCount=1 forces a non-null dictionary so the exclusion guard is actually exercised.
+    /// </summary>
+    [Fact]
+    public void BuildStepMetadata_RunningEnvironmentSetup_DoesNotIncludeBranchName_EvenWhenSet()
+    {
+        var run = CreateMinimalRun();
+        run.BranchName = "feature/test-branch";
+        run.RetryCount = 1; // forces non-null dictionary via AddCostAndRetryMetadata
+
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.RunningEnvironmentSetup);
+
+        // BranchName must not appear — RunningEnvironmentSetup (logical order 2) precedes
+        // CreatingBranch (logical order 4), so the branch hasn't been created yet.
+        metadata.Should().NotBeNull("RetryCount=1 must produce a non-null dictionary");
+        metadata!.ContainsKey("BranchName").Should().BeFalse(
+            "BranchName must not be included at RunningEnvironmentSetup (logical order 2 < CreatingBranch logical order 4)");
+    }
+
+    /// <summary>
+    /// Boundary test: at exactly CreatingBranch the comparison is strictly >, not >=,
+    /// so BranchName is not yet included (it's included from VerifyingBaseline onward).
+    /// Pins the correct operator choice and prevents a future > to >= drift.
+    /// RetryCount=1 forces a non-null dictionary so the exclusion guard is actually exercised.
+    /// </summary>
+    [Fact]
+    public void BuildStepMetadata_CreatingBranch_DoesNotIncludeBranchName()
+    {
+        var run = CreateMinimalRun();
+        run.BranchName = "feature/test-branch";
+        run.RetryCount = 1; // forces non-null dictionary via AddCostAndRetryMetadata
+
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.CreatingBranch);
+
+        // Strictly > threshold: at CreatingBranch itself (logical order 4 > 4 = FALSE) BranchName is excluded.
+        metadata.Should().NotBeNull("RetryCount=1 must produce a non-null dictionary");
+        metadata!.ContainsKey("BranchName").Should().BeFalse(
+            "BranchName is included only when newStep is strictly AFTER CreatingBranch (comparison is >, not >=)");
+    }
+
+    /// <summary>
+    /// Positive-case regression test for issue #2460.
+    /// Verifies that BranchName IS included in metadata when newStep is strictly after CreatingBranch
+    /// (e.g., VerifyingBaseline, logical order 5 > CreatingBranch logical order 4 = TRUE).
+    /// Together with BuildStepMetadata_RunningEnvironmentSetup_DoesNotIncludeBranchName_EvenWhenSet,
+    /// this pins both sides of the corrected StepOrder.GetOrder threshold behaviour.
+    /// </summary>
+    // TODO: This test is a near-duplicate of the pre-existing BuildStepMetadata_AfterCreatingBranch_IncludesBranchName
+    // (line ~1263): both use CreateMinimalRun, set BranchName, call BuildStepMetadata with VerifyingBaseline, and assert
+    // metadata["BranchName"]. Consider removing this test and relying on the pre-existing one, or replace it with a
+    // distinct scenario (e.g., a different step or additional data state) to provide unique coverage.
+    [Fact]
+    public void BuildStepMetadata_AfterCreatingBranch_IncludesBranchName_Regression2460()
+    {
+        var run = CreateMinimalRun();
+        run.BranchName = "feature/test-branch";
+
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.VerifyingBaseline);
+
+        // VerifyingBaseline has logical order 5 > CreatingBranch logical order 4 = TRUE.
+        // BranchName must be present in the metadata payload.
+        metadata.Should().NotBeNull("metadata must be produced at VerifyingBaseline");
+        metadata!["BranchName"].Should().Be("feature/test-branch",
+            "BranchName must be included when newStep is logically after CreatingBranch");
+    }
+
     private static PipelineRun CreateMinimalRun() => new()
     {
         RunId = "run-meta",
@@ -1408,6 +1479,12 @@ public class LocalPipelineExecutorTests : IDisposable
     };
 
     // ── TransitionToInternalAsync (PipelineSignalRReporter) ────────────
+
+    // TODO: AddCodeChangeMetadata and AddDecompositionMetadata received the same StepOrder.GetOrder fix
+    // (issue #2460) as AddBranchAndBaselineMetadata but have no corresponding RunningEnvironmentSetup
+    // regression tests. Add tests that set RunningEnvironmentSetup as newStep with RunningEnvironmentSetup
+    // ordinal (29) triggering the old raw-ordinal path, to ensure FilesChangedCount, OpenIssuesDownloaded,
+    // and DecompositionSubIssuesAttempted are NOT included before their respective logical thresholds.
 
     // TODO(#1776): Add test for PipelineSignalRReporter.ReportStepTransitionAsync — verify it updates
     // run.CurrentStep and swallows SignalR failures (awaited path used during PR creation).

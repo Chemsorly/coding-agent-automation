@@ -1,5 +1,8 @@
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Telemetry;
 using Serilog;
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 
 namespace CodingAgent.Pipeline.Services;
 
@@ -35,6 +38,12 @@ public static class AgentLabelOperations
     /// Set to true for strict callers (e.g. <c>SwapLabelStrictAsync</c>) that expect failure
     /// propagation. Best-effort callers should leave this as false.
     /// </param>
+    /// <param name="exhaustionCounter">
+    /// Optional: counter to increment when remove-phase retries are exhausted on the
+    /// <c>throwOnRemoveExhaustion=false</c> path. When null, falls back to
+    /// <see cref="PipelineTelemetry.LabelSwapRemoveExhausted"/>. Intended for unit-test
+    /// injection only — production callers should omit this parameter.
+    /// </param>
     public static async Task SwapAsync(
         Func<string, CancellationToken, Task> removeLabel,
         Func<string, CancellationToken, Task> addLabel,
@@ -43,9 +52,11 @@ public static class AgentLabelOperations
         string? expectedCurrentLabel = null,
         string? identifier = null,
         ILogger? logger = null,
-        bool throwOnRemoveExhaustion = false)
+        bool throwOnRemoveExhaustion = false,
+        Counter<long>? exhaustionCounter = null)
     {
         var effectiveLogger = logger ?? Logger;
+        var effectiveExhaustionCounter = exhaustionCounter ?? PipelineTelemetry.LabelSwapRemoveExhausted;
 
         // Validate the transition if the caller provides context about the current state.
         // This is observational only — invalid transitions log a warning but never block.
@@ -92,6 +103,16 @@ public static class AgentLabelOperations
 
                     if (throwOnRemoveExhaustion)
                         throw;
+                    else
+                    {
+                        // Increment only when the error is swallowed — the issue is now in a dual-label state.
+                        // When throwOnRemoveExhaustion=true the caller knows about the failure; no counter needed.
+                        effectiveExhaustionCounter.Add(1, new TagList
+                        {
+                            new("label", label),
+                            new("identifier", identifier ?? "unknown")
+                        });
+                    }
                 }
             }
         }
