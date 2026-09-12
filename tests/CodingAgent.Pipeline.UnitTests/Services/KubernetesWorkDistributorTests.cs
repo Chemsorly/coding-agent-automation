@@ -137,6 +137,52 @@ public sealed class KubernetesWorkDistributorTests
     }
 
     [Fact]
+    public async Task DistributeAsync_Consolidation_When422_ReturnsFailureWithPermanentTrue()
+    {
+        // 422 Unprocessable from DispatchAsync: no job template for the agent selector.
+        // This is a permanent configuration error — Permanent=true must be set so the caller
+        // (ConsolidationDispatcher) can cascade the run to Failed instead of leaving it Queued.
+        var request = MakeRequest(taskType: WorkItemTaskType.Consolidation);
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Unprocessable", null, System.Net.HttpStatusCode.UnprocessableEntity));
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse("422 is a permanent failure — no template exists for the selector");
+        result.Permanent.Should().BeTrue("422 means no job template — this cannot be resolved by retrying");
+        result.Queued.Should().BeFalse();
+        result.ErrorMessage.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task DistributeAsync_Consolidation_When409_ReturnsTransientFailureNotPermanent()
+    {
+        // 409 from DispatchAsync: concurrency limit reached — transient, retry on restart.
+        var request = MakeRequest(taskType: WorkItemTaskType.Consolidation);
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Conflict", null, System.Net.HttpStatusCode.Conflict));
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.Permanent.Should().BeFalse("409 (concurrency) is transient — keep run Queued for retry");
+    }
+
+    [Fact]
+    public async Task DistributeAsync_Consolidation_When503_ReturnsTransientFailureNotPermanent()
+    {
+        // 503 from DispatchAsync: PVC unavailable — transient, retry on restart.
+        var request = MakeRequest(taskType: WorkItemTaskType.Consolidation);
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Service Unavailable", null, System.Net.HttpStatusCode.ServiceUnavailable));
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.Permanent.Should().BeFalse("503 (PVC unavailable) is transient — keep run Queued for retry");
+    }
+
+    [Fact]
     public async Task DistributeAsync_NullRequest_Throws()
     {
         var act = () => _sut.DistributeAsync(null!, CancellationToken.None);

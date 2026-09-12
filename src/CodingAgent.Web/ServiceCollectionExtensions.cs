@@ -125,7 +125,18 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IWorkDistributor>(),
             sp.GetRequiredService<IAgentProfileStore>(),
             sp.GetRequiredService<IConsolidationWorkspaceManager>(),
-            sp.GetRequiredService<IPipelineConfigStore>()));
+            sp.GetRequiredService<IPipelineConfigStore>(),
+            sp.GetRequiredService<IConsolidationService>()));
+
+        // Bounded background retry sweep: periodically re-dispatches consolidation runs that
+        // remain Queued after a transient failure (409 concurrency / 503 PVC unavailable).
+        // Runs every 5 minutes. Permanently-failed runs (cascaded to Failed after a 422) are
+        // excluded because RehydrateQueuedRunsAsync only returns Status == Queued runs.
+        services.AddSingleton<ConsolidationRetryService>(sp => new ConsolidationRetryService(
+            sp.GetRequiredService<IConsolidationService>(),
+            sp.GetRequiredService<IConsolidationDispatcher>(),
+            Log.Logger));
+        services.AddHostedService(sp => sp.GetRequiredService<ConsolidationRetryService>());
 
         return services;
     }

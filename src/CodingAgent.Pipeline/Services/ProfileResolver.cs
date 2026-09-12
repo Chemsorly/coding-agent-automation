@@ -42,13 +42,31 @@ public sealed class ProfileResolver
     /// then by priority, then by Id for determinism.
     /// Returns <c>null</c> if no enabled profile covers all required labels.
     /// </summary>
+    /// <remarks>
+    /// An empty <paramref name="requiredLabels"/> is treated as "unresolvable" and returns
+    /// <c>null</c> rather than matching all profiles. The <see cref="LabelMatchStrategies.Superset"/>
+    /// strategy returns <c>true</c> for every profile when the target set is empty (vacuous truth),
+    /// which would silently select an arbitrary profile — typically the one with the most MatchLabels —
+    /// that may not have a matching job template. Callers that pass an empty required-labels list
+    /// are expected to apply a fallback (e.g. <c>DefaultRequiredAgentLabels</c>) after receiving
+    /// <c>null</c>.
+    /// </remarks>
     /// <param name="profiles">All available profiles to evaluate.</param>
-    /// <param name="requiredLabels">Labels that must ALL be present in the profile's MatchLabels.</param>
-    /// <returns>The best matching profile, or <c>null</c> if none cover all required labels.</returns>
+    /// <param name="requiredLabels">Labels that must ALL be present in the profile's MatchLabels.
+    /// An empty list returns <c>null</c> immediately (no arbitrary profile selection).</param>
+    /// <returns>The best matching profile, or <c>null</c> if none cover all required labels
+    /// or if <paramref name="requiredLabels"/> is empty.</returns>
     public static AgentProfile? ResolveByRequiredLabels(IReadOnlyList<AgentProfile> profiles, IReadOnlyList<string> requiredLabels)
     {
         ArgumentNullException.ThrowIfNull(profiles);
         ArgumentNullException.ThrowIfNull(requiredLabels);
+
+        // An empty required-labels set would match ALL profiles via the Superset strategy
+        // (vacuous truth: every label in the empty set is trivially covered). This leads to
+        // an arbitrary profile selection that is very likely to have no matching job template.
+        // Return null immediately so callers can apply the correct fallback.
+        if (requiredLabels.Count == 0)
+            return null;
 
         return LabelMatchResolver.Resolve(
             profiles,

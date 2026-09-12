@@ -216,10 +216,10 @@ public sealed class SynchronousDispatchEndpointTests
         statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
     }
 
-    // ── Acceptance Criterion: 409 when no template for selector ─────────────
+    // ── Acceptance Criterion: 422 when no template for selector ─────────────
 
     [Fact]
-    public async Task DispatchWorkItem_WhenNoTemplateForSelector_Returns409()
+    public async Task DispatchWorkItem_WhenNoTemplateForSelector_Returns422()
     {
         var dbFactory = CreateDbFactory();
         // Template only has "kiro,dotnet", not "opencode,java"
@@ -232,8 +232,11 @@ public sealed class SynchronousDispatchEndpointTests
         var result = await WorkItemEndpoints.DispatchWorkItem(
             request, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
 
-        // Assert: 409 (no template)
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>();
+        // Assert: 422 Unprocessable (permanent — no template for selector)
+        // 422 (not 409) is intentional: 409 is used for concurrency/idempotent conflicts,
+        // 422 is the correct status for a permanent configuration error that the caller
+        // (KubernetesWorkDistributor) must not retry as a transient failure.
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.UnprocessableEntity<string>>();
     }
 
     // ── Acceptance Criterion: PipelineRun registered in RunService ────────────

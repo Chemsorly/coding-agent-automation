@@ -693,9 +693,12 @@ public static class WorkItemEndpoints
     /// Returns:
     /// <list type="bullet">
     ///   <item>200 + WorkItemId — dispatch succeeded (K8s Job running, WorkItem=Dispatched)</item>
-    ///   <item>409 Conflict — concurrency limit reached for this selector</item>
-    ///   <item>503 Service Unavailable — no PVC available or K8s Job creation failed</item>
+    ///   <item>409 Conflict — concurrency limit reached for this selector (transient)</item>
+    ///   <item>422 Unprocessable Entity — no job template for the agent selector (permanent)</item>
+    ///   <item>503 Service Unavailable — no PVC available or K8s Job creation failed (transient)</item>
     /// </list>
+    /// Callers must distinguish 422 (permanent configuration error — cascade to Failed) from
+    /// 409/503 (transient capacity errors — keep as Queued and retry on next restart).
     /// </summary>
     internal static async Task<IResult> DispatchWorkItem(
         [FromBody] JobDistributionRequest request,
@@ -711,9 +714,15 @@ public static class WorkItemEndpoints
         var template = templateStore.Resolve(request.AgentSelector ?? "");
         if (template is null)
         {
-            Log.Warning("DispatchWorkItem: no job template for selector {Selector} — returning 409",
+            Log.Warning("DispatchWorkItem: no job template for selector {Selector} — returning 422",
                 request.AgentSelector);
-            return TypedResults.Conflict($"No job template for agent selector: {request.AgentSelector}");
+            // 422 Unprocessable: permanent configuration error — no job template exists for this
+            // agent selector. Unlike 409 (concurrency) and 503 (PVC unavailable) which are transient,
+            // this will never succeed without a configuration change.
+            // Callers (KubernetesWorkDistributor.DispatchSynchronouslyAsync) must treat 422 as a
+            // permanent failure and cascade the consolidation run to Failed rather than leaving it
+            // Queued for endless restart-rehydration retries.
+            return TypedResults.UnprocessableEntity($"No job template for agent selector: {request.AgentSelector}");
         }
 
         var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);

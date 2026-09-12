@@ -89,11 +89,23 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
             return new DistributionResult(true, workItemId.ToString(), null, Queued: false);
         }
         catch (HttpRequestException ex) when (
+            ex.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity)
+        {
+            // 422 Unprocessable: permanent configuration error — no job template exists for
+            // the agent selector. This will never succeed without a configuration change.
+            // Propagate Permanent=true so ConsolidationDispatcher can cascade to Failed
+            // (surfaces in Attention) rather than leaving the run stuck as Queued forever.
+            _logger.LogWarning(
+                "Dispatch endpoint returned 422 Unprocessable for consolidation {IssueIdentifier} — no job template for selector (permanent failure): {Message}",
+                request.IssueIdentifier, ex.Message);
+            return new DistributionResult(false, null, $"No job template for agent selector (permanent): {ex.Message}", Permanent: true);
+        }
+        catch (HttpRequestException ex) when (
             ex.StatusCode == System.Net.HttpStatusCode.Conflict ||
             ex.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
         {
             _logger.LogInformation(
-                "Dispatch endpoint returned {StatusCode} for consolidation {IssueIdentifier} — no capacity",
+                "Dispatch endpoint returned {StatusCode} for consolidation {IssueIdentifier} — no capacity (transient)",
                 ex.StatusCode, request.IssueIdentifier);
             return new DistributionResult(false, null, $"No capacity ({ex.StatusCode}): {ex.Message}");
         }

@@ -124,6 +124,65 @@ public class ProfileResolverPropertyTests
         result.Should().NotBeNull("profile should match when labels differ only in case");
         result!.Id.Should().Be("case-test");
     }
+
+    // ── ResolveByRequiredLabels ────────────────────────────────────────────
+
+    /// <summary>
+    /// ResolveByRequiredLabels with an empty required-labels list must return null,
+    /// not an arbitrary profile selected via vacuous Superset truth.
+    /// Without this guard, an empty required-labels set would match ALL profiles and
+    /// silently select one (typically the profile with the most MatchLabels) that may
+    /// have no corresponding job template, causing consolidation runs to get stuck
+    /// permanently as Queued.
+    /// </summary>
+    [Fact]
+    public void ResolveByRequiredLabels_EmptyRequiredLabels_ReturnsNull()
+    {
+        var profiles = new[]
+        {
+            new AgentProfile { Id = "p1", DisplayName = "Kiro Dotnet", Enabled = true, Priority = 0, MatchLabels = ["kiro", "dotnet", "dotnet10"], AgentProviderConfigId = "prov-1" },
+            new AgentProfile { Id = "p2", DisplayName = "Kiro Python", Enabled = true, Priority = 0, MatchLabels = ["kiro", "python", "python312"], AgentProviderConfigId = "prov-2" },
+        };
+
+        var result = ProfileResolver.ResolveByRequiredLabels(profiles, []);
+
+        result.Should().BeNull("empty required-labels must not match any profile — callers must apply a fallback");
+    }
+
+    /// <summary>
+    /// ResolveByRequiredLabels with a non-empty required-labels list that matches a profile
+    /// must still return that profile (regression guard: fix must not break the normal path).
+    /// </summary>
+    [Fact]
+    public void ResolveByRequiredLabels_NonEmptyRequiredLabels_ReturnsMatchingProfile()
+    {
+        var profiles = new[]
+        {
+            new AgentProfile { Id = "p-dotnet", DisplayName = "Kiro Dotnet", Enabled = true, Priority = 0, MatchLabels = ["kiro", "dotnet", "dotnet10"], AgentProviderConfigId = "prov-1" },
+            new AgentProfile { Id = "p-python", DisplayName = "Kiro Python", Enabled = true, Priority = 0, MatchLabels = ["kiro", "python", "python312"], AgentProviderConfigId = "prov-2" },
+        };
+
+        var result = ProfileResolver.ResolveByRequiredLabels(profiles, ["kiro", "dotnet"]);
+
+        result.Should().NotBeNull("a non-empty required-labels list that is a subset of a profile's MatchLabels must match");
+        result!.Id.Should().Be("p-dotnet");
+    }
+
+    /// <summary>
+    /// ResolveByRequiredLabels with required-labels that no profile covers must return null.
+    /// </summary>
+    [Fact]
+    public void ResolveByRequiredLabels_NoMatchingProfile_ReturnsNull()
+    {
+        var profiles = new[]
+        {
+            new AgentProfile { Id = "p1", DisplayName = "Kiro Dotnet", Enabled = true, Priority = 0, MatchLabels = ["kiro", "dotnet"], AgentProviderConfigId = "prov-1" },
+        };
+
+        var result = ProfileResolver.ResolveByRequiredLabels(profiles, ["kiro", "java"]);
+
+        result.Should().BeNull("no profile covers the required java label");
+    }
 }
 
 // --- Wrapper types for FsCheck ---

@@ -16,12 +16,14 @@ public sealed class ConsolidationDispatcherTests
     private readonly Mock<IAgentProfileStore> _profileStore = new();
     private readonly Mock<IConsolidationWorkspaceManager> _workspaceManager = new();
     private readonly Mock<IPipelineConfigStore> _configStore = new();
+    private readonly Mock<IConsolidationService> _consolidationService = new();
 
     private ConsolidationDispatcher CreateSut() => new(
         _workDistributor.Object,
         _profileStore.Object,
         _workspaceManager.Object,
-        _configStore.Object);
+        _configStore.Object,
+        _consolidationService.Object);
 
     private void SetupDefaults()
     {
@@ -283,14 +285,16 @@ public sealed class ConsolidationDispatcherTests
 
     /// <summary>
     /// When QueuedRequiredLabels is null and DefaultRequiredAgentLabels is not configured,
-    /// the dispatcher falls back to the first enabled profile's MatchLabels.
+    /// the dispatcher falls back to an empty selector (not an arbitrary profile's labels),
+    /// and the distributor call is still made. The empty selector will result in a 422
+    /// (permanent) from the API, which cascades the run to Failed.
     /// </summary>
     [Fact]
-    public async Task DispatchRunAsync_NullRequiredLabels_NoDefault_FallsBackToFirstProfile()
+    public async Task DispatchRunAsync_NullRequiredLabels_NoDefault_DispatchesWithEmptySelector()
     {
         _configStore
             .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration());
+            .ReturnsAsync(new PipelineConfiguration()); // DefaultRequiredAgentLabels = null
 
         var profile = new AgentProfile
         {
@@ -313,7 +317,12 @@ public sealed class ConsolidationDispatcherTests
         _workDistributor
             .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .Callback<JobDistributionRequest, CancellationToken>((r, _) => captured = r)
-            .ReturnsAsync(new DistributionResult(true, null, null));
+            // Simulate permanent failure: no job template for empty selector
+            .ReturnsAsync(new DistributionResult(false, null, "No job template for agent selector (permanent): ...", Permanent: true));
+
+        _consolidationService
+            .Setup(s => s.UpdateRunAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()))
+            .Returns(Task.CompletedTask);
 
         var run = new ConsolidationRun
         {
@@ -327,9 +336,23 @@ public sealed class ConsolidationDispatcherTests
         var sut = CreateSut();
         await sut.DispatchRunAsync(run, CancellationToken.None);
 
+        // DistributeAsync is called (with empty selector), permanent failure cascades to Failed
         Assert.NotNull(captured);
-        Assert.Equal(AgentSelectorKey.From(profile.MatchLabels), captured!.AgentSelector);
-        Assert.NotEmpty(captured.AgentSelector);
+        Assert.Equal("", captured!.AgentSelector);
+        _workDistributor.Verify(
+            d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+        // Verify that the permanent-failure cascade fires: UpdateRunAsync must be called with
+        // Failed status so the run surfaces in Attention rather than staying stuck as Queued.
+        _consolidationService.Verify(
+            s => s.UpdateRunAsync(
+                It.IsAny<RunId>(),
+                ConsolidationRunStatus.Failed,
+                It.Is<string?>(m => m != null && m.Contains("permanent")),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<long>()),
+            Times.Once,
+            "Null labels + no default config must cascade to Failed via permanent-failure branch");
     }
 
     /// <summary>
@@ -425,5 +448,124 @@ public sealed class ConsolidationDispatcherTests
         Assert.NotNull(captured);
         // Profile's full MatchLabels (superset of default) should be used
         Assert.Equal(AgentSelectorKey.From(matchingProfile.MatchLabels), captured!.AgentSelector);
+    }
+
+    // ── Permanent failure cascade ─────────────────────────────────────────
+
+    /// <summary>
+    /// When DistributeAsync returns Permanent=true, the run must be cascaded to Failed.
+    /// This covers the case where the agent selector has no matching job template (permanent
+    /// configuration error) — the run must not stay Queued forever.
+    /// </summary>
+    [Fact]
+    public async Task DispatchRunAsync_PermanentFailure_CascadesToFailed()
+    {
+        SetupDefaults();
+        _workDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(false, null, "No job template for agent selector (permanent): kiro,python,python312", Permanent: true));
+
+        _consolidationService
+            .Setup(s => s.UpdateRunAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()))
+            .Returns(Task.CompletedTask);
+
+        var runId = Guid.NewGuid().ToString();
+        var run = new ConsolidationRun
+        {
+            RunId = runId,
+            Type = ConsolidationRunType.BrainConsolidation,
+            Status = ConsolidationRunStatus.Queued,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            QueuedRequiredLabels = ["kiro", "python", "python312"]
+        };
+
+        var sut = CreateSut();
+        // Must not throw — cascade is best-effort
+        await sut.DispatchRunAsync(run, CancellationToken.None);
+
+        // UpdateRunAsync must be called with Failed status to surface the run in Attention
+        // TODO [WARNING]: The 0L row-version argument below pins an implementation detail rather than
+        // the observable contract. If production code ever passes run.RowVersion here, this verify
+        // would pass with the wrong value (both would be 0 by default). Replace 0L with
+        // It.IsAny<long>() and rely on the status and error message assertions for contract coverage.
+        // See: .agent/review-findings-testqualityreviewer.md
+        _consolidationService.Verify(
+            s => s.UpdateRunAsync(
+                (RunId)runId,
+                ConsolidationRunStatus.Failed,
+                It.Is<string?>(m => m != null && m.Contains("permanent")),
+                It.IsAny<CancellationToken>(),
+                0L),
+            Times.Once,
+            "Permanent dispatch failure must cascade the run to Failed so it surfaces in Attention");
+    }
+
+    /// <summary>
+    /// When DistributeAsync returns Permanent=false (transient failure),
+    /// the run must NOT be cascaded to Failed — it stays Queued for rehydration retry.
+    /// </summary>
+    [Fact]
+    public async Task DispatchRunAsync_TransientFailure_DoesNotCascadeToFailed()
+    {
+        SetupDefaults();
+        _workDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(false, null, "No capacity (409): concurrency limit", Permanent: false));
+
+        _consolidationService
+            // TODO [WARNING]: This mock setup on UpdateRunAsync is unnecessary for a Times.Never assertion —
+            // the setup is never triggered, but its presence with It.IsAny matchers masks the intent.
+            // Remove it (or use a strict mock) so that any unexpected UpdateRunAsync call produces a more
+            // diagnostic failure rather than silently succeeding before the Times.Never verify catches it.
+            // See: .agent/review-findings-testqualityreviewer.md
+            .Setup(s => s.UpdateRunAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()))
+            .Returns(Task.CompletedTask);
+
+        var run = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.RefactoringDetection,
+            Status = ConsolidationRunStatus.Queued,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            QueuedRequiredLabels = ["kiro", "dotnet", "dotnet10"]
+        };
+
+        var sut = CreateSut();
+        await sut.DispatchRunAsync(run, CancellationToken.None);
+
+        // UpdateRunAsync must NOT be called — run stays Queued
+        _consolidationService.Verify(
+            s => s.UpdateRunAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()),
+            Times.Never,
+            "Transient dispatch failure must not cascade to Failed — run stays Queued for rehydration");
+    }
+
+    /// <summary>
+    /// When cascading a permanent failure, if UpdateRunAsync itself throws, the error must
+    /// be swallowed — the outer dispatch method must not propagate it to the caller.
+    /// </summary>
+    [Fact]
+    public async Task DispatchRunAsync_PermanentFailure_UpdateRunThrows_DoesNotPropagate()
+    {
+        SetupDefaults();
+        _workDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(false, null, "No job template", Permanent: true));
+
+        _consolidationService
+            .Setup(s => s.UpdateRunAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()))
+            .ThrowsAsync(new InvalidOperationException("Store unavailable"));
+
+        var run = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.BrainConsolidation,
+            Status = ConsolidationRunStatus.Queued,
+            StartedAtUtc = DateTimeOffset.UtcNow
+        };
+
+        var sut = CreateSut();
+        // Must complete without throwing even when UpdateRunAsync throws
+        await sut.DispatchRunAsync(run, CancellationToken.None);
     }
 }

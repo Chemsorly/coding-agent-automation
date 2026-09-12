@@ -124,7 +124,33 @@ public class AssignmentEnricher
         // NOTE: [WARNING] ProfileResolver.ResolveByRequiredLabels is called as a static method, but
         // ProfileResolver is registered as a singleton in the DI container. If the instance ever
         // gains injected state or config, this static call will silently bypass it.
-        var profile = ProfileResolver.ResolveByRequiredLabels(profiles, selectorLabels);
+        //
+        // When selectorLabels is empty, ResolveByRequiredLabels normally returns null to prevent
+        // the dispatch path from selecting an arbitrary profile (see ProfileResolver remarks). In
+        // the assignment-enrichment path, however, an empty selector is a valid catch-all: the job
+        // was already routed and any enabled profile is acceptable. We resolve directly via
+        // LabelMatchResolver with the Superset strategy, which returns true for any profile when
+        // the required-labels set is empty (vacuous truth), picking the highest-priority enabled
+        // profile.
+        AgentProfile? profile;
+        if (selectorLabels.Count == 0)
+        {
+            profile = LabelMatchResolver.Resolve(
+                profiles,
+                selectorLabels,
+                enabledPredicate: p => p.Enabled,
+                labelSelector: p => p.MatchLabels,
+                matchStrategy: LabelMatchStrategies.Superset,
+                orderBy: items => items
+                    .OrderByDescending(p => p.MatchLabels.Count)
+                    .ThenByDescending(p => p.Priority)
+                    .ThenBy(p => p.Id, StringComparer.Ordinal))
+                .FirstOrDefault();
+        }
+        else
+        {
+            profile = ProfileResolver.ResolveByRequiredLabels(profiles, selectorLabels);
+        }
 
         if (profile is null)
         {
