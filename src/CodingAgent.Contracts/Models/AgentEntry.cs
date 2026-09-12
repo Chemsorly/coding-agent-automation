@@ -63,7 +63,7 @@ public sealed record AgentEntry
     public DateTimeOffset? DisconnectedAt { get; set; }
 
     /// <summary>
-    /// When true, the agent is excluded from job selection (SelectAgent skips it)
+    /// When true, the agent is excluded from job selection
     /// while allowing it to finish its current job. In-memory only, not serialized.
     /// Resets to false on agent re-registration after orchestrator restart.
     /// </summary>
