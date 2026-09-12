@@ -603,6 +603,16 @@ public sealed record PipelineConfiguration
     [Key(82)]
     public int HousekeepingTriggerCooldownMinutes { get; init; } = 25;
 
+    /// <summary>
+    /// Maximum time in minutes a PR may hold the in-flight housekeeping slot before being evicted
+    /// regardless of mergeability status (Blocked/Unknown). Prevents a single stuck PR from
+    /// monopolising the sole slot and starving all other behind PRs indefinitely.
+    /// Set to 0 to disable time-based eviction (slot held until mergeability resolves naturally).
+    /// Default: 0 (disabled — preserves previous behaviour; set to e.g. 120 to enable).
+    /// </summary>
+    [Key(84)]
+    public int HousekeepingMaxSlotAgeMinutes { get; init; } = 0;
+
     // ── Consolidation dispatch settings ──────────────────────────────────────
 
     /// <summary>

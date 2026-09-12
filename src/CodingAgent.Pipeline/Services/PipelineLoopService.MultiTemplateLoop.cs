@@ -42,8 +42,49 @@ public sealed partial class PipelineLoopService
                 break;
             }
 
-            if (!await ExecuteCycleAsync(snapshot, stoppingToken, ct))
+            try
+            {
+                if (!await ExecuteCycleAsync(snapshot, stoppingToken, ct))
+                    break;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Host stopping or leadership lost — propagate so the outer catch chain handles it cleanly.
                 break;
+            }
+            catch (Exception ex) when (IsTransientApiFailure(ex))
+            {
+                // A transient API/connectivity failure escaped ExecuteCycleAsync (e.g. a
+                // BrokenCircuitException from an unguarded call inside DispatchFairRoundRobinAsync,
+                // or a TimeoutRejectedException from housekeeping's IsPullRequestBehindBaseAsync
+                // before the per-PR guard was introduced). Retry in place after a short backoff so
+                // the loop stays alive. The explicit delay is REQUIRED: BrokenCircuitException
+                // throws instantly (no I/O) and without it we would hot-loop at 100% CPU.
+                // Non-transient exceptions (InvalidOperationException, NullReferenceException, etc.)
+                // are intentionally NOT caught here — they bubble to ExecuteAsync's fail-fast catch,
+                // preserving the deliberate fail-fast design for genuine bugs.
+                // TODO: retrying the entire cycle from the top means dispatch (DispatchFairRoundRobinAsync,
+                //   which increments ProcessedCount) runs again ~5s after a failure that occurred in
+                //   a later phase (e.g. housekeeping). If an issue was dispatched in the partial cycle
+                //   (a run created, ProcessedCount+1) before the exception, the retry re-polls and
+                //   may attempt to dispatch the same issue again. Double-dispatch is mitigated by two
+                //   dedup layers re-evaluated on retry: IsIssueBeingProcessed (live orchestration state)
+                //   and a freshly-reloaded ActiveIssueIdentifiers snapshot. The residual risk is a
+                //   narrow window between run creation and that run becoming visible to those checks,
+                //   and inflated ProcessedCount/FailedCount for the abandoned partial cycle regardless.
+                //   Confirm the dedup window is fully closed before removing this note.
+                // TODO: TaskCanceledException is included in IsTransientApiFailure and reaches this
+                //   handler when ct.IsCancellationRequested is false (i.e. the preceding OCE catch
+                //   did not fire). A TaskCanceledException thrown by a provider call that uses its
+                //   own independent private timeout CancellationTokenSource (not ct) will have
+                //   ct.IsCancellationRequested==false and be silently retried here as a transient
+                //   failure rather than propagated. This could mask genuine internal timeouts as
+                //   "transient API noise". If provider implementations begin using independent
+                //   timeout tokens, consider tightening this catch to exclude TaskCanceledException
+                //   unless it is wrapped in a TimeoutRejectedException by Polly.
+                _logger.Warning(ex, "Pipeline loop: transient API failure mid-cycle — backing off and retrying");
+                await DelayOrStop(TimeSpan.FromSeconds(5), ct);
+            }
         }
     }
 
@@ -368,6 +409,7 @@ public sealed partial class PipelineLoopService
                 template.HousekeepingBranchCleanupEnabled,
                 snapshot.Config.HousekeepingBranchCleanupIntervalMinutes,
                 snapshot.Config.HousekeepingTriggerCooldownMinutes,
+                snapshot.Config.HousekeepingMaxSlotAgeMinutes,
                 ct);
         }
     }
