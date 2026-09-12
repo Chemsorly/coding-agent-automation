@@ -37,8 +37,8 @@ public sealed class PipelineRunEndpointTests
     /// must receive 403 Forbidden on every method — GET list, GET by id, and POST.
     /// </summary>
     [Theory]
-    [InlineData("GET",  "/api/pipeline-runs")]
-    [InlineData("GET",  "/api/pipeline-runs/00000000-0000-0000-0000-000000000001")]
+    [InlineData("GET", "/api/pipeline-runs")]
+    [InlineData("GET", "/api/pipeline-runs/00000000-0000-0000-0000-000000000001")]
     [InlineData("POST", "/api/pipeline-runs")]
     public async Task PipelineRunEndpoints_AgentDerivedKey_ReturnsForbidden(string method, string path)
     {
