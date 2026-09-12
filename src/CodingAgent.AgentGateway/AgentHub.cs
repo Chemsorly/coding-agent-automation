@@ -193,6 +193,9 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// Swaps the agent label on the entity (issue or PR) using the shared issue operations service.
     /// The target entity kind is derived from <see cref="PipelineRun.LabelTargetKind"/> inside the service.
     /// </summary>
+    // TODO: Thread a meaningful CancellationToken (e.g. Context.ConnectionAborted) through these
+    // agent-initiated wrappers. Currently uses default (CancellationToken.None) — fix tracked as
+    // a follow-up to issue #2473 which addressed the completion-path bookkeeping token.
     private Task SwapLabelAsync(PipelineRun run, string newLabel)
         => _issueOps.SwapLabelAsync(run, newLabel);
 
@@ -200,6 +203,9 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// Posts a comment on the issue using the shared issue operations service.
     /// Returns the comment URL if available.
     /// </summary>
+    // TODO: Thread a meaningful CancellationToken (e.g. Context.ConnectionAborted) through these
+    // agent-initiated wrappers. Currently uses default (CancellationToken.None) — fix tracked as
+    // a follow-up to issue #2473 which addressed the completion-path bookkeeping token.
     private Task<string?> PostCommentViaIssueProviderAsync(PipelineRun run, string body)
         => _issueOps.PostCommentViaIssueProviderAsync(run, body);
 
