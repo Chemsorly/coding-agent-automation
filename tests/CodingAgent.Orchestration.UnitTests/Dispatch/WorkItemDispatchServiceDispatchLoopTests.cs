@@ -8,6 +8,7 @@ using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline;
+using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -393,16 +394,19 @@ public class WorkItemDispatchServiceDispatchLoopTests : IDisposable
         WorkItemTaskType taskType,
         string agentSelector = "kiro,dotnet",
         string issueProviderConfigId = "github",
+        string? issueIdentifier = null,
+        string? repoProviderConfigId = null,
         WorkItemStatus status = WorkItemStatus.Pending,
         DateTimeOffset? createdAt = null,
         int priorityWeight = 0,
         Guid? projectId = null)
     {
+        var resolvedIssueIdentifier = issueIdentifier ?? id.ToString();
         var payload = new JobDistributionRequest
         {
-            IssueIdentifier = id.ToString(),
+            IssueIdentifier = resolvedIssueIdentifier,
             IssueProviderConfigId = issueProviderConfigId,
-            RepoProviderConfigId = "",
+            RepoProviderConfigId = repoProviderConfigId ?? "",
             InitiatedBy = "test",
             TaskType = taskType,
             AgentSelector = agentSelector,
@@ -414,7 +418,7 @@ public class WorkItemDispatchServiceDispatchLoopTests : IDisposable
         db.WorkItems.Add(new WorkItemEntity
         {
             Id = id,
-            IssueIdentifier = id.ToString(),
+            IssueIdentifier = resolvedIssueIdentifier,
             IssueProviderConfigId = issueProviderConfigId,
             Status = status,
             AgentSelector = agentSelector,
@@ -426,6 +430,432 @@ public class WorkItemDispatchServiceDispatchLoopTests : IDisposable
             Payload = JsonSerializer.Serialize(payload, PipelineJsonOptions.Default)
         });
         await db.SaveChangesAsync();
+    }
+
+    // ── Pre-dispatch eligibility gate (CheckEligibilityAsync) ────────────
+
+    /// <summary>
+    /// A Pending Implementation WorkItem whose issue is closed is cancelled before any K8s Job
+    /// is created. The gate calls IsIssueClosedAsync via IIssueProvider.
+    /// </summary>
+    [Fact]
+    public async Task CheckEligibility_ImplementationItemWithClosedIssue_ReturnsCancellationReason()
+    {
+        var item = MakeProjection("issue-42", "ip-1", WorkItemTaskType.Implementation);
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.IsIssueClosedAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true); // closed
+
+        var mockProviderFactory = new Mock<IProviderFactory>();
+        mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var mockConfigStore = new Mock<IProviderConfigStore>();
+        mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("ip-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderConfig { Id = "ip-1", DisplayName = "GH", Kind = ProviderKind.Issue, ProviderType = "GitHub" });
+
+        var handler = CreateHandlerWithGate(mockProviderFactory.Object, mockConfigStore.Object);
+        var cache = new Dictionary<(string, string, WorkItemTaskType), bool?>();
+
+        var reason = await handler.CheckEligibilityAsync(item, cache, repoProviderConfigIdFromPayload: null, CancellationToken.None);
+
+        reason.Should().NotBeNull("a closed issue must produce a cancellation reason");
+        reason.Should().Contain("Issue", "reason must identify the issue as the cause");
+        cache.Should().ContainKey(("ip-1", "issue-42", WorkItemTaskType.Implementation))
+            .WhoseValue.Should().BeFalse("result must be cached as ineligible");
+    }
+
+    /// <summary>
+    /// A Pending Implementation WorkItem whose issue is still open is NOT cancelled.
+    /// </summary>
+    [Fact]
+    public async Task CheckEligibility_ImplementationItemWithOpenIssue_ReturnsNull()
+    {
+        var item = MakeProjection("issue-42", "ip-1", WorkItemTaskType.Implementation);
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.IsIssueClosedAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false); // open
+
+        var mockProviderFactory = new Mock<IProviderFactory>();
+        mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var mockConfigStore = new Mock<IProviderConfigStore>();
+        mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("ip-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderConfig { Id = "ip-1", DisplayName = "GH", Kind = ProviderKind.Issue, ProviderType = "GitHub" });
+
+        var handler = CreateHandlerWithGate(mockProviderFactory.Object, mockConfigStore.Object);
+        var cache = new Dictionary<(string, string, WorkItemTaskType), bool?>();
+
+        var reason = await handler.CheckEligibilityAsync(item, cache, repoProviderConfigIdFromPayload: null, CancellationToken.None);
+
+        reason.Should().BeNull("an open issue must not produce a cancellation reason");
+        cache.Should().ContainKey(("ip-1", "issue-42", WorkItemTaskType.Implementation))
+            .WhoseValue.Should().BeTrue("open result must be cached as eligible");
+    }
+
+    /// <summary>
+    /// A Pending Review WorkItem whose PR is closed is cancelled. Uses IPullRequestProvider
+    /// (via CreateRepositoryProvider), not IIssueProvider.
+    /// </summary>
+    [Fact]
+    public async Task CheckEligibility_ReviewItemWithClosedPr_ReturnsCancellationReason()
+    {
+        var item = MakeProjection("101", "ip-1", WorkItemTaskType.Review);
+
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider
+            .Setup(p => p.IsPullRequestClosedAsync(101, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true); // closed
+
+        var mockProviderFactory = new Mock<IProviderFactory>();
+        mockProviderFactory
+            .Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockRepoProvider.Object);
+
+        var mockConfigStore = new Mock<IProviderConfigStore>();
+        mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("rp-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderConfig { Id = "rp-1", DisplayName = "GH Repo", Kind = ProviderKind.Repository, ProviderType = "GitHub" });
+
+        var handler = CreateHandlerWithGate(mockProviderFactory.Object, mockConfigStore.Object);
+        var cache = new Dictionary<(string, string, WorkItemTaskType), bool?>();
+
+        var reason = await handler.CheckEligibilityAsync(item, cache, repoProviderConfigIdFromPayload: "rp-1", CancellationToken.None);
+
+        reason.Should().NotBeNull("a closed PR must produce a cancellation reason");
+        reason.Should().Contain("PR", "reason must identify the PR as the cause");
+        // Verify the gate used CreateRepositoryProvider, NOT CreateIssueProvider
+        mockProviderFactory.Verify(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()), Times.Never,
+            "Review items must use CreateRepositoryProvider, not CreateIssueProvider");
+        mockProviderFactory.Verify(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()), Times.Once);
+        // Review eligibility result must be cached under the Review task type key
+        cache.Should().ContainKey(("ip-1", "101", WorkItemTaskType.Review))
+            .WhoseValue.Should().BeFalse("closed PR result must be cached as ineligible");
+    }
+
+    /// <summary>
+    /// When two items share the same (provider, identifier) in the same cycle, the upstream
+    /// provider is called only once — the second call uses the cache.
+    /// </summary>
+    [Fact]
+    public async Task CheckEligibility_MultipleItemsSameProviderAndIdentifier_OnlyOneUpstreamCall()
+    {
+        var item1 = MakeProjection("issue-42", "ip-1", WorkItemTaskType.Implementation);
+        var item2 = MakeProjection("issue-42", "ip-1", WorkItemTaskType.Implementation);
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.IsIssueClosedAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false); // open
+
+        var mockProviderFactory = new Mock<IProviderFactory>();
+        mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var mockConfigStore = new Mock<IProviderConfigStore>();
+        mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("ip-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderConfig { Id = "ip-1", DisplayName = "GH", Kind = ProviderKind.Issue, ProviderType = "GitHub" });
+
+        var handler = CreateHandlerWithGate(mockProviderFactory.Object, mockConfigStore.Object);
+        var cache = new Dictionary<(string, string, WorkItemTaskType), bool?>();
+
+        await handler.CheckEligibilityAsync(item1, cache, repoProviderConfigIdFromPayload: null, CancellationToken.None);
+        await handler.CheckEligibilityAsync(item2, cache, repoProviderConfigIdFromPayload: null, CancellationToken.None);
+
+        mockIssueProvider.Verify(p => p.IsIssueClosedAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()),
+            Times.Once, "upstream provider must be called only once per (provider, identifier, taskType) per cycle");
+    }
+
+    /// <summary>
+    /// Review and Implementation items with the same numeric identifier under the same provider
+    /// do NOT collide in the cache — each uses its own eligibility method independently.
+    /// </summary>
+    [Fact]
+    public async Task CheckEligibility_ReviewAndImplementationSameIdentifier_DoNotCollideInCache()
+    {
+        // PR #42 is closed; issue #42 is open. Both share provider "ip-1" and identifier "42".
+        // Without TaskType in the cache key they would collide; with it they must not.
+        var reviewItem = MakeProjection("42", "ip-1", WorkItemTaskType.Review);
+        var implItem = MakeProjection("42", "ip-1", WorkItemTaskType.Implementation);
+
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider
+            .Setup(p => p.IsPullRequestClosedAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true); // PR #42 is closed
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.IsIssueClosedAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false); // issue #42 is open
+
+        var mockProviderFactory = new Mock<IProviderFactory>();
+        mockProviderFactory
+            .Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockRepoProvider.Object);
+        mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var mockConfigStore = new Mock<IProviderConfigStore>();
+        mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("rp-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderConfig { Id = "rp-1", DisplayName = "GH Repo", Kind = ProviderKind.Repository, ProviderType = "GitHub" });
+        mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("ip-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderConfig { Id = "ip-1", DisplayName = "GH", Kind = ProviderKind.Issue, ProviderType = "GitHub" });
+
+        var handler = CreateHandlerWithGate(mockProviderFactory.Object, mockConfigStore.Object);
+        var cache = new Dictionary<(string, string, WorkItemTaskType), bool?>();
+
+        // Check Review item first (PR #42 is closed → cancellation reason)
+        var reviewReason = await handler.CheckEligibilityAsync(
+            reviewItem, cache, repoProviderConfigIdFromPayload: "rp-1", CancellationToken.None);
+        // Then check Implementation item (issue #42 is open → null)
+        var implReason = await handler.CheckEligibilityAsync(
+            implItem, cache, repoProviderConfigIdFromPayload: null, CancellationToken.None);
+
+        reviewReason.Should().NotBeNull("PR #42 is closed — Review item must be cancelled");
+        reviewReason.Should().Contain("PR");
+        implReason.Should().BeNull("issue #42 is open — Implementation item must NOT be cancelled");
+
+        // Both upstream providers must have been called independently (no cross-type cache collision)
+        mockRepoProvider.Verify(p => p.IsPullRequestClosedAsync(42, It.IsAny<CancellationToken>()), Times.Once,
+            "Review item must have called IsPullRequestClosedAsync");
+        mockIssueProvider.Verify(p => p.IsIssueClosedAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()), Times.Once,
+            "Implementation item must have called IsIssueClosedAsync independently");
+
+        // Cache must contain two separate entries keyed by task type
+        cache.Should().ContainKey(("ip-1", "42", WorkItemTaskType.Review))
+            .WhoseValue.Should().BeFalse("Review result cached as ineligible");
+        cache.Should().ContainKey(("ip-1", "42", WorkItemTaskType.Implementation))
+            .WhoseValue.Should().BeTrue("Implementation result cached as eligible");
+    }
+
+    /// <summary>
+    /// When the eligibility check throws (network failure, rate limit, etc.), the gate fails
+    /// open: returns null (no cancellation) and does NOT cache as eligible or ineligible.
+    /// </summary>
+    [Fact]
+    public async Task CheckEligibility_WhenProviderThrows_FailsOpenAndDoesNotCache()
+    {
+        var item = MakeProjection("issue-42", "ip-1", WorkItemTaskType.Implementation);
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.IsIssueClosedAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("network error"));
+
+        var mockProviderFactory = new Mock<IProviderFactory>();
+        mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var mockConfigStore = new Mock<IProviderConfigStore>();
+        mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("ip-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderConfig { Id = "ip-1", DisplayName = "GH", Kind = ProviderKind.Issue, ProviderType = "GitHub" });
+
+        var handler = CreateHandlerWithGate(mockProviderFactory.Object, mockConfigStore.Object);
+        var cache = new Dictionary<(string, string, WorkItemTaskType), bool?>();
+
+        var reason = await handler.CheckEligibilityAsync(item, cache, repoProviderConfigIdFromPayload: null, CancellationToken.None);
+
+        reason.Should().BeNull("an eligibility check failure must fail open (no cancellation)");
+        // Cache entry must be null (inconclusive), not true or false
+        cache.Should().ContainKey(("ip-1", "issue-42", WorkItemTaskType.Implementation))
+            .WhoseValue.Should().BeNull("inconclusive result must be cached as null, not eligible/ineligible");
+    }
+
+    /// <summary>
+    /// When provider infrastructure is not wired (ProviderFactory = null), the gate
+    /// fails open immediately without calling any provider.
+    /// </summary>
+    [Fact]
+    public async Task CheckEligibility_WhenProviderFactoryIsNull_FailsOpen()
+    {
+        var item = MakeProjection("issue-42", "ip-1", WorkItemTaskType.Implementation);
+        // CreateHandler (no gate) — ProviderFactory and ProviderConfigStore are null
+        var handler = CreateHandler();
+        var cache = new Dictionary<(string, string, WorkItemTaskType), bool?>();
+
+        var reason = await handler.CheckEligibilityAsync(item, cache, repoProviderConfigIdFromPayload: null, CancellationToken.None);
+
+        reason.Should().BeNull("gate must fail open when ProviderFactory is null");
+        cache.Should().BeEmpty("no cache entry should be written when gate is skipped");
+    }
+
+    /// <summary>
+    /// A Pending Implementation WorkItem whose issue is closed is cancelled before K8s Job
+    /// creation in the full PollAndDispatchAsync path (end-to-end gate test).
+    /// Also verifies that RetryCount is NOT incremented on an eligibility cancellation.
+    /// </summary>
+    [Fact]
+    public async Task PollAndDispatch_ImplementationItemWithClosedIssue_CancelledBeforeK8sJob()
+    {
+        var id = Guid.NewGuid();
+        await InsertWorkItem(id, WorkItemTaskType.Implementation, issueProviderConfigId: "ip-1");
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.IsIssueClosedAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true); // closed
+
+        var mockProviderFactory = new Mock<IProviderFactory>();
+        mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var mockConfigStore = new Mock<IProviderConfigStore>();
+        mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("ip-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderConfig { Id = "ip-1", DisplayName = "GH", Kind = ProviderKind.Issue, ProviderType = "GitHub" });
+
+        var handler = CreateHandlerWithGate(mockProviderFactory.Object, mockConfigStore.Object, pvcPool: ["pvc-1"]);
+        await handler.PollAndDispatchAsync(CancellationToken.None);
+
+        // K8s Job must NOT be created
+        _mockKubeClient.Verify(
+            k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never, "K8s Job must not be created for an item whose issue is closed");
+
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(id);
+        item!.Status.Should().Be(WorkItemStatus.Cancelled,
+            "item with closed issue must be cancelled before K8s Job creation");
+        item.ErrorMessage.Should().Contain("Issue",
+            "cancellation reason must mention the issue");
+        item.RetryCount.Should().Be(0,
+            "RetryCount must not be incremented on an eligibility cancellation — WorkItemMutationFactory.Cancelled only sets CompletedAt and ErrorMessage");
+    }
+
+    /// <summary>
+    /// A Pending Review WorkItem whose PR is closed is cancelled before K8s Job creation
+    /// in the full PollAndDispatchAsync path (end-to-end gate test).
+    /// Verifies that IPullRequestProvider is used (not IIssueProvider), the K8s Job is never
+    /// created, and RetryCount is not incremented.
+    /// </summary>
+    [Fact]
+    public async Task PollAndDispatch_ReviewItemWithClosedPr_CancelledBeforeK8sJob()
+    {
+        var id = Guid.NewGuid();
+        // Insert a Review WorkItem with a numeric PR identifier and a repo provider config ID
+        // in the payload — both are required for CheckReviewItemEligibilityAsync to run.
+        await InsertWorkItem(
+            id,
+            WorkItemTaskType.Review,
+            issueIdentifier: "101",
+            issueProviderConfigId: "ip-1",
+            repoProviderConfigId: "rp-1");
+
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider
+            .Setup(p => p.IsPullRequestClosedAsync(101, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true); // PR #101 is closed
+
+        var mockProviderFactory = new Mock<IProviderFactory>();
+        mockProviderFactory
+            .Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockRepoProvider.Object);
+
+        var mockConfigStore = new Mock<IProviderConfigStore>();
+        mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("rp-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderConfig { Id = "rp-1", DisplayName = "GH Repo", Kind = ProviderKind.Repository, ProviderType = "GitHub" });
+
+        var handler = CreateHandlerWithGate(mockProviderFactory.Object, mockConfigStore.Object, pvcPool: ["pvc-1"]);
+        await handler.PollAndDispatchAsync(CancellationToken.None);
+
+        // K8s Job must NOT be created
+        _mockKubeClient.Verify(
+            k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never, "K8s Job must not be created for a Review item whose PR is closed");
+
+        // Gate must use IPullRequestProvider, NOT IIssueProvider
+        mockProviderFactory.Verify(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()), Times.Never,
+            "Review gate must use CreateRepositoryProvider, not CreateIssueProvider");
+        mockProviderFactory.Verify(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()), Times.Once,
+            "Review gate must call CreateRepositoryProvider to check PR state");
+
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var workItem = await db.WorkItems.FindAsync(id);
+        workItem!.Status.Should().Be(WorkItemStatus.Cancelled,
+            "Review item with closed PR must be cancelled before K8s Job creation");
+        workItem.ErrorMessage.Should().Contain("PR",
+            "cancellation reason must mention the PR");
+        workItem.RetryCount.Should().Be(0,
+            "RetryCount must not be incremented on a Review eligibility cancellation");
+    }
+
+    // ── CheckEligibilityAsync helpers ─────────────────────────────────────
+
+    private static PendingWorkItemProjection MakeProjection(
+        string issueIdentifier,
+        string issueProviderConfigId,
+        WorkItemTaskType taskType) => new()
+    {
+        Id = Guid.NewGuid(),
+        AgentSelector = "kiro,dotnet",
+        CreatedAt = DateTimeOffset.UtcNow,
+        TimeoutSeconds = 300,
+        TaskType = taskType,
+        IssueIdentifier = issueIdentifier,
+        IssueProviderConfigId = issueProviderConfigId
+    };
+
+    private WorkItemDispatchService CreateHandlerWithGate(
+        IProviderFactory providerFactory,
+        IProviderConfigStore providerConfigStore,
+        string[]? pvcPool = null)
+    {
+        pvcPool ??= ["pvc-test-1"];
+        var imageMapping = new Dictionary<string, string> { ["dotnet,kiro"] = "ghcr.io/agent:latest" };
+
+        var templates = imageMapping.Select(kv => new JobTemplate
+        {
+            Labels = kv.Key,
+            Image = kv.Value,
+            ProviderType = "kiro",
+            MaxConcurrent = 0
+        }).ToList();
+
+        var templateStore = JobTemplateStore.LoadFromJson(JsonSerializer.Serialize(templates));
+
+        var options = new DispatchServiceOptions
+        {
+            PollIntervalSeconds = 10,
+            RateLimitPerSecond = 100,
+            Namespace = "default",
+            OrchestratorUrl = "http://orchestrator:8080",
+            AgentApiKeySecretName = "agent-api-key",
+            KiroPvcPool = pvcPool.ToList()
+        };
+
+        var lifecycle = new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, options);
+        var stateBuilder = new DispatchStateBuilder(
+            _dbFactory, lifecycle, templateStore,
+            new DispatchTemplateResolver(null, templateStore),
+            options);
+
+        return new WorkItemDispatchService(
+            new WorkItemDispatchServiceDependencies(
+                _dbFactory, _leader, lifecycle, templateStore,
+                Mock.Of<Microsoft.Extensions.Configuration.IConfiguration>(),
+                _transitionService,
+                stateBuilder,
+                ProviderFactory: providerFactory,
+                ProviderConfigStore: providerConfigStore),
+            options);
     }
 
     // ── Test infrastructure ───────────────────────────────────────────────

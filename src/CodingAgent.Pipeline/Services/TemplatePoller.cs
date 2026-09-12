@@ -104,7 +104,8 @@ internal sealed class TemplatePoller
 
         // Success — update status (agentDonePrQueues not counted as dispatchable work)
         var issueCount = issueQueues[template.Id].Count;
-        var prCount = prQueues[template.Id].Count;
+        // prQueues key may be absent when PR polling failed (BuildPrEligibilityMap fail-open design).
+        var prCount = prQueues.TryGetValue(template.Id, out var polledPrs) ? polledPrs.Count : 0;
         var decompCount = decompositionQueues[template.Id].Count;
         templateStatuses[template.Id] = new ConfigStatusSnapshot
         {
@@ -153,6 +154,15 @@ internal sealed class TemplatePoller
     /// <summary>
     /// Polls the PR queue for a template (only when ReviewEnabled).
     /// Wrapped in its own try-catch so that a PR polling failure does not discard the issue queue.
+    /// <para>
+    /// On success, <paramref name="prQueues"/>[template.Id] is set to the fetched PR list (may be
+    /// empty when there are genuinely zero eligible PRs). On failure (exception or provider not in
+    /// cache), the key is <em>removed</em> from <paramref name="prQueues"/> so that
+    /// <c>BuildPrEligibilityMap</c> sees the template as "not polled this cycle" and omits its
+    /// provider from the eligibility map (fail-open). This is the correct signal to distinguish
+    /// "polled successfully, zero eligible PRs" (key present, empty list) from
+    /// "poll failed, data unavailable" (key absent).
+    /// </para>
     /// </summary>
     private async Task PollPrQueueAsync(
         PipelineJobTemplate template,
@@ -160,8 +170,12 @@ internal sealed class TemplatePoller
         Dictionary<string, List<PullRequestSummary>> prQueues,
         CancellationToken ct)
     {
-        prQueues[template.Id] = new List<PullRequestSummary>();
-        if (!template.ReviewEnabled) return;
+        if (!template.ReviewEnabled)
+        {
+            // Not a review template — set empty list so PollSingleTemplateAsync can read prCount safely.
+            prQueues[template.Id] = new List<PullRequestSummary>();
+            return;
+        }
 
         try
         {
@@ -169,10 +183,13 @@ internal sealed class TemplatePoller
             {
                 _logger.Warning("Template '{TemplateName}': repo provider '{RepoProviderId}' not found in cache, skipping PR polling",
                     template.Name, template.RepoProviderId);
+                // Provider not in cache — remove key so BuildPrEligibilityMap fails open for this template.
+                prQueues.Remove(template.Id);
                 return;
             }
 
             var prs = await FetchAgentNextPullRequestsAsync(repoProvider, maxPagesToFetch, ct);
+            // Success: key present with actual results (empty list = genuinely zero eligible PRs).
             prQueues[template.Id] = prs;
         }
         catch (OperationCanceledException) { throw; }
@@ -180,6 +197,9 @@ internal sealed class TemplatePoller
         {
             _logger.Warning(ex, "Template '{TemplateName}' PR polling failed, issue polling unaffected: {Error}",
                 template.Name, ex.Message);
+            // Remove the key so BuildPrEligibilityMap treats this as "not polled" (fail-open).
+            // If the key was already absent (e.g. first-ever failure), Remove is a no-op.
+            prQueues.Remove(template.Id);
         }
     }
 

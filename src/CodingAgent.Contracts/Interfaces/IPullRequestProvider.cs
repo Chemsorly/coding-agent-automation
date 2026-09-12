@@ -47,6 +47,14 @@ public interface IPullRequestProvider : IAsyncDisposable
         => Task.CompletedTask;
 
     /// <summary>
+    /// Checks whether the specified pull request/merge request is closed.
+    /// Returns <c>true</c> if closed or merged; <c>false</c> if open.
+    /// Returns <c>false</c> by default (fail-open) when not supported by the implementation.
+    /// </summary>
+    Task<bool> IsPullRequestClosedAsync(int pullRequestNumber, CancellationToken ct)
+        => Task.FromResult(false);
+
+    /// <summary>
     /// Lists open pull requests with optional label filtering.
     /// When labels is null or empty, returns all open PRs.
     /// Default throws <see cref="NotSupportedException"/>.

@@ -66,4 +66,17 @@ public static class WorkItemMutationFactory
     /// </summary>
     public static Action<WorkItemEntity> Cancelled()
         => item => item.CompletedAt = DateTimeOffset.UtcNow;
+
+    /// <summary>
+    /// Returns a mutation action for a <see cref="WorkItemStatus.Cancelled"/> terminal transition
+    /// with an optional error message explaining the cancellation reason.
+    /// Sets <see cref="WorkItemEntity.CompletedAt"/> and, when provided, <see cref="WorkItemEntity.ErrorMessage"/>.
+    /// </summary>
+    public static Action<WorkItemEntity> Cancelled(string? errorMessage)
+        => item =>
+        {
+            item.CompletedAt = DateTimeOffset.UtcNow;
+            if (errorMessage is not null)
+                item.ErrorMessage = errorMessage;
+        };
 }

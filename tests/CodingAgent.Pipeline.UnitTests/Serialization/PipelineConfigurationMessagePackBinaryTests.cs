@@ -130,6 +130,7 @@ public class PipelineConfigurationMessagePackBinaryTests
         deserialized.ImageDownloadTimeoutSeconds.Should().Be(60);
         deserialized.MaxConsolidationDispatchRetries.Should().Be(7);
         deserialized.TransientRetryDelay.Should().Be(TimeSpan.FromSeconds(15));
+        deserialized.QueueSweepEnabled.Should().BeFalse();
         deserialized.CiCancelledMoveMaxRetries.Should().Be(7);
         deserialized.HousekeepingTriggerCooldownMinutes.Should().Be(30);
         deserialized.MinIssueSlots.Should().Be(2);
@@ -220,6 +221,7 @@ public class PipelineConfigurationMessagePackBinaryTests
         ImageDownloadTimeoutSeconds = 60,
         MaxConsolidationDispatchRetries = 7,
         TransientRetryDelay = TimeSpan.FromSeconds(15),
+        QueueSweepEnabled = false,
         CiCancelledMoveMaxRetries = 7,
         HousekeepingTriggerCooldownMinutes = 30,
         MinIssueSlots = 2,

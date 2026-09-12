@@ -242,6 +242,7 @@ public class PipelineConfigurationTests
         config.TransientRetryDelay.Should().Be(TimeSpan.FromSeconds(30));
         config.FeedbackTimeoutSeconds.Should().Be(60);
         config.MinIssueSlots.Should().Be(1);
+        config.QueueSweepEnabled.Should().BeTrue("QueueSweepEnabled defaults to true — on by default since the PR-aware sweep landed in #2519");
     }
 
     // ── MinIssueSlots validation ────────────────────────────────────────────────

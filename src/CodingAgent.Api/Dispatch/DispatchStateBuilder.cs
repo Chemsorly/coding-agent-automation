@@ -268,4 +268,66 @@ internal sealed class DispatchStateBuilder
     /// </summary>
     internal static bool IsKiroAgentWithoutPvc(bool isKiroAgent, List<string> availablePvcs)
         => isKiroAgent && availablePvcs.Count == 0;
+
+    /// <summary>
+    /// Finds the first <c>RepoProviderId</c> from the template store that is associated with
+    /// the given issue provider config ID and has <c>ReviewEnabled = true</c>.
+    /// Used by the pre-dispatch eligibility gate to resolve the repository provider for Review WorkItems.
+    /// Returns <c>null</c> if no matching template is found (caller should fail-open).
+    /// </summary>
+    // TODO [WARNING]: FindRepoProviderIdForIssueProvider unconditionally returns null because the
+    // K8s JobTemplateStore is keyed by agent selector, not by issue provider ID. As a result,
+    // the pre-dispatch eligibility gate for Review items is only active when the WorkItem payload
+    // contains a repoProviderConfigId field. If that field is absent, the gate fails open and
+    // never verifies PR state for the item. To make the gate reliably active, either:
+    //   (a) store RepoProviderConfigId as a dedicated column on WorkItemEntity (and set it at
+    //       enqueue time in KubernetesWorkDistributor.DistributeAsync), then read it directly; or
+    //   (b) extend JobTemplateStore to support lookup by issue provider ID.
+    // Until then, verify that Review WorkItem payloads reliably include repoProviderConfigId by
+    // inspecting ReviewDispatchRequest / DispatchOrchestrationService where they are built.
+    internal string? FindRepoProviderIdForIssueProvider(string issueProviderConfigId)
+    {
+        // The K8s JobTemplateStore is keyed by agent selector, not by issue provider ID.
+        // We cannot resolve the repo provider ID from the K8s template directly.
+        // This always returns null (fail-open) — callers use the payload as the fallback.
+        // TODO: if RepoProviderConfigId is stored in the WorkItem in the future,
+        // use that column directly instead of relying on payload parsing.
+        return null;
+    }
+
+    /// <summary>
+    /// Attempts to read the <c>repoProviderConfigId</c> field from the WorkItem payload JSON
+    /// stored in the database. Used by the pre-dispatch eligibility gate to find the repository
+    /// provider for Review WorkItems.
+    /// Returns <c>null</c> if the workitem is not found, payload is missing, or parsing fails.
+    /// </summary>
+    // TODO [WARNING]: ReadRepoProviderConfigIdFromPayloadAsync is defined but never called.
+    // WorkItemDispatchService parses repoProviderConfigId inline inside the prepareVariant lambda
+    // from the already-loaded WorkItemEntity.Payload (no extra DB query needed there). This method
+    // is dead code. If it was intended as a utility for other callers, wire it up or remove it to
+    // avoid misleading future maintainers with an untested DB-accessing method.
+    internal async Task<string?> ReadRepoProviderConfigIdFromPayloadAsync(
+        Guid workItemId, PipelineDbContext db, CancellationToken ct)
+    {
+        var payload = await db.WorkItems
+            .AsNoTracking()
+            .Where(w => w.Id == workItemId)
+            .Select(w => w.Payload)
+            .FirstOrDefaultAsync(ct);
+
+        if (string.IsNullOrEmpty(payload))
+            return null;
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(payload);
+            if (doc.RootElement.TryGetProperty("repoProviderConfigId", out var prop))
+                return prop.GetString();
+        }
+        catch
+        {
+            // Malformed JSON — fail open
+        }
+        return null;
+    }
 }

@@ -321,6 +321,27 @@ public partial class GitHubRepositoryProvider
     }
 
     /// <inheritdoc />
+    public async Task<bool> IsPullRequestClosedAsync(int pullRequestNumber, CancellationToken ct)
+    {
+        // TODO [WARNING]: ExecuteWithResilienceAsync propagates NotFoundException (404) when the PR
+        // has been deleted or never existed. The caller (CheckEligibilityAsync) catches this and
+        // fails open — leaving the item Pending rather than cancelling it. For hard-deleted PRs, the
+        // gate will never cancel the WorkItem; only the queue sweep (which correctly omits deleted PRs
+        // from prQueues) will clean it up. The gap is documented here; if the gate should also handle
+        // deleted PRs, catch Octokit.NotFoundException and return true (treat as closed).
+        var pr = await ExecuteWithResilienceAsync(
+            client => client.PullRequest.Get(Owner, Repo, pullRequestNumber),
+            "IsPullRequestClosed", ct);
+        // GitHub PullRequest.State is StringEnum<ItemState>; value is "open" or "closed".
+        // "closed" covers both merged and closed PRs.
+        // TODO [WARNING]: pr.State.StringValue == "closed" is case-sensitive and null-sensitive.
+        // If Octokit ever returns a null StringValue or changes casing, this evaluates to false
+        // (treated as open — fail-open, which is safe). For robustness, consider comparing against
+        // the typed ItemState.Closed enum value instead of a raw string literal.
+        return pr.State.StringValue == "closed";
+    }
+
+    /// <inheritdoc />
     public async Task<PagedResult<PullRequestSummary>> ListOpenPullRequestsAsync(
         int page, int pageSize, IReadOnlyList<string>? labels, CancellationToken ct)
     {

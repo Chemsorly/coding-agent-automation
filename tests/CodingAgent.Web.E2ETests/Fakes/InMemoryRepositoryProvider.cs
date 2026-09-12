@@ -99,6 +99,9 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
 
     public Task ClosePullRequestAsync(int pullRequestNumber, CancellationToken ct) => Task.CompletedTask;
 
+    public Task<bool> IsPullRequestClosedAsync(int pullRequestNumber, CancellationToken ct) =>
+        Task.FromResult(false); // fail-open: always treat as open in test context
+
     public Task CheckoutRemoteBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct) =>
         Task.CompletedTask;
 

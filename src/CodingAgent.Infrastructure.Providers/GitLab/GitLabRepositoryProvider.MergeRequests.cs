@@ -232,6 +232,26 @@ public partial class GitLabRepositoryProvider
         Log.Information("Closed MR !{MrIid} in project {ProjectId}", pullRequestNumber, ProjectId);
     }
 
+    /// <inheritdoc />
+    public async Task<bool> IsPullRequestClosedAsync(int pullRequestNumber, CancellationToken ct)
+    {
+        // TODO [WARNING]: mrClient[pullRequestNumber] (indexer) throws for a missing MR rather than
+        // returning a "closed" result. In the pre-dispatch gate this is caught and fails open
+        // (leaves the item Pending), which is acceptable. However, the error semantics differ from
+        // the GitHub implementation (which returns pr.State.StringValue == "closed" — a bool, no throw
+        // for valid-but-closed PRs). Future callers that don't wrap this in try/catch may be surprised.
+        // Consider catching GitLabException for "not found" (404) and returning true (treat as closed).
+        var mr = await ExecuteWithResilienceAsync(
+            client =>
+            {
+                var mrClient = client.GetMergeRequest(ProjectId);
+                return Task.Run(() => mrClient[pullRequestNumber], ct);
+            },
+            "IsPullRequestClosed", ct);
+        // GitLab MR states: "opened", "merged", "closed" — anything other than "opened" is not open.
+        return mr.State is not "opened";
+    }
+
     // ─── Agent MR Discovery ──────────────────────────────────────────────────────
 
     /// <inheritdoc />
