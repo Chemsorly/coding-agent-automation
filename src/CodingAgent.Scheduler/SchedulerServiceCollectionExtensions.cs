@@ -222,18 +222,18 @@ public static class SchedulerServiceCollectionExtensions
         // ── PipelineLoopService ───────────────────────────────────────────────
         services.AddSingleton<PipelineLoopServiceDependencies>(sp => new PipelineLoopServiceDependencies
         {
-            Orchestration         = sp.GetRequiredService<IDispatchRunCreator>(),
-            ProviderFactory       = sp.GetRequiredService<IProviderFactory>(),
-            PipelineConfigStore   = sp.GetRequiredService<IPipelineConfigStore>(),
-            ProviderConfigStore   = sp.GetRequiredService<IProviderConfigStore>(),
-            ProjectStore          = sp.GetRequiredService<IProjectStore>(),
-            Logger                = Log.Logger,
-            WorkDistributor       = sp.GetRequiredService<IWorkDistributor>(),
+            Orchestration = sp.GetRequiredService<IDispatchRunCreator>(),
+            ProviderFactory = sp.GetRequiredService<IProviderFactory>(),
+            PipelineConfigStore = sp.GetRequiredService<IPipelineConfigStore>(),
+            ProviderConfigStore = sp.GetRequiredService<IProviderConfigStore>(),
+            ProjectStore = sp.GetRequiredService<IProjectStore>(),
+            Logger = Log.Logger,
+            WorkDistributor = sp.GetRequiredService<IWorkDistributor>(),
             DispatchOrchestration = sp.GetRequiredService<IDispatchOrchestrationService>(),
-            DependencyChecker     = sp.GetRequiredService<IDependencyChecker>(),
-            HousekeepingService   = sp.GetRequiredService<IHousekeepingService>(),
-            LeaderElection        = sp.GetService<ILeaderElectionService>(),
-            WorkItemClient        = sp.GetRequiredService<IPipelineApiWorkItemClient>(),
+            DependencyChecker = sp.GetRequiredService<IDependencyChecker>(),
+            HousekeepingService = sp.GetRequiredService<IHousekeepingService>(),
+            LeaderElection = sp.GetService<ILeaderElectionService>(),
+            WorkItemClient = sp.GetRequiredService<IPipelineApiWorkItemClient>(),
         });
         services.AddSingleton<PipelineLoopService>();
         services.AddSingleton<IPipelineLoopService>(sp => sp.GetRequiredService<PipelineLoopService>());

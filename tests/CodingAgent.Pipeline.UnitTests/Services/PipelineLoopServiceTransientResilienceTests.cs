@@ -114,7 +114,9 @@ public sealed class PipelineLoopServiceTransientResilienceTests : IAsyncDisposab
             .ReturnsAsync(new PagedResult<PullRequestSummary>
             {
                 Items = new List<PullRequestSummary>().AsReadOnly(),
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
             });
 
         _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))

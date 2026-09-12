@@ -78,7 +78,9 @@ public class HousekeepingServiceTests
                     .ReturnsAsync(new PagedResult<PullRequestSummary>
                     {
                         Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
-                        Page = 1, PageSize = 100, HasMore = false
+                        Page = 1,
+                        PageSize = 100,
+                        HasMore = false
                     });
 
         return (svc, providerMock, issueProviderMock, runsMock);
@@ -915,7 +917,9 @@ public class HousekeepingServiceTests
                 .ReturnsAsync(new PagedResult<PullRequestSummary>
                 {
                     Items = new[] { openPr }.AsReadOnly(),
-                    Page = 1, PageSize = 100, HasMore = false
+                    Page = 1,
+                    PageSize = 100,
+                    HasMore = false
                 });
 
         await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0);
@@ -986,7 +990,9 @@ public class HousekeepingServiceTests
                 .ReturnsAsync(new PagedResult<PullRequestSummary>
                 {
                     Items = new[] { MakePr(99, agentBranch) }.AsReadOnly(),
-                    Page = 1, PageSize = 10, HasMore = false
+                    Page = 1,
+                    PageSize = 10,
+                    HasMore = false
                 });
 
         await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0);
@@ -1076,7 +1082,9 @@ public class HousekeepingServiceTests
                 .ReturnsAsync(new PagedResult<PullRequestSummary>
                 {
                     Items = new[] { MakePr(99, agentBranch) }.AsReadOnly(),
-                    Page = 1, PageSize = 100, HasMore = true   // always true — malformed
+                    Page = 1,
+                    PageSize = 100,
+                    HasMore = true   // always true — malformed
                 });
         provider.Setup(p => p.ListOpenPullRequestsAsync(
                     It.Is<int>(p => p > 1), It.IsAny<int>(),
@@ -1085,7 +1093,9 @@ public class HousekeepingServiceTests
                 .ReturnsAsync(new PagedResult<PullRequestSummary>
                 {
                     Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
-                    Page = 2, PageSize = 100, HasMore = true   // always true
+                    Page = 2,
+                    PageSize = 100,
+                    HasMore = true   // always true
                 });
 
         var ex = await Record.ExceptionAsync(
@@ -1143,7 +1153,7 @@ public class HousekeepingServiceTests
         var (svc, provider, issues, _) = Create();
 
         var autoMergePr = MakePr(10, "feature/auto", hasAutoMerge: true);
-        var regularPr   = MakePr(20, "feature/regular");
+        var regularPr = MakePr(20, "feature/regular");
 
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.Behind);
@@ -1173,7 +1183,7 @@ public class HousekeepingServiceTests
         var (svc, provider, issues, _) = Create();
 
         var autoMergePr = MakePr(10, "feature/auto", hasAutoMerge: true);
-        var regularPr   = MakePr(20, "feature/regular");
+        var regularPr = MakePr(20, "feature/regular");
 
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.Behind);
@@ -1255,7 +1265,7 @@ public class HousekeepingServiceTests
         var (svc, provider, issues, _) = Create();
 
         var autoMergePr = MakePr(10, "feature/auto", hasAutoMerge: true);
-        var regularPr   = MakePr(20, "feature/regular");
+        var regularPr = MakePr(20, "feature/regular");
 
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.Behind);

@@ -272,7 +272,7 @@ public sealed class HousekeepingService : IHousekeepingService
             {
                 var lastTriggered = _lastTriggeredAt.GetValueOrDefault((repoProviderId, pr.Number), DateTimeOffset.MinValue);
                 var cooledDown = (now5 - lastTriggered) >= TriggerCooldown;
-                if (!cooledDown)     return 2;   // recently triggered — back of queue
+                if (!cooledDown) return 2;   // recently triggered — back of queue
                 if (pr.HasAutoMerge) return 0;   // auto-merge + cooled — front
                 return 1;                        // no auto-merge + cooled — middle
             })
