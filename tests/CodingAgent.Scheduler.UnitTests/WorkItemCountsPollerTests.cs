@@ -92,17 +92,21 @@ public sealed class WorkItemCountsPollerTests
     public async Task WhenNullGate_PollsUnconditionally()
     {
         // null gate = dev / single-replica mode
+        // Set up the mock before constructing the poller so the background task never sees
+        // an unconfigured mock on the first poll (which fires immediately in ExecuteAsync).
+        _mockClient
+            .Setup(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
         var poller = new WorkItemCountsPoller(
             _mockClient.Object,
             leaderGate: null,
             _mockLogger.Object,
             interval: TimeSpan.FromMilliseconds(1));
 
-        _mockClient
-            .Setup(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
-
-        await RunPollerForDurationAsync(poller, TimeSpan.FromMilliseconds(500));
+        // Use the same 2000ms window as WhenLeader_CallsGetWorkItemCountsAsync to give the
+        // background task enough time to start and tick under parallel test-suite load.
+        await RunPollerForDurationAsync(poller, TimeSpan.FromMilliseconds(2000));
 
         _mockClient.Verify(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()),
             Times.AtLeastOnce(), "null gate must not suppress polling");

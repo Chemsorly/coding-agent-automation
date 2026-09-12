@@ -229,6 +229,12 @@ public class ChatDispatcherObservabilityTests : IDisposable
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
         var dispatchActivity = _capturedActivities
+            // TODO: This selector is asymmetric with the timeout counterpart test, which filters by
+            // ActivityStatusCode.Error to avoid picking up unrelated parallel activities. If a parallel
+            // test produces a Chat.Dispatch activity with Error status before this test's own activity
+            // is captured, the assertion below (.NotBe(ActivityStatusCode.Error)) could fail spuriously.
+            // Consider applying the same status-filter pattern used in the timeout test (filter by
+            // ActivityStatusCode.Ok or use a per-test activity source to isolate captures).
             .FirstOrDefault(a => a.OperationName == "Chat.Dispatch");
 
         dispatchActivity.Should().NotBeNull();

@@ -187,24 +187,36 @@ level, regardless of which API replica makes the insert.
 
 ### Defense 2 — `IsIssueBeingProcessed` in-process check
 
+<!-- TODO: Clarify that Defense 2 is a probabilistic filter, not an atomic guard. Between
+     the moment IsIssueBeingProcessed returns false and the moment the WorkItem row is
+     inserted, a second replica can also pass the same check (classic TOCTOU window).
+     Defense 1 (unique index) is the backstop for that scenario. The text should note this
+     so readers have the correct mental model. -->
+
 `PipelineRunLifecycleService.IsIssueBeingProcessed()` checks whether the current API
 replica is already tracking a run for this issue. Under multi-replica,
 `DistributedRunService.IsIssueBeingProcessed()` delegates to `IsIssueDistributedAsync` —
 a Postgres query that returns true if a non-terminal `WorkItem` already exists — so this
 check is cross-replica even though the method name sounds in-memory.
 
-### Defense 3 — `IsIssueDistributedAsync` from the Scheduler
+### Defense 3 — `IsIssueDistributedAsync` from orphan-recovery
 
-<!-- TODO: This description overstates the breadth of Defense 3. In practice,
-`KubernetesWorkDistributor.IsIssueDistributedAsync()` is called from
-`OrphanedLabelRecoveryService` (orphan-recovery path), not on every primary dispatch
-decision. The guard fires only during orphan label recovery, not on every new-run
-dispatch. Update this section to accurately describe when and where this check fires. -->
 `KubernetesWorkDistributor.IsIssueDistributedAsync()` calls the Pipeline API before
-dispatching. The Scheduler uses this to avoid re-dispatching an issue that a different
-replica already picked up.
+dispatching. This guard fires on the **orphan-recovery path** only
+(`OrphanedLabelRecoveryService`), not on every primary dispatch decision. It prevents
+the orphan-recovery path from re-dispatching an issue that a different replica has already
+picked up. Primary new-run dispatch relies on Defenses 1 and 2.
 
 ### Known gap — no per-agent selection lock
+
+<!-- TODO: The causal ordering description below is slightly imprecise. The actual race
+     sequence is: dispatcher snapshots agent as Idle → agent disconnects and
+     TransitionStatusAsync writes Disconnected to Redis → dispatcher inserts the WorkItem
+     (assigning to the now-disconnected agent). The DB unique-index (Defense 1) and
+     IsIssueBeingProcessed (Defense 2) do not help here — those guards prevent a *second*
+     WorkItem for the same issue, not assignment to a disconnected agent. ReconciliationService
+     is the sole recovery path for this specific window. The phrase "after … but before the
+     WorkItem insert" inverts the ordering; consider rewriting for clarity. -->
 
 `DistributedAgentRegistryService.TransitionStatusAsync` writes agent status to Redis
 without a distributed lock (`lock:agent:{id}` was never implemented). This creates a
@@ -216,11 +228,9 @@ a separate issue.
 
 ---
 
-<!-- TODO: "four" is stale — the system has five distinct processes (Orchestrator, Pipeline API,
-Job Controller, Scheduler, Agent), as correctly stated in the Overview. Update this heading. -->
 ## Cross-Process Communication
 
-The four processes communicate strictly via defined interfaces:
+The five processes communicate strictly via defined interfaces:
 
 | From | To | Mechanism |
 |------|----|-----------|
