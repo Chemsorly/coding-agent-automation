@@ -430,8 +430,7 @@ public static class ApiServiceCollectionExtensions
         // DispatchLifecycleService — shared PVC-selection lock + K8s Job creation lifecycle.
         // DispatchTemplateResolver — agent-selector → JobTemplate fallback resolution.
         // DispatchStateBuilder     — builds concurrency map and PVC availability state.
-        // Used by WorkItemDispatchService (non-consolidation Pending poll) and by
-        // ConsolidationWorkItemDispatchService (consolidation Pending poll).
+        // Used by WorkItemDispatchService (non-consolidation Pending poll).
         services.AddSingleton<CodingAgent.Api.Dispatch.DispatchLifecycleService>(sp =>
         {
             var jobClient = sp.GetService<IKubernetesJobClient>();

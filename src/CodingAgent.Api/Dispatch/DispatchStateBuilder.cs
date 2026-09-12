@@ -46,7 +46,6 @@ internal sealed class DispatchStateBuilder
     /// </summary>
     /// <param name="taskTypeFilter">
     /// Filter expression for the TaskType column.
-    /// ConsolidationWorkItemDispatchService: w.TaskType == WorkItemTaskType.Consolidation
     /// </param>
     /// <param name="recordTelemetry">Whether to record poll telemetry.</param>
     /// <param name="ct">Cancellation token.</param>

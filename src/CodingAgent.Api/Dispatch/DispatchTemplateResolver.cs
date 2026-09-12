@@ -9,7 +9,7 @@ namespace CodingAgent.Api.Dispatch;
 /// <summary>
 /// Shared template resolution fallback: when a work item's AgentSelector is a subset of the template's
 /// label set, resolves the matching profile to get the full MatchLabels, then retries template lookup.
-/// Used by both <see cref="ConsolidationWorkItemDispatchService"/> and other dispatch services.
+/// Used by dispatch services.
 /// </summary>
 internal sealed class DispatchTemplateResolver
 {

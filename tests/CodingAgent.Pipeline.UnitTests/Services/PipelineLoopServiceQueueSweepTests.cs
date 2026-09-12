@@ -309,8 +309,8 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
     [Fact]
     public async Task SweepPendingWorkItemsAsync_WhenTaskTypeIsConsolidation_IsSkipped()
     {
-        // Consolidation WorkItems are managed by ConsolidationWorkItemDispatchService and
-        // must never be cancelled by the queue sweep.
+        // Consolidation WorkItems are dispatched synchronously via KubernetesWorkDistributor
+        // and must never be cancelled by the queue sweep.
         var item = MakePendingItem("42", "ip-1", taskType: WorkItemTaskType.Consolidation);
         _sweepClientMock
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))

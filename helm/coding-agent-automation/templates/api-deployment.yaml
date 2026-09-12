@@ -121,10 +121,10 @@ spec:
               value: {{ .Values.database.migrateOnStartup | toString | quote }}
             {{- include "coding-agent-automation.signalrEnv" . | nindent 12 }}
             # WorkDistribution env vars — required by DispatchServiceOptionsFactory.Create(),
-            # consumed by ModelFetchJobService and ConsolidationWorkItemDispatchService (Req 9.3c).
+            # consumed by ModelFetchJobService.
             # Without these the factory returns empty OrchestratorUrl / ServiceAccount, and
             # JobSpecBuilder emits a Job spec the K8s admission webhook rejects.
-            # ORCHESTRATOR_URL handed to the consolidation and model-fetch agent pods dispatched
+            # ORCHESTRATOR_URL handed to the model-fetch agent pods dispatched
             # from this process. Must be the Pipeline API, not the web service.
             {{- include "coding-agent-automation.workDistributionEnv" . | nindent 12 }}
           volumeMounts:

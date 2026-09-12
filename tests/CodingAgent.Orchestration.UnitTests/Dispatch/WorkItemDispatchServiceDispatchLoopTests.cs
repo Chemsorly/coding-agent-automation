@@ -23,8 +23,7 @@ namespace CodingAgent.Orchestration.UnitTests.Dispatch;
 /// Covers the rate-limit → eligibility → dispatch loop behavior for non-consolidation
 /// WorkItems (Implementation, Review, Decomposition).
 ///
-/// Pattern mirrors <see cref="ConsolidationWorkItemDispatchServiceDispatchLoopTests"/>:
-/// items are inserted directly as <c>Pending</c> and the DB state is asserted after
+/// Items are inserted directly as <c>Pending</c> and the DB state is asserted after
 /// calling <c>PollAndDispatchAsync</c>.
 /// </summary>
 [Trait("Feature", "WorkItemDispatchService")]
@@ -110,8 +109,16 @@ public class WorkItemDispatchServiceDispatchLoopTests : IDisposable
 
     /// <summary>
     /// Consolidation WorkItems are NOT dispatched by WorkItemDispatchService —
-    /// they are managed by ConsolidationWorkItemDispatchService.
+    /// they are dispatched synchronously via <c>KubernetesWorkDistributor.DistributeAsync</c>.
     /// </summary>
+    // TODO [WARNING]: No surviving test verifies the synchronous dispatch routing itself — that
+    // KubernetesWorkDistributor.DistributeAsync routes TaskType=Consolidation to DispatchSynchronouslyAsync
+    // rather than the async Pending queue. The end-to-end FullLifecycle test that covered this routing
+    // was part of DispatchServiceConsolidationTests.cs (deleted with ConsolidationWorkItemDispatchService).
+    // If the `if (request.TaskType == WorkItemTaskType.Consolidation)` branch in KubernetesWorkDistributor
+    // were accidentally removed, consolidation dispatches would silently land in the Pending queue with no
+    // poller to claim them, and no test would catch it. Consider adding a unit test for
+    // KubernetesWorkDistributor that asserts Consolidation requests call DispatchSynchronouslyAsync.
     [Fact]
     public async Task PollAndDispatch_ConsolidationItem_IsNotDispatchedByThisService()
     {
@@ -134,7 +141,7 @@ public class WorkItemDispatchServiceDispatchLoopTests : IDisposable
         await using var db = await _dbFactory.CreateDbContextAsync();
         var item = await db.WorkItems.FindAsync(id);
         item!.Status.Should().Be(WorkItemStatus.Pending,
-            "Consolidation items must remain Pending (owned by ConsolidationWorkItemDispatchService)");
+            "Consolidation items must remain Pending (dispatched synchronously via KubernetesWorkDistributor, not polled)");
     }
 
     // ── Rate-limit / concurrency ──────────────────────────────────────────

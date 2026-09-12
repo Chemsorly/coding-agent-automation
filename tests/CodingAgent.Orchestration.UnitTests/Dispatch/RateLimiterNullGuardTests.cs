@@ -15,10 +15,9 @@ namespace CodingAgent.Orchestration.UnitTests.Dispatch;
 /// reachable through existing production constructors (all of which supply a non-null
 /// <c>rateLimitPerSecond</c>), but the guard must be correct if it ever fires.
 ///
-/// TODO: These tests use inner test doubles (NullRateLimiterService, ConsolidationStyleNullGuardTestService)
+/// TODO: These tests use inner test doubles (NullRateLimiterService)
 /// that re-implement the guard expression locally rather than invoking the production code path in
-/// DispatchService.ProcessDispatchCandidateAsync, ConsolidationDispatchHandler.ProcessConsolidationItemAsync,
-/// or ConsolidationWorkItemDispatchService.PollAndDispatchConsolidationAsync.
+/// DispatchService.ProcessDispatchCandidateAsync or ConsolidationDispatchHandler.ProcessConsolidationItemAsync.
 /// As a result, removing or changing the guard in the production methods would not cause these tests to fail —
 /// they only verify that the ?? throw pattern works in C#, not that it is actually present at the correct site.
 /// For stronger regression coverage, add integration-style tests that instantiate the real production classes
@@ -62,38 +61,6 @@ public class RateLimiterNullGuardTests
         }
     }
 
-    /// <summary>
-    /// A minimal concrete subclass of <see cref="LeaderElectedPollingService"/> that
-    /// deliberately omits <c>rateLimitPerSecond</c>, leaving <c>RateLimiter</c> as null,
-    /// and applies the same <c>?? throw</c> guard pattern used in
-    /// <see cref="ConsolidationWorkItemDispatchService.PollAndDispatchConsolidationAsync"/>.
-    /// Verifies that the guard message names "ConsolidationWorkItemDispatchService".
-    /// </summary>
-    private sealed class ConsolidationStyleNullGuardTestService : LeaderElectedPollingService
-    {
-        public ConsolidationStyleNullGuardTestService(ILeaderElectionService leaderElection)
-            : base(leaderElection)
-        {
-            // Intentionally omits rateLimitPerSecond → RateLimiter stays null.
-        }
-
-        protected override string ServiceName => "ConsolidationStyleNullGuardTestService";
-        protected override int PollIntervalSeconds => 60;
-        protected override Task OnPollCycleAsync(CancellationToken ct) => Task.CompletedTask;
-
-        /// <summary>
-        /// Applies the null-guard expression mirroring
-        /// <see cref="ConsolidationWorkItemDispatchService.PollAndDispatchConsolidationAsync"/>
-        /// to verify it throws the correct exception type and message.
-        /// </summary>
-        public void InvokeConsolidationStyleNullGuard()
-        {
-            _ = RateLimiter ?? throw new InvalidOperationException(
-                "ConsolidationWorkItemDispatchService requires a rate limiter but RateLimiter is null. " +
-                "Ensure the constructor passes rateLimitPerSecond to the base class.");
-        }
-    }
-
     [Fact]
     public void WhenRateLimiterIsNull_NullGuardExpression_ThrowsInvalidOperationException()
     {
@@ -126,41 +93,6 @@ public class RateLimiterNullGuardTests
             .WithMessage("*NullRateLimiterService*");
     }
 
-    [Fact]
-    public void WhenRateLimiterIsNull_ConsolidationStyleGuard_ThrowsInvalidOperationException()
-    {
-        // Arrange: construct a service with the ConsolidationWorkItemDispatchService-style guard,
-        // but no rate limiter configured.
-        var leaderElectionMock = new Mock<ILeaderElectionService>();
-        leaderElectionMock.SetupGet(l => l.IsLeader).Returns(false);
-        leaderElectionMock.SetupGet(l => l.LeaderToken).Returns(CancellationToken.None);
-
-        var service = new ConsolidationStyleNullGuardTestService(leaderElectionMock.Object);
-
-        // Act & Assert: mirrors ConsolidationWorkItemDispatchService.PollAndDispatchConsolidationAsync —
-        // the guard must throw InvalidOperationException, not NullReferenceException.
-        service.Invoking(s => s.InvokeConsolidationStyleNullGuard())
-            .Should().Throw<InvalidOperationException>(
-                "the null-guard in ConsolidationWorkItemDispatchService must surface a clear error " +
-                "rather than a NullReferenceException");
-    }
-
-    [Fact]
-    public void WhenRateLimiterIsNull_ConsolidationStyleGuard_ExceptionMessageNamesConsolidationWorkItemDispatchService()
-    {
-        // Arrange
-        var leaderElectionMock = new Mock<ILeaderElectionService>();
-        leaderElectionMock.SetupGet(l => l.IsLeader).Returns(false);
-        leaderElectionMock.SetupGet(l => l.LeaderToken).Returns(CancellationToken.None);
-
-        var service = new ConsolidationStyleNullGuardTestService(leaderElectionMock.Object);
-
-        // Act & Assert: the exception message must identify ConsolidationWorkItemDispatchService
-        // so the operator has actionable context when diagnosing the failure.
-        service.Invoking(s => s.InvokeConsolidationStyleNullGuard())
-            .Should().Throw<InvalidOperationException>()
-            .WithMessage("*ConsolidationWorkItemDispatchService*");
-    }
 }
 
 /// <summary>
@@ -168,8 +100,6 @@ public class RateLimiterNullGuardTests
 /// when constructed without a rate limiter, the guard inside
 /// <see cref="WorkItemDispatchService.PollAndDispatchAsync"/> throws
 /// <see cref="InvalidOperationException"/> with a message that names the service.
-/// Mirrors <see cref="RateLimiterNullGuardTests"/> for
-/// <see cref="ConsolidationWorkItemDispatchService"/>.
 /// </summary>
 [Trait("Feature", "WorkItemDispatchService")]
 public class WorkItemDispatchServiceRateLimiterGuardTests
