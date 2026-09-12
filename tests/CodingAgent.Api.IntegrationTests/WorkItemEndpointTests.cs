@@ -821,13 +821,80 @@ public sealed class WorkItemEndpointTests
             "IssueTitle must be null when the Payload JobDistributionRequest has no IssueDetail");
     }
 
-    // TODO: [WARNING] Missing test for null-Payload active work items. The production code in
-    // GetActiveWorkItems has an explicit `if (w.Payload is not null)` guard and a `catch (JsonException)`
-    // branch, but neither path is exercised by the tests above — SeedEntity always writes a non-null
-    // Payload. Add a test that inserts a WorkItemStatus.Running entity with Payload = null (matching the
-    // GetPendingWorkItems_WithNullPayload_ReturnsNullForNewFields pattern) and asserts the response is
-    // HTTP 200 with IssueTitle == null. Also add a corrupt-payload variant (invalid JSON string) for the
-    // JsonException branch.
+    [Fact]
+    public async Task GetActiveWorkItems_ReturnsInitiatedBy_WhenPayloadHasIt()
+    {
+        // Seed a Running work item, then overwrite its Payload with InitiatedBy = "loop:issue"
+        // (overriding the default "test" set by MakeRequest()).
+        var entity = SeedEntity(WorkItemStatus.Running);
+
+        var requestWithInitiatedBy = MakeRequest(entity.IssueIdentifier) with
+        {
+            InitiatedBy = "loop:issue"
+        };
+        using (var db = _factory.CreateDbContext())
+        {
+            var item = await db.WorkItems.FindAsync(entity.Id);
+            item!.Payload = JsonSerializer.Serialize(requestWithInitiatedBy, PipelineJsonOptions.Default);
+            await db.SaveChangesAsync();
+        }
+
+        var response = await _client.GetAsync("/api/work-items/active?olderThanSeconds=0");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await response.Content.ReadFromJsonAsync<List<ActiveWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+        var seeded = items!.FirstOrDefault(i => i.Id == entity.Id);
+        seeded.Should().NotBeNull("the seeded active item must appear in the response");
+        seeded!.InitiatedBy.Should().Be("loop:issue",
+            "InitiatedBy must be extracted from JobDistributionRequest.InitiatedBy in the Payload");
+    }
+
+    [Fact]
+    public async Task GetActiveWorkItems_ReturnsNullInitiatedByAndIssueTitle_WhenPayloadIsNull()
+    {
+        // SeedEntity always writes a non-null Payload — construct the entity directly so we can
+        // set Payload = null. DispatchedAt must be in the past so the item passes olderThanSeconds=0.
+        // Satisfies the TODO at ~line 824 which requested a null-Payload test.
+        Guid entityId;
+        using (var db = _factory.CreateDbContext())
+        {
+            var entity = new WorkItemEntity
+            {
+                Id = Guid.NewGuid(),
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = $"issue-{Guid.NewGuid():N}",
+                IssueProviderConfigId = "prov-seed",
+                Status = WorkItemStatus.Running,
+                Payload = null,
+                AgentSelector = "",
+                TimeoutSeconds = 3600,
+                CreatedAt = DateTimeOffset.UtcNow.AddSeconds(-300),
+                DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-300)
+            };
+            db.WorkItems.Add(entity);
+            await db.SaveChangesAsync();
+            entityId = entity.Id;
+        }
+
+        var response = await _client.GetAsync("/api/work-items/active?olderThanSeconds=0");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await response.Content.ReadFromJsonAsync<List<ActiveWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+        var seeded = items!.FirstOrDefault(i => i.Id == entityId);
+        seeded.Should().NotBeNull("the seeded active item with null Payload must appear in the response");
+        seeded!.InitiatedBy.Should().BeNull(
+            "InitiatedBy must be null when the work item has no Payload");
+        seeded.IssueTitle.Should().BeNull(
+            "IssueTitle must be null when the work item has no Payload");
+    }
+
+    // TODO: [WARNING] The corrupt-payload (JsonException) branch in GetActiveWorkItems is not covered by
+    // any test. Add a test that inserts a WorkItemEntity with Status=Running and Payload set to an invalid
+    // JSON string (e.g. Payload = "{invalid"), calls GET /api/work-items/active?olderThanSeconds=0, and
+    // asserts HTTP 200 with InitiatedBy == null and IssueTitle == null for that entity. This validates the
+    // catch (JsonException) guard and ensures a regression that removes it would be caught.
 
     // ── LabelSwap ─────────────────────────────────────────────────────────────────
 

@@ -41,4 +41,12 @@ public sealed record ActiveWorkItemDto
     /// Populated by the API for display purposes only — not used by the Job Controller.
     /// </summary>
     public string? IssueTitle { get; init; }
+
+    /// <summary>
+    /// Dispatch source extracted from <c>JobDistributionRequest.InitiatedBy</c> in the Payload
+    /// (e.g. <c>"loop:issue"</c>, <c>"manual"</c>, <c>"consolidation:auto"</c>).
+    /// Null when payload is absent or payload is malformed.
+    /// Populated by the API for display purposes only — not used by the Job Controller.
+    /// </summary>
+    public string? InitiatedBy { get; init; }
 }
