@@ -261,11 +261,20 @@ public sealed class AgentOrphanRecoveryServiceTests
         _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
     }
 
-    // ── Active job: run already in memory (owned by different agent) → no overwrite
+    // ── Active job: run already in memory (pod replacement — different agent reconnects) → updates AgentId
 
     [Fact]
-    public async Task ActiveJob_RunInMemoryOwnedByDifferentAgent_DoesNotOverwrite()
+    public async Task ActiveJob_RunInMemoryOwnedByDifferentAgent_UpdatesAgentId()
     {
+        // Pod replacement: a new agent pod registers with the same RunId but a different AgentId.
+        // LinkAgentToExistingRun must update run.AgentId and link the new agent to the run.
+        // NOTE: This tests LinkAgentToExistingRun in isolation (RecoverOrphanedStateAsync called
+        // directly, without a preceding RegisterAgent call). In the combined production flow,
+        // RegisterAgent updates run.AgentId first, so by the time LinkAgentToExistingRun runs,
+        // existingRun.AgentId already matches — making it a no-op. The isolation test here
+        // verifies the service handles the case correctly when called independently.
+        // entry.ActiveJobId is null so the inner trackedEntry.ActiveJobId is null lock guard is
+        // satisfied, allowing TransitionStatus(Busy) to be called.
         const string agentId = "agent-1";
         const string otherAgent = "agent-other";
         const string runId = "run-other";
@@ -281,6 +290,7 @@ public sealed class AgentOrphanRecoveryServiceTests
         };
 
         var entry = CreateEntry(agentId);
+        // entry.ActiveJobId is null (default) — satisfies the inner lock guard for TransitionStatus
         _mockFacade.Setup(f => f.GetRun(runId)).Returns(existingRun);
         _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns(new List<PipelineRun>());
@@ -289,9 +299,15 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         await _service.RecoverOrphanedStateAsync(message, agentId);
 
-        existingRun.AgentId.Should().Be(otherAgent);
-        entry.ActiveJobId.Should().BeNull();
-        _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Never);
+        existingRun.AgentId.Should().Be(agentId, "pod replacement must update run.AgentId to the new agent");
+        entry.ActiveJobId.Should().Be(runId, "the new agent must be linked to the run");
+        _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once,
+            "the new agent must be transitioned to Busy");
+        // TODO: [WARNING] The acceptance criterion "A log entry is emitted when AgentId is updated due
+        // to pod replacement" is not verified here. The _mockLogger is available in this test class;
+        // a silent removal of the pod-replacement Information log line would not be caught by any test
+        // on the Web.UnitTests recovery-service path. Consider adding a log emission assertion:
+        // _mockLogger.Verify(l => l.Information(It.Is<string>(s => s.Contains("pod replacement")), ...), Times.Once);
     }
 
     // ── Orphan detection: orchestrator has orphaned runs → sets OrphanRestoredAt

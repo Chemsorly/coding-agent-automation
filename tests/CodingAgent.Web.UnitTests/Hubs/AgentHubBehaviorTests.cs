@@ -6,6 +6,7 @@ using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Services;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Hosting;
 using Moq;
 using ILogger = Serilog.ILogger;
 
@@ -589,7 +590,10 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var repoConfig = new ProviderConfig
         {
-            Id = "repo-cfg-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Id = "repo-cfg-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string> { ["privateKeyBase64"] = "key123", ["clientId"] = "c", ["installationId"] = "1" }
         };
         _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("repo-cfg-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
@@ -615,7 +619,10 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var repoConfig = new ProviderConfig
         {
-            Id = "repo-from-payload", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Id = "repo-from-payload",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string> { ["privateKeyBase64"] = "key", ["clientId"] = "c", ["installationId"] = "1" }
         };
         _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("repo-from-payload", ProviderKind.Repository, It.IsAny<CancellationToken>()))
@@ -654,7 +661,10 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var brainConfig = new ProviderConfig
         {
-            Id = "brain-cfg", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Brain",
+            Id = "brain-cfg",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Brain",
             Settings = new Dictionary<string, string> { ["privateKeyBase64"] = "brainkey", ["clientId"] = "c", ["installationId"] = "1" }
         };
         _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("brain-cfg", ProviderKind.Repository, It.IsAny<CancellationToken>()))
@@ -1048,12 +1058,15 @@ public sealed class AgentHubBehaviorTests : IDisposable
             _mockFacade.Object,
             _mockLabelService.Object,
             _mockLogger.Object);
+        var appLifetime = new Mock<IHostApplicationLifetime>();
+        appLifetime.SetupGet(l => l.ApplicationStopping).Returns(CancellationToken.None);
         return new AgentJobLifecycleService(
             _mockFacade.Object,
             _mockLifecycleManager.Object,
             _mockLabelService.Object,
             issueOps,
             changeNotifier,
+            appLifetime.Object,
             _mockLogger.Object);
     }
 
