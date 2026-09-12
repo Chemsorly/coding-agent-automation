@@ -192,7 +192,6 @@ All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans mark
 | `RunQualityGates` | `pipeline.run_id`, `pipeline.issue` | Quality gate execution |
 | `QualityGate.Compilation` | `gate_name` | Compilation command execution (child of RunQualityGates) |
 | `QualityGate.Tests` | `gate_name` | Test command execution (child of RunQualityGates) |
-| `QualityGate.Coverage` | `gate_name` | Coverage report parsing (child of RunQualityGates) |
 | `ReviewCode` | `pipeline.run_id`, `pipeline.issue` | Multi-agent code review |
 | `CodeReview.Iteration` | `pipeline.run_id`, `pipeline.issue`, `code_review.iteration`, `code_review.max_iterations`, `code_review.parallel` | Single code review iteration (child of ReviewCode) |
 | `CodeReview.Agent` | `pipeline.run_id`, `pipeline.issue`, `pipeline.review_agent`, `pipeline.isolated` | Individual review agent execution (child of CodeReview.Iteration) |
@@ -339,8 +338,7 @@ ExecutePipeline
 │   └── ...
 ├── RunQualityGates
 │   ├── QualityGate.Compilation
-│   ├── QualityGate.Tests
-│   └── QualityGate.Coverage
+│   └── QualityGate.Tests
 ├── CreatePullRequest
 ├── GeneratePrDescription
 └── FinalizePullRequest
