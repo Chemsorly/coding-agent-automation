@@ -104,7 +104,8 @@ internal sealed class TemplatePoller
 
         // Success — update status (agentDonePrQueues not counted as dispatchable work)
         var issueCount = issueQueues[template.Id].Count;
-        var prCount = prQueues[template.Id].Count;
+        // prQueues key may be absent if PR polling was skipped or failed (see PollPrQueueAsync).
+        var prCount = prQueues.TryGetValue(template.Id, out var prList) ? prList.Count : 0;
         var decompCount = decompositionQueues[template.Id].Count;
         templateStatuses[template.Id] = new ConfigStatusSnapshot
         {
@@ -153,6 +154,17 @@ internal sealed class TemplatePoller
     /// <summary>
     /// Polls the PR queue for a template (only when ReviewEnabled).
     /// Wrapped in its own try-catch so that a PR polling failure does not discard the issue queue.
+    /// <para>
+    /// Key-presence contract for <see cref="BuildPrEligibilityMap"/>:
+    /// <list type="bullet">
+    ///   <item><c>ReviewEnabled = false</c> — key is set to an empty list (correct "no eligible PRs").</item>
+    ///   <item>Successful poll — key is set to the fetched PR list.</item>
+    ///   <item>Exception — key is <em>removed</em> so <see cref="BuildPrEligibilityMap"/> treats
+    ///         the template as "not polled this cycle" (fail-open) rather than "zero eligible PRs".
+    ///         Without this, a transient PR-poll failure would cause the sweep to cancel every
+    ///         Pending Review WorkItem for the affected provider.</item>
+    /// </list>
+    /// </para>
     /// </summary>
     private async Task PollPrQueueAsync(
         PipelineJobTemplate template,
@@ -160,8 +172,12 @@ internal sealed class TemplatePoller
         Dictionary<string, List<PullRequestSummary>> prQueues,
         CancellationToken ct)
     {
-        prQueues[template.Id] = new List<PullRequestSummary>();
-        if (!template.ReviewEnabled) return;
+        if (!template.ReviewEnabled)
+        {
+            // Intentional "zero eligible PRs" — not a failure.
+            prQueues[template.Id] = new List<PullRequestSummary>();
+            return;
+        }
 
         try
         {
@@ -169,6 +185,8 @@ internal sealed class TemplatePoller
             {
                 _logger.Warning("Template '{TemplateName}': repo provider '{RepoProviderId}' not found in cache, skipping PR polling",
                     template.Name, template.RepoProviderId);
+                // Treat as zero eligible PRs (misconfigured provider, not a transient failure).
+                prQueues[template.Id] = new List<PullRequestSummary>();
                 return;
             }
 
@@ -178,6 +196,10 @@ internal sealed class TemplatePoller
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
+            // Remove the key so BuildPrEligibilityMap omits this provider (fail-open).
+            // A transient failure must never be treated as "zero eligible PRs" — that would
+            // cause the sweep to cancel all Pending Review WorkItems for this provider.
+            prQueues.Remove(template.Id);
             _logger.Warning(ex, "Template '{TemplateName}' PR polling failed, issue polling unaffected: {Error}",
                 template.Name, ex.Message);
         }

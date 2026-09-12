@@ -474,7 +474,17 @@ public static class ApiServiceCollectionExtensions
                     sp.GetRequiredService<JobTemplateStore>(),
                     sp.GetRequiredService<IConfiguration>(),
                     sp.GetRequiredService<WorkItemTransitionService>(),
-                    sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchStateBuilder>())));
+                    sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchStateBuilder>())
+                {
+                    // Wire provider infrastructure for the pre-dispatch eligibility gate.
+                    // When the gate is enabled, ineligible Pending items are cancelled before
+                    // K8s Job creation (restores the #2251 / #2268 dispatch-time eligibility re-check).
+                    ProviderFactory = sp.GetRequiredService<IProviderFactory>(),
+                    ProviderConfigStore = sp.GetRequiredService<IProviderConfigStore>(),
+                    // ProjectStore is used to look up templates so Review items are checked against
+                    // the correct repository provider (matched by IssueProviderId), not a random first one.
+                    ProjectStore = sp.GetRequiredService<IProjectStore>()
+                }));
         services.AddHostedService(sp =>
             sp.GetRequiredService<CodingAgent.Api.Dispatch.WorkItemDispatchService>());
 

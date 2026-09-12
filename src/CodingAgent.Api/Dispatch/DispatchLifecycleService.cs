@@ -276,6 +276,25 @@ internal sealed class DispatchLifecycleService : IDisposable
     }
 
     /// <summary>
+    /// Cancels a work item with the given reason. Transitions to Cancelled.
+    /// Used by the pre-dispatch eligibility gate when an item is found ineligible before K8s Job creation.
+    /// RetryCount is NOT incremented — this is a clean cancellation, not a failure.
+    /// The reason is persisted to <see cref="WorkItemEntity.ErrorMessage"/> so it is visible
+    /// in the Work UI and queryable from the database (mirrors the sweep path which writes
+    /// <c>ErrorMessage = cancelReason</c> via <c>PostStatusAsync</c>).
+    /// </summary>
+    public async Task CancelWorkItemAsync(Guid workItemId, string reason, CancellationToken ct)
+    {
+        await _transitionService.TransitionAsync(
+            workItemId,
+            WorkItemStatus.Cancelled,
+            WorkItemMutationFactory.Cancelled(reason),
+            ct: ct);
+
+        Log.Information("DispatchLifecycleService: WorkItem {WorkItemId} cancelled: {Reason}", workItemId, reason);
+    }
+
+    /// <summary>
     /// Loads project secrets from the project's Settings JSON.
     /// </summary>
     public static async Task<Dictionary<string, string>?> LoadProjectSecretsAsync(

@@ -62,8 +62,19 @@ public static class WorkItemMutationFactory
 
     /// <summary>
     /// Returns a mutation action for a <see cref="WorkItemStatus.Cancelled"/> terminal transition.
-    /// Sets only <see cref="WorkItemEntity.CompletedAt"/>.
+    /// Sets <see cref="WorkItemEntity.CompletedAt"/> and, if <paramref name="reason"/> is provided,
+    /// <see cref="WorkItemEntity.ErrorMessage"/> so the cancellation reason is visible in the UI
+    /// and queryable from the database.
     /// </summary>
-    public static Action<WorkItemEntity> Cancelled()
-        => item => item.CompletedAt = DateTimeOffset.UtcNow;
+    /// <param name="reason">
+    /// Human-readable cancellation reason (e.g. <c>"Issue closed"</c>, <c>"PR closed"</c>).
+    /// When <see langword="null"/>, <see cref="WorkItemEntity.ErrorMessage"/> is left unchanged.
+    /// </param>
+    public static Action<WorkItemEntity> Cancelled(string? reason = null)
+        => item =>
+        {
+            item.CompletedAt = DateTimeOffset.UtcNow;
+            if (reason is not null)
+                item.ErrorMessage = reason;
+        };
 }
