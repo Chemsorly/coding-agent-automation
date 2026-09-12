@@ -424,6 +424,231 @@ public partial class LayerBoundaryTests
             "and this allowlist, and confirm they do not violate the lock-ordering rules.");
     }
 
+    // ── SyncRoot correctness guard: AgentEntry.ActiveJobId only assigned under lock ──
+    // Source-scanning test: verifies that every non-exempt AgentEntry.ActiveJobId assignment
+    // in any .cs file under src/ appears inside a lock(...) block.
+    //
+    // Scope: all *.cs files under src/ (excluding obj/ build artefacts).
+    //
+    // Exempt bare writes (known-safe off-lock; documented per-line below):
+    //   AgentJobLifecycleService.cs  — job-rejection path: `agent.ActiveJobId = null`
+    //     These are off-lock by design: job-completion/rejection semantics require clearing
+    //     the field quickly before the status transition, and the calling context holds no
+    //     other lock that could create a nesting hazard.  They are NOT authorized SyncRoot
+    //     consumers (see docs/architecture/concurrency-model.md §Authorized consumers).
+    //   AgentHub.Consolidation.cs    — consolidation-complete path: `agent.ActiveJobId = null`
+    //     Same rationale: job-completion semantics, intentionally off-lock null-clear.
+    //   HubConsolidationOperations.cs — local snapshot clear: `agent.ActiveJobId = null`
+    //     Duplicate snapshot update for a non-tracked local reference; same rationale.
+    //
+    // If null-clears are ever found to be unsafe, remove the relevant entries from the
+    // exempt set below and update docs/architecture/concurrency-model.md to document the
+    // required locking discipline for completion paths.
+    //
+    // TODO: [WARNING] nextBraceOpensLock has no guard against malformed/edited code where
+    // "lock (...)" appears but its { is never found (e.g. if the file is syntactically broken
+    // or an intervening line has an unrelated { before the lock body opens).  In that case
+    // nextBraceOpensLock stays armed and binds to the first subsequent { it encounters,
+    // silently corrupting lockBraceDepths for the rest of the file.  Replace with a
+    // Roslyn-based approach that parses the syntax tree directly for a robust long-term guard.
+    //
+    // TODO: [WARNING] The brace-depth scanner does not strip block comments (/* ... */) or
+    // braces inside string literals.  If a future file adds either construct, the scanner
+    // can silently mis-track lock depth.  Switch to a Roslyn-based check if that happens.
+    //
+    // Implementation: brace-depth tracking. Each lock (...) { increments the lock depth; each
+    // closing } decrements it. An ActiveJobId assignment found at lockDepth == 0 is bare (unlocked).
+    //
+    // See docs/architecture/concurrency-model.md — authorized consumers + release-then-reacquire pattern.
+
+    // Exempt file-name → set of bare `ActiveJobId = <expr>` line contents (trimmed) that are
+    // known-safe off-lock.  Two categories are exempt:
+    //
+    //   (a) Object-initializer / record-`with` / DTO-mapping assignments — these are writes
+    //       to a freshly-constructed object (or an immutable clone), not mutations on a shared
+    //       live AgentEntry.  No concurrent reader can see the object until construction is
+    //       complete, so no lock is required.
+    //
+    //   (b) Intentional off-lock null-clears in job-completion/rejection paths — these are NOT
+    //       authorized SyncRoot consumers (see docs/architecture/concurrency-model.md
+    //       §Authorized consumers).  They clear the field as part of job-completion semantics
+    //       where the calling context holds no other lock.
+    //
+    // To add a new exemption: confirm the write falls into one of the above categories and
+    // document the rationale in a comment next to the entry.
+    private static readonly Dictionary<string, HashSet<string>> ActiveJobIdBareWriteExemptions =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            // ── Category (a): object-initializer / with-expression / DTO-mapping ──
+
+            // DistributedAgentRegistryService — snapshot object-initializer (BuildSnapshot method):
+            // constructs a new AgentEntry snapshot; the object is not yet shared.
+            // Also: _localSnapshot update via record `with { ActiveJobId = ... }` in UpdateAgentFieldAsync
+            // (immutable `with` expression creates a new snapshot record, not a mutation of a live entry).
+            // Also: BuildAgentEntryFromHashEntries object-initializer reading from Redis hash.
+            ["DistributedAgentRegistryService.cs"] = new(StringComparer.Ordinal)
+            {
+                "ActiveJobId = activeJobId,",
+                "\"activeJobId\" => snapshot with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },",
+                "ActiveJobId = dict.GetValueOrDefault(\"activeJobId\") is { Length: > 0 } aj ? aj : null,",
+            },
+
+            // AgentEntryDtoFactory — DTO mapping: reads entry.ActiveJobId into a DTO; no write to a live entry.
+            ["AgentEntryDtoFactory.cs"] = new(StringComparer.Ordinal)
+            {
+                "ActiveJobId = entry.ActiveJobId,",
+            },
+
+            // ApiAgentRegistryService — object-initializer building AgentEntry from a DTO (read path, not mutation).
+            ["ApiAgentRegistryService.cs"] = new(StringComparer.Ordinal)
+            {
+                "ActiveJobId = dto.ActiveJobId,",
+            },
+
+            // ── Category (b): intentional off-lock null-clears in job-completion paths ──
+
+            // job-rejection path in AgentJobLifecycleService (two identical call sites)
+            ["AgentJobLifecycleService.cs"] = new(StringComparer.Ordinal) { "agent.ActiveJobId = null;" },
+            // consolidation-complete path in AgentHub.Consolidation
+            ["AgentHub.Consolidation.cs"] = new(StringComparer.Ordinal) { "agent.ActiveJobId = null; // local snapshot update" },
+            // duplicate local snapshot clear in HubConsolidationOperations
+            ["HubConsolidationOperations.cs"] = new(StringComparer.Ordinal) { "agent.ActiveJobId = null;" },
+        };
+
+    [Fact]
+    public void AgentEntry_ActiveJobId_OnlyAssignedUnderLock_CwideGuard()
+    {
+        var srcRoot = Path.Combine(RepoRoot, "src");
+        var sourceFiles = Directory
+            .EnumerateFiles(srcRoot, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"))
+            .ToList();
+
+        // Violations: (file, 1-based line number) pairs.
+        var violations = new List<(string File, int Line)>();
+
+        foreach (var filePath in sourceFiles)
+        {
+            var fileName = Path.GetFileName(filePath);
+            var lines = File.ReadAllLines(filePath);
+            ScanFileForBareActiveJobIdAssignments(lines, fileName, filePath, violations);
+        }
+
+        Assert.True(violations.Count == 0,
+            $"Bare AgentEntry.ActiveJobId assignments found outside lock(SyncRoot) " +
+            $"({violations.Count} violation(s)):\n" +
+            string.Join("\n", violations.Select(v => $"  {v.File}:{v.Line}")) + "\n" +
+            "All non-exempt ActiveJobId mutations must be wrapped in lock(entry.SyncRoot) " +
+            "using the release-then-reacquire pattern. " +
+            "To exempt a known-safe bare write, add it to ActiveJobIdBareWriteExemptions " +
+            "with a comment explaining why it is safe. " +
+            "See docs/architecture/concurrency-model.md for the authorized-consumer rules.");
+    }
+
+    private static void ScanFileForBareActiveJobIdAssignments(
+        string[] lines,
+        string fileName,
+        string filePath,
+        List<(string, int)> violations)
+    {
+        // Track brace depth globally and lock-brace depth separately.
+        // lockBraceDepths holds the brace depth at which each active lock block opened
+        // (post-increment, i.e. the depth INSIDE the lock body).
+        //
+        // Algorithm: lock-statement detection runs BEFORE the brace-counting loop so that
+        // when "lock (...) {" appears on a single line the opening { is recognised as a
+        // lock brace at the correct post-increment depth.
+        //
+        // Pop invariant (verified correct; do not swap order):
+        //   Push records braceDepth AFTER incrementing for the '{'.
+        //   Pop check fires BEFORE decrementing for the '}': at that point braceDepth
+        //   still equals the value recorded on push, so the comparison is correct.
+        //   Multi-brace lines (e.g. "}) {") are handled because the char loop is
+        //   left-to-right: the closing '}' is processed and popped first, then the '{'.
+        var braceDepth = 0;
+        var lockBraceDepths = new Stack<int>(); // depths (post-{-increment) at which lock blocks opened
+        var nextBraceOpensLock = false;         // true after "lock (...)" seen WITHOUT same-line {
+
+        ActiveJobIdBareWriteExemptions.TryGetValue(fileName, out var exemptLines);
+
+        foreach (var (rawLine, index) in lines.Select((l, i) => (l, i)))
+        {
+            // Strip single-line comments to avoid matching { or } in // ... text.
+            // TODO: [WARNING] does not handle /* */ block comments or // inside string literals;
+            // if a future refactor adds those to a scanned file, switch to a Roslyn-based check.
+            var commentStart = rawLine.IndexOf("//", StringComparison.Ordinal);
+            var line = commentStart >= 0 ? rawLine[..commentStart] : rawLine;
+
+            var trimmed = line.Trim();
+
+            // ── Step 1: detect "lock (...)" BEFORE counting braces ──
+            // This ensures we know whether an opening { on this line belongs to a lock.
+            var lineStartsLock = false; // true if this line contains "lock (...)"
+            var sameBraceOnLine = false; // true if the lock { is also on this line
+            if (System.Text.RegularExpressions.Regex.IsMatch(trimmed, @"^lock\s*\("))
+            {
+                lineStartsLock = true;
+                sameBraceOnLine = trimmed.Contains('{');
+            }
+
+            // ── Step 2: count braces on this line ──
+            foreach (var ch in line)
+            {
+                if (ch == '{')
+                {
+                    braceDepth++;
+                    // This { opens a lock scope if:
+                    //   (a) the previous line had "lock (...)" with no {, OR
+                    //   (b) this line itself has "lock (...)" and this { is its brace.
+                    // For case (b) we use the lineStartsLock + sameBraceOnLine flags;
+                    // we consume the flag so only the first { on a same-line lock is pushed.
+                    if (nextBraceOpensLock)
+                    {
+                        lockBraceDepths.Push(braceDepth);
+                        nextBraceOpensLock = false;
+                    }
+                    else if (lineStartsLock && sameBraceOnLine)
+                    {
+                        lockBraceDepths.Push(braceDepth);
+                        lineStartsLock = false; // consume — only push once per lock statement
+                    }
+                }
+                else if (ch == '}')
+                {
+                    // Pop invariant: check BEFORE decrement (see header comment).
+                    if (lockBraceDepths.Count > 0 && braceDepth == lockBraceDepths.Peek())
+                        lockBraceDepths.Pop();
+                    braceDepth--;
+                }
+            }
+
+            // ── Step 3: arm nextBraceOpensLock for the next line if { not yet seen ──
+            if (lineStartsLock && !sameBraceOnLine)
+                nextBraceOpensLock = true;
+
+            // ── Step 4: detect bare ActiveJobId assignment ──
+            // Match both simple assignment (= not followed by = or ?) and null-coalescing
+            // assignment (??=), which was previously missed by the [^=?] character class.
+            // Pattern: \bActiveJobId\s* followed by either (??=) or (= not followed by =).
+            // Note: plain `=?` (conditional assignment) is not a C# operator; the [^=]
+            // lookahead on the simple-assignment branch excludes only ==.
+            if (System.Text.RegularExpressions.Regex.IsMatch(
+                    trimmed,
+                    @"\bActiveJobId\s*(?:\?\?=|=[^=])")
+                && lockBraceDepths.Count == 0)
+            {
+                // Check against the per-file exemption list (raw trimmed line content from
+                // the original line, before comment stripping, to preserve inline comments
+                // that are part of the exemption key).
+                var rawTrimmed = rawLine.Trim();
+                if (exemptLines is null || !exemptLines.Contains(rawTrimmed))
+                {
+                    violations.Add((filePath, index + 1));
+                }
+            }
+        }
+    }
+
     // ── T9: Agent must not depend on Infrastructure.Persistence ───────────
     // Guard test: ensures the Agent assembly never gains a dependency on the
     // Persistence assembly. The T9 split is complete — this test now uses a

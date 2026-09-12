@@ -21,7 +21,7 @@
             <h1>Fleet</h1>
             <span class="cockpit-page-sub">Registered agents — status, capacity, and current work</span>
         </div>
-        <RefreshBar OnRefresh="RefreshQuietAsync" IsLoading="@(_loading && _agents is null)" />
+        <RefreshBar OnRefresh="RefreshQuietAsync" IsLoading="@(_loading && _agents is null)" StorageKey="autoRefresh.fleet" />
     </div>
 
     @* TODO: [WARNING] Fleet shows agent status (Idle/Busy) which changes on job assignment/completion.

@@ -2,6 +2,9 @@ using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Web.Components.Shared;
 using Microsoft.AspNetCore.Components;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.JSInterop;
+using Moq;
 
 namespace CodingAgent.Web.UnitTests.Components;
 
@@ -16,9 +19,24 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// - Selecting Off cancels any active timer
 /// - Component disposal cancels active timer (no ObjectDisposedException)
 /// - Auto-refresh timer actually fires the OnRefresh callback after the interval elapses
+/// - StorageKey: restores persisted interval on first render
+/// - StorageKey: writes to localStorage on interval change
+/// - StorageKey: timer still starts when no stored value exists
+/// - StorageKey: ignores stored values not in the Intervals list
+/// - StorageKey: null means no localStorage calls (opt-in)
 /// </summary>
 public class RefreshBarComponentTests : BunitContext
 {
+    private readonly Mock<IJSRuntime> _mockJs = new();
+
+    public RefreshBarComponentTests()
+    {
+        // IJSRuntime is now injected by RefreshBar. Register a shared loose mock so all existing
+        // tests continue to work without modification. Individual tests that need specific return
+        // values configure _mockJs.Setup(...) before calling Render<RefreshBar>().
+        Services.AddSingleton<IJSRuntime>(_mockJs.Object);
+    }
+
     [Fact]
     public void RefreshBar_RendersRefreshButton()
     {
@@ -115,6 +133,7 @@ public class RefreshBarComponentTests : BunitContext
         var act = () =>
         {
             using var ctx = new BunitContext();
+            ctx.Services.AddSingleton<IJSRuntime>(new Mock<IJSRuntime>().Object);
             _ = ctx.Render<RefreshBar>();
             // ctx.Dispose() is called implicitly — component DisposeAsync is awaited synchronously
             // via GetAwaiter().GetResult() by bUnit, so the timer is properly cancelled.
@@ -129,6 +148,7 @@ public class RefreshBarComponentTests : BunitContext
         var act = async () =>
         {
             await using var ctx = new BunitContext();
+            ctx.Services.AddSingleton<IJSRuntime>(new Mock<IJSRuntime>().Object);
             var cut = ctx.Render<RefreshBar>();
             var select = cut.Find("select");
             await cut.InvokeAsync(() => select.Change("10"));
@@ -394,5 +414,197 @@ public class RefreshBarComponentTests : BunitContext
             "auto-refresh timer must invoke OnRefresh at least once after the interval elapses; " +
             "a broken RunTickLoopAsync (e.g. the fire-and-forget removed) would leave callCount at 0");
         completed.Should().Be(tcs.Task, "OnRefresh must fire within 5 seconds of a 1-second interval being set");
+    }
+
+    // ── StorageKey persistence tests ──────────────────────────────────────────
+
+    // TODO [WARNING]: StorageKey_DisposedDuringLocalStorageGet_DoesNotLeakTimer is missing.
+    // The _disposed flag (set at the top of DisposeAsync, checked in OnAfterRenderAsync after
+    // the localStorageGet await) is the only guard against a timer/CTS leak when DisposeAsync
+    // runs during the localStorageGet yield. This guard has no test coverage — a future refactor
+    // that moves `_disposed = true` after an await would not be caught by the current suite.
+    // Add a test that resolves the localStorageGet mock after disposal and asserts no second
+    // timer is created (e.g. _timerCts count remains at 1, or RestartTimer is not called twice).
+
+    /// <summary>
+    /// When a valid interval is stored in localStorage, it must be restored on first render,
+    /// overriding the default 60s interval. The timer must be running with the restored interval.
+    /// </summary>
+    [Fact]
+    public void StorageKey_WithSavedInterval_RestoresIntervalOnFirstRender()
+    {
+        // Arrange: localStorage returns "30" for the storage key.
+        // Use the no-CT overload (object[]?) — that is what JS.InvokeAsync<T>(id, args) calls.
+        _mockJs
+            .Setup(j => j.InvokeAsync<string?>("localStorageGet", It.IsAny<object[]?>()))
+            .ReturnsAsync("30");
+
+        // Act
+        var cut = Render<RefreshBar>(p => p
+            .Add(c => c.StorageKey, "autoRefresh.work")
+            .Add(c => c.OnRefresh, EventCallback.Factory.Create(this, () => { })));
+
+        // Assert: interval was restored to 30s
+        var instance = cut.Instance;
+        var type = instance.GetType();
+        var intervalField = type.GetField("_intervalSeconds",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.NotNull(intervalField);
+
+        intervalField.GetValue(instance).Should().Be(30,
+            "the stored interval (30s) must be restored on first render");
+
+        // Timer must also be running
+        var timerCtsField = type.GetField("_timerCts",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.NotNull(timerCtsField);
+        timerCtsField.GetValue(instance).Should().NotBeNull(
+            "timer must be running after the interval is restored");
+    }
+
+    /// <summary>
+    /// When the stored value is not in the Intervals array (e.g. "999"), it must be ignored
+    /// and the default interval used. The timer must still start.
+    /// </summary>
+    [Fact]
+    public void StorageKey_WithInvalidInterval_IgnoresStoredValue_UsesDefault()
+    {
+        // Arrange: localStorage returns a value not in the Intervals array
+        _mockJs
+            .Setup(j => j.InvokeAsync<string?>("localStorageGet", It.IsAny<object[]?>()))
+            .ReturnsAsync("999");
+
+        // Act
+        var cut = Render<RefreshBar>(p => p
+            .Add(c => c.StorageKey, "autoRefresh.work"));
+
+        // Assert: default interval unchanged
+        var instance = cut.Instance;
+        var type = instance.GetType();
+        var intervalField = type.GetField("_intervalSeconds",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.NotNull(intervalField);
+
+        intervalField.GetValue(instance).Should().Be(60,
+            "an invalid stored value must be ignored; default 60s interval must remain");
+
+        // Timer must still be running (default start must have fired)
+        var timerCtsField = type.GetField("_timerCts",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.NotNull(timerCtsField);
+        timerCtsField.GetValue(instance).Should().NotBeNull(
+            "timer must still start even when the stored value is invalid");
+    }
+
+    /// <summary>
+    /// When the stored value is null (key not yet written — first visit), the default interval
+    /// must be used and the timer must start. This is the key regression test for the
+    /// 'double-phase' approach: the timer must start via RestartTimer() BEFORE the localStorage
+    /// check, not only when a valid stored value is found.
+    /// </summary>
+    [Fact]
+    public void StorageKey_WithNullStoredValue_StartsTimerAtDefault()
+    {
+        // Arrange: localStorage returns null (key absent)
+        _mockJs
+            .Setup(j => j.InvokeAsync<string?>("localStorageGet", It.IsAny<object[]?>()))
+            .ReturnsAsync((string?)null);
+
+        // Act
+        var cut = Render<RefreshBar>(p => p
+            .Add(c => c.StorageKey, "autoRefresh.work")
+            .Add(c => c.OnRefresh, EventCallback.Factory.Create(this, () => { })));
+
+        // Assert: default interval (60s) unchanged
+        var instance = cut.Instance;
+        var type = instance.GetType();
+        var intervalField = type.GetField("_intervalSeconds",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.NotNull(intervalField);
+        intervalField.GetValue(instance).Should().Be(60,
+            "when no value is stored the default interval must be used");
+
+        // Timer must be running (the unconditional RestartTimer call must have fired)
+        var timerCtsField = type.GetField("_timerCts",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.NotNull(timerCtsField);
+        timerCtsField.GetValue(instance).Should().NotBeNull(
+            "timer must start even when localStorage returns null for the key");
+    }
+
+    /// <summary>
+    /// When the user changes the interval and StorageKey is set, the new interval must be
+    /// written to localStorage.
+    /// </summary>
+    [Fact]
+    public async Task StorageKey_OnIntervalChange_WritesToLocalStorage()
+    {
+        // Act: change the interval to 30s
+        var cut = Render<RefreshBar>(p => p
+            .Add(c => c.StorageKey, "autoRefresh.work")
+            .Add(c => c.OnRefresh, EventCallback.Factory.Create(this, () => { })));
+
+        var select = cut.Find("select");
+        await cut.InvokeAsync(() => select.Change("30"));
+
+        // Assert: localStorageSet was called with the new interval.
+        // InvokeVoidAsync maps to InvokeAsync<IJSVoidResult> with the no-CT overload.
+        _mockJs.Verify(
+            j => j.InvokeAsync<Microsoft.JSInterop.Infrastructure.IJSVoidResult>(
+                "localStorageSet",
+                It.Is<object[]?>(args => args != null && args.Length == 2
+                    && args[0].ToString() == "autoRefresh.work"
+                    && args[1].ToString() == "30")),
+            Times.Once,
+            "localStorageSet must be called with the storage key and new interval value");
+        // TODO [WARNING]: This test does not verify that localStorageSet is NOT called during the
+        // restore path (OnAfterRenderAsync). The requirement "write on user-initiated change only"
+        // has no coverage — a regression that adds a write in the restore path would not be caught.
+        // Add a separate test (or an extra Times assertion here) that confirms localStorageSet is
+        // never called when only a restore occurs (no user-initiated change).
+    }
+
+    /// <summary>
+    /// When StorageKey is null (not provided), localStorageGet must never be called.
+    /// This confirms the opt-in behaviour — components without StorageKey make no JS calls.
+    /// </summary>
+    [Fact]
+    public void StorageKey_Null_DoesNotCallLocalStorageGet()
+    {
+        // Act: render without StorageKey
+        _ = Render<RefreshBar>(p => p
+            .Add(c => c.OnRefresh, EventCallback.Factory.Create(this, () => { })));
+
+        // Assert: no localStorageGet call was made
+        _mockJs.Verify(
+            j => j.InvokeAsync<string?>("localStorageGet", It.IsAny<object[]?>()),
+            Times.Never,
+            "localStorageGet must not be called when StorageKey is null");
+    }
+
+    /// <summary>
+    /// When StorageKey is null, the component behaves exactly as it did before the StorageKey
+    /// parameter was added: timer starts at default 1-minute interval.
+    /// </summary>
+    [Fact]
+    public void NoStorageKey_BehavesExactlyAsToday()
+    {
+        var cut = Render<RefreshBar>(p => p
+            .Add(c => c.OnRefresh, EventCallback.Factory.Create(this, () => { })));
+
+        var instance = cut.Instance;
+        var type = instance.GetType();
+
+        var intervalField = type.GetField("_intervalSeconds",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var timerCtsField = type.GetField("_timerCts",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.NotNull(intervalField);
+        Assert.NotNull(timerCtsField);
+
+        intervalField.GetValue(instance).Should().Be(60,
+            "without StorageKey, interval must default to 60s (1 minute)");
+        timerCtsField.GetValue(instance).Should().NotBeNull(
+            "without StorageKey, timer must start automatically at the default interval");
     }
 }
