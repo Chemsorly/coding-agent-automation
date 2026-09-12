@@ -44,7 +44,7 @@ public static class AgentLabels
     /// <summary>Labels representing terminal pipeline states — should not be overwritten by recovery services.</summary>
     public static readonly IReadOnlySet<string> TerminalLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        Done, Error, NeedsRefinement, WontDo, Cancelled
+        Done, Error, NeedsRefinement, WontDo, Cancelled, EpicReview
     };
 
     /// <summary>

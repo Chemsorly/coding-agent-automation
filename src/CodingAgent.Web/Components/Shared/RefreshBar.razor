@@ -1,14 +1,19 @@
 @implements IAsyncDisposable
+@inject IJSRuntime JS
 
 @*
     RefreshBar — a consistent refresh toolbar for all live-data pages.
     Renders a manual Refresh button and an auto-refresh interval selector.
     Manages its own PeriodicTimer so callers don't need a separate <AutoRefresh/>.
 
-    Usage:
+    Usage (no persistence):
         <RefreshBar OnRefresh="LoadAsync" IsLoading="_loading" />
 
-    Auto-refresh default is 1 minute. The selected interval is session-local (field state).
+    Usage (with localStorage persistence):
+        <RefreshBar OnRefresh="LoadAsync" IsLoading="_loading" StorageKey="autoRefresh.work" />
+
+    Auto-refresh default is 1 minute. When StorageKey is provided, the selected interval is
+    persisted to localStorage and restored on first render.
     The timer is cancelled and disposed on component teardown — no leaked timers.
     Invoking the EventCallback re-renders the parent, so handlers need no explicit StateHasChanged.
 *@
@@ -50,11 +55,26 @@
     /// <summary>When true, the Refresh button is disabled (the page is already loading).</summary>
     [Parameter] public bool IsLoading { get; set; }
 
+    /// <summary>
+    /// Optional localStorage key for persisting the selected auto-refresh interval.
+    /// When null (default), no localStorage reads or writes are performed — behaviour
+    /// is identical to before this parameter was added.
+    /// </summary>
+    [Parameter] public string? StorageKey { get; set; }
+
     // 60 = 1 minute (default). 0 = Off (no auto-refresh).
+    // TODO [WARNING]: The acceptance criterion states "defaults to Off", but the original
+    // implementation (pre-#2491) used 60s as the default and the existing tests assert 60s.
+    // Confirm whether the pre-existing default was 0 or 60 and align the criterion, the field
+    // initialiser, and the tests. This is a pre-existing ambiguity, not introduced by this PR.
     private int _intervalSeconds = 60;
 
     private PeriodicTimer? _timer;
     private CancellationTokenSource? _timerCts;
+
+    // Guards the second RestartTimer call in OnAfterRenderAsync (the localStorage-override path)
+    // against running after DisposeAsync has already torn down the timer.
+    private bool _disposed;
 
     private async Task HandleManualRefresh() => await OnRefresh.InvokeAsync();
 
@@ -66,14 +86,44 @@
     // cycle rather than a leaked timer. Low probability, but worth monitoring if timer state looks off.
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender)
-            await RestartTimer();
+        if (!firstRender) return;
+
+        // Always start the default timer first. This preserves the original behaviour for
+        // callers that don't pass StorageKey, and ensures the timer starts even when
+        // StorageKey is set but no stored value exists yet (first visit, or stored value
+        // equals the current default — the localStorage override path below only fires
+        // when a stored value differs from _intervalSeconds).
+        await RestartTimer();
+
+        if (StorageKey is null) return;
+
+        try
+        {
+            var raw = await JS.InvokeAsync<string?>("localStorageGet", StorageKey);
+            if (!_disposed && int.TryParse(raw, out var secs) && Intervals.Any(i => i.Seconds == secs) && secs != _intervalSeconds)
+            {
+                _intervalSeconds = secs;
+                await RestartTimer();
+                StateHasChanged();
+            }
+        }
+        catch (JSDisconnectedException) { }
+        catch (JSException) { }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { }
     }
 
     private async Task HandleIntervalChanged(ChangeEventArgs e)
     {
         if (!int.TryParse(e.Value?.ToString(), out var secs) || secs < 0) return;
         _intervalSeconds = secs;
+        if (StorageKey is not null)
+        {
+            try { await JS.InvokeVoidAsync("localStorageSet", StorageKey, secs.ToString()); }
+            catch (JSDisconnectedException) { }
+            catch (JSException) { }
+            catch (InvalidOperationException) { }
+        }
         await RestartTimer();
     }
 
@@ -135,6 +185,9 @@
 
     public async ValueTask DisposeAsync()
     {
+        // Set _disposed before any await so that OnAfterRenderAsync's localStorage-override
+        // path (which awaits localStorageGet) sees the flag and skips the second RestartTimer.
+        _disposed = true;
         if (_timerCts is not null)
         {
             try { await _timerCts.CancelAsync(); } catch (ObjectDisposedException) { }

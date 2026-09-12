@@ -31,7 +31,7 @@
                causing a visible flash. Fix: extract a quiet reload variant that does not toggle _loading
                (keeping stale data visible while re-fetching) and wire the RefreshBar OnRefresh to that
                quiet path instead, matching the established convention used by Overview/Runs/Work. *@
-            <RefreshBar OnRefresh="LoadAsync" IsLoading="@_loading" />
+            <RefreshBar OnRefresh="LoadAsync" IsLoading="@_loading" StorageKey="autoRefresh.insights" />
 
             @* TODO: [WARNING] Insights aggregates completed run metrics. The run-scoped hub events
                (OnRunCompleted) are not wired here because they are sent only to run-specific groups.
