@@ -66,6 +66,7 @@ public static class TestPipelineConfig
         HousekeepingTriggerCooldownMinutes = 25,
         ClosedLoopAutoStart = true,
         MinIssueSlots = 1,
+        HousekeepingMaxSlotAgeMinutes = 0,
     };
 
     /// <summary>
@@ -123,5 +124,6 @@ public static class TestPipelineConfig
         HousekeepingTriggerCooldownMinutes = 25,
         ClosedLoopAutoStart = true,
         MinIssueSlots = 1,
+        HousekeepingMaxSlotAgeMinutes = 0,
     };
 }

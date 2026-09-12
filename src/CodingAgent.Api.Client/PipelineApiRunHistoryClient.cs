@@ -62,18 +62,19 @@ internal sealed class PipelineApiRunHistoryClient : IPipelineApiRunHistoryClient
     public async Task<IReadOnlyList<string>> GetActiveBranchesAsync(CancellationToken ct = default)
     {
         // Use GetAsync + EnsureSuccessStatusCode so that non-2xx responses (403 Forbidden,
-        // 500 Internal Server Error, etc.) throw an HttpRequestException instead of being
-        // silently swallowed as an empty list. The exception propagates to
+        // 500 Internal Server Error, etc.) throw an HttpRequestException instead of returning
+        // a null result that would have to be null-checked. The exception propagates to
         // SchedulerRunQueryService.GetActiveRunBranchesAsync, which propagates it further to
         // HousekeepingService.ExecuteAsync where the catch block sets activeRunBranchesUnavailable=true
         // and applies the conservative fallback (skip all branch updates this cycle).
-        // A silent empty list would be indistinguishable from "no active runs" and would defeat
+        // A null/empty result would be indistinguishable from "no active runs" and would defeat
         // the conservative fallback — e.g. a 403 from a misconfigured auth key would cause
         // UpdatePullRequestBranchAsync to be called on live-run branches.
-        // NOTE: GetRunHistoryAsync (line ~22) uses the same GetFromJsonAsync pattern and
-        //   would throw a NullReferenceException on non-2xx responses (result! dereference).
-        //   That is a pre-existing issue in this file; consider aligning it to GetAsync +
-        //   EnsureSuccessStatusCode for consistency.
+        // NOTE: GetRunHistoryAsync above uses GetFromJsonAsync which also throws HttpRequestException
+        //   (not a NullReferenceException) on non-2xx responses, because GetFromJsonAsync calls
+        //   EnsureSuccessStatusCode internally. The result! dereference is safe on 2xx where the
+        //   body is expected to be non-null JSON; it will throw NullReferenceException only if the
+        //   server returns a 2xx with an empty or null body, which is not a valid API response here.
         var response = await _http.GetAsync("/api/pipeline-runs/active-branches", ct);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<IReadOnlyList<string>>(

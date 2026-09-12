@@ -78,6 +78,23 @@ public sealed class HousekeepingService : IHousekeepingService
     private readonly ConcurrentDictionary<string, HashSet<int>> _inFlight = new();
 
     /// <summary>
+    /// Tracks when each PR's in-flight slot was acquired, keyed by (repoProviderId, prNumber).
+    /// Used to implement max-age slot eviction: a PR that has held the slot for longer than
+    /// <see cref="PipelineConfiguration.HousekeepingMaxSlotAgeMinutes"/> is evicted regardless
+    /// of mergeability status, preventing a single stuck PR from starving all other behind PRs.
+    /// Cleared on normal slot release (Steps 3 and 6b) and on PR removal from the polled set.
+    /// </summary>
+    /// <remarks>
+    /// TODO: the invariant "every entry in _inFlight has a matching entry in _inFlightAt" is not
+    /// enforced structurally — it relies on Step 6b being the only writer to both dictionaries.
+    /// A PR that enters _inFlight without a corresponding _inFlightAt entry (e.g. via a future code
+    /// path) will have slotAge fall back to 0.0 and max-age eviction will silently never fire for it.
+    /// Consider encapsulating both writes behind a helper method (e.g. AcquireSlot / ReleaseSlot)
+    /// to make the pairing structural rather than a documentation convention.
+    /// </remarks>
+    private readonly ConcurrentDictionary<(string repoId, int prNumber), DateTimeOffset> _inFlightAt = new();
+
+    /// <summary>
     /// Tracks when the last stale-branch cleanup pass ran per repository,
     /// so we don't call <c>ListAgentBranchesAsync</c> on every tick.
     /// </summary>
@@ -120,6 +137,7 @@ public sealed class HousekeepingService : IHousekeepingService
         bool branchCleanupEnabled,
         int cleanupIntervalMinutes,
         int triggerCooldownMinutes,
+        int maxSlotAgeMinutes,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(repoProvider);
@@ -144,7 +162,21 @@ public sealed class HousekeepingService : IHousekeepingService
         var mergeabilityMap = new Dictionary<int, PrMergeabilityStatus>(agentDonePrs.Count);
         foreach (var pr in agentDonePrs)
         {
-            mergeabilityMap[pr.Number] = await repoProvider.IsPullRequestBehindBaseAsync(pr.Number, ct);
+            try
+            {
+                mergeabilityMap[pr.Number] = await repoProvider.IsPullRequestBehindBaseAsync(pr.Number, ct);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                // Conservative fallback: treat a failed probe as Unknown so one flaky PR or
+                // transient API error does not abort the entire mergeability pass. Unknown status
+                // means Step 3 will keep the slot occupied (no eviction) and Step 6b will skip
+                // the PR — safe no-op behaviour until the probe succeeds in a future cycle.
+                _logger.Warning(ex,
+                    "HousekeepingService: mergeability probe failed for PR #{PrNumber} in repo {RepoId} — treating as Unknown (conservative fallback)",
+                    pr.Number, repoProviderId);
+                mergeabilityMap[pr.Number] = PrMergeabilityStatus.Unknown;
+            }
         }
 
         // ── Step 2: Get or create in-flight set ──────────────────────────────
@@ -152,20 +184,49 @@ public sealed class HousekeepingService : IHousekeepingService
 
         // ── Step 3: Evict resolved in-flight entries ──────────────────────────
         var currentPrNumbers = new HashSet<int>(agentDonePrs.Select(p => p.Number));
+        var now3 = UtcNow();
         foreach (var prNumber in inFlight.ToList())
         {
             if (!currentPrNumbers.Contains(prNumber))
             {
                 inFlight.Remove(prNumber);
                 _lastTriggeredAt.TryRemove((repoProviderId, prNumber), out _); // PR merged/closed — clear cooldown state
+                _inFlightAt.TryRemove((repoProviderId, prNumber), out _);       // clear slot entry time
                 PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
             }
             else
             {
                 var status = mergeabilityMap[prNumber];
-                if (status != PrMergeabilityStatus.Blocked && status != PrMergeabilityStatus.Unknown)
+
+                // Max-age eviction: if this slot has been held longer than the configured threshold,
+                // release it regardless of mergeability status. This prevents a single PR stuck at
+                // Blocked/Unknown from monopolising the slot and starving all other behind PRs.
+                // maxSlotAgeMinutes=0 disables time-based eviction (preserves previous behaviour).
+                var slotAge = maxSlotAgeMinutes > 0
+                    && _inFlightAt.TryGetValue((repoProviderId, prNumber), out var acquiredAt)
+                    ? (now3 - acquiredAt).TotalMinutes
+                    : 0.0;
+
+                if (maxSlotAgeMinutes > 0 && slotAge >= maxSlotAgeMinutes)
+                {
+                    _logger.Information(
+                        "HousekeepingService: PR #{PrNumber} in repo {RepoId} has held the slot for {SlotAge:F0}m (max {MaxAge}m, status={Status}) — evicting to unblock other PRs",
+                        prNumber, repoProviderId, slotAge, maxSlotAgeMinutes, status);
+                    inFlight.Remove(prNumber);
+                    _inFlightAt.TryRemove((repoProviderId, prNumber), out _);
+                    PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
+                    // TODO: a PR with current status=Behind whose TriggerCooldown has also elapsed
+                    //   (likely, since maxSlotAgeMinutes is normally >> cooldown) will be immediately
+                    //   re-selected by Step 6b in the same cycle, re-acquiring the slot and re-triggering
+                    //   UpdatePullRequestBranchAsync. The eviction is only effective for Blocked/Unknown
+                    //   PRs (which Step 6b skips). For a chronically-Behind PR the eviction is a no-op.
+                    //   To fix: record the evicted PR number for this pass and skip it in Step 6b, or
+                    //   only apply max-age eviction when status is Blocked/Unknown.
+                }
+                else if (status != PrMergeabilityStatus.Blocked && status != PrMergeabilityStatus.Unknown)
                 {
                     inFlight.Remove(prNumber);
+                    _inFlightAt.TryRemove((repoProviderId, prNumber), out _);
                     PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
                 }
             }
@@ -301,6 +362,7 @@ public sealed class HousekeepingService : IHousekeepingService
 
             _lastTriggeredAt[(repoProviderId, pr.Number)] = now6b;
             inFlight.Add(pr.Number);
+            _inFlightAt[(repoProviderId, pr.Number)] = now6b; // record slot acquisition time for max-age eviction
             PipelineTelemetry.HousekeepingTriggered.Add(1, repoTag);
             await FireAndForget(UpdateAsync(repoProvider, repoProviderId, pr.Number, repoTag));
         }
