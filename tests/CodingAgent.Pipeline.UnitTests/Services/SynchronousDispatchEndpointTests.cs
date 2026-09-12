@@ -216,10 +216,15 @@ public sealed class SynchronousDispatchEndpointTests
         statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
     }
 
-    // ── Acceptance Criterion: 409 when no template for selector ─────────────
+    // ── Acceptance Criterion: 422 when no template for selector ─────────────
 
+    /// <summary>
+    /// When no job template is registered for the requested agent selector, DispatchWorkItem
+    /// must return 422 Unprocessable Entity (permanent failure — no template will appear without
+    /// a configuration change). This is distinct from 409 (concurrency limit, transient).
+    /// </summary>
     [Fact]
-    public async Task DispatchWorkItem_WhenNoTemplateForSelector_Returns409()
+    public async Task DispatchWorkItem_WhenNoTemplateForSelector_Returns422()
     {
         var dbFactory = CreateDbFactory();
         // Template only has "kiro,dotnet", not "opencode,java"
@@ -232,8 +237,51 @@ public sealed class SynchronousDispatchEndpointTests
         var result = await WorkItemEndpoints.DispatchWorkItem(
             request, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
 
-        // Assert: 409 (no template)
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>();
+        // Assert: 422 Unprocessable Entity (permanent — no template, not a concurrency issue)
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.UnprocessableEntity<string>>(
+            "no-template must return 422 Unprocessable Entity, not 409 Conflict");
+    }
+
+    /// <summary>
+    /// Regression: concurrency limit must still return 409 Conflict (transient), not 422.
+    /// </summary>
+    [Fact]
+    public async Task DispatchWorkItem_WhenConcurrencyLimitReached_Returns409_NotChangedTo422()
+    {
+        // Arrange: seed 2 active items (maxConcurrent=2 means limit reached)
+        var dbFactory = CreateDbFactory();
+        await using (var db = await dbFactory.CreateDbContextAsync())
+        {
+            for (int i = 0; i < 2; i++)
+            {
+                db.WorkItems.Add(new WorkItemEntity
+                {
+                    Id = Guid.NewGuid(),
+                    TaskType = WorkItemTaskType.Implementation,
+                    IssueIdentifier = $"active-{i}",
+                    IssueProviderConfigId = "prov-1",
+                    Status = WorkItemStatus.Dispatched,
+                    AgentSelector = "kiro,dotnet",
+                    TimeoutSeconds = 3600,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    Payload = "{}"
+                });
+            }
+            await db.SaveChangesAsync();
+        }
+
+        var templateStore = CreateTemplateStore(maxConcurrent: 2);
+        var lifecycle = CreateLifecycleService();
+        var runService = CreateRunService();
+        var request = MakeRequest(WorkItemTaskType.Implementation, "kiro,dotnet");
+
+        // Act
+        var result = await WorkItemEndpoints.DispatchWorkItem(
+            request, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
+
+        // Assert: 409 Conflict (concurrency limit is transient — must NOT be 422)
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
+            "concurrency limit must still return 409 Conflict (transient), not 422");
     }
 
     // ── Acceptance Criterion: PipelineRun registered in RunService ────────────

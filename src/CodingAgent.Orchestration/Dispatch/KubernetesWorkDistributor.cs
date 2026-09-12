@@ -88,17 +88,35 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
                 workItemId, request.IssueIdentifier);
             return new DistributionResult(true, workItemId.ToString(), null, Queued: false);
         }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity)
+        {
+            // 422 = permanent failure: no job template for the requested selector, or the selector
+            // is otherwise unresolvable. This will not succeed without a configuration change.
+            _logger.LogWarning(
+                "Dispatch endpoint returned 422 (no job template) for consolidation {IssueIdentifier} — permanent failure",
+                request.IssueIdentifier);
+            return new DistributionResult(false, null, $"Permanent: {ex.Message}", IsPermanentFailure: true);
+        }
         catch (HttpRequestException ex) when (
             ex.StatusCode == System.Net.HttpStatusCode.Conflict ||
             ex.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
         {
+            // 409 = concurrency limit reached; 503 = PVC unavailable. Both are transient — retry is appropriate.
             _logger.LogInformation(
-                "Dispatch endpoint returned {StatusCode} for consolidation {IssueIdentifier} — no capacity",
+                "Dispatch endpoint returned {StatusCode} for consolidation {IssueIdentifier} — transient, run stays Queued",
                 ex.StatusCode, request.IssueIdentifier);
-            return new DistributionResult(false, null, $"No capacity ({ex.StatusCode}): {ex.Message}");
+            return new DistributionResult(false, null, $"Transient ({ex.StatusCode}): {ex.Message}", IsPermanentFailure: false);
         }
         catch (Exception ex)
         {
+            // TODO: Non-422 permanent HTTP errors (400, 401, 403, 404, etc.) fall through here
+            // and return IsPermanentFailure=false (transient default), meaning a misconfigured
+            // API key (401), bad request (400), or missing endpoint (404) will leave the run
+            // Queued forever — the same "stuck Queued" bug this fix targets. Consider treating
+            // the 4xx client-error range (except 409) as permanent (IsPermanentFailure=true)
+            // since none of those statuses resolve without a configuration change. Requires a
+            // catch clause for HttpRequestException before this general catch, similar to the
+            // 422 handler above. See review-findings.md [WARNING] KubernetesWorkDistributor.cs:112.
             _logger.LogError(ex,
                 "Failed to dispatch consolidation WorkItem via Pipeline API for issue {IssueIdentifier}",
                 request.IssueIdentifier);

@@ -44,7 +44,8 @@ public sealed class ConsolidationRehydrationExtensionsTests
             sp.GetRequiredService<IWorkDistributor>(),
             sp.GetRequiredService<IAgentProfileStore>(),
             sp.GetRequiredService<IConsolidationWorkspaceManager>(),
-            sp.GetRequiredService<IPipelineConfigStore>()));
+            sp.GetRequiredService<IPipelineConfigStore>(),
+            sp.GetRequiredService<IConsolidationService>()));
 
         return builder.Build();
     }

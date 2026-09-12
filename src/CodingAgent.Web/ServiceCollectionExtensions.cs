@@ -125,7 +125,20 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IWorkDistributor>(),
             sp.GetRequiredService<IAgentProfileStore>(),
             sp.GetRequiredService<IConsolidationWorkspaceManager>(),
-            sp.GetRequiredService<IPipelineConfigStore>()));
+            sp.GetRequiredService<IPipelineConfigStore>(),
+            sp.GetRequiredService<IConsolidationService>()));
+
+        // Bounded background retry sweep for Queued consolidation runs. Re-dispatches runs that
+        // previously received a transient dispatch failure (409/503) so they are not stuck waiting
+        // for the next orchestrator restart. Runs that exceed MaxRetryAttempts are cascaded to
+        // Failed so they surface in the Attention view.
+        services.AddSingleton<ConsolidationTransientRetryService>(sp =>
+            new ConsolidationTransientRetryService(
+                sp.GetRequiredService<IConsolidationService>(),
+                sp.GetRequiredService<IConsolidationDispatcher>(),
+                TimeProvider.System,
+                Serilog.Log.Logger));
+        services.AddHostedService(sp => sp.GetRequiredService<ConsolidationTransientRetryService>());
 
         return services;
     }

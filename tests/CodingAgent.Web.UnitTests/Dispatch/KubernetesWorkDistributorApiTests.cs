@@ -182,7 +182,7 @@ public class KubernetesWorkDistributorApiTests
     public async Task DistributeAsync_ConsolidationRequest_When409Conflict_ReturnsFailureNoCapacity()
     {
         // The synchronous dispatch endpoint returns 409 when the concurrency cap is reached.
-        // This is surfaced as a failure result (no capacity), not a thrown exception.
+        // This is surfaced as a transient failure result, not a thrown exception.
         var request = CreateConsolidationRequest();
 
         _mockClient
@@ -193,14 +193,15 @@ public class KubernetesWorkDistributorApiTests
 
         result.Success.Should().BeFalse();
         result.Queued.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("No capacity", "409 on the consolidation dispatch path means no capacity");
+        result.IsPermanentFailure.Should().BeFalse("409 is transient — concurrency limit, not a config error");
+        result.ErrorMessage.Should().Contain("Transient", "409 on the consolidation dispatch path is a transient failure");
     }
 
     [Fact]
     public async Task DistributeAsync_ConsolidationRequest_When503ServiceUnavailable_ReturnsFailureNoCapacity()
     {
         // 503 (no PVC available / K8s failure) on the synchronous dispatch path is also treated
-        // as a no-capacity failure so the Scheduler can retry the issue next cycle.
+        // as a transient failure so rehydration can retry.
         var request = CreateConsolidationRequest();
 
         _mockClient
@@ -210,7 +211,8 @@ public class KubernetesWorkDistributorApiTests
         var result = await _sut.DistributeAsync(request, CancellationToken.None);
 
         result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("No capacity");
+        result.IsPermanentFailure.Should().BeFalse("503 is transient — PVC unavailable, not a config error");
+        result.ErrorMessage.Should().Contain("Transient");
     }
 
     [Fact]

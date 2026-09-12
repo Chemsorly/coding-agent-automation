@@ -137,6 +137,55 @@ public sealed class KubernetesWorkDistributorTests
     }
 
     [Fact]
+    public async Task DistributeAsync_Consolidation_When409Conflict_ReturnsTransientFailure()
+    {
+        // 409 from DispatchAsync on the Consolidation path = concurrency limit reached (transient).
+        // Must return Success=false, IsPermanentFailure=false so the caller leaves run Queued for retry.
+        var request = MakeRequest(taskType: WorkItemTaskType.Consolidation);
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("concurrency limit", null, System.Net.HttpStatusCode.Conflict));
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse("409 on the consolidation path is a dispatch failure");
+        result.IsPermanentFailure.Should().BeFalse("409 is a transient (concurrency) failure — run must stay Queued for retry");
+        result.ErrorMessage.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task DistributeAsync_Consolidation_When503ServiceUnavailable_ReturnsTransientFailure()
+    {
+        // 503 from DispatchAsync on the Consolidation path = PVC unavailable (transient).
+        // Must return Success=false, IsPermanentFailure=false so the caller leaves run Queued for retry.
+        var request = MakeRequest(taskType: WorkItemTaskType.Consolidation);
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("no PVC", null, System.Net.HttpStatusCode.ServiceUnavailable));
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse("503 on the consolidation path is a dispatch failure");
+        result.IsPermanentFailure.Should().BeFalse("503 is a transient (PVC unavailable) failure — run must stay Queued for retry");
+        result.ErrorMessage.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task DistributeAsync_Consolidation_When422UnprocessableEntity_ReturnsPermanentFailure()
+    {
+        // 422 from DispatchAsync on the Consolidation path = no job template for the requested
+        // agent selector. This is a permanent failure — will not resolve without a config change.
+        // Must return Success=false, IsPermanentFailure=true so the caller cascades to Failed.
+        var request = MakeRequest(taskType: WorkItemTaskType.Consolidation);
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("No job template for agent selector: kiro,python,python312", null, System.Net.HttpStatusCode.UnprocessableEntity));
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse("422 on the consolidation path is a permanent dispatch failure");
+        result.IsPermanentFailure.Should().BeTrue("422 means no job template — permanent, must cascade run to Failed");
+        result.ErrorMessage.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
     public async Task DistributeAsync_NullRequest_Throws()
     {
         var act = () => _sut.DistributeAsync(null!, CancellationToken.None);

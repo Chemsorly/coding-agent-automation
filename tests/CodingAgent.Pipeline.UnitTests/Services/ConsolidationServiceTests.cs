@@ -162,8 +162,11 @@ public sealed class ConsolidationServiceTests : IDisposable
     [Fact]
     public async Task TriggerAsync_WithNoDefaultRequiredAgentLabels_LeavesQueuedRequiredLabelsNull()
     {
-        // When DefaultRequiredAgentLabels is not configured, QueuedRequiredLabels stays null
-        // (any agent matches — the dispatcher falls back to profile-based selection).
+        // When DefaultRequiredAgentLabels is not configured, QueuedRequiredLabels stays null.
+        // null does NOT mean "any agent can handle it" — it means no required labels were
+        // configured at trigger time. The dispatcher handles this by falling back to
+        // DefaultRequiredAgentLabels at dispatch time (or emitting a warning if that is also
+        // unset). The Superset-match on an empty required set is deliberately bypassed.
         var sut = CreateSut(); // _config has no DefaultRequiredAgentLabels
 
         var run = await sut.TriggerAsync(
@@ -171,7 +174,8 @@ public sealed class ConsolidationServiceTests : IDisposable
 
         run.Should().NotBeNull();
         run!.QueuedRequiredLabels.Should().BeNull(
-            "when no default labels are configured, QueuedRequiredLabels should be null so any agent can handle it");
+            "when no default labels are configured, QueuedRequiredLabels is null; " +
+            "the dispatcher uses DefaultRequiredAgentLabels at dispatch time as a fallback");
     }
 
     [Fact]

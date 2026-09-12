@@ -711,9 +711,9 @@ public static class WorkItemEndpoints
         var template = templateStore.Resolve(request.AgentSelector ?? "");
         if (template is null)
         {
-            Log.Warning("DispatchWorkItem: no job template for selector {Selector} — returning 409",
+            Log.Warning("DispatchWorkItem: no job template for selector {Selector} — returning 422",
                 request.AgentSelector);
-            return TypedResults.Conflict($"No job template for agent selector: {request.AgentSelector}");
+            return TypedResults.UnprocessableEntity($"No job template for agent selector: {request.AgentSelector}");
         }
 
         var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);

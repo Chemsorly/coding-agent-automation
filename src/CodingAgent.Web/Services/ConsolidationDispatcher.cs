@@ -20,17 +20,20 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
     private readonly IAgentProfileStore _profileStore;
     private readonly IConsolidationWorkspaceManager _workspaceManager;
     private readonly IPipelineConfigStore _configStore;
+    private readonly IConsolidationService _consolidationService;
 
     public ConsolidationDispatcher(
         IWorkDistributor workDistributor,
         IAgentProfileStore profileStore,
         IConsolidationWorkspaceManager workspaceManager,
-        IPipelineConfigStore configStore)
+        IPipelineConfigStore configStore,
+        IConsolidationService consolidationService)
     {
         _workDistributor = workDistributor;
         _profileStore = profileStore;
         _workspaceManager = workspaceManager;
         _configStore = configStore;
+        _consolidationService = consolidationService;
     }
 
     /// <inheritdoc />
@@ -42,18 +45,33 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
             var liveConfig = await _configStore.LoadPipelineConfigAsync(ct);
             var profiles = await _profileStore.LoadAgentProfilesAsync(ct);
 
-            // Resolve full profile MatchLabels from QueuedRequiredLabels to produce the
-            // correct AgentSelector key (matches the startup rehydration path exactly).
-            var requiredLabels = run.QueuedRequiredLabels ?? [];
-            var profile = ProfileResolver.ResolveByRequiredLabels(profiles, requiredLabels.ToList());
-            var selectorLabels = profile?.MatchLabels ?? requiredLabels;
-
-            // If selectorLabels is still empty (QueuedRequiredLabels was null on an old persisted run,
-            // or profiles loaded empty during a startup race), attempt a backward-compat fallback.
-            // New runs will have QueuedRequiredLabels populated by ConsolidationService.BuildNewRun
-            // so this block is only entered for runs created before that fix.
-            if (selectorLabels.Count == 0)
+            // Resolve the AgentSelector key for this run.
+            //
+            // Two distinct paths:
+            //
+            // NEW RUN PATH (QueuedRequiredLabels is set):
+            //   The required labels were baked at trigger time by ConsolidationService.BuildNewRun.
+            //   Use them directly for profile resolution — this is the normal, deterministic path.
+            //
+            // LEGACY RUN PATH (QueuedRequiredLabels is null):
+            //   The run was created before the label-baking fix, or DefaultRequiredAgentLabels was
+            //   not configured at trigger time. The required labels are unknown. We MUST NOT fall
+            //   through to ProfileResolver.ResolveByRequiredLabels with an empty required set because
+            //   Superset-matching with an empty target set matches EVERY profile and deterministically
+            //   picks the Id-lexicographically-smallest enabled profile — which is almost certainly
+            //   wrong (e.g., "kiro,python,python312" when only "kiro,dotnet,dotnet10" has a template).
+            //   Instead, use the live DefaultRequiredAgentLabels as a fallback, or produce an empty
+            //   selector (warning path) if no default is configured.
+            IReadOnlyList<string> selectorLabels;
+            if (run.QueuedRequiredLabels is { Count: > 0 } baked)
             {
+                // New run path: use baked labels → profile resolution → full MatchLabels as key
+                var profile = ProfileResolver.ResolveByRequiredLabels(profiles, baked.ToList());
+                selectorLabels = profile?.MatchLabels ?? baked;
+            }
+            else
+            {
+                // Legacy run path: QueuedRequiredLabels was null — do NOT run Superset-match.
                 if (!string.IsNullOrWhiteSpace(liveConfig.DefaultRequiredAgentLabels))
                 {
                     var defaultLabels = liveConfig.DefaultRequiredAgentLabels
@@ -61,6 +79,14 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
                         .ToList()
                         .AsReadOnly();
                     var defaultProfile = ProfileResolver.ResolveByRequiredLabels(profiles, defaultLabels);
+                    // TODO: If defaultProfile is null (no enabled profile's MatchLabels is a superset of
+                    // defaultLabels), selectorLabels falls back to the raw defaultLabels string (e.g.
+                    // "kiro,dotnet"). If no job template matches that partial key (e.g. the only template
+                    // is "kiro,dotnet,dotnet10"), dispatch returns 422 and the run is permanently cascaded
+                    // to Failed — even though the configuration is technically correct (the profile exists
+                    // but the default label string is not the full MatchLabels). Fix: if defaultProfile is
+                    // null, log a warning and fall through to the empty-selector path rather than using the
+                    // partial raw labels as a key. See review-findings.md [WARNING] ConsolidationDispatcher.cs:100.
                     selectorLabels = defaultProfile?.MatchLabels ?? defaultLabels;
                     Log.Warning(
                         "ConsolidationDispatcher: run {RunId} has no QueuedRequiredLabels; fell back to DefaultRequiredAgentLabels → selector '{Selector}'",
@@ -68,10 +94,14 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
                 }
                 else
                 {
-                    // Profiles are empty — startup race or profile store unavailable.
-                    // Empty selector → dispatch will 409. Run stays Queued; rehydration retries on restart.
+                    // No baked labels and no default configured — cannot determine a correct selector.
+                    // Produce an empty selector; dispatch will return a permanent 422 (no template).
+                    // The permanent-failure handler below will cascade this run to Failed so it surfaces
+                    // in the Attention view rather than staying Queued silently.
+                    selectorLabels = [];
                     Log.Warning(
-                        "ConsolidationDispatcher: run {RunId} has no QueuedRequiredLabels and no profiles loaded (startup race?). Empty selector will cause 409; run stays Queued.",
+                        "ConsolidationDispatcher: run {RunId} has no QueuedRequiredLabels and DefaultRequiredAgentLabels is not configured. " +
+                        "Empty selector will be dispatched; this is a permanent failure — run will be cascaded to Failed.",
                         run.RunId);
                 }
             }
@@ -104,11 +134,34 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
                     "ConsolidationDispatcher: dispatched run {RunId} ({Type}) → WorkItem {WorkItemId}",
                     run.RunId, run.Type, result.WorkItemId);
             }
+            else if (result.IsPermanentFailure)
+            {
+                // Permanent failure: no job template for the selector, or the selector is unresolvable.
+                // This will never succeed without a configuration change — cascade to Failed so the run
+                // surfaces in the Attention view and does not stay Queued forever.
+                Log.Warning(
+                    "ConsolidationDispatcher: permanent dispatch failure for run {RunId} ({Type}): {Error}. " +
+                    "Cascading to Failed — operator must fix configuration (job template / required labels) and re-trigger.",
+                    run.RunId, run.Type, result.ErrorMessage);
+                // TODO: Use CancellationToken.None (not ct) for this terminal state write. If ct is
+                // already cancelled when we reach here (orchestrator pod draining at the exact moment
+                // dispatch returned a permanent failure), UpdateRunAsync(ct) will throw
+                // OperationCanceledException, the outer catch will log "unexpected error", and the
+                // run will silently stay Queued — defeating the cascade. The terminal bookkeeping
+                // write must complete regardless of the inbound token. Only the DistributeAsync call
+                // above should honour ct. See review-findings.md [WARNING] ConsolidationDispatcher.cs:135.
+                await _consolidationService.UpdateRunAsync(
+                    new RunId(run.RunId),
+                    ConsolidationRunStatus.Failed,
+                    $"Dispatch permanently failed: {result.ErrorMessage}",
+                    ct);
+            }
             else
             {
-                // Leave the run as Queued — startup rehydration retries on next pod restart.
+                // Transient failure (concurrency limit, PVC unavailable). Leave Queued —
+                // startup rehydration retries on next pod restart.
                 Log.Warning(
-                    "ConsolidationDispatcher: dispatch failed for run {RunId} ({Type}): {Error}. " +
+                    "ConsolidationDispatcher: dispatch failed (transient) for run {RunId} ({Type}): {Error}. " +
                     "Run remains Queued; will retry on next orchestrator restart.",
                     run.RunId, run.Type, result.ErrorMessage);
             }
