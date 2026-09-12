@@ -1650,10 +1650,10 @@ public static class WorkItemEndpoints
                 IssueTitle = issueTitle,
                 InitiatedBy = initiatedBy
             };
-        // TODO [WARNING]: ct is available and used in the SQL phase (ToListAsync(ct)) but is not
-        // propagated to this in-memory LINQ loop. Under normal payload sizes this is harmless because
-        // the deserialization is synchronous and fast. If payload sizes grow significantly, consider
-        // adding a cancellation check (ct.ThrowIfCancellationRequested()) inside the loop body.
+            // TODO [WARNING]: ct is available and used in the SQL phase (ToListAsync(ct)) but is not
+            // propagated to this in-memory LINQ loop. Under normal payload sizes this is harmless because
+            // the deserialization is synchronous and fast. If payload sizes grow significantly, consider
+            // adding a cancellation check (ct.ThrowIfCancellationRequested()) inside the loop body.
         }).ToList();
 
         // Enrich with live pipeline step from the in-memory run service when available.

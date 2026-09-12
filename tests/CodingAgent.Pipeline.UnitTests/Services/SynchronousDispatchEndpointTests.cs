@@ -94,16 +94,16 @@ public sealed class SynchronousDispatchEndpointTests
         WorkItemTaskType taskType = WorkItemTaskType.Implementation,
         string selector = "kiro,dotnet",
         string? runId = null) => new()
-    {
-        IssueIdentifier = new IssueIdentifier($"issue-{Guid.NewGuid():N}"),
-        IssueProviderConfigId = "prov-1",
-        RepoProviderConfigId = "repo-1",
-        InitiatedBy = "test",
-        TaskType = taskType,
-        AgentSelector = selector,
-        TimeoutSeconds = 3600,
-        RunId = runId ?? Guid.NewGuid().ToString()
-    };
+        {
+            IssueIdentifier = new IssueIdentifier($"issue-{Guid.NewGuid():N}"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = taskType,
+            AgentSelector = selector,
+            TimeoutSeconds = 3600,
+            RunId = runId ?? Guid.NewGuid().ToString()
+        };
 
     // ── Acceptance Criterion: Review dispatched successfully ─────────────────
 
