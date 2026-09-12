@@ -911,6 +911,14 @@ public sealed class AgentJobLifecycleServiceTests
             throw new TimeoutException(
                 $"Timed out after {timeoutMs}ms waiting for a Warning invocation containing '{templateFragment}' " +
                 $"on the logger mock. Warning invocations recorded: {loggerMock.Invocations.Count(i => i.Method.Name == nameof(ILogger.Warning))}");
+
+        // Brief pause after the condition is met to ensure the thread-pool write to Moq's
+        // InvocationCollection is fully visible to Verify on the test thread. Under Release
+        // JIT with CPU memory reordering, SpinWait.SpinUntil can exit the moment HasMatchingWarning
+        // returns true, but Verify observes a stale snapshot if the write hasn't propagated
+        // through the CPU cache hierarchy yet. 50ms is well below the 5-second test timeout and
+        // reliably covers any realistic memory-ordering delay on CI hardware.
+        Thread.Sleep(50);
     }
 
     [Fact]
