@@ -888,6 +888,17 @@ public sealed class AgentJobLifecycleServiceTests
     /// </summary>
     private static void WaitForLoggerWarningContaining(Mock<ILogger> loggerMock, string templateFragment,
         int timeoutMs = 5000)
+        => WaitForLoggerWarningContaining(loggerMock, templateFragment, requireException: false, timeoutMs);
+
+    /// <summary>
+    /// Waits for a Warning invocation whose template string contains <paramref name="templateFragment"/>.
+    /// When <paramref name="requireException"/> is <c>true</c>, only invocations that include a non-null
+    /// <see cref="Exception"/> as the first argument are matched — used to distinguish fire-and-forget
+    /// ContinueWith warnings (which carry an exception) from synchronous warnings that happen to contain
+    /// the same keyword.
+    /// </summary>
+    private static void WaitForLoggerWarningContaining(Mock<ILogger> loggerMock, string templateFragment,
+        bool requireException, int timeoutMs = 5000)
     {
         // TODO: [WARNING] SpinWait.SpinUntil polls the Moq invocation list, which requires the
         // continuation to have been scheduled and executed on the thread pool. This is more reliable
@@ -903,14 +914,16 @@ public sealed class AgentJobLifecycleServiceTests
         bool HasMatchingWarning() =>
             loggerMock.Invocations.Any(i =>
                 i.Method.Name == nameof(ILogger.Warning) &&
-                i.Arguments.OfType<string>().Any(s => s.Contains(templateFragment)));
+                i.Arguments.OfType<string>().Any(s => s.Contains(templateFragment)) &&
+                (!requireException || i.Arguments.OfType<Exception>().Any(e => e != null)));
 
         SpinWait.SpinUntil(HasMatchingWarning, timeoutMs);
 
         if (!HasMatchingWarning())
             throw new TimeoutException(
-                $"Timed out after {timeoutMs}ms waiting for a Warning invocation containing '{templateFragment}' " +
-                $"on the logger mock. Warning invocations recorded: {loggerMock.Invocations.Count(i => i.Method.Name == nameof(ILogger.Warning))}");
+                $"Timed out after {timeoutMs}ms waiting for a Warning invocation containing '{templateFragment}'" +
+                (requireException ? " (with exception)" : "") +
+                $" on the logger mock. Warning invocations recorded: {loggerMock.Invocations.Count(i => i.Method.Name == nameof(ILogger.Warning))}");
 
         // Brief pause after the condition is met to ensure the thread-pool write to Moq's
         // InvocationCollection is fully visible to Verify on the test thread. Under Release
@@ -1115,7 +1128,12 @@ public sealed class AgentJobLifecycleServiceTests
 
         // Act: agent=null triggers the run-fallback path
         await _sut.HandleJobCompletedAsync(jobId, agent: null, MakePayload(), CancellationToken.None);
-        WaitForLoggerWarningContaining(_logger, "run fallback");
+        // Wait specifically for the ContinueWith warning (which carries an Exception argument),
+        // not the synchronous warning at line ~274 which also contains "run fallback" but has no
+        // exception and fires before the fire-and-forget continuation. Without requireException:true
+        // the SpinWait exits on the synchronous warning and the 50ms sleep isn't enough for the
+        // ContinueWith to fire, causing a flaky Times.Once failure.
+        WaitForLoggerWarningContaining(_logger, "run fallback", requireException: true);
 
         // Assert: a Warning is logged for the run-fallback activeJobId fault path
         _logger.Verify(

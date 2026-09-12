@@ -70,19 +70,19 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
 
         _loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
         {
-            Orchestration         = runCreator,
-            ProviderFactory       = _mockFactory.Object,
-            PipelineConfigStore   = _mockStore.Object,
-            ProviderConfigStore   = _mockStore.Object,
-            ProjectStore          = _mockStore.Object,
-            Logger                = _mockLogger.Object,
-            WorkDistributor       = null,
+            Orchestration = runCreator,
+            ProviderFactory = _mockFactory.Object,
+            PipelineConfigStore = _mockStore.Object,
+            ProviderConfigStore = _mockStore.Object,
+            ProjectStore = _mockStore.Object,
+            Logger = _mockLogger.Object,
+            WorkDistributor = null,
             DispatchOrchestration = new NullDispatchOrchestrationService(),
-            DependencyChecker     = null,
-            HousekeepingService   = null,
-            LeaderElection        = null,
-            WorkItemClient        = sweepClient,
-            MeterFactory          = _meterFactory
+            DependencyChecker = null,
+            HousekeepingService = null,
+            LeaderElection = null,
+            WorkItemClient = sweepClient,
+            MeterFactory = _meterFactory
         });
         return _loopService;
     }
@@ -143,7 +143,11 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         // Template polled but not present in issueQueues at all (e.g. never got to polling)
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true
         };
 
         var result = PipelineLoopService.BuildEligibilityMap(
@@ -164,7 +168,11 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         // set, so Pending WorkItems for this provider WILL be cancelled.
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true
         };
         var issueQueues = new Dictionary<string, List<IssueSummary>>
         {
@@ -192,7 +200,11 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
     {
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true
         };
         var issueQueues = new Dictionary<string, List<IssueSummary>>
         {
@@ -577,7 +589,11 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         // cancellation of all pending WorkItems for that provider.
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true
         };
         var issueQueues = new Dictionary<string, List<IssueSummary>>
         {
@@ -611,7 +627,11 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         // (fail-open), preventing cancellation of all pending WorkItems due to a transient failure.
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true
         };
         var issueQueues = new Dictionary<string, List<IssueSummary>>
         {
@@ -641,7 +661,11 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         // The provider SHOULD be included so stale WorkItems are correctly cancelled.
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true
         };
         var issueQueues = new Dictionary<string, List<IssueSummary>>
         {
@@ -779,8 +803,12 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         // Template with ReviewEnabled = false should not contribute to the PR map.
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1",
-            Enabled = true, ReviewEnabled = false
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true,
+            ReviewEnabled = false
         };
         var prQueues = new Dictionary<string, List<PullRequestSummary>>
         {
@@ -798,8 +826,12 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
     {
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1",
-            Enabled = true, ReviewEnabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true,
+            ReviewEnabled = true
         };
         var prQueues = new Dictionary<string, List<PullRequestSummary>>
         {
@@ -822,8 +854,12 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         // Template not polled this cycle (e.g. repo provider not in cache) — fail open.
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1",
-            Enabled = true, ReviewEnabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true,
+            ReviewEnabled = true
         };
 
         var result = PipelineLoopService.BuildPrEligibilityMap([template], prQueues: []);
@@ -841,8 +877,12 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         // BuildPrEligibilityMap must omit the provider when the key is absent — fail open.
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1",
-            Enabled = true, ReviewEnabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true,
+            ReviewEnabled = true
         };
         // Key is absent — mirrors the state after PollPrQueueAsync catches an exception and removes the key.
         var prQueues = new Dictionary<string, List<PullRequestSummary>>();
@@ -895,8 +935,12 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         // Template was rate-limited during this cycle — fail open.
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1",
-            Enabled = true, ReviewEnabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true,
+            ReviewEnabled = true
         };
         var prQueues = new Dictionary<string, List<PullRequestSummary>>
         {

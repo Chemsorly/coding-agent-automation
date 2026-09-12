@@ -26,16 +26,16 @@ public partial class GitHubRepositoryProvider
         // pr.MergeableState is StringEnum<MergeableState>; switch on the string value.
         return pr.MergeableState?.StringValue switch
         {
-            "behind"    => PrMergeabilityStatus.Behind,
-            "clean"     => PrMergeabilityStatus.UpToDate,
-            "dirty"     => PrMergeabilityStatus.Conflicted, // merge conflict — trigger rework
-            "draft"     => PrMergeabilityStatus.UpToDate,
+            "behind" => PrMergeabilityStatus.Behind,
+            "clean" => PrMergeabilityStatus.UpToDate,
+            "dirty" => PrMergeabilityStatus.Conflicted, // merge conflict — trigger rework
+            "draft" => PrMergeabilityStatus.UpToDate,
             "has_hooks" => PrMergeabilityStatus.UpToDate,
-            "unstable"  => PrMergeabilityStatus.UpToDate,   // non-required checks only; not a conflict
-            "blocked"   => PrMergeabilityStatus.Blocked,    // required checks pending/failing — CI still running
-            "unknown"   => PrMergeabilityStatus.Unknown,    // initial async computation (lasts seconds)
-            null        => PrMergeabilityStatus.Unknown,
-            _           => PrMergeabilityStatus.Unknown     // unknown future values: conservative
+            "unstable" => PrMergeabilityStatus.UpToDate,   // non-required checks only; not a conflict
+            "blocked" => PrMergeabilityStatus.Blocked,    // required checks pending/failing — CI still running
+            "unknown" => PrMergeabilityStatus.Unknown,    // initial async computation (lasts seconds)
+            null => PrMergeabilityStatus.Unknown,
+            _ => PrMergeabilityStatus.Unknown     // unknown future values: conservative
         };
     }
 

@@ -803,15 +803,15 @@ public class WorkItemDispatchServiceDispatchLoopTests : IDisposable
         string issueIdentifier,
         string issueProviderConfigId,
         WorkItemTaskType taskType) => new()
-    {
-        Id = Guid.NewGuid(),
-        AgentSelector = "kiro,dotnet",
-        CreatedAt = DateTimeOffset.UtcNow,
-        TimeoutSeconds = 300,
-        TaskType = taskType,
-        IssueIdentifier = issueIdentifier,
-        IssueProviderConfigId = issueProviderConfigId
-    };
+        {
+            Id = Guid.NewGuid(),
+            AgentSelector = "kiro,dotnet",
+            CreatedAt = DateTimeOffset.UtcNow,
+            TimeoutSeconds = 300,
+            TaskType = taskType,
+            IssueIdentifier = issueIdentifier,
+            IssueProviderConfigId = issueProviderConfigId
+        };
 
     private WorkItemDispatchService CreateHandlerWithGate(
         IProviderFactory providerFactory,
