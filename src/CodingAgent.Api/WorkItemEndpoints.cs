@@ -1327,22 +1327,24 @@ public static class WorkItemEndpoints
             })
             .ToListAsync(ct);
 
-        // Phase 2: in-memory deserialization to extract IssueTitle from Payload.
+        // Phase 2: in-memory deserialization to extract IssueTitle and InitiatedBy from Payload.
         // Same defensive pattern as GetPendingWorkItems — a malformed or absent payload
-        // produces a null IssueTitle rather than a 500.
+        // produces null display fields rather than a 500.
         var dtos = items.Select(w =>
         {
             string? issueTitle = null;
+            string? initiatedBy = null;
             if (w.Payload is not null)
             {
                 try
                 {
                     var req = JsonSerializer.Deserialize<JobDistributionRequest>(w.Payload, PipelineJsonOptions.Lenient);
                     issueTitle = req?.IssueDetail?.Title;
+                    initiatedBy = req?.InitiatedBy;
                 }
                 catch (JsonException)
                 {
-                    // Corrupt or legacy payload — leave IssueTitle null.
+                    // Corrupt or legacy payload — leave display fields null.
                 }
             }
             return new ActiveWorkItemDto
@@ -1354,7 +1356,8 @@ public static class WorkItemEndpoints
                 IssueIdentifier = w.IssueIdentifier,
                 K8sJobName = w.K8sJobName,
                 TimeoutSeconds = w.TimeoutSeconds,
-                IssueTitle = issueTitle
+                IssueTitle = issueTitle,
+                InitiatedBy = initiatedBy
             };
         // TODO [WARNING]: ct is available and used in the SQL phase (ToListAsync(ct)) but is not
         // propagated to this in-memory LINQ loop. Under normal payload sizes this is harmless because

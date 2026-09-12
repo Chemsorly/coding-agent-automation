@@ -102,8 +102,11 @@ builder.Services.AddOpenTelemetry()
     {
         m.AddAspNetCoreInstrumentation()
          .AddHttpClientInstrumentation()
-         // The Job Controller owns the dispatch loop — RecordLastPollEpoch, UpdateCredentialPoolMetrics,
-         // RecordDispatchLatency and LogTerminalStatus are all called from DispatchLoop/ReconciliationLoop.
+         // The Job Controller owns the reconciliation loop — LogTerminalStatus is called from ReconciliationLoop.
+         // TODO: RecordLastPollEpoch, UpdateCredentialPoolMetrics, and RecordDispatchLatency have no live callers
+         // in this process (their original owner, DispatchService, was deleted in #2322). Consider removing
+         // these dead instruments from WorkDistributionTelemetry or moving RecordDispatchLatency docs to
+         // CodingAgent.Api/Dispatch/DispatchLifecycleService (its only remaining caller).
          // Without this AddMeter, those measurements are taken but never exported.
          .AddMeter(WorkDistributionTelemetry.MeterName)
          // PipelineTelemetry instruments (jobs.completed, jobs.failed, job duration, queue wait, etc.)
@@ -126,8 +129,8 @@ var app = builder.Build();
 // ── Health probes ─────────────────────────────────────────────────────────────
 app.MapGet("/healthz", () => Results.Ok(new { status = "healthy" }));
 // /readyz returns 200 for all replicas regardless of leader state.
-// Leader election gates the actual dispatch and reconciliation work inside
-// DispatchService and ReconciliationService — the non-leader idles and is still
+// Leader election gates the actual reconciliation work inside
+// ReconciliationService — the non-leader idles and is still
 // healthy. Returning 503 for non-leaders would keep the pod stuck as 0/1 Ready
 // in multi-replica deployments (strategy: RollingUpdate) and is incorrect: the
 // non-leader is not degraded, just standing by.
