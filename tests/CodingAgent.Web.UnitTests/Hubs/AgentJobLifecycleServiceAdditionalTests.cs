@@ -4,6 +4,7 @@ using CodingAgent.Orchestration;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Moq;
+using Microsoft.Extensions.Hosting;
 using Xunit;
 using ILogger = Serilog.ILogger;
 
@@ -24,15 +25,21 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
     private readonly Mock<ILabelService> _labelService = new();
     private readonly Mock<IHubIssueOperations> _issueOps = new();
     private readonly Mock<IChangeNotifier> _changeNotifier = new();
+    private readonly Mock<IHostApplicationLifetime> _appLifetime = new();
     private readonly Mock<ILogger> _logger = new();
 
-    private AgentJobLifecycleService CreateService() => new(
-        _facade.Object,
-        _lifecycleManager.Object,
-        _labelService.Object,
-        _issueOps.Object,
-        _changeNotifier.Object,
-        _logger.Object);
+    private AgentJobLifecycleService CreateService()
+    {
+        _appLifetime.SetupGet(l => l.ApplicationStopping).Returns(CancellationToken.None);
+        return new AgentJobLifecycleService(
+            _facade.Object,
+            _lifecycleManager.Object,
+            _labelService.Object,
+            _issueOps.Object,
+            _changeNotifier.Object,
+            _appLifetime.Object,
+            _logger.Object);
+    }
 
     private static PipelineRun MakeRun(string jobId = "job-1") => new()
     {
@@ -239,7 +246,7 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
 
         await svc.HandleJobRejectedAsync(new JobId("job-1"), null, "crash", CancellationToken.None);
 
-        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Error), Times.Once);
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -250,7 +257,7 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
         _facade.Setup(f => f.GetWorkItemRetryCountAsync("job-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(3);
         _issueOps
-            .Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()))
+            .Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("rate limit"));
 
         var svc = CreateService();
@@ -523,7 +530,7 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
 
         await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
 
-        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Done), Times.Once);
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Done, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -547,7 +554,7 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
 
         await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
 
-        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Cancelled), Times.Once);
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Cancelled, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -573,7 +580,7 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
 
         await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
 
-        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Error), Times.Once);
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -598,8 +605,8 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
         await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
 
         // FinalLabel takes precedence over step-derived AgentLabels.Done
-        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.EpicReview), Times.Once);
-        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Done), Times.Never);
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.EpicReview, It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Done, It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -625,7 +632,7 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
         await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
 
         // Invalid FinalLabel is ignored → falls back to step-derived label (Done)
-        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Done), Times.Once);
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Done, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -651,9 +658,9 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
         await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
 
         // No label swap — Starting has no mapping
-        _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never);
+        _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         // Feedback comment must still be posted regardless
-        _issueOps.Verify(o => o.PostIssueFeedbackCommentAsync(run), Times.Once);
+        _issueOps.Verify(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -677,7 +684,7 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
                 It.IsAny<CancellationToken>(), null, null))
             .ReturnsAsync(run);
         _issueOps
-            .Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()))
+            .Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("rate limit"));
 
         var svc = CreateService();
@@ -686,7 +693,7 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
             await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
 
         await act.Should().ThrowAsync<InvalidOperationException>("SwapLabelAsync exceptions propagate from PostCompletionBookkeepingAsync");
-        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Done), Times.Once);
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Done, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

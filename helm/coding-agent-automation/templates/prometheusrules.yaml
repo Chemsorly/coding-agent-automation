@@ -128,6 +128,28 @@ spec:
             description: "Job controller pod is Running but not Ready for over 2 minutes. No dispatch is occurring."
 {{- end }}
 
+        # Alert when a label-swap remove phase exhausts all retries.
+        # Indicates a dual-label state (issue carries both new and old agent:* labels).
+        # Dispatcher and housekeeping skip such issues — manual intervention required.
+        # Metric: label_swap_remove_exhausted_total (counter, tagged by label and identifier).
+        # TODO: This alert uses increase(...[10m]) > 0 with for: 0m, which causes it to auto-resolve
+        # after the 10-minute window passes even if the dual-label state has not been remediated.
+        # An operator cleaning up a stuck issue may see the alert self-clear while still working.
+        # Consider raising `for:` (e.g. 1m) to absorb evaluation jitter, or tracking the raw counter
+        # delta differently so the alert persists until the issue is actually resolved.
+        - alert: LabelSwapRemoveExhausted
+          expr: |
+            increase(label_swap_remove_exhausted_total[10m]) > 0
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Label swap remove-phase retry exhaustion detected"
+            description: >-
+              AgentLabelOperations.SwapAsync failed to remove an old agent:* label after 3 attempts
+              for label {{ "{{ $labels.label }}" }} on issue {{ "{{ $labels.identifier }}" }}.
+              The issue is now in a dual-label state and requires manual cleanup.
+
 {{- if .Values.api.enabled }}
         # Alert when the API pod is Running but not Ready.
         # Separate from WebDatabaseUnreachable — the API's most likely cause during

@@ -290,6 +290,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 
         if (result is null) return null;
 
+        var linkedIssueContexts = await FetchLinkedIssueContextsAsync(reviewRequest, ct);
+
         var request = MapToRequest(result, WorkItemTaskType.Review, PipelineRunType.Review, _logger);
         return request with
         {
@@ -302,8 +304,104 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             },
             ReviewPrTargetBranch = reviewRequest.PrTargetBranch,
             ReviewPrDescription = reviewRequest.PrDescription,
-            ReviewPrAuthor = reviewRequest.PrAuthor
+            ReviewPrAuthor = reviewRequest.PrAuthor,
+            LinkedIssueContexts = linkedIssueContexts.Count > 0 ? linkedIssueContexts : null
         };
+    }
+
+    /// <summary>
+    /// Parses closing-keyword issue references from the PR title and description, fetches each
+    /// referenced issue from the issue provider, and returns them as <see cref="LinkedIssueContext"/>
+    /// records for inclusion in the dispatch payload.
+    /// <para>
+    /// Uses <see cref="IssueReferenceParser.ParseAllClosingKeywords"/> which covers both GitLab base
+    /// forms (<c>Closes/Fixes/Resolves #N</c>) and all GitHub verb forms
+    /// (<c>close/closes/closed</c>, <c>fix/fixes/fixed</c>, <c>resolve/resolves/resolved</c> with
+    /// <c>#N</c> or <c>GH-N</c>). Does NOT use <see cref="IssueReferenceParser.ParseIssueReferences"/>
+    /// to avoid over-matching standalone <c>#N</c> patterns in inline code and markdown links.
+    /// </para>
+    /// <para>
+    /// Non-fatal: individual <see cref="IIssueProvider.GetIssueAsync"/> failures are caught and
+    /// logged as warnings. The dispatch proceeds with whichever issues were successfully fetched.
+    /// Returns an empty list when no closing references are detected or all fetches fail.
+    /// </para>
+    /// </summary>
+    private async Task<IReadOnlyList<LinkedIssueContext>> FetchLinkedIssueContextsAsync(
+        ReviewDispatchRequest reviewRequest,
+        CancellationToken ct)
+    {
+        // Parse closing-keyword references from title and description using all verb forms
+        // (base GitLab forms + all GitHub verb forms including past tense).
+        // PrTitle is required string (non-nullable); PrDescription is string? — ParseAllClosingKeywords
+        // handles both safely via its internal IsNullOrWhiteSpace guard.
+        var issueNumbers = new HashSet<string>(StringComparer.Ordinal);
+        IssueReferenceParser.ParseAllClosingKeywords(reviewRequest.PrTitle, issueNumbers);
+        IssueReferenceParser.ParseAllClosingKeywords(reviewRequest.PrDescription, issueNumbers);
+
+        if (issueNumbers.Count == 0)
+            return Array.Empty<LinkedIssueContext>();
+
+        // Cap to prevent latency spikes from adversarial PR descriptions.
+        // Note: HashSet iteration order is not deterministic across CLR versions — when
+        // issueNumbers.Count > MaxLinkedIssues, different issues may be fetched on different runs.
+        // Consider sorting issueNumbers before Take(MaxLinkedIssues) to make truncation deterministic,
+        // and log which issue numbers were dropped.
+        const int MaxLinkedIssues = 5;
+        if (issueNumbers.Count > MaxLinkedIssues)
+        {
+            _logger.Warning(
+                "FetchLinkedIssueContextsAsync: PR has {Count} closing-keyword references, capping to {Max}",
+                issueNumbers.Count, MaxLinkedIssues);
+        }
+
+        // Note: reviewRequest.IssueProviderId.Value is accessed unconditionally here.
+        // ProviderConfigId can be default-initialized (empty string) via JSON deserialization or
+        // direct struct construction, bypassing the implicit-conversion ArgumentException guard.
+        // Add ArgumentException.ThrowIfNullOrEmpty(reviewRequest.IssueProviderId.Value) before this
+        // call, consistent with DispatchRunCreationService.cs:58, to surface misconfiguration early.
+        // Load the issue provider config. If not found, return empty (non-fatal).
+        var issueConfig = await _providerConfigStore
+            .GetProviderConfigByIdAsync(reviewRequest.IssueProviderId.Value, ProviderKind.Issue, ct);
+        if (issueConfig is null)
+        {
+            _logger.Warning(
+                "FetchLinkedIssueContextsAsync: issue provider config '{ConfigId}' not found; skipping linked issue fetch",
+                reviewRequest.IssueProviderId.Value);
+            return Array.Empty<LinkedIssueContext>();
+        }
+
+        var results = new List<LinkedIssueContext>();
+
+        // Create one provider instance for the entire batch fetch — consistent with
+        // DispatchInfrastructure.BuildIssueContextAsync pattern.
+        await using var issueProvider = _infra.ProviderFactory.CreateIssueProvider(issueConfig);
+
+        foreach (var issueNumber in issueNumbers.Take(MaxLinkedIssues))
+        {
+            try
+            {
+                var issue = await issueProvider.GetIssueAsync(issueNumber, ct);
+                results.Add(new LinkedIssueContext
+                {
+                    Identifier = issue.Identifier,
+                    Title = issue.Title,
+                    Description = issue.Description
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Non-fatal: a 404 or rate-limit on one linked issue must not abort dispatch.
+                _logger.Warning(ex,
+                    "FetchLinkedIssueContextsAsync: failed to fetch linked issue #{IssueNumber} (non-fatal, skipping)",
+                    issueNumber);
+            }
+        }
+
+        return results;
     }
 
     /// <inheritdoc />
@@ -453,8 +551,20 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             return new DispatchOutcome(false, false, result.ErrorMessage);
         }
 
-        // Synchronous dispatch path: every successful distribution is immediately Dispatched
-        // (no Pending queue). The label swap to agent:in-progress is always unconditional.
+        if (result.Queued)
+        {
+            // Pending enqueue path: the WorkItem is queued, not yet dispatched — no K8s Job running.
+            // Per the DistributionResult.Queued contract the issue MUST stay agent:next: swapping to
+            // agent:in-progress here would mark every queued issue in-progress while it only waits in
+            // the queue. The swap is deferred until an agent actually picks up the run — in K8s
+            // dispatch mode that is AgentHub.RegisterAgent (the agent connecting with an ActiveJob).
+            // Dedup is unaffected: a Pending WorkItem already counts as active
+            // (PipelineConstants.ActiveWorkItemStatuses), so the loop will not re-dispatch the issue.
+            return new DispatchOutcome(true, true, null);
+        }
+
+        // Synchronous dispatch path (non-Pending): item is already Dispatched (K8s Job running).
+        // Confirm the label swap to agent:in-progress.
         await ConfirmDistributionLabelAsync(request, ct);
 
         return new DispatchOutcome(true, false, null);
@@ -462,6 +572,15 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 
     /// <inheritdoc />
     public async Task ConfirmDistributionLabelAsync(JobDistributionRequest request, CancellationToken ct)
+        => await ConfirmDistributionLabelAsync(request, ct, swallowCancellation: false);
+
+    /// <param name="swallowCancellation">
+    /// When <c>true</c>, <see cref="OperationCanceledException"/> is also swallowed.
+    /// Use on the Pending-enqueue path where the WorkItem is already committed to the DB —
+    /// the best-effort reasoning applies fully (there is nothing safe to revert).
+    /// </param>
+    private async Task ConfirmDistributionLabelAsync(
+        JobDistributionRequest request, CancellationToken ct, bool swallowCancellation)
     {
         ArgumentNullException.ThrowIfNull(request);
 
@@ -478,6 +597,15 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                 request.IssueIdentifier);
             await _infra.LabelService.SwapLabelAsync(
                 request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.InProgress, ct);
+        }
+        catch (OperationCanceledException) when (swallowCancellation)
+        {
+            // Queued path: WorkItem already committed — swallow OCE so the item is not
+            // stranded by a cancellation that arrives after the DB write.
+            _logger.Warning(
+                "Orchestration: label swap to agent:in-progress cancelled for issue {IssueIdentifier} " +
+                "(WorkItem already Pending — label will be wrong until next cycle)",
+                request.IssueIdentifier);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

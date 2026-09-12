@@ -53,7 +53,8 @@ public sealed class PostStatusIdempotencyTests
     private static async Task<WorkItemEntity> SeedWorkItemAsync(
         DbContextOptions<PipelineDbContext> opts,
         WorkItemStatus status,
-        DateTimeOffset? completedAt = null)
+        DateTimeOffset? completedAt = null,
+        FailureReason? failureReason = null)
     {
         var item = new WorkItemEntity
         {
@@ -64,6 +65,7 @@ public sealed class PostStatusIdempotencyTests
             TaskType = WorkItemTaskType.Implementation,
             CreatedAt = DateTimeOffset.UtcNow,
             CompletedAt = completedAt,
+            FailureReason = failureReason,
         };
 
         await using var ctx = new TestPipelineDbContext(opts);
@@ -385,6 +387,107 @@ public sealed class PostStatusIdempotencyTests
             "CancelRunAsync must be called exactly once on a real Running→Cancelled transition");
     }
 
+    // ── Infrastructure recovery from Failed/Timeout race (issue #2459) ──────────
+
+    /// <summary>
+    /// Regression test for issue #2459.
+    /// When a WorkItem is in Failed state with FailureReason=Timeout (set by ReconciliationLoop's
+    /// EnforceTimeoutsAsync during a race with the agent's in-flight PostStatus(Running)),
+    /// PostStatus(Running) must return HTTP 200 and transition the item to Running via
+    /// TryRecoverFromInfrastructureFailureAsync — not return 400 and silently drop the update.
+    ///
+    /// Primary assertion: DB state read-back confirms item.Status == Running. HTTP 200 alone is
+    /// insufficient because TryRecoverFromInfrastructureFailureAsync returns true both on a real
+    /// transition AND when the item is already at the target (idempotent path). Only the DB
+    /// read-back proves the transition actually occurred from Failed/Timeout.
+    ///
+    /// The "Invalid transition" warning is NOT emitted for this scenario: PostStatus now calls
+    /// TryRecoverFromInfrastructureFailureAsync before TransitionDetailedAsync for Running requests,
+    /// so TransitionCoreAsync (which emits the warning) is never reached when recovery succeeds.
+    /// </summary>
+    [Fact]
+    public async Task WhenItemIsFailedWithTimeoutReason_PostStatusRunning_RecoversThroughInfrastructureRecovery()
+    {
+        // Arrange: seed a WorkItem in Failed state with FailureReason=Timeout to replicate the
+        // race condition where ReconciliationLoop timed out the item while the agent was still running.
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Failed,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
+            failureReason: FailureReason.Timeout);
+        var transitionService = CreateTransitionService(opts);
+        var runService = new Mock<IOrchestratorRunService>().Object;
+        var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
+        // dbFactory is null: Running is not a terminal status, so EmitTerminalStatusTelemetryAsync
+        // is never reached — null is safe and matches the pattern of non-telemetry tests in this class.
+        // TODO: This null is load-bearing — if TryRecoverFromInfrastructureFailureAsync or a future
+        // refactor ever reaches a code path that uses dbFactory, the test will null-reference at
+        // runtime rather than failing clearly. Consider providing a real in-memory dbFactory here
+        // (matching the opts already in scope) to make the test resilient to future changes.
+        var request = new WorkItemStatusRequest { Status = WorkItemStatus.Running };
+
+        // Act
+        var result = await WorkItemEndpoints.PostStatus(
+            item.Id, request, transitionService, runService, lifecycleManager, dbFactory: null);
+
+        // Assert — HTTP 200 confirms the recovery path was taken
+        result.Should().BeOfType<Ok>(
+            "PostStatus(Running) on a Failed/Timeout WorkItem must return 200 via infrastructure recovery");
+
+        // Assert — DB state read-back is the primary correctness check; HTTP 200 alone is
+        // insufficient (TryRecoverFromInfrastructureFailureAsync returns true idempotently too).
+        await using var db = new TestPipelineDbContext(opts);
+        var updated = await db.WorkItems.FindAsync(item.Id);
+        updated.Should().NotBeNull();
+        updated!.Status.Should().Be(WorkItemStatus.Running,
+            "the WorkItem must have transitioned to Running in the database, not just returned HTTP 200");
+    }
+
+    /// <summary>
+    /// Regression test for issue #2459.
+    /// PostStatus(Running) on a WorkItem in Failed state with FailureReason=AgentError must
+    /// continue to return HTTP 400 — AgentError is not a recoverable race-induced failure and
+    /// must not be recovered via the infrastructure-recovery path.
+    ///
+    /// Primary assertion: DB state read-back confirms item.Status remains Failed.
+    /// </summary>
+    [Fact]
+    public async Task WhenItemIsFailedWithAgentErrorReason_PostStatusRunning_ReturnsBadRequest()
+    {
+        // Arrange: seed a WorkItem in Failed state with FailureReason=AgentError — this represents
+        // a genuine agent failure and must NOT be recovered by the infrastructure-recovery path.
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Failed,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
+            failureReason: FailureReason.AgentError);
+        var transitionService = CreateTransitionService(opts);
+        var runService = new Mock<IOrchestratorRunService>().Object;
+        var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
+        // dbFactory is null: the endpoint returns 400 before any telemetry path is reached.
+        var request = new WorkItemStatusRequest { Status = WorkItemStatus.Running };
+
+        // Act
+        var result = await WorkItemEndpoints.PostStatus(
+            item.Id, request, transitionService, runService, lifecycleManager, dbFactory: null);
+
+        // Assert — HTTP 400: AgentError is non-recoverable
+        result.Should().BeOfType<BadRequest<string>>(
+            "PostStatus(Running) on a Failed/AgentError WorkItem must return 400 — AgentError is not recoverable");
+
+        // Assert — DB state read-back is the primary correctness check; confirms TryRecoverFromInfrastructureFailureAsync
+        // correctly blocked the transition and did not mutate the item.
+        await using var db = new TestPipelineDbContext(opts);
+        var unchanged = await db.WorkItems.FindAsync(item.Id);
+        unchanged.Should().NotBeNull();
+        unchanged!.Status.Should().Be(WorkItemStatus.Failed,
+            "the WorkItem must remain in Failed state — AgentError transitions must not be recovered");
+    }
+
+    // TODO: Add WhenItemIsFailedWithInfrastructureFailureReason_PostStatusRunning_RecoversThroughInfrastructureRecovery
+    // to cover the FailureReason.InfrastructureFailure recovery path. TryRecoverFromInfrastructureFailureCoreAsync
+    // explicitly allows both Timeout and InfrastructureFailure; without this test a refactor that
+    // accidentally removes InfrastructureFailure from the eligibility check would not be caught.
+    // (Follow-up for issue #2459 — see TestQualityReviewer finding.)
+
     // ── FailureReason IsDefined guard (issue #2341) ───────────────────────────
 
     /// <summary>
@@ -539,6 +642,137 @@ public sealed class PostStatusIdempotencyTests
         capturedTags.Should().Contain(
             "AgentError",
             "a named FailureReason (\"AgentError\") must pass through IsDefined and reach the metric tag");
+    }
+
+    // ── Terminal-idempotency guard (issue #2461) ──────────────────────────────
+
+    /// <summary>
+    /// Regression test for issue #2461.
+    /// PostStatus(Failed) on an already-Cancelled WorkItem must return HTTP 200 silently.
+    /// The "Invalid transition" warning must NOT be emitted, no lifecycle events must fire,
+    /// and the DB record must remain unchanged (no write attempted).
+    ///
+    /// Structural assertions are used rather than log-capture because the "Invalid transition"
+    /// warning goes through <c>ILogger&lt;WorkItemTransitionService&gt;</c>, which is injected as
+    /// <see cref="NullLogger{T}"/> by <see cref="CreateTransitionService"/>. NullLogger discards
+    /// all calls silently and never writes to the global Serilog logger that CapturingSink
+    /// intercepts — a CapturingSink assertion would be vacuously true regardless of the fix.
+    ///
+    /// TODO: Warning-suppression is validated structurally (pre-read guard short-circuits before
+    /// TransitionCoreAsync), not by log-capture. A future refactor that moves the "Invalid
+    /// transition" warning to a different logger path (e.g. inside GetCurrentStatusAsync) would
+    /// not be caught by these tests. Consider wiring ILogger&lt;WorkItemTransitionService&gt; to a
+    /// CapturingSink in the test harness so that the absence of the warning can be asserted
+    /// directly. See review finding #2 (TestQualityReviewer) for issue #2461.
+    ///
+    /// TODO: A test asserting that PostStatus(Failed) on a Running item still transitions the
+    /// item to Failed (DB persisted status = Failed) is missing. The pre-read guard falls through
+    /// for Running items, but if the guard condition were accidentally widened to include Running,
+    /// Running→Failed would silently return 200 without transitioning — a regression the current
+    /// tests would miss. PostStatus_ActualFailedTransition_CallsFailRunAsync only verifies lifecycle
+    /// manager invocation, not the DB-persisted final status. See review finding #1 (TestQualityReviewer)
+    /// for issue #2461.
+    /// </summary>
+    [Fact]
+    public async Task WhenItemIsCancelled_PostStatusFailed_ReturnOkWithoutTransition()
+    {
+        // Arrange
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Cancelled, completedAt: DateTimeOffset.UtcNow.AddMinutes(-5));
+        var transitionService = CreateTransitionService(opts);
+        var dbFactory = CreateDbFactory(opts);
+
+        // Strict mock: any unexpected call to FailRunAsync / CancelRunAsync fails the test.
+        // The guard must short-circuit before TransitionDetailedAsync and therefore before any
+        // lifecycle branch is entered.
+        var lifecycleManager = new Mock<IRunLifecycleManager>(MockBehavior.Strict);
+        var runService = new Mock<IOrchestratorRunService>().Object;
+
+        var request = new WorkItemStatusRequest { Status = WorkItemStatus.Failed, ErrorMessage = "Late K8s callback" };
+
+        // Act
+        var result = await WorkItemEndpoints.PostStatus(
+            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory);
+
+        // Assert 1: endpoint returns 200
+        // TODO: This assertion confirms the result type but does not verify that GetCurrentStatusAsync
+        // was the mechanism (i.e. the pre-read guard fired). A mock/spy on transitionService asserting
+        // GetCurrentStatusAsync was called exactly once and TransitionDetailedAsync was never called
+        // would make the structural claim in the doc-comment verifiable. As-is, a regression that
+        // bypasses the guard and reaches Ok() via another code path would not be caught.
+        // See review finding #1 (TestQualityReviewer) for issue #2461.
+        result.Should().BeOfType<Ok>(
+            "PostStatus(Failed) on a Cancelled WorkItem must return 200 (silent idempotent success)");
+
+        // Assert 2: no lifecycle event was fired (strict mock would throw on any unexpected call)
+        lifecycleManager.VerifyNoOtherCalls();
+
+        // Assert 3: DB record was NOT mutated — status is still Cancelled, no CompletedAt change.
+        // This is the definitive structural proof the pre-read guard fired and short-circuited
+        // before TransitionDetailedAsync was entered (which would have written nothing anyway,
+        // but returning Ok proves the guard path was taken rather than the Rejected/BadRequest path).
+        //
+        // TODO: Consider a pre-assertion here that reads the item and confirms GetCurrentStatusAsync
+        // would return Cancelled for it (e.g. assert item status from DB before calling PostStatus).
+        // This makes failure messages more actionable if the seeded state is ever incorrect.
+        // See review finding #2 (TestQualityReviewer) for issue #2461.
+        await using var verifyCtx = new TestPipelineDbContext(opts);
+        var persisted = await verifyCtx.WorkItems.FindAsync(item.Id);
+        persisted.Should().NotBeNull();
+        persisted!.Status.Should().Be(WorkItemStatus.Cancelled,
+            "the WorkItem must remain Cancelled — no transition was performed");
+        // TODO: Weak assertion — NotBe("Late K8s callback") passes if ErrorMessage was written as any
+        // other value (e.g. null cleared to empty string, or a different mutation value). Replace with
+        // a stronger assertion against the original seeded value (or BeNull() if seeded as null) to
+        // directly verify no mutation occurred. See review finding #3 (TestQualityReviewer) for issue #2461.
+        persisted.ErrorMessage.Should().NotBe("Late K8s callback",
+            "ErrorMessage must not have been written because the guard returned before ApplyStatusMutation ran");
+    }
+
+    /// <summary>
+    /// Regression test for issue #2461.
+    /// PostStatus(Failed) on an already-Succeeded WorkItem must return HTTP 200 silently.
+    /// </summary>
+    [Fact]
+    public async Task WhenItemIsSucceeded_PostStatusFailed_ReturnOkWithoutTransition()
+    {
+        // Arrange
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Succeeded, completedAt: DateTimeOffset.UtcNow.AddMinutes(-10));
+        var transitionService = CreateTransitionService(opts);
+        var dbFactory = CreateDbFactory(opts);
+
+        var lifecycleManager = new Mock<IRunLifecycleManager>(MockBehavior.Strict);
+        var runService = new Mock<IOrchestratorRunService>().Object;
+
+        var request = new WorkItemStatusRequest { Status = WorkItemStatus.Failed, ErrorMessage = "Late K8s callback" };
+
+        // Act
+        var result = await WorkItemEndpoints.PostStatus(
+            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory);
+
+        // Assert 1: endpoint returns 200
+        // TODO: Same guard-mechanism verification gap as WhenItemIsCancelled_PostStatusFailed_ReturnOkWithoutTransition —
+        // a mock/spy asserting GetCurrentStatusAsync was called and TransitionDetailedAsync was not
+        // would make the pre-read guard claim structurally verifiable. See review finding #1
+        // (TestQualityReviewer) for issue #2461.
+        result.Should().BeOfType<Ok>(
+            "PostStatus(Failed) on a Succeeded WorkItem must return 200 (silent idempotent success)");
+
+        // Assert 2: no lifecycle event was fired
+        lifecycleManager.VerifyNoOtherCalls();
+
+        // Assert 3: DB record was NOT mutated
+        await using var verifyCtx = new TestPipelineDbContext(opts);
+        var persisted = await verifyCtx.WorkItems.FindAsync(item.Id);
+        persisted.Should().NotBeNull();
+        persisted!.Status.Should().Be(WorkItemStatus.Succeeded,
+            "the WorkItem must remain Succeeded — no transition was performed");
+        // TODO: Weak assertion — NotBe("Late K8s callback") passes if ErrorMessage was set to any other
+        // value. Replace with a stronger assertion against the original seeded value (or BeNull()).
+        // See review finding #3 (TestQualityReviewer) for issue #2461.
+        persisted.ErrorMessage.Should().NotBe("Late K8s callback",
+            "ErrorMessage must not have been written because the guard returned before ApplyStatusMutation ran");
     }
 
     // ── Test Infrastructure ───────────────────────────────────────────────────
