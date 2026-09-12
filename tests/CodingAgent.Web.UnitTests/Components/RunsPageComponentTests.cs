@@ -7,6 +7,7 @@ using CodingAgent.Web.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.JSInterop;
 using Moq;
 
 namespace CodingAgent.Web.UnitTests.Components;
@@ -83,6 +84,8 @@ public class RunsPageComponentTests : BunitContext
         Services.AddSingleton(_mockRunHistory.Object);
         Services.AddSingleton(_mockHubConnection.Object);
         Services.AddSingleton(new CockpitState());
+        // IJSRuntime is required by RefreshBar (injected via @inject IJSRuntime JS).
+        Services.AddSingleton(Mock.Of<IJSRuntime>());
         // NavigationManager is provided automatically by bunit.
     }
 

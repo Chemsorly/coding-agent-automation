@@ -153,6 +153,8 @@ public class BasepathNavigationTests : BunitContext
         Services.AddSingleton(Mock.Of<IDependencyChecker>());
         Services.AddSingleton<BlockedIssuesService>();
         Services.AddSingleton(new CockpitState());
+        // IJSRuntime is required by RefreshBar (injected via @inject IJSRuntime JS).
+        Services.AddSingleton(Mock.Of<IJSRuntime>());
 
         var cut = Render<Work>();
 
@@ -192,6 +194,8 @@ public class BasepathNavigationTests : BunitContext
         Services.AddSingleton(Mock.Of<IDependencyChecker>());
         Services.AddSingleton<BlockedIssuesService>();
         Services.AddSingleton(new CockpitState());
+        // IJSRuntime is required by RefreshBar (injected via @inject IJSRuntime JS).
+        Services.AddSingleton(Mock.Of<IJSRuntime>());
 
         var cut = Render<Attention>();
 
