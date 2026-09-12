@@ -26,7 +26,7 @@
             <h1>Attention</h1>
             <span class="cockpit-page-sub">@(_loading ? "…" : $"{_sections.Sum(s => s.Rows.Count)}") item(s) that may need a human — acted on in the issue tracker</span>
         </div>
-        <RefreshBar OnRefresh="RefreshAsync" IsLoading="@_loading" />
+        <RefreshBar OnRefresh="RefreshAsync" IsLoading="@_loading" StorageKey="autoRefresh.attention" />
     </div>
 
     @* TODO: [WARNING] Attention shows needs-refinement, failed runs, and decomposition plans — data that

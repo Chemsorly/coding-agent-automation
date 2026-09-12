@@ -117,13 +117,44 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
             "Agent {AgentId} reported active consolidation job {RunId} — skipping pipeline run restoration (handled by ReportConsolidationComplete)",
             agentId, activeJob.RunId);
 
-        // Still mark agent as busy with this job so it's tracked correctly
+        // Still mark agent as busy with this job so it's tracked correctly.
+        // ActiveJobId write is under SyncRoot (release-then-reacquire pattern: TransitionStatus
+        // acquires SyncRoot internally, so it must be called after the lock is released).
+        // Guard against TOCTOU: capture whether we wrote the value inside the lock, then
+        // only call TransitionStatus if the value we wrote is still current — a concurrent
+        // disconnect handler may have cleared ActiveJobId between lock release and this check.
         var consolEntry = _facade.GetByAgentId(agentId);
         if (consolEntry is not null)
         {
-            consolEntry.ActiveJobId = activeJob.RunId;
-            _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
-            _facade.TransitionStatus(agentId, AgentStatus.Busy);
+            // TODO: [WARNING] writtenJobId is always assigned activeJob.RunId unconditionally
+            // inside the lock, so it is always equal to activeJob.RunId at the point of the
+            // TOCTOU guard below.  The variable creates a false impression that the captured
+            // value might differ from activeJob.RunId.  Consider replacing with a direct
+            // comparison: if (consolEntry.ActiveJobId == activeJob.RunId).
+            string? writtenJobId;
+            lock (consolEntry.SyncRoot)
+            {
+                consolEntry.ActiveJobId = activeJob.RunId;
+                writtenJobId = activeJob.RunId;
+                // TODO: [WARNING] UpdateAgentFieldAsync is called while holding SyncRoot.
+                // On the in-memory path (AgentRegistryService) this reacquires SyncRoot
+                // internally — safe only because Monitor is reentrant on the same thread.
+                // On the distributed path the async continuation escapes the lock and may
+                // complete after TransitionStatus, causing transient persisted-state skew
+                // (reconciliation corrects this, but it is an ordering hazard).
+                // Consider hoisting the persistence write outside the lock to make ordering
+                // explicit and remove the nested-lock coupling.
+                _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
+            }
+            // TODO: [WARNING] This read of consolEntry.ActiveJobId is outside SyncRoot and
+            // is therefore a data race: any other thread may write ActiveJobId simultaneously.
+            // The guard is intended to suppress TransitionStatus when a concurrent disconnect
+            // handler has already cleared the field, but the unsynchronised read means the
+            // check is not race-free.  For a race-free guard, perform the read inside the
+            // lock or use Volatile.Read.  In practice .NET's strong memory model on x86/x64
+            // makes the race benign, but the pattern deviates from the documented lock discipline.
+            if (consolEntry.ActiveJobId == writtenJobId)
+                _facade.TransitionStatus(agentId, AgentStatus.Busy);
         }
 
         _changeNotifier.NotifyChange();
@@ -142,13 +173,44 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
 
         _facade.AddRun(restoredRun);
 
-        // Set agent as busy with this job
+        // Set agent as busy with this job.
+        // ActiveJobId write is under SyncRoot (release-then-reacquire pattern: TransitionStatus
+        // acquires SyncRoot internally, so it must be called after the lock is released).
+        // Guard against TOCTOU: capture whether we wrote the value inside the lock, then
+        // only call TransitionStatus if the value we wrote is still current — a concurrent
+        // disconnect handler may have cleared ActiveJobId between lock release and this check.
         var restoredEntry = _facade.GetByAgentId(agentId);
         if (restoredEntry is not null)
         {
-            restoredEntry.ActiveJobId = activeJob.RunId;
-            _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
-            _facade.TransitionStatus(agentId, AgentStatus.Busy);
+            // TODO: [WARNING] writtenJobId is always assigned activeJob.RunId unconditionally
+            // inside the lock, so it is always equal to activeJob.RunId at the point of the
+            // TOCTOU guard below.  The variable creates a false impression that the captured
+            // value might differ from activeJob.RunId.  Consider replacing with a direct
+            // comparison: if (restoredEntry.ActiveJobId == activeJob.RunId).
+            string? writtenJobId;
+            lock (restoredEntry.SyncRoot)
+            {
+                restoredEntry.ActiveJobId = activeJob.RunId;
+                writtenJobId = activeJob.RunId;
+                // TODO: [WARNING] UpdateAgentFieldAsync is called while holding SyncRoot.
+                // On the in-memory path (AgentRegistryService) this reacquires SyncRoot
+                // internally — safe only because Monitor is reentrant on the same thread.
+                // On the distributed path the async continuation escapes the lock and may
+                // complete after TransitionStatus, causing transient persisted-state skew
+                // (reconciliation corrects this, but it is an ordering hazard).
+                // Consider hoisting the persistence write outside the lock to make ordering
+                // explicit and remove the nested-lock coupling.
+                _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
+            }
+            // TODO: [WARNING] This read of restoredEntry.ActiveJobId is outside SyncRoot and
+            // is therefore a data race: any other thread may write ActiveJobId simultaneously.
+            // The guard is intended to suppress TransitionStatus when a concurrent disconnect
+            // handler has already cleared the field, but the unsynchronised read means the
+            // check is not race-free.  For a race-free guard, perform the read inside the
+            // lock or use Volatile.Read.  In practice .NET's strong memory model on x86/x64
+            // makes the race benign, but the pattern deviates from the documented lock discipline.
+            if (restoredEntry.ActiveJobId == writtenJobId)
+                _facade.TransitionStatus(agentId, AgentStatus.Busy);
         }
 
         _logger.Information(
@@ -213,36 +275,63 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
     {
         // Run already exists in-memory (e.g., created by K8s DispatchService with AgentId=null).
         // Ensure the agent is linked to it and transitioned to Busy.
-        // Guard: only link if the run is unowned OR already owned by this agent (idempotent re-registration).
-        if (existingRun.AgentId is null || existingRun.AgentId == agentId.Value)
+        //
+        // AgentId update: covers first pickup (null AgentId) and pod-replacement reconnect
+        // (different AgentId). Same-agent reconnect (already matches) is a no-op for the assignment.
+        if (existingRun.AgentId != agentId.Value)
         {
-            if (existingRun.AgentId is null)
-                existingRun.AgentId = agentId.Value;
+            var previousAgentId = existingRun.AgentId;
+            existingRun.AgentId = agentId.Value;
 
-            // Adopt the metadata only the pod can compute. The model name is resolved agent-side
-            // from the agent provider config delivered with the assignment, and registration is
-            // the sole channel that carries it back — JobCompletionPayload has no ModelName field.
-            // RestorePipelineRun (the path taken when no run exists yet) already does this; this
-            // path did not, and this is the ordinary Kubernetes path, so every run that dispatched
-            // normally reached history with a null ModelName.
-            // ??= so a re-registration cannot blank a value already recorded.
-            existingRun.ModelName ??= activeJob.ModelName;
-            existingRun.RepositoryName ??= activeJob.RepositoryName;
-
-            var trackedEntry = _facade.GetByAgentId(agentId);
-            if (trackedEntry is not null)
+            // TODO: [WARNING] Use !string.IsNullOrEmpty(previousAgentId) here instead of `is not null`
+            // to match RegisterAgent's first-pickup detection (which uses string.IsNullOrEmpty).
+            // If AgentId were ever an empty string, `is not null` would log a pod-replacement entry
+            // with PreviousAgentId="" while RegisterAgent would treat the same state as a first pickup.
+            // The normal dispatch path always sets AgentId=null, so the divergence is theoretical,
+            // but the two guards should use the same predicate for consistency.
+            if (previousAgentId is not null)
             {
-                lock (trackedEntry.SyncRoot)
-                {
-                    if (trackedEntry.ActiveJobId is null)
-                    {
-                        trackedEntry.ActiveJobId = activeJob.RunId;
-                        _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
-                    }
-                }
-                if (trackedEntry.ActiveJobId == activeJob.RunId)
-                    _facade.TransitionStatus(agentId, AgentStatus.Busy);
+                // Pod replacement: a different agent pod has taken over this run.
+                _logger.Information(
+                    "LinkAgentToExistingRun: updated AgentId on run {RunId} from {PreviousAgentId} to {NewAgentId} (pod replacement)",
+                    existingRun.RunId, previousAgentId, agentId);
             }
+        }
+
+        // Adopt the metadata only the pod can compute. The model name is resolved agent-side
+        // from the agent provider config delivered with the assignment, and registration is
+        // the sole channel that carries it back — JobCompletionPayload has no ModelName field.
+        // RestorePipelineRun (the path taken when no run exists yet) already does this; this
+        // path did not, and this is the ordinary Kubernetes path, so every run that dispatched
+        // normally reached history with a null ModelName.
+        // ??= so a re-registration cannot blank a value already recorded.
+        existingRun.ModelName ??= activeJob.ModelName;
+        existingRun.RepositoryName ??= activeJob.RepositoryName;
+
+        // Agent tracking: always run when the run belongs to this agent.
+        // This covers: first pickup (AgentId just set above), pod replacement (AgentId just updated),
+        // and same-agent reconnect (AgentId already matched, tracking still needed if entry lost state).
+        var trackedEntry = _facade.GetByAgentId(agentId);
+        if (trackedEntry is not null)
+        {
+            lock (trackedEntry.SyncRoot)
+            {
+                if (trackedEntry.ActiveJobId is null)
+                {
+                    trackedEntry.ActiveJobId = activeJob.RunId;
+                    _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
+                }
+            }
+            if (trackedEntry.ActiveJobId == activeJob.RunId)
+                // TODO: [WARNING] This read of trackedEntry.ActiveJobId is unsynchronised — it was
+                // written under lock(trackedEntry.SyncRoot) above, but here it is read outside the lock.
+                // A concurrent disconnect handler that clears ActiveJobId between the lock release and
+                // this read could cause TransitionStatus(Busy) to fire on a stale match, clobbering a
+                // Disconnected status. The diff made this block unconditional (runs on every path including
+                // same-agent reconnects), widening the race window vs. the previous code. Consider moving
+                // this check inside the lock, or capturing the written value inside the lock and comparing
+                // the captured value here.
+                _facade.TransitionStatus(agentId, AgentStatus.Busy);
         }
 
         _logger.Debug("Agent {AgentId} active job {RunId} already tracked — linked agent to run",

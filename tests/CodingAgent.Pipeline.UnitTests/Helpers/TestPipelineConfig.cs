@@ -65,6 +65,7 @@ public static class TestPipelineConfig
         FeedbackTimeoutSeconds = 60,
         HousekeepingTriggerCooldownMinutes = 25,
         ClosedLoopAutoStart = true,
+        MinIssueSlots = 1,
     };
 
     /// <summary>
@@ -121,5 +122,6 @@ public static class TestPipelineConfig
         FeedbackTimeoutSeconds = 60,
         HousekeepingTriggerCooldownMinutes = 25,
         ClosedLoopAutoStart = true,
+        MinIssueSlots = 1,
     };
 }

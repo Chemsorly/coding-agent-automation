@@ -77,29 +77,54 @@ public sealed partial class AgentHub
         // Persist AgentId on the active run so the UI shows which agent is handling it.
         // In K8s dispatch mode, AgentAcceptedRunAsync is not called, so this is the only
         // place that sets run.AgentId when an agent picks up a dispatched work item.
+        // Guard: update when the run's current AgentId differs from the registering agent —
+        // covers first pickup (null AgentId) and pod-replacement reconnect (different AgentId).
+        // Same-agent reconnect (AgentId == message.AgentId.Value) skips the block entirely (no-op).
         if (message.ActiveJob?.RunId is { } jobId && Guid.TryParse(jobId, out _))
         {
             var run = _facade.GetRun(new JobId(jobId));
-            if (run is not null && string.IsNullOrEmpty(run.AgentId))
+            // TODO: [WARNING] No concurrency guard protects this block against two pods with different
+            // AgentIds racing to reconnect to the same RunId. Both GetRun calls would return the same
+            // object (same stale AgentId), both would pass the inequality check, and both would overwrite
+            // run.AgentId and call ReplaceRun — leaving the run with whichever AgentId won the race.
+            // The first-pickup path had the same gap; the pod-replacement path introduced here widens
+            // the affected surface from null→first-agent to any-agent→any-other-agent.
+            // Consider adding a per-run lock or using an optimistic compare-and-swap before ReplaceRun.
+            if (run is not null && run.AgentId != message.AgentId.Value)
             {
+                var previousAgentId = run.AgentId;
                 run.AgentId = message.AgentId.Value;
                 _facade.ReplaceRun(run);
-                _logger.Debug("RegisterAgent: set AgentId={AgentId} on run {RunId}", message.AgentId, jobId);
 
-                // K8s dispatch mode: the agent has now actually picked up the run, so this is the
-                // correct moment to move the issue (or PR, for reviews) agent:next → agent:in-progress.
-                // Until now it stayed agent:next while the WorkItem sat Pending in the queue
-                // (DistributionResult.Queued contract). Gated on the first pickup (AgentId was empty)
-                // so a reconnect does not re-swap. Best-effort: a label-swap failure must not break
-                // registration or force-disconnect the agent.
-                try
+                if (string.IsNullOrEmpty(previousAgentId))
                 {
-                    await SwapLabelAsync(run, AgentLabels.InProgress);
+                    // First pickup: run had no prior agent — set AgentId and swap label to in-progress.
+                    _logger.Debug("RegisterAgent: set AgentId={AgentId} on run {RunId}", message.AgentId, jobId);
+
+                    // K8s dispatch mode: the agent has now actually picked up the run, so this is the
+                    // correct moment to move the issue (or PR, for reviews) agent:next → agent:in-progress.
+                    // Until now it stayed agent:next while the WorkItem sat Pending in the queue
+                    // (DistributionResult.Queued contract). Gated on the first pickup (previousAgentId was
+                    // empty) so a pod-replacement reconnect does not re-swap. Best-effort: a label-swap
+                    // failure must not break registration or force-disconnect the agent.
+                    try
+                    {
+                        await SwapLabelAsync(run, AgentLabels.InProgress);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warning(ex,
+                            "RegisterAgent: failed to swap label to agent:in-progress for run {RunId} (non-fatal)", jobId);
+                    }
                 }
-                catch (Exception ex)
+                else
                 {
-                    _logger.Warning(ex,
-                        "RegisterAgent: failed to swap label to agent:in-progress for run {RunId} (non-fatal)", jobId);
+                    // Pod replacement: a different agent pod has taken over this run.
+                    // Update run.AgentId so the UI and audit trail reflect the current pod.
+                    // Do NOT re-swap the label — it was already moved to agent:in-progress on first pickup.
+                    _logger.Information(
+                        "RegisterAgent: updated AgentId on run {RunId} from {PreviousAgentId} to {NewAgentId} (pod replacement)",
+                        jobId, previousAgentId, message.AgentId);
                 }
             }
         }

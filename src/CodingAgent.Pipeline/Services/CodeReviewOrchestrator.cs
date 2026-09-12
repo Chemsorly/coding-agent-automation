@@ -406,8 +406,21 @@ internal class CodeReviewOrchestrator
             });
             context.Callbacks.NotifyChange();
 
-            var result = await ExecuteSingleReviewAgentAsync(context, agent, iterationIndex, ct);
-            agentsRun.Add(agent.Name);
+            var result = await ExecuteSingleReviewAgentSafeAsync(context, agent, iterationIndex, ct);
+            agentsRun.Add(agent.Name); // unconditional — records even crashed agents, matching parallel path behavior
+
+            if (result.Failed)
+            {
+                _logger.Warning("Pipeline {RunId} sequential review agent '{AgentName}' failed: {Error}",
+                    run.RunId, agent.Name, result.Error);
+                run.ChatHistory.Enqueue(new ChatEntry
+                {
+                    Role = ChatRole.System,
+                    Content = $"Review agent '{agent.Name}' failed: {result.Error}"
+                });
+                context.Callbacks.NotifyChange();
+                continue;
+            }
 
             criticalCount += MergeReviewAgentResult(context, agent, result, iterationIndex, iterationFindings);
             context.Callbacks.NotifyChange();
@@ -528,8 +541,9 @@ internal class CodeReviewOrchestrator
     }
 
     /// <summary>
-    /// Wraps <see cref="ExecuteSingleReviewAgentAsync"/> with exception handling for parallel execution.
-    /// Returns a failed result instead of throwing, so one agent failure doesn't cancel others.
+    /// Wraps <see cref="ExecuteSingleReviewAgentAsync"/> with exception handling for fault isolation.
+    /// Returns a failed result instead of throwing, so one agent failure doesn't cancel the remaining agents.
+    /// Used by both the sequential and parallel paths.
     /// </summary>
     private async Task<ReviewAgentResult> ExecuteSingleReviewAgentSafeAsync(
         AgentPhaseContext context, ReviewAgentConfig agent, int iterationIndex, CancellationToken ct)
@@ -540,12 +554,12 @@ internal class CodeReviewOrchestrator
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            throw; // Propagate cancellation — all parallel tasks should stop
+            throw; // Propagate cancellation — all agents should stop
         }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "Pipeline {RunId} parallel review agent '{AgentName}' threw exception",
-                context.Run.RunId, agent.Name);
+            _logger.Warning(ex, "Pipeline {RunId} review agent '{AgentName}' threw exception (iteration {IterationIndex})",
+                context.Run.RunId, agent.Name, iterationIndex + 1);
             return ReviewAgentResult.Failure(ex.Message);
         }
     }

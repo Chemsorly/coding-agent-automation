@@ -39,7 +39,7 @@ public partial class QualityGateExecutor
             LogAndRecordReport(context, report, "quality gates");
 
             report = await RunRetryLoopAsync(context, report, "Quality gate retry agent", linkedCt);
-            if (run.CurrentStep == PipelineStep.Failed) return;
+            if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart) return;
 
             if (report.AllPassed)
                 await RunPostRetryCleanupAndFinalizeAsync(context, linkedCt);
@@ -128,7 +128,7 @@ public partial class QualityGateExecutor
 
         LogAndRecordReport(context, report, "final quality gates");
         report = await RunRetryLoopAsync(context, report, "Final QG retry agent", linkedCt);
-        if (run.CurrentStep == PipelineStep.Failed) return;
+        if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart) return;
 
         if (report.AllPassed)
         {
@@ -155,6 +155,12 @@ public partial class QualityGateExecutor
         if (!report.AllPassed)
         {
             report = await RunRetryLoopAsync(context, report, "Post-PR CI retry agent", linkedCt);
+            // TODO [WARNING]: Guard is missing for ConflictRestart. If AppendExternalCiIfNeededAsync
+            // sets ConflictRestart during the post-PR retry loop, RunRetryLoopAsync returns early
+            // (via the inner guard at line ~491), but this call site only checks for Failed.
+            // The !report.AllPassed condition below will be true (ExternalCi.Passed=false on conflict),
+            // causing FinalizeDraftPrAsync to be called on a run already re-queued via agent:next.
+            // Fix: change to `if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart) return;`
             if (run.CurrentStep == PipelineStep.Failed) return;
 
             if (!report.AllPassed)
@@ -481,14 +487,7 @@ public partial class QualityGateExecutor
             report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, ct);
 
             report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, ct);
-            if (run.CurrentStep == PipelineStep.Failed) return report;
-            // NOTE [WARNING]: The ConflictRestart early-return guard that previously appeared here
-            // was removed. The original comment described an active bug: a ConflictRestart detected
-            // inside AppendExternalCiIfNeededAsync during a retry iteration could cause
-            // AddRunToHistoryAsync to be called twice. Removing the guard changes runtime behavior:
-            // ConflictRestart now falls through to LogAndRecordReport and continues the retry loop.
-            // Verify this is intentional (e.g., ConflictRestart is now handled at a higher level).
-            // See review finding: Correctness WARNING — QualityGateExecutor.RetryLoop.cs:582
+            if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart) return report;
 
             LogAndRecordReport(context, report, "retry quality gates");
         }

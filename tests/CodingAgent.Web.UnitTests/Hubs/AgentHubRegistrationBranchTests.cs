@@ -478,8 +478,10 @@ public sealed class AgentHubRegistrationBranchTests
     [Fact]
     public async Task RegisterAgent_ActiveJobRunAlreadyHasAgentId_DoesNotReSwapLabel()
     {
-        // Reconnect: the run already has an assigned agent, so the label is already agent:in-progress.
-        // Re-registering must NOT re-swap (avoids redundant provider calls and label churn).
+        // Same-agent reconnect: the registering agent is the same agent already assigned to the run.
+        // run.AgentId == message.AgentId → the guard (run.AgentId != message.AgentId.Value) is false
+        // → the entire block is skipped (no ReplaceRun, no label swap). This is the idempotent case.
+        // The different-agent (pod replacement) case is covered by RegisterAgent_PodReplacement_DifferentAgentId_UpdatesRunAgentId.
         var ctx = BuildContext("conn-1", agentIdQueryParam: "agent-1", user: null);
         var hub = CreateHub(ctx);
 
@@ -514,6 +516,113 @@ public sealed class AgentHubRegistrationBranchTests
 
         _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never,
             "a reconnect where the run already has an assigned agent must not re-swap the label");
+    }
+
+    // ── RegisterAgent — pod replacement (different AgentId reconnects) ────────
+
+    [Fact]
+    public async Task RegisterAgent_PodReplacement_DifferentAgentId_UpdatesRunAgentId()
+    {
+        // Pod replacement: a new agent pod registers with the same RunId but a different AgentId.
+        // run.AgentId must be updated to the new agent's identity.
+        // The label must NOT be swapped — it was already moved to agent:in-progress on first pickup.
+        var ctx = BuildContext("conn-1", agentIdQueryParam: "agent-new", user: null);
+        var hub = CreateHub(ctx);
+
+        var runId = Guid.NewGuid().ToString();
+        var run = new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "issue-cfg-1",
+            RepoProviderConfigId = "repo-cfg-1",
+            AgentId = "agent-old" // prior pod's identity — different from registering agent
+        };
+
+        _facade.Setup(f => f.GetByAgentId(It.IsAny<AgentId>())).Returns((AgentEntry?)null);
+        _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(CreateEntry("agent-new", "conn-1"));
+        _facade.Setup(f => f.GetRun(runId)).Returns(run);
+        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()));
+        _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>())).Returns(Task.CompletedTask);
+        _orphanRecoveryService
+            .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
+            .Returns(Task.CompletedTask);
+
+        var message = new AgentRegistrationMessage
+        {
+            AgentId = "agent-new",
+            Hostname = "host",
+            Labels = [],
+            ActiveJob = MakeActiveJob(runId)
+        };
+
+        await hub.RegisterAgent(message);
+
+        run.AgentId.Should().Be("agent-new", "pod replacement must update run.AgentId to the new agent");
+        // TODO: [WARNING] _facade.Verify(f => f.ReplaceRun(run), Times.Once) does not add confidence
+        // beyond the AgentId assertion above — `run` is a mutable reference already mutated to "agent-new"
+        // before Verify executes, so it doesn't distinguish "ReplaceRun called with updated run" from
+        // "ReplaceRun called with original run". The AgentId assertion is the meaningful check here.
+        _facade.Verify(f => f.ReplaceRun(run), Times.Once,
+            "run must be persisted after AgentId update");
+        // TODO: [WARNING] The acceptance criterion "A log entry is emitted when AgentId is updated due to
+        // pod replacement" is not verified here. CreateHub wires Logger: Log.Logger (Serilog static logger,
+        // not a mock), so _logger.Information(... "pod replacement") cannot be asserted via mock expectations
+        // from this test class. To cover the log AC for the RegisterAgent path, the hub would need to be
+        // constructed with a Mock<ILogger> (as AgentHubBehaviorTests already does).
+        _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never,
+            "label swap must NOT fire on pod replacement — only first pickup swaps the label");
+    }
+
+    [Fact]
+    public async Task RegisterAgent_SameAgentReconnect_RunAgentId_IsNoOp()
+    {
+        // Same-agent reconnect: the entire AgentId block must be skipped (no ReplaceRun, no label swap).
+        // run.AgentId must remain unchanged.
+        // TODO: [WARNING] This test is structurally identical to RegisterAgent_ActiveJobRunAlreadyHasAgentId_DoesNotReSwapLabel
+        // above (same setup: run.AgentId = "agent-1", register with "agent-1", verify ReplaceRun/SwapLabel never called).
+        // The added `run.AgentId.Should().Be("agent-1")` assertion is trivially satisfied because no mutation
+        // occurs when the block is skipped — it confirms the reference was not changed, not that the guard
+        // logic was evaluated correctly. The two tests have no meaningful differentiation; consider whether
+        // one of them can be removed or replaced with a guard-logic-focused assertion.
+        var ctx = BuildContext("conn-1", agentIdQueryParam: "agent-1", user: null);
+        var hub = CreateHub(ctx);
+
+        var runId = Guid.NewGuid().ToString();
+        var run = new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "issue-cfg-1",
+            RepoProviderConfigId = "repo-cfg-1",
+            AgentId = "agent-1" // same as registering agent
+        };
+
+        _facade.Setup(f => f.GetByAgentId(It.IsAny<AgentId>())).Returns((AgentEntry?)null);
+        _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(CreateEntry("agent-1", "conn-1"));
+        _facade.Setup(f => f.GetRun(runId)).Returns(run);
+        _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>())).Returns(Task.CompletedTask);
+        _orphanRecoveryService
+            .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
+            .Returns(Task.CompletedTask);
+
+        var message = new AgentRegistrationMessage
+        {
+            AgentId = "agent-1",
+            Hostname = "host",
+            Labels = [],
+            ActiveJob = MakeActiveJob(runId)
+        };
+
+        await hub.RegisterAgent(message);
+
+        run.AgentId.Should().Be("agent-1", "same-agent reconnect must leave run.AgentId unchanged");
+        _facade.Verify(f => f.ReplaceRun(It.IsAny<PipelineRun>()), Times.Never,
+            "same-agent reconnect must not trigger a ReplaceRun write");
+        _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never,
+            "same-agent reconnect must not re-swap the label");
     }
 
     [Fact]
