@@ -81,7 +81,7 @@ public sealed class AgentHubIssueOpsTests
         await hub.RequestPostComment("job-missing", CommentType.Analysis, payload);
 
         _mockIssueOps.Verify(o => o.PostCommentViaIssueProviderAsync(
-            It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never);
+            It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── RequestPostComment — Analysis CommentType ────────────────────────
@@ -97,7 +97,7 @@ public sealed class AgentHubIssueOpsTests
 
         await hub.RequestPostComment("job-1", CommentType.Analysis, payload);
 
-        _mockIssueOps.Verify(o => o.PostCommentViaIssueProviderAsync(run, "## My Analysis\nLooks good."), Times.Once);
+        _mockIssueOps.Verify(o => o.PostCommentViaIssueProviderAsync(run, "## My Analysis\nLooks good.", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -111,7 +111,7 @@ public sealed class AgentHubIssueOpsTests
 
         await hub.RequestPostComment("job-1", CommentType.Analysis, payload);
 
-        _mockIssueOps.Verify(o => o.PostCommentViaIssueProviderAsync(run, string.Empty), Times.Once);
+        _mockIssueOps.Verify(o => o.PostCommentViaIssueProviderAsync(run, string.Empty, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ── RequestPostComment — unknown CommentType early return ────────────
@@ -129,7 +129,7 @@ public sealed class AgentHubIssueOpsTests
         await hub.RequestPostComment("job-1", (CommentType)999, payload);
 
         _mockIssueOps.Verify(o => o.PostCommentViaIssueProviderAsync(
-            It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never);
+            It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         _mockGateFormatter.Verify(f => f.FormatGateComment(
             It.IsAny<string?>(), It.IsAny<bool>()), Times.Never);
     }
@@ -156,7 +156,7 @@ public sealed class AgentHubIssueOpsTests
         await hub.RequestLabelChange("job-missing", AgentLabels.Done);
 
         _mockIssueOps.Verify(o => o.SwapLabelAsync(
-            It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never);
+            It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── RequestLabelChange — invalid label ───────────────────────────────
@@ -172,7 +172,7 @@ public sealed class AgentHubIssueOpsTests
         await hub.RequestLabelChange("job-1", "invalid:not-a-real-label");
 
         _mockIssueOps.Verify(o => o.SwapLabelAsync(
-            It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never);
+            It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── RequestLabelChange — gated label ─────────────────────────────────
@@ -189,7 +189,7 @@ public sealed class AgentHubIssueOpsTests
         await hub.RequestLabelChange("job-1", AgentLabels.EpicApproved);
 
         _mockIssueOps.Verify(o => o.SwapLabelAsync(
-            It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never);
+            It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── RequestLabelChange — valid non-gated label swaps ─────────────────
@@ -204,7 +204,7 @@ public sealed class AgentHubIssueOpsTests
 
         await hub.RequestLabelChange("job-1", AgentLabels.Error);
 
-        _mockIssueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Error), Times.Once);
+        _mockIssueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -218,7 +218,7 @@ public sealed class AgentHubIssueOpsTests
 
         await hub.RequestLabelChange("job-1", string.Empty);
 
-        _mockIssueOps.Verify(o => o.SwapLabelAsync(run, string.Empty), Times.Once);
+        _mockIssueOps.Verify(o => o.SwapLabelAsync(run, string.Empty, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ── RequestTokenRefresh — delegates to token refresh service ─────────

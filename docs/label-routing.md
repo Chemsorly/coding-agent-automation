@@ -56,15 +56,15 @@ Resolution: most specific match wins (highest label count). A profile with empty
 
 QGCs define per-stack quality gates. Configured in Settings → Quality Gate Configs.
 
-| QGC | Match Labels | Compilation | Tests | Coverage |
-|-----|-------------|-------------|-------|----------|
-| .NET Quality Gate | `dotnet` | `dotnet build --no-restore` | `dotnet test --no-restore --no-build --filter Category!=E2E` | Cobertura (auto-collected via coverlet) |
-| Python Quality Gate | `python` | `python -m pytest --collect-only` | `python -m pytest --cov=. --cov-report=xml:coverage.xml` | Cobertura (`coverage.xml`) |
-| Java Quality Gate | `java` | `mvn compile -q` | `mvn test -q` | JaCoCo (`target/site/jacoco/jacoco.xml`) |
+| QGC | Match Labels | Compilation | Tests |
+|-----|-------------|-------------|-------|
+| .NET Quality Gate | `dotnet` | `dotnet build --no-restore` | `dotnet test --no-restore --no-build --filter Category!=E2E` |
+| Python Quality Gate | `python` | `python -m pytest --collect-only` | `python -m pytest --cov=. --cov-report=xml:coverage.xml` |
+| Java Quality Gate | `java` | `mvn compile -q` | `mvn test -q` |
 
 Resolution: all QGCs whose labels intersect with the job's labels are applied sequentially. A polyglot repo with labels `["dotnet", "python"]` gets both the .NET and Python quality gates.
 
-Coverage report format and file paths are configurable per QGC via `coverageReportFormat` ("cobertura" or "jacoco") and `coverageReportPaths` (explicit file globs). When not specified, convention-based discovery is used.
+> **Coverage enforcement:** The built-in coverage threshold gate was retired (`coverageThreshold`, `coverageReportFormat`, and `coverageReportPaths` are tombstoned fields — configuring them has no effect). To enforce coverage minimums, add the appropriate flag to the `TestArguments` field on the QGC. For example, `--coverage-fail-below 80` for pytest-cov (Python) or a test runner argument like `--minimum-coverage 80` for .NET tools that support it. The test command will fail with a non-zero exit code if coverage is below the threshold, which the Tests gate will catch.
 
 ## Reviewer Configurations
 

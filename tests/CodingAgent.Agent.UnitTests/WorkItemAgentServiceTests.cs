@@ -196,9 +196,16 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         // Use a hub manager pointing at non-existent server — StartAsync will throw
         var mockConnectionManager = Mock.Of<IAgentConnectionManager>();
 
-        // Use a TaskCompletionSource to detect when StopApplication is called
+        // Capture Environment.ExitCode inside the StopApplication callback — at the exact point
+        // the service sets it — to avoid a race condition where parallel test assemblies running
+        // concurrently in CI reset ExitCode between the service setting it and this test reading it.
+        var capturedExitCode = new TaskCompletionSource<int>();
         var stopCalled = new TaskCompletionSource<bool>();
-        _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
+        _mockLifetime.Setup(l => l.StopApplication()).Callback(() =>
+        {
+            capturedExitCode.TrySetResult(Environment.ExitCode);
+            stopCalled.TrySetResult(true);
+        });
 
         var service = new WorkItemAgentService(new WorkItemAgentServiceDependencies(
             "job-fail", client, mockConnectionManager,
@@ -221,14 +228,16 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         }
         finally
         {
-            var actualExitCode = Environment.ExitCode;
             Environment.ExitCode = previousExitCode; // Restore
-
-            // Assert: exit code must be non-zero on failure
-            actualExitCode.Should().NotBe(0,
-                "Pipeline failure (including SignalR connection failure) must set non-zero exit code " +
-                "so K8s marks the pod as Failed, not Completed");
         }
+
+        // Assert: exit code must be non-zero on failure.
+        // Read from the captured value (set synchronously before StopApplication returned)
+        // rather than from Environment.ExitCode after the await, which is racy in parallel CI.
+        var actualExitCode = await capturedExitCode.Task;
+        actualExitCode.Should().NotBe(0,
+            "Pipeline failure (including SignalR connection failure) must set non-zero exit code " +
+            "so K8s marks the pod as Failed, not Completed");
     }
 
     /// <summary>
@@ -255,8 +264,16 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
 
         var failingConnectionManager = Mock.Of<IAgentConnectionManager>();
 
+        // Capture Environment.ExitCode inside the StopApplication callback — at the exact point
+        // the service sets it — to avoid a race condition where parallel test assemblies running
+        // concurrently in CI reset ExitCode between the service setting it and this test reading it.
+        var capturedExitCode = new TaskCompletionSource<int>();
         var stopCalled = new TaskCompletionSource<bool>();
-        _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
+        _mockLifetime.Setup(l => l.StopApplication()).Callback(() =>
+        {
+            capturedExitCode.TrySetResult(Environment.ExitCode);
+            stopCalled.TrySetResult(true);
+        });
 
         var service = new WorkItemAgentService(new WorkItemAgentServiceDependencies(
             "job-pipeline-fail", client, failingConnectionManager,
@@ -278,13 +295,15 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         }
         finally
         {
-            var actualExitCode = Environment.ExitCode;
             Environment.ExitCode = previousExitCode; // Restore
-
-            actualExitCode.Should().NotBe(0,
-                "When pipeline completes with FinalStep=Failed (even after posting terminal status), " +
-                "the process must exit non-zero so K8s marks the pod as Failed");
         }
+
+        // Assert: read from the captured value (set synchronously before StopApplication returned)
+        // rather than from Environment.ExitCode after the await, which is racy in parallel CI.
+        var actualExitCode = await capturedExitCode.Task;
+        actualExitCode.Should().NotBe(0,
+            "When pipeline completes with FinalStep=Failed (even after posting terminal status), " +
+            "the process must exit non-zero so K8s marks the pod as Failed");
     }
 
     // ── ForceFlush Return Value Handling ─────────────────────────────────

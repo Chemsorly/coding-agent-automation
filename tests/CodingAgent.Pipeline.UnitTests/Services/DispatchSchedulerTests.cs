@@ -1,4 +1,7 @@
 using AwesomeAssertions;
+using FsCheck;
+using FsCheck.Fluent;
+using FsCheck.Xunit;
 using Moq;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -166,11 +169,11 @@ public class DispatchSchedulerTests
     #region Fairness Test
 
     [Fact]
-    public async Task FairRoundRobin_EqualQueues_DispatchesByPriorityOrder()
+    public async Task FairRoundRobin_EqualQueues_StrictPriorityWithFloorDisabled()
     {
-        // Arrange: 1 template, 3 queue types, 9 items each, budget = 9
-        // With priority ordering (PRs > Decomp > Issues), all 9 budget slots are consumed by
-        // PRs first (highest priority). Decomposition and Issues receive 0 dispatches.
+        // Arrange: 1 template, 3 queue types, 9 items each, budget = 9, MinIssueSlots = 0
+        // With priority ordering (PRs > Decomp > Issues) and floor disabled, all 9 budget slots
+        // are consumed by PRs first (highest priority). Decomposition and Issues receive 0 dispatches.
         var template = CreateTemplate("t1");
         var project = CreateProject("p1");
         var (pollable, flattened) = BuildTemplateLists(template, project);
@@ -188,13 +191,13 @@ public class DispatchSchedulerTests
             ["t1"] = Enumerable.Range(1, 9).Select(i => (CreateIssueSummary($"epic-{i}"), PipelineRunType.DecompositionAnalysis)).ToList()
         };
 
-        // Act
+        // Act — MinIssueSlots = 0 disables the floor (strict priority, original behavior)
         var result = await _scheduler.DispatchFairRoundRobinAsync(
             new DispatchScheduler.DispatchRoundRobinRequest
             {
                 PollableTemplates = pollable,
                 FlattenedTemplates = flattened,
-                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100, MinIssueSlots = 0 },
                 MaxRunsPerCycle = 9,
                 ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
                 IssueQueues = issueQueues,
@@ -212,11 +215,437 @@ public class DispatchSchedulerTests
         _prDispatchCount.Should().Be(9);
         _decompDispatchCount.Should().Be(0);
         _issueDispatchCount.Should().Be(0);
-        // TODO: add an integration test where the PR queue has fewer items than the budget so the
-        // scheduler falls through to Decomposition (and then Issues) within a single cycle. The
-        // current test always exhausts the full budget on PRs, so fallthrough to lower-priority
-        // queues (e.g. Decomposition dispatched when PR queue empties mid-cycle) is not covered
-        // by DispatchSchedulerTests integration tests.
+    }
+
+    [Fact]
+    public async Task FairRoundRobin_EqualQueues_FloorReservesOneSlotForIssues()
+    {
+        // Arrange: 1 template, 3 queue types, 9 items each, budget = 9, MinIssueSlots = 1 (default)
+        // With priority ordering (PRs > Decomp > Issues) and floor enabled:
+        //   Priority loop: 8 PR slots dispatched (remaining drops 9→1), loop exits (no more budget).
+        //   Floor pass: remaining=1 > 0, issueDispatchedThisCycle=false → dispatches 1 Issue.
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        var issueQueues = new Dictionary<string, List<IssueSummary>>
+        {
+            ["t1"] = Enumerable.Range(1, 9).Select(i => CreateIssueSummary($"issue-{i}")).ToList()
+        };
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>
+        {
+            ["t1"] = Enumerable.Range(1, 9).Select(i => CreatePrSummary($"pr-{i}", i)).ToList()
+        };
+        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>
+        {
+            ["t1"] = Enumerable.Range(1, 9).Select(i => (CreateIssueSummary($"epic-{i}"), PipelineRunType.DecompositionAnalysis)).ToList()
+        };
+
+        // Act — MinIssueSlots = 1 (default) enables the floor
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100, MinIssueSlots = 1 },
+                MaxRunsPerCycle = 9,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = decompQueues,
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        // Assert: 8 PR slots from priority loop + 1 Issue slot from floor pass = 9 total.
+        result.ProcessedCount.Should().Be(9);
+        _prDispatchCount.Should().Be(8);
+        _decompDispatchCount.Should().Be(0);
+        _issueDispatchCount.Should().Be(1);
+    }
+
+    #endregion
+
+    #region Floor Allocation Tests (#2476)
+
+    [Fact]
+    public async Task FloorAllocation_WhenBothPrsAndIssuesPresent_IssuesGetAtLeastOneSlot()
+    {
+        // AC1: When PRs and Implementation issues are both present,
+        // at least 1 Implementation issue is dispatched per cycle.
+        // TODO: [WARNING] This test uses an empty Decomp queue. AC1 says "When PRs and Implementation
+        // issues are both present" without qualification on Decomp, so the realistic scenario includes
+        // all three queue types non-empty. A Decomp queue consumes priority-loop budget between PRs
+        // and Issues, changing how much budget remains before the floor fires. The property test
+        // (FloorProperty_IssuesAlwaysGetAtLeastOneSlot_WhenPresent) now covers this dimension, but
+        // a dedicated deterministic test with a non-empty Decomp queue would make AC1 more explicit.
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        var issueQueues = new Dictionary<string, List<IssueSummary>>
+        {
+            ["t1"] = Enumerable.Range(1, 5).Select(i => CreateIssueSummary($"issue-{i}")).ToList()
+        };
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>
+        {
+            ["t1"] = Enumerable.Range(1, 10).Select(i => CreatePrSummary($"pr-{i}", i)).ToList()
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MinIssueSlots = 1 },
+                MaxRunsPerCycle = 5,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(5);
+        _prDispatchCount.Should().Be(4);
+        _issueDispatchCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task FloorAllocation_WhenOnlyPrsPresent_AllSlotsGoToPrs()
+    {
+        // AC2: When only PRs are present, all available slots go to PRs (no change from current behavior).
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>
+        {
+            ["t1"] = Enumerable.Range(1, 5).Select(i => CreatePrSummary($"pr-{i}", i)).ToList()
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MinIssueSlots = 1 },
+                MaxRunsPerCycle = 5,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = new Dictionary<string, List<IssueSummary>>(),
+                PrQueues = prQueues,
+                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(5);
+        _prDispatchCount.Should().Be(5);
+        _issueDispatchCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task FloorAllocation_WithMinIssueSlotsZero_StrictPriorityBehavior()
+    {
+        // AC3: MinIssueSlots = 0 disables floor (strict priority, original behavior).
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        var issueQueues = new Dictionary<string, List<IssueSummary>>
+        {
+            ["t1"] = Enumerable.Range(1, 5).Select(i => CreateIssueSummary($"issue-{i}")).ToList()
+        };
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>
+        {
+            ["t1"] = Enumerable.Range(1, 5).Select(i => CreatePrSummary($"pr-{i}", i)).ToList()
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MinIssueSlots = 0 },
+                MaxRunsPerCycle = 5,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(5);
+        _prDispatchCount.Should().Be(5);
+        _issueDispatchCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task FloorAllocation_WithMaxRunsPerCycleOne_FloorDoesNotApply()
+    {
+        // MaxRunsPerCycle = 1: only one slot — PRs win, floor does not apply.
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        var issueQueues = new Dictionary<string, List<IssueSummary>>
+        {
+            ["t1"] = new() { CreateIssueSummary("issue-1") }
+        };
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>
+        {
+            ["t1"] = new() { CreatePrSummary("pr-1", 1) }
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MinIssueSlots = 1 },
+                MaxRunsPerCycle = 1,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(1);
+        _prDispatchCount.Should().Be(1);
+        _issueDispatchCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task FloorAllocation_WithUnlimitedBudget_PriorityLoopNaturallyFallsThrough()
+    {
+        // MaxRunsPerCycle = 0 means unlimited. With a finite in-memory PR queue, the priority
+        // loop exhausts all PRs and then naturally falls through to dispatch the issue
+        // (issueDispatchedThisCycle=true → floor guard skips). This verifies correct total
+        // dispatch count and that Issues are not blocked when PRs run out.
+        //
+        // NOTE: The unlimited-budget floor code path (floorBudget = issueFloor when
+        // totalBudget == int.MaxValue) is structurally unreachable with finite in-memory queues:
+        // the priority loop always drains all PRs before AnyProgress becomes false, setting
+        // issueDispatchedThisCycle=true via natural fallthrough, which causes the floor guard
+        // to skip. To exercise the unlimited-budget floor path, a truly infinite PR source
+        // (e.g., a mock returning endless items) would be required. The floor mechanism for
+        // finite budgets is covered by FloorAllocation_WhenBothPrsAndIssuesPresent_IssuesGetAtLeastOneSlot
+        // and FairRoundRobin_EqualQueues_FloorReservesOneSlotForIssues.
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        var issueQueues = new Dictionary<string, List<IssueSummary>>
+        {
+            ["t1"] = new() { CreateIssueSummary("issue-1") }
+        };
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>
+        {
+            ["t1"] = Enumerable.Range(1, 3).Select(i => CreatePrSummary($"pr-{i}", i)).ToList()
+        };
+
+        // Act with unlimited budget (MaxRunsPerCycle = 0)
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MinIssueSlots = 1 },
+                MaxRunsPerCycle = 0,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        // All PRs dispatched by priority loop, then issue dispatched via natural fallthrough.
+        result.ProcessedCount.Should().Be(4);
+        _prDispatchCount.Should().Be(3);
+        _issueDispatchCount.Should().Be(1);
+        _decompDispatchCount.Should().Be(0);
+    }
+
+    #endregion
+
+    #region Floor Allocation Property Test (#2476 — AC4)
+
+    /// <summary>
+    /// AC4: For any combination of PR/Issue/Decomp queue sizes with MaxRunsPerCycle ≥ 2,
+    /// Issues always get ≥ 1 slot when present (MinIssueSlots = 1, default).
+    /// Calls DispatchFairRoundRobinAsync directly — NOT a simulation — to catch real regressions.
+    /// Decomposition queue is populated (0–9 items) to verify the floor invariant holds when
+    /// Decomp items compete for priority-loop budget between PRs and Issues.
+    /// </summary>
+    [Property(MaxTest = 20)]
+    public Property FloorProperty_IssuesAlwaysGetAtLeastOneSlot_WhenPresent(
+        PositiveInt prCount,
+        PositiveInt issueCount,
+        NonNegativeInt decompCount,
+        PositiveInt maxRunsPerCycle)
+    {
+        // Clamp to reasonable sizes (property generators can produce very large values)
+        int prs = prCount.Get % 20 + 1;     // 1–20 PRs
+        int issues = issueCount.Get % 10 + 1; // 1–10 Issues
+        int decomps = decompCount.Get % 10;   // 0–9 Decomp items (NonNegativeInt so 0 is included)
+        int budget = maxRunsPerCycle.Get % 19 + 2; // 2–20 (ensures >= 2)
+
+        var template = new PipelineJobTemplate
+        {
+            Id = "t1",
+            Name = "Template t1",
+            IssueProviderId = "provider-t1",
+            RepoProviderId = "repo-t1",
+            ImplementationEnabled = true,
+            ReviewEnabled = true,
+            DecompositionEnabled = true
+        };
+        var project = new PipelineProject { Id = "p1", Name = "Project p1" };
+
+        var issueQueues = new Dictionary<string, List<IssueSummary>>
+        {
+            ["t1"] = Enumerable.Range(1, issues).Select(i => new IssueSummary
+            {
+                Identifier = $"issue-{i}",
+                Title = $"Issue {i}",
+                Labels = new List<string>()
+            }).ToList()
+        };
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>
+        {
+            ["t1"] = Enumerable.Range(1, prs).Select(i => new PullRequestSummary
+            {
+                Identifier = $"pr-{i}",
+                Title = $"PR {i}",
+                Description = "",
+                Labels = new List<string>(),
+                BranchName = $"feat/pr-{i}",
+                TargetBranch = "main",
+                Url = $"https://github.com/owner/repo/pull/{i}",
+                Number = i,
+                IsDraft = false
+            }).ToList()
+        };
+        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
+        if (decomps > 0)
+        {
+            decompQueues["t1"] = Enumerable.Range(1, decomps).Select(i =>
+                (new IssueSummary { Identifier = $"epic-{i}", Title = $"Epic {i}", Labels = new List<string>() },
+                 PipelineRunType.DecompositionAnalysis)).ToList();
+        }
+
+        var issueDispatched = 0;
+        var mockOrch = new Mock<IDispatchRunCreator>();
+        mockOrch.Setup(o => o.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()))
+            .Returns(false);
+        mockOrch.Setup(o => o.GetAllActiveRuns()).Returns(new List<PipelineRun>());
+
+        var mockDispatch = new Mock<IDispatchOrchestrationService>();
+        mockDispatch
+            .Setup(d => d.PrepareDistributionRequestAsync(
+                It.IsAny<ImplementationDispatchOrchestrationRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ImplementationDispatchOrchestrationRequest req, CancellationToken _) =>
+            {
+                Interlocked.Increment(ref issueDispatched);
+                return new JobDistributionRequest
+                {
+                    IssueIdentifier = req.IssueIdentifier,
+                    IssueProviderConfigId = "provider-t1",
+                    RepoProviderConfigId = "repo-t1",
+                    InitiatedBy = "test",
+                    TaskType = WorkItemTaskType.Implementation,
+                    AgentSelector = "",
+                    TimeoutSeconds = 300
+                };
+            });
+        mockDispatch
+            .Setup(d => d.PrepareReviewDistributionRequestAsync(
+                It.IsAny<ReviewDispatchRequest>(), It.IsAny<PipelineProject>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ReviewDispatchRequest req, PipelineProject _, CancellationToken __) =>
+                new JobDistributionRequest
+                {
+                    IssueIdentifier = req.PrIdentifier,
+                    IssueProviderConfigId = "provider-t1",
+                    RepoProviderConfigId = "repo-t1",
+                    InitiatedBy = "test",
+                    TaskType = WorkItemTaskType.Review,
+                    AgentSelector = "",
+                    TimeoutSeconds = 300
+                });
+        mockDispatch
+            .Setup(d => d.PrepareDecompositionDistributionRequestAsync(
+                It.IsAny<DecompositionDispatchOrchestrationRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DecompositionDispatchOrchestrationRequest req, CancellationToken _) =>
+                new JobDistributionRequest
+                {
+                    IssueIdentifier = req.EpicIdentifier,
+                    IssueProviderConfigId = "provider-t1",
+                    RepoProviderConfigId = "repo-t1",
+                    InitiatedBy = "test",
+                    TaskType = WorkItemTaskType.Decomposition,
+                    AgentSelector = "",
+                    TimeoutSeconds = 300
+                });
+        mockDispatch
+            .Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchOutcome(true, false, null));
+
+        var mockFactory = new Mock<IProviderFactory>();
+        var cacheManager = new ProviderCacheManager(mockFactory.Object, Serilog.Core.Logger.None);
+        var scheduler = new DispatchScheduler(
+            mockOrch.Object, mockDispatch.Object,
+            dependencyChecker: null, cacheManager, Serilog.Core.Logger.None);
+
+        var result = scheduler.DispatchFairRoundRobinAsync(
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = new[] { template },
+                FlattenedTemplates = new[] { (template, project) },
+                Config = new PipelineConfiguration { MinIssueSlots = 1, MaxConcurrentDecompositions = 100 },
+                MaxRunsPerCycle = budget,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = decompQueues,
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None)
+            .GetAwaiter().GetResult();
+        // NOTE: .GetAwaiter().GetResult() is required here because FsCheck [Property] functions must
+        // be synchronous. This is safe in xUnit's thread-pool context (no SynchronizationContext).
+
+        return (issueDispatched >= 1)
+            .ToProperty()
+            .Label($"PRs={prs}, Issues={issues}, Decomps={decomps}, Budget={budget}, IssueDispatched={issueDispatched}, Total={result.ProcessedCount}");
     }
 
     #endregion
@@ -335,7 +764,7 @@ public class DispatchSchedulerTests
             {
                 PollableTemplates = pollable,
                 FlattenedTemplates = flattened,
-                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100, MinIssueSlots = 0 },
                 MaxRunsPerCycle = 2,
                 ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
                 IssueQueues = issueQueues,
@@ -350,7 +779,7 @@ public class DispatchSchedulerTests
 
         // Assert: exactly 2 dispatched, no more.
         // Priority order is PR→Decomp→Issues; PRs have highest priority, so both budget slots
-        // are consumed by PRs. A bug dispatching from a lower-priority queue would fail these checks.
+        // are consumed by PRs. MinIssueSlots=0 disables the floor, preserving strict-priority behavior.
         result.ProcessedCount.Should().Be(2);
         _prDispatchCount.Should().Be(2);
         _decompDispatchCount.Should().Be(0);

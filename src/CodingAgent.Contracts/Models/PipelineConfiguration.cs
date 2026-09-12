@@ -734,4 +734,22 @@ public sealed record PipelineConfiguration
     [ProjectOverridable(Order = 32)]
     public int FeedbackTimeoutSeconds { get; init; } = FeedbackConstraints.FailureFeedbackTimeoutSeconds;
 
+    /// <summary>
+    /// Minimum number of Implementation issue slots reserved per dispatch cycle.
+    /// When PRs (or other higher-priority work) would otherwise consume all slots,
+    /// this many slots are held back for Issues if any are present and
+    /// <see cref="DispatchRoundRobinRequest.MaxRunsPerCycle"/> ≥ 2 (or is 0 for unlimited).
+    /// Default: 1. Set to 0 to disable floor allocation (strict priority, original behavior).
+    /// </summary>
+    [Key(83)]
+    [ProjectOverridable(Order = 33)]
+    public int MinIssueSlots
+    {
+        get => _minIssueSlots;
+        init => _minIssueSlots = value >= 0
+            ? value
+            : throw new ArgumentOutOfRangeException(nameof(MinIssueSlots), value, "Value must be >= 0.");
+    }
+    private readonly int _minIssueSlots = 1;
+
 }
