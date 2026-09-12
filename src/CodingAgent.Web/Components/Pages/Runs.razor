@@ -67,6 +67,7 @@
                     <colgroup>
                         <col style="width: 110px;" />  @* Result *@
                         <col style="width: 130px;" />  @* Type *@
+                        <col style="width: 130px;" />  @* Initiated by *@
                         <col />                         @* Run (flexible) *@
                         <col style="width: 100px;" />  @* Duration *@
                         <col style="width: 90px;" />   @* Tokens *@
@@ -103,6 +104,26 @@
                                     <option value="Review">Review</option>
                                     <option value="Decomposition">Decomposition</option>
                                     <option value="Consolidation">Consolidation</option>
+                                </select>
+                            </th>
+                            @* ── Initiated by column: filter only (not sortable) ────────────────── *@
+                            @* TODO: [WARNING] Using value="@_initiatedByFilter" + @onchange is not the idiomatic Blazor two-way binding
+                               form. If _initiatedByFilter is reset programmatically, the <select> element's displayed value will not
+                               update in all rendering scenarios. The safe idiomatic alternative is @bind-value="@_initiatedByFilter"
+                               @bind-value:event="onchange". This is consistent with how the existing _resultFilter and _typeFilter
+                               dropdowns are implemented, so it is not a regression introduced here, but the same latent risk applies. *@
+                            <th>
+                                Initiated by
+                                <select class="column-filter" aria-label="Filter by Initiated by"
+                                        value="@_initiatedByFilter"
+                                        @onchange="e => _initiatedByFilter = e.Value?.ToString() ?? string.Empty">
+                                    <option value="">All</option>
+                                    <option value="@InitiatedByConstants.LoopIssue">@InitiatedByConstants.LoopIssue</option>
+                                    <option value="@InitiatedByConstants.LoopReview">@InitiatedByConstants.LoopReview</option>
+                                    <option value="@InitiatedByConstants.LoopDecomposition">@InitiatedByConstants.LoopDecomposition</option>
+                                    <option value="@InitiatedByConstants.Manual">@InitiatedByConstants.Manual</option>
+                                    <option value="@InitiatedByConstants.ConsolidationManual">@InitiatedByConstants.ConsolidationManual</option>
+                                    <option value="@InitiatedByConstants.ConsolidationAuto">@InitiatedByConstants.ConsolidationAuto</option>
                                 </select>
                             </th>
                             <th>Run</th>
@@ -168,6 +189,13 @@
                                         <span class="run-type-badge run-type-impl" title="Implementation"><Icon Name="hammer" Size="14" /> Impl</span>
                                     }
                                 </td>
+                                @* TODO: [WARNING] run.InitiatedBy is declared as non-nullable string with a "manual" default, but
+                                   rows deserialized from storage that predate the InitiatedBy field will deserialize with null
+                                   (absent JSON field ignores C# default initializers). Passing null to ToDisplayString(string, RunMode)
+                                   will produce a NullReferenceException when those legacy rows are rendered. Add a null-coalescing guard
+                                   here, e.g. @InitiatedByConstants.ToDisplayString(run.InitiatedBy ?? string.Empty, run.RunMode),
+                                   or update PipelineRunSummary.InitiatedBy to string? and add an overload/guard in ToDisplayString. *@
+                                <td><span class="cockpit-chip">@InitiatedByConstants.ToDisplayString(run.InitiatedBy, run.RunMode)</span></td>
                                 <td>
                                     <span style="font-weight: 600;">@(run.RunType == PipelineRunType.Review ? "PR " : "")#@run.IssueIdentifier</span>
                                     <span style="color: var(--text-muted);">@Truncate(run.IssueTitle, 60)</span>
@@ -250,6 +278,7 @@
 
     private string _resultFilter = "";
     private string _typeFilter = "";
+    private string _initiatedByFilter = "";
 
     // ── Query parameters ─────────────────────────────────────────────────────
 
@@ -466,6 +495,9 @@
 
         if (!string.IsNullOrEmpty(_typeFilter))
             items = items.Where(r => RunTypeLabel(r) == _typeFilter);
+
+        if (!string.IsNullOrEmpty(_initiatedByFilter))
+            items = items.Where(r => r.InitiatedBy == _initiatedByFilter);
 
         // ── Client-side sort ──────────────────────────────────────────────────
         items = _sortColumn switch

@@ -119,7 +119,7 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 **Status (2026-08-28 — Reassess-when condition met and resolved):** The monolith was split into **4 separate services** in specs 041–045:
 - `CodingAgent.Web` (orchestrator) — Blazor UI + pipeline orchestration. **No direct DB access.** Connects to API via HTTP/SignalR for all state reads and writes.
 - `CodingAgent.Api` — sole owner of the Postgres database, `/hubs/agent`, `/api/work-items/*`, and all agent-facing endpoints.
-- `CodingAgent.JobController` — owns dispatch and reconciliation loops. Leader-elected; one leader runs them, others idle as hot standbys.
+- `CodingAgent.JobController` — owns the reconciliation loop. Leader-elected; one leader runs it, others idle as hot standbys. _Dispatch loops were removed from the JobController in #2322/#2323 — see the "Dispatch loop belongs in a leader-elected controller" decision below for where dispatch lives now and where it is moving._
 - `CodingAgent.Scheduler` — owns all scheduled/periodic background work (retention sweeps, maintenance). No direct DB access; triggers work via HTTP.
 
 Leader election continues to handle multi-replica safety. The split was driven by: (a) the orchestrator needing to be a UI-only consumer of the API rather than the source of truth, (b) dispatch/reconciliation needing a separate leader lease from the pipeline loop, and (c) scheduled maintenance needing isolation from both.
@@ -129,6 +129,21 @@ Leader election continues to handle multi-replica safety. The split was driven b
 **Alternatives considered at the time:** Standalone K8s operator (spec 036), sidecar extraction, microservice split. All were deferred for deployment complexity reasons. Specs 041–045 eventually delivered the microservice split.
 
 **Reassess when:** Independent scaling of the dispatch or API layer is needed (scale-out now possible — each service scales independently). Or if the JobController and Scheduler should be merged back for operational simplicity.
+
+---
+
+### Dispatch loop belongs in a leader-elected controller, not the stateless API
+
+**Date:** 2026-09-12
+**Category:** architecture
+
+**Decision:** WorkItem dispatch — the poll loop that turns `Pending` WorkItems into `Dispatched` + K8s Jobs — MUST run as a single leader-elected loop, never on every API replica. The API is stateless request/response only: it holds no background dispatch loop and no leader election. Only loop-controllers hold leader leases. The dispatch loop belongs in a leader-elected controller (the Scheduler, per the DatabaseMaintenanceService / Spec 047 pattern) that drives a **stateless** `POST /api/work-items/{id}/dispatch` endpoint; K8s Job creation stays in the API because that is where the `batch/jobs` RBAC lives.
+
+**Context — regression being corrected:** #2322/#2323 relocated dispatch out of the JobController into the API's `WorkItemDispatchService`, registered on all replicas via `AlwaysLeaderService`. Because each replica builds its own concurrency snapshot from the DB, per-selector `maxConcurrent` is not enforced across replicas — observed live: 4 active pods for a cap of 3. This contradicts two recorded principles: "PipelineLoopService: full loop must be leader-gated in multi-replica deployments" (loops fire concurrently on non-gated replicas) and "the Scheduler is the designated owner of all scheduled/periodic background work; putting periodic logic in the API contradicts the Scheduler's role" (DatabaseMaintenanceService, Spec 047). `AlwaysLeaderService`'s own doc calls the gap "an accepted trade-off for the single-process deployment target" — but production runs the API multi-replica.
+
+**Status (2026-09-12):** In progress — tracked by epic #2541 (stateless endpoint #2542, leader-elected Scheduler poller + cutover flags #2545, flag-gated cutover #2546, post-cutover teardown of `WorkItemDispatchService`/`AlwaysLeaderService` #2547; dead-code cleanup #2543/#2544). Same-item double-dispatch is prevented by the `TransitionIfAsync(Pending→Dispatched)` CAS, so the cutover is flag-gated (`WorkDistribution:Dispatch:Enabled` off / `Scheduler:Dispatch:Enabled` on) and reversible via `helm rollback`.
+
+**Reassess when:** If the API is ever intentionally reduced to a single replica (the `AlwaysLeaderService` assumption), the leader-elected Scheduler poller remains correct and simpler — there is no reason to revert dispatch into the API.
 
 ---
 
