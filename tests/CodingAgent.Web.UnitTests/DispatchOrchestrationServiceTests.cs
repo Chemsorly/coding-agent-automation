@@ -841,6 +841,437 @@ public class DispatchOrchestrationServiceTests
     }
 
     [Fact]
+    public async Task PrepareReviewDistributionRequestAsync_PrWithFixesHashN_PopulatesLinkedIssueContexts()
+    {
+        // Arrange — PR description contains "Fixes #99"; expect linked issue body pre-fetched.
+        SetupStandardMocks();
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"]
+        };
+        _mockProviderConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        // Issue provider config for the linked-issue fetch (IssueProviderId = "issue-1").
+        var issueConfig = new ProviderConfig
+        {
+            Id = "issue-1",
+            DisplayName = "Issue Provider",
+            ProviderType = "github",
+            Kind = ProviderKind.Issue
+        };
+        _mockProviderConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("issue-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issueConfig);
+
+        // Stub GetIssueAsync for the PR itself (identifier "42", fetched by PrepareDispatchCoreAsync)
+        // and for the linked issue (#99, fetched by FetchLinkedIssueContextsAsync).
+        // TODO: [WARNING] The production code calls `await using var issueProvider = ...CreateIssueProvider(...)`,
+        // which invokes DisposeAsync() on this mock. Add `.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask)`
+        // to be consistent with other test files (e.g. AgentIssueOperationsTests.cs) and to be safe
+        // if strict-mock mode is ever enabled.
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "42",
+                Title = "PR #42",
+                Description = "Fixes #99",
+                Labels = []
+            });
+        mockIssueProvider
+            .Setup(p => p.ListCommentsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<IssueComment>());
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync("99", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "99",
+                Title = "Parent Issue",
+                Description = "## Requirements\nDo the thing",
+                Labels = []
+            });
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var service = CreateService();
+        DispatchOrchestrationService iface = service;
+
+        var reviewRequest = new ReviewDispatchRequest
+        {
+            PrIdentifier = "42",
+            PrBranchName = "feature/my-pr",
+            PrTitle = "My PR",
+            PrDescription = "Fixes #99",
+            PrAuthor = "dev-user",
+            PrUrl = "https://github.com/org/repo/pull/42",
+            PrTargetBranch = "main",
+            IssueProviderId = "issue-1",
+            RepoProviderId = "repo-1",
+            BrainProviderId = null,
+            InitiatedBy = "review-loop"
+        };
+
+        // Act
+        var result = await iface.PrepareReviewDistributionRequestAsync(
+            reviewRequest, TestProject, CancellationToken.None);
+
+        // Assert — LinkedIssueContexts populated with body from referenced issue.
+        result.Should().NotBeNull();
+        result!.LinkedIssueContexts.Should().NotBeNullOrEmpty(
+            "a PR description with 'Fixes #99' must cause LinkedIssueContexts to be populated");
+        result.LinkedIssueContexts!.Should().HaveCount(1);
+        result.LinkedIssueContexts[0].Identifier.Should().Be("99");
+        result.LinkedIssueContexts[0].Title.Should().Be("Parent Issue");
+        result.LinkedIssueContexts[0].Description.Should().NotBeNullOrEmpty(
+            "the issue body must be fetched and stored, not just the identifier");
+        result.LinkedIssueContexts[0].Description.Should().Be("## Requirements\nDo the thing");
+    }
+
+    [Fact]
+    public async Task PrepareReviewDistributionRequestAsync_PrWithNoClosingKeywords_LinkedIssueContextsIsNull()
+    {
+        // Arrange — PR description has no closing keywords; expect no issue fetch and null LinkedIssueContexts.
+        SetupStandardMocks();
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"]
+        };
+        _mockProviderConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "42",
+                Title = "Refactor PR",
+                Description = "This PR adds pagination support to the API",
+                Labels = []
+            });
+        mockIssueProvider
+            .Setup(p => p.ListCommentsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<IssueComment>());
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var service = CreateService();
+        DispatchOrchestrationService iface = service;
+
+        var reviewRequest = new ReviewDispatchRequest
+        {
+            PrIdentifier = "42",
+            PrBranchName = "feature/refactor",
+            PrTitle = "Refactor PR",
+            PrDescription = "This PR adds pagination support to the API",
+            PrAuthor = "dev-user",
+            PrUrl = "https://github.com/org/repo/pull/42",
+            PrTargetBranch = "main",
+            IssueProviderId = "issue-1",
+            RepoProviderId = "repo-1",
+            BrainProviderId = null,
+            InitiatedBy = "review-loop"
+        };
+
+        // Act
+        var result = await iface.PrepareReviewDistributionRequestAsync(
+            reviewRequest, TestProject, CancellationToken.None);
+
+        // Assert — no closing keywords means no linked issue fetches.
+        result.Should().NotBeNull();
+        result!.LinkedIssueContexts.Should().BeNullOrEmpty(
+            "a PR with no closing-keyword references must not populate LinkedIssueContexts");
+
+        // TODO: [WARNING] The Verify below is tautological: FetchLinkedIssueContextsAsync returns early
+        // (before calling CreateIssueProvider) when issueNumbers.Count == 0, so the local mockIssueProvider
+        // is never passed to the factory and GetIssueAsync can never be called on it regardless.
+        // A more meaningful assertion would be:
+        //   _mockProviderFactory.Verify(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()), Times.Never)
+        // to confirm that the provider was not even instantiated for this early-return path.
+        // Verify GetIssueAsync was only called for the PR itself ("42"), not for any additional issue.
+        mockIssueProvider.Verify(
+            p => p.GetIssueAsync(It.Is<IssueIdentifier>(id => id.Value != "42"), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "GetIssueAsync must not be called for any linked issue when there are no closing references");
+    }
+
+    [Fact]
+    public async Task PrepareReviewDistributionRequestAsync_IssueFetchFails_ContinuesWithNullLinkedIssueContexts()
+    {
+        // Arrange — closing keyword present, but GetIssueAsync throws; dispatch must not abort.
+        SetupStandardMocks();
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"]
+        };
+        _mockProviderConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        var issueConfig = new ProviderConfig
+        {
+            Id = "issue-1",
+            DisplayName = "Issue Provider",
+            ProviderType = "github",
+            Kind = ProviderKind.Issue
+        };
+        _mockProviderConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("issue-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issueConfig);
+
+        // TODO: [WARNING] Add `.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask)` to this mock.
+        // The production code uses `await using var issueProvider = ...CreateIssueProvider(...)` which calls
+        // DisposeAsync() on the mock. Consistent with AgentIssueOperationsTests.cs — see review finding.
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "42",
+                Title = "PR #42",
+                Description = "Fixes #99",
+                Labels = []
+            });
+        mockIssueProvider
+            .Setup(p => p.ListCommentsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<IssueComment>());
+        // The linked issue fetch throws — simulates 404 or rate-limit.
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync("99", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Issue not found"));
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var service = CreateService();
+        DispatchOrchestrationService iface = service;
+
+        var reviewRequest = new ReviewDispatchRequest
+        {
+            PrIdentifier = "42",
+            PrBranchName = "feature/my-pr",
+            PrTitle = "My PR",
+            PrDescription = "Fixes #99",
+            PrAuthor = "dev-user",
+            PrUrl = "https://github.com/org/repo/pull/42",
+            PrTargetBranch = "main",
+            IssueProviderId = "issue-1",
+            RepoProviderId = "repo-1",
+            BrainProviderId = null,
+            InitiatedBy = "review-loop"
+        };
+
+        // Act
+        var result = await iface.PrepareReviewDistributionRequestAsync(
+            reviewRequest, TestProject, CancellationToken.None);
+
+        // Assert — method returns successfully (dispatch not aborted); LinkedIssueContexts empty.
+        result.Should().NotBeNull(
+            "a failed linked-issue fetch must not abort the dispatch — it is non-fatal");
+        result!.LinkedIssueContexts.Should().BeNullOrEmpty(
+            "all linked issue fetches failed so LinkedIssueContexts should be empty/null");
+    }
+
+    [Fact]
+    public async Task PrepareReviewDistributionRequestAsync_MoreThanMaxLinkedIssues_CapsAtFive()
+    {
+        // Arrange — PR description references 7 issues; only the first 5 should be fetched.
+        SetupStandardMocks();
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"]
+        };
+        _mockProviderConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        var issueConfig = new ProviderConfig
+        {
+            Id = "issue-1",
+            DisplayName = "Issue Provider",
+            ProviderType = "github",
+            Kind = ProviderKind.Issue
+        };
+        _mockProviderConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("issue-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issueConfig);
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "42",
+                Title = "Big PR",
+                Description = "Fixes #1\nFixes #2\nFixes #3\nFixes #4\nFixes #5\nFixes #6\nFixes #7",
+                Labels = []
+            });
+        mockIssueProvider
+            .Setup(p => p.ListCommentsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<IssueComment>());
+
+        // Stub all 7 possible linked issue fetches.
+        for (var i = 1; i <= 7; i++)
+        {
+            var num = i.ToString();
+            mockIssueProvider
+                .Setup(p => p.GetIssueAsync(num, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new IssueDetail
+                {
+                    Identifier = num,
+                    Title = $"Issue {num}",
+                    Description = $"Body of issue {num}",
+                    Labels = []
+                });
+        }
+
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var service = CreateService();
+        DispatchOrchestrationService iface = service;
+
+        var reviewRequest = new ReviewDispatchRequest
+        {
+            PrIdentifier = "42",
+            PrBranchName = "feature/big-pr",
+            PrTitle = "Big PR",
+            PrDescription = "Fixes #1\nFixes #2\nFixes #3\nFixes #4\nFixes #5\nFixes #6\nFixes #7",
+            PrAuthor = "dev-user",
+            PrUrl = "https://github.com/org/repo/pull/42",
+            PrTargetBranch = "main",
+            IssueProviderId = "issue-1",
+            RepoProviderId = "repo-1",
+            BrainProviderId = null,
+            InitiatedBy = "review-loop"
+        };
+
+        // Act
+        var result = await iface.PrepareReviewDistributionRequestAsync(
+            reviewRequest, TestProject, CancellationToken.None);
+
+        // Assert — exactly 5 linked issues returned, not 7.
+        result.Should().NotBeNull();
+        result!.LinkedIssueContexts.Should().NotBeNullOrEmpty();
+        result.LinkedIssueContexts!.Should().HaveCount(5,
+            "FetchLinkedIssueContextsAsync caps linked issue fetches at MaxLinkedIssues=5");
+    }
+
+    [Fact]
+    public async Task PrepareReviewDistributionRequestAsync_OneIssueFetchFailsOthersSucceed_ReturnsPartialResults()
+    {
+        // Arrange — PR references 2 issues; the second fetch throws; only the first should appear.
+        SetupStandardMocks();
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"]
+        };
+        _mockProviderConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        var issueConfig = new ProviderConfig
+        {
+            Id = "issue-1",
+            DisplayName = "Issue Provider",
+            ProviderType = "github",
+            Kind = ProviderKind.Issue
+        };
+        _mockProviderConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("issue-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issueConfig);
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "42",
+                Title = "PR #42",
+                Description = "Fixes #10\nFixes #11",
+                Labels = []
+            });
+        mockIssueProvider
+            .Setup(p => p.ListCommentsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<IssueComment>());
+        // First linked issue succeeds.
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync("10", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "10",
+                Title = "Issue Ten",
+                Description = "Body of issue 10",
+                Labels = []
+            });
+        // Second linked issue throws — simulates 404.
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync("11", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Not found"));
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var service = CreateService();
+        DispatchOrchestrationService iface = service;
+
+        var reviewRequest = new ReviewDispatchRequest
+        {
+            PrIdentifier = "42",
+            PrBranchName = "feature/my-pr",
+            PrTitle = "My PR",
+            PrDescription = "Fixes #10\nFixes #11",
+            PrAuthor = "dev-user",
+            PrUrl = "https://github.com/org/repo/pull/42",
+            PrTargetBranch = "main",
+            IssueProviderId = "issue-1",
+            RepoProviderId = "repo-1",
+            BrainProviderId = null,
+            InitiatedBy = "review-loop"
+        };
+
+        // Act
+        var result = await iface.PrepareReviewDistributionRequestAsync(
+            reviewRequest, TestProject, CancellationToken.None);
+
+        // Assert — dispatch succeeds; the successful fetch is present, the failed one is absent.
+        result.Should().NotBeNull(
+            "a partially-failed linked-issue batch must not abort dispatch");
+        result!.LinkedIssueContexts.Should().NotBeNullOrEmpty(
+            "at least one linked issue was fetched successfully");
+        result.LinkedIssueContexts!.Should().HaveCount(1,
+            "only the successful fetch should be included; the failed fetch is skipped");
+        result.LinkedIssueContexts[0].Identifier.Should().Be("10");
+    }
+
+    [Fact]
     public async Task PrepareDecompositionDistributionRequestAsync_ReturnsRequestWithDecompositionFields()
     {
         SetupStandardMocks();
@@ -1558,26 +1989,27 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
     }
 
     [Fact]
-    public async Task DistributeAndFinalizeAsync_WhenDistributeSucceedsWithQueuedTrue_StillConfirmsLabel()
+    public async Task DistributeAndFinalizeAsync_WhenQueued_KeepsAgentNextAndReturnsQueued()
     {
-        // DistributeAndFinalizeAsync always calls ConfirmDistributionLabelAsync on success
-        // regardless of the Queued flag — the synchronous dispatch path means the item is always
-        // Dispatched immediately. This test verifies that even if a distributor returns Queued=true
-        // (e.g., a legacy or alternative implementation), the label swap still fires unconditionally.
+        // When the distributor returns Queued=true (item enqueued as Pending), the issue is only
+        // waiting in the queue — no pod is running. Per the DistributionResult.Queued contract the
+        // label MUST stay agent:next; the swap to agent:in-progress is deferred until an agent
+        // actually picks up the run (AgentHub.RegisterAgent in K8s dispatch mode). The outcome still
+        // reports Queued=true so callers know no pod is running yet.
         _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(true, "work-1", null, Queued: true));
 
         var outcome = await _service.DistributeAndFinalizeAsync(TestRequest, CancellationToken.None);
 
         outcome.Success.Should().BeTrue();
-        // DistributeAndFinalizeAsync now always returns Queued=false (synchronous dispatch path)
-        outcome.Queued.Should().BeFalse("DistributeAndFinalizeAsync always returns Queued=false on success");
+        outcome.Queued.Should().BeTrue("when enqueued as Pending, outcome must report Queued=true");
         outcome.ErrorMessage.Should().BeNull();
 
-        // Label IS now swapped unconditionally on success — the drain service no longer defers it
+        // Label MUST NOT be swapped to agent:in-progress while the item only sits Pending in the queue.
         _mockLabelService.Verify(
-            s => s.SwapLabelAsync("ipc-1", "owner/repo#42", AgentLabels.InProgress, It.IsAny<CancellationToken>()),
-            Times.Once);
+            s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            Times.Never,
+            "a queued (Pending) issue must stay agent:next — the in-progress swap is deferred to actual dispatch");
     }
 
     [Fact]

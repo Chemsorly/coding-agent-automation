@@ -131,11 +131,11 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
         await SeedIssueAndProfileAsync("200");
         await SeedIssueAndProfileAsync("201");
 
-        // Dispatch first issue WITHOUT an agent → synchronous dispatch path (issue #2322):
-        // item is created as Dispatched immediately, never Pending
+        // Dispatch first issue WITHOUT an agent → Pending enqueue path:
+        // item is created as Pending (visible in UI queue), FakeJobController will claim it
         var result1 = await DispatchIssueAsync("200");
         Assert.True(result1.Success);
-        Assert.False(result1.Queued, "Synchronous dispatch: item is Dispatched immediately, never Pending");
+        Assert.True(result1.Queued, "Pending enqueue path: item enters queue first, pod created when claimed");
 
         // Now connect agent — FakeJobController will bootstrap the assignment
         await using var agent = new FakeAgentClient("edge-agent-concurrent", "edge-e2e");
@@ -330,9 +330,9 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
         var r2 = await DispatchIssueAsync("601");
         var r3 = await DispatchIssueAsync("602");
 
-        Assert.True(r1.Success && !r1.Queued, "Issue 600 should be dispatched synchronously");
-        Assert.True(r2.Success && !r2.Queued, "Issue 601 should be dispatched synchronously");
-        Assert.True(r3.Success && !r3.Queued, "Issue 602 should be dispatched synchronously");
+        Assert.True(r1.Success && r1.Queued, "Issue 600 should be enqueued as Pending");
+        Assert.True(r2.Success && r2.Queued, "Issue 601 should be enqueued as Pending");
+        Assert.True(r3.Success && r3.Queued, "Issue 602 should be enqueued as Pending");
 
         // Connect 2 agents — FakeJobController distributes 2 of the 3 dispatched items
         await using var agent1 = new FakeAgentClient("edge-multi-1", "edge-e2e");
@@ -355,7 +355,8 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
         var dispatchedItem = await db.WorkItems.AsNoTracking()
             .FirstOrDefaultAsync(w => w.IssueIdentifier == remainingIssue);
         Assert.NotNull(dispatchedItem);
-        Assert.Equal(WorkItemStatus.Dispatched, dispatchedItem.Status);
+        Assert.True(dispatchedItem.Status is WorkItemStatus.Pending or WorkItemStatus.Dispatched,
+            $"Third item should be Pending or Dispatched, got {dispatchedItem.Status}");
 
         // Complete one job to free agent1 — FakeJobController delivers the third item
         await agent1.AcceptAndCompleteJobAsync(job1.JobId);
