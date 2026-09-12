@@ -423,14 +423,10 @@ public sealed class PullRequestFinalizationService
     /// On failure, creates a fallback feedback record via feedbackService.
     /// Emits <c>pipeline.step.duration{step_name="FeedbackCollection"}</c> unconditionally (including on failure).
     /// </summary>
-    // TODO: The optional `config` parameter creates an asymmetry with QualityGateExecutor.RetryLoop, which always
-    // reads from context.Config. Any future call site that omits config will silently fall back to the 60s constant
-    // rather than the operator-configured value, bypassing project-level overrides. Consider making config required
-    // or moving this method to a context-based signature to match the failure path. (Warning from review #2225)
     public async Task CollectFeedbackAsync(
         PipelineRun run, IAgentProvider agentProvider, FeedbackService feedbackService,
         IPipelineRunHistoryService? historyService, Action<string> emitOutputLine, CancellationToken ct,
-        PipelineConfiguration? config = null)
+        PipelineConfiguration config)
     {
         var sw = Stopwatch.StartNew();
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("FeedbackCollection");
@@ -450,7 +446,7 @@ public sealed class PullRequestFinalizationService
                 {
                     Prompt = feedbackPrompt,
                     WorkspacePath = run.WorkspacePath!,
-                    Timeout = TimeSpan.FromSeconds(config?.FeedbackTimeoutSeconds ?? FeedbackConstraints.FailureFeedbackTimeoutSeconds),
+                    Timeout = TimeSpan.FromSeconds(config.FeedbackTimeoutSeconds),
                     UseResume = true
                 },
                 ct,
