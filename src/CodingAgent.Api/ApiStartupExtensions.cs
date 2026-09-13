@@ -2,6 +2,7 @@ using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Orchestration.Registry;
+using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -78,14 +79,22 @@ internal static class ApiStartupExtensions
 
         // Readiness: Can this pod serve traffic?
         // Returns 503 when:
+        //   • Shutdown drain is active (pod is being removed from endpoints), OR
         //   • DatabaseHealthState reports DB unreachable, OR
         //   • An IConnectionMultiplexer is registered (Redis backplane configured) and it is
         //     not currently connected. A disconnected backplane causes silent message loss in
         //     multi-replica deployments — hub broadcasts succeed locally but are never fanned out.
+        // Drain check MUST come first: drain is a pre-shutdown signal, not a health signal.
         endpoints.MapGet("/readyz", (
+                [FromServices] ReadinessState readinessState,
                 [FromServices] DatabaseHealthState dbHealth,
                 [FromServices] IConnectionMultiplexer? redis) =>
             {
+                if (!readinessState.IsReady)
+                    return Results.Json(
+                        new { status = "draining" },
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
+
                 if (!dbHealth.IsDatabaseHealthy)
                     return Results.Json(
                         new { status = "unhealthy", reason = "database_unreachable" },

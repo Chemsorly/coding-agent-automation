@@ -3,6 +3,7 @@ using CodingAgent.AgentGateway;
 using CodingAgent.Infrastructure;
 using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Pipeline;
+using CodingAgent.Pipeline.Services;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -62,6 +63,22 @@ builder.Services.AddApiSignalR(builder.Configuration);
 
 // ── Agent API key authentication + authorization ─────────────────────────────
 builder.Services.AddApiAuthentication(agentApiKey, Log.Logger);
+
+// ── Readiness drain on SIGTERM ────────────────────────────────────────────────
+// Registered LAST so its StoppingAsync fires FIRST (IHostedLifecycleService fires in reverse order).
+// Marks /readyz as 503 and waits READINESS_DRAIN_DELAY_SECONDS (default 15s) before allowing
+// the host to proceed with shutdown. Configurable via READINESS_DRAIN_DELAY_SECONDS env var.
+// TODO [WARNING]: The API host does not perform shutdown-budget validation (unlike the Web host, which
+// calls ShutdownBudgetValidationExtensions.ValidateShutdownBudget). READINESS_DRAIN_DELAY_SECONDS is
+// clamped to 0–120s by ReadinessDrainService.ResolveDrainDelay(), but HostOptions.ShutdownTimeout is
+// fixed at 40s. If an operator sets readinessDrainDelaySeconds > 40 (e.g. 90), StoppingAsync starts a
+// 90s Task.Delay but the host cancels it at 40s — the pod drains for only 40s with no startup warning.
+// Consider calling ValidateShutdownBudget (or an equivalent API-specific version) after app.Build() to
+// surface this misconfiguration at startup instead of silently at shutdown time.
+builder.Services.AddSingleton<ReadinessState>();
+builder.Services.AddHostedService(sp => new ReadinessDrainService(
+    sp.GetRequiredService<ReadinessState>(),
+    Log.Logger));
 
 // ── Serilog ──────────────────────────────────────────────────────────────────
 builder.Host.ConfigureApiSerilog();

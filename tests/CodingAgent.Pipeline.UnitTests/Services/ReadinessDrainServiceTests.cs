@@ -1,8 +1,7 @@
-using CodingAgent.Web.Services;
+using CodingAgent.Pipeline.Services;
 using Microsoft.Extensions.Time.Testing;
 using Serilog;
 using Xunit;
-
 namespace CodingAgent.Pipeline.UnitTests.Services;
 
 [Collection("EnvironmentVariables")]

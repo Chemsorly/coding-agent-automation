@@ -214,8 +214,24 @@ public static class ApiServiceCollectionExtensions
         });
 
         // ── ITokenVendingService ─────────────────────────────────────────────
+        // SocketsHttpHandler.PooledConnectionLifetime set to 90s so stale connections to
+        // replaced pod IPs are recycled after a rolling update. CircuitBreaker.MinimumThroughput
+        // lowered to 10 so the breaker can trip on low-traffic clients during a pod blip.
+        // TODO [WARNING]: This ConfigureHttpClientDefaults call is registered independently from
+        // the one in PipelineApiClientServiceCollectionExtensions.cs. If both are active in the
+        // same container, ConfigurePrimaryHttpMessageHandler accumulates, and each registration
+        // replaces the previous handler instance — the first SocketsHttpHandler is created and
+        // immediately abandoned (minor leak until GC). Consider consolidating into a single shared
+        // call. See review finding [WARNING] ApiServiceCollectionExtensions.cs:220.
+        services.ConfigureHttpClientDefaults(b =>
+        {
+            b.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                PooledConnectionLifetime = TimeSpan.FromSeconds(90)
+            });
+        });
         services.AddHttpClient("TokenVending")
-            .AddStandardResilienceHandler();
+            .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
         services.AddSingleton<ITokenVendingService>(sp =>
             new TokenVendingService(Log.Logger, sp.GetRequiredService<IHttpClientFactory>()));
 

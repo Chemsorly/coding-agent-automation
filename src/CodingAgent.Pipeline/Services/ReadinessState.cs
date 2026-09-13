@@ -1,4 +1,4 @@
-namespace CodingAgent.Web.Services;
+namespace CodingAgent.Pipeline.Services;
 
 /// <summary>
 /// Thread-safe readiness state for the /readyz Kubernetes probe.
