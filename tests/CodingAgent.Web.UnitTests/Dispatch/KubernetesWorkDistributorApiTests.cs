@@ -130,8 +130,9 @@ public class KubernetesWorkDistributorApiTests
     [Fact]
     public async Task DistributeAsync_ConsolidationRequest_CallsDispatchAsync_NotCreateAsync()
     {
-        // Consolidation must use the synchronous DispatchAsync path so it is not orphaned
-        // in a Pending state with no poller to claim it.
+        // Flag off (default): Consolidation must use the legacy synchronous DispatchAsync path
+        // so the WorkItem is not orphaned in a Pending state with no poller to claim it.
+        // _sut is constructed without the flag (unifiedDispatchEnabled=false by default).
         var workItemId = Guid.NewGuid();
         var request = CreateConsolidationRequest();
 
@@ -230,6 +231,87 @@ public class KubernetesWorkDistributorApiTests
         result.ErrorMessage.Should().Contain("unexpected dispatch error");
     }
 
+    // ── Consolidation (unified dispatch path, flag=on) ────────────────────
+
+    [Fact]
+    public async Task DistributeAsync_ConsolidationRequest_FlagOn_CallsCreateAsync_NotDispatchAsync()
+    {
+        // Flag on: Consolidation must use the Pending enqueue path (CreateAsync), same as all
+        // other task types. The poller applies RunType tier ordering (#2563) before pod creation.
+        var workItemId = Guid.NewGuid();
+        var request = CreateConsolidationRequest();
+        var sut = CreateFlagOnSut();
+
+        _mockClient
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workItemId);
+
+        var result = await sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        result.WorkItemId.Should().Be(workItemId.ToString());
+        result.Queued.Should().BeTrue("unified dispatch path enqueues as Pending, not Dispatched");
+
+        _mockClient.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockClient.Verify(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DistributeAsync_ConsolidationRequest_FlagOn_When409_ReturnsSuccess_Idempotent()
+    {
+        // Flag on: 409 on the Pending enqueue path means a live WorkItem already exists for this
+        // consolidation run — treated as idempotent success (Queued=true), same as all other task
+        // types. This prevents a requeue loop if rehydration calls dispatch twice for the same run.
+        var request = CreateConsolidationRequest();
+        var sut = CreateFlagOnSut();
+
+        _mockClient
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("conflict", null, HttpStatusCode.Conflict));
+
+        var result = await sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeTrue("409 on unified dispatch path is treated as already-queued, not a failure");
+        result.Queued.Should().BeTrue("existing live WorkItem means the item is effectively queued");
+        result.ErrorMessage.Should().BeNull();
+        // TODO: WorkItemId is not asserted here. On the 409 idempotent path, WorkItemId may be
+        // null (no new item was created). Callers that log or store the WorkItemId from the result
+        // would silently receive null. Add an assertion on result.WorkItemId (expected null on 409)
+        // once the expected contract for the idempotent case is confirmed. (#2564 review finding)
+    }
+
+    [Fact]
+    public async Task DistributeAsync_ConsolidationRequest_FlagOn_FlagOff_RoutesToDifferentPaths()
+    {
+        // Verify the flag routes correctly in both states for the same Consolidation request.
+        // Flag off → DispatchAsync (synchronous). Flag on → CreateAsync (Pending enqueue).
+        var workItemId = Guid.NewGuid();
+        var request = CreateConsolidationRequest();
+
+        _mockClient
+            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workItemId);
+        _mockClient
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workItemId);
+
+        // Flag off (default _sut) → synchronous path
+        var flagOffResult = await _sut.DistributeAsync(request, CancellationToken.None);
+        flagOffResult.Queued.Should().BeFalse("flag=off dispatches synchronously, not via Pending queue");
+
+        // Flag on → Pending enqueue path
+        var flagOnResult = await CreateFlagOnSut().DistributeAsync(request, CancellationToken.None);
+        flagOnResult.Queued.Should().BeTrue("flag=on enqueues as Pending");
+        // TODO: This combination test only asserts on Queued, not on which mock methods were
+        // called. If the routing condition were accidentally inverted, this test would still pass
+        // because both mocks are set up and Queued is set by whichever path runs. The per-flag
+        // dedicated tests (FlagOn_CallsCreateAsync_NotDispatchAsync and the existing flag-off test)
+        // carry the method-call verification. If this combination test is ever strengthened, add
+        // Verify(DispatchAsync, Times.Once) after the flag-off call and Verify(CreateAsync,
+        // Times.Once) after the flag-on call, using a fresh mock per invocation to avoid
+        // accumulated call history. (#2564 review finding)
+    }
+
     [Fact]
     public async Task DistributeAsync_ImplementationRequest_WhenCreateThrowsUnexpected_ReturnsFailure()
     {
@@ -270,4 +352,11 @@ public class KubernetesWorkDistributorApiTests
         AgentSelector = "dotnet,kiro",
         TimeoutSeconds = 3600
     };
+
+    /// <summary>
+    /// Creates a <see cref="KubernetesWorkDistributor"/> with the unified dispatch flag enabled.
+    /// Uses the shared <see cref="_mockClient"/> so that Moq <c>Verify</c> calls work correctly.
+    /// </summary>
+    private KubernetesWorkDistributor CreateFlagOnSut() =>
+        new(_mockClient.Object, Mock.Of<ILogger<KubernetesWorkDistributor>>(), unifiedDispatchEnabled: true);
 }

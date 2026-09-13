@@ -11,4 +11,17 @@ namespace CodingAgent.Pipeline.Models;
 /// immediately dispatched to an agent. Callers should NOT swap the issue label to
 /// <c>agent:in-progress</c> — the label swap happens later when the drain service assigns it.
 /// </param>
-public record DistributionResult(bool Success, string? WorkItemId, string? ErrorMessage, bool Queued = false);
+/// <param name="IsPermanentFailure">
+/// When <c>true</c>, the dispatch failure is permanent and will not resolve by retrying (e.g. no
+/// matching job template for the agent selector). The caller should cascade the run to
+/// <c>Failed</c> rather than leaving it <c>Queued</c> for restart rehydration.
+/// When <c>false</c> (default), the failure is transient (concurrency limit, PVC unavailable)
+/// and the run should remain <c>Queued</c> for a later retry.
+/// Only meaningful when <see cref="Success"/> is <c>false</c>.
+/// </param>
+public record DistributionResult(
+    bool Success,
+    string? WorkItemId,
+    string? ErrorMessage,
+    bool Queued = false,
+    bool IsPermanentFailure = false);

@@ -31,7 +31,7 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
         _tempDir = Path.Combine(Path.GetTempPath(), $"store-integration-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
 
-        _config = new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir };
+        _config = new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir, DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10" };
         _mockRunHistory = new Mock<IPipelineRunHistoryService>();
         _mockRunHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>());
 

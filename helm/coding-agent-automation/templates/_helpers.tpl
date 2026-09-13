@@ -168,6 +168,8 @@ Usage (inside an env: list, indented to 12):
   value: {{ include "coding-agent-automation.secretName" . | quote }}
 - name: WorkDistribution__JobTemplatesPath
   value: "/app/config/job-templates.yaml"
+- name: WorkDistribution__Dispatch__Enabled
+  value: {{ .Values.workDistribution.dispatch.enabled | quote }}
 - name: WorkDistribution__Dispatch__IntervalSeconds
   value: {{ .Values.workDistribution.dispatch.intervalSeconds | quote }}
 - name: WorkDistribution__Dispatch__RateLimitPerSecond
@@ -204,6 +206,7 @@ WorkDistribution__AgentServiceAccountName: "{{ include "coding-agent-automation.
 WorkDistribution__Namespace: {{ .Release.Namespace | quote }}
 WorkDistribution__OpencodeConfigSecretName: {{ include "coding-agent-automation.secretName" . | quote }}
 WorkDistribution__JobTemplatesPath: "/app/config/job-templates.yaml"
+WorkDistribution__Dispatch__Enabled: {{ .Values.workDistribution.dispatch.enabled | quote }}
 WorkDistribution__Dispatch__IntervalSeconds: {{ .Values.workDistribution.dispatch.intervalSeconds | quote }}
 WorkDistribution__Dispatch__RateLimitPerSecond: {{ .Values.workDistribution.dispatch.rateLimitPerSecond | quote }}
 WorkDistribution__Dispatch__ChatJobMaxDurationSeconds: {{ .Values.workDistribution.dispatch.chatJobMaxDurationSeconds | quote }}

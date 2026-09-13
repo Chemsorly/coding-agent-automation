@@ -49,7 +49,8 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
 
         _config = new PipelineConfiguration
         {
-            WorkspaceBaseDirectory = _tempDir
+            WorkspaceBaseDirectory = _tempDir,
+            DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10"
         };
 
         _workspaceManager = new ConsolidationWorkspaceManager(

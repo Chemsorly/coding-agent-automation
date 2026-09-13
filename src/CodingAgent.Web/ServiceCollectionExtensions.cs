@@ -125,7 +125,19 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IWorkDistributor>(),
             sp.GetRequiredService<IAgentProfileStore>(),
             sp.GetRequiredService<IConsolidationWorkspaceManager>(),
-            sp.GetRequiredService<IPipelineConfigStore>()));
+            sp.GetRequiredService<IPipelineConfigStore>(),
+            sp.GetRequiredService<IConsolidationService>()));
+
+        // Background retry sweep for transient dispatch failures (409 capacity / 503 PVC).
+        // Startup rehydration only runs once; this service fills the gap for runs that fail
+        // transiently while the orchestrator is running (issue #2536 CRITICAL fix).
+        services.AddSingleton<ConsolidationRetryBackgroundService>(sp =>
+            new ConsolidationRetryBackgroundService(
+                sp.GetRequiredService<IConsolidationService>(),
+                sp.GetRequiredService<IConsolidationDispatcher>(),
+                sp.GetRequiredService<TimeProvider>(),
+                Log.Logger));
+        services.AddHostedService(sp => sp.GetRequiredService<ConsolidationRetryBackgroundService>());
 
         return services;
     }

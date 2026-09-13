@@ -71,12 +71,40 @@ public interface IPipelineApiWorkItemClient : IWorkItemSweepClient
 
     /// <summary>
     /// Calls <c>POST /api/work-items/{id}/dispatch</c> to dispatch an existing Pending WorkItem by CAS.
-    /// Claims the item (Pending→Dispatched) and creates the K8s Job atomically. Returns on success.
-    /// Throws <see cref="System.Net.Http.HttpRequestException"/> with:
-    ///   <list type="bullet">
-    ///     <item>409 Conflict — item not Pending, concurrency limit reached, or no template for selector.</item>
-    ///     <item>503 Service Unavailable — no PVC available, advisory lock timeout, or K8s failure.</item>
-    ///   </list>
+    /// Claims the item (Pending→Dispatched) and creates the K8s Job atomically.
+    /// Returns a <see cref="DispatchPendingResult"/> indicating the outcome:
+    /// <list type="bullet">
+    ///   <item><see cref="DispatchPendingResult.Dispatched"/> — item dispatched successfully (200 OK).</item>
+    ///   <item><see cref="DispatchPendingResult.PermanentRejection"/> — item not Pending, concurrency limit reached,
+    ///     or no template for selector (409 Conflict). Do not retry this item in the current cycle.</item>
+    ///   <item><see cref="DispatchPendingResult.Transient"/> — PVC unavailable, advisory lock timeout, or K8s failure
+    ///     (503 Service Unavailable). Retry in the next poll cycle.</item>
+    /// </list>
+    /// Throws <see cref="System.Net.Http.HttpRequestException"/> for all other unexpected status codes.
     /// </summary>
-    Task DispatchPendingAsync(Guid workItemId, CancellationToken ct = default);
+    Task<DispatchPendingResult> DispatchPendingAsync(Guid workItemId, CancellationToken ct = default);
+}
+
+/// <summary>
+/// Outcome of a <c>POST /api/work-items/{id}/dispatch</c> call.
+/// Used by <c>WorkItemDispatchPoller</c> in the Scheduler to distinguish permanent rejections
+/// (stop dispatching this selector for the current cycle) from transient failures (retry next cycle).
+/// </summary>
+public enum DispatchPendingResult
+{
+    /// <summary>Item was successfully dispatched — K8s Job created, state transitioned to Dispatched.</summary>
+    Dispatched,
+
+    /// <summary>
+    /// Permanent rejection (409 Conflict): item is not in Pending state, the concurrency limit for this
+    /// selector is reached, or no job template matches the selector. Do not retry in the current cycle;
+    /// the Scheduler poller treats this as a stop signal for the item's AgentSelector.
+    /// </summary>
+    PermanentRejection,
+
+    /// <summary>
+    /// Transient failure (503 Service Unavailable): no PVC available, advisory lock timeout, or K8s failure.
+    /// Retry in the next poll cycle.
+    /// </summary>
+    Transient,
 }

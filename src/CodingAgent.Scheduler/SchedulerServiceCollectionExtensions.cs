@@ -171,6 +171,14 @@ public static class SchedulerServiceCollectionExtensions
         services.AddDispatchResolutionServices(includeWorkItemClient: true);
 
         // ── Work distributor (KubernetesWorkDistributor is already API-backed) ─
+        // TODO: The Scheduler host does not pass unifiedDispatchEnabled here, so it always
+        // defaults to false regardless of the Consolidation:UnifiedDispatch:Enabled config flag.
+        // The Scheduler host currently has no consolidation dispatch path (its only Consolidation
+        // reference is a retention-sweep metric), so this is not a defect today. However, if a
+        // future change routes consolidation through the Scheduler host, the flag would silently
+        // have no effect here. When that happens, wire the same flag read used in
+        // WorkDistributionRegistration.Consolidation.cs into this registration to keep both
+        // hosts consistent. (#2564 review finding)
         services.AddSingleton<IWorkDistributor>(sp => new KubernetesWorkDistributor(
             sp.GetRequiredService<IPipelineApiWorkItemClient>(),
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<KubernetesWorkDistributor>()));
@@ -328,6 +336,24 @@ public static class SchedulerServiceCollectionExtensions
                 sp.GetService<ILeaderElectionService>(),
                 Log.Logger));
         services.AddHostedService(sp => sp.GetRequiredService<WorkItemCountsPoller>());
+
+        // ── WorkItemDispatchPoller (flag-off by default) ───────────────────────────────
+        // Gates on Scheduler:Dispatch:Enabled (default false). Flip to true to enable
+        // the Scheduler-side dispatch loop as a replacement for the API-side
+        // WorkItemDispatchService (which is disabled via WorkDistribution:Dispatch:Enabled=false).
+        // Both flags default to preserving current behavior — merging this changes nothing.
+        if (config.GetValue("Scheduler:Dispatch:Enabled", defaultValue: false))
+        {
+            var rateLimitPerSecond = config.GetValue("Scheduler:Dispatch:RateLimitPerSecond", defaultValue: 10);
+            services.AddSingleton<WorkItemDispatchPoller>(sp =>
+                new WorkItemDispatchPoller(
+                    sp.GetRequiredService<IPipelineApiWorkItemClient>(),
+                    sp.GetService<ILeaderElectionService>(),
+                    Log.Logger,
+                    rateLimitPerSecond: rateLimitPerSecond));
+            services.AddHostedService(sp =>
+                sp.GetRequiredService<WorkItemDispatchPoller>());
+        }
 
         return services;
     }

@@ -59,7 +59,12 @@ public sealed class ConsolidationServiceTests : IDisposable
 
         _config = new PipelineConfiguration
         {
-            WorkspaceBaseDirectory = _tempDir
+            WorkspaceBaseDirectory = _tempDir,
+            // Most tests need runs to succeed. DefaultRequiredAgentLabels must be set so
+            // TriggerAsync passes the fail-fast label-resolution check added in issue #2536.
+            // Tests that specifically test the "no labels" rejection path create their own
+            // PipelineConfiguration instance without DefaultRequiredAgentLabels.
+            DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10"
         };
 
         // Mock IProjectStore to return a default project owning all templates
@@ -160,18 +165,37 @@ public sealed class ConsolidationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task TriggerAsync_WithNoDefaultRequiredAgentLabels_LeavesQueuedRequiredLabelsNull()
+    public async Task TriggerAsync_WithNoDefaultRequiredAgentLabels_QueuesRun()
     {
-        // When DefaultRequiredAgentLabels is not configured, QueuedRequiredLabels stays null
-        // (any agent matches — the dispatcher falls back to profile-based selection).
-        var sut = CreateSut(); // _config has no DefaultRequiredAgentLabels
+        // When DefaultRequiredAgentLabels is not configured, TriggerAsync should still queue
+        // the run. QueuedRequiredLabels will be null, and ConsolidationDispatcher.ResolveSelector
+        // will fall back to the first enabled profile (step 3). If that profile has no job
+        // template the dispatch endpoint returns 422 → IsPermanentFailure=true → the run
+        // cascades to Failed with a clear error message. This is preferable to rejecting at
+        // trigger time, which would display a misleading "already running/queued or template
+        // not found" error on the consolidation page.
+        // Use a dedicated SUT without DefaultRequiredAgentLabels (unlike _config which has it set).
+        var configWithoutLabels = new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir };
+        var sutWithoutLabels = new ConsolidationService(new ConsolidationServiceDependencies(
+            _logger,
+            configWithoutLabels,
+            _mockProjectStore.Object,
+            _mockRunHistory.Object,
+            new FileSystemConsolidationRunStore(_runsDir),
+            new FileSystemHarnessSuggestionStore(_suggestionsPath),
+            WorkspaceManager: new ConsolidationWorkspaceManager(_logger, configWithoutLabels)));
 
-        var run = await sut.TriggerAsync(
+        var run = await sutWithoutLabels.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
 
-        run.Should().NotBeNull();
-        run!.QueuedRequiredLabels.Should().BeNull(
-            "when no default labels are configured, QueuedRequiredLabels should be null so any agent can handle it");
+        run.Should().NotBeNull(
+            "TriggerAsync must queue the run even when DefaultRequiredAgentLabels is not configured — " +
+            "the dispatcher will cascade it to Failed with a clear error message if no profile matches");
+        run!.Status.Should().Be(ConsolidationRunStatus.Queued,
+            "a newly triggered run must start in Queued status regardless of label configuration");
+        run.QueuedRequiredLabels.Should().BeNullOrEmpty(
+            "when DefaultRequiredAgentLabels is empty, QueuedRequiredLabels is null — " +
+            "the dispatcher falls back to the first enabled profile");
     }
 
     [Fact]

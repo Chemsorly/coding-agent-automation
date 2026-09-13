@@ -82,7 +82,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             await _runStore.SaveRunAsync(run, ct);
             _logger.Information("Marked orphaned consolidation run {RunId} ({Type}) as Failed", run.RunId, run.Type);
         }
-        
+
     }
 
     /// <inheritdoc />
@@ -114,6 +114,16 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             templateName = "Global";
         }
 
+        // Note: when DefaultRequiredAgentLabels is empty, BuildNewRun sets QueuedRequiredLabels
+        // to null. ConsolidationDispatcher.ResolveSelector will fall back to the first enabled
+        // profile (step 3), which may have no job template. In that case the dispatch endpoint
+        // returns 422, KubernetesWorkDistributor maps this to IsPermanentFailure=true, and
+        // DispatchRunAsync cascades the run to Failed via FailRunSafelyAsync. This is the correct
+        // behavior: the run is queued (visible to the operator), attempted, and fails with a clear
+        // error message rather than being silently rejected at trigger time. The operator can then
+        // configure DefaultRequiredAgentLabels and re-trigger.
+        // Rejection at trigger time (returning null) would cause the UI to show "rejected — already
+        // running/queued or template not found", which is misleading for a config-gap scenario.
         var run = BuildNewRun(type, templateIdValue, templateName, projectName, autoDispatch, _config);
 
         if (!_runningRuns.TryAdd(key, run))
@@ -336,7 +346,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     private async Task PersistRunAsync(ConsolidationRun run, CancellationToken ct)
     {
         await _runStore.SaveRunAsync(run, ct);
-        
+
     }
 
     /// <inheritdoc />
@@ -345,7 +355,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         try
         {
             await _runStore.DeleteRunAsync(runId, ct);
-            
+
         }
         catch (Exception ex)
         {
@@ -373,7 +383,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         try
         {
             await _runStore.DeleteRunAsync(runId, CancellationToken.None);
-            
+
         }
         catch (Exception ex)
         {
@@ -393,32 +403,32 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         string? projectName,
         bool autoDispatch,
         PipelineConfiguration config) => new()
-    {
-        RunId = Guid.NewGuid().ToString(),
-        Type = type,
-        TemplateId = templateIdValue,
-        TemplateName = templateName,
-        StartedAtUtc = DateTimeOffset.UtcNow,
-        // New runs start as Queued — the K8s Job Controller transitions to Running on dispatch.
-        // In the old SignalR path, runs were created as Running because an agent was immediately
-        // assigned; in K8s mode the pod hasn't started yet so Queued is the correct initial state.
-        Status = ConsolidationRunStatus.Queued,
-        AutoDispatch = autoDispatch,
-        ProjectName = projectName,
-        // Resolve required agent labels at trigger time so the dispatcher has a deterministic
-        // selector without guessing from runtime profile state. Mirrors the label resolution
-        // used by the regular pipeline dispatch loop (LabelResolver.ResolveRequiredLabels).
-        // Consolidation runs have no per-run repo provider config, so repoConfig is null and
-        // resolution falls back to DefaultRequiredAgentLabels → empty (any agent).
-        QueuedRequiredLabels = LabelResolver.ResolveRequiredLabels(repoConfig: null, config)
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = type,
+            TemplateId = templateIdValue,
+            TemplateName = templateName,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            // New runs start as Queued — the K8s Job Controller transitions to Running on dispatch.
+            // In the old SignalR path, runs were created as Running because an agent was immediately
+            // assigned; in K8s mode the pod hasn't started yet so Queued is the correct initial state.
+            Status = ConsolidationRunStatus.Queued,
+            AutoDispatch = autoDispatch,
+            ProjectName = projectName,
+            // Resolve required agent labels at trigger time so the dispatcher has a deterministic
+            // selector without guessing from runtime profile state. Mirrors the label resolution
+            // used by the regular pipeline dispatch loop (LabelResolver.ResolveRequiredLabels).
+            // Consolidation runs have no per-run repo provider config, so repoConfig is null and
+            // resolution falls back to DefaultRequiredAgentLabels → empty (any agent).
+            QueuedRequiredLabels = LabelResolver.ResolveRequiredLabels(repoConfig: null, config)
                                     is { Count: > 0 } resolvedLabels ? resolvedLabels : null,
-        // Capture trace context at trigger time (inside the HTTP request span).
-        // Stored on the run so it survives restart/rehydration even when Activity.Current
-        // is null at drain time. CaptureTraceContext creates a short-lived Producer span
-        // to guarantee a valid traceparent even if no ambient span exists.
-        TraceParent = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation")
+            // Capture trace context at trigger time (inside the HTTP request span).
+            // Stored on the run so it survives restart/rehydration even when Activity.Current
+            // is null at drain time. CaptureTraceContext creates a short-lived Producer span
+            // to guarantee a valid traceparent even if no ambient span exists.
+            TraceParent = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation")
             ?.GetValueOrDefault("traceparent")
-    };
+        };
 
     private async Task<bool> TryEvictAndRetryAsync(
         (ConsolidationRunType, string?) key,

@@ -95,7 +95,8 @@ public class ConsolidationServicePropertyTests : IDisposable
         };
         var config = new PipelineConfiguration
         {
-            WorkspaceBaseDirectory = _tempDir
+            WorkspaceBaseDirectory = _tempDir,
+            DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10"
         };
         var mockHistory = new Mock<IPipelineRunHistoryService>();
         mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
@@ -173,7 +174,8 @@ public class ConsolidationServicePropertyTests : IDisposable
         };
         var config = new PipelineConfiguration
         {
-            WorkspaceBaseDirectory = _tempDir
+            WorkspaceBaseDirectory = _tempDir,
+            DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10"
         };
         var mockHistory = new Mock<IPipelineRunHistoryService>();
         mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
