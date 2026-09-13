@@ -97,6 +97,15 @@ spec:
             {{- include "coding-agent-automation.otelEnv" (dict "serviceName" "coding-agent-scheduler" "root" .) | nindent 12 }}
             - name: LOG_LEVEL
               value: {{ .Values.scheduler.env.logLevel | default "Information" | quote }}
+            - name: Scheduler__Dispatch__Enabled
+              value: {{ .Values.scheduler.dispatch.enabled | quote }}
+            # TODO [WARNING]: Scheduler__Dispatch__RateLimitPerSecond is sourced from the API-side
+            # workDistribution.dispatch.rateLimitPerSecond value, not a dedicated scheduler key.
+            # There is no way to set different rate limits for API vs Scheduler without adding a new
+            # Helm value (scheduler.dispatch.rateLimitPerSecond). At cutover time, operators who need
+            # independent limits should introduce that key and update this template accordingly.
+            - name: Scheduler__Dispatch__RateLimitPerSecond
+              value: {{ .Values.workDistribution.dispatch.rateLimitPerSecond | quote }}
       {{- with .Values.scheduler.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

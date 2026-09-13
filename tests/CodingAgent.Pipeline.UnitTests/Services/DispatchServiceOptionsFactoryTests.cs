@@ -174,4 +174,39 @@ public class DispatchServiceOptionsFactoryTests
         options.PollIntervalSeconds.Should().Be(42);
         options.RateLimitPerSecond.Should().Be(20);
     }
+
+    [Fact]
+    public void DispatchServiceOptions_Enabled_DefaultsToTrue()
+    {
+        // No configuration supplied — default should be true (preserves current behavior).
+        var options = new CodingAgent.Kubernetes.DispatchServiceOptions();
+        options.Enabled.Should().BeTrue("WorkDistribution:Dispatch:Enabled defaults to true so merging without config changes nothing");
+    }
+
+    [Fact]
+    public void Create_WhenEnabledIsFalse_BindsToFalse()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["WorkDistribution:Dispatch:Enabled"] = "false"
+            })
+            .Build();
+
+        var options = DispatchServiceOptionsFactory.Create(config);
+
+        options.Enabled.Should().BeFalse("Bind() should pick up Enabled=false from config");
+    }
+
+    [Fact]
+    public void Create_WhenEnabledIsMissing_DefaultsToTrue()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>())
+            .Build();
+
+        var options = DispatchServiceOptionsFactory.Create(config);
+
+        options.Enabled.Should().BeTrue("missing Enabled key must fall back to the property default of true");
+    }
 }

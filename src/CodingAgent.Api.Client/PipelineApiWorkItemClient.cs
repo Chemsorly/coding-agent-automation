@@ -216,20 +216,31 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         return await response.Content.ReadFromJsonAsync<Guid>(cancellationToken: ct);
     }
 
-    public async Task DispatchPendingAsync(Guid workItemId, CancellationToken ct = default)
+    public async Task<DispatchPendingResult> DispatchPendingAsync(Guid workItemId, CancellationToken ct = default)
     {
+        // TODO [WARNING]: response is not disposed. Use `using var response = await _http.PostAsync(...)`
+        // to ensure the HttpResponseMessage is disposed after reading StatusCode. This matches the
+        // correct pattern for calls where the response body is not read (only the status code is used).
+        // Note: the pre-existing methods in this file (ClaimAsync, RequeueAsync, etc.) share the same
+        // pattern; this TODO covers the newly written code specifically.
         var response = await _http.PostAsync(
             $"/api/work-items/{workItemId}/dispatch",
             null,
             ct);
-        // TODO [WARNING]: EnsureSuccessStatusCode() collapses the endpoint's intentional 409/503 distinction.
-        // The endpoint contract is: 409 = permanent rejection (item not Pending, no template, concurrency limit —
-        // do NOT retry); 503 = transient failure (PVC exhausted, lock timeout, K8s failure — retry next poll).
-        // Both codes throw an undifferentiated HttpRequestException here, so the Scheduler consumer (issue #2541)
-        // cannot distinguish "stop retrying" from "retry next cycle", risking tight loops on permanent 409s or
-        // premature abandonment on transient 503s. Replace with a manual status-code check that preserves the
-        // distinction (e.g. throw a typed exception or return a discriminated union) when the Scheduler is wired up.
-        response.EnsureSuccessStatusCode();
+        // Preserve the endpoint's intentional 409/503 distinction (resolves the former TODO [WARNING]).
+        // 409 = permanent rejection (item not Pending, no template, concurrency limit —
+        // do NOT retry this selector this cycle).
+        // 503 = transient failure (PVC exhausted, lock timeout, K8s failure — retry next poll cycle).
+        return response.StatusCode switch
+        {
+            System.Net.HttpStatusCode.OK => DispatchPendingResult.Dispatched,
+            System.Net.HttpStatusCode.Conflict => DispatchPendingResult.PermanentRejection,
+            System.Net.HttpStatusCode.ServiceUnavailable => DispatchPendingResult.Transient,
+            _ => throw new HttpRequestException(
+                $"Unexpected status {(int)response.StatusCode} dispatching work item {workItemId}",
+                inner: null,
+                statusCode: response.StatusCode)
+        };
     }
 
     // Internal DTOs for response deserialization

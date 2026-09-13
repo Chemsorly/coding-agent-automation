@@ -329,6 +329,24 @@ public static class SchedulerServiceCollectionExtensions
                 Log.Logger));
         services.AddHostedService(sp => sp.GetRequiredService<WorkItemCountsPoller>());
 
+        // ── WorkItemDispatchPoller (flag-off by default) ───────────────────────────────
+        // Gates on Scheduler:Dispatch:Enabled (default false). Flip to true to enable
+        // the Scheduler-side dispatch loop as a replacement for the API-side
+        // WorkItemDispatchService (which is disabled via WorkDistribution:Dispatch:Enabled=false).
+        // Both flags default to preserving current behavior — merging this changes nothing.
+        if (config.GetValue("Scheduler:Dispatch:Enabled", defaultValue: false))
+        {
+            var rateLimitPerSecond = config.GetValue("Scheduler:Dispatch:RateLimitPerSecond", defaultValue: 10);
+            services.AddSingleton<WorkItemDispatchPoller>(sp =>
+                new WorkItemDispatchPoller(
+                    sp.GetRequiredService<IPipelineApiWorkItemClient>(),
+                    sp.GetService<ILeaderElectionService>(),
+                    Log.Logger,
+                    rateLimitPerSecond: rateLimitPerSecond));
+            services.AddHostedService(sp =>
+                sp.GetRequiredService<WorkItemDispatchPoller>());
+        }
+
         return services;
     }
 }
