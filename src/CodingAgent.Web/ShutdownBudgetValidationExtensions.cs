@@ -1,7 +1,4 @@
 using CodingAgent.Pipeline.Services;
-// TODO [WARNING]: The 'using CodingAgent.Web.Services' import below is unused after ReadinessDrainService
-// was moved to CodingAgent.Pipeline.Services. Remove it to eliminate compiler warning CS8019.
-using CodingAgent.Web.Services;
 using Serilog;
 
 namespace CodingAgent.Web;
