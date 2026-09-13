@@ -68,4 +68,15 @@ public interface IPipelineApiWorkItemClient : IWorkItemSweepClient
     ///   </list>
     /// </summary>
     Task<Guid> DispatchAsync(JobDistributionRequest request, CancellationToken ct = default);
+
+    /// <summary>
+    /// Calls <c>POST /api/work-items/{id}/dispatch</c> to dispatch an existing Pending WorkItem by CAS.
+    /// Claims the item (Pending→Dispatched) and creates the K8s Job atomically. Returns on success.
+    /// Throws <see cref="System.Net.Http.HttpRequestException"/> with:
+    ///   <list type="bullet">
+    ///     <item>409 Conflict — item not Pending, concurrency limit reached, or no template for selector.</item>
+    ///     <item>503 Service Unavailable — no PVC available, advisory lock timeout, or K8s failure.</item>
+    ///   </list>
+    /// </summary>
+    Task DispatchPendingAsync(Guid workItemId, CancellationToken ct = default);
 }
