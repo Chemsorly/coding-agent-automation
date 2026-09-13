@@ -702,11 +702,16 @@ public sealed record PipelineConfiguration
 
     /// <summary>
     /// When true, the closed-loop cycle runs a sweep after each dispatch pass to cancel Pending
-    /// Implementation WorkItems whose issue is no longer in the current cycle's eligibility set.
-    /// Default: false (safe rollout — enable explicitly in production when ready).
+    /// WorkItems whose issue or PR is no longer in the current cycle's eligibility set.
+    /// <list type="bullet">
+    ///   <item><see cref="WorkItemTaskType.Implementation"/> — compared against the issue eligibility map.</item>
+    ///   <item><see cref="WorkItemTaskType.Review"/> — compared against the PR eligibility map.</item>
+    ///   <item><see cref="WorkItemTaskType.Decomposition"/> and <see cref="WorkItemTaskType.Consolidation"/> — skipped (fail-open).</item>
+    /// </list>
+    /// Default: true (opt-out).
     /// </summary>
     [Key(79)]
-    public bool QueueSweepEnabled { get; init; }
+    public bool QueueSweepEnabled { get; init; } = true;
 
     /// <summary>
     /// Maximum number of re-poll attempts when CI is cancelled because the branch HEAD moved

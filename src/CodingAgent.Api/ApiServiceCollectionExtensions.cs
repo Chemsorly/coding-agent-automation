@@ -473,7 +473,9 @@ public static class ApiServiceCollectionExtensions
                     sp.GetRequiredService<JobTemplateStore>(),
                     sp.GetRequiredService<IConfiguration>(),
                     sp.GetRequiredService<WorkItemTransitionService>(),
-                    sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchStateBuilder>())));
+                    sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchStateBuilder>(),
+                    sp.GetRequiredService<IProviderConfigStore>(),
+                    sp.GetRequiredService<IProviderFactory>())));
         services.AddHostedService(sp =>
             sp.GetRequiredService<CodingAgent.Api.Dispatch.WorkItemDispatchService>());
 

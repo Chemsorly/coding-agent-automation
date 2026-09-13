@@ -104,7 +104,9 @@ internal sealed class TemplatePoller
 
         // Success — update status (agentDonePrQueues not counted as dispatchable work)
         var issueCount = issueQueues[template.Id].Count;
-        var prCount = prQueues[template.Id].Count;
+        // prQueues[template.Id] may be absent when ReviewEnabled=false or when PR polling failed
+        // and intentionally omitted the key (fail-open for BuildPrEligibilityMap). Use 0 in those cases.
+        var prCount = prQueues.TryGetValue(template.Id, out var prList) ? prList.Count : 0;
         var decompCount = decompositionQueues[template.Id].Count;
         templateStatuses[template.Id] = new ConfigStatusSnapshot
         {
@@ -153,6 +155,12 @@ internal sealed class TemplatePoller
     /// <summary>
     /// Polls the PR queue for a template (only when ReviewEnabled).
     /// Wrapped in its own try-catch so that a PR polling failure does not discard the issue queue.
+    /// On success, writes the fetched PRs to <paramref name="prQueues"/> (may be an empty list if
+    /// no eligible PRs were found).
+    /// On failure, the entry is intentionally NOT written to <paramref name="prQueues"/>, so
+    /// <c>BuildPrEligibilityMap</c> sees an absent key and fails open (does not cancel Review
+    /// WorkItems for this template's provider), rather than treating an empty result from a failed
+    /// poll as "zero eligible PRs".
     /// </summary>
     private async Task PollPrQueueAsync(
         PipelineJobTemplate template,
@@ -160,7 +168,6 @@ internal sealed class TemplatePoller
         Dictionary<string, List<PullRequestSummary>> prQueues,
         CancellationToken ct)
     {
-        prQueues[template.Id] = new List<PullRequestSummary>();
         if (!template.ReviewEnabled) return;
 
         try
@@ -173,6 +180,8 @@ internal sealed class TemplatePoller
             }
 
             var prs = await FetchAgentNextPullRequestsAsync(repoProvider, maxPagesToFetch, ct);
+            // Write result only on success so BuildPrEligibilityMap can distinguish a genuine
+            // empty queue (present key, empty list) from a failed poll (absent key → fail open).
             prQueues[template.Id] = prs;
         }
         catch (OperationCanceledException) { throw; }
@@ -180,6 +189,8 @@ internal sealed class TemplatePoller
         {
             _logger.Warning(ex, "Template '{TemplateName}' PR polling failed, issue polling unaffected: {Error}",
                 template.Name, ex.Message);
+            // Intentionally omit prQueues[template.Id] on failure so BuildPrEligibilityMap
+            // fails open for this template's provider rather than cancelling all Review WorkItems.
         }
     }
 

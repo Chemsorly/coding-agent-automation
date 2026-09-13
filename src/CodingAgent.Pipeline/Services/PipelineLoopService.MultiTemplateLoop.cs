@@ -137,11 +137,13 @@ public sealed partial class PipelineLoopService
 
         EmitCyclePollMetrics(snapshot, failuresBefore, issueQueues, prQueues, decompositionQueues, projectLevelDecompositionQueues);
 
-        // Build eligibility map from already-polled data for use by the queue sweep later.
-        // failuresBefore is passed so BuildEligibilityMap can detect templates that failed (or were
-        // rate-limited) *during* this cycle and skip them (fail-open), preventing incorrect
-        // cancellation of WorkItems when poll data is stale due to a same-cycle failure.
-        var eligibleByProvider = BuildEligibilityMap(snapshot.PollableTemplates, issueQueues, failuresBefore, _templateStatuses);
+        // Build eligibility maps from already-polled data for use by the queue sweep later.
+        // failuresBefore is passed so BuildEligibilityMap / BuildPrEligibilityMap can detect
+        // templates that failed (or were rate-limited) *during* this cycle and skip them
+        // (fail-open), preventing incorrect cancellation of WorkItems when poll data is stale
+        // due to a same-cycle failure.
+        var issueEligibleByProvider = BuildEligibilityMap(snapshot.PollableTemplates, issueQueues, failuresBefore, _templateStatuses);
+        var prEligibleByProvider = BuildPrEligibilityMap(snapshot.PollableTemplates, prQueues, failuresBefore, _templateStatuses);
 
         if (await CheckCircuitBreakerAsync(snapshot.EnabledTemplates, snapshot.Config.ClosedLoopMaxConsecutivePollFailures, snapshot.Config.ClosedLoopCircuitBreakerCooldown, ct))
             return true;
@@ -178,7 +180,7 @@ public sealed partial class PipelineLoopService
 
         if (_stopRequested || ct.IsCancellationRequested) return false;
         if (snapshot.Config.QueueSweepEnabled)
-            await SweepPendingWorkItemsAsync(eligibleByProvider, sweepEnabled: true, ct);
+            await SweepPendingWorkItemsAsync(issueEligibleByProvider, prEligibleByProvider, sweepEnabled: true, ct);
 
         if (_stopRequested || ct.IsCancellationRequested) return false;
 
@@ -236,37 +238,123 @@ public sealed partial class PipelineLoopService
             // a provider whose poll data is unreliable. In practice failuresBefore is always built
             // from the same _templateStatuses snapshot before polling, so the two should always be
             // in sync — but this is not enforced by the type system.
-            if (templateStatuses is not null && templateStatuses.TryGetValue(template.Id, out var status))
-            {
-                if (status.RateLimitResetAt.HasValue)
-                    continue; // rate-limited during (or before) this cycle — fail open
+            if (IsSameEligibilityShouldSkip(template.Id, failuresBefore, templateStatuses))
+                continue;
 
-                if (failuresBefore is not null &&
-                    failuresBefore.TryGetValue(template.Id, out var before) &&
-                    status.ConsecutiveFailures > before)
-                    continue; // poll failed during this cycle — fail open
-            }
-
-            if (!result.TryGetValue(template.IssueProviderId, out var set))
-            {
-                set = new HashSet<string>(StringComparer.Ordinal);
-                result[template.IssueProviderId] = set;
-            }
-            foreach (var issue in issues)
-                set.Add(issue.Identifier);
+            AddToEligibilityMap(result, template.IssueProviderId, issues.Select(i => i.Identifier));
         }
         return result;
     }
 
     /// <summary>
-    /// Fetches all Pending WorkItems and cancels any whose issue is no longer in the
-    /// current cycle's eligibility set. Skips WorkItems with <c>TaskType != Implementation</c>.
+    /// Builds a provider-keyed PR eligibility map from the already-polled PR queues.
+    /// Used by <see cref="SweepPendingWorkItemsAsync"/> to decide which Pending
+    /// <see cref="WorkItemTaskType.Review"/> WorkItems to cancel.
+    /// <para>
+    /// Fail-open cases — a template is omitted from the map (its provider will be absent,
+    /// causing the sweep to skip WorkItems for that provider) when:
+    /// <list type="bullet">
+    ///   <item>Its ID is not in <paramref name="prQueues"/> (template was not polled:
+    ///         ReviewEnabled = false, repo provider not found, or PR poll threw an exception).
+    ///         <c>PollPrQueueAsync</c> intentionally omits the entry on failure so this guard
+    ///         reliably detects both "not polled" and "poll failed".</item>
+    ///   <item>Its <c>ConsecutiveFailures</c> increased versus <paramref name="failuresBefore"/>
+    ///         (issue polling failed this cycle — poll data may be unreliable).</item>
+    ///   <item>Its current status has <c>RateLimitResetAt</c> set (rate-limited during this cycle).</item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// A present-but-empty entry in <paramref name="prQueues"/> means the poll succeeded and
+    /// found zero eligible PRs (e.g. all PRs merged/closed since the last cycle). This is treated
+    /// as a genuine empty set, not missing data.
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyDictionary<string, HashSet<string>> BuildPrEligibilityMap(
+        IReadOnlyList<PipelineJobTemplate> pollableTemplates,
+        Dictionary<string, List<PullRequestSummary>> prQueues,
+        IReadOnlyDictionary<string, int>? failuresBefore = null,
+        IReadOnlyDictionary<string, ConfigStatusSnapshot>? templateStatuses = null)
+    {
+        var result = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var template in pollableTemplates)
+        {
+            if (!prQueues.TryGetValue(template.Id, out var prs))
+                continue; // template not polled for PRs this cycle (e.g. ReviewEnabled=false, or poll threw) — fail open
+
+            // Same-cycle failure and rate-limit guards — mirrors BuildEligibilityMap exactly.
+            // TODO [WARNING]: The ConsecutiveFailures guard here checks the issue-polling failure counter
+            // (incremented when issue polling fails). A PR-only polling failure (thrown inside
+            // PollPrQueueAsync) does NOT increment ConsecutiveFailures — it just omits the prQueues
+            // entry and logs a Warning. The absent-key guard above (TryGetValue check) correctly handles
+            // that PR-poll-failure case. If issue polling also fails in the same cycle, ConsecutiveFailures
+            // increases and this guard fires too — which is redundant but harmless (still fail-open).
+            // The XML doc comment for this guard should say "issue polling failed this cycle (PR polling
+            // failure is already handled by the absent-key guard above)" rather than just "poll failed".
+            if (IsSameEligibilityShouldSkip(template.Id, failuresBefore, templateStatuses))
+                continue;
+
+            AddToEligibilityMap(result, template.IssueProviderId, prs.Select(pr => pr.Identifier));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when a template should be skipped from eligibility maps because
+    /// it was rate-limited or failed during the current cycle (poll data is unreliable).
+    /// Shared by <see cref="BuildEligibilityMap"/> and <see cref="BuildPrEligibilityMap"/>.
+    /// </summary>
+    private static bool IsSameEligibilityShouldSkip(
+        string templateId,
+        IReadOnlyDictionary<string, int>? failuresBefore,
+        IReadOnlyDictionary<string, ConfigStatusSnapshot>? templateStatuses)
+    {
+        if (templateStatuses is null || !templateStatuses.TryGetValue(templateId, out var status))
+            return false;
+
+        if (status.RateLimitResetAt.HasValue)
+            return true; // rate-limited during (or before) this cycle — fail open
+
+        if (failuresBefore is not null &&
+            failuresBefore.TryGetValue(templateId, out var before) &&
+            status.ConsecutiveFailures > before)
+            return true; // poll failed during this cycle — fail open
+
+        return false;
+    }
+
+    /// <summary>
+    /// Unions <paramref name="identifiers"/> into the provider-keyed set for <paramref name="providerId"/>.
+    /// Creates the set if it does not yet exist. Shared by build-eligibility-map methods.
+    /// </summary>
+    private static void AddToEligibilityMap(
+        Dictionary<string, HashSet<string>> result,
+        string providerId,
+        IEnumerable<string> identifiers)
+    {
+        if (!result.TryGetValue(providerId, out var set))
+        {
+            set = new HashSet<string>(StringComparer.Ordinal);
+            result[providerId] = set;
+        }
+        foreach (var id in identifiers)
+            set.Add(id);
+    }
+
+    /// <summary>
+    /// Fetches all Pending WorkItems and cancels any whose issue or PR is no longer in the
+    /// current cycle's eligibility set.
+    /// <list type="bullet">
+    ///   <item><see cref="WorkItemTaskType.Implementation"/> — checked against <paramref name="issueEligibleByProvider"/>.</item>
+    ///   <item><see cref="WorkItemTaskType.Review"/> — checked against <paramref name="prEligibleByProvider"/>.</item>
+    ///   <item><see cref="WorkItemTaskType.Decomposition"/> and <see cref="WorkItemTaskType.Consolidation"/> — skipped (fail-open).</item>
+    /// </list>
     /// Aborts the entire sweep (without cancelling anything) if <c>GetPendingAsync</c> throws.
     /// Per-item <c>PostStatusAsync</c> failures are handled individually: expected HTTP races
     /// (400/404/409) are logged at Debug level; unexpected failures are logged at Warning and
     /// counted in <see cref="PipelineTelemetry.QueueSweepFailed"/>.
     /// </summary>
-    /// <param name="eligibleByProvider">Provider-keyed eligibility map from <see cref="BuildEligibilityMap"/>.</param>
+    /// <param name="issueEligibleByProvider">Provider-keyed eligibility map for Implementation items from <see cref="BuildEligibilityMap"/>.</param>
+    /// <param name="prEligibleByProvider">Provider-keyed eligibility map for Review items from <see cref="BuildPrEligibilityMap"/>.</param>
     /// <param name="sweepEnabled">
     /// Must be <c>true</c> for the sweep to run. Pass <see cref="PipelineConfiguration.QueueSweepEnabled"/>
     /// here; the parameter is explicit (rather than reading config inside the method) so the
@@ -274,7 +362,8 @@ public sealed partial class PipelineLoopService
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     internal async Task SweepPendingWorkItemsAsync(
-        IReadOnlyDictionary<string, HashSet<string>> eligibleByProvider,
+        IReadOnlyDictionary<string, HashSet<string>> issueEligibleByProvider,
+        IReadOnlyDictionary<string, HashSet<string>> prEligibleByProvider,
         bool sweepEnabled,
         CancellationToken ct)
     {
@@ -282,13 +371,11 @@ public sealed partial class PipelineLoopService
         if (_workItemClient is null) return;
 
         IReadOnlyList<PendingWorkItemDto> pending;
-        // TODO [WARNING]: GetPendingAsync(maxResults: 500) is a hard, unpaginated cap. If more
-        // than 500 Pending Implementation WorkItems exist, the excess is silently skipped this
-        // cycle with no log, no counter. The assumption is that the sweep drains across multiple
-        // cycles. If the full 500 are returned, consider logging a Warning to signal the cap was hit.
         try
         {
             pending = await _workItemClient.GetPendingAsync(maxResults: 500, ct);
+            if (pending.Count == 500)
+                _logger.Warning("QueueSweep: GetPendingAsync returned the maximum 500 items — some Pending WorkItems may have been skipped this cycle");
         }
         catch (OperationCanceledException)
         {
@@ -302,39 +389,49 @@ public sealed partial class PipelineLoopService
 
         foreach (var item in pending)
         {
-            if (item.TaskType == WorkItemTaskType.Consolidation)
+            // Determine which eligibility map to use based on TaskType.
+            // Consolidation and Decomposition are skipped (fail-open): their complete eligibility
+            // source is not built this cycle, so cancelling them would be incorrect.
+            IReadOnlyDictionary<string, HashSet<string>> map;
+            string itemKind;
+            switch (item.TaskType)
             {
-                // Consolidation WorkItems are dispatched synchronously via KubernetesWorkDistributor
-                // and have no eligibility map entry — skip them here.
-                _queueSweepSkipped.Add(1);
-                continue;
+                case WorkItemTaskType.Implementation:
+                    map = issueEligibleByProvider;
+                    itemKind = "issue";
+                    break;
+                case WorkItemTaskType.Review:
+                    map = prEligibleByProvider;
+                    itemKind = "PR";
+                    break;
+                case WorkItemTaskType.Consolidation:
+                case WorkItemTaskType.Decomposition:
+                default:
+                    // Consolidation: dispatched synchronously via KubernetesWorkDistributor — no eligibility map.
+                    // Decomposition: eligibility source (decompositionQueues, projectLevelDecompositionQueues)
+                    //   not yet folded into a sweep map — skip to avoid incorrect cancellations.
+                    _queueSweepSkipped.Add(1);
+                    continue;
             }
 
-            if (!eligibleByProvider.TryGetValue(item.IssueProviderConfigId, out var eligible))
+            if (!map.TryGetValue(item.IssueProviderConfigId, out var eligible))
             {
                 // Provider was not polled this cycle (e.g. rate-limited template excluded from
-                // pollableTemplates) — fail open, do not cancel
+                // pollableTemplates, or PR poll failed/threw) — fail open, do not cancel
                 _queueSweepSkipped.Add(1);
                 continue;
             }
 
             if (eligible.Contains(item.IssueIdentifier))
             {
-                // Issue is still eligible for dispatch — do not cancel
+                // Issue/PR is still eligible for dispatch — do not cancel
                 continue;
             }
 
             _logger.Information(
-                "QueueSweep: cancelling WorkItem {WorkItemId} for issue {IssueIdentifier} " +
-                "(provider {IssueProviderConfigId}) — issue no longer eligible",
-                item.Id, item.IssueIdentifier, item.IssueProviderConfigId);
-            // TODO [WARNING]: QueueSweepCancelled is incremented here, before PostStatusAsync.
-            // If PostStatusAsync throws (expected 400/404/409 race or unexpected failure), the
-            // counter still records a "cancelled" item that was not actually cancelled by this sweep.
-            // This means QueueSweepCancelled counts "cancel attempts" rather than "confirmed
-            // cancellations". To fix, move this Add(1) call inside the try block, after the
-            // PostStatusAsync await succeeds.
-            _queueSweepCancelled.Add(1);
+                "QueueSweep: cancelling WorkItem {WorkItemId} ({TaskType}) for {ItemKind} {IssueIdentifier} " +
+                "(provider {IssueProviderConfigId}) — {ItemKind2} no longer eligible",
+                item.Id, item.TaskType, itemKind, item.IssueIdentifier, item.IssueProviderConfigId, itemKind);
 
             try
             {
@@ -342,8 +439,11 @@ public sealed partial class PipelineLoopService
                     new WorkItemStatusUpdate
                     {
                         Status = "Cancelled",
-                        ErrorMessage = "Issue no longer eligible for dispatch (queue sweep)"
+                        ErrorMessage = $"{(item.TaskType == WorkItemTaskType.Review ? "PR" : "Issue")} no longer eligible for dispatch (queue sweep)"
                     }, ct);
+                // Increment cancelled counter AFTER successful PostStatusAsync so it counts
+                // confirmed cancellations, not just cancel attempts.
+                _queueSweepCancelled.Add(1);
             }
             catch (HttpRequestException httpEx) when (
                 httpEx.StatusCode is System.Net.HttpStatusCode.BadRequest
