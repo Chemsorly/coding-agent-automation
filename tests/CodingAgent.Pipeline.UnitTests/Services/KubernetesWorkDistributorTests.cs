@@ -25,15 +25,15 @@ public sealed class KubernetesWorkDistributorTests
 
     private static JobDistributionRequest MakeRequest(
         WorkItemTaskType taskType = WorkItemTaskType.Implementation) => new()
-    {
-        IssueIdentifier = new IssueIdentifier("GH-1"),
-        IssueProviderConfigId = "github",
-        RepoProviderConfigId = "github-repo",
-        InitiatedBy = "test",
-        TaskType = taskType,
-        AgentSelector = "kiro",
-        TimeoutSeconds = 3600
-    };
+        {
+            IssueIdentifier = new IssueIdentifier("GH-1"),
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "github-repo",
+            InitiatedBy = "test",
+            TaskType = taskType,
+            AgentSelector = "kiro",
+            TimeoutSeconds = 3600
+        };
 
     // ── Constructor guards ────────────────────────────────────────────────
 

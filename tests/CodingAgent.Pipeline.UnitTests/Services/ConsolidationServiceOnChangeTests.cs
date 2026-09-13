@@ -115,7 +115,9 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
     {
         var suggestions = new HarnessSuggestions
         {
-            BasedOnRunCount = 1, GeneratedAtUtc = DateTime.UtcNow, SuccessRate = 1.0m,
+            BasedOnRunCount = 1,
+            GeneratedAtUtc = DateTime.UtcNow,
+            SuccessRate = 1.0m,
             Suggestions = new List<HarnessSuggestion>()
         };
         _onChangeLog.Clear();
