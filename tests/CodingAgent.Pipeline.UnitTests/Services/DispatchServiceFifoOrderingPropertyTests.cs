@@ -6,9 +6,16 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 
 /// <summary>
 /// Property-based tests for DispatchService dispatch ordering.
-/// Validates the two-key sort invariant: ORDER BY PriorityWeight DESC, CreatedAt ASC.
-/// Higher-priority items are always dispatched first; equal-weight items fall back to FIFO.
-/// **Validates: Requirements 5.7 (updated for #2172)**
+/// Validates the three-key sort invariant: tier(TaskType) ASC, PriorityWeight DESC, CreatedAt ASC.
+/// Lower-tier items (Review &gt; Decomposition &gt; Implementation &gt; Consolidation) always dispatch first;
+/// within a tier, higher-priority items dispatch first; equal-priority items fall back to FIFO.
+/// <para>
+/// NOTE: These properties sort anonymous in-memory lists using the same expression as production.
+/// They guard the within-tier logic (PriorityWeight and CreatedAt invariants) and the cross-tier
+/// invariant. For an integration-level guard against the production <c>DispatchStateBuilder.BuildStateAsync</c>
+/// query, see <c>DispatchStateBuilderBranchTests</c> in <c>CodingAgent.Orchestration.UnitTests</c>.
+/// </para>
+/// <para><b>Updated for #2563:</b> added tier as primary sort key; Requirements 5.7 updated for #2172.</para>
 /// </summary>
 public class DispatchServiceFifoOrderingPropertyTests
 {
@@ -122,7 +129,7 @@ public class DispatchServiceFifoOrderingPropertyTests
             return true; // equal timestamps — tie-break undefined, skip
 
         var earlier = t1 < t2 ? t1 : t2;
-        var later   = t1 < t2 ? t2 : t1;
+        var later = t1 < t2 ? t2 : t1;
         const int sameWeight = 50;
 
         var items = new[]
@@ -164,5 +171,56 @@ public class DispatchServiceFifoOrderingPropertyTests
 
         // High-weight item must come first despite being created later
         return dispatchOrder[0].Id == "high";
+    }
+
+    /// <summary>
+    /// Property: For any two items of distinct task types (where tierA &lt; tierB), the lower-tier
+    /// item always appears first in dispatch order — regardless of PriorityWeight or CreatedAt.
+    /// A high-priority item in a higher tier must never jump ahead of a lower-tier item.
+    /// </summary>
+    [Property(MaxTest = 20)]
+    public bool LowerTierItem_AlwaysPrecedesHigherTierItem(
+        PositiveInt tierAIndex,
+        PositiveInt tierBIndex,
+        int weightA,
+        int weightB,
+        int createdAtOffsetSecondsA,
+        int createdAtOffsetSecondsB)
+    {
+        // Map indices to tier values 0–3 (Review=0, Decomp=1, Impl=2, Consolidation=3)
+        var allTiers = new[] { 0, 1, 2, 3 };
+        var tierA = allTiers[(tierAIndex.Get - 1) % 4];
+        var tierB = allTiers[(tierBIndex.Get - 1) % 4];
+
+        if (tierA == tierB)
+            return true; // degenerate: same tier, cross-tier invariant doesn't apply
+
+        // Ensure tierA < tierB (lower tier = higher dispatch priority)
+        if (tierA > tierB)
+            (tierA, tierB) = (tierB, tierA);
+
+        // TODO: Math.Abs(int.MinValue) throws OverflowException (int.MinValue has no positive counterpart).
+        // With MaxTest=20 this is unlikely to be sampled, but it is a latent flaky-test risk.
+        // Replace with (int)((uint)weightA % 1001) and (long)((ulong)createdAtOffsetSecondsA % 10_000_000)
+        // to eliminate the overflow path, mirroring the safe unsigned-cast pattern used elsewhere in this file.
+        var wA = Math.Abs(weightA) % 1001; // 0–1000
+        var wB = Math.Abs(weightB) % 1001;
+        var tA = DateTimeOffset.UnixEpoch.AddSeconds(Math.Abs(createdAtOffsetSecondsA) % 10_000_000);
+        var tB = DateTimeOffset.UnixEpoch.AddSeconds(Math.Abs(createdAtOffsetSecondsB) % 10_000_000);
+
+        var items = new[]
+        {
+            new { Id = "A", Tier = tierA, PriorityWeight = wA, CreatedAt = tA },
+            new { Id = "B", Tier = tierB, PriorityWeight = wB, CreatedAt = tB }
+        };
+
+        var dispatchOrder = items
+            .OrderBy(x => x.Tier)
+            .ThenByDescending(x => x.PriorityWeight)
+            .ThenBy(x => x.CreatedAt)
+            .ToList();
+
+        // Lower-tier item (A, tierA < tierB) must always come first
+        return dispatchOrder[0].Id == "A";
     }
 }

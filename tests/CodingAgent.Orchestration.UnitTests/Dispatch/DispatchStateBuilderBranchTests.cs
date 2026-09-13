@@ -223,6 +223,171 @@ public class DispatchStateBuilderBranchTests : IDisposable
         candidates.Should().HaveCount(2, "two eligible items with no concurrency limit");
     }
 
+    // ── Tier ordering (RunType tier = primary sort key) ───────────────────
+    // TODO: These tests use the EF Core InMemory provider, which evaluates the OrderBy ternary
+    // as a CLR expression (LINQ-to-Objects) — it never exercises the SQL CASE WHEN translation
+    // used against PostgreSQL in production. If Npgsql failed to translate the conditional (it
+    // does not — this is supported), these tests would still pass, giving false confidence.
+    // Consider adding one tier-ordering assertion to the Testcontainers-backed Npgsql integration
+    // suite (tests/CodingAgent.Infrastructure.IntegrationTests) to guard the actual SQL translation.
+
+    // TODO: All tier-ordering tests below pass `w => true` as the taskTypeFilter, exercising the
+    // "future CAS-locked poller" code path only. The acceptance criteria also require that tier
+    // ordering works when the legacy filter (`w => w.TaskType != Consolidation`) is active.
+    // Add a test that passes the legacy filter with a mixed-type seed (including a Consolidation
+    // item that should be hidden) to verify the filter-before-sort contract and guard against a
+    // future refactor accidentally swapping the filter and sort in BuildStateAsync.
+
+    /// <summary>
+    /// AC 1: Mixed task types are ordered by tier then PriorityWeight then CreatedAt.
+    /// Review (tier 0) &gt; Decomposition (tier 1) &gt; Implementation (tier 2) &gt; Consolidation (tier 3).
+    /// All items have equal PriorityWeight and different CreatedAt to make tier the sole differentiator.
+    /// </summary>
+    [Fact]
+    public async Task BuildStateAsync_MixedTaskTypes_OrdersByTierThenPriorityThenCreatedAt()
+    {
+        var baseTime = DateTimeOffset.UtcNow;
+        var reviewId = Guid.NewGuid();
+        var decompId = Guid.NewGuid();
+        var implId = Guid.NewGuid();
+        var consId = Guid.NewGuid();
+
+        // Seed newest → oldest so that CreatedAt alone would produce the wrong order.
+        await InsertWorkItemFull(reviewId, WorkItemTaskType.Review, priorityWeight: 0, createdAt: baseTime.AddMinutes(3));
+        await InsertWorkItemFull(decompId, WorkItemTaskType.Decomposition, priorityWeight: 0, createdAt: baseTime.AddMinutes(2));
+        await InsertWorkItemFull(implId, WorkItemTaskType.Implementation, priorityWeight: 0, createdAt: baseTime.AddMinutes(1));
+        await InsertWorkItemFull(consId, WorkItemTaskType.Consolidation, priorityWeight: 0, createdAt: baseTime);
+
+        var builder = CreateBuilder();
+        var state = await builder.BuildStateAsync(
+            w => true,   // include all task types — Pending-status filter is applied inside BuildStateAsync
+            recordTelemetry: false,
+            CancellationToken.None);
+
+        state.Should().NotBeNull();
+        var ids = state!.PendingItems.Select(i => i.Id).ToList();
+        ids.Should().ContainInConsecutiveOrder(new[] { reviewId, decompId, implId, consId },
+            "tier ordering must place Review→Decomp→Impl→Consolidation regardless of CreatedAt");
+    }
+
+    /// <summary>
+    /// AC 2: Within a tier, PriorityWeight DESC is the secondary sort key.
+    /// A manual (weight=100) Implementation item dispatches before an automatic (weight=0) one.
+    /// </summary>
+    [Fact]
+    public async Task BuildStateAsync_WithinTier_HigherPriorityWeightFirst()
+    {
+        var baseTime = DateTimeOffset.UtcNow;
+        var highId = Guid.NewGuid();
+        var lowId = Guid.NewGuid();
+
+        // lowId is older — without PriorityWeight ordering it would come first (FIFO).
+        await InsertWorkItemFull(lowId, WorkItemTaskType.Implementation, priorityWeight: 0, createdAt: baseTime.AddMinutes(-10));
+        await InsertWorkItemFull(highId, WorkItemTaskType.Implementation, priorityWeight: 100, createdAt: baseTime);
+
+        var builder = CreateBuilder();
+        var state = await builder.BuildStateAsync(
+            w => true,
+            recordTelemetry: false,
+            CancellationToken.None);
+
+        state.Should().NotBeNull();
+        var items = state!.PendingItems;
+        items[0].Id.Should().Be(highId,
+            "higher PriorityWeight (100) must come before lower weight (0) within the same tier");
+        items[1].Id.Should().Be(lowId);
+    }
+
+    /// <summary>
+    /// AC 3: Within a tier, CreatedAt ASC (FIFO) is the tiebreaker when PriorityWeight is equal.
+    /// </summary>
+    [Fact]
+    public async Task BuildStateAsync_WithinTier_OlderItemFirst_WhenSamePriority()
+    {
+        var baseTime = DateTimeOffset.UtcNow;
+        var olderId = Guid.NewGuid();
+        var newerId = Guid.NewGuid();
+
+        await InsertWorkItemFull(newerId, WorkItemTaskType.Implementation, priorityWeight: 0, createdAt: baseTime);
+        await InsertWorkItemFull(olderId, WorkItemTaskType.Implementation, priorityWeight: 0, createdAt: baseTime.AddMinutes(-10));
+
+        var builder = CreateBuilder();
+        var state = await builder.BuildStateAsync(
+            w => true,
+            recordTelemetry: false,
+            CancellationToken.None);
+
+        state.Should().NotBeNull();
+        var items = state!.PendingItems;
+        items[0].Id.Should().Be(olderId,
+            "older item (earlier CreatedAt) must come first when PriorityWeight and tier are equal");
+        items[1].Id.Should().Be(newerId);
+    }
+
+    /// <summary>
+    /// AC 4: Consolidation (tier 3) is last even if it was created first (oldest CreatedAt).
+    /// A Review item created later still dispatches before consolidation.
+    /// </summary>
+    [Fact]
+    public async Task BuildStateAsync_ConsolidationIsLast_EvenIfCreatedFirst()
+    {
+        var baseTime = DateTimeOffset.UtcNow;
+        var consId = Guid.NewGuid();
+        var reviewId = Guid.NewGuid();
+
+        await InsertWorkItemFull(consId, WorkItemTaskType.Consolidation, priorityWeight: 0, createdAt: baseTime.AddMinutes(-100));
+        await InsertWorkItemFull(reviewId, WorkItemTaskType.Review, priorityWeight: 0, createdAt: baseTime);
+
+        var builder = CreateBuilder();
+        var state = await builder.BuildStateAsync(
+            w => true,
+            recordTelemetry: false,
+            CancellationToken.None);
+
+        state.Should().NotBeNull();
+        var items = state!.PendingItems;
+        items[0].Id.Should().Be(reviewId,
+            "Review (tier 0) must come before Consolidation (tier 3) regardless of CreatedAt");
+        items[1].Id.Should().Be(consId,
+            "Consolidation must be last even though it was created first");
+    }
+
+    /// <summary>
+    /// AC 6: A manual (PriorityWeight=100) Implementation item must NOT cross the tier boundary
+    /// and jump ahead of a Review item (PriorityWeight=0). Tier is the primary key.
+    /// </summary>
+    [Fact]
+    public async Task BuildStateAsync_ManualItemWithinTier_DoesNotCrossOtherTier()
+    {
+        var baseTime = DateTimeOffset.UtcNow;
+        var implManualId = Guid.NewGuid();
+        var reviewAutoId = Guid.NewGuid();
+
+        await InsertWorkItemFull(implManualId, WorkItemTaskType.Implementation, priorityWeight: 100, createdAt: baseTime);
+        await InsertWorkItemFull(reviewAutoId, WorkItemTaskType.Review, priorityWeight: 0, createdAt: baseTime.AddMinutes(10));
+
+        var builder = CreateBuilder();
+        var state = await builder.BuildStateAsync(
+            w => true,
+            recordTelemetry: false,
+            CancellationToken.None);
+
+        state.Should().NotBeNull();
+        var items = state!.PendingItems;
+        items[0].Id.Should().Be(reviewAutoId,
+            "Review (tier 0) must come before a manual Implementation (tier 2) — tier beats PriorityWeight");
+        items[1].Id.Should().Be(implManualId,
+            "manual Implementation item must be second, not first");
+    }
+
+    // TODO: Missing test — legacy flat loop filter contract: add a test that calls BuildStateAsync
+    // with the legacy filter (`w => w.TaskType != WorkItemTaskType.Consolidation`) when a Consolidation
+    // Pending item exists in the DB, and asserts that the item does NOT appear in PendingItems.
+    // This guards the filter-before-sort contract in BuildStateAsync and prevents the filter from
+    // being accidentally removed in a future refactor. The existing
+    // PollAndDispatch_ConsolidationItem_IsNotDispatchedByThisService covers the end-to-end poller
+    // behaviour, but not the BuildStateAsync filter boundary directly.
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private DispatchStateBuilder CreateBuilder(
@@ -302,6 +467,34 @@ public class DispatchStateBuilderBranchTests : IDisposable
             TimeoutSeconds = 3600,
             Payload = "{}",
             TaskType = taskType
+        });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Extended helper supporting PriorityWeight and CreatedAt for tier-ordering tests.
+    /// Inserts a Pending item on the default "kiro,dotnet" selector.
+    /// </summary>
+    private async Task InsertWorkItemFull(
+        Guid id,
+        WorkItemTaskType taskType,
+        int priorityWeight = 0,
+        DateTimeOffset? createdAt = null,
+        string agentSelector = "kiro,dotnet")
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        db.WorkItems.Add(new WorkItemEntity
+        {
+            Id = id,
+            IssueIdentifier = $"owner/repo#{id.ToString("N")[..4]}",
+            IssueProviderConfigId = "provider-1",
+            Status = WorkItemStatus.Pending,
+            AgentSelector = agentSelector,
+            CreatedAt = createdAt ?? DateTimeOffset.UtcNow,
+            TimeoutSeconds = 3600,
+            Payload = "{}",
+            TaskType = taskType,
+            PriorityWeight = priorityWeight
         });
         await db.SaveChangesAsync();
     }

@@ -472,10 +472,19 @@ public class DispatchStateBuilderTests : IDisposable
             "the resolved selector 'dotnet,kiro' is at its concurrency limit (1/1), so the partial-selector item should be skipped");
     }
 
-    // ── PriorityWeight ordering ──────────────────────────────────────────
+    // ── PriorityWeight ordering (within-tier) ────────────────────────────
 
+    /// <summary>
+    /// Within a tier, PriorityWeight DESC is the secondary sort key — the higher-weight item
+    /// (PriorityWeight=100, manual) appears before the lower-weight item (PriorityWeight=0, auto)
+    /// even when it was created later.
+    ///
+    /// Note: Both items are Implementation (same tier), so this test covers the within-tier ordering
+    /// only. For the tier-primary sort invariant (Review &gt; Decomp &gt; Impl &gt; Consolidation), see
+    /// DispatchStateBuilderBranchTests in CodingAgent.Orchestration.UnitTests.
+    /// </summary>
     [Fact]
-    public async Task BuildStateAsync_OrdersPendingItems_ByPriorityWeightDescThenCreatedAtAsc()
+    public async Task BuildStateAsync_WithinTier_OrdersByPriorityWeightDescThenCreatedAtAsc()
     {
         // Seed: low-weight item created first, high-weight item created later
         var lowId = Guid.NewGuid();

@@ -13,9 +13,15 @@ namespace CodingAgent.Api.Dispatch;
 
 /// <summary>
 /// BackgroundService that polls for non-consolidation Pending WorkItems
-/// (Implementation, Review, Decomposition) ordered by <c>PriorityWeight DESC, CreatedAt ASC</c>
+/// (Implementation, Review, Decomposition) ordered by
+/// <c>tier(TaskType) ASC, PriorityWeight DESC, CreatedAt ASC</c>
 /// and dispatches them as K8s Jobs when capacity is available.
 ///
+/// <para>
+/// Tier ordering: Review (tier 0) &gt; Decomposition (tier 1) &gt; Implementation (tier 2).
+/// Within a tier, higher <c>PriorityWeight</c> items are dispatched first; equal-weight
+/// items fall back to FIFO (<c>CreatedAt ASC</c>).
+/// </para>
 /// <para>
 /// Flow: Scheduler enqueues an issue as a <c>Pending</c> WorkItem (visible in the UI queue) via
 /// <c>KubernetesWorkDistributor.DistributeAsync → POST /api/work-items</c>. This service picks up
@@ -82,7 +88,9 @@ internal sealed class WorkItemDispatchService : LeaderElectedPollingService
 
     internal async Task PollAndDispatchAsync(CancellationToken ct)
     {
-        // Poll all non-consolidation Pending WorkItems, ordered by PriorityWeight DESC, CreatedAt ASC.
+        // Poll all non-consolidation Pending WorkItems, ordered by tier(TaskType) ASC,
+        // PriorityWeight DESC, CreatedAt ASC. Consolidation items are excluded here — they must not
+        // be claimable by this legacy per-replica loop before the CAS-locked poller (#2541) is live.
         // recordTelemetry:false — only the Job Controller is the authoritative emitter for
         // workdistribution.dispatcher_last_poll_epoch_seconds and credential pool metrics.
         var state = await _stateBuilder.BuildStateAsync(
