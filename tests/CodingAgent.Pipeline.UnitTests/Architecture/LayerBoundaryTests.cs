@@ -769,6 +769,13 @@ public partial class LayerBoundaryTests
             // pattern that resolves a pre-registered singleton. The service IS actively registered
             // in ApiServiceCollectionExtensions.AddApiOrchestration.
             "WorkItemDispatchService",
+
+            // WorkItemDispatchPoller is conditionally registered in SchedulerServiceCollectionExtensions
+            // under the Scheduler:Dispatch:Enabled flag (default false). Registration uses the lambda
+            // pattern: services.AddHostedService(sp => sp.GetRequiredService<WorkItemDispatchPoller>()).
+            // The T4 scanner only detects AddHostedService<T>() (generic form), not the lambda pattern.
+            // The service IS actively registered when Scheduler:Dispatch:Enabled=true.
+            "WorkItemDispatchPoller",
         };
 
         // ── Step 3: find all concrete BackgroundService subclasses in src files ──

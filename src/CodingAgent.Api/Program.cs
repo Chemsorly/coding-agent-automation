@@ -54,7 +54,7 @@ builder.Services.Configure<HostOptions>(opts => opts.ShutdownTimeout = TimeSpan.
 // ── Service registrations ────────────────────────────────────────────────────
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddApiInfrastructure(dbConnectionString);
-builder.Services.AddApiOrchestration();
+builder.Services.AddApiOrchestration(builder.Configuration);
 builder.Services.AddAgentHubServices();  // shared, from CodingAgent.AgentGateway
 
 // ── SignalR (with optional Redis backplane) ──────────────────────────────────

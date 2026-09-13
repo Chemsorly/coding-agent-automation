@@ -519,6 +519,60 @@ public sealed class PipelineApiWorkItemClientTests : IDisposable
         // {"priorityWeight": <value>} so regressions in payload serialisation are caught.
     }
 
+    // ── DispatchPendingAsync ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task DispatchPendingAsync_Success_ReturnsDispatched()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/dispatch").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(200));
+
+        var result = await _sut.DispatchPendingAsync(workItemId);
+
+        result.Should().Be(DispatchPendingResult.Dispatched,
+            "200 OK must return Dispatched so the poller continues to the next item");
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_Conflict_ReturnsPermanentRejection()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/dispatch").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(409));
+
+        var result = await _sut.DispatchPendingAsync(workItemId);
+
+        result.Should().Be(DispatchPendingResult.PermanentRejection,
+            "409 Conflict must return PermanentRejection so the Scheduler poller stops dispatching this selector");
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_ServiceUnavailable_ReturnsTransient()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/dispatch").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(503));
+
+        var result = await _sut.DispatchPendingAsync(workItemId);
+
+        result.Should().Be(DispatchPendingResult.Transient,
+            "503 Service Unavailable must return Transient so the Scheduler poller retries next cycle");
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_UnexpectedStatus_ThrowsHttpRequestException()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/dispatch").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(500));
+
+        var act = () => _sut.DispatchPendingAsync(workItemId);
+
+        await act.Should().ThrowAsync<HttpRequestException>(
+            "unexpected status codes (e.g. 500 Internal Server Error) must throw, not be silently swallowed");
+    }
+
     // ── DispatchAsync ─────────────────────────────────────────────────────
 
     [Fact]
