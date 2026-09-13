@@ -257,18 +257,24 @@ public sealed class WorkItemDispatchPollerTests
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("connection refused"));
 
-        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(500));
+        // Call PollAndDispatchAsync directly to avoid wall-clock timing flakiness.
+        // The BackgroundService loop path is tested by WhenLeaderAndPendingExists_ShouldCallDispatchEndpoint;
+        // here we only need to verify the exception-handling branch.
+        var poller = new WorkItemDispatchPoller(
+            _mockClient.Object,
+            _mockLeaderGate.Object,
+            _mockLogger.Object,
+            rateLimitPerSecond: 100);
+        await poller.PollAndDispatchAsync(CancellationToken.None);
 
-        // TODO [WARNING]: the production code calls _logger.Warning(ex, "...message...") which is the
-        // two-argument Warning(Exception, string) overload. The verify below matches that form. However
-        // this is inconsistent with the pattern acknowledged in WhenTransient503 (which notes that Serilog
-        // uses generic overloads). If the implementation were changed to log with a structured template arg
-        // (three-argument form), this verify would silently pass vacuously on a loose mock. Align with the
-        // WhenTransient503 pattern or add a note explaining why the two-arg form is correct here.
+        // Production code calls _logger.Warning(ex, messageTemplate) — the two-argument
+        // Warning(Exception, string) Serilog overload (no template args).
         _mockLogger.Verify(l => l.Warning(It.IsAny<Exception>(), It.IsAny<string>()),
-            Times.AtLeastOnce(), "GetPendingAsync failure must log a Warning");
+            Times.Once(), "GetPendingAsync failure must log a Warning");
         _mockLogger.Verify(l => l.Error(It.IsAny<Exception>(), It.IsAny<string>()),
             Times.Never(), "GetPendingAsync failure must not log Error");
+
+        poller.Dispose();
     }
 
     [Fact]
