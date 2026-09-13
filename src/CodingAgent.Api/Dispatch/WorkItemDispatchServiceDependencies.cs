@@ -1,6 +1,7 @@
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
+using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.LeaderElection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -19,4 +20,8 @@ internal sealed record WorkItemDispatchServiceDependencies(
     IConfiguration Configuration,
     WorkItemTransitionService TransitionService,
     // StateBuilder is required — always provided via GetRequiredService in production.
-    DispatchStateBuilder StateBuilder);
+    DispatchStateBuilder StateBuilder,
+    // Optional: when non-null, a pre-dispatch eligibility gate runs before K8s Job creation.
+    // When null (e.g. tests that do not wire providers), the gate is skipped — fail-open.
+    IProviderConfigStore? ProviderConfigStore = null,
+    IProviderFactory? ProviderFactory = null);
