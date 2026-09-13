@@ -249,14 +249,14 @@ public class DispatchStateBuilderBranchTests : IDisposable
         var baseTime = DateTimeOffset.UtcNow;
         var reviewId = Guid.NewGuid();
         var decompId = Guid.NewGuid();
-        var implId   = Guid.NewGuid();
-        var consId   = Guid.NewGuid();
+        var implId = Guid.NewGuid();
+        var consId = Guid.NewGuid();
 
         // Seed newest → oldest so that CreatedAt alone would produce the wrong order.
-        await InsertWorkItemFull(reviewId, WorkItemTaskType.Review,         priorityWeight: 0, createdAt: baseTime.AddMinutes(3));
-        await InsertWorkItemFull(decompId, WorkItemTaskType.Decomposition,  priorityWeight: 0, createdAt: baseTime.AddMinutes(2));
-        await InsertWorkItemFull(implId,   WorkItemTaskType.Implementation, priorityWeight: 0, createdAt: baseTime.AddMinutes(1));
-        await InsertWorkItemFull(consId,   WorkItemTaskType.Consolidation,  priorityWeight: 0, createdAt: baseTime);
+        await InsertWorkItemFull(reviewId, WorkItemTaskType.Review, priorityWeight: 0, createdAt: baseTime.AddMinutes(3));
+        await InsertWorkItemFull(decompId, WorkItemTaskType.Decomposition, priorityWeight: 0, createdAt: baseTime.AddMinutes(2));
+        await InsertWorkItemFull(implId, WorkItemTaskType.Implementation, priorityWeight: 0, createdAt: baseTime.AddMinutes(1));
+        await InsertWorkItemFull(consId, WorkItemTaskType.Consolidation, priorityWeight: 0, createdAt: baseTime);
 
         var builder = CreateBuilder();
         var state = await builder.BuildStateAsync(
@@ -279,10 +279,10 @@ public class DispatchStateBuilderBranchTests : IDisposable
     {
         var baseTime = DateTimeOffset.UtcNow;
         var highId = Guid.NewGuid();
-        var lowId  = Guid.NewGuid();
+        var lowId = Guid.NewGuid();
 
         // lowId is older — without PriorityWeight ordering it would come first (FIFO).
-        await InsertWorkItemFull(lowId,  WorkItemTaskType.Implementation, priorityWeight: 0,   createdAt: baseTime.AddMinutes(-10));
+        await InsertWorkItemFull(lowId, WorkItemTaskType.Implementation, priorityWeight: 0, createdAt: baseTime.AddMinutes(-10));
         await InsertWorkItemFull(highId, WorkItemTaskType.Implementation, priorityWeight: 100, createdAt: baseTime);
 
         var builder = CreateBuilder();
@@ -332,11 +332,11 @@ public class DispatchStateBuilderBranchTests : IDisposable
     public async Task BuildStateAsync_ConsolidationIsLast_EvenIfCreatedFirst()
     {
         var baseTime = DateTimeOffset.UtcNow;
-        var consId   = Guid.NewGuid();
+        var consId = Guid.NewGuid();
         var reviewId = Guid.NewGuid();
 
-        await InsertWorkItemFull(consId,   WorkItemTaskType.Consolidation, priorityWeight: 0, createdAt: baseTime.AddMinutes(-100));
-        await InsertWorkItemFull(reviewId, WorkItemTaskType.Review,        priorityWeight: 0, createdAt: baseTime);
+        await InsertWorkItemFull(consId, WorkItemTaskType.Consolidation, priorityWeight: 0, createdAt: baseTime.AddMinutes(-100));
+        await InsertWorkItemFull(reviewId, WorkItemTaskType.Review, priorityWeight: 0, createdAt: baseTime);
 
         var builder = CreateBuilder();
         var state = await builder.BuildStateAsync(
@@ -364,7 +364,7 @@ public class DispatchStateBuilderBranchTests : IDisposable
         var reviewAutoId = Guid.NewGuid();
 
         await InsertWorkItemFull(implManualId, WorkItemTaskType.Implementation, priorityWeight: 100, createdAt: baseTime);
-        await InsertWorkItemFull(reviewAutoId, WorkItemTaskType.Review,         priorityWeight: 0,   createdAt: baseTime.AddMinutes(10));
+        await InsertWorkItemFull(reviewAutoId, WorkItemTaskType.Review, priorityWeight: 0, createdAt: baseTime.AddMinutes(10));
 
         var builder = CreateBuilder();
         var state = await builder.BuildStateAsync(

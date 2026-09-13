@@ -65,8 +65,8 @@ internal sealed class DispatchStateBuilder
                 .Where(w => w.Status == WorkItemStatus.Pending)
                 .Where(taskTypeFilter)
                 .OrderBy(w =>
-                    w.TaskType == WorkItemTaskType.Review         ? 0 :
-                    w.TaskType == WorkItemTaskType.Decomposition  ? 1 :
+                    w.TaskType == WorkItemTaskType.Review ? 0 :
+                    w.TaskType == WorkItemTaskType.Decomposition ? 1 :
                     w.TaskType == WorkItemTaskType.Implementation ? 2 :
                     /* Consolidation */                             3)
                 .ThenByDescending(w => w.PriorityWeight)

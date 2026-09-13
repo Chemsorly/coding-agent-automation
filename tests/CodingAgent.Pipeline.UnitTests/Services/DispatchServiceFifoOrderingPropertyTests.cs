@@ -129,7 +129,7 @@ public class DispatchServiceFifoOrderingPropertyTests
             return true; // equal timestamps — tie-break undefined, skip
 
         var earlier = t1 < t2 ? t1 : t2;
-        var later   = t1 < t2 ? t2 : t1;
+        var later = t1 < t2 ? t2 : t1;
         const int sameWeight = 50;
 
         var items = new[]
