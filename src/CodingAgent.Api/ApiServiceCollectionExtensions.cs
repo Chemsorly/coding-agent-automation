@@ -151,7 +151,7 @@ public static class ApiServiceCollectionExtensions
     /// agent registry, run service, job deduplication, dispatch infrastructure,
     /// lifecycle manager, label/token/consolidation services, and agent communication.
     /// </summary>
-    public static IServiceCollection AddApiOrchestration(this IServiceCollection services)
+    public static IServiceCollection AddApiOrchestration(this IServiceCollection services, IConfiguration config)
     {
         // Serilog.ILogger for DI resolution (some services take Serilog.ILogger directly)
         services.AddSingleton(Log.Logger);
@@ -476,8 +476,15 @@ public static class ApiServiceCollectionExtensions
                     sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchStateBuilder>(),
                     sp.GetRequiredService<IProviderConfigStore>(),
                     sp.GetRequiredService<IProviderFactory>())));
-        services.AddHostedService(sp =>
-            sp.GetRequiredService<CodingAgent.Api.Dispatch.WorkItemDispatchService>());
+        // Gate AddHostedService behind WorkDistribution:Dispatch:Enabled (default true).
+        // Set to false to disable the API dispatch loop when cutting over to the
+        // Scheduler-side WorkItemDispatchPoller. The singleton registration above is
+        // unconditional so the service can still be resolved for testing/inspection.
+        if (DispatchServiceOptionsFactory.Create(config).Enabled)
+        {
+            services.AddHostedService(sp =>
+                sp.GetRequiredService<CodingAgent.Api.Dispatch.WorkItemDispatchService>());
+        }
 
         // ── WorkItemMetricsBackgroundService ──────────────────────────────────────────────────
         // Spec 047: Removed from API hosted services — replaced by WorkItemCountsPoller in

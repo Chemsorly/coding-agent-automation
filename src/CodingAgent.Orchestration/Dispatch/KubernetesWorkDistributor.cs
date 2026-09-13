@@ -13,11 +13,16 @@ namespace CodingAgent.Orchestration.Dispatch;
 /// <see cref="DistributeAsync"/> routes by task type:
 /// <list type="bullet">
 ///   <item>
-///     <c>Consolidation</c> — calls <c>POST /api/work-items/dispatch</c> (synchronous path,
-///     creates the WorkItem as <c>Dispatched</c> and starts the K8s Job immediately).
-///     <c>ConsolidationDispatcher</c> in the monolith uses <see cref="IWorkDistributor"/> and
-///     must go through the synchronous endpoint to avoid leaving the item in a Pending state
-///     with no poller to claim it.
+///     <c>Consolidation</c> (flag off, default) — calls <c>POST /api/work-items/dispatch</c>
+///     (legacy synchronous path, creates the WorkItem as <c>Dispatched</c> and starts the K8s
+///     Job immediately). Use this path when no poller is present to claim <c>Pending</c>
+///     consolidation items.
+///   </item>
+///   <item>
+///     <c>Consolidation</c> (flag <c>Consolidation:UnifiedDispatch:Enabled=true</c>) — calls
+///     <c>POST /api/work-items</c> to create a <c>Pending</c> WorkItem, identical to other
+///     task types. The poller applies RunType tier ordering (#2563) before creating the K8s Job.
+///     Enable only after #2563 (RunType tier ordering at dispatch) is deployed.
 ///   </item>
 ///   <item>
 ///     All other task types (Implementation, Review, Decomposition) — calls
@@ -44,15 +49,18 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
 {
     private readonly IPipelineApiWorkItemClient _apiClient;
     private readonly ILogger<KubernetesWorkDistributor> _logger;
+    private readonly bool _unifiedDispatchEnabled;
 
     public KubernetesWorkDistributor(
         IPipelineApiWorkItemClient apiClient,
-        ILogger<KubernetesWorkDistributor> logger)
+        ILogger<KubernetesWorkDistributor> logger,
+        bool unifiedDispatchEnabled = false)
     {
         ArgumentNullException.ThrowIfNull(apiClient);
         ArgumentNullException.ThrowIfNull(logger);
         _apiClient = apiClient;
         _logger = logger;
+        _unifiedDispatchEnabled = unifiedDispatchEnabled;
     }
 
     /// <inheritdoc />
@@ -60,11 +68,11 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        // Consolidation WorkItems are dispatched synchronously (Dispatched directly).
-        // ConsolidationDispatcher bypasses the poll queue and goes through IWorkDistributor,
-        // so we must use the synchronous DispatchAsync path to avoid orphaning the item in a
-        // Pending state with no poller to claim it.
-        if (request.TaskType == WorkItemTaskType.Consolidation)
+        // Flag off (default): Consolidation uses the legacy synchronous dispatch path so the
+        // WorkItem is created as Dispatched immediately — no poller required.
+        // Flag on: Consolidation is enqueued as Pending like all other task types; the poller
+        // picks it up with RunType tier ordering (#2563).
+        if (request.TaskType == WorkItemTaskType.Consolidation && !_unifiedDispatchEnabled)
             return await DispatchSynchronouslyAsync(request, ct);
 
         return await EnqueueAsPendingAsync(request, ct);
@@ -72,7 +80,8 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
 
     /// <summary>
     /// Calls <c>POST /api/work-items/dispatch</c> — creates the WorkItem as <c>Dispatched</c>
-    /// and starts the K8s Job atomically. Used for Consolidation task types.
+    /// and starts the K8s Job atomically. Used for Consolidation task types when
+    /// <c>Consolidation:UnifiedDispatch:Enabled</c> is <c>false</c> (legacy path).
     /// </summary>
     private async Task<DistributionResult> DispatchSynchronouslyAsync(
         JobDistributionRequest request, CancellationToken ct)
