@@ -44,17 +44,8 @@ public sealed class ConfigMigrationService
     {
         await using var lockHandle = await _lockProvider.AcquireAsync(MigrationLockKey, ct);
 
-        await using var db = await _dbFactory.CreateDbContextAsync(ct);
-
-        // Idempotent check: if PipelineConfig row exists, migration is complete
-        var hasConfig = await db.PipelineConfig.AnyAsync(ct);
-        if (hasConfig)
-        {
-            Logger.Information("ConfigMigration: PipelineConfig row exists, skipping migration");
-            return false;
-        }
-
-        // If config directory doesn't exist or is empty, skip migration
+        // If config directory doesn't exist or is empty, skip migration — these are pure
+        // filesystem checks that don't touch the DB and don't need a retry wrapper.
         if (!Directory.Exists(_configBasePath))
         {
             Logger.Information("ConfigMigration: Config directory {Path} does not exist, skipping migration", _configBasePath);
@@ -68,62 +59,94 @@ public sealed class ConfigMigrationService
             return false;
         }
 
-        Logger.Information("ConfigMigration: Empty database detected, starting migration from {Path}", _configBasePath);
+        // Obtain the execution strategy from a short-lived context that is properly disposed.
+        // CreateDbContextAsync() checks out a pooled slot — it must be disposed to return it.
+        // Both the idempotency check (AnyAsync) and the migration body are wrapped inside
+        // strategy.ExecuteAsync so NpgsqlRetryingExecutionStrategy retries both on transient
+        // Postgres failures. The ct argument is forwarded to the retry delay so host shutdown
+        // can interrupt a retry wait (up to maxRetryDelay:5s × maxRetryCount:3 = 15s otherwise).
+        // TODO [WARNING]: If _dbFactory.CreateDbContextAsync(ct) here fails (pool exhausted or
+        // transient error), the ExecuteAsync wrapper is never reached and startup migration aborts
+        // without any retry. The strategyCtx slot is also held for the full duration of the
+        // (potentially retried) migration, transiently doubling pool pressure alongside the inner
+        // 'db' context. An alternative is to obtain the strategy from inside the lambda (from 'db')
+        // and remove this outer strategyCtx checkout entirely.
+        // See Issue #2576 review findings (Correctness [WARNING], DotNetSpecialist [WARNING]).
+        await using var strategyCtx = await _dbFactory.CreateDbContextAsync(ct);
+        var strategy = strategyCtx.Database.CreateExecutionStrategy();
 
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
-
-        try
+        var migrated = await strategy.ExecuteAsync(async cancellationToken =>
         {
-            var counts = new MigrationCounts();
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
 
-            // 1. Pipeline config
-            await MigratePipelineConfigAsync(db, counts, ct);
+            // Idempotent check: if PipelineConfig row exists, migration is complete.
+            // Inside the retry wrapper so a transient failure here is retried, not aborted.
+            var hasConfig = await db.PipelineConfig.AnyAsync(cancellationToken);
+            if (hasConfig)
+            {
+                Logger.Information("ConfigMigration: PipelineConfig row exists, skipping migration");
+                return false;
+            }
 
-            // 2. Provider configs
-            await MigrateProviderConfigsAsync(db, counts, ct);
+            Logger.Information("ConfigMigration: Empty database detected, starting migration from {Path}", _configBasePath);
 
-            // 3. Agent profiles
-            await MigrateAgentProfilesAsync(db, counts, ct);
+            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
-            // 4. Quality gate configs
-            await MigrateQualityGateConfigsAsync(db, counts, ct);
+            try
+            {
+                var counts = new MigrationCounts();
 
-            // 5. Reviewer configs
-            await MigrateReviewerConfigsAsync(db, counts, ct);
+                // 1. Pipeline config
+                await MigratePipelineConfigAsync(db, counts, cancellationToken);
 
-            // 6. Projects + templates
-            await MigrateProjectsAsync(db, counts, ct);
+                // 2. Provider configs
+                await MigrateProviderConfigsAsync(db, counts, cancellationToken);
 
-            // 7. Consolidation runs
-            await MigrateConsolidationRunsAsync(db, counts, ct);
+                // 3. Agent profiles
+                await MigrateAgentProfilesAsync(db, counts, cancellationToken);
 
-            // 8. Pipeline runs
-            await MigratePipelineRunsAsync(db, counts, ct);
+                // 4. Quality gate configs
+                await MigrateQualityGateConfigsAsync(db, counts, cancellationToken);
 
-            await db.SaveChangesAsync(ct);
-            await transaction.CommitAsync(ct);
+                // 5. Reviewer configs
+                await MigrateReviewerConfigsAsync(db, counts, cancellationToken);
 
-            Logger.Information(
-                "ConfigMigration: Completed successfully. " +
-                "PipelineConfig: {PipelineConfig}, ProviderConfigs: {Providers}, " +
-                "AgentProfiles: {Profiles}, QualityGates: {QualityGates}, " +
-                "Reviewers: {Reviewers}, Projects: {Projects}, " +
-                "Templates: {Templates}, ConsolidationRuns: {ConsolidationRuns}, " +
-                "PipelineRuns: {PipelineRuns}",
-                counts.PipelineConfig, counts.ProviderConfigs,
-                counts.AgentProfiles, counts.QualityGates,
-                counts.Reviewers, counts.Projects,
-                counts.Templates, counts.ConsolidationRuns,
-                counts.PipelineRuns);
+                // 6. Projects + templates
+                await MigrateProjectsAsync(db, counts, cancellationToken);
 
-            return true;
-        }
-        catch (Exception ex)
-        {
-            await transaction.RollbackAsync(ct);
-            Logger.Error(ex, "ConfigMigration: Failed — transaction rolled back");
-            throw;
-        }
+                // 7. Consolidation runs
+                await MigrateConsolidationRunsAsync(db, counts, cancellationToken);
+
+                // 8. Pipeline runs
+                await MigratePipelineRunsAsync(db, counts, cancellationToken);
+
+                await db.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+
+                Logger.Information(
+                    "ConfigMigration: Completed successfully. " +
+                    "PipelineConfig: {PipelineConfig}, ProviderConfigs: {Providers}, " +
+                    "AgentProfiles: {Profiles}, QualityGates: {QualityGates}, " +
+                    "Reviewers: {Reviewers}, Projects: {Projects}, " +
+                    "Templates: {Templates}, ConsolidationRuns: {ConsolidationRuns}, " +
+                    "PipelineRuns: {PipelineRuns}",
+                    counts.PipelineConfig, counts.ProviderConfigs,
+                    counts.AgentProfiles, counts.QualityGates,
+                    counts.Reviewers, counts.Projects,
+                    counts.Templates, counts.ConsolidationRuns,
+                    counts.PipelineRuns);
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                Logger.Error(ex, "ConfigMigration: Failed — transaction rolled back");
+                throw;
+            }
+        }, ct);
+
+        return migrated;
     }
 
     private async Task MigratePipelineConfigAsync(PipelineDbContext db, MigrationCounts counts, CancellationToken ct)

@@ -579,99 +579,125 @@ public static class ConfigEndpoints
         if (bundle is null)
             return TypedResults.BadRequest(new ImportExportResult { Success = false, Message = "Empty or invalid bundle" });
 
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
-
-        // Clear existing config (not runs, consolidation data, or work items — those are preserved).
-        db.PipelineConfig.RemoveRange(db.PipelineConfig);
-        db.ProviderConfigs.RemoveRange(db.ProviderConfigs);
-        db.AgentProfiles.RemoveRange(db.AgentProfiles);
-        db.QualityGateConfigs.RemoveRange(db.QualityGateConfigs);
-        db.ReviewerConfigs.RemoveRange(db.ReviewerConfigs);
-        db.Projects.RemoveRange(db.Projects);
-        db.PipelineJobTemplates.RemoveRange(db.PipelineJobTemplates);
-        await db.SaveChangesAsync(ct);
-
-        if (bundle.PipelineConfig is not null)
+        // Obtain the execution strategy from a short-lived context that is properly disposed.
+        // CreateDbContext() checks out a pooled slot — callers must dispose it to return the slot.
+        // The lambda re-creates the DbContext on each retry attempt so the change-tracker
+        // starts clean even if a previous attempt left partial state.
+        // TODO [WARNING]: If dbFactory.CreateDbContextAsync(ct) itself fails (e.g. pool exhausted or
+        // transient error), the ExecuteAsync wrapper is never reached and the caller gets an unhandled
+        // exception without benefit of the retry strategy. Because CreateExecutionStrategy() is a pure
+        // in-memory call, an alternative is to obtain the strategy from inside the lambda (from the
+        // same 'db' context) and remove this outer strategyCtx checkout entirely.
+        // See Issue #2576 review findings (Correctness [WARNING], DotNetSpecialist [WARNING]).
+        await using var strategyCtx = await dbFactory.CreateDbContextAsync(ct);
+        var strategy = strategyCtx.Database.CreateExecutionStrategy();
+        // Pass ct as the second argument so the ExecuteAsync overload can forward it to the retry
+        // delay between attempts; without it a cancelled request cannot interrupt a retry wait
+        // (up to maxRetryDelay:5s × maxRetryCount:3 = 15s of uninterruptible delay).
+        await strategy.ExecuteAsync(async cancellationToken =>
         {
-            db.PipelineConfig.Add(new PipelineConfigEntity
-            {
-                Id = Guid.NewGuid(),
-                Configuration = bundle.PipelineConfig
-            });
-        }
+            await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
-        foreach (var p in bundle.ProviderConfigs ?? [])
-        {
-            db.ProviderConfigs.Add(new ProviderConfigEntity
-            {
-                Id = p.Id,
-                Kind = p.Kind,
-                DisplayName = p.DisplayName,
-                ProviderType = p.ProviderType,
-                Enabled = p.Enabled,
-                Configuration = p.Configuration
-            });
-        }
+            // Clear existing config (not runs, consolidation data, or work items — those are preserved).
+            // TODO [WARNING]: db.PipelineConfig on a freshly created DbContext returns the change-tracker's
+            // local cache, which is empty. RemoveRange(db.PipelineConfig) is therefore a no-op against
+            // tracked state. Verify that EF Core translates RemoveRange(DbSet<T>) into a bulk DELETE SQL
+            // statement rather than relying on tracked entities — if the delete only fires via tracked
+            // state, rows are silently not deleted on retry attempts where the cache starts clean.
+            // See Issue #2576 review findings (Correctness [WARNING], DotNetSpecialist [WARNING]).
+            db.PipelineConfig.RemoveRange(db.PipelineConfig);
+            db.ProviderConfigs.RemoveRange(db.ProviderConfigs);
+            db.AgentProfiles.RemoveRange(db.AgentProfiles);
+            db.QualityGateConfigs.RemoveRange(db.QualityGateConfigs);
+            db.ReviewerConfigs.RemoveRange(db.ReviewerConfigs);
+            db.Projects.RemoveRange(db.Projects);
+            db.PipelineJobTemplates.RemoveRange(db.PipelineJobTemplates);
+            await db.SaveChangesAsync(cancellationToken);
 
-        foreach (var a in bundle.AgentProfiles ?? [])
-        {
-            db.AgentProfiles.Add(new AgentProfileEntity
+            if (bundle.PipelineConfig is not null)
             {
-                Id = a.Id,
-                Name = a.Name,
-                Configuration = a.Configuration
-            });
-        }
+                db.PipelineConfig.Add(new PipelineConfigEntity
+                {
+                    Id = Guid.NewGuid(),
+                    Configuration = bundle.PipelineConfig
+                });
+            }
 
-        foreach (var q in bundle.QualityGateConfigs ?? [])
-        {
-            db.QualityGateConfigs.Add(new QualityGateConfigEntity
+            foreach (var p in bundle.ProviderConfigs ?? [])
             {
-                Id = q.Id,
-                Name = q.Name,
-                Configuration = q.Configuration
-            });
-        }
+                db.ProviderConfigs.Add(new ProviderConfigEntity
+                {
+                    Id = p.Id,
+                    Kind = p.Kind,
+                    DisplayName = p.DisplayName,
+                    ProviderType = p.ProviderType,
+                    Enabled = p.Enabled,
+                    Configuration = p.Configuration
+                });
+            }
 
-        foreach (var r in bundle.ReviewerConfigs ?? [])
-        {
-            db.ReviewerConfigs.Add(new ReviewerConfigEntity
+            foreach (var a in bundle.AgentProfiles ?? [])
             {
-                Id = r.Id,
-                Name = r.Name,
-                Configuration = r.Configuration
-            });
-        }
+                db.AgentProfiles.Add(new AgentProfileEntity
+                {
+                    Id = a.Id,
+                    Name = a.Name,
+                    Configuration = a.Configuration
+                });
+            }
 
-        foreach (var proj in bundle.Projects ?? [])
-        {
-            db.Projects.Add(new ProjectEntity
+            foreach (var q in bundle.QualityGateConfigs ?? [])
             {
-                Id = proj.Id,
-                Name = proj.Name,
-                Enabled = proj.Enabled,
-                Description = proj.Description,
-                Settings = proj.Settings,
-                TemplateIds = proj.TemplateIds ?? []
-            });
-        }
+                db.QualityGateConfigs.Add(new QualityGateConfigEntity
+                {
+                    Id = q.Id,
+                    Name = q.Name,
+                    Configuration = q.Configuration
+                });
+            }
 
-        foreach (var t in bundle.JobTemplates ?? [])
-        {
-            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
+            foreach (var r in bundle.ReviewerConfigs ?? [])
             {
-                Id = t.Id,
-                ProjectId = t.ProjectId,
-                Name = t.Name,
-                Configuration = t.Configuration
-            });
-        }
+                db.ReviewerConfigs.Add(new ReviewerConfigEntity
+                {
+                    Id = r.Id,
+                    Name = r.Name,
+                    Configuration = r.Configuration
+                });
+            }
 
-        await db.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
+            foreach (var proj in bundle.Projects ?? [])
+            {
+                db.Projects.Add(new ProjectEntity
+                {
+                    Id = proj.Id,
+                    Name = proj.Name,
+                    Enabled = proj.Enabled,
+                    Description = proj.Description,
+                    Settings = proj.Settings,
+                    TemplateIds = proj.TemplateIds ?? []
+                });
+            }
+
+            foreach (var t in bundle.JobTemplates ?? [])
+            {
+                db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
+                {
+                    Id = t.Id,
+                    ProjectId = t.ProjectId,
+                    Name = t.Name,
+                    Configuration = t.Configuration
+                });
+            }
+
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }, ct);
 
         // Invalidate config store caches after the raw DB write (bypasses the store layer).
+        // This must run AFTER the ExecuteAsync wrapper so it fires exactly once on commit,
+        // not inside the retry lambda where it could fire on a failed attempt before rollback.
         configStore.InvalidateCaches();
 
         return TypedResults.Ok(new ImportExportResult

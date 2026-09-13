@@ -1,5 +1,7 @@
+using System.Net.Http;
 using System.Threading.RateLimiting;
 using Microsoft.Extensions.Hosting;
+using Polly.CircuitBreaker;
 using Serilog;
 
 namespace CodingAgent.Pipeline.LeaderElection;
@@ -20,7 +22,11 @@ namespace CodingAgent.Pipeline.LeaderElection;
 /// </summary>
 public abstract class LeaderElectedPollingService : BackgroundService
 {
-    private static readonly ILogger Log = Serilog.Log.ForContext<LeaderElectedPollingService>();
+    // Use a property (not a readonly field) so tests that replace Serilog.Log.Logger
+    // after class load can intercept log output. A readonly field captures the logger
+    // at class-load time; a property calls ForContext<T>() on the current global logger
+    // at emit time, which correctly reflects any logger replacement in tests.
+    private static ILogger Log => Serilog.Log.ForContext<LeaderElectedPollingService>();
 
     /// <summary>
     /// The leader election service used to determine if this instance holds the leader lease.
@@ -132,6 +138,10 @@ public abstract class LeaderElectedPollingService : BackgroundService
             {
                 break;
             }
+            catch (Exception ex) when (IsTransientPollingException(ex))
+            {
+                Log.Warning(ex, "{ServiceName}: transient error in poll cycle — will retry next interval", ServiceName);
+            }
             catch (Exception ex)
             {
                 Log.Error(ex, "{ServiceName}: unhandled error in poll cycle", ServiceName);
@@ -153,4 +163,30 @@ public abstract class LeaderElectedPollingService : BackgroundService
     /// <see cref="RunLeadershipTermAsync"/> implementation.
     /// </summary>
     protected abstract Task OnPollCycleAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Returns <c>true</c> if <paramref name="ex"/> is a transient infrastructure exception
+    /// that is expected to resolve on the next poll cycle (e.g. a momentary network blip or
+    /// circuit-breaker open state). Transient exceptions are logged at Warning level; all other
+    /// exceptions are logged at Error level.
+    /// </summary>
+    /// <remarks>
+    /// This assembly (<c>CodingAgent.Infrastructure.Common</c>) has no Npgsql or EF Core dependency,
+    /// so <c>NpgsqlException.IsTransient</c> is intentionally absent here. DB-layer transient
+    /// classification lives in <c>ResiliencePipelineRegistrationExtensions.IsTransientDbException</c>
+    /// in the Persistence assembly. Concrete subclasses that communicate via HTTP (e.g.
+    /// <see cref="ReconciliationService"/>) are fully covered by this predicate.
+    /// </remarks>
+    protected static bool IsTransientPollingException(Exception ex) =>
+        // TODO [WARNING]: System.IO.IOException is the base class for DirectoryNotFoundException,
+        // FileNotFoundException, EndOfStreamException, and other non-transient I/O errors. A
+        // FileNotFoundException from application logic (e.g. missing config file) would be silently
+        // downgraded to Warning and retried indefinitely. Consider narrowing to SocketException
+        // (which derives from IOException and covers network-transient failures) or adding explicit
+        // exclusions for non-transient IOException subclasses.
+        // See Issue #2576 review findings (Correctness [WARNING]).
+        ex is HttpRequestException
+            or TimeoutException
+            or System.IO.IOException
+            or BrokenCircuitException;
 }

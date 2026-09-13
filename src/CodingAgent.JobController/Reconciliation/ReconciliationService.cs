@@ -22,7 +22,9 @@ namespace CodingAgent.JobController.Reconciliation;
 // using [InternalsVisibleTo] with an internal class instead.
 public class ReconciliationService : LeaderElectedPollingService, IReconciliationTrigger
 {
-    private static readonly Serilog.ILogger Log = Serilog.Log.ForContext<ReconciliationService>();
+    // Use a property (not a readonly field) so tests that replace Serilog.Log.Logger
+    // after class load can intercept log output.
+    private static Serilog.ILogger Log => Serilog.Log.ForContext<ReconciliationService>();
 
     private readonly ReconciliationLoop _loop;
 
@@ -117,6 +119,10 @@ public class ReconciliationService : LeaderElectedPollingService, IReconciliatio
             {
                 break;
             }
+            catch (Exception ex) when (IsTransientPollingException(ex))
+            {
+                Log.Warning(ex, "ReconciliationService: transient error in poll cycle — will retry next interval");
+            }
             catch (Exception ex)
             {
                 Log.Error(ex, "ReconciliationService: unhandled error in poll cycle");
@@ -185,6 +191,10 @@ public class ReconciliationService : LeaderElectedPollingService, IReconciliatio
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             // Expected on leadership loss
+        }
+        catch (Exception ex) when (IsTransientPollingException(ex))
+        {
+            Log.Warning(ex, "ReconciliationService: transient error in {Task} — will retry next cycle", name);
         }
         catch (Exception ex)
         {
