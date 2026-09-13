@@ -96,7 +96,7 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
 
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(
             new LoggerConfiguration().CreateLogger(),
-            new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir },
+            new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir, DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10" },
             mockProjectStore.Object,
             mockHistory.Object,
             store,

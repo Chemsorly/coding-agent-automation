@@ -216,10 +216,10 @@ public sealed class SynchronousDispatchEndpointTests
         statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
     }
 
-    // ── Acceptance Criterion: 409 when no template for selector ─────────────
+    // ── Acceptance Criterion: 422 when no template for selector ─────────────
 
     [Fact]
-    public async Task DispatchWorkItem_WhenNoTemplateForSelector_Returns409()
+    public async Task DispatchWorkItem_WhenNoTemplateForSelector_Returns422()
     {
         var dbFactory = CreateDbFactory();
         // Template only has "kiro,dotnet", not "opencode,java"
@@ -232,8 +232,11 @@ public sealed class SynchronousDispatchEndpointTests
         var result = await WorkItemEndpoints.DispatchWorkItem(
             request, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
 
-        // Assert: 409 (no template)
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>();
+        // Assert: 422 Unprocessable Entity (permanent config error — no job template for selector).
+        // Distinct from 409 (transient capacity) so callers can distinguish permanent vs transient failures.
+        var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
+        statusResult.Should().NotBeNull();
+        statusResult!.StatusCode.Should().Be(StatusCodes.Status422UnprocessableEntity);
     }
 
     // ── Acceptance Criterion: PipelineRun registered in RunService ────────────

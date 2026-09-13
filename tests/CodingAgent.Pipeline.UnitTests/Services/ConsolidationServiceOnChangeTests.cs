@@ -42,7 +42,7 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
 
         _sut = new ConsolidationService(new ConsolidationServiceDependencies(
             new LoggerConfiguration().CreateLogger(),
-            new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir },
+            new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir, DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10" },
             mockProjectStore.Object,
             mockHistory.Object,
             new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs")),

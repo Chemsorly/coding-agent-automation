@@ -711,9 +711,12 @@ public static class WorkItemEndpoints
         var template = templateStore.Resolve(request.AgentSelector ?? "");
         if (template is null)
         {
-            Log.Warning("DispatchWorkItem: no job template for selector {Selector} — returning 409",
+            Log.Warning("DispatchWorkItem: no job template for selector {Selector} — returning 422",
                 request.AgentSelector);
-            return TypedResults.Conflict($"No job template for agent selector: {request.AgentSelector}");
+            // 422 Unprocessable Entity — permanent config error (no job template for this selector).
+            // Distinct from 409 Conflict (transient capacity limit) so callers can differentiate
+            // permanent failures (cascade run to Failed) from transient ones (leave Queued, retry later).
+            return TypedResults.StatusCode(StatusCodes.Status422UnprocessableEntity);
         }
 
         var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);

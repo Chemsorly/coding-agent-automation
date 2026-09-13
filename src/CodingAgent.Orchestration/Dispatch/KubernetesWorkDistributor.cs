@@ -86,6 +86,19 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
             return new DistributionResult(true, workItemId.ToString(), null, Queued: false);
         }
         catch (HttpRequestException ex) when (
+            ex.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity)
+        {
+            // 422 = permanent failure — no job template exists for the resolved agent selector.
+            // Retrying will always produce the same result; the run should be cascaded to Failed
+            // so it surfaces in the Attention view rather than staying Queued forever.
+            _logger.LogWarning(
+                "Dispatch endpoint returned 422 for consolidation {IssueIdentifier} — no job template for selector '{AgentSelector}' (permanent failure)",
+                request.IssueIdentifier, request.AgentSelector);
+            return new DistributionResult(false, null,
+                $"No job template for agent selector '{request.AgentSelector}': {ex.Message}",
+                IsPermanentFailure: true);
+        }
+        catch (HttpRequestException ex) when (
             ex.StatusCode == System.Net.HttpStatusCode.Conflict ||
             ex.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
         {
@@ -96,6 +109,12 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
         }
         catch (Exception ex)
         {
+            // TODO [WARNING]: This catch-all returns IsPermanentFailure=false (transient) by default.
+            // Unexpected exceptions (e.g. JsonException on malformed response, TaskCanceledException
+            // on timeout) are treated as transient, which leaves the run Queued indefinitely if
+            // the condition is persistent. With the new permanent/transient distinction, it is worth
+            // auditing whether some exception types should be mapped to IsPermanentFailure=true.
+            // (review-findings.md DotNetSpecialist warning, KubernetesWorkDistributor.cs:107)
             _logger.LogError(ex,
                 "Failed to dispatch consolidation WorkItem via Pipeline API for issue {IssueIdentifier}",
                 request.IssueIdentifier);

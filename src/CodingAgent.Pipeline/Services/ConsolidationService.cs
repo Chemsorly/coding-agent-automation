@@ -114,6 +114,31 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             templateName = "Global";
         }
 
+        // Fail fast if required labels cannot be resolved (CRITICAL fix — issue #2536).
+        // BuildNewRun coalesces an empty resolution to null; a null QueuedRequiredLabels
+        // causes ConsolidationDispatcher to pick an arbitrary profile (step 3 fallback)
+        // which may have no job template → dispatch cascades the run to Failed immediately.
+        // Rejecting here is strictly better: it surfaces the config gap to the caller rather
+        // than silently persisting a Queued run that will fail on its first dispatch attempt.
+        // Note: this only fires when DefaultRequiredAgentLabels is empty AND no per-run
+        // repo labels are resolvable — i.e., there is genuinely no configured routing target.
+        // TODO [WARNING]: This returns null without adding anything to _runningRuns. Callers
+        // that receive null are responsible for surfacing a user-visible error (e.g. an HTTP
+        // 400 Bad Request or a UI toast). If a caller silently discards the null, operators
+        // clicking "Run consolidation" will get no feedback that DefaultRequiredAgentLabels
+        // is not configured. Verify that all call sites of TriggerAsync handle null with a
+        // visible error rather than a swallowed null-return. (review-findings.md correctness warning)
+        var resolvedLabels = LabelResolver.ResolveRequiredLabels(repoConfig: null, _config);
+        if (resolvedLabels.Count == 0)
+        {
+            _logger.Warning(
+                "Consolidation run rejected: DefaultRequiredAgentLabels is not configured and no " +
+                "required labels can be resolved. Configure DefaultRequiredAgentLabels to route " +
+                "consolidation runs to the correct agent. Type={Type}, TemplateId={TemplateId}",
+                type, templateIdValue ?? "Global");
+            return null;
+        }
+
         var run = BuildNewRun(type, templateIdValue, templateName, projectName, autoDispatch, _config);
 
         if (!_runningRuns.TryAdd(key, run))
