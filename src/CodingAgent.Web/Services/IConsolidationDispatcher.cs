@@ -15,8 +15,16 @@ namespace CodingAgent.Web.Services;
 public interface IConsolidationDispatcher
 {
     /// <summary>
-    /// Dispatches the consolidation run to a K8s agent. If dispatch fails (no capacity,
-    /// network error) the run remains <c>Queued</c> — startup rehydration retries on next restart.
+    /// Dispatches the consolidation run to a K8s agent.
+    /// <para>
+    /// On transient failure (capacity limit, PVC unavailable) the run remains <c>Queued</c> —
+    /// startup rehydration retries on next restart.
+    /// </para>
+    /// <para>
+    /// On permanent failure (no job template for the resolved agent selector) the run is
+    /// cascaded to <c>Failed</c> so it surfaces in the Attention view rather than staying
+    /// <c>Queued</c> forever.
+    /// </para>
     /// Never throws for runtime failures; logs and swallows them so the caller's status message
     /// is still shown. Throws <see cref="ArgumentNullException"/> if <paramref name="run"/> is null.
     /// </summary>

@@ -81,7 +81,7 @@ public sealed class ConsolidationServiceEvictionTests : IDisposable
             .Setup(x => x.LoadAllRunsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ConsolidationRun>());
 
-        _config = new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir };
+        _config = new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir, DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10" };
     }
 
     public void Dispose()

@@ -51,6 +51,11 @@ internal static class ConsolidationRehydrationExtensions
         // Rehydrate queued consolidation runs via IConsolidationDispatcher (unified dispatch path).
         // IConsolidationDispatcher is shared with the UI trigger path so both use identical
         // JobDistributionRequest construction.
+        // TODO [WARNING]: This startup rehydration only runs once per pod restart. Transient
+        // dispatch failures (409 capacity / 503 PVC) that occur while the orchestrator is
+        // running are now retried by ConsolidationRetryBackgroundService, but this path still
+        // handles the initial rehydration on startup. See ConsolidationRetryBackgroundService
+        // for the bounded background retry sweep added as part of issue #2536.
         var queuedRuns = await consolidationService.RehydrateQueuedRunsAsync(CancellationToken.None);
         if (queuedRuns.Count > 0)
         {

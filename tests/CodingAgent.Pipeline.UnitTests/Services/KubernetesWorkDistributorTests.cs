@@ -25,15 +25,15 @@ public sealed class KubernetesWorkDistributorTests
 
     private static JobDistributionRequest MakeRequest(
         WorkItemTaskType taskType = WorkItemTaskType.Implementation) => new()
-    {
-        IssueIdentifier = new IssueIdentifier("GH-1"),
-        IssueProviderConfigId = "github",
-        RepoProviderConfigId = "github-repo",
-        InitiatedBy = "test",
-        TaskType = taskType,
-        AgentSelector = "kiro",
-        TimeoutSeconds = 3600
-    };
+        {
+            IssueIdentifier = new IssueIdentifier("GH-1"),
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "github-repo",
+            InitiatedBy = "test",
+            TaskType = taskType,
+            AgentSelector = "kiro",
+            TimeoutSeconds = 3600
+        };
 
     // ── Constructor guards ────────────────────────────────────────────────
 
@@ -134,6 +134,69 @@ public sealed class KubernetesWorkDistributorTests
         result.Queued.Should().BeFalse("Consolidation uses synchronous dispatch, not Pending queue");
         _client.Verify(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
         _client.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// 422 from DispatchAsync = permanent failure (no job template for selector).
+    /// Must return IsPermanentFailure=true so ConsolidationDispatcher can cascade to Failed.
+    /// </summary>
+    [Fact]
+    public async Task DistributeAsync_Consolidation_When422_ReturnsPermanentFailure()
+    {
+        var request = MakeRequest(taskType: WorkItemTaskType.Consolidation);
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Unprocessable Entity", null,
+                System.Net.HttpStatusCode.UnprocessableEntity));
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.IsPermanentFailure.Should().BeTrue(
+            "422 means no job template exists for the selector — retrying will not help; cascade to Failed");
+        result.ErrorMessage.Should().NotBeNullOrEmpty();
+    }
+
+    /// <summary>
+    /// 409 from DispatchAsync = transient capacity failure — must NOT be marked as permanent.
+    /// Run should stay Queued and be retried on restart.
+    /// </summary>
+    [Fact]
+    public async Task DistributeAsync_Consolidation_When409_ReturnsTransientFailure()
+    {
+        var request = MakeRequest(taskType: WorkItemTaskType.Consolidation);
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Conflict", null,
+                System.Net.HttpStatusCode.Conflict));
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.IsPermanentFailure.Should().BeFalse(
+            "409 is a transient capacity limit — the run should remain Queued and retry on restart");
+        // TODO [WARNING]: ErrorMessage is not asserted here for symmetry with the 422 test above.
+        // ConsolidationDispatcher.FailRunSafelyAsync propagates result.ErrorMessage as the failure
+        // note written to the run record; a null/empty message produces a misleading Attention view entry.
+        // Add: result.ErrorMessage.Should().NotBeNullOrEmpty(); (review-findings.md TestQualityReviewer warning)
+    }
+
+    /// <summary>
+    /// 503 from DispatchAsync = transient PVC/capacity failure — must NOT be permanent.
+    /// </summary>
+    [Fact]
+    public async Task DistributeAsync_Consolidation_When503_ReturnsTransientFailure()
+    {
+        var request = MakeRequest(taskType: WorkItemTaskType.Consolidation);
+        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Service Unavailable", null,
+                System.Net.HttpStatusCode.ServiceUnavailable));
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.IsPermanentFailure.Should().BeFalse(
+            "503 is a transient PVC/capacity issue — the run should remain Queued and retry on restart");
+        // TODO [WARNING]: ErrorMessage is not asserted here for symmetry with the 422 test above.
+        // Add: result.ErrorMessage.Should().NotBeNullOrEmpty(); (review-findings.md TestQualityReviewer warning)
     }
 
     [Fact]

@@ -42,7 +42,7 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
 
         _sut = new ConsolidationService(new ConsolidationServiceDependencies(
             new LoggerConfiguration().CreateLogger(),
-            new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir },
+            new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir, DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10" },
             mockProjectStore.Object,
             mockHistory.Object,
             new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs")),
@@ -115,7 +115,9 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
     {
         var suggestions = new HarnessSuggestions
         {
-            BasedOnRunCount = 1, GeneratedAtUtc = DateTime.UtcNow, SuccessRate = 1.0m,
+            BasedOnRunCount = 1,
+            GeneratedAtUtc = DateTime.UtcNow,
+            SuccessRate = 1.0m,
             Suggestions = new List<HarnessSuggestion>()
         };
         _onChangeLog.Clear();
