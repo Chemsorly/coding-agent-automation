@@ -165,13 +165,15 @@ public sealed class ConsolidationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task TriggerAsync_WithNoDefaultRequiredAgentLabels_RejectsRun()
+    public async Task TriggerAsync_WithNoDefaultRequiredAgentLabels_QueuesRun()
     {
-        // Regression test for issue #2536 (CRITICAL fix): when DefaultRequiredAgentLabels is
-        // not configured, required labels cannot be resolved at trigger time. Persisting a run
-        // with null QueuedRequiredLabels would cause the dispatcher to pick an arbitrary profile
-        // (step 3 fallback) that likely has no job template → cascade to Failed on first dispatch.
-        // Fail fast at trigger time instead: return null with a config-gap warning.
+        // When DefaultRequiredAgentLabels is not configured, TriggerAsync should still queue
+        // the run. QueuedRequiredLabels will be null, and ConsolidationDispatcher.ResolveSelector
+        // will fall back to the first enabled profile (step 3). If that profile has no job
+        // template the dispatch endpoint returns 422 → IsPermanentFailure=true → the run
+        // cascades to Failed with a clear error message. This is preferable to rejecting at
+        // trigger time, which would display a misleading "already running/queued or template
+        // not found" error on the consolidation page.
         // Use a dedicated SUT without DefaultRequiredAgentLabels (unlike _config which has it set).
         var configWithoutLabels = new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir };
         var sutWithoutLabels = new ConsolidationService(new ConsolidationServiceDependencies(
@@ -186,15 +188,14 @@ public sealed class ConsolidationServiceTests : IDisposable
         var run = await sutWithoutLabels.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
 
-        run.Should().BeNull(
-            "TriggerAsync must reject the run when DefaultRequiredAgentLabels is not configured — " +
-            "persisting it would create a Queued run that fails immediately on dispatch");
-        // TODO [WARNING]: This test only asserts TriggerAsync returns null. It does not verify
-        // that no run was persisted to the FileSystemConsolidationRunStore. If the implementation
-        // were changed to persist the run before the label-resolution check and then return null,
-        // a dangling Queued run would exist in the store but this test would still pass.
-        // Add: Directory.EnumerateFiles(_runsDir).Should().BeEmpty("rejected run must not be persisted");
-        // (review-findings.md TestQualityReviewer warning, ConsolidationServiceTests.cs:165)
+        run.Should().NotBeNull(
+            "TriggerAsync must queue the run even when DefaultRequiredAgentLabels is not configured — " +
+            "the dispatcher will cascade it to Failed with a clear error message if no profile matches");
+        run!.Status.Should().Be(ConsolidationRunStatus.Queued,
+            "a newly triggered run must start in Queued status regardless of label configuration");
+        run.QueuedRequiredLabels.Should().BeNullOrEmpty(
+            "when DefaultRequiredAgentLabels is empty, QueuedRequiredLabels is null — " +
+            "the dispatcher falls back to the first enabled profile");
     }
 
     [Fact]
