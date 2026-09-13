@@ -10,8 +10,8 @@ namespace CodingAgent.Scheduler.Services;
 
 /// <summary>
 /// Leader-elected background service that polls for Pending WorkItems and dispatches them via
-/// <c>POST /api/work-items/{id}/dispatch</c>. Intended to become the sole dispatcher once the
-/// API-side <c>WorkItemDispatchService</c> is disabled via <c>WorkDistribution:Dispatch:Enabled=false</c>.
+/// <c>POST /api/work-items/{id}/dispatch</c>. This is the sole dispatcher following the
+/// post-cutover teardown of the API-side dispatch loop (issue #2547).
 ///
 /// <para>
 /// Each poll cycle:

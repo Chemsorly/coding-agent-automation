@@ -761,7 +761,7 @@ public static class WorkItemEndpoints
         // The label swap to agent:in-progress is NOT in scope — it happens in AgentHub.RegisterAgent.
         //
         // Note: this lock only protects concurrent calls to THIS endpoint. DispatchWorkItem
-        // (collection-level) and WorkItemDispatchService (background poller) do NOT acquire
+        // (collection-level) and WorkItemDispatchPoller (Scheduler background poller) do NOT acquire
         // this lock. Cross-path correctness is provided by the CAS in ExecuteDispatchLifecycleAsync.
         // TODO [WARNING]: The two-variable lock pattern (IAsyncDisposable lockHandle; ... await using var _ = lockHandle)
         // is non-idiomatic. Prefer a try/finally or helper wrapper if this method is refactored, to
@@ -783,7 +783,7 @@ public static class WorkItemEndpoints
         await using var _ = lockHandle;
 
         // TODO [WARNING]: The item's status is not re-read after acquiring the lock. If another
-        // dispatch path (WorkItemDispatchService or DispatchWorkItem) transitioned the item from
+        // dispatch path (WorkItemDispatchPoller or DispatchWorkItem) transitioned the item from
         // Pending to Dispatched between the fast-path check and lock acquisition, the gates may
         // pass and the lifecycle CAS will then abort (returning !dispatched → 503). The CAS
         // preserves correctness, but callers receive a transient 503 instead of a permanent 409,
@@ -913,7 +913,7 @@ public static class WorkItemEndpoints
                 {
                     dispatched = true;
                     // Label swap to agent:in-progress is handled by AgentHub.RegisterAgent when
-                    // the agent connects. No action needed here — same as WorkItemDispatchService.
+                    // the agent connects. No action needed here — same as WorkItemDispatchPoller.
                     return Task.CompletedTask;
                 },
                 ct,

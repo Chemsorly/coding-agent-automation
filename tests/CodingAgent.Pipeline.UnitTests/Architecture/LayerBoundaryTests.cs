@@ -763,12 +763,9 @@ public partial class LayerBoundaryTests
             // The T4 scanner does not detect the cast pattern — service is actively registered.
             "LoopStatusPollingService",
 
-            // WorkItemDispatchService is registered via AddHostedService lambda pattern:
-            //   services.AddHostedService(sp => sp.GetRequiredService<WorkItemDispatchService>())
-            // The T4 scanner only detects AddHostedService<T>() (generic form), not the lambda
-            // pattern that resolves a pre-registered singleton. The service IS actively registered
-            // in ApiServiceCollectionExtensions.AddApiOrchestration.
-            "WorkItemDispatchService",
+            // WorkItemDispatchService — DELETED in issue #2547 (post-cutover teardown of the API
+            // dispatch loop). The Scheduler-side WorkItemDispatchPoller is the sole dispatcher.
+            // "WorkItemDispatchService", // DELETED — do not add back
 
             // WorkItemDispatchPoller is conditionally registered in SchedulerServiceCollectionExtensions
             // under the Scheduler:Dispatch:Enabled flag (default false). Registration uses the lambda

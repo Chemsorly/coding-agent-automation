@@ -6,14 +6,6 @@ namespace CodingAgent.Kubernetes;
 /// </summary>
 public sealed class DispatchServiceOptions
 {
-    /// <summary>
-    /// Whether the API-side WorkItemDispatchService is enabled.
-    /// Default: <c>true</c> (preserves current behavior). Set to <c>false</c> to disable the API dispatch loop
-    /// when cutting over to the Scheduler-side <c>WorkItemDispatchPoller</c>.
-    /// Bound from <c>WorkDistribution:Dispatch:Enabled</c>.
-    /// </summary>
-    public bool Enabled { get; set; } = true;
-
     /// <summary>Interval between poll cycles in seconds. Default: 10.</summary>
     public int PollIntervalSeconds { get; set; } = 10;
 
