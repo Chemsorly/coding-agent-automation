@@ -171,6 +171,14 @@ public static class SchedulerServiceCollectionExtensions
         services.AddDispatchResolutionServices(includeWorkItemClient: true);
 
         // ── Work distributor (KubernetesWorkDistributor is already API-backed) ─
+        // TODO: The Scheduler host does not pass unifiedDispatchEnabled here, so it always
+        // defaults to false regardless of the Consolidation:UnifiedDispatch:Enabled config flag.
+        // The Scheduler host currently has no consolidation dispatch path (its only Consolidation
+        // reference is a retention-sweep metric), so this is not a defect today. However, if a
+        // future change routes consolidation through the Scheduler host, the flag would silently
+        // have no effect here. When that happens, wire the same flag read used in
+        // WorkDistributionRegistration.Consolidation.cs into this registration to keep both
+        // hosts consistent. (#2564 review finding)
         services.AddSingleton<IWorkDistributor>(sp => new KubernetesWorkDistributor(
             sp.GetRequiredService<IPipelineApiWorkItemClient>(),
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<KubernetesWorkDistributor>()));
