@@ -435,11 +435,6 @@ public sealed class ReconciliationServiceTests
 
         var leaderElection = MakeLeaderElection(isLeader: false); // not the leader; we invoke RunSafe directly
         var loop = new ReconciliationLoop(_workItemClient.Object, _k8sClient.Object, _options);
-        // TODO [WARNING]: 'svc' below is dead code — RunSafe is static so it is invoked with null
-        // instance via reflection. If RunSafe is ever made instance-level, the reflection call at
-        // runSafe!.Invoke(null, ...) will silently test the wrong call path. Consider removing 'svc'
-        // or guarding the invoke against null. See Issue #2576 review findings (DotNetSpecialist [WARNING]).
-        var svc = MakeService(leaderElection);
 
         // Invoke RunSafe via reflection with a task that throws HttpRequestException
         var runSafe = typeof(ReconciliationService).GetMethod(
@@ -483,7 +478,6 @@ public sealed class ReconciliationServiceTests
             .CreateLogger();
 
         var leaderElection = MakeLeaderElection(isLeader: false);
-        var svc = MakeService(leaderElection);
 
         var runSafe = typeof(ReconciliationService).GetMethod(
             "RunSafe", BindingFlags.NonPublic | BindingFlags.Static);
@@ -519,20 +513,6 @@ public sealed class ReconciliationServiceTests
         protected override int PollIntervalSeconds => 30_000;
 
         public TestableReconciliationService(ILeaderElectionService leaderElection, ReconciliationLoop loop)
-            : base(leaderElection, loop)
-        {
-        }
-    }
-
-    /// <summary>
-    /// Subclass with a fast (1-second) poll interval for log-level assertion tests,
-    /// so recovery cycles happen within the test's deadline.
-    /// </summary>
-    private sealed class FastPollingReconciliationService : ReconciliationService
-    {
-        protected override int PollIntervalSeconds => 1;
-
-        public FastPollingReconciliationService(ILeaderElectionService leaderElection, ReconciliationLoop loop)
             : base(leaderElection, loop)
         {
         }
