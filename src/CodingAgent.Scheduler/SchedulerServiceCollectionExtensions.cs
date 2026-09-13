@@ -339,8 +339,7 @@ public static class SchedulerServiceCollectionExtensions
 
         // ── WorkItemDispatchPoller (flag-off by default) ───────────────────────────────
         // Gates on Scheduler:Dispatch:Enabled (default false). Flip to true to enable
-        // the Scheduler-side dispatch loop as a replacement for the API-side
-        // WorkItemDispatchService (which is disabled via WorkDistribution:Dispatch:Enabled=false).
+        // the Scheduler-side dispatch loop. The API-side dispatch loop was removed in issue #2547.
         // Both flags default to preserving current behavior — merging this changes nothing.
         if (config.GetValue("Scheduler:Dispatch:Enabled", defaultValue: false))
         {

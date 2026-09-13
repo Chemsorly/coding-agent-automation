@@ -26,10 +26,10 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// (<see cref="WorkItemEndpoints.DispatchWorkItem"/>).
 ///
 /// <para>
-/// As of the Pending-queue restore (fix/restore-pending-queue), this endpoint is called by
-/// <see cref="WorkItemDispatchService"/> (not the Scheduler directly). The Scheduler now calls
-/// <c>POST /api/work-items</c> to create a <c>Pending</c> WorkItem; <c>WorkItemDispatchService</c>
-/// polls those items and calls <c>POST /api/work-items/dispatch</c> when capacity is available.
+/// As of the Pending-queue restore (fix/restore-pending-queue), this endpoint is called by the
+/// Scheduler-side <c>WorkItemDispatchPoller</c>. The Scheduler creates a <c>Pending</c> WorkItem
+/// via <c>POST /api/work-items</c>; <c>WorkItemDispatchPoller</c> then polls those items and calls
+/// <c>POST /api/work-items/dispatch</c> when capacity is available.
 /// </para>
 ///
 /// Covers:

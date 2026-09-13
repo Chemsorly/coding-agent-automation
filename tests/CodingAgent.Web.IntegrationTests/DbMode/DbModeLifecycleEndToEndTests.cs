@@ -80,7 +80,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
     [Fact]
     public async Task FullLifecycle_Dispatch_AgentAccepts_Completes_AllStatesConsistent()
     {
-        // Arrange: Create WorkItem directly as Dispatched (as WorkItemDispatchService does after
+        // Arrange: Create WorkItem directly as Dispatched (as WorkItemDispatchPoller does after
         // claiming a Pending item via ExecuteDispatchLifecycleAsync)
         var runId = Guid.NewGuid();
         await using (var db = await _dbFactory.CreateDbContextAsync())
@@ -998,7 +998,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
     ///
     /// This test directly exercises the <see cref="WorkItemStatus.Pending"/> entry point
     /// that <c>KubernetesWorkDistributor.DistributeAsync</c> now uses (via <c>CreateAsync</c>),
-    /// and the <c>Pending → Dispatched</c> transition that <c>WorkItemDispatchService</c>
+    /// and the <c>Pending → Dispatched</c> transition that <c>WorkItemDispatchPoller</c>
     /// performs via <c>DispatchLifecycleService.ExecuteDispatchLifecycleAsync</c>.
     ///
     /// Regression guard: if <c>CreateAsync</c> is reverted to <c>DispatchAsync</c> (skipping
@@ -1038,8 +1038,8 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
             item.DispatchedAt.Should().BeNull("no K8s Job has been created yet");
         }
 
-        // ── Phase 2: WorkItemDispatchService picks up Pending → transitions to Dispatched ───
-        // Simulate WorkItemDispatchService.ExecuteDispatchLifecycleAsync:
+        // ── Phase 2: WorkItemDispatchPoller picks up Pending → transitions to Dispatched ────
+        // Simulate WorkItemDispatchPoller.ExecuteDispatchLifecycleAsync:
         // TransitionIfAsync(Pending → Dispatched) is the CAS claim step.
         var transitioned = await _transitionService.TransitionIfAsync(
             runId,
@@ -1049,12 +1049,12 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
             ct: CancellationToken.None);
 
         transitioned.Should().BeTrue("TransitionIfAsync(Pending → Dispatched) must succeed — " +
-            "this is the CAS claim step inside WorkItemDispatchService.ExecuteDispatchLifecycleAsync");
+            "this is the CAS claim step inside WorkItemDispatchPoller.ExecuteDispatchLifecycleAsync");
 
         await using (var db = await _dbFactory.CreateDbContextAsync())
         {
             var item = await db.WorkItems.FindAsync(runId);
-            item!.Status.Should().Be(WorkItemStatus.Dispatched, "WorkItem must be Dispatched after WorkItemDispatchService claims it");
+            item!.Status.Should().Be(WorkItemStatus.Dispatched, "WorkItem must be Dispatched after WorkItemDispatchPoller claims it");
             item.DispatchedAt.Should().NotBeNull("DispatchedAt is set when the K8s Job is created");
         }
 
@@ -1102,7 +1102,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
 
     /// <summary>
     /// Regression: Within-tier PriorityWeight ordering is respected — a higher-weight item is
-    /// dispatched before a lower-weight one of the same task type when WorkItemDispatchService
+    /// dispatched before a lower-weight one of the same task type when WorkItemDispatchPoller
     /// polls the Pending queue.
     ///
     /// Regression guard: if the within-tier secondary sort (PriorityWeight DESC) is removed from
@@ -1153,7 +1153,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
             await db.SaveChangesAsync();
         }
 
-        // Act: simulate WorkItemDispatchService claiming items.
+        // Act: simulate WorkItemDispatchPoller claiming items.
         // With PriorityWeight DESC, CreatedAt ASC ordering the high-priority item must be claimed first.
         // We claim only the first item (maxConcurrent = 1 on a single-slot selector).
         var claimed = false;
@@ -1176,7 +1176,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
             var low = await db.WorkItems.FindAsync(lowId);
 
             high!.Status.Should().Be(WorkItemStatus.Dispatched,
-                "higher-priority item must be claimed first by WorkItemDispatchService");
+                "higher-priority item must be claimed first by WorkItemDispatchPoller");
             low!.Status.Should().Be(WorkItemStatus.Pending,
                 "lower-priority item must remain Pending until the higher-priority one is processed");
         }

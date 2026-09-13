@@ -185,10 +185,6 @@ database:
 workDistribution:
   # DispatchService settings
   dispatch:
-    # Whether the API-side WorkItemDispatchService is enabled.
-    # Set to false when cutting over dispatch to the Scheduler-side WorkItemDispatchPoller.
-    # Default: true (preserves current behavior).
-    enabled: true
     intervalSeconds: 10
     rateLimitPerSecond: 10
     # Maximum lifetime (seconds) of a chat session K8s Job pod.
@@ -402,8 +398,13 @@ scheduler:
     leaseName: ""
   dispatch:
     # Whether the Scheduler-side WorkItemDispatchPoller is enabled.
-    # Default: false (dormant until cutover). Set to true when disabling the API dispatch loop
-    # (workDistribution.dispatch.enabled=false) to cut over dispatch to the single Scheduler leader.
+    # The API-side dispatch loop has been removed (issue #2547). Set to true to enable
+    # the Scheduler WorkItemDispatchPoller as the sole dispatcher.
+    # TODO [WARNING]: This defaults to false. With the API-side dispatch loop removed and this
+    # flag still false, a fresh install or an upgrade that does not explicitly set this to true
+    # will have NO active dispatcher — Pending WorkItems will accumulate indefinitely and never
+    # be promoted to Dispatched. Operators MUST set scheduler.dispatch.enabled=true as part of
+    # the cutover. Consider adding a NOTES.txt warning or a Helm validation rule to catch this.
     enabled: false
   terminationGracePeriodSeconds: 90
   nodeSelector: {}

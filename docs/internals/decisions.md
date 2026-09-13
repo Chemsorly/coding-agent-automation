@@ -141,9 +141,9 @@ Leader election continues to handle multi-replica safety. The split was driven b
 
 **Context — regression being corrected:** #2322/#2323 relocated dispatch out of the JobController into the API's `WorkItemDispatchService`, registered on all replicas via `AlwaysLeaderService`. Because each replica builds its own concurrency snapshot from the DB, per-selector `maxConcurrent` is not enforced across replicas — observed live: 4 active pods for a cap of 3. This contradicts two recorded principles: "PipelineLoopService: full loop must be leader-gated in multi-replica deployments" (loops fire concurrently on non-gated replicas) and "the Scheduler is the designated owner of all scheduled/periodic background work; putting periodic logic in the API contradicts the Scheduler's role" (DatabaseMaintenanceService, Spec 047). `AlwaysLeaderService`'s own doc calls the gap "an accepted trade-off for the single-process deployment target" — but production runs the API multi-replica.
 
-**Status (2026-09-12):** In progress — tracked by epic #2541 (stateless endpoint #2542, leader-elected Scheduler poller + cutover flags #2545, flag-gated cutover #2546, post-cutover teardown of `WorkItemDispatchService`/`AlwaysLeaderService` #2547; dead-code cleanup #2543/#2544). Same-item double-dispatch is prevented by the `TransitionIfAsync(Pending→Dispatched)` CAS, so the cutover is flag-gated (`WorkDistribution:Dispatch:Enabled` off / `Scheduler:Dispatch:Enabled` on) and reversible via `helm rollback`.
+**Status (2026-09-13):** Complete — epic #2541 fully resolved. `WorkItemDispatchService` and `AlwaysLeaderService` removed from the API in issue #2547. The `WorkItemDispatchPoller` in the Scheduler is now the sole dispatcher. The `WorkDistribution:Dispatch:Enabled` flag and its Helm wiring have been removed; `Scheduler:Dispatch:Enabled` remains the control flag.
 
-**Reassess when:** If the API is ever intentionally reduced to a single replica (the `AlwaysLeaderService` assumption), the leader-elected Scheduler poller remains correct and simpler — there is no reason to revert dispatch into the API.
+**Reassess when:** No longer needs reassessment — the correct architecture is in place.
 
 ---
 

@@ -27,7 +27,7 @@ namespace CodingAgent.Orchestration.Dispatch;
 ///   <item>
 ///     All other task types (Implementation, Review, Decomposition) — calls
 ///     <c>POST /api/work-items</c> to create a <c>Pending</c> WorkItem visible in the UI queue.
-///     <c>WorkItemDispatchService</c> in the API polls those items ordered by
+///     <c>WorkItemDispatchPoller</c> in the Scheduler polls those items ordered by
 ///     <c>tier(TaskType) ASC, PriorityWeight DESC, CreatedAt ASC</c> (Review &gt; Decomposition &gt;
 ///     Implementation; within a tier, higher <c>PriorityWeight</c> first, then FIFO) and creates
 ///     the K8s Job when capacity is available. This preserves the UI queue so operators can
@@ -146,7 +146,7 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
                 "WorkItem {WorkItemId} enqueued as Pending via Pipeline API for issue {IssueIdentifier}",
                 workItemId, request.IssueIdentifier);
             // Queued=true: the item is in the Pending queue (visible in the UI).
-            // WorkItemDispatchService in the API will pick it up, apply PriorityWeight ordering,
+            // WorkItemDispatchPoller (Scheduler) will pick it up, apply PriorityWeight ordering,
             // and create the K8s Job when a slot is available.
             return new DistributionResult(true, workItemId.ToString(), null, Queued: true);
         }

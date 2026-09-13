@@ -168,8 +168,13 @@ Usage (inside an env: list, indented to 12):
   value: {{ include "coding-agent-automation.secretName" . | quote }}
 - name: WorkDistribution__JobTemplatesPath
   value: "/app/config/job-templates.yaml"
-- name: WorkDistribution__Dispatch__Enabled
-  value: {{ .Values.workDistribution.dispatch.enabled | quote }}
+{{- /* TODO [WARNING]: WorkDistribution__Dispatch__IntervalSeconds and the other Dispatch__* env vars
+     below are injected into the API container but the WorkItemDispatchService that consumed them was
+     removed in issue #2547. The API no longer starts a dispatch background loop, so these values are
+     dead configuration for the API container (they are still used by the Scheduler, which sources
+     them via its own env block in scheduler-deployment.yaml). The dead env vars are harmlessly ignored
+     at runtime but may confuse operators into thinking the API still dispatches. Consider moving these
+     to the Scheduler-only env block when the workDistributionEnv helper is next refactored. */}}
 - name: WorkDistribution__Dispatch__IntervalSeconds
   value: {{ .Values.workDistribution.dispatch.intervalSeconds | quote }}
 - name: WorkDistribution__Dispatch__RateLimitPerSecond
@@ -206,7 +211,12 @@ WorkDistribution__AgentServiceAccountName: "{{ include "coding-agent-automation.
 WorkDistribution__Namespace: {{ .Release.Namespace | quote }}
 WorkDistribution__OpencodeConfigSecretName: {{ include "coding-agent-automation.secretName" . | quote }}
 WorkDistribution__JobTemplatesPath: "/app/config/job-templates.yaml"
-WorkDistribution__Dispatch__Enabled: {{ .Values.workDistribution.dispatch.enabled | quote }}
+{{- /* TODO [WARNING]: WorkDistribution__Dispatch__IntervalSeconds and the other Dispatch__* keys
+     below are written into the API ConfigMap but the WorkItemDispatchService that consumed them was
+     removed in issue #2547. The API no longer starts a dispatch background loop, so these values are
+     dead configuration for the API container. They are still used by the Scheduler (sourced from the
+     same values.yaml section). The dead keys are harmlessly ignored at runtime but may mislead
+     operators. Consider moving them to the Scheduler-only ConfigMap when this helper is next refactored. */}}
 WorkDistribution__Dispatch__IntervalSeconds: {{ .Values.workDistribution.dispatch.intervalSeconds | quote }}
 WorkDistribution__Dispatch__RateLimitPerSecond: {{ .Values.workDistribution.dispatch.rateLimitPerSecond | quote }}
 WorkDistribution__Dispatch__ChatJobMaxDurationSeconds: {{ .Values.workDistribution.dispatch.chatJobMaxDurationSeconds | quote }}
