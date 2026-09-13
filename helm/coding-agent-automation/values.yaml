@@ -185,6 +185,10 @@ database:
 workDistribution:
   # DispatchService settings
   dispatch:
+    # Whether the API-side WorkItemDispatchService is enabled.
+    # Set to false when cutting over dispatch to the Scheduler-side WorkItemDispatchPoller.
+    # Default: true (preserves current behavior).
+    enabled: true
     intervalSeconds: 10
     rateLimitPerSecond: 10
     # Maximum lifetime (seconds) of a chat session K8s Job pod.
@@ -396,6 +400,11 @@ scheduler:
     # Scheduler-specific K8s Lease name — distinct from the API's lease.
     # Empty (default) = release-scoped: caa-<release>-scheduler-lock
     leaseName: ""
+  dispatch:
+    # Whether the Scheduler-side WorkItemDispatchPoller is enabled.
+    # Default: false (dormant until cutover). Set to true when disabling the API dispatch loop
+    # (workDistribution.dispatch.enabled=false) to cut over dispatch to the single Scheduler leader.
+    enabled: false
   terminationGracePeriodSeconds: 90
   nodeSelector: {}
   env:
