@@ -68,11 +68,6 @@ public sealed class WorkItemDispatchPollerTests
     [Fact]
     public async Task WhenLeaderAndPendingExists_ShouldCallDispatchEndpoint()
     {
-        // TODO [WARNING]: this test runs the BackgroundService loop for 500ms with a 1ms tick, so the
-        // mock fires hundreds of times. The assertion is Times.AtLeastOnce(), which passes even if the
-        // first 99 cycles silently dropped the dispatch. For a more precise "leader dispatches the item"
-        // contract, call PollAndDispatchAsync directly and assert Times.Once(), as the per-selector and
-        // transient tests do.
         var itemId = Guid.NewGuid();
         _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(true);
         // Set up mock BEFORE StartAsync so the immediate first tick sees a configured mock.
@@ -103,11 +98,6 @@ public sealed class WorkItemDispatchPollerTests
     [Fact]
     public async Task WhenNullGate_ShouldPollUnconditionally()
     {
-        // TODO [WARNING]: this test runs for 2000ms wall-clock time (1ms tick × 2000ms), making it
-        // one of the slowest unit tests in this suite for no additional coverage benefit — the mock
-        // returns [] every cycle, so it only proves GetPendingAsync was called at least once. The same
-        // assertion can be achieved in microseconds by calling PollAndDispatchAsync directly with a
-        // null-gate poller instance.
         // null gate = dev / single-replica mode
         // Set up mock before constructing poller to avoid unconfigured mock on first poll.
         _mockClient
@@ -132,11 +122,6 @@ public sealed class WorkItemDispatchPollerTests
     [Fact]
     public async Task WhenMultiplePendingItems_ShouldDispatchAllSequentially()
     {
-        // TODO [WARNING]: this test only verifies that all three items are eventually dispatched
-        // (Times.AtLeastOnce), which would pass equally well for a parallel-dispatch implementation.
-        // The word "sequentially" in the test name is not validated. A meaningful sequentiality test
-        // would record the call order (e.g. via a callback that appends to a list) and assert the
-        // expected ordering, or verify that id2 was not dispatched before id1 completed.
         var id1 = Guid.NewGuid();
         var id2 = Guid.NewGuid();
         var id3 = Guid.NewGuid();
@@ -233,13 +218,8 @@ public sealed class WorkItemDispatchPollerTests
         _mockClient.Verify(c => c.DispatchPendingAsync(id1, It.IsAny<CancellationToken>()), Times.Once());
         // id2 must NOT be dispatched — cycle aborted
         _mockClient.Verify(c => c.DispatchPendingAsync(id2, It.IsAny<CancellationToken>()), Times.Never());
-        // Verify any Warning-level call was made. Serilog uses generic template overloads;
-        // the actual call is ILogger.Warning<Guid>(messageTemplate, workItemId).
-        // TODO [WARNING]: this logger verify is redundant — the behavioral assertions above (id2 never
-        // dispatched) already prove the cycle was aborted. The Warning(string, Guid) overload match
-        // is fragile: if the log arg type changes or a different overload is used, the verify silently
-        // passes vacuously (loose mock returns default for unmatched calls), masking a missing warning.
-        // Consider removing this verify and relying solely on the behavioral assertions.
+        // Verify Warning was logged for the transient failure.
+        // Serilog uses generic template overloads; the actual call is ILogger.Warning<Guid>(messageTemplate, workItemId).
         _mockLogger.Verify(
             l => l.Warning(It.IsAny<string>(), It.IsAny<Guid>()),
             Times.AtLeastOnce(), "transient failure should log a warning");

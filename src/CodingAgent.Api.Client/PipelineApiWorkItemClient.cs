@@ -218,16 +218,11 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
 
     public async Task<DispatchPendingResult> DispatchPendingAsync(Guid workItemId, CancellationToken ct = default)
     {
-        // TODO [WARNING]: response is not disposed. Use `using var response = await _http.PostAsync(...)`
-        // to ensure the HttpResponseMessage is disposed after reading StatusCode. This matches the
-        // correct pattern for calls where the response body is not read (only the status code is used).
-        // Note: the pre-existing methods in this file (ClaimAsync, RequeueAsync, etc.) share the same
-        // pattern; this TODO covers the newly written code specifically.
-        var response = await _http.PostAsync(
+        using var response = await _http.PostAsync(
             $"/api/work-items/{workItemId}/dispatch",
             null,
             ct);
-        // Preserve the endpoint's intentional 409/503 distinction (resolves the former TODO [WARNING]).
+        // Preserve the endpoint's intentional 409/503 distinction.
         // 409 = permanent rejection (item not Pending, no template, concurrency limit —
         // do NOT retry this selector this cycle).
         // 503 = transient failure (PVC exhausted, lock timeout, K8s failure — retry next poll cycle).

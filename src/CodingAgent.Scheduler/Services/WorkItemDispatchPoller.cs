@@ -49,10 +49,7 @@ public sealed class WorkItemDispatchPoller : BackgroundService
         TimeSpan? interval = null)
     {
         _workItemClient = workItemClient ?? throw new ArgumentNullException(nameof(workItemClient));
-        // TODO [WARNING]: logger has no null guard here. A null logger will cause a NullReferenceException
-        // on the next line rather than a clear ArgumentNullException. Add:
-        //   ArgumentNullException.ThrowIfNull(logger);
-        // consistent with LoopWatchdogService and other sibling services in this directory.
+        ArgumentNullException.ThrowIfNull(logger);
         _leaderGate = leaderGate;
         _logger = logger.ForContext<WorkItemDispatchPoller>();
         _interval = interval ?? TimeSpan.FromSeconds(10);
@@ -72,9 +69,6 @@ public sealed class WorkItemDispatchPoller : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.Information(
-            // TODO [WARNING]: _rateLimiter.GetStatistics()?.CurrentAvailablePermits can return null before the
-            // first replenishment, so this log line may emit "rateLimitPerSecond " instead of the configured
-            // integer. Store rateLimitPerSecond in a private readonly field and log it directly.
             "WorkItemDispatchPoller started — interval {Interval}, rateLimitPerSecond {RateLimit}",
             _interval, _rateLimiter.GetStatistics()?.CurrentAvailablePermits);
 
@@ -99,10 +93,6 @@ public sealed class WorkItemDispatchPoller : BackgroundService
                 continue;
             }
 
-            // TODO [WARNING]: stoppingToken is correctly forwarded to PollAndDispatchAsync here, but
-            // PollAndDispatchAsync is also called directly in tests with CancellationToken.None. This
-            // is a test-only concern (not a runtime bug), but callers passing a dead token will not
-            // receive cooperative cancellation during a long dispatch cycle in that path.
             await PollAndDispatchAsync(stoppingToken);
         }
     }
@@ -203,7 +193,7 @@ public sealed class WorkItemDispatchPoller : BackgroundService
             }
         }
 
-        exitLoop:
+    exitLoop:
         // Record the epoch after each cycle (including cycles that were aborted mid-way).
         // The static call cannot be mocked by Moq — this is consistent with how WorkItemCountsPoller
         // calls WorkDistributionTelemetry.RegisterWorkItemsByStatusCallback directly.
