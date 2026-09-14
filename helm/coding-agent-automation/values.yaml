@@ -113,6 +113,13 @@ web:
     # This value is injected as the <base href> in the HTML shell so the browser resolves all
     # relative asset and navigation URLs correctly under the proxy prefix.
     basePath: "./"
+  # Consolidation unified-dispatch feature flag.
+  # When true, consolidation runs are enqueued as Pending WorkItems (unified dispatch path).
+  # When false (default), consolidation runs use the legacy synchronous dispatch path.
+  # Enable after #2563 (RunType tier ordering at dispatch) is deployed.
+  consolidation:
+    unifiedDispatch:
+      enabled: false
 
 # ── Secrets ──────────────────────────────────────────────────────────────────
 

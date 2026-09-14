@@ -139,6 +139,15 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            # Consolidation unified-dispatch feature flag — gates whether consolidation runs
+            # are enqueued as Pending WorkItems (unified path) or dispatched synchronously
+            # (legacy path). Defaults false; enable after #2563 deploys.
+            # TODO: $web.consolidation will be nil if a partial values override omits the consolidation
+            # sub-tree entirely (e.g. --set web.someOtherKey=val without values.yaml loaded). Consider
+            # a defensive default: ((($web.consolidation | default dict).unifiedDispatch | default dict).enabled | default false)
+            # This is safe in normal helm install/upgrade usage where values.yaml is always loaded.
+            - name: Consolidation__UnifiedDispatch__Enabled
+              value: {{ $web.consolidation.unifiedDispatch.enabled | quote }}
           volumeMounts:
             - name: job-templates
               mountPath: /app/config/job-templates.yaml
