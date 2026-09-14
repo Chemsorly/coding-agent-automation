@@ -1,3 +1,4 @@
+using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
@@ -16,6 +17,13 @@ namespace CodingAgent.Api;
 /// <c>WorkItems.Payload</c> now stores only identity fields; all mutable config is resolved
 /// fresh each time <c>GET /api/work-items/{id}/assignment</c> is called.
 /// </para>
+/// <para>
+/// For <c>TaskType=Consolidation</c> work items, enrichment delegates to
+/// <see cref="IConsolidationJobPreparationService.PrepareAsync"/> instead of
+/// <see cref="DispatchInfrastructure.PrepareDispatchCoreAsync"/> (issue #2583).
+/// Issue-provider infrastructure and quality-gate configs are not fetched for consolidation
+/// agents, which do not process issues and have no quality gates.
+/// </para>
 /// </summary>
 /// <remarks>
 /// Registered as a singleton in the API host. All dependencies are thread-safe singletons.
@@ -25,19 +33,28 @@ public class AssignmentEnricher
 {
     private readonly DispatchInfrastructure _infra;
     private readonly IAgentProfileStore _agentProfileStore;
+    // TODO: [WARNING] _consolidationPreparer is declared nullable but is always non-null in the
+    // production DI path (the public constructor guards it with ArgumentNullException.ThrowIfNull).
+    // The nullable exists solely to support the protected test constructor. Consider making the
+    // field non-nullable and removing the null guard in EnrichConsolidationCoreAsync, keeping
+    // the nullable only in the protected constructor's local assignment where the intent is explicit.
+    private readonly IConsolidationJobPreparationService? _consolidationPreparer;
     private readonly ILogger _logger;
 
     public AssignmentEnricher(
         DispatchInfrastructure infra,
         IAgentProfileStore agentProfileStore,
+        IConsolidationJobPreparationService consolidationPreparer,
         ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(infra);
         ArgumentNullException.ThrowIfNull(agentProfileStore);
+        ArgumentNullException.ThrowIfNull(consolidationPreparer);
         ArgumentNullException.ThrowIfNull(logger);
 
         _infra = infra;
         _agentProfileStore = agentProfileStore;
+        _consolidationPreparer = consolidationPreparer;
         _logger = logger;
     }
 
@@ -51,10 +68,13 @@ public class AssignmentEnricher
     // helpful message. Consider adding a guard in EnrichCoreAsync (e.g., throw InvalidOperationException
     // with a clear message when _infra is null) to fail fast with a diagnostic message rather than
     // an opaque NRE. Also, logger is not null-guarded consistently with the public constructor.
-    protected internal AssignmentEnricher(ILogger logger)
+    protected internal AssignmentEnricher(
+        ILogger logger,
+        IConsolidationJobPreparationService? consolidationPreparer = null)
     {
         _infra = null!;
         _agentProfileStore = null!;
+        _consolidationPreparer = consolidationPreparer;
         _logger = logger ?? Serilog.Log.Logger;
     }
 
@@ -113,6 +133,10 @@ public class AssignmentEnricher
         PipelineProject project,
         CancellationToken ct)
     {
+        // ── Route consolidation items to the consolidation-specific enrichment path ──
+        if (identity.TaskType == WorkItemTaskType.Consolidation)
+            return await EnrichConsolidationCoreAsync(identity, project, ct);
+
         // ── Step 1: Resolve agent profile from AgentSelector ──────────────────────
         // AgentSelector is the sorted comma-joined MatchLabels from the resolved profile.
         // Splitting it back gives us the required labels for fresh profile resolution.
@@ -185,6 +209,100 @@ public class AssignmentEnricher
             ForceRefreshAnalysis = forceRefresh,
             StalenessSignal = stalenessSignal,
             AnalysisRefreshCount = refreshCount,
+        };
+    }
+
+    /// <summary>
+    /// Consolidation-specific enrichment path. Delegates to
+    /// <see cref="IConsolidationJobPreparationService.PrepareAsync"/> to resolve provider
+    /// configs, vend short-lived tokens, and determine the per-template pipeline configuration.
+    /// Issue-fetch infrastructure (<see cref="DispatchInfrastructure.PrepareDispatchCoreAsync"/>)
+    /// is intentionally bypassed — consolidation agents do not process issues and have no
+    /// quality gates.
+    /// </summary>
+    private async Task<JobDistributionRequest?> EnrichConsolidationCoreAsync(
+        JobDistributionRequest identity,
+        PipelineProject project,
+        CancellationToken ct)
+    {
+        if (_consolidationPreparer is null)
+        {
+            // TODO: [WARNING] Returning null here conflates a programming error (missing required
+            // dependency injected via the protected test constructor) with the legitimate
+            // "not found" null return (profile not found, provider config removed). This causes
+            // the endpoint to return a degraded response instead of surfacing the misconfiguration.
+            // Consider throwing InvalidOperationException here (fail-fast) instead of returning null,
+            // since this path is unreachable in production DI.
+            _logger.Warning(
+                "AssignmentEnricher: IConsolidationJobPreparationService not available; " +
+                "cannot enrich consolidation assignment for IssueIdentifier {IssueIdentifier}",
+                identity.IssueIdentifier);
+            return null;
+        }
+
+        // ── Step 1: Resolve agent labels from AgentSelector ───────────────────────
+        // TODO: [WARNING] agentLabels is a mutable List<string> passed as IReadOnlyList<string> to
+        // PrepareAsync. The callee receives a reference to the concrete list and can cast it back to
+        // List<string> and mutate it. Use agentLabels.AsReadOnly() before passing to guarantee
+        // immutability at the call site (mirrors the intent of the IReadOnlyList<string> parameter type).
+        var agentLabels = (identity.AgentSelector ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+
+        // ── Step 2: Resolve agent profile ────────────────────────────────────────
+        // Required to populate ResolvedProfileId, AgentProviderConfigId, and McpServers.
+        // Note: ConsolidationJobPreparationService.PrepareAsync also calls LoadAgentProfilesAsync
+        // internally (ResolveAgentProviderConfigAsync). The double-load is accepted; the store
+        // is cached so the performance impact is negligible.
+        var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
+        var profile = ProfileResolver.ResolveByRequiredLabels(profiles, agentLabels);
+
+        if (profile is null)
+        {
+            _logger.Warning(
+                "AssignmentEnricher: no profile matches selector [{Selector}] for consolidation assignment; cannot enrich",
+                identity.AgentSelector ?? "");
+            return null;
+        }
+
+        // ── Step 3: Resolve provider configs and vend tokens via consolidation service ──
+        var templateId = string.IsNullOrEmpty(identity.ConsolidationTemplateId)
+            ? (TemplateId?)null
+            : (TemplateId)identity.ConsolidationTemplateId;
+
+        var preparation = await _consolidationPreparer.PrepareAsync(
+            identity.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
+            templateId,
+            agentLabels,
+            ct);
+
+        // ── Step 4: Build enriched JobDistributionRequest ─────────────────────────
+        // QualityGateConfigs and ReviewerConfigs are intentionally not set —
+        // consolidation agents do not have quality gates.
+        // IssueDetail, ParsedIssue, IssueComments are identity-preserved (null in minimal
+        // payload) — consolidation agents do not fetch or process issues.
+        return identity with
+        {
+            // TODO: [WARNING] preparation.ProviderConfigs is declared `required IReadOnlyList<ProviderConfig>`
+            // (non-nullable) and ConsolidationJobPreparationService.PrepareAsync always assigns a non-null
+            // list, so `?? []` is dead code against the production implementation. Two concerns:
+            // (1) a lenient mock or substitute preparer returning null silently produces an empty-config
+            //     assignment instead of failing loudly, directly contradicting the "fully-enriched" requirement;
+            // (2) the expression is written twice (here and in RepoSteeringContent below), so on the
+            //     null-fallback branch two distinct empty lists are allocated and the RepoSteeringContent
+            //     lookup runs against a different collection than the one assigned to ProviderConfigs.
+            // Bind preparation.ProviderConfigs to a single local variable and either drop the null-coalesce
+            // (trusting the non-null contract) or replace it with an explicit ArgumentNullException/
+            // InvalidOperationException precondition to fail fast with a clear diagnostic message.
+            ProviderConfigs = preparation.ProviderConfigs ?? [],
+            RepoProviderConfigId = preparation.RepoProviderConfigId,
+            PipelineConfiguration = preparation.PipelineConfiguration,
+            ResolvedProfileId = profile.Id,
+            AgentProviderConfigId = profile.AgentProviderConfigId,
+            McpServers = DispatchOrchestrationService.MergeMcpServers(profile.McpServers, project.McpServers),
+            ProjectSteeringContent = project.SteeringContent,
+            RepoSteeringContent = (preparation.ProviderConfigs ?? [])
+                .TryGetProviderConfig(preparation.RepoProviderConfigId)?.SteeringContent,
         };
     }
 }

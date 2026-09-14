@@ -39,7 +39,11 @@ public interface IConsolidationJobPreparationService
     /// <param name="templateId">Template ID to resolve repo/brain/issue providers from.</param>
     /// <param name="agentLabels">Agent labels for profile-based agent config resolution.</param>
     /// <param name="ct">Cancellation token.</param>
-    /// <returns>Preparation result with vended configs and repo provider ID, or null if template resolution failed.</returns>
+    /// <returns>
+    /// Preparation result with vended provider configs, the resolved repo provider ID, and the
+    /// per-template pipeline configuration. Always returns a valid result — never null.
+    /// Throws on unrecoverable failures (e.g., provider config not found, token-vending error).
+    /// </returns>
     Task<ConsolidationJobPreparationResult> PrepareAsync(
         ConsolidationRunType type,
         TemplateId? templateId,
