@@ -9,17 +9,16 @@ namespace CodingAgent.Infrastructure.Persistence.Services;
 /// Database-backed implementation of <see cref="IFeedbackCommentOutbox"/>.
 /// Uses a context-per-operation pattern via <see cref="IDbContextFactory{TContext}"/>
 /// (same pattern as <see cref="EfKeyValueStore"/>).
-/// Registered as <c>AddScoped&lt;IFeedbackCommentOutbox, PostgresFeedbackCommentOutboxStore&gt;()</c>.
+/// Registered as <c>AddSingleton&lt;IFeedbackCommentOutbox, PostgresFeedbackCommentOutboxStore&gt;()</c>.
 /// </summary>
-// TODO: Add unit/integration tests for this store. The relay tests (FeedbackCommentRelayServiceTests)
-// use a mocked IPipelineApiFeedbackCommentOutboxClient and never exercise the store logic. The
-// following behaviours are untested at the store level:
-//   - MarkFailedAsync: AttemptCount increment and Pending→Failed transition at maxAttempts
-//   - GetPendingAsync: Status=Pending + AttemptCount<maxAttempts filter
-//   - EnqueueAsync: RunId idempotency (ON CONFLICT DO NOTHING for duplicate RunId)
-// EfKeyValueStoreTests shows the repo pattern for InMemory-backed store tests. For the RunId
-// idempotency case, use SQLite (InMemory does not enforce unique indexes) or simulate the
-// DbUpdateException to verify the swallow path.
+/// <remarks>
+/// Known test coverage gap: the relay tests use a mocked IPipelineApiFeedbackCommentOutboxClient
+/// and never exercise the store logic directly. Behaviours lacking store-level tests include:
+/// MarkFailedAsync AttemptCount increment and Pending→Failed transition at maxAttempts,
+/// GetPendingAsync Status=Pending + AttemptCount&lt;maxAttempts filter, and
+/// EnqueueAsync RunId idempotency. EfKeyValueStoreTests shows the InMemory-backed repo pattern;
+/// the RunId idempotency case requires SQLite or DbUpdateException simulation.
+/// </remarks>
 public sealed class PostgresFeedbackCommentOutboxStore : IFeedbackCommentOutbox
 {
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;

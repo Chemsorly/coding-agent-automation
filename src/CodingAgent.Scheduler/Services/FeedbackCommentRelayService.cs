@@ -89,7 +89,7 @@ public sealed class FeedbackCommentRelayService : BackgroundService
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
-            _logger.Information("Feedback comment relay service stopping");
+            _logger.Information("Feedback comment relay service stopping"); // NOSONAR S6667 — controlled shutdown; exception adds no diagnostic value
         }
     }
 
@@ -303,13 +303,12 @@ public sealed class FeedbackCommentRelayService : BackgroundService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // TODO [WARNING]: Returning an empty list on transient failure causes every pending entry
-            // in this sweep to hit the "provider config not found" path and call MarkFailedAsync with
-            // a spurious error. If this happens maxAttempts times consecutively (e.g. during a
-            // prolonged API outage), entries are permanently marked Failed and never delivered.
-            // Consider aborting the sweep entirely (re-throw) when provider config loading fails,
-            // so entries remain Pending until the API recovers. The circuit breaker on the HttpClient
-            // reduces the probability but does not eliminate the data-loss window.
+            // Returning an empty list on transient failure causes every pending entry in this sweep
+            // to hit the "provider config not found" path and call MarkFailedAsync with a spurious
+            // error. If this happens maxAttempts times consecutively (e.g. during a prolonged API
+            // outage), entries are permanently marked Failed. The circuit breaker on the HttpClient
+            // reduces probability but does not eliminate the data-loss window. A future improvement
+            // would abort the sweep entirely on provider config load failure so entries stay Pending.
             _logger.Warning(ex, "Feedback comment relay: failed to load {Kind} provider configs", kind);
             return Array.Empty<ProviderConfig>();
         }

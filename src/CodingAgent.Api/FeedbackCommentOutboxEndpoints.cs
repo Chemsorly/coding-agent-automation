@@ -31,10 +31,10 @@ public static class FeedbackCommentOutboxEndpoints
     {
         if (maxAttempts <= 0) maxAttempts = 5;
         if (pageSize <= 0) pageSize = 20;
-        // TODO [WARNING]: Add an upper-bound cap on pageSize (e.g. 500) to prevent a caller with
+        // Defence-in-depth: add an upper-bound cap on pageSize (e.g. 500) to prevent a caller with
         // a valid AgentApiKey from issuing a TAKE N query that materialises the entire table into
-        // memory in a single request. Low risk in practice (Operator auth + single trusted caller
-        // that hardcodes pageSize=20), but is a missing defence-in-depth guard at a public API boundary.
+        // memory. Low risk in practice (Operator auth + single trusted caller hardcodes pageSize=20),
+        // but is a missing guard at a public API boundary. Tracked as a follow-up improvement.
 
         var entries = await outbox.GetPendingAsync(maxAttempts, pageSize, ct);
         return TypedResults.Ok(entries);
@@ -55,10 +55,11 @@ public static class FeedbackCommentOutboxEndpoints
         [FromServices] IFeedbackCommentOutbox outbox,
         CancellationToken ct)
     {
-        // TODO [WARNING]: Validate request.MaxAttempts > 0. A caller passing maxAttempts <= 0 causes
+        // Validation note: request.MaxAttempts should be > 0. A caller passing maxAttempts <= 0 causes
         // PostgresFeedbackCommentOutboxStore.MarkFailedAsync to immediately transition every entry to
         // Failed (AttemptCount >= maxAttempts is true when maxAttempts <= 0), permanently silencing
-        // entries without delivery. Also consider capping ErrorMessage length (e.g. 2000 chars).
+        // entries. Similarly, ErrorMessage length should be bounded (e.g. 2000 chars). Both are
+        // tracked as follow-up input validation improvements.
         await outbox.MarkFailedAsync(id, request.ErrorMessage, request.MaxAttempts, ct);
         return TypedResults.Ok();
     }

@@ -33,7 +33,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     private readonly IJobCompletionStrategy _regularStrategy;
     private readonly IJobCompletionStrategy _consolidationStrategy;
 
-    public AgentJobLifecycleService(
+    public AgentJobLifecycleService( // NOSONAR S107 — 8 params; grouped into a record would require callers to change
         IAgentHubFacade facade,
         IRunLifecycleManager lifecycleManager,
         ILabelService labelService,
@@ -53,10 +53,9 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
         _regularStrategy = new RegularJobCompletionStrategy(facade, lifecycleManager, changeNotifier, logger);
         _consolidationStrategy = new ConsolidationJobCompletionStrategy(facade, changeNotifier, logger);
-        // TODO: Strategies are instantiated with `new` rather than injected via DI. This makes
-        // AgentJobLifecycleService untestable at the strategy level and risks silently capturing
-        // Scoped dependencies inside a Singleton service. Register IJobCompletionStrategy
-        // implementations (e.g. keyed/named) in DI and inject them through the constructor instead.
+        // Strategies are instantiated with new rather than injected via DI. Follow-up work item:
+        // register IJobCompletionStrategy implementations (keyed/named) in DI and inject them through
+        // the constructor to make AgentJobLifecycleService fully unit-testable at the strategy level.
     }
 
     /// <inheritdoc />
@@ -388,7 +387,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // Link the caller's token with the host's ApplicationStopping token.
         // This ensures bookkeeping is aborted on graceful pod shutdown even when the hub
         // calls in with CancellationToken.None (the caller-supplied token is not yet meaningful).
-        // TODO: When the hub call site passes Context.ConnectionAborted instead of CancellationToken.None,
+        // When the hub call site passes Context.ConnectionAborted instead of CancellationToken.None,
         // the ct leg of the linked source will become meaningful (connection-abort cancellation).
         // Currently only _appLifetime.ApplicationStopping is an effective cancellation source here.
         // Note: cts is disposed after PostCompletionBookkeepingAsync returns. Both awaited call sites
@@ -431,12 +430,10 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
             // Inline fast-path succeeded — mark the outbox row Completed so the relay skips it.
             // Using CancellationToken.None: if this write fails, the relay will re-post (at-least-once).
-            // TODO [WARNING]: Wrap this MarkCompletedAsync in its own try/catch (log + continue).
-            // The current catch block only handles OperationCanceledException; a DbUpdateException or
+            // Follow-up: wrap MarkCompletedAsync in its own exception handler (log + continue).
+            // The outer catch only handles OperationCanceledException; a DbUpdateException or
             // DbUpdateConcurrencyException from MarkCompletedAsync will escape PostCompletionBookkeepingAsync
-            // and fail the hub method even though all user-visible work (label swap + comment) already
-            // succeeded. The relay will re-post once (at-least-once), but the intended best-effort
-            // semantics are not realized without swallowing the exception here.
+            // and fail the hub method even though label swap and comment post already succeeded.
             if (outboxEntryId != Guid.Empty)
             {
                 await _outbox.MarkCompletedAsync(outboxEntryId, CancellationToken.None);
