@@ -92,6 +92,8 @@ spec:
               value: {{ .Values.api.env.logLevel | default "Information" | quote }}
             - name: DB_LOG_LEVEL
               value: {{ .Values.api.env.dbLogLevel | default "Warning" | quote }}
+            - name: READINESS_DRAIN_DELAY_SECONDS
+              value: {{ .Values.api.env.readinessDrainDelaySeconds | default 15 | quote }}
             - name: Database__Host
               value: {{ required "database.host is required" .Values.database.host | quote }}
             - name: Database__Port

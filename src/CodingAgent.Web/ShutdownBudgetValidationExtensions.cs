@@ -1,4 +1,4 @@
-using CodingAgent.Web.Services;
+using CodingAgent.Pipeline.Services;
 using Serilog;
 
 namespace CodingAgent.Web;

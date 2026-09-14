@@ -34,30 +34,46 @@ public static class SchedulerServiceCollectionExtensions
     {
         services.AddSingleton(Log.Logger);
 
+        // ── Shared HTTP resilience defaults ──────────────────────────────────
+        // Sets PooledConnectionLifetime so stale connections to replaced pod IPs (after a
+        // rolling update) are recycled within 90s rather than persisting indefinitely.
+        // Applied via ConfigureHttpClientDefaults so it covers every client registered in
+        // this AddSchedulerServices call.
+        services.ConfigureHttpClientDefaults(b =>
+        {
+            b.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                PooledConnectionLifetime = TimeSpan.FromSeconds(90)
+            });
+        });
+
         // ── HTTP clients to the API ──────────────────────────────────────────
+        // CircuitBreaker.MinimumThroughput tuned to 10 (down from the default 100) so the
+        // breaker can trip after ~10 failures in 30s. Without this, low-traffic clients
+        // stall for the full 3×10s = 30s during a pod blip.
         services.AddHttpClient<IPipelineApiConfigClient, PipelineApiConfigClient>(c =>
         {
             c.BaseAddress = new Uri(pipelineApiBaseUrl);
             c.DefaultRequestHeaders.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", agentApiKey);
-        }).AddStandardResilienceHandler();
+        }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
         services.AddHttpClient<IPipelineApiWorkItemClient, PipelineApiWorkItemClient>(c =>
         {
             c.BaseAddress = new Uri(pipelineApiBaseUrl);
             c.DefaultRequestHeaders.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", agentApiKey);
-        }).AddStandardResilienceHandler();
+        }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
         services.AddHttpClient<IPipelineApiRunHistoryClient, PipelineApiRunHistoryClient>(c =>
         {
             c.BaseAddress = new Uri(pipelineApiBaseUrl);
             c.DefaultRequestHeaders.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", agentApiKey);
-        }).AddStandardResilienceHandler();
+        }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
         services.AddHttpClient("TokenVending")
-            .AddStandardResilienceHandler();
+            .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
         // ── Store shims (moved to Api.Client.Stores in Spec 047) ─────────────
         var ttlSeconds = config.GetValue<int?>("PipelineLoop:ConfigCacheTtlSeconds");
@@ -321,7 +337,7 @@ public static class SchedulerServiceCollectionExtensions
         });
 
         services.AddHttpClient("SchedulerToApi")
-            .AddStandardResilienceHandler();
+            .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
         services.AddSingleton<RetentionSweepSchedulerService>(sp =>
             new RetentionSweepSchedulerService(
