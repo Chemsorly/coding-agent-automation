@@ -456,7 +456,7 @@ public sealed class WorkItemEndpointTests
     }
 
     [Fact]
-    public async Task GetPendingWorkItems_ExcludesConsolidation()
+    public async Task GetPendingWorkItems_ExcludesConsolidation_WhenFlagOff()
     {
         var consolidation = SeedEntity(WorkItemStatus.Pending, taskType: WorkItemTaskType.Consolidation);
 
