@@ -61,18 +61,6 @@ public sealed class FeedbackCommentOutboxEnqueueTests
             Issue = new IssueFeedback { Description = description }
         };
 
-    // TODO: MakeRunWithFeedback is unused — no test in this file calls it. Either remove it or
-    // use it in a test that starts with a run that already has feedback set (rather than setting
-    // feedback via the payload). Its presence suggests tests exercising it were intended but not written.
-    private static PipelineRun MakeRunWithFeedback(string description = "Issue is unclear") =>
-        MakeRun(feedback: new RunFeedback
-        {
-            Outcome = FeedbackOutcome.Failure,
-            CollectedAtUtc = DateTime.UtcNow,
-            Harness = new HarnessFeedback(),
-            Issue = new IssueFeedback { Description = description }
-        });
-
     private static PipelineRun MakeRun(RunFeedback? feedback = null)
     {
         var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
@@ -110,8 +98,11 @@ public sealed class FeedbackCommentOutboxEnqueueTests
         // cannot prevent the row from being written.
         var agent = new AgentEntry
         {
-            AgentId = new AgentId("agent-1"), ConnectionId = "c1",
-            Hostname = "h", Labels = [], RegisteredAt = DateTimeOffset.UtcNow,
+            AgentId = new AgentId("agent-1"),
+            ConnectionId = "c1",
+            Hostname = "h",
+            Labels = [],
+            RegisteredAt = DateTimeOffset.UtcNow,
             Status = AgentStatus.Idle
         };
         var jobId = new JobId("job-1");
@@ -151,8 +142,11 @@ public sealed class FeedbackCommentOutboxEnqueueTests
     {
         var agent = new AgentEntry
         {
-            AgentId = new AgentId("agent-1"), ConnectionId = "c1",
-            Hostname = "h", Labels = [], RegisteredAt = DateTimeOffset.UtcNow,
+            AgentId = new AgentId("agent-1"),
+            ConnectionId = "c1",
+            Hostname = "h",
+            Labels = [],
+            RegisteredAt = DateTimeOffset.UtcNow,
             Status = AgentStatus.Idle
         };
         var jobId = new JobId("job-1");
@@ -183,8 +177,11 @@ public sealed class FeedbackCommentOutboxEnqueueTests
     {
         var agent = new AgentEntry
         {
-            AgentId = new AgentId("agent-1"), ConnectionId = "c1",
-            Hostname = "h", Labels = [], RegisteredAt = DateTimeOffset.UtcNow,
+            AgentId = new AgentId("agent-1"),
+            ConnectionId = "c1",
+            Hostname = "h",
+            Labels = [],
+            RegisteredAt = DateTimeOffset.UtcNow,
             Status = AgentStatus.Idle
         };
         var jobId = new JobId("job-1");
@@ -207,8 +204,11 @@ public sealed class FeedbackCommentOutboxEnqueueTests
         // be posted. Enqueuing such a row would create an un-deliverable entry.
         var agent = new AgentEntry
         {
-            AgentId = new AgentId("agent-1"), ConnectionId = "c1",
-            Hostname = "h", Labels = [], RegisteredAt = DateTimeOffset.UtcNow,
+            AgentId = new AgentId("agent-1"),
+            ConnectionId = "c1",
+            Hostname = "h",
+            Labels = [],
+            RegisteredAt = DateTimeOffset.UtcNow,
             Status = AgentStatus.Idle
         };
         var jobId = new JobId("job-1");
@@ -236,8 +236,11 @@ public sealed class FeedbackCommentOutboxEnqueueTests
     {
         var agent = new AgentEntry
         {
-            AgentId = new AgentId("agent-1"), ConnectionId = "c1",
-            Hostname = "h", Labels = [], RegisteredAt = DateTimeOffset.UtcNow,
+            AgentId = new AgentId("agent-1"),
+            ConnectionId = "c1",
+            Hostname = "h",
+            Labels = [],
+            RegisteredAt = DateTimeOffset.UtcNow,
             Status = AgentStatus.Idle
         };
         var jobId = new JobId("job-1");
@@ -268,8 +271,11 @@ public sealed class FeedbackCommentOutboxEnqueueTests
     {
         var agent = new AgentEntry
         {
-            AgentId = new AgentId("agent-1"), ConnectionId = "c1",
-            Hostname = "h", Labels = [], RegisteredAt = DateTimeOffset.UtcNow,
+            AgentId = new AgentId("agent-1"),
+            ConnectionId = "c1",
+            Hostname = "h",
+            Labels = [],
+            RegisteredAt = DateTimeOffset.UtcNow,
             Status = AgentStatus.Idle
         };
         var jobId = new JobId("job-1");
@@ -304,8 +310,11 @@ public sealed class FeedbackCommentOutboxEnqueueTests
     {
         var agent = new AgentEntry
         {
-            AgentId = new AgentId("agent-1"), ConnectionId = "c1",
-            Hostname = "h", Labels = [], RegisteredAt = DateTimeOffset.UtcNow,
+            AgentId = new AgentId("agent-1"),
+            ConnectionId = "c1",
+            Hostname = "h",
+            Labels = [],
+            RegisteredAt = DateTimeOffset.UtcNow,
             Status = AgentStatus.Idle
         };
         var jobId = new JobId("job-1");
