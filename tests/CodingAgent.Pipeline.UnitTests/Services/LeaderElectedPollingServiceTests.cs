@@ -184,7 +184,11 @@ public class LeaderElectedPollingServiceTests
     [Trait("Feature", "ConnectionResiliency")]
     public async Task OnPollCycleAsync_WhenThrowsHttpRequestException_LogsAtWarningNotError()
     {
-        // Arrange: capture log events via a real Serilog sink
+        // Arrange: capture log events via a real Serilog sink.
+        // Save and restore the global logger so concurrent tests running in parallel cannot
+        // see events from this test's CapturingSink (LeaderElectedPollingService.Log is a
+        // property that re-evaluates Serilog.Log.Logger on every call).
+        var previousLogger = Serilog.Log.Logger;
         var sink = new CapturingSink();
         Serilog.Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Debug()
@@ -199,46 +203,59 @@ public class LeaderElectedPollingServiceTests
             exceptionOnFirstCall: new HttpRequestException("connection refused"));
         var hostCts = new CancellationTokenSource();
 
-        var executeTask = InvokeExecuteAsync(service, hostCts.Token);
+        try
+        {
+            var executeTask = InvokeExecuteAsync(service, hostCts.Token);
 
-        // Wait for the exception to be thrown and handled (poll count > 1 means we recovered)
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        // TODO [WARNING]: PollCycleCount is a plain int field; Interlocked.Increment writes it but
-        // this spin-loop read is non-volatile. On Release builds with register caching, the test
-        // thread may never observe PollCycleCount >= 2 and spin to the deadline. Fix: use
-        // Volatile.Read(ref service.PollCycleCount) in the loop condition (requires making the
-        // field accessible, or adding a volatile-read helper property).
-        // See Issue #2576 review findings (TestQualityReviewer [WARNING]).
-        while (service.PollCycleCount < 2 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+            // Wait for the exception to be thrown and handled (poll count > 1 means we recovered)
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            // TODO [WARNING]: PollCycleCount is a plain int field; Interlocked.Increment writes it but
+            // this spin-loop read is non-volatile. On Release builds with register caching, the test
+            // thread may never observe PollCycleCount >= 2 and spin to the deadline. Fix: use
+            // Volatile.Read(ref service.PollCycleCount) in the loop condition (requires making the
+            // field accessible, or adding a volatile-read helper property).
+            // See Issue #2576 review findings (TestQualityReviewer [WARNING]).
+            while (service.PollCycleCount < 2 && DateTime.UtcNow < deadline)
+                await Task.Delay(50);
 
-        hostCts.Cancel();
-        await WaitForTaskCompletion(executeTask);
+            hostCts.Cancel();
+            await WaitForTaskCompletion(executeTask);
 
-        // Assert: loop survived (count > 1)
-        service.PollCycleCount.Should().BeGreaterThanOrEqualTo(2,
-            "loop must continue after a transient HttpRequestException");
+            // Assert: loop survived (count > 1)
+            service.PollCycleCount.Should().BeGreaterThanOrEqualTo(2,
+                "loop must continue after a transient HttpRequestException");
 
-        // Assert: Warning was emitted for the transient exception
-        sink.Events
-            .Should().Contain(e =>
-                e.Level == LogEventLevel.Warning &&
-                e.RenderMessage().Contains("transient"),
-            "HttpRequestException must log at Warning level with 'transient' in the message");
+            // Assert: Warning was emitted for the transient exception
+            sink.Events
+                .Should().Contain(e =>
+                    e.Level == LogEventLevel.Warning &&
+                    e.RenderMessage().Contains("transient"),
+                "HttpRequestException must log at Warning level with 'transient' in the message");
 
-        // Assert: no Error was emitted for the transient exception
-        sink.Events
-            .Should().NotContain(e =>
-                e.Level == LogEventLevel.Error &&
-                e.Exception is HttpRequestException,
-            "HttpRequestException must NOT be logged at Error level");
+            // Assert: no Error was emitted for the transient exception
+            sink.Events
+                .Should().NotContain(e =>
+                    e.Level == LogEventLevel.Error &&
+                    e.Exception is HttpRequestException,
+                "HttpRequestException must NOT be logged at Error level");
+        }
+        finally
+        {
+            hostCts.Cancel();
+            Serilog.Log.Logger = previousLogger;
+        }
     }
 
     [Fact]
     [Trait("Feature", "ConnectionResiliency")]
     public async Task OnPollCycleAsync_WhenThrowsNonTransientException_LogsAtError()
     {
-        // Arrange
+        // Arrange: save and restore the global logger so concurrent tests cannot inject
+        // Warning+InvalidOperationException events into this test's CapturingSink.
+        // ModelFetchJobService (same assembly) logs Warning(InvalidOperationException) for
+        // cleanup/PVC-selection failures; without the restore those events cross test boundaries
+        // and trip the NotContain assertion below.
+        var previousLogger = Serilog.Log.Logger;
         var sink = new CapturingSink();
         Serilog.Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Debug()
@@ -252,31 +269,39 @@ public class LeaderElectedPollingServiceTests
             exceptionOnFirstCall: new InvalidOperationException("genuine bug"));
         var hostCts = new CancellationTokenSource();
 
-        var executeTask = InvokeExecuteAsync(service, hostCts.Token);
+        try
+        {
+            var executeTask = InvokeExecuteAsync(service, hostCts.Token);
 
-        // Wait for the exception to be thrown and handled
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        // TODO [WARNING]: PollCycleCount spin-loop read is non-volatile (same issue as above test method).
-        // Fix: use Volatile.Read in the loop condition. See Issue #2576 review findings (TestQualityReviewer [WARNING]).
-        while (service.PollCycleCount < 2 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+            // Wait for the exception to be thrown and handled
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            // TODO [WARNING]: PollCycleCount spin-loop read is non-volatile (same issue as above test method).
+            // Fix: use Volatile.Read in the loop condition. See Issue #2576 review findings (TestQualityReviewer [WARNING]).
+            while (service.PollCycleCount < 2 && DateTime.UtcNow < deadline)
+                await Task.Delay(50);
 
-        hostCts.Cancel();
-        await WaitForTaskCompletion(executeTask);
+            hostCts.Cancel();
+            await WaitForTaskCompletion(executeTask);
 
-        // Assert: Error was emitted for the non-transient exception
-        sink.Events
-            .Should().Contain(e =>
-                e.Level == LogEventLevel.Error &&
-                e.Exception is InvalidOperationException,
-            "InvalidOperationException must log at Error level");
+            // Assert: Error was emitted for the non-transient exception
+            sink.Events
+                .Should().Contain(e =>
+                    e.Level == LogEventLevel.Error &&
+                    e.Exception is InvalidOperationException,
+                "InvalidOperationException must log at Error level");
 
-        // Assert: no Warning at all for this exception (it must go to Error, not Warning)
-        sink.Events
-            .Should().NotContain(e =>
-                e.Level == LogEventLevel.Warning &&
-                e.Exception is InvalidOperationException,
-            "non-transient exception must NOT be logged at Warning level");
+            // Assert: no Warning at all for this exception (it must go to Error, not Warning)
+            sink.Events
+                .Should().NotContain(e =>
+                    e.Level == LogEventLevel.Warning &&
+                    e.Exception is InvalidOperationException,
+                "non-transient exception must NOT be logged at Warning level");
+        }
+        finally
+        {
+            hostCts.Cancel();
+            Serilog.Log.Logger = previousLogger;
+        }
     }
 
     [Fact]
