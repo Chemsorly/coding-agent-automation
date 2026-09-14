@@ -34,10 +34,25 @@ internal static class AgentWorkItemModeRegistration
         .AddStandardResilienceHandler(options =>
         {
             options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(90);
+            // AttemptTimeout must exceed the server-side "TokenVending" TotalRequestTimeout (30s)
+            // so the server can complete its full retry ladder before the agent cancels the request.
+            // Prior to this fix, the default 10s AttemptTimeout caused HttpContext.RequestAborted
+            // to fire mid-retry, which was laundered into "Aborting dispatch" (issue #2575).
+            options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(35);
             options.Retry.MaxRetryAttempts = 5;
             options.Retry.BackoffType = DelayBackoffType.Exponential;
             options.Retry.UseJitter = true;
-            options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(30);
+            // SamplingDuration must be >= 2 * AttemptTimeout per Polly validation rules.
+            // With AttemptTimeout = 35s, minimum is 70s.
+            // TODO [WARNING]: Raising SamplingDuration from 30s to 70s increases the observation window
+            // required before the circuit can open. With MaxRetryAttempts = 5 and exponential backoff,
+            // a sustained failure period may take several minutes to accumulate enough throughput to trip
+            // the circuit (absent a MinimumThroughput adjustment). The circuit breaker may be slower to
+            // open and slower to recover during a real incident. Consider also adjusting
+            // CircuitBreaker.MinimumThroughput and BreakDuration to preserve the original responsiveness
+            // intent. The optional per-installation circuit breaker mentioned in issue #2575 was not
+            // implemented; this change makes the existing one less aggressive. (.NET Specialist warning)
+            options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(70);
         });
 
         // Capture agentId at registration time; set it after the typed client is resolved.

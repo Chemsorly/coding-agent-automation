@@ -505,3 +505,176 @@ public sealed class AssignmentEnricherTests
         public NullLoggerEnricher(Serilog.ILogger logger) : base(logger) { }
     }
 }
+
+/// <summary>
+/// Regression tests for the OperationCanceledException chain through
+/// <see cref="AssignmentEnricher.EnrichAsync"/>.
+///
+/// Fix A (issue #2575) repairs OCE laundering in <c>TokenVendingService.PrepareAgentConfigsAsync</c>
+/// so that a cancelled HTTP call surfaces as OCE rather than being wrapped in
+/// <c>InvalidOperationException("Aborting dispatch")</c>.
+///
+/// This class verifies the downstream half of the chain:
+/// <list type="bullet">
+///   <item>The <c>when (ex is not OperationCanceledException)</c> guard in <see cref="AssignmentEnricher.EnrichAsync"/>
+///   suppresses the Error log and lets OCE propagate when the enricher core throws OCE.</item>
+///   <item>Before Fix A, the OCE was wrapped in InvalidOperationException, so the guard was never reached
+///   and the error was logged at Error level and counted as a dispatch failure.</item>
+/// </list>
+/// </summary>
+public sealed class AssignmentEnricherOceCancellationTests
+{
+    // ── StubDispatchInfrastructure ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Subclass of DispatchInfrastructure that throws a supplied exception from
+    /// PrepareDispatchCoreAsync to simulate downstream failure.
+    /// </summary>
+    private sealed class ThrowingDispatchInfrastructure : DispatchInfrastructure
+    {
+        private readonly Exception _toThrow;
+
+        public ThrowingDispatchInfrastructure(Exception toThrow) : base()
+        {
+            _toThrow = toThrow;
+        }
+
+        internal override Task<(IReadOnlyList<QualityGateConfiguration> QualityGates,
+            IReadOnlyList<ReviewerConfiguration> Reviewers,
+            DispatchInfrastructure.IssueContextResult IssueContext,
+            IReadOnlyList<ProviderConfig> ProviderConfigs,
+            PipelineConfiguration Config,
+            bool ForceRefresh,
+            string? StalenessSignal,
+            int RefreshCount)?> PrepareDispatchCoreAsync(DispatchCoreRequest request, CancellationToken ct)
+            => throw _toThrow;
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────────
+
+    private static JobDistributionRequest MakeIdentity() => new()
+    {
+        IssueIdentifier = new IssueIdentifier("owner/repo#42"),
+        IssueProviderConfigId = "issue-prov-1",
+        RepoProviderConfigId = "repo-prov-1",
+        InitiatedBy = "test",
+        TaskType = WorkItemTaskType.Implementation,
+        AgentSelector = "dotnet",
+        TimeoutSeconds = 3600,
+    };
+
+    private static PipelineProject MakeProject() => new()
+    {
+        Id = Guid.NewGuid().ToString(),
+        Name = "Test Project",
+    };
+
+    private static AssignmentEnricher MakeEnricherWithThrowingInfra(
+        Exception toThrow, Mock<Serilog.ILogger> mockLogger)
+    {
+        var infra = new ThrowingDispatchInfrastructure(toThrow);
+
+        var profileStoreMock = new Mock<IAgentProfileStore>();
+        profileStoreMock
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new AgentProfile
+            {
+                Id = "profile-1",
+                DisplayName = "Test Profile",
+                AgentProviderConfigId = "agent-cfg-1",
+                MatchLabels = ["dotnet"],
+                Enabled = true,
+            }]);
+
+        return new AssignmentEnricher(infra, profileStoreMock.Object, mockLogger.Object);
+    }
+
+    // ── OCE does not trigger Error log ────────────────────────────────────────────
+
+    /// <summary>
+    /// Regression test for the "Aborting dispatch" laundering chain (issue #2575, Fix A).
+    ///
+    /// Before Fix A: TokenVendingService wrapped OCE in InvalidOperationException, which
+    /// passed through the `when (ex is not OperationCanceledException)` guard in EnrichAsync,
+    /// triggering an Error log and recording a dispatch failure.
+    ///
+    /// After Fix A: OCE propagates unchanged from TokenVendingService → PrepareDispatchCoreAsync
+    /// → EnrichCoreAsync. The guard `when (ex is not OperationCanceledException)` catches all
+    /// non-OCE exceptions, so an OCE thrown from EnrichCoreAsync must NOT trigger the Error log.
+    ///
+    /// This test verifies that the guard works as intended: an OperationCanceledException thrown
+    /// during enrichment does NOT produce an Error-level log entry.
+    /// </summary>
+    [Fact]
+    public async Task EnrichAsync_WhenEnrichCoreThrowsOce_DoesNotLogError()
+    {
+        // ARRANGE: infra throws OCE, simulating what token vending does after Fix A
+        var mockLogger = new Mock<Serilog.ILogger>();
+        // Mock the ForContext call that Serilog uses internally — return the same mock logger
+        // so calls on the contextual logger are also captured.
+        mockLogger.Setup(l => l.ForContext(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<bool>()))
+                  .Returns(mockLogger.Object);
+        mockLogger.Setup(l => l.ForContext<It.IsAnyType>()).Returns(mockLogger.Object);
+
+        var enricher = MakeEnricherWithThrowingInfra(new OperationCanceledException(), mockLogger);
+
+        // ACT — the OCE must propagate, not be swallowed or re-wrapped
+        // TODO [WARNING]: This test passes CancellationToken.None to EnrichAsync, then relies on
+        // ThrowingDispatchInfrastructure to throw a bare `new OperationCanceledException()` regardless
+        // of token state. It does not verify the realistic scenario where HttpContext.RequestAborted
+        // fires and the OCE carries a specific CancellationToken. While sufficient to test the
+        // catch-filter logic in EnrichAsync, it does not cover cases where OCE.CancellationToken
+        // might interact differently with logging enrichers that inspect the token. Consider adding
+        // a variant that links a real CancellationTokenSource, cancels it, and passes the linked
+        // token to EnrichAsync to exercise the full realistic path. (TestQualityReviewer warning)
+        var act = () => enricher.EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None);
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            "the OCE must propagate from EnrichAsync — the `when (ex is not OCE)` guard must not catch it");
+
+        // ASSERT — Error log must NOT have been called.
+        // AssignmentEnricher calls: _logger.Error(ex, "... {IssueIdentifier} ...", identity.IssueIdentifier)
+        // which resolves to Serilog's generic overload Error<T>(Exception, string, T) with T = IssueIdentifier.
+        // The `when (ex is not OperationCanceledException)` guard must prevent this call for OCE.
+        mockLogger.Verify(
+            l => l.Error(
+                It.IsAny<Exception>(),
+                It.IsAny<string>(),
+                It.IsAny<IssueIdentifier>()),
+            Times.Never,
+            "the Error log in the catch block must be suppressed by the `when (ex is not OCE)` guard; " +
+            "a client cancellation must not be recorded as a dispatch failure");
+    }
+
+    /// <summary>
+    /// Complementary test: a non-OCE exception (e.g., InvalidOperationException from a DB timeout)
+    /// MUST trigger the Error log. This guards against an accidental over-broad OCE catch
+    /// that would suppress all error logging.
+    /// </summary>
+    [Fact]
+    public async Task EnrichAsync_WhenEnrichCoreThrowsNonOce_LogsError()
+    {
+        // ARRANGE: infra throws a transient non-OCE, simulating a DB or network error
+        var mockLogger = new Mock<Serilog.ILogger>();
+        mockLogger.Setup(l => l.ForContext(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<bool>()))
+                  .Returns(mockLogger.Object);
+        mockLogger.Setup(l => l.ForContext<It.IsAnyType>()).Returns(mockLogger.Object);
+
+        var enricher = MakeEnricherWithThrowingInfra(
+            new InvalidOperationException("simulated DB timeout"), mockLogger);
+
+        // ACT — non-OCE propagates through the Error-logging catch
+        var act = () => enricher.EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None);
+        await act.Should().ThrowAsync<InvalidOperationException>();
+
+        // ASSERT — Error log MUST have been called (verifies the guard is not over-broad)
+        // AssignmentEnricher calls: _logger.Error(ex, "... {IssueIdentifier} ...", identity.IssueIdentifier)
+        // which resolves to Serilog's generic overload Error<T>(Exception, string, T) with T = IssueIdentifier.
+        mockLogger.Verify(
+            l => l.Error(
+                It.IsAny<Exception>(),
+                It.IsAny<string>(),
+                It.IsAny<IssueIdentifier>()),
+            Times.Once,
+            "a non-OCE exception must still trigger the Error log in EnrichAsync");
+    }
+}

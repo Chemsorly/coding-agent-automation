@@ -6,6 +6,9 @@ database:
   host: postgres.coding-agent.svc.cluster.local
   auth:
     existingSecret: ci-postgres-secret
+signalr:
+  redis:
+    connectionString: ci-redis-placeholder:6379
 api:
   image:
     tag: ci-api-placeholder
