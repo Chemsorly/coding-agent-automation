@@ -312,6 +312,15 @@ public static class WorkItemEndpoints
         IProjectStore projectStore,
         CancellationToken ct)
     {
+        // TODO: [WARNING] This method early-returns when request.ProjectId is null, but consolidation
+        // work items frequently carry a ConsolidationTemplateId with no ProjectId (the template-owns-project
+        // relationship is resolved lazily). ConsolidationWorkItemEndpoints.EnrichPayloadAsync resolves the
+        // owning project by template membership when ProjectId is empty, then vends project secrets from that
+        // owner. As a result, a TaskType=Consolidation work item with ProjectId=null and a ConsolidationTemplateId
+        // whose owning project defines Secrets will get ProjectSecrets=null from this path but populated secrets
+        // from the legacy claim path, violating the "fully-enriched" requirement for the unified assignment path.
+        // Mirror the template-ownership fallback from ConsolidationWorkItemEndpoints.EnrichPayloadAsync here,
+        // or document that /assignment intentionally omits project secrets for project-less consolidation items.
         if (!request.ProjectId.HasValue)
             return message;
 

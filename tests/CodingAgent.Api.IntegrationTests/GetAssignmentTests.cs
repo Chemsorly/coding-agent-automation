@@ -536,6 +536,46 @@ public sealed class GetAssignmentTests
     }
 
     [Fact]
+    public void BuildMinimalPayload_PreservesConsolidationIdentityFields()
+    {
+        // ARRANGE: a consolidation request with all consolidation-specific identity fields set
+        var full = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier("consolidation/run#1"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600,
+            ConsolidationRunType = CodingAgent.Pipeline.Models.ConsolidationRunType.RefactoringDetection,
+            ConsolidationTemplateId = "tmpl-preserve-1",
+            ConsolidationWorkspacePath = "/workspaces/consolidation",
+            AutoDispatch = true,
+        };
+
+        // ACT
+        var minimal = WorkItemEndpoints.BuildMinimalPayload(full);
+
+        // ASSERT: all four non-reconstructable consolidation identity fields survive stripping
+        minimal.TaskType.Should().Be(WorkItemTaskType.Consolidation,
+            "TaskType must be preserved so the enricher can route to the consolidation path");
+        minimal.ConsolidationRunType.Should().Be(CodingAgent.Pipeline.Models.ConsolidationRunType.RefactoringDetection,
+            "ConsolidationRunType must be preserved — it determines which providers and scopes are resolved");
+        minimal.ConsolidationTemplateId.Should().Be("tmpl-preserve-1",
+            "ConsolidationTemplateId must be preserved — it is used to resolve repo/brain providers at assignment time");
+        minimal.ConsolidationWorkspacePath.Should().Be("/workspaces/consolidation",
+            "ConsolidationWorkspacePath must be preserved — it cannot be reconstructed from the template at assignment time");
+        minimal.AutoDispatch.Should().BeTrue(
+            "AutoDispatch must be preserved — it controls whether created issues are auto-dispatched");
+
+        // Mutable config must still be stripped
+        minimal.ProviderConfigs.Should().BeNull("ProviderConfigs must be null in minimal payload");
+        minimal.PipelineConfiguration.Should().BeNull("PipelineConfiguration must be null in minimal payload");
+        minimal.QualityGateConfigs.Should().BeNull("QualityGateConfigs must be null in minimal payload");
+    }
+
+    [Fact]
     public void BuildMinimalPayload_IssueDetailRetainsIdentityButStripsBody()
     {
         var full = MakeFullRequest() with

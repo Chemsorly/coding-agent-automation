@@ -381,6 +381,7 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton(sp => new AssignmentEnricher(
             sp.GetRequiredService<DispatchInfrastructure>(),
             sp.GetRequiredService<IAgentProfileStore>(),
+            sp.GetRequiredService<IConsolidationJobPreparationService>(),
             Log.Logger));
         // Required by ModelFetchJobService and ChatJobDispatcher.
         // IKubernetes is already registered above; only the job client wrapper is missing.
