@@ -347,7 +347,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     private async Task PostCompletionBookkeepingAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload, CancellationToken ct)
     {
         // ── Durable outbox enqueue (must happen BEFORE cts is created) ──────────────────
-        // Scope: this outbox closes the "pod dies during bookkeeping" window (the former :395 TODO).
+        // Scope: this outbox closes the "pod dies during bookkeeping" window (see prior :395 note).
         // It does NOT close the "ReportJobCompleted was rejected / never invoked (reconnect race)"
         // window — there the enqueue below never runs because PostCompletionBookkeepingAsync is
         // never reached. That window is reduced by Part A's reconnect-gate but not fully closed

@@ -273,4 +273,166 @@ public sealed class FeedbackCommentRelayServiceTests
         // But the outbox entry should still be marked completed (comment was posted successfully)
         _outboxClient.Verify(c => c.MarkCompletedAsync(entry.Id, It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    // ── Test: null Description → marks completed without posting ──────────
+
+    [Fact]
+    public async Task NullDescription_MarksCompletedWithoutPosting()
+    {
+        var entry = MakeEntry(description: null); // FeedbackCommentFormatter.FormatComment returns null
+        SetupConfig();
+
+        _outboxClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([entry]);
+        SetupNoProviders();
+
+        await CreateSut().SweepOnceForTestAsync(CancellationToken.None);
+
+        // Should mark completed — no deliverable body, no point retrying
+        _outboxClient.Verify(c => c.MarkCompletedAsync(entry.Id, It.IsAny<CancellationToken>()), Times.Once);
+        // PostCommentAsync must never be called
+        _providerFactory.Verify(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()), Times.Never);
+    }
+
+    // ── Test: issue provider config not found → MarkFailed ────────────────
+
+    [Fact]
+    public async Task IssueProviderConfigNotFound_CallsMarkFailed()
+    {
+        var entry = MakeEntry(); // IssueProviderConfigId = "github" but no provider config loaded
+        SetupConfig(maxAttempts: 5);
+
+        _outboxClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([entry]);
+
+        // No issue providers — config is missing
+        _configClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        _configClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        await CreateSut().SweepOnceForTestAsync(CancellationToken.None);
+
+        _outboxClient.Verify(
+            c => c.MarkFailedAsync(entry.Id, It.Is<string>(msg => msg.Contains("github")), 5, It.IsAny<CancellationToken>()),
+            Times.Once);
+        _outboxClient.Verify(c => c.MarkCompletedAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── Test: config-load failure → fallback to default maxAttempts ───────
+
+    [Fact]
+    public async Task ConfigLoadFails_FallsBackToDefaultMaxAttempts()
+    {
+        // GetPipelineConfigAsync throws → LoadMaxAttemptsAsync falls back to default (5)
+        _configClient.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("config endpoint unavailable"));
+
+        _outboxClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        // Should not throw — sweep continues with default maxAttempts
+        await CreateSut().SweepOnceForTestAsync(CancellationToken.None);
+
+        // GetPendingAsync called with the default (5), not zero or an error value
+        _outboxClient.Verify(
+            c => c.GetPendingAsync(5, It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    // ── Test: MarkFailed itself throws → exception swallowed (sweep continues) ──
+
+    [Fact]
+    public async Task MarkFailedThrows_ExceptionSwallowed_OtherEntriesProcessed()
+    {
+        var entry1 = MakeEntry("run-fail-mark");
+        var entry2 = MakeEntry("run-ok");
+        SetupConfig(maxAttempts: 5);
+
+        _outboxClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([entry1, entry2]);
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("provider down"));
+        mockIssueProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+
+        var issueConfig = new ProviderConfig { Id = "github", Kind = ProviderKind.Issue, DisplayName = "GitHub", ProviderType = "GitHub" };
+        _configClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([issueConfig]);
+        _configClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        _providerFactory.Setup(f => f.CreateIssueProvider(issueConfig)).Returns(mockIssueProvider.Object);
+
+        // MarkFailed throws for entry1 — should be swallowed, entry2 still processed
+        _outboxClient.Setup(c => c.MarkFailedAsync(entry1.Id, It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("mark-failed endpoint down"));
+        // entry2's MarkFailed succeeds
+        _outboxClient.Setup(c => c.MarkFailedAsync(entry2.Id, It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Should not throw — MarkFailed failure is swallowed
+        await CreateSut().SweepOnceForTestAsync(CancellationToken.None);
+
+        // Both entries attempted MarkFailed
+        _outboxClient.Verify(c => c.MarkFailedAsync(entry1.Id, It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
+        _outboxClient.Verify(c => c.MarkFailedAsync(entry2.Id, It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── Test: provider config load fails → sweep continues, entries get MarkFailed ──
+
+    [Fact]
+    public async Task ProviderConfigLoadFails_EntriesGetMarkFailed()
+    {
+        var entry = MakeEntry();
+        SetupConfig(maxAttempts: 5);
+
+        _outboxClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([entry]);
+
+        // Provider config load fails → LoadProviderConfigsAsync returns empty list
+        _configClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("config endpoint down"));
+
+        // Should not throw
+        await CreateSut().SweepOnceForTestAsync(CancellationToken.None);
+
+        // Entry gets MarkFailed because no issue provider config was found
+        _outboxClient.Verify(
+            c => c.MarkFailedAsync(entry.Id, It.IsAny<string>(), 5, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    // ── Test: repo config not found → PR append skipped, still marks completed ──
+
+    [Fact]
+    public async Task RepoProviderConfigNotFound_SkipsPrAppend_StillMarksCompleted()
+    {
+        var entry = MakeEntry(pullRequestNumber: "47"); // PR number but no repo config
+        SetupConfig();
+
+        _outboxClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([entry]);
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("https://github.com/org/repo/issues/42#issuecomment-123");
+        mockIssueProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+
+        var issueConfig = new ProviderConfig { Id = "github", Kind = ProviderKind.Issue, DisplayName = "GitHub", ProviderType = "GitHub" };
+        // No repo provider configs returned
+        _configClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([issueConfig]);
+        _configClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        _providerFactory.Setup(f => f.CreateIssueProvider(issueConfig)).Returns(mockIssueProvider.Object);
+
+        await CreateSut().SweepOnceForTestAsync(CancellationToken.None);
+
+        // PR append was skipped (no repo provider), but the entry was still completed
+        _providerFactory.Verify(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()), Times.Never);
+        _outboxClient.Verify(c => c.MarkCompletedAsync(entry.Id, It.IsAny<CancellationToken>()), Times.Once);
+    }
 }
