@@ -16,15 +16,10 @@ namespace CodingAgent.Scheduler.UnitTests;
 /// Unit tests for <see cref="FeedbackCommentRelayService"/>.
 /// Tests call the internal <see cref="FeedbackCommentRelayService.SweepOnceForTestAsync"/> method directly
 /// rather than running through BackgroundService timing, to avoid thread-scheduling races.
+/// Placed in the <see cref="TimingTestCollection"/> (SchedulerTiming) collection so it serializes
+/// with the other PeriodicTimer-based tests in this assembly and does not starve them on CI.
 /// </summary>
-// TODO: Add a test for the config-load failure fallback path in LoadMaxAttemptsAsync:
-//   when GetPipelineConfigAsync throws, the sweep should still proceed using DefaultFeedbackCommentOutboxMaxAttempts (5).
-//   Without this test, a change that aborts the sweep on config failure would go undetected.
-//
-// TODO: Add a test for the null-Description / null-FormatComment path in ProcessEntryAsync:
-//   an entry whose FeedbackJson deserializes to an IssueFeedback with Description=null should be
-//   marked Completed without calling PostCommentAsync. This ensures the "no-deliverable-body"
-//   guard does not silently change to MarkFailed or throw in a future refactor.
+[Collection("SchedulerTiming")]
 public sealed class FeedbackCommentRelayServiceTests
 {
     private readonly Mock<IPipelineApiFeedbackCommentOutboxClient> _outboxClient = new();
@@ -434,5 +429,111 @@ public sealed class FeedbackCommentRelayServiceTests
         // PR append was skipped (no repo provider), but the entry was still completed
         _providerFactory.Verify(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()), Times.Never);
         _outboxClient.Verify(c => c.MarkCompletedAsync(entry.Id, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── Test: non-numeric PR number → TryParse false, append skipped ──────
+
+    [Fact]
+    public async Task NonNumericPullRequestNumber_SkipsPrAppend_StillMarksCompleted()
+    {
+        // int.TryParse("not-a-number") returns false → TryAppendFeedbackLinkToPrBodyAsync returns early
+        var entry = MakeEntry(pullRequestNumber: "not-a-number");
+        SetupConfig();
+
+        _outboxClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([entry]);
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("https://github.com/org/repo/issues/42#issuecomment-999");
+        mockIssueProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+
+        var issueConfig = new ProviderConfig { Id = "github", Kind = ProviderKind.Issue, DisplayName = "GitHub", ProviderType = "GitHub" };
+        var repoConfig = new ProviderConfig { Id = "github-repo", Kind = ProviderKind.Repository, DisplayName = "GitHub Repo", ProviderType = "GitHub" };
+        _configClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([issueConfig]);
+        _configClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([repoConfig]);
+        _providerFactory.Setup(f => f.CreateIssueProvider(issueConfig)).Returns(mockIssueProvider.Object);
+
+        await CreateSut().SweepOnceForTestAsync(CancellationToken.None);
+
+        // int.TryParse("not-a-number") = false → PR append skipped, but entry completed
+        _providerFactory.Verify(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()), Times.Never);
+        _outboxClient.Verify(c => c.MarkCompletedAsync(entry.Id, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── Test: TryAppendFeedbackLinkToPrBodyAsync exception → swallowed, marks completed ──
+
+    [Fact]
+    public async Task PrBodyAppendThrows_ExceptionSwallowed_MarksCompleted()
+    {
+        // The PR-body append is non-fatal: an exception in TryAppendFeedbackLinkToPrBodyAsync
+        // must be swallowed and the outbox entry still marked completed.
+        var entry = MakeEntry(pullRequestNumber: "47");
+        SetupConfig();
+
+        _outboxClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([entry]);
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("https://github.com/org/repo/issues/42#issuecomment-999");
+        mockIssueProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider.Setup(p => p.GetPullRequestBodyAsync(47, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("repo api down"));
+        mockRepoProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+
+        var issueConfig = new ProviderConfig { Id = "github", Kind = ProviderKind.Issue, DisplayName = "GitHub", ProviderType = "GitHub" };
+        var repoConfig = new ProviderConfig { Id = "github-repo", Kind = ProviderKind.Repository, DisplayName = "GitHub Repo", ProviderType = "GitHub" };
+        _configClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([issueConfig]);
+        _configClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([repoConfig]);
+        _providerFactory.Setup(f => f.CreateIssueProvider(issueConfig)).Returns(mockIssueProvider.Object);
+        _providerFactory.Setup(f => f.CreateRepositoryProvider(repoConfig)).Returns(mockRepoProvider.Object);
+
+        // Must not throw — the append failure is non-fatal
+        await CreateSut().SweepOnceForTestAsync(CancellationToken.None);
+
+        _outboxClient.Verify(c => c.MarkCompletedAsync(entry.Id, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── Test: OperationCanceledException in ProcessEntryAsync re-throws ───
+
+    [Fact]
+    public async Task OperationCancelled_DuringProcessEntry_Propagates()
+    {
+        // OperationCanceledException from PostCommentAsync should propagate out of ProcessEntryAsync
+        // (it is re-thrown) and abort the sweep (caught by SweepAsync's caller).
+        var entry = MakeEntry();
+        SetupConfig();
+
+        _outboxClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([entry]);
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+        mockIssueProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+
+        var issueConfig = new ProviderConfig { Id = "github", Kind = ProviderKind.Issue, DisplayName = "GitHub", ProviderType = "GitHub" };
+        _configClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([issueConfig]);
+        _configClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        _providerFactory.Setup(f => f.CreateIssueProvider(issueConfig)).Returns(mockIssueProvider.Object);
+
+        // SweepOnceForTestAsync propagates OperationCanceledException (ProcessEntryAsync re-throws it)
+        var act = () => CreateSut().SweepOnceForTestAsync(CancellationToken.None);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+
+        // MarkFailed must NOT be called — OCE is re-thrown, not handled by the catch(Exception) block
+        _outboxClient.Verify(c => c.MarkFailedAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

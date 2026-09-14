@@ -430,6 +430,88 @@ public sealed class PipelineApiRemainingClientsTests
         handler.LastRequest!.RequestUri!.PathAndQuery.Should().Contain("agent%2F1");
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // PipelineApiFeedbackCommentOutboxClient
+    // ─────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task OutboxClient_GetPendingAsync_ReturnsList()
+    {
+        var (client, handler) = Create(h => new PipelineApiFeedbackCommentOutboxClient(h));
+        var entries = new List<FeedbackCommentOutboxEntry>
+        {
+            new() { Id = Guid.NewGuid(), RunId = "run-1", IssueIdentifier = "GH-1",
+                    IssueProviderConfigId = "gh", RepoProviderConfigId = "gh-repo",
+                    FeedbackJson = "{}", Status = "Pending", AttemptCount = 0,
+                    CreatedAt = DateTimeOffset.UtcNow }
+        };
+        handler.Respond = _ => JsonResponse(entries);
+
+        var result = await client.GetPendingAsync(maxAttempts: 5, pageSize: 20);
+
+        result.Should().HaveCount(1);
+        result[0].RunId.Should().Be("run-1");
+        handler.LastRequest!.RequestUri!.PathAndQuery.Should().Contain("maxAttempts=5");
+        handler.LastRequest.RequestUri.PathAndQuery.Should().Contain("pageSize=20");
+    }
+
+    [Fact]
+    public async Task OutboxClient_GetPendingAsync_WhenNullBody_ReturnsEmpty()
+    {
+        var (client, handler) = Create(h => new PipelineApiFeedbackCommentOutboxClient(h));
+        handler.Respond = _ => NullJson();
+
+        var result = await client.GetPendingAsync(maxAttempts: 5, pageSize: 20);
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task OutboxClient_MarkCompletedAsync_SendsPost()
+    {
+        var (client, handler) = Create(h => new PipelineApiFeedbackCommentOutboxClient(h));
+        handler.Respond = _ => Empty();
+        var id = Guid.NewGuid();
+
+        await client.MarkCompletedAsync(id);
+
+        handler.LastRequest!.Method.Should().Be(HttpMethod.Post);
+        handler.LastRequest.RequestUri!.PathAndQuery.Should().Be($"/api/feedback-comment-outbox/{id}/complete");
+    }
+
+    [Fact]
+    public async Task OutboxClient_MarkCompletedAsync_WhenNonSuccess_Throws()
+    {
+        var (client, handler) = Create(h => new PipelineApiFeedbackCommentOutboxClient(h));
+        handler.Respond = _ => Empty(HttpStatusCode.InternalServerError);
+
+        var act = () => client.MarkCompletedAsync(Guid.NewGuid());
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task OutboxClient_MarkFailedAsync_SendsPostWithBody()
+    {
+        var (client, handler) = Create(h => new PipelineApiFeedbackCommentOutboxClient(h));
+        handler.Respond = _ => Empty();
+        var id = Guid.NewGuid();
+
+        await client.MarkFailedAsync(id, "provider error", maxAttempts: 5);
+
+        handler.LastRequest!.Method.Should().Be(HttpMethod.Post);
+        handler.LastRequest.RequestUri!.PathAndQuery.Should().Be($"/api/feedback-comment-outbox/{id}/fail");
+    }
+
+    [Fact]
+    public async Task OutboxClient_MarkFailedAsync_WhenNonSuccess_Throws()
+    {
+        var (client, handler) = Create(h => new PipelineApiFeedbackCommentOutboxClient(h));
+        handler.Respond = _ => Empty(HttpStatusCode.BadRequest);
+
+        var act = () => client.MarkFailedAsync(Guid.NewGuid(), "error", 5);
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
     // ── Stub ──────────────────────────────────────────────────────────────
 
     internal sealed class StubHandler : HttpMessageHandler

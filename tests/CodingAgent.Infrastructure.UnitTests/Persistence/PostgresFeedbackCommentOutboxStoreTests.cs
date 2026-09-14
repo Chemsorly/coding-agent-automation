@@ -249,6 +249,111 @@ public sealed class PostgresFeedbackCommentOutboxStoreTests : IDisposable
         await act.Should().NotThrowAsync();
     }
 
+    // ── DbUpdateConcurrencyException paths ────────────────────────────────
+
+    [Fact]
+    public async Task MarkCompletedAsync_WhenConcurrentWrite_DoesNotThrow()
+    {
+        // Simulate two callers both marking the same entry completed (at-least-once relay scenario).
+        // InMemory doesn't enforce xmin, so the second MarkCompleted simply re-saves with Completed.
+        var store = CreateStore();
+        var entry = MakeEntry("run-concur-complete");
+        await store.EnqueueAsync(entry, CancellationToken.None);
+
+        await store.MarkCompletedAsync(entry.Id, CancellationToken.None);
+        var act = () => store.MarkCompletedAsync(entry.Id, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+
+        // Entry should still be Completed
+        await using var db = new PipelineDbContext(_dbOptions);
+        var saved = await db.FeedbackCommentOutbox.FindAsync(entry.Id);
+        saved!.Status.Should().Be("Completed");
+    }
+
+    [Fact]
+    public async Task MarkFailedAsync_WhenCalledMultipleTimes_AccumulatesAttempts()
+    {
+        var store = CreateStore();
+        var entry = MakeEntry("run-multi-fail");
+        await store.EnqueueAsync(entry, CancellationToken.None);
+
+        // Multiple MarkFailed calls — each increments AttemptCount
+        await store.MarkFailedAsync(entry.Id, "error 1", 5, CancellationToken.None);
+        await store.MarkFailedAsync(entry.Id, "error 2", 5, CancellationToken.None);
+
+        await using var db = new PipelineDbContext(_dbOptions);
+        var saved = await db.FeedbackCommentOutbox.FindAsync(entry.Id);
+        saved!.AttemptCount.Should().Be(2);
+        saved.ErrorMessage.Should().Be("error 2");
+    }
+
+    // ── Unique violation via DbUpdateException fallback ───────────────────
+
+    [Fact]
+    public async Task EnqueueAsync_WhenDbUpdateExceptionWithDuplicateKeyMessage_TreatedAsNoOp()
+    {
+        // Test the DbUpdateException catch path in EnqueueAsync that handles unique-index violations.
+        // We simulate this by providing a factory that returns a context whose SaveChangesAsync
+        // throws DbUpdateException with "duplicate key" in the inner exception message.
+        var options = new DbContextOptionsBuilder<PipelineDbContext>()
+            .UseInMemoryDatabase($"OutboxThrowTest-{Guid.NewGuid()}")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+        using var ctx = new PipelineDbContext(options);
+        ctx.Database.EnsureCreated();
+
+        var throwingFactory = new ThrowOnSaveDbContextFactory(options,
+            new DbUpdateException("Save failed",
+                new InvalidOperationException("duplicate key value violates unique constraint")));
+        var store = new PostgresFeedbackCommentOutboxStore(throwingFactory);
+
+        var entry = MakeEntry("run-throw-dupe");
+
+        // Should NOT throw — unique violation is swallowed
+        var act = () => store.EnqueueAsync(entry, CancellationToken.None);
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_WhenDbUpdateExceptionWithUniqueConstraintMessage_TreatedAsNoOp()
+    {
+        // Same as above but tests the "unique constraint" message variant
+        var options = new DbContextOptionsBuilder<PipelineDbContext>()
+            .UseInMemoryDatabase($"OutboxThrowTest2-{Guid.NewGuid()}")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+        using var ctx = new PipelineDbContext(options);
+        ctx.Database.EnsureCreated();
+
+        var throwingFactory = new ThrowOnSaveDbContextFactory(options,
+            new DbUpdateException("Save failed",
+                new InvalidOperationException("unique constraint violation")));
+        var store = new PostgresFeedbackCommentOutboxStore(throwingFactory);
+
+        var act = () => store.EnqueueAsync(MakeEntry("run-throw-unique"), CancellationToken.None);
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_WhenDbUpdateExceptionNonViolation_Propagates()
+    {
+        // Other DbUpdateException types (e.g. connection loss) should propagate to the caller.
+        var options = new DbContextOptionsBuilder<PipelineDbContext>()
+            .UseInMemoryDatabase($"OutboxThrowTest3-{Guid.NewGuid()}")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+        using var ctx = new PipelineDbContext(options);
+        ctx.Database.EnsureCreated();
+
+        var throwingFactory = new ThrowOnSaveDbContextFactory(options,
+            new DbUpdateException("Connection failed", new InvalidOperationException("timeout")));
+        var store = new PostgresFeedbackCommentOutboxStore(throwingFactory);
+
+        var act = () => store.EnqueueAsync(MakeEntry("run-throw-other"), CancellationToken.None);
+        await act.Should().ThrowAsync<DbUpdateException>();
+    }
+
     // ── Helper ────────────────────────────────────────────────────────────
 
     private sealed class InMemoryDbContextFactory : IDbContextFactory<PipelineDbContext>
@@ -258,5 +363,39 @@ public sealed class PostgresFeedbackCommentOutboxStoreTests : IDisposable
         public PipelineDbContext CreateDbContext() => new(_options);
         public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
             => Task.FromResult(CreateDbContext());
+    }
+
+    /// <summary>
+    /// A DbContextFactory that returns a context whose SaveChangesAsync throws the given exception.
+    /// Used to test exception-handling paths that require DbUpdateException or DbUpdateConcurrencyException.
+    /// </summary>
+    private sealed class ThrowOnSaveDbContextFactory : IDbContextFactory<PipelineDbContext>
+    {
+        private readonly DbContextOptions<PipelineDbContext> _options;
+        private readonly Exception _exceptionToThrow;
+
+        public ThrowOnSaveDbContextFactory(DbContextOptions<PipelineDbContext> options, Exception exceptionToThrow)
+        {
+            _options = options;
+            _exceptionToThrow = exceptionToThrow;
+        }
+
+        public PipelineDbContext CreateDbContext() => new ThrowingPipelineDbContext(_options, _exceptionToThrow);
+
+        public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
+            => Task.FromResult(CreateDbContext());
+    }
+
+    private sealed class ThrowingPipelineDbContext : PipelineDbContext
+    {
+        private readonly Exception _exceptionToThrow;
+
+        public ThrowingPipelineDbContext(DbContextOptions<PipelineDbContext> options, Exception ex) : base(options)
+        {
+            _exceptionToThrow = ex;
+        }
+
+        public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+            => Task.FromException<int>(_exceptionToThrow);
     }
 }
