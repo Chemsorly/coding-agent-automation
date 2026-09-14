@@ -126,6 +126,13 @@ public static class ApiServiceCollectionExtensions
         // ── IKeyValueStore ──────────────────────────────────────────────────
         services.AddScoped<IKeyValueStore, EfKeyValueStore>();
 
+        // ── IFeedbackCommentOutbox ──────────────────────────────────────────
+        // Registered as singleton (not scoped) because AgentJobLifecycleService is a singleton
+        // and resolving a scoped service from the root container would throw at startup.
+        // PostgresFeedbackCommentOutboxStore is safe as a singleton: it takes only
+        // IDbContextFactory<PipelineDbContext> and uses a context-per-operation pattern.
+        services.AddSingleton<IFeedbackCommentOutbox, PostgresFeedbackCommentOutboxStore>();
+
         // ── IDatabaseProbe (no-op — real DB connectivity is handled by DatabaseStartupService) ─
         services.AddSingleton<IDatabaseProbe, NoOpDatabaseProbe>();
 

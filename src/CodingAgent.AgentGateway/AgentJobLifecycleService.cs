@@ -4,6 +4,7 @@ using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
 using Microsoft.Extensions.Hosting;
 using ILogger = Serilog.ILogger;
@@ -26,6 +27,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     private readonly IHubIssueOperations _issueOps;
     private readonly IChangeNotifier _changeNotifier;
     private readonly IHostApplicationLifetime _appLifetime;
+    private readonly IFeedbackCommentOutbox _outbox;
     private readonly ILogger _logger;
 
     private readonly IJobCompletionStrategy _regularStrategy;
@@ -38,6 +40,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         IHubIssueOperations issueOps,
         IChangeNotifier changeNotifier,
         IHostApplicationLifetime appLifetime,
+        IFeedbackCommentOutbox outbox,
         ILogger logger)
     {
         _facade = facade;
@@ -45,6 +48,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         _issueOps = issueOps;
         _changeNotifier = changeNotifier;
         _appLifetime = appLifetime;
+        _outbox = outbox;
         _logger = logger;
 
         _regularStrategy = new RegularJobCompletionStrategy(facade, lifecycleManager, changeNotifier, logger);
@@ -343,6 +347,44 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
     private async Task PostCompletionBookkeepingAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload, CancellationToken ct)
     {
+        // ── Durable outbox enqueue (must happen BEFORE cts is created) ──────────────────
+        // Scope: this outbox closes the "pod dies during bookkeeping" window (the former :395 TODO).
+        // It does NOT close the "ReportJobCompleted was rejected / never invoked (reconnect race)"
+        // window — there the enqueue below never runs because PostCompletionBookkeepingAsync is
+        // never reached. That window is reduced by Part A's reconnect-gate but not fully closed
+        // by Part B. Fully closing it would require enqueuing on the durable HTTP-primary completion
+        // path (WorkItemEndpoints), where run.Feedback is unavailable; deferred as a follow-up.
+        //
+        // Guard mirrors FeedbackCommentFormatter.FormatComment: only enqueue when
+        // Description is non-null (a null Description would produce no comment body and
+        // create an un-deliverable row that exhausts maxAttempts without ever posting).
+        // Using CancellationToken.None explicitly so this DB write survives ApplicationStopping —
+        // the entire point of the outbox is to persist comments that the cancellable fast path drops.
+        Guid outboxEntryId = Guid.Empty;
+        if (run.Feedback?.Issue?.Description is not null)
+        {
+            var entry = BuildOutboxEntry(run);
+            outboxEntryId = entry.Id;
+            // Enqueue is best-effort: a transient DB failure must not abort the label swap below.
+            // Before this outbox was introduced, PostCompletionBookkeepingAsync performed no DB
+            // writes, so a Postgres blip could not bypass SwapLabelAsync. We preserve that guarantee
+            // by catching and logging any exception from EnqueueAsync rather than propagating it.
+            // If the enqueue fails, the comment is not durable for this run (same behaviour as before
+            // the outbox was introduced), but the label swap proceeds normally.
+            try
+            {
+                await _outbox.EnqueueAsync(entry, CancellationToken.None);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Warning(ex,
+                    "Job {JobId} failed to enqueue feedback comment outbox row (run={RunId}) — " +
+                    "comment durability is degraded for this run but label swap will proceed",
+                    jobId.Value, entry.RunId);
+                outboxEntryId = Guid.Empty; // don't attempt MarkCompleted if enqueue failed
+            }
+        }
+
         // Link the caller's token with the host's ApplicationStopping token.
         // This ensures bookkeeping is aborted on graceful pod shutdown even when the hub
         // calls in with CancellationToken.None (the caller-supplied token is not yet meaningful).
@@ -386,22 +428,46 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             var swComment = Stopwatch.StartNew();
             await _issueOps.PostIssueFeedbackCommentAsync(run, cts.Token);
             _logger.Information("Job {JobId} PostIssueFeedbackCommentAsync completed in {ElapsedMs}ms", jobId.Value, swComment.ElapsedMilliseconds);
+
+            // Inline fast-path succeeded — mark the outbox row Completed so the relay skips it.
+            // Using CancellationToken.None: if this write fails, the relay will re-post (at-least-once).
+            // TODO [WARNING]: Wrap this MarkCompletedAsync in its own try/catch (log + continue).
+            // The current catch block only handles OperationCanceledException; a DbUpdateException or
+            // DbUpdateConcurrencyException from MarkCompletedAsync will escape PostCompletionBookkeepingAsync
+            // and fail the hub method even though all user-visible work (label swap + comment) already
+            // succeeded. The relay will re-post once (at-least-once), but the intended best-effort
+            // semantics are not realized without swallowing the exception here.
+            if (outboxEntryId != Guid.Empty)
+            {
+                await _outbox.MarkCompletedAsync(outboxEntryId, CancellationToken.None);
+            }
         }
         catch (OperationCanceledException)
         {
             // Graceful shutdown or connection abort — bookkeeping aborted cleanly.
             // OrphanedLabelRecoveryService will correct any stuck agent:in-progress label
             // on its next sweep (default interval: ~30 min).
-            // TODO: A feedback comment that was in-flight when cancellation occurred is permanently
-            // lost — there is no equivalent recovery mechanism for comments (unlike labels). If the
-            // label swap had not yet started, the comment is also skipped. Consider splitting the
-            // try block into two separate catches if feedback comment loss should be logged distinctly
-            // or if a retry strategy for comments is introduced.
+            // FeedbackCommentRelayService will deliver the feedback comment on its next sweep —
+            // the outbox row was enqueued above with CancellationToken.None before cts was created.
             _logger.Information(
-                "PostCompletionBookkeepingAsync cancelled for job {JobId} — OrphanedLabelRecoveryService will handle label cleanup",
+                "PostCompletionBookkeepingAsync cancelled for job {JobId} — OrphanedLabelRecoveryService will handle label cleanup, FeedbackCommentRelayService will deliver the feedback comment",
                 jobId.Value);
         }
     }
+
+    private static FeedbackCommentOutboxEntry BuildOutboxEntry(PipelineRun run) =>
+        new()
+        {
+            Id = Guid.NewGuid(),
+            RunId = run.RunId,
+            IssueProviderConfigId = run.IssueProviderConfigId,
+            IssueIdentifier = run.IssueIdentifier,
+            RepoProviderConfigId = run.RepoProviderConfigId,
+            PullRequestNumber = run.PullRequestNumber,
+            FeedbackJson = System.Text.Json.JsonSerializer.Serialize(
+                run.Feedback!.Issue,
+                PipelineJsonOptions.Default)
+        };
 
     /// <inheritdoc />
     public void HandleStepTransition(JobId jobId, PipelineStep step, DateTimeOffset timestamp, Dictionary<string, string>? metadata)

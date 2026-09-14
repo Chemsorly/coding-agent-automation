@@ -31,6 +31,7 @@ public sealed class AgentJobLifecycleServiceCompletionTests
     private readonly Mock<IHubIssueOperations> _issueOps = new();
     private readonly Mock<IChangeNotifier> _changeNotifier = new();
     private readonly Mock<IHostApplicationLifetime> _appLifetime = new();
+    private readonly Mock<IFeedbackCommentOutbox> _outbox = new();
     private readonly Mock<ILogger> _logger = new();
 
     private AgentJobLifecycleService CreateService()
@@ -43,6 +44,7 @@ public sealed class AgentJobLifecycleServiceCompletionTests
             _issueOps.Object,
             _changeNotifier.Object,
             _appLifetime.Object,
+            _outbox.Object,
             _logger.Object);
     }
 

@@ -173,6 +173,7 @@ app.MapConfigEndpoints();
 app.MapConsolidationRunEndpoints();
 app.MapConsolidationWorkItemEndpoints();
 app.MapHarnessSuggestionEndpoints();
+app.MapFeedbackCommentOutboxEndpoints();
 app.MapAgentEndpoints();
 app.MapChatEndpoints();
 app.MapApiSchedulerEndpoints();

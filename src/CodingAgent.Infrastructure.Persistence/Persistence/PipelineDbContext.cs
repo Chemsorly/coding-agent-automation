@@ -28,6 +28,7 @@ public class PipelineDbContext : DbContext
     public DbSet<ConsolidationRunEntity> ConsolidationRuns => Set<ConsolidationRunEntity>();
     public DbSet<PipelineConfigEntity> PipelineConfig => Set<PipelineConfigEntity>();
     public DbSet<KeyValueEntity> KeyValueStore => Set<KeyValueEntity>();
+    public DbSet<FeedbackCommentOutboxEntity> FeedbackCommentOutbox => Set<FeedbackCommentOutboxEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -140,6 +141,16 @@ public class PipelineDbContext : DbContext
             e.HasKey(kv => kv.Key);
             e.Property(kv => kv.RowVersion).IsRowVersion();
             e.Property(kv => kv.Value).HasColumnType(JsonbColumnType);
+        });
+
+        modelBuilder.Entity<FeedbackCommentOutboxEntity>(e =>
+        {
+            e.HasKey(f => f.Id);
+            e.Property(f => f.RowVersion).IsRowVersion();
+            // Unique index: one row per pipeline run — makes EnqueueAsync idempotent.
+            e.HasIndex(f => f.RunId).IsUnique();
+            // Relay query index: Status + AttemptCount + CreatedAt (oldest-first sweep).
+            e.HasIndex(f => new { f.Status, f.AttemptCount, f.CreatedAt });
         });
     }
 }

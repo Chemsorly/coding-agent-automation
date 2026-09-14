@@ -301,6 +301,21 @@ public static class SchedulerServiceCollectionExtensions
             sp.GetService<ILeaderElectionService>(),
             Log.Logger));
 
+        // ── FeedbackCommentRelayService ───────────────────────────────────────
+        services.AddHttpClient<IPipelineApiFeedbackCommentOutboxClient, PipelineApiFeedbackCommentOutboxClient>(c =>
+        {
+            c.BaseAddress = new Uri(pipelineApiBaseUrl);
+            c.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", agentApiKey);
+        }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
+
+        services.AddHostedService(sp => new FeedbackCommentRelayService(
+            sp.GetRequiredService<IPipelineApiFeedbackCommentOutboxClient>(),
+            sp.GetRequiredService<IProviderFactory>(),
+            sp.GetRequiredService<IPipelineApiConfigClient>(),
+            sp.GetService<ILeaderElectionService>(),
+            Log.Logger));
+
         // ── Redis cleanup services (null-safe) ────────────────────────────────
         services.AddSingleton<AgentRegistryCleanupService>(sp =>
         {

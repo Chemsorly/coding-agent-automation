@@ -137,6 +137,7 @@ public static class PipelineConstants
 
     /// <summary>Default interval in minutes between orphaned label recovery sweeps.</summary>
     public const int DefaultOrphanedLabelSweepIntervalMinutes = 30;
+    public const int DefaultFeedbackCommentOutboxMaxAttempts = 5;
 
     /// <summary>
     /// Default cooldown period for restart-induced dedup protection.
