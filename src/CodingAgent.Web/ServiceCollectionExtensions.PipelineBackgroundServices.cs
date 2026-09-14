@@ -30,6 +30,25 @@ public static partial class ServiceCollectionExtensions
     /// </summary>
     private static void RegisterPipelineBackgroundServices(IServiceCollection services)
     {
+        // ── Shared HTTP resilience defaults ──────────────────────────────────
+        // Sets PooledConnectionLifetime so stale connections to replaced pod IPs (after a
+        // rolling update) are recycled within 90s rather than persisting indefinitely.
+        // Applied via ConfigureHttpClientDefaults so it covers every client registered in
+        // this method (ISchedulerApiClient) and in RegisterTokenAndRunServices (TokenVending).
+        // ConfigureHttpClientDefaults is additive — if AddPipelineApiClient also registered a
+        // ConfigurePrimaryHttpMessageHandler, the last registration wins. Both register an
+        // identical SocketsHttpHandler factory so the outcome is correct regardless of order.
+        // TODO: consolidate multiple ConfigureHttpClientDefaults registrations across this
+        // container into a single shared call to avoid stacked identical handler factories.
+        // See review finding [WARNING] ApiServiceCollectionExtensions.cs:220.
+        services.ConfigureHttpClientDefaults(b =>
+        {
+            b.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                PooledConnectionLifetime = TimeSpan.FromSeconds(90)
+            });
+        });
+
         // ── Spec 047: Loop status polling (replaces in-process PipelineLoopService) ──────────
         // Polls GET /loop/status on the Scheduler every 3 seconds (configurable via
         // SchedulerApi:StatusPollIntervalSeconds). The Overview and Pipelines pages inject
@@ -73,7 +92,7 @@ public static partial class ServiceCollectionExtensions
             if (!string.IsNullOrEmpty(apiKey))
                 c.DefaultRequestHeaders.Add("X-Api-Key", apiKey);
         })
-        .AddStandardResilienceHandler();
+        .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
         // ── Spec 045 retained registrations (consumed by drawer services) ──────────────────
         // ApiConfigurationStore composed from three narrow store shims. Required by

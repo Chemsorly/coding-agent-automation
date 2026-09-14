@@ -60,7 +60,18 @@ web:
       periodSeconds: 5
       timeoutSeconds: 3
       failureThreshold: 3
-  terminationGracePeriodSeconds: 30
+  # terminationGracePeriodSeconds must be >= HostOptions.ShutdownTimeout (40s) + preStop duration (5s).
+  # preStop runs concurrently within the grace window, so effective post-SIGTERM window is
+  # terminationGracePeriodSeconds - preStop = 45 - 5 = 40s, matching the host's ShutdownTimeout.
+  # Previously 30s, which caused the process to be SIGKILL'd 15s into the drain window.
+  # TODO [WARNING]: This arithmetic is only valid for the default values. readinessDrainDelaySeconds
+  # and terminationGracePeriodSeconds are independently editable. If an operator raises
+  # web.env.readinessDrainDelaySeconds without also raising terminationGracePeriodSeconds, the pod
+  # will be SIGKILL'd mid-drain. The invariant
+  #   readinessDrainDelaySeconds + ShutdownTimeout + buffer <= terminationGracePeriodSeconds - preStop
+  # is documented in prose but not enforced at helm render time. The Web host validates this at
+  # startup (ValidateShutdownBudget), which partially mitigates the risk at runtime.
+  terminationGracePeriodSeconds: 45
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -291,11 +302,12 @@ api:
   # AgentRegistryService and OrchestratorRunService switch to Redis-backed distributed mode
   # automatically when Redis is configured. Without Redis the API falls back to in-memory
   # implementations and hub messages cannot be routed cross-replica.
-  # Spec 048 Phase 2: defaults to 1 so the out-of-the-box configuration is valid and safe
-  # (single-replica, in-memory). For HA, set replicas > 1 AND signalr.redis.connectionString —
-  # the chart now fails at render time (see _deprecations.tpl) on replicas > 1 without Redis,
-  # instead of silently shipping a split-brain multi-replica API.
-  replicas: 1
+  # Defaults to 2 (HA) so a PodDisruptionBudget is created and any single-pod disruption
+  # (node drain, OOMKill, rolling update) does not cause a full API outage. Requires
+  # signalr.redis.connectionString — the chart fails at render time (see _deprecations.tpl)
+  # if replicas > 1 and Redis is not configured. For single-replica (in-memory) deployments
+  # without Redis, set replicas: 1 explicitly.
+  replicas: 2
   # Additional annotations on the Deployment metadata (e.g., reloader.stakater.com/auto: "true")
   annotations: {}
   service:
@@ -323,11 +335,29 @@ api:
       memory: 256Mi
     limits:
       cpu: 500m
-      memory: 512Mi
-  terminationGracePeriodSeconds: 30
+      # Raised from 512Mi to reduce OOMKill risk. The API hosts SignalR, EF Core connection pools,
+      # and AgentRegistryService in-memory state. 512Mi was a frequent OOMKill boundary.
+      # For production HA deployments, 768Mi is recommended minimum.
+      memory: 768Mi
+  # terminationGracePeriodSeconds must be >= HostOptions.ShutdownTimeout (40s) + preStop duration (5s).
+  # preStop runs concurrently within the grace window, so effective post-SIGTERM window is
+  # terminationGracePeriodSeconds - preStop = 45 - 5 = 40s, matching the host's ShutdownTimeout.
+  # Previously 30s, which caused the process to be SIGKILL'd 15s into the drain window.
+  # TODO [WARNING]: This arithmetic is only valid for the default values. readinessDrainDelaySeconds
+  # and terminationGracePeriodSeconds are independently editable. If an operator raises
+  # api.env.readinessDrainDelaySeconds (e.g. to 45) without also raising terminationGracePeriodSeconds,
+  # the pod will be SIGKILL'd mid-drain. The invariant
+  #   readinessDrainDelaySeconds + ShutdownTimeout + buffer <= terminationGracePeriodSeconds - preStop
+  # is documented in prose but not enforced at helm render time (unlike the replicas>1/Redis guard in
+  # _deprecations.tpl). Consider adding a Helm validation or a clear operator note in docs.
+  terminationGracePeriodSeconds: 45
   env:
     logLevel: Information
     dbLogLevel: Warning
+    # Seconds to wait after marking /readyz as 503 before proceeding with shutdown.
+    # Allows Kubernetes to remove the pod from Service endpoints before connections are dropped.
+    # Mirrors web.env.readinessDrainDelaySeconds. Must be < terminationGracePeriodSeconds - preStop.
+    readinessDrainDelaySeconds: 15
 
 # ── Job Controller ────────────────────────────────────────────────────────────
 

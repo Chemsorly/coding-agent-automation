@@ -14,7 +14,7 @@ public static partial class ServiceCollectionExtensions
     private static void RegisterTokenAndRunServices(IServiceCollection services, PipelineConfiguration pipelineConfig)
     {
         services.AddHttpClient("TokenVending")
-            .AddStandardResilienceHandler();
+            .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
         services.AddSingleton<ITokenVendingService>(sp => new TokenVendingService(Log.Logger, sp.GetRequiredService<IHttpClientFactory>()));
 
         services.AddSingleton(sp => new OrchestratorRunService(

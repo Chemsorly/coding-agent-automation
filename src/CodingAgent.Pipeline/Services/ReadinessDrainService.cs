@@ -1,16 +1,17 @@
 using Microsoft.Extensions.Hosting;
 
-namespace CodingAgent.Web.Services;
+namespace CodingAgent.Pipeline.Services;
 
 /// <summary>
 /// Graceful shutdown drain service. On SIGTERM/host stopping:
 /// 1. Marks /readyz as unhealthy (503) so Kubernetes removes the pod from Service endpoints
 /// 2. Waits a configurable delay for endpoint removal propagation and in-flight request completion
-/// 3. Then allows the host to proceed with ShutdownService (pipeline/agent cancellation)
+/// 3. Then allows the host to proceed with shutdown (ShutdownService in the Web host,
+///    or normal process exit in the API host)
 ///
-/// Registration order: This service MUST be registered AFTER ShutdownService in DI.
-/// IHostedLifecycleService.StoppingAsync fires in REVERSE registration order,
-/// so this drain runs FIRST (flips readiness, waits), then ShutdownService cancels work.
+/// Registration order: This service MUST be registered AFTER any other shutdown-sensitive
+/// hosted services. IHostedLifecycleService.StoppingAsync fires in REVERSE registration order,
+/// so this drain runs FIRST (flips readiness, waits), then the other services shut down.
 ///
 /// Configurable via READINESS_DRAIN_DELAY_SECONDS env var (default: 15, bounds: 0–120).
 /// </summary>
@@ -37,7 +38,7 @@ public sealed class ReadinessDrainService : IHostedLifecycleService
 
     /// <summary>
     /// Marks readiness as unhealthy and waits for the drain delay before allowing
-    /// the rest of the shutdown sequence (ShutdownService) to proceed.
+    /// the rest of the shutdown sequence to proceed.
     /// </summary>
     public async Task StoppingAsync(CancellationToken cancellationToken)
     {
@@ -54,7 +55,7 @@ public sealed class ReadinessDrainService : IHostedLifecycleService
             _logger.Warning("Readiness drain delay was cancelled — proceeding with shutdown immediately");
         }
 
-        _logger.Information("Readiness drain complete — proceeding with ShutdownService");
+        _logger.Information("Readiness drain complete — proceeding with shutdown");
     }
 
     /// <summary>
