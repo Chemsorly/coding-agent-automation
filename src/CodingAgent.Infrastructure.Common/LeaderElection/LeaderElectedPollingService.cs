@@ -1,5 +1,7 @@
+using System.Net.Http;
 using System.Threading.RateLimiting;
 using Microsoft.Extensions.Hosting;
+using Polly.CircuitBreaker;
 using Serilog;
 
 namespace CodingAgent.Pipeline.LeaderElection;
@@ -20,7 +22,7 @@ namespace CodingAgent.Pipeline.LeaderElection;
 /// </summary>
 public abstract class LeaderElectedPollingService : BackgroundService
 {
-    private static readonly ILogger Log = Serilog.Log.ForContext<LeaderElectedPollingService>();
+    private readonly ILogger _log;
 
     /// <summary>
     /// The leader election service used to determine if this instance holds the leader lease.
@@ -51,13 +53,19 @@ public abstract class LeaderElectedPollingService : BackgroundService
     /// base class. Subclasses access it via <see cref="RateLimiter"/>.
     /// Omit for services that do not require rate limiting.
     /// </param>
-    protected LeaderElectedPollingService(ILeaderElectionService leaderElection, int? rateLimitPerSecond = null)
+    /// <param name="logger">
+    /// Optional logger. When provided, used directly for all log output from this instance.
+    /// When omitted, falls back to <c>Serilog.Log.ForContext&lt;LeaderElectedPollingService&gt;()</c>.
+    /// Pass an explicit logger in tests to capture log output without touching the global static.
+    /// </param>
+    protected LeaderElectedPollingService(ILeaderElectionService leaderElection, int? rateLimitPerSecond = null, ILogger? logger = null)
     {
         ArgumentNullException.ThrowIfNull(leaderElection);
         LeaderElection = leaderElection;
         RateLimiter = rateLimitPerSecond.HasValue
             ? RateLimiterFactory.CreateTokenBucket(rateLimitPerSecond.Value)
             : null;
+        _log = (logger ?? Serilog.Log.Logger).ForContext<LeaderElectedPollingService>();
     }
 
     /// <inheritdoc/>
@@ -74,7 +82,7 @@ public abstract class LeaderElectedPollingService : BackgroundService
     /// </summary>
     protected sealed override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        Log.Information("{ServiceName} started — waiting for leader election", ServiceName);
+        _log.Information("{ServiceName} started — waiting for leader election", ServiceName);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -104,11 +112,11 @@ public abstract class LeaderElectedPollingService : BackgroundService
 
             if (!stoppingToken.IsCancellationRequested)
             {
-                Log.Information("{ServiceName}: leadership lost, re-entering wait loop", ServiceName);
+                _log.Information("{ServiceName}: leadership lost, re-entering wait loop", ServiceName);
             }
         }
 
-        Log.Information("{ServiceName}: exiting (stopping)", ServiceName);
+        _log.Information("{ServiceName}: exiting (stopping)", ServiceName);
     }
 
     /// <summary>
@@ -120,7 +128,7 @@ public abstract class LeaderElectedPollingService : BackgroundService
     /// <param name="ct">Cancellation token that fires on leadership loss or host stop.</param>
     protected virtual async Task RunLeadershipTermAsync(CancellationToken ct)
     {
-        Log.Information("{ServiceName}: leader acquired, entering poll loop", ServiceName);
+        _log.Information("{ServiceName}: leader acquired, entering poll loop", ServiceName);
 
         while (!ct.IsCancellationRequested)
         {
@@ -132,9 +140,13 @@ public abstract class LeaderElectedPollingService : BackgroundService
             {
                 break;
             }
+            catch (Exception ex) when (IsTransientPollingException(ex))
+            {
+                _log.Warning(ex, "{ServiceName}: transient error in poll cycle — will retry next interval", ServiceName);
+            }
             catch (Exception ex)
             {
-                Log.Error(ex, "{ServiceName}: unhandled error in poll cycle", ServiceName);
+                _log.Error(ex, "{ServiceName}: unhandled error in poll cycle", ServiceName);
             }
 
             try
@@ -153,4 +165,30 @@ public abstract class LeaderElectedPollingService : BackgroundService
     /// <see cref="RunLeadershipTermAsync"/> implementation.
     /// </summary>
     protected abstract Task OnPollCycleAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Returns <c>true</c> if <paramref name="ex"/> is a transient infrastructure exception
+    /// that is expected to resolve on the next poll cycle (e.g. a momentary network blip or
+    /// circuit-breaker open state). Transient exceptions are logged at Warning level; all other
+    /// exceptions are logged at Error level.
+    /// </summary>
+    /// <remarks>
+    /// This assembly (<c>CodingAgent.Infrastructure.Common</c>) has no Npgsql or EF Core dependency,
+    /// so <c>NpgsqlException.IsTransient</c> is intentionally absent here. DB-layer transient
+    /// classification lives in <c>ResiliencePipelineRegistrationExtensions.IsTransientDbException</c>
+    /// in the Persistence assembly. Concrete subclasses that communicate via HTTP (e.g.
+    /// <see cref="ReconciliationService"/>) are fully covered by this predicate.
+    /// </remarks>
+    protected static bool IsTransientPollingException(Exception ex) =>
+        // TODO [WARNING]: System.IO.IOException is the base class for DirectoryNotFoundException,
+        // FileNotFoundException, EndOfStreamException, and other non-transient I/O errors. A
+        // FileNotFoundException from application logic (e.g. missing config file) would be silently
+        // downgraded to Warning and retried indefinitely. Consider narrowing to SocketException
+        // (which derives from IOException and covers network-transient failures) or adding explicit
+        // exclusions for non-transient IOException subclasses.
+        // See Issue #2576 review findings (Correctness [WARNING]).
+        ex is HttpRequestException
+            or TimeoutException
+            or System.IO.IOException
+            or BrokenCircuitException;
 }

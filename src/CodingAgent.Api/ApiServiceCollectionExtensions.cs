@@ -62,7 +62,11 @@ public static class ApiServiceCollectionExtensions
 
         // ── EF Core DbContext Factory + scoped accessor ─────────────────────
         services.AddPooledDbContextFactory<PipelineDbContext>(opts =>
-            opts.UseNpgsql(normalizedConnectionString));
+            opts.UseNpgsql(normalizedConnectionString, npgsqlOpts =>
+                npgsqlOpts.EnableRetryOnFailure(
+                    maxRetryCount: 3,
+                    maxRetryDelay: TimeSpan.FromSeconds(5),
+                    errorCodesToAdd: null)));
         services.AddScoped(sp =>
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>().CreateDbContext());
 

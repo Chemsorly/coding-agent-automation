@@ -22,7 +22,9 @@ namespace CodingAgent.JobController.Reconciliation;
 // using [InternalsVisibleTo] with an internal class instead.
 public class ReconciliationService : LeaderElectedPollingService, IReconciliationTrigger
 {
-    private static readonly Serilog.ILogger Log = Serilog.Log.ForContext<ReconciliationService>();
+    // Logger is stored as an instance field so tests can inject a capturing logger
+    // without touching the process-global Serilog.Log.Logger.
+    private readonly Serilog.ILogger _log;
 
     private readonly ReconciliationLoop _loop;
 
@@ -36,12 +38,14 @@ public class ReconciliationService : LeaderElectedPollingService, IReconciliatio
 
     public ReconciliationService(
         ILeaderElectionService leaderElection,
-        ReconciliationLoop loop)
-        : base(leaderElection) // no rate limiter — reconciliation doesn't need throttling
+        ReconciliationLoop loop,
+        Serilog.ILogger? logger = null)
+        : base(leaderElection, logger: logger) // no rate limiter — reconciliation doesn't need throttling
     {
         ArgumentNullException.ThrowIfNull(leaderElection);
         ArgumentNullException.ThrowIfNull(loop);
         _loop = loop;
+        _log = (logger ?? Serilog.Log.Logger).ForContext<ReconciliationService>();
     }
 
     /// <inheritdoc/>
@@ -105,7 +109,7 @@ public class ReconciliationService : LeaderElectedPollingService, IReconciliatio
         // in-process cache is cleared and PostStatusAsync is called once).
         _loop.OnLeadershipAcquired();
 
-        Log.Information("ReconciliationService: leader acquired, entering poll loop");
+        _log.Information("ReconciliationService: leader acquired, entering poll loop");
 
         while (!ct.IsCancellationRequested)
         {
@@ -117,9 +121,13 @@ public class ReconciliationService : LeaderElectedPollingService, IReconciliatio
             {
                 break;
             }
+            catch (Exception ex) when (IsTransientPollingException(ex))
+            {
+                _log.Warning(ex, "ReconciliationService: transient error in poll cycle — will retry next interval");
+            }
             catch (Exception ex)
             {
-                Log.Error(ex, "ReconciliationService: unhandled error in poll cycle");
+                _log.Error(ex, "ReconciliationService: unhandled error in poll cycle");
             }
 
             try
@@ -159,7 +167,7 @@ public class ReconciliationService : LeaderElectedPollingService, IReconciliatio
 
     protected override async Task OnPollCycleAsync(CancellationToken ct)
     {
-        Log.Debug("ReconciliationService: starting reconciliation cycle");
+        _log.Debug("ReconciliationService: starting reconciliation cycle");
 
         // Run all reconciliation tasks concurrently within the same poll cycle
         // TODO: ReconcileOnceAsync reads and writes _reconciledTerminalIds (a plain HashSet<Guid>
@@ -176,7 +184,7 @@ public class ReconciliationService : LeaderElectedPollingService, IReconciliatio
             RunSafe(_loop.CleanupOrphansAsync(ct), "CleanupOrphans", ct));
     }
 
-    private static async Task RunSafe(Task task, string name, CancellationToken ct)
+    private async Task RunSafe(Task task, string name, CancellationToken ct)
     {
         try
         {
@@ -186,9 +194,13 @@ public class ReconciliationService : LeaderElectedPollingService, IReconciliatio
         {
             // Expected on leadership loss
         }
+        catch (Exception ex) when (IsTransientPollingException(ex))
+        {
+            _log.Warning(ex, "ReconciliationService: transient error in {Task} — will retry next cycle", name);
+        }
         catch (Exception ex)
         {
-            Log.Error(ex, "ReconciliationService: unhandled error in {Task}", name);
+            _log.Error(ex, "ReconciliationService: unhandled error in {Task}", name);
         }
     }
 }
