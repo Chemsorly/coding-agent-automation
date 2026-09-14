@@ -323,12 +323,10 @@ public sealed class ReconciliationServiceTests
     [Trait("Feature", "ConnectionResiliency")]
     public async Task RunLeadershipTerm_WhenOnPollCycleThrowsHttpRequestException_LogsAtWarningNotError()
     {
-        // Arrange: capture log events via a real Serilog sink.
-        // Save and restore the global logger so concurrent tests cannot inject foreign events
-        // into this test's CapturingSink.
-        var previousLogger = Serilog.Log.Logger;
+        // Arrange: build a scoped logger backed by a CapturingSink and inject it into the SUT.
+        // No global Serilog.Log.Logger mutation — parallel tests cannot contaminate this sink.
         var sink = new CapturingSink();
-        Serilog.Log.Logger = new LoggerConfiguration()
+        var logger = new LoggerConfiguration()
             .MinimumLevel.Debug()
             .WriteTo.Sink(sink)
             .CreateLogger();
@@ -344,55 +342,46 @@ public sealed class ReconciliationServiceTests
             {
                 if (Interlocked.Increment(ref throwCount) == 1)
                     throw new HttpRequestException("simulated transient blip");
-            });
+            },
+            logger: logger);
 
         using var stopCts = new CancellationTokenSource();
+        var executeTask = RunExecuteForDuration(svc, stopCts.Token);
 
-        try
-        {
-            var executeTask = RunExecuteForDuration(svc, stopCts.Token);
+        // Wait until the second poll cycle (recovery after the throw)
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        // TODO [WARNING]: throwCount is a plain int field; Interlocked.Increment writes it but this
+        // spin-loop read is non-volatile. On Release builds with aggressive register allocation, the
+        // JIT may cache the stale value and never observe throwCount >= 2, causing the test to spin
+        // until the deadline. Fix: use Volatile.Read(ref throwCount) in the loop condition.
+        // See Issue #2576 review findings (TestQualityReviewer [WARNING]).
+        while (throwCount < 2 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
-            // Wait until the second poll cycle (recovery after the throw)
-            var deadline = DateTime.UtcNow.AddSeconds(10);
-            // TODO [WARNING]: throwCount is a plain int field; Interlocked.Increment writes it but this
-            // spin-loop read is non-volatile. On Release builds with aggressive register allocation, the
-            // JIT may cache the stale value and never observe throwCount >= 2, causing the test to spin
-            // until the deadline. Fix: use Volatile.Read(ref throwCount) in the loop condition.
-            // See Issue #2576 review findings (TestQualityReviewer [WARNING]).
-            while (throwCount < 2 && DateTime.UtcNow < deadline)
-                await Task.Delay(50);
+        stopCts.Cancel();
+        await executeTask;
 
-            stopCts.Cancel();
-            await executeTask;
+        // Assert: Warning was emitted, not Error
+        sink.Events
+            .Should().Contain(e =>
+                e.Level == LogEventLevel.Warning &&
+                e.Exception is HttpRequestException,
+            "HttpRequestException must log at Warning level in the outer poll-loop catch");
 
-            // Assert: Warning was emitted, not Error
-            sink.Events
-                .Should().Contain(e =>
-                    e.Level == LogEventLevel.Warning &&
-                    e.Exception is HttpRequestException,
-                "HttpRequestException must log at Warning level in the outer poll-loop catch");
-
-            sink.Events
-                .Should().NotContain(e =>
-                    e.Level == LogEventLevel.Error &&
-                    e.Exception is HttpRequestException,
-                "HttpRequestException must NOT log at Error level");
-        }
-        finally
-        {
-            stopCts.Cancel();
-            Serilog.Log.Logger = previousLogger;
-        }
+        sink.Events
+            .Should().NotContain(e =>
+                e.Level == LogEventLevel.Error &&
+                e.Exception is HttpRequestException,
+            "HttpRequestException must NOT log at Error level");
     }
 
     [Fact]
     [Trait("Feature", "ConnectionResiliency")]
     public async Task RunLeadershipTerm_WhenOnPollCycleThrowsNonTransientException_LogsAtError()
     {
-        // Arrange: save and restore global logger to prevent cross-test contamination.
-        var previousLogger = Serilog.Log.Logger;
+        // Arrange: inject scoped logger — no global mutation.
         var sink = new CapturingSink();
-        Serilog.Log.Logger = new LoggerConfiguration()
+        var logger = new LoggerConfiguration()
             .MinimumLevel.Debug()
             .WriteTo.Sink(sink)
             .CreateLogger();
@@ -407,36 +396,28 @@ public sealed class ReconciliationServiceTests
             {
                 if (Interlocked.Increment(ref throwCount) == 1)
                     throw new InvalidOperationException("genuine bug");
-            });
+            },
+            logger: logger);
 
         using var stopCts = new CancellationTokenSource();
+        var executeTask = RunExecuteForDuration(svc, stopCts.Token);
 
-        try
-        {
-            var executeTask = RunExecuteForDuration(svc, stopCts.Token);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        // TODO [WARNING]: throwCount spin-loop read is non-volatile (same issue as above test method).
+        // Fix: use Volatile.Read(ref throwCount) in the loop condition.
+        // See Issue #2576 review findings (TestQualityReviewer [WARNING]).
+        while (throwCount < 2 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
-            var deadline = DateTime.UtcNow.AddSeconds(10);
-            // TODO [WARNING]: throwCount spin-loop read is non-volatile (same issue as above test method).
-            // Fix: use Volatile.Read(ref throwCount) in the loop condition.
-            // See Issue #2576 review findings (TestQualityReviewer [WARNING]).
-            while (throwCount < 2 && DateTime.UtcNow < deadline)
-                await Task.Delay(50);
+        stopCts.Cancel();
+        await executeTask;
 
-            stopCts.Cancel();
-            await executeTask;
-
-            // Assert: Error was emitted
-            sink.Events
-                .Should().Contain(e =>
-                    e.Level == LogEventLevel.Error &&
-                    e.Exception is InvalidOperationException,
-                "InvalidOperationException must log at Error level in the outer poll-loop catch");
-        }
-        finally
-        {
-            stopCts.Cancel();
-            Serilog.Log.Logger = previousLogger;
-        }
+        // Assert: Error was emitted
+        sink.Events
+            .Should().Contain(e =>
+                e.Level == LogEventLevel.Error &&
+                e.Exception is InvalidOperationException,
+            "InvalidOperationException must log at Error level in the outer poll-loop catch");
     }
 
     /// <summary>
@@ -448,96 +429,78 @@ public sealed class ReconciliationServiceTests
     [Trait("Feature", "ConnectionResiliency")]
     public async Task RunSafe_WhenTaskThrowsHttpRequestException_LogsAtWarningNotError()
     {
-        // Arrange: save and restore global logger to prevent cross-test contamination.
-        var previousLogger = Serilog.Log.Logger;
+        // Arrange: inject scoped logger — no global mutation.
         var sink = new CapturingSink();
-        Serilog.Log.Logger = new LoggerConfiguration()
+        var logger = new LoggerConfiguration()
             .MinimumLevel.Debug()
             .WriteTo.Sink(sink)
             .CreateLogger();
 
         var leaderElection = MakeLeaderElection(isLeader: false); // not the leader; we invoke RunSafe directly
         var loop = new ReconciliationLoop(_workItemClient.Object, _k8sClient.Object, _options);
+        var svc = new ReconciliationService(leaderElection, loop, logger);
 
-        // Invoke RunSafe via reflection with a task that throws HttpRequestException
+        // Invoke RunSafe via reflection — it is now a private instance method
         var runSafe = typeof(ReconciliationService).GetMethod(
-            "RunSafe", BindingFlags.NonPublic | BindingFlags.Static);
-        runSafe.Should().NotBeNull("RunSafe must exist as a private static method");
+            "RunSafe", BindingFlags.NonPublic | BindingFlags.Instance);
+        runSafe.Should().NotBeNull("RunSafe must exist as a private instance method");
 
         var throwingTask = Task.FromException(new HttpRequestException("simulated K8s API blip"));
         using var cts = new CancellationTokenSource();
 
-        try
-        {
-            // TODO [WARNING]: The null-forgiving '!' below suppresses the null-check after the guard
-            // assertion above. If RunSafe is renamed or made non-static, the reflection lookup returns
-            // null and this line throws NullReferenceException instead of a meaningful assertion failure.
-            // Consider using a null-check + Assert.Fail before proceeding.
-            // See Issue #2576 review findings (TestQualityReviewer [WARNING]).
-            await (Task)runSafe!.Invoke(null, [throwingTask, "ReconcileOnce", cts.Token])!;
+        await (Task)runSafe!.Invoke(svc, [throwingTask, "ReconcileOnce", cts.Token])!;
 
-            // Assert: Warning from RunSafe
-            sink.Events
-                .Should().Contain(e =>
-                    e.Level == LogEventLevel.Warning &&
-                    e.Exception is HttpRequestException &&
-                    e.RenderMessage().Contains("transient"),
-                "HttpRequestException in RunSafe must log at Warning with 'transient' in the message");
+        // Assert: Warning from RunSafe
+        sink.Events
+            .Should().Contain(e =>
+                e.Level == LogEventLevel.Warning &&
+                e.Exception is HttpRequestException &&
+                e.RenderMessage().Contains("transient"),
+            "HttpRequestException in RunSafe must log at Warning with 'transient' in the message");
 
-            sink.Events
-                .Should().NotContain(e =>
-                    e.Level == LogEventLevel.Error &&
-                    e.Exception is HttpRequestException,
-                "HttpRequestException in RunSafe must NOT log at Error");
-        }
-        finally
-        {
-            Serilog.Log.Logger = previousLogger;
-        }
+        sink.Events
+            .Should().NotContain(e =>
+                e.Level == LogEventLevel.Error &&
+                e.Exception is HttpRequestException,
+            "HttpRequestException in RunSafe must NOT log at Error");
     }
 
     [Fact]
     [Trait("Feature", "ConnectionResiliency")]
     public async Task RunSafe_WhenTaskThrowsNonTransientException_LogsAtError()
     {
-        // Arrange: save and restore global logger to prevent cross-test contamination.
-        var previousLogger = Serilog.Log.Logger;
+        // Arrange: inject scoped logger — no global mutation.
         var sink = new CapturingSink();
-        Serilog.Log.Logger = new LoggerConfiguration()
+        var logger = new LoggerConfiguration()
             .MinimumLevel.Debug()
             .WriteTo.Sink(sink)
             .CreateLogger();
 
         var leaderElection = MakeLeaderElection(isLeader: false);
+        var loop = new ReconciliationLoop(_workItemClient.Object, _k8sClient.Object, _options);
+        var svc = new ReconciliationService(leaderElection, loop, logger);
 
         var runSafe = typeof(ReconciliationService).GetMethod(
-            "RunSafe", BindingFlags.NonPublic | BindingFlags.Static);
-        runSafe.Should().NotBeNull("RunSafe must exist as a private static method");
+            "RunSafe", BindingFlags.NonPublic | BindingFlags.Instance);
+        runSafe.Should().NotBeNull("RunSafe must exist as a private instance method");
 
         var throwingTask = Task.FromException(new InvalidOperationException("genuine bug in reconciliation"));
         using var cts = new CancellationTokenSource();
 
-        try
-        {
-            await (Task)runSafe!.Invoke(null, [throwingTask, "ReconcileOnce", cts.Token])!;
+        await (Task)runSafe!.Invoke(svc, [throwingTask, "ReconcileOnce", cts.Token])!;
 
-            // Assert: Error from RunSafe
-            sink.Events
-                .Should().Contain(e =>
-                    e.Level == LogEventLevel.Error &&
-                    e.Exception is InvalidOperationException,
-                "InvalidOperationException in RunSafe must log at Error");
+        // Assert: Error from RunSafe
+        sink.Events
+            .Should().Contain(e =>
+                e.Level == LogEventLevel.Error &&
+                e.Exception is InvalidOperationException,
+            "InvalidOperationException in RunSafe must log at Error");
 
-            sink.Events
-                .Should().NotContain(e =>
-                    e.Level == LogEventLevel.Warning &&
-                    e.Exception is InvalidOperationException,
-                "InvalidOperationException in RunSafe must NOT log at Warning");
-        }
-        finally
-        {
-            Serilog.Log.Logger = previousLogger;
-        }
+        sink.Events
+            .Should().NotContain(e =>
+                e.Level == LogEventLevel.Warning &&
+                e.Exception is InvalidOperationException,
+            "InvalidOperationException in RunSafe must NOT log at Warning");
     }
 
     /// <summary>
@@ -568,8 +531,9 @@ public sealed class ReconciliationServiceTests
         public ThrowingOnPollCycleReconciliationService(
             ILeaderElectionService leaderElection,
             ReconciliationLoop loop,
-            Action onCycle)
-            : base(leaderElection, loop)
+            Action onCycle,
+            Serilog.ILogger? logger = null)
+            : base(leaderElection, loop, logger)
         {
             _onCycle = onCycle;
         }
@@ -586,12 +550,6 @@ public sealed class ReconciliationServiceTests
     /// Thread-safe: uses <see cref="ConcurrentQueue{T}"/> so that concurrent Serilog background
     /// thread emissions do not race with the test spin-loop's reads.
     /// </summary>
-    // TODO [WARNING]: The async loop tests mutate the process-global Serilog.Log.Logger; if two
-    // test classes run in parallel, events from one class can land in the other's CapturingSink.
-    // Neither ReconciliationServiceTests nor LeaderElectedPollingServiceTests uses [Collection]
-    // isolation. Add [Collection("SerialSerilogTests")] to both classes to enforce serial execution,
-    // or switch to scoped Serilog Logger instances rather than the global static.
-    // See Issue #2576 review findings (DotNetSpecialist [WARNING], TestQualityReviewer [WARNING]).
     private sealed class CapturingSink : ILogEventSink
     {
         private readonly ConcurrentQueue<LogEvent> _events = new();

@@ -22,11 +22,7 @@ namespace CodingAgent.Pipeline.LeaderElection;
 /// </summary>
 public abstract class LeaderElectedPollingService : BackgroundService
 {
-    // Use a property (not a readonly field) so tests that replace Serilog.Log.Logger
-    // after class load can intercept log output. A readonly field captures the logger
-    // at class-load time; a property calls ForContext<T>() on the current global logger
-    // at emit time, which correctly reflects any logger replacement in tests.
-    private static ILogger Log => Serilog.Log.ForContext<LeaderElectedPollingService>();
+    private readonly ILogger _log;
 
     /// <summary>
     /// The leader election service used to determine if this instance holds the leader lease.
@@ -57,13 +53,19 @@ public abstract class LeaderElectedPollingService : BackgroundService
     /// base class. Subclasses access it via <see cref="RateLimiter"/>.
     /// Omit for services that do not require rate limiting.
     /// </param>
-    protected LeaderElectedPollingService(ILeaderElectionService leaderElection, int? rateLimitPerSecond = null)
+    /// <param name="logger">
+    /// Optional logger. When provided, used directly for all log output from this instance.
+    /// When omitted, falls back to <c>Serilog.Log.ForContext&lt;LeaderElectedPollingService&gt;()</c>.
+    /// Pass an explicit logger in tests to capture log output without touching the global static.
+    /// </param>
+    protected LeaderElectedPollingService(ILeaderElectionService leaderElection, int? rateLimitPerSecond = null, ILogger? logger = null)
     {
         ArgumentNullException.ThrowIfNull(leaderElection);
         LeaderElection = leaderElection;
         RateLimiter = rateLimitPerSecond.HasValue
             ? RateLimiterFactory.CreateTokenBucket(rateLimitPerSecond.Value)
             : null;
+        _log = (logger ?? Serilog.Log.Logger).ForContext<LeaderElectedPollingService>();
     }
 
     /// <inheritdoc/>
@@ -80,7 +82,7 @@ public abstract class LeaderElectedPollingService : BackgroundService
     /// </summary>
     protected sealed override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        Log.Information("{ServiceName} started — waiting for leader election", ServiceName);
+        _log.Information("{ServiceName} started — waiting for leader election", ServiceName);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -110,11 +112,11 @@ public abstract class LeaderElectedPollingService : BackgroundService
 
             if (!stoppingToken.IsCancellationRequested)
             {
-                Log.Information("{ServiceName}: leadership lost, re-entering wait loop", ServiceName);
+                _log.Information("{ServiceName}: leadership lost, re-entering wait loop", ServiceName);
             }
         }
 
-        Log.Information("{ServiceName}: exiting (stopping)", ServiceName);
+        _log.Information("{ServiceName}: exiting (stopping)", ServiceName);
     }
 
     /// <summary>
@@ -126,7 +128,7 @@ public abstract class LeaderElectedPollingService : BackgroundService
     /// <param name="ct">Cancellation token that fires on leadership loss or host stop.</param>
     protected virtual async Task RunLeadershipTermAsync(CancellationToken ct)
     {
-        Log.Information("{ServiceName}: leader acquired, entering poll loop", ServiceName);
+        _log.Information("{ServiceName}: leader acquired, entering poll loop", ServiceName);
 
         while (!ct.IsCancellationRequested)
         {
@@ -140,11 +142,11 @@ public abstract class LeaderElectedPollingService : BackgroundService
             }
             catch (Exception ex) when (IsTransientPollingException(ex))
             {
-                Log.Warning(ex, "{ServiceName}: transient error in poll cycle — will retry next interval", ServiceName);
+                _log.Warning(ex, "{ServiceName}: transient error in poll cycle — will retry next interval", ServiceName);
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "{ServiceName}: unhandled error in poll cycle", ServiceName);
+                _log.Error(ex, "{ServiceName}: unhandled error in poll cycle", ServiceName);
             }
 
             try
