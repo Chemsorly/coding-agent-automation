@@ -139,8 +139,8 @@ public sealed class AssignmentEnricherTests
         string?,
         int)? MakeCoreResult(IReadOnlyList<ProviderConfig>? providerConfigs = null)
         => (
-            (IReadOnlyList<QualityGateConfiguration>) [],
-            (IReadOnlyList<ReviewerConfiguration>) [],
+            (IReadOnlyList<QualityGateConfiguration>)[],
+            (IReadOnlyList<ReviewerConfiguration>)[],
             MakeIssueContext(),
             providerConfigs ?? MakeProviderConfigs(),
             new PipelineConfiguration(),
@@ -540,20 +540,20 @@ public sealed class AssignmentEnricherTests
         string? templateId = "tmpl-1",
         string? workspacePath = "/ws",
         bool autoDispatch = false) => new()
-    {
-        IssueIdentifier = new IssueIdentifier("owner/repo#42"),
-        IssueProviderConfigId = "issue-prov-1",
-        RepoProviderConfigId = "repo-prov-1",
-        InitiatedBy = "test",
-        TaskType = WorkItemTaskType.Consolidation,
-        AgentSelector = agentSelector,
-        TimeoutSeconds = 3600,
-        ConsolidationRunType = runType,
-        ConsolidationTemplateId = templateId,
-        ConsolidationWorkspacePath = workspacePath,
-        AutoDispatch = autoDispatch,
-        PayloadSchemaVersion = 1,
-    };
+        {
+            IssueIdentifier = new IssueIdentifier("owner/repo#42"),
+            IssueProviderConfigId = "issue-prov-1",
+            RepoProviderConfigId = "repo-prov-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = agentSelector,
+            TimeoutSeconds = 3600,
+            ConsolidationRunType = runType,
+            ConsolidationTemplateId = templateId,
+            ConsolidationWorkspacePath = workspacePath,
+            AutoDispatch = autoDispatch,
+            PayloadSchemaVersion = 1,
+        };
 
     private static ConsolidationJobPreparationResult MakeConsolidationPreparationResult(
         string repoProviderConfigId = "repo-prov-1",
