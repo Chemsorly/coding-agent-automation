@@ -824,4 +824,98 @@ public class OpenIssueContextWriterTests : IDisposable
             Path.Combine(_workspacePath, AgentWorkspacePaths.OpenIssuesDirectory, "closed-1.md"));
         closedContent.Should().Contain("status: closed");
     }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // AC2: Degraded-context Warning when all fetches fail despite collected identifiers
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// AC2: When identifiers were collected but every GetIssueAsync call fails,
+    /// the writer emits a Warning (not a silent Information) so the degraded context
+    /// state is visible in the pipeline run's failure diagnostics.
+    ///
+    /// Moq verification targets Warning(string, T0, T1, T2) — the typed generic overload
+    /// for a three-property log statement. Extension methods cannot be verified by Moq.
+    /// </summary>
+    // TODO: This test constructs a local OpenIssueContextWriter with mockLogger while relying on the
+    // class-level _issueOps mock. The asymmetry (some tests use the class-level _writer + _logger,
+    // others instantiate their own) can cause confusion during maintenance. Consider moving these
+    // two AC2 tests into a dedicated nested class or a separate test file with their own self-contained
+    // fixtures to avoid coupling to the shared _issueOps setup.
+    [Fact]
+    public async Task WriteOpenIssueContextAsync_AllFetchesFail_EmitsWarningWhenIdentifiersCollected()
+    {
+        var mockLogger = new Mock<Serilog.ILogger>();
+        var writer = new OpenIssueContextWriter(mockLogger.Object);
+
+        var issues = new[]
+        {
+            new IssueSummary { Identifier = "1", Title = "Issue 1", Labels = Array.Empty<string>() },
+            new IssueSummary { Identifier = "2", Title = "Issue 2", Labels = Array.Empty<string>() },
+            new IssueSummary { Identifier = "3", Title = "Issue 3", Labels = Array.Empty<string>() }
+        };
+
+        _issueOps.Setup(x => x.ListOpenIssuesAsync(1, 30, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = issues,
+                Page = 1,
+                PageSize = 30,
+                HasMore = false
+            });
+
+        // All GetIssueAsync calls fail — simulating RequestGetIssue hub errors
+        _issueOps.Setup(x => x.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("HubException: Failed to invoke 'RequestGetIssue' due to an error on the server."));
+
+        var count = await writer.WriteOpenIssueContextAsync(_issueOps.Object, _workspacePath, 50, CancellationToken.None);
+
+        count.Should().Be(0);
+
+        // TODO: The Moq Verify predicate checks s.Contains("0 files") against the message template
+        // literal. If the wording changes (e.g., "wrote zero files"), this assertion silently breaks
+        // without a compile-time error. Consider using s.Contains("WriteOpenIssueContext") combined
+        // with It.Is<int>(n => n > 0) for TotalIdentifiers for a more stable assertion.
+        // Warning(string messageTemplate, T0 totalIdentifiers, T1 openCount, T2 closedCount)
+        mockLogger.Verify(
+            l => l.Warning(
+                It.Is<string>(s => s.Contains("0 files") && s.Contains("{TotalIdentifiers}")),
+                It.Is<int>(n => n == 3),  // TotalIdentifiers
+                It.Is<int>(n => n == 3),  // OpenCount
+                It.Is<int>(n => n == 0)), // ClosedCount
+            Times.Once);
+    }
+
+    /// <summary>
+    /// AC2: When the listing returns no issues at all (empty repo, not a hub failure),
+    /// the degraded-context Warning must NOT be emitted — silence is correct here.
+    /// </summary>
+    [Fact]
+    public async Task WriteOpenIssueContextAsync_NoIdentifiersCollected_DoesNotEmitDegradedWarning()
+    {
+        var mockLogger = new Mock<Serilog.ILogger>();
+        var writer = new OpenIssueContextWriter(mockLogger.Object);
+
+        _issueOps.Setup(x => x.ListOpenIssuesAsync(1, 30, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = Array.Empty<IssueSummary>(),
+                Page = 1,
+                PageSize = 30,
+                HasMore = false
+            });
+
+        var count = await writer.WriteOpenIssueContextAsync(_issueOps.Object, _workspacePath, 50, CancellationToken.None);
+
+        count.Should().Be(0);
+
+        // The degraded Warning must not fire — no identifiers were ever collected
+        mockLogger.Verify(
+            l => l.Warning(
+                It.Is<string>(s => s.Contains("all RequestGetIssue calls may have failed")),
+                It.IsAny<int>(),
+                It.IsAny<int>(),
+                It.IsAny<int>()),
+            Times.Never);
+    }
 }
