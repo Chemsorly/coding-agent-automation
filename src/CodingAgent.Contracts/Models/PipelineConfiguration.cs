@@ -767,4 +767,13 @@ public sealed record PipelineConfiguration
     }
     private readonly int _minIssueSlots = 1;
 
+    // ── Feedback comment outbox ────────────────────────────────────────────
+    /// <summary>
+    /// Maximum number of delivery attempts for a durable feedback comment before it is
+    /// permanently marked Failed and excluded from the relay sweep.
+    /// Default 5. See FeedbackCommentRelayService.
+    /// </summary>
+    [Key(85)]
+    public int FeedbackCommentOutboxMaxAttempts { get; init; } = PipelineConstants.DefaultFeedbackCommentOutboxMaxAttempts;
+
 }

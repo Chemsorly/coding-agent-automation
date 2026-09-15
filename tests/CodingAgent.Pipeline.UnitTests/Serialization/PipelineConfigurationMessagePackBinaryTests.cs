@@ -134,6 +134,7 @@ public class PipelineConfigurationMessagePackBinaryTests
         deserialized.HousekeepingTriggerCooldownMinutes.Should().Be(30);
         deserialized.MinIssueSlots.Should().Be(2);
         deserialized.HousekeepingMaxSlotAgeMinutes.Should().Be(120);
+        deserialized.FeedbackCommentOutboxMaxAttempts.Should().Be(10);
     }
 
     private static PipelineConfiguration CreateFullyPopulatedConfig() => new()
@@ -225,5 +226,6 @@ public class PipelineConfigurationMessagePackBinaryTests
         HousekeepingTriggerCooldownMinutes = 30,
         MinIssueSlots = 2,
         HousekeepingMaxSlotAgeMinutes = 120,
+        FeedbackCommentOutboxMaxAttempts = 10,
     };
 }
