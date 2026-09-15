@@ -264,18 +264,12 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
     public static bool IsValidTransition(WorkItemStatus current, WorkItemStatus target)
         => (current, target) switch
         {
-            // Pending→Dispatched: used by the consolidation claim endpoint (ClaimWorkItem).
-            // The regular live dispatch path (issue #2322) no longer creates items as Pending —
-            // it creates them directly as Dispatched. The consolidation JobController dispatch
-            // path (ConsolidationDispatchLoop) was removed in issue #2323.
-            // TODO [CRITICAL]: Remove Pending→Dispatched once the ClaimWorkItem endpoint is confirmed
-            // to have no remaining callers and consolidation claim flow is fully retired.
+            // Pending→Dispatched: used by ClaimWorkItem (POST /api/work-items/{id}/claim).
+            // The Scheduler's WorkItemDispatchPoller uses this endpoint for all task types.
             (WorkItemStatus.Pending, WorkItemStatus.Dispatched or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,
-            // Dispatched→Pending: was used by ConsolidationDispatchLoop.TryCreateK8sJobAsync
-            // (which called RequeueAsync on K8s Job creation failure, transitioning Dispatched→Pending).
-            // ConsolidationDispatchLoop was removed in issue #2323.
-            // TODO [CRITICAL]: Remove Dispatched→Pending once the consolidation claim/requeue flow
-            // is confirmed to have no remaining callers.
+            // Dispatched→Pending: used by RequeueWorkItem (POST /api/work-items/{id}/requeue)
+            // when K8s Job creation fails after a successful claim — the item must be returned to
+            // the Pending queue for retry rather than being stuck in Dispatched state.
             (WorkItemStatus.Dispatched, WorkItemStatus.Running or WorkItemStatus.Failed or WorkItemStatus.Cancelled or WorkItemStatus.Pending) => true,
             (WorkItemStatus.Running, WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,
             // Requeue paths: Failed/Cancelled → Pending (Req 6.1, POST /api/work-items/{id}/requeue)

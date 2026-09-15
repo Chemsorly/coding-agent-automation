@@ -18,9 +18,11 @@ public class WorkItemStateMachinePropertyTests
 {
     /// <summary>
     /// The exhaustive set of allowed state transitions per the work item state machine.
-    /// Pending→Dispatched and Dispatched→Pending are preserved for the consolidation dispatch
-    /// path (ClaimWorkItem endpoint). The regular live dispatch path (issue #2322) no longer
-    /// creates items as Pending, but these transitions remain valid for consolidation items.
+    /// The consolidation-specific TODO comments on Pending→Dispatched and Dispatched→Pending
+    /// are removed in issue #2566. Both transitions remain valid:
+    /// - Pending→Dispatched: used by ClaimWorkItem (POST /api/work-items/{id}/claim)
+    /// - Dispatched→Pending: used by RequeueWorkItem (POST /api/work-items/{id}/requeue)
+    ///   when K8s Job creation fails after a successful claim
     /// </summary>
     private static readonly HashSet<(WorkItemStatus Current, WorkItemStatus Target)> AllowedTransitions =
     [
@@ -125,7 +127,8 @@ public class WorkItemStateMachineReachabilityPropertyTests
             steps++;
         }
 
-        // If we hit maxSteps, we're in a cycle (Dispatched↔Pending).
+        // If we hit maxSteps, we're in a cycle (e.g. Pending → Dispatched → Pending, or
+        // Pending → Failed/Cancelled → Pending).
         // That's valid — the system can re-queue indefinitely.
         // Verify current state is non-terminal (otherwise it would have exited above).
         return !TerminalStatuses.Contains(current);
@@ -167,18 +170,20 @@ public class WorkItemStateMachineReachabilityPropertyTests
     }
 
     /// <summary>
-    /// Property: Pending is reachable from Dispatched, Failed, and Cancelled (requeue paths).
-    /// Dispatched→Pending is retained for the consolidation dispatch path (out of scope for #2322).
+    /// Property: Pending is reachable from Dispatched (requeue on K8s Job failure), Failed, and
+    /// Cancelled (explicit requeue, Req 6.1).
+    /// The consolidation-specific TODO on Dispatched→Pending is removed in issue #2566;
+    /// the transition remains valid for the general requeue path (RequeueWorkItem endpoint).
     /// </summary>
     [Fact]
-    public void Pending_OnlyReachableFrom_Dispatched()
+    public void Pending_ReachableFrom_Dispatched_Failed_Cancelled()
     {
         var statesThatCanReachPending = AllStatuses
             .Where(s => s != WorkItemStatus.Pending && WorkItemTransitionService.IsValidTransition(s, WorkItemStatus.Pending))
             .OrderBy(s => s)
             .ToArray();
 
-        // Dispatched (claim recovery) + Failed + Cancelled (explicit requeue, Req 6.1)
+        // Dispatched (requeue on K8s Job failure) + Failed + Cancelled (explicit requeue, Req 6.1)
         Assert.Equal(3, statesThatCanReachPending.Length);
         Assert.Contains(WorkItemStatus.Dispatched, statesThatCanReachPending);
         Assert.Contains(WorkItemStatus.Failed, statesThatCanReachPending);

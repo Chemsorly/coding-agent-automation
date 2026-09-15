@@ -512,36 +512,36 @@ public sealed class SynchronousDispatchEndpointTests
 
 /// <summary>
 /// Tests for the <see cref="WorkItemTransitionService.IsValidTransition"/> state machine.
-/// After issue #2322, Pending→Dispatched and Dispatched→Pending are PRESERVED because
-/// the consolidation dispatch path (ClaimWorkItem endpoint) still uses them.
-/// The key change in #2322 is that the live dispatch path NO LONGER creates WorkItems
-/// as Pending — it creates them directly as Dispatched via POST /api/work-items/dispatch.
+/// After issue #2566, the consolidation-specific TODO comments on Pending→Dispatched and
+/// Dispatched→Pending are removed. Both transitions remain valid:
+/// - Pending→Dispatched: ClaimWorkItem (POST /api/work-items/{id}/claim)
+/// - Dispatched→Pending: RequeueWorkItem (POST /api/work-items/{id}/requeue) when K8s Job
+///   creation fails after a successful claim
 /// </summary>
 public sealed class WorkItemTransitionService_PendingDispatchedTransitionsTests
 {
     /// <summary>
-    /// Pending→Dispatched remains valid for the consolidation dispatch path (ClaimWorkItem).
-    /// The live dispatch path (KubernetesWorkDistributor) never uses this transition — it creates
-    /// items directly as Dispatched. But the consolidation path's ClaimWorkItem endpoint still
-    /// uses TransitionIfAsync(Pending→Dispatched).
+    /// Pending→Dispatched remains valid for ClaimWorkItem (POST /api/work-items/{id}/claim),
+    /// used by the Scheduler's WorkItemDispatchPoller for all task types.
     /// </summary>
     [Fact]
-    public void PendingToDispatched_IsStillValid_ForConsolidationPath()
+    public void PendingToDispatched_IsStillValid_ForClaimWorkItem()
     {
         WorkItemTransitionService.IsValidTransition(WorkItemStatus.Pending, WorkItemStatus.Dispatched)
             .Should().BeTrue(
-                "Pending→Dispatched is retained for the consolidation dispatch path (ClaimWorkItem endpoint)");
+                "Pending→Dispatched is used by ClaimWorkItem (POST /api/work-items/{id}/claim) for all task types");
     }
 
     /// <summary>
-    /// Dispatched→Pending remains valid for the consolidation dispatch path's claim recovery.
+    /// Dispatched→Pending remains valid for RequeueWorkItem when K8s Job creation fails after claim.
+    /// The consolidation-specific TODO is removed in #2566; the transition remains in the state machine.
     /// </summary>
     [Fact]
-    public void DispatchedToPending_IsStillValid_ForConsolidationClaimRecovery()
+    public void DispatchedToPending_IsStillValid_ForRequeueWorkItem()
     {
         WorkItemTransitionService.IsValidTransition(WorkItemStatus.Dispatched, WorkItemStatus.Pending)
             .Should().BeTrue(
-                "Dispatched→Pending is retained for the consolidation dispatch path's claim recovery");
+                "Dispatched→Pending is used by RequeueWorkItem when K8s Job creation fails after claim");
     }
 
     /// <summary>
