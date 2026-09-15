@@ -129,6 +129,11 @@ spec:
             # ORCHESTRATOR_URL handed to the model-fetch agent pods dispatched
             # from this process. Must be the Pipeline API, not the web service.
             {{- include "coding-agent-automation.workDistributionEnv" . | nindent 12 }}
+            # Consolidation unified-dispatch feature flag — gates whether GET /api/work-items/pending
+            # includes consolidation items for WorkItemDispatchPoller. Must match the web pod setting.
+            # Defaults false; enable after all prerequisites (#2582–#2585 + this change) deploy.
+            - name: Consolidation__UnifiedDispatch__Enabled
+              value: {{ .Values.api.consolidation.unifiedDispatch.enabled | quote }}
           volumeMounts:
             - name: job-templates
               mountPath: /app/config
