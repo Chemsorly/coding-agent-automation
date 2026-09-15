@@ -365,6 +365,12 @@ api:
     # Allows Kubernetes to remove the pod from Service endpoints before connections are dropped.
     # Mirrors web.env.readinessDrainDelaySeconds. Must be < terminationGracePeriodSeconds - preStop.
     readinessDrainDelaySeconds: 15
+  # Consolidation unified-dispatch feature flag — gates whether GET /api/work-items/pending
+  # includes consolidation items for WorkItemDispatchPoller. Must match the web pod setting.
+  # Defaults false; enable after all prerequisites (#2582–#2585 + this change) deploy.
+  consolidation:
+    unifiedDispatch:
+      enabled: false
 
 # ── Job Controller ────────────────────────────────────────────────────────────
 
