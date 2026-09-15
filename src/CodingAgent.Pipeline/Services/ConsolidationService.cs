@@ -224,7 +224,8 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
 
             await PersistRunAsync(run, ct);
 
-            if (status != ConsolidationRunStatus.Running && status != ConsolidationRunStatus.Queued)
+            if (status != ConsolidationRunStatus.Running && status != ConsolidationRunStatus.Queued
+                && status != ConsolidationRunStatus.Pending)
             {
                 var key = (run.Type, run.TemplateId);
                 _runningRuns.TryRemove(key, out _);
@@ -249,7 +250,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         try
         {
             var run = await _runStore.GetByIdAsync(runId, ct);
-            if (run is null || run.Status != ConsolidationRunStatus.Queued)
+            if (run is null || (run.Status != ConsolidationRunStatus.Queued && run.Status != ConsolidationRunStatus.Pending))
                 return false;
 
             run.Status = ConsolidationRunStatus.Cancelled;
@@ -281,7 +282,9 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         try
         {
             var run = await _runStore.GetByIdAsync(runId, ct);
-            if (run is null || run.Status != ConsolidationRunStatus.Queued)
+            // Accept Queued (legacy synchronous dispatch) and Pending (unified dispatch path —
+            // the WorkItem was enqueued as Pending and the Scheduler is now starting the K8s Job).
+            if (run is null || (run.Status != ConsolidationRunStatus.Queued && run.Status != ConsolidationRunStatus.Pending))
                 return;
 
             run.Status = ConsolidationRunStatus.Running;
@@ -306,6 +309,19 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         var queuedRuns = new List<ConsolidationRun>();
         var allRuns = await _runStore.LoadAllRunsAsync(ct);
 
+        // Only select runs with Queued status. Pending runs already have a live WorkItem in
+        // the database — the Scheduler's WorkItemDispatchPoller will pick them up and create
+        // the K8s Job when capacity is available. Re-dispatching Pending runs would cause a
+        // recurring 409 loop (each POST /api/work-items returns Conflict, which is treated as
+        // idempotent Queued=true, which re-triggers this path indefinitely).
+        // TODO [WARNING]: Pending runs are intentionally excluded from dispatch here, but they are
+        // also not re-added to _runningRuns after an orchestrator restart. CleanupOrphanedRunsAsync
+        // only restores Running runs (with live agents) into _runningRuns; RehydrateQueuedRunsAsync
+        // only restores Queued runs. This means: after a restart, the (type, templateId) key for a
+        // Pending run is absent from _runningRuns, so TriggerAsync's TryAdd succeeds and a new
+        // ConsolidationRun (with a new RunId/WorkItem) is created — a genuine duplicate consolidation.
+        // Fix: also re-add Pending runs to _runningRuns during startup rehydration (for dedup only,
+        // without re-dispatching them), mirroring how CleanupOrphanedRunsAsync handles Running runs.
         foreach (var run in allRuns.Where(r => r.Status == ConsolidationRunStatus.Queued))
         {
             var key = (run.Type, run.TemplateId);

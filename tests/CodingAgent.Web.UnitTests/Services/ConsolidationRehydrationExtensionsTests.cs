@@ -186,10 +186,12 @@ public sealed class ConsolidationRehydrationExtensionsTests
         {
             new() { RunId = runId1, Type = ConsolidationRunType.BrainConsolidation,
                     TemplateId = "tmpl-1", Status = ConsolidationRunStatus.Queued,
-                    StartedAtUtc = DateTimeOffset.UtcNow },
+                    StartedAtUtc = DateTimeOffset.UtcNow,
+                    QueuedRequiredLabels = ["kiro", "dotnet"] },
             new() { RunId = runId2, Type = ConsolidationRunType.RefactoringDetection,
                     TemplateId = "tmpl-2", Status = ConsolidationRunStatus.Queued,
-                    StartedAtUtc = DateTimeOffset.UtcNow }
+                    StartedAtUtc = DateTimeOffset.UtcNow,
+                    QueuedRequiredLabels = ["kiro", "dotnet"] }
         };
 
         SetupDefaults(queuedRuns: queuedRuns);
@@ -312,7 +314,9 @@ public sealed class ConsolidationRehydrationExtensionsTests
             TemplateId = "tmpl-refactor",
             Status = ConsolidationRunStatus.Queued,
             StartedAtUtc = DateTimeOffset.UtcNow,
-            AutoDispatch = true
+            AutoDispatch = true,
+            // Baked labels ensure selector resolves without needing profiles
+            QueuedRequiredLabels = ["kiro", "dotnet"]
         };
 
         SetupDefaults(queuedRuns: [queuedRun]);
