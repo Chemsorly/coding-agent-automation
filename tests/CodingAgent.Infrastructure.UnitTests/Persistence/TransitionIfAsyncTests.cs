@@ -24,7 +24,7 @@ public class TransitionIfAsyncTests
     public async Task TransitionIfAsync_MatchingExpected_Succeeds()
     {
         // Arrange: row is Dispatched
-        // Note: Pending→Dispatched was removed (issue #2322: synchronous dispatch path).
+        // Note: Pending→Dispatched was removed in issue #2566 (consolidation dispatch path retired).
         // Using Dispatched→Running as the canonical valid CAS transition.
         var id = Guid.NewGuid();
         var factory = await CreateFactoryWithItem(id, WorkItemStatus.Dispatched);
@@ -79,7 +79,8 @@ public class TransitionIfAsyncTests
     public async Task TransitionIfAsync_ConcurrentClaims_OnlyOneSucceeds()
     {
         // Arrange: single Dispatched row, two separate service instances (each with its own factory)
-        // Note: Pending→Dispatched was removed (issue #2322). Using Dispatched→Running instead.
+        // Note: Pending→Dispatched was removed in issue #2566 (consolidation dispatch path retired).
+        // Using Dispatched→Running instead.
         var id = Guid.NewGuid();
         var dbOptions = CreateInMemoryDbOptions();
         await SeedItem(dbOptions, id, WorkItemStatus.Dispatched);
@@ -105,7 +106,8 @@ public class TransitionIfAsyncTests
     public async Task TransitionIfAsync_MutateCallback_AppliedOnSuccess()
     {
         // Arrange: row is Dispatched
-        // Note: Pending→Dispatched was removed (issue #2322). Using Dispatched→Running instead.
+        // Note: Pending→Dispatched was removed in issue #2566 (consolidation dispatch path retired).
+        // Using Dispatched→Running instead.
         var id = Guid.NewGuid();
         var factory = await CreateFactoryWithItem(id, WorkItemStatus.Dispatched);
         var svc = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);

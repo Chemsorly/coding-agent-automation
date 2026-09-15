@@ -11,6 +11,10 @@ namespace CodingAgent.Web.UnitTests.Services;
 /// <summary>
 /// Unit tests for <see cref="ConsolidationRehydrationExtensions.RunConsolidationStartupAsync"/>.
 ///
+/// After issue #2566, the startup dispatch-rehydration loop was removed. Pending runs are now
+/// poller-owned: ConsolidationRetryBackgroundService handles any queued runs after startup.
+/// RunConsolidationStartupAsync only performs orphan cleanup.
+///
 /// Uses a raw <c>WebApplication.CreateBuilder()</c> host to avoid Program.cs fast-fail
 /// env-var checks. All services consumed by the extension method are registered as mocks.
 /// </summary>
@@ -20,10 +24,6 @@ public sealed class ConsolidationRehydrationExtensionsTests
 
     private readonly Mock<IConsolidationService> _consolidationService = new();
     private readonly Mock<IPipelineApiAgentClient> _apiAgentClient = new();
-    private readonly Mock<IPipelineConfigStore> _configStore = new();
-    private readonly Mock<IWorkDistributor> _workDistributor = new();
-    private readonly Mock<IAgentProfileStore> _profileStore = new();
-    private readonly Mock<IConsolidationWorkspaceManager> _workspaceManager = new();
 
     private WebApplication BuildApp()
     {
@@ -31,27 +31,11 @@ public sealed class ConsolidationRehydrationExtensionsTests
 
         builder.Services.AddSingleton(_consolidationService.Object);
         builder.Services.AddSingleton(_apiAgentClient.Object);
-        builder.Services.AddSingleton<IPipelineConfigStore>(_configStore.Object);
-        builder.Services.AddSingleton(_workDistributor.Object);
-        builder.Services.AddSingleton(_profileStore.Object);
-        builder.Services.AddSingleton(_workspaceManager.Object);
-
-        // Register the real ConsolidationDispatcher so that RunConsolidationStartupAsync
-        // can resolve IConsolidationDispatcher from the container. This lets existing
-        // _workDistributor.Verify() assertions continue to work — ConsolidationDispatcher
-        // delegates to IWorkDistributor internally.
-        builder.Services.AddSingleton<IConsolidationDispatcher>(sp => new ConsolidationDispatcher(
-            sp.GetRequiredService<IWorkDistributor>(),
-            sp.GetRequiredService<IAgentProfileStore>(),
-            sp.GetRequiredService<IConsolidationWorkspaceManager>(),
-            sp.GetRequiredService<IPipelineConfigStore>(),
-            sp.GetRequiredService<IConsolidationService>()));
 
         return builder.Build();
     }
 
-    private void SetupDefaults(IReadOnlyList<AgentEntryDto>? agents = null,
-        IReadOnlyList<ConsolidationRun>? queuedRuns = null)
+    private void SetupDefaults(IReadOnlyList<AgentEntryDto>? agents = null)
     {
         _apiAgentClient
             .Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
@@ -61,18 +45,6 @@ public sealed class ConsolidationRehydrationExtensionsTests
             .Setup(s => s.CleanupOrphanedRunsAsync(
                 It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-
-        _consolidationService
-            .Setup(s => s.RehydrateQueuedRunsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(queuedRuns ?? Array.Empty<ConsolidationRun>());
-
-        _configStore
-            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration());
-
-        _profileStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
     }
 
     // ── Guard tests ───────────────────────────────────────────────────────
@@ -141,12 +113,6 @@ public sealed class ConsolidationRehydrationExtensionsTests
             .Setup(s => s.CleanupOrphanedRunsAsync(
                 It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _consolidationService
-            .Setup(s => s.RehydrateQueuedRunsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<ConsolidationRun>());
-        _configStore
-            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration());
 
         await using var app = BuildApp();
 
@@ -160,184 +126,21 @@ public sealed class ConsolidationRehydrationExtensionsTests
             Times.Once);
     }
 
-    // ── Rehydration ───────────────────────────────────────────────────────
+    // ── No-dispatch guarantee (startup dispatch loop removed in #2566) ────
 
     [Fact]
-    public async Task RunConsolidationStartupAsync_NoQueuedRuns_DoesNotCallDistributor()
+    public async Task RunConsolidationStartupAsync_DoesNotCallRehydrateQueuedRunsAsync()
     {
-        SetupDefaults(queuedRuns: Array.Empty<ConsolidationRun>());
+        // The startup dispatch loop was removed in #2566 — queued runs are now owned by
+        // ConsolidationRetryBackgroundService, not startup rehydration.
+        SetupDefaults();
         await using var app = BuildApp();
 
         await app.RunConsolidationStartupAsync();
 
-        // No runs to rehydrate → distributor never touched
-        _workDistributor.Verify(
-            d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
-
-    [Fact]
-    public async Task RunConsolidationStartupAsync_WithQueuedRuns_DispatchesEachRun()
-    {
-        var runId1 = Guid.NewGuid().ToString();
-        var runId2 = Guid.NewGuid().ToString();
-
-        var queuedRuns = new List<ConsolidationRun>
-        {
-            new() { RunId = runId1, Type = ConsolidationRunType.BrainConsolidation,
-                    TemplateId = "tmpl-1", Status = ConsolidationRunStatus.Queued,
-                    StartedAtUtc = DateTimeOffset.UtcNow,
-                    QueuedRequiredLabels = ["kiro", "dotnet"] },
-            new() { RunId = runId2, Type = ConsolidationRunType.RefactoringDetection,
-                    TemplateId = "tmpl-2", Status = ConsolidationRunStatus.Queued,
-                    StartedAtUtc = DateTimeOffset.UtcNow,
-                    QueuedRequiredLabels = ["kiro", "dotnet"] }
-        };
-
-        SetupDefaults(queuedRuns: queuedRuns);
-
-        _workspaceManager
-            .Setup(w => w.GetWorkspacePath(It.IsAny<RunId>()))
-            .Returns<RunId>(r => $"/workspaces/{r}");
-
-        _workDistributor
-            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DistributionResult(true, null, null));
-
-        await using var app = BuildApp();
-
-        await app.RunConsolidationStartupAsync();
-
-        // One dispatch per queued run
-        _workDistributor.Verify(
-            d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()),
-            Times.Exactly(2));
-    }
-
-    [Fact]
-    public async Task RunConsolidationStartupAsync_QueuedRunHasRequiredLabels_ResolvesSelectorFromProfile()
-    {
-        var runId = Guid.NewGuid().ToString();
-        var requiredLabels = new List<string> { "kiro", "dotnet" };
-
-        var queuedRun = new ConsolidationRun
-        {
-            RunId = runId,
-            Type = ConsolidationRunType.BrainConsolidation,
-            TemplateId = "tmpl-1",
-            Status = ConsolidationRunStatus.Queued,
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            QueuedRequiredLabels = requiredLabels
-        };
-
-        var matchingProfile = new AgentProfile
-        {
-            Id = "profile-dotnet",
-            DisplayName = "DotNet Profile",
-            AgentProviderConfigId = "provider-1",
-            MatchLabels = ["kiro", "dotnet", "dotnet10"]
-        };
-
-        SetupDefaults(queuedRuns: [queuedRun]);
-
-        _profileStore
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { matchingProfile });
-
-        _workspaceManager
-            .Setup(w => w.GetWorkspacePath(It.IsAny<RunId>()))
-            .Returns("/workspaces/test");
-
-        JobDistributionRequest? capturedRequest = null;
-        _workDistributor
-            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<JobDistributionRequest, CancellationToken>((req, _) => capturedRequest = req)
-            .ReturnsAsync(new DistributionResult(true, null, null));
-
-        await using var app = BuildApp();
-
-        await app.RunConsolidationStartupAsync();
-
-        Assert.NotNull(capturedRequest);
-        // AgentSelector should be built from profile's MatchLabels (broader set), not requiredLabels
-        Assert.Equal(AgentSelectorKey.From(matchingProfile.MatchLabels), capturedRequest!.AgentSelector);
-    }
-
-    [Fact]
-    public async Task RunConsolidationStartupAsync_QueuedRunNoMatchingProfile_FallsBackToRequiredLabels()
-    {
-        var runId = Guid.NewGuid().ToString();
-        var requiredLabels = new List<string> { "opencode", "python" };
-
-        var queuedRun = new ConsolidationRun
-        {
-            RunId = runId,
-            Type = ConsolidationRunType.HarnessSuggestions,
-            TemplateId = "tmpl-3",
-            Status = ConsolidationRunStatus.Queued,
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            QueuedRequiredLabels = requiredLabels
-        };
-
-        // No profile matches "opencode,python"
-        SetupDefaults(queuedRuns: [queuedRun]);
-
-        _workspaceManager
-            .Setup(w => w.GetWorkspacePath(It.IsAny<RunId>()))
-            .Returns("/workspaces/test");
-
-        JobDistributionRequest? capturedRequest = null;
-        _workDistributor
-            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<JobDistributionRequest, CancellationToken>((req, _) => capturedRequest = req)
-            .ReturnsAsync(new DistributionResult(true, null, null));
-
-        await using var app = BuildApp();
-
-        await app.RunConsolidationStartupAsync();
-
-        Assert.NotNull(capturedRequest);
-        // No profile match → falls back to requiredLabels themselves as the selector
-        Assert.Equal(AgentSelectorKey.From(requiredLabels), capturedRequest!.AgentSelector);
-    }
-
-    [Fact]
-    public async Task RunConsolidationStartupAsync_DispatchRequest_HasCorrectConsolidationFields()
-    {
-        var runId = Guid.NewGuid().ToString();
-        const string workspacePath = "/workspaces/consolidation";
-
-        var queuedRun = new ConsolidationRun
-        {
-            RunId = runId,
-            Type = ConsolidationRunType.RefactoringDetection,
-            TemplateId = "tmpl-refactor",
-            Status = ConsolidationRunStatus.Queued,
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            AutoDispatch = true,
-            // Baked labels ensure selector resolves without needing profiles
-            QueuedRequiredLabels = ["kiro", "dotnet"]
-        };
-
-        SetupDefaults(queuedRuns: [queuedRun]);
-        _workspaceManager.Setup(w => w.GetWorkspacePath(It.IsAny<RunId>())).Returns(workspacePath);
-
-        JobDistributionRequest? captured = null;
-        _workDistributor
-            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<JobDistributionRequest, CancellationToken>((r, _) => captured = r)
-            .ReturnsAsync(new DistributionResult(true, null, null));
-
-        await using var app = BuildApp();
-        await app.RunConsolidationStartupAsync();
-
-        Assert.NotNull(captured);
-        Assert.Equal(runId, captured!.IssueIdentifier);
-        Assert.Equal(WorkItemTaskType.Consolidation, captured.TaskType);
-        Assert.Equal(ConsolidationRunType.RefactoringDetection, captured.ConsolidationRunType);
-        Assert.Equal("tmpl-refactor", captured.ConsolidationTemplateId);
-        Assert.Equal(workspacePath, captured.ConsolidationWorkspacePath);
-        Assert.Equal(runId, captured.RunId);
-        Assert.True(captured.AutoDispatch);
+        _consolidationService.Verify(
+            s => s.RehydrateQueuedRunsAsync(It.IsAny<CancellationToken>()),
+            Times.Never,
+            "startup rehydration dispatch loop was removed in #2566");
     }
 }

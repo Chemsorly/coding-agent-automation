@@ -456,18 +456,6 @@ public sealed class WorkItemEndpointTests
     }
 
     [Fact]
-    public async Task GetPendingWorkItems_ExcludesConsolidation_WhenFlagOff()
-    {
-        var consolidation = SeedEntity(WorkItemStatus.Pending, taskType: WorkItemTaskType.Consolidation);
-
-        var response = await _client.GetAsync("/api/work-items/pending");
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var items = await response.Content.ReadFromJsonAsync<List<PendingWorkItemDto>>(PipelineJsonOptions.Default);
-        items.Should().NotBeNull();
-        items!.Should().NotContain(i => i.Id == consolidation.Id);
-    }
-
-    [Fact]
     public async Task GetPendingWorkItems_ProjectIdFilter_ReturnsOnlyMatchingProject()
     {
         var projectA = Guid.NewGuid();
@@ -1481,5 +1469,42 @@ public sealed class WorkItemEndpointTests
         entity.PriorityWeight = priorityWeight;
         db.SaveChanges();
         return entity;
+    }
+
+    // ── GET /pending — consolidation always included ──────────────────────────
+
+    [Fact]
+    public async Task GetPendingWorkItems_IncludesConsolidationItems()
+    {
+        // Consolidation WorkItems are now enqueued as Pending (unified dispatch path, #2566).
+        // GET /api/work-items/pending must include them so the WorkItemDispatchPoller can dispatch them.
+        // TODO: [WARNING] This test only verifies the "consolidation items are included" half. There is
+        // no assertion that a non-Consolidation Pending item is also returned, which would confirm that
+        // removing the old `TaskType != Consolidation` filter didn't accidentally break the general Pending
+        // query. Seed an Implementation Pending item alongside the Consolidation one and assert both appear.
+        var consolidation = SeedEntity(WorkItemStatus.Pending, taskType: WorkItemTaskType.Consolidation);
+
+        var response = await _client.GetAsync("/api/work-items/pending?maxResults=500");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await response.Content.ReadFromJsonAsync<List<PendingWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+        items!.Should().Contain(i => i.Id == consolidation.Id,
+            "consolidation Pending items must be returned by GET /api/work-items/pending so the WorkItemDispatchPoller can dispatch them");
+    }
+
+    [Fact]
+    public async Task GetPendingWorkItems_ExcludesNonPendingConsolidationItems()
+    {
+        // Only Pending items should be returned — non-Pending consolidation items must be excluded.
+        var running = SeedEntity(WorkItemStatus.Running, taskType: WorkItemTaskType.Consolidation);
+
+        var response = await _client.GetAsync("/api/work-items/pending?maxResults=500");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await response.Content.ReadFromJsonAsync<List<PendingWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+        items!.Should().NotContain(i => i.Id == running.Id,
+            "non-Pending consolidation items must not appear in the pending queue");
     }
 }

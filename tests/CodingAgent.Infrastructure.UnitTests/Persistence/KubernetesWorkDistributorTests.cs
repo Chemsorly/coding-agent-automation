@@ -76,22 +76,22 @@ public class KubernetesWorkDistributorTests
     }
 
     [Fact]
-    public async Task DistributeAsync_ConsolidationRequest_CallsDispatchAsync()
+    public async Task DistributeAsync_ConsolidationRequest_CallsCreateAsync()
     {
-        // Consolidation uses the synchronous DispatchAsync path.
+        // Consolidation uses the unified Pending enqueue path, same as all other task types (#2566).
         var expectedId = Guid.NewGuid();
         var request = CreateRequest("consolidation-run-1", "consolidation",
             taskType: WorkItemTaskType.Consolidation);
         _mockApiClient
-            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(expectedId);
 
         var result = await _distributor.DistributeAsync(request, CancellationToken.None);
 
         result.Success.Should().BeTrue();
-        result.Queued.Should().BeFalse("Consolidation dispatched synchronously");
-        _mockApiClient.Verify(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
-        _mockApiClient.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        result.Queued.Should().BeTrue("consolidation uses the Pending enqueue path");
+        _mockApiClient.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockApiClient.Verify(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── CancelJobAsync ───────────────────────────────────────────────────

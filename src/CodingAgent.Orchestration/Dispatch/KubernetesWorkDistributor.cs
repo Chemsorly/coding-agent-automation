@@ -13,19 +13,7 @@ namespace CodingAgent.Orchestration.Dispatch;
 /// <see cref="DistributeAsync"/> routes by task type:
 /// <list type="bullet">
 ///   <item>
-///     <c>Consolidation</c> (flag off, default) — calls <c>POST /api/work-items/dispatch</c>
-///     (legacy synchronous path, creates the WorkItem as <c>Dispatched</c> and starts the K8s
-///     Job immediately). Use this path when no poller is present to claim <c>Pending</c>
-///     consolidation items.
-///   </item>
-///   <item>
-///     <c>Consolidation</c> (flag <c>Consolidation:UnifiedDispatch:Enabled=true</c>) — calls
-///     <c>POST /api/work-items</c> to create a <c>Pending</c> WorkItem, identical to other
-///     task types. The poller applies RunType tier ordering (#2563) before creating the K8s Job.
-///     Enable only after #2563 (RunType tier ordering at dispatch) is deployed.
-///   </item>
-///   <item>
-///     All other task types (Implementation, Review, Decomposition) — calls
+///     All task types (Implementation, Review, Decomposition, Consolidation) — calls
 ///     <c>POST /api/work-items</c> to create a <c>Pending</c> WorkItem visible in the UI queue.
 ///     <c>WorkItemDispatchPoller</c> in the Scheduler polls those items ordered by
 ///     <c>tier(TaskType) ASC, PriorityWeight DESC, CreatedAt ASC</c> (Review &gt; Decomposition &gt;
@@ -50,91 +38,27 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
 {
     private readonly IPipelineApiWorkItemClient _apiClient;
     private readonly ILogger<KubernetesWorkDistributor> _logger;
-    private readonly bool _unifiedDispatchEnabled;
 
     public KubernetesWorkDistributor(
         IPipelineApiWorkItemClient apiClient,
-        ILogger<KubernetesWorkDistributor> logger,
-        bool unifiedDispatchEnabled = false)
+        ILogger<KubernetesWorkDistributor> logger)
     {
         ArgumentNullException.ThrowIfNull(apiClient);
         ArgumentNullException.ThrowIfNull(logger);
         _apiClient = apiClient;
         _logger = logger;
-        _unifiedDispatchEnabled = unifiedDispatchEnabled;
     }
 
     /// <inheritdoc />
     public async Task<DistributionResult> DistributeAsync(JobDistributionRequest request, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
-
-        // Flag off (default): Consolidation uses the legacy synchronous dispatch path so the
-        // WorkItem is created as Dispatched immediately — no poller required.
-        // Flag on: Consolidation is enqueued as Pending like all other task types; the poller
-        // picks it up with RunType tier ordering (#2563).
-        if (request.TaskType == WorkItemTaskType.Consolidation && !_unifiedDispatchEnabled)
-            return await DispatchSynchronouslyAsync(request, ct);
-
         return await EnqueueAsPendingAsync(request, ct);
     }
 
     /// <summary>
-    /// Calls <c>POST /api/work-items/dispatch</c> — creates the WorkItem as <c>Dispatched</c>
-    /// and starts the K8s Job atomically. Used for Consolidation task types when
-    /// <c>Consolidation:UnifiedDispatch:Enabled</c> is <c>false</c> (legacy path).
-    /// </summary>
-    private async Task<DistributionResult> DispatchSynchronouslyAsync(
-        JobDistributionRequest request, CancellationToken ct)
-    {
-        try
-        {
-            var workItemId = await _apiClient.DispatchAsync(request, ct);
-            _logger.LogInformation(
-                "WorkItem {WorkItemId} dispatched synchronously (Consolidation) via Pipeline API for issue {IssueIdentifier}",
-                workItemId, request.IssueIdentifier);
-            return new DistributionResult(true, workItemId.ToString(), null, Queued: false);
-        }
-        catch (HttpRequestException ex) when (
-            ex.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity)
-        {
-            // 422 = permanent failure — no job template exists for the resolved agent selector.
-            // Retrying will always produce the same result; the run should be cascaded to Failed
-            // so it surfaces in the Attention view rather than staying Queued forever.
-            _logger.LogWarning(
-                "Dispatch endpoint returned 422 for consolidation {IssueIdentifier} — no job template for selector '{AgentSelector}' (permanent failure)",
-                request.IssueIdentifier, request.AgentSelector);
-            return new DistributionResult(false, null,
-                $"No job template for agent selector '{request.AgentSelector}': {ex.Message}",
-                IsPermanentFailure: true);
-        }
-        catch (HttpRequestException ex) when (
-            ex.StatusCode == System.Net.HttpStatusCode.Conflict ||
-            ex.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
-        {
-            _logger.LogInformation(
-                "Dispatch endpoint returned {StatusCode} for consolidation {IssueIdentifier} — no capacity",
-                ex.StatusCode, request.IssueIdentifier);
-            return new DistributionResult(false, null, $"No capacity ({ex.StatusCode}): {ex.Message}");
-        }
-        catch (Exception ex)
-        {
-            // TODO [WARNING]: This catch-all returns IsPermanentFailure=false (transient) by default.
-            // Unexpected exceptions (e.g. JsonException on malformed response, TaskCanceledException
-            // on timeout) are treated as transient, which leaves the run Queued indefinitely if
-            // the condition is persistent. With the new permanent/transient distinction, it is worth
-            // auditing whether some exception types should be mapped to IsPermanentFailure=true.
-            // (review-findings.md DotNetSpecialist warning, KubernetesWorkDistributor.cs:107)
-            _logger.LogError(ex,
-                "Failed to dispatch consolidation WorkItem via Pipeline API for issue {IssueIdentifier}",
-                request.IssueIdentifier);
-            return new DistributionResult(false, null, ex.Message);
-        }
-    }
-
-    /// <summary>
     /// Calls <c>POST /api/work-items</c> — creates the WorkItem as <c>Pending</c> (visible
-    /// in the UI queue). Used for Implementation, Review, and Decomposition task types.
+    /// in the UI queue). Used for all task types including Consolidation.
     /// </summary>
     private async Task<DistributionResult> EnqueueAsPendingAsync(
         JobDistributionRequest request, CancellationToken ct)

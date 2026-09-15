@@ -76,20 +76,15 @@ public static partial class WorkDistributionRegistration
         // ── IWorkDistributor (KubernetesWorkDistributor) ─────────────────────
         // KubernetesWorkDistributor is now fully API-backed — no IDbContextFactory,
         // no WorkItemTransitionService. Distribute, cancel, status, and dedup all
-        // route through IPipelineApiWorkItemClient.
-        //
-        // UnifiedDispatch flag: when Consolidation:UnifiedDispatch:Enabled=true, consolidation
-        // runs are enqueued as Pending WorkItems (like all other task types) rather than being
-        // dispatched synchronously. Defaults false — ships inert. Enable after #2563 deploys.
-        var unifiedDispatchEnabled = configuration.GetValue<bool>(
-            $"{ConsolidationUnifiedDispatchOptions.SectionName}:{nameof(ConsolidationUnifiedDispatchOptions.Enabled)}");
+        // route through IPipelineApiWorkItemClient. All task types (including Consolidation)
+        // are enqueued as Pending WorkItems via POST /api/work-items; the Scheduler's
+        // WorkItemDispatchPoller picks them up with RunType tier ordering.
         services.AddSingleton<IWorkDistributor>(sp =>
         {
             var apiClient = sp.GetRequiredService<IPipelineApiWorkItemClient>();
             return new KubernetesWorkDistributor(
                 apiClient,
-                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<KubernetesWorkDistributor>>(),
-                unifiedDispatchEnabled);
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<KubernetesWorkDistributor>>());
         });
 
         // ── JobTemplateStore ─────────────────────────────────────────────────
