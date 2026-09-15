@@ -156,38 +156,9 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
         await WaitWithTimeoutAsync(gate.Task, ct);
     }
 
-    private async Task WaitWithTimeoutAsync(Task gateTask, CancellationToken ct)
+    private Task WaitWithTimeoutAsync(Task gateTask, CancellationToken ct)
     {
-        // CTS is created inside the async method so its lifetime is tied to the async
-        // state machine rather than the synchronous call frame — this prevents the
-        // `using var` early-dispose bug that plagued the previous synchronous wrapper.
-        using var timeoutCts = new CancellationTokenSource(ResiliencePipelineFactory.SignalRTimeout);
-        // TODO [WARNING]: The caller-supplied `ct` is not included in Task.WhenAny below.
-        // Cancelling `ct` (e.g. ApplicationStopping) will not promptly unblock this wait;
-        // the gate or the 30-second timeout must fire first. Fix: add a Task.Delay(Timeout.Infinite, ct)
-        // competitor to the WhenAny call, and catch OperationCanceledException from it.
-        var timeoutTask = Task.Delay(Timeout.Infinite, timeoutCts.Token);
-        try
-        {
-            var completedTask = await Task.WhenAny(gateTask, timeoutTask);
-            if (completedTask != gateTask)
-            {
-                _logger.Warning(
-                    "Agent {AgentId}: registration gate wait timed out after {Timeout}s — proceeding anyway",
-                    _agentId.Value, ResiliencePipelineFactory.SignalRTimeout.TotalSeconds);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            _logger.Warning(
-                "Agent {AgentId}: registration gate wait cancelled — proceeding anyway",
-                _agentId.Value);
-        }
-        finally
-        {
-            // Cancel the timeout so the Task.Delay timer is released immediately
-            await timeoutCts.CancelAsync();
-        }
+        return ReconnectionHelper.WaitWithTimeoutAsync(gateTask, ct, _agentId.Value, _logger);
     }
 
     private static TaskCompletionSource CreateCompletedGate()
@@ -215,8 +186,9 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
     /// </summary>
     public async ValueTask DisposeAsync()
     {
-        // Cancel any waiters on the registration gate so they are not left hanging at shutdown
-        _registrationGate.TrySetCanceled();
+        // Cancel any waiters on the registration gate so they are not left hanging at shutdown.
+        // Pass ApplicationStopping so that the gate's cancellation carries the shutdown token context.
+        _registrationGate.TrySetCanceled(_lifetime?.ApplicationStopping ?? CancellationToken.None);
 
         // Stop heartbeat (thread-safe: prevents double-dispose race with HandleForceDisconnectAsync)
         await StopHeartbeatAsync();
