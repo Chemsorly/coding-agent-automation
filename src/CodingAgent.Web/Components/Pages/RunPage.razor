@@ -471,6 +471,7 @@
             IssueProviderConfigId = string.Empty,
             RepoProviderConfigId = string.Empty,
             BrainProviderConfigId = summary.BrainRepoUsed ? "placeholder" : null,
+            RunType = summary.RunType,
         };
 
         model.CurrentStep = summary.FinalStep;
