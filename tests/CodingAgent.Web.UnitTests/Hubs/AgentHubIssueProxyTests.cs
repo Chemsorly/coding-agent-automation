@@ -615,4 +615,100 @@ public sealed class AgentHubIssueProxyTests
         // Null ProjectId must never trigger template lookup
         _mockFacade.Verify(f => f.LoadTemplatesForProjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    // ── ResolveIssueProviderForRunAsync — Warning logged before HubException ──
+
+    /// <summary>
+    /// AC1: When run is not found, a Warning is emitted before throwing HubException,
+    /// so the cross-replica state miss is visible in API logs.
+    /// Moq verification targets the typed generic overload Warning(string, T) —
+    /// NOT the extension method (which cannot be intercepted by Moq).
+    /// </summary>
+    // TODO: Moq generic overload resolution for Serilog ILogger.Warning is fragile. If Serilog
+    // declares both Warning(string, object) and Warning<T>(string, T), Moq may match the non-generic
+    // object overload instead of Warning<string>, causing Verify to fail with "never invoked" even
+    // though the warning was emitted — or vice versa. If these tests produce false-green results
+    // after a Serilog upgrade or call-site type change, review which overload is being bound.
+    [Fact]
+    public async Task RequestGetIssue_RunNotFound_LogsWarningBeforeThrowingHubException()
+    {
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        var hub = CreateHub();
+        var act = () => hub.RequestGetIssue("job-1", "42");
+
+        await act.Should().ThrowAsync<HubException>().WithMessage("*No active run*");
+
+        // Warning(string messageTemplate, T propertyValue) — "... {JobId} ..." with string jobId
+        _mockLogger.Verify(
+            l => l.Warning(
+                It.Is<string>(s => s.Contains("no active run") && s.Contains("{JobId}")),
+                It.Is<string>(s => s == "job-1")),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// AC1: When issue provider config is not found, a Warning is emitted before throwing HubException,
+    /// so the missing-config failure is visible in API logs.
+    /// Moq verification targets the typed generic overload Warning(string, T0, T1).
+    /// </summary>
+    // TODO: Same Moq generic overload resolution fragility as the run-not-found test above.
+    // The two-arg Warning(string, T0, T1) overload matching depends on Serilog's ILogger generic
+    // interface structure. A Serilog upgrade or parameter type change could silently affect
+    // which overload is bound. Argument order is correct (configId first, jobId second) but
+    // should be re-validated if tests start producing unexpected verification failures.
+    [Fact]
+    public async Task RequestGetIssue_ProviderConfigNotFound_LogsWarningBeforeThrowingHubException()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "job-1",
+            IssueIdentifier = "org/repo#42",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "missing-config",
+            RepoProviderConfigId = "repo-cfg-1"
+        };
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>()); // no matching config
+
+        var hub = CreateHub();
+        var act = () => hub.RequestGetIssue("job-1", "42");
+
+        await act.Should().ThrowAsync<HubException>().WithMessage("*missing-config*");
+
+        // Warning(string messageTemplate, T0 propertyValue0, T1 propertyValue1) —
+        // "... {IssueProviderConfigId} ... {JobId}" with string configId, string jobId
+        _mockLogger.Verify(
+            l => l.Warning(
+                It.Is<string>(s => s.Contains("{IssueProviderConfigId}") && s.Contains("{JobId}")),
+                It.Is<string>(s => s == "missing-config"),
+                It.Is<string>(s => s == "job-1")),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// AC1: Same as the run-not-found case above, verified via a different calling method
+    /// (RequestListOpenIssues) to guard all callers of ResolveIssueProviderForRunAsync.
+    /// </summary>
+    [Fact]
+    public async Task RequestListOpenIssues_RunNotFound_LogsWarningBeforeThrowingHubException()
+    {
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        var hub = CreateHub();
+        var act = () => hub.RequestListOpenIssues("job-1", 1, 25, null);
+
+        await act.Should().ThrowAsync<HubException>();
+
+        _mockLogger.Verify(
+            l => l.Warning(
+                It.Is<string>(s => s.Contains("no active run") && s.Contains("{JobId}")),
+                It.Is<string>(s => s == "job-1")),
+            Times.Once);
+    }
 }
