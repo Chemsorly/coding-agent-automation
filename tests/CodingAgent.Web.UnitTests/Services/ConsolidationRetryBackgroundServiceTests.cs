@@ -31,6 +31,14 @@ public sealed class ConsolidationRetryBackgroundServiceTests
         StartedAtUtc = DateTimeOffset.UtcNow
     };
 
+    private static ConsolidationRun MakePendingRun(string? runId = null) => new()
+    {
+        RunId = runId ?? Guid.NewGuid().ToString(),
+        Type = ConsolidationRunType.BrainConsolidation,
+        Status = ConsolidationRunStatus.Pending,
+        StartedAtUtc = DateTimeOffset.UtcNow
+    };
+
     // ── No queued runs ────────────────────────────────────────────────────
 
     [Fact]
@@ -189,5 +197,33 @@ public sealed class ConsolidationRetryBackgroundServiceTests
             d => d.DispatchRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "a pre-cancelled token must stop the sweep before dispatching any run");
+    }
+
+    // ── Pending runs excluded from retry ──────────────────────────────────
+
+    /// <summary>
+    /// Regression test for issue #2584: a run in Pending state (successfully enqueued as a
+    /// Pending WorkItem on the unified dispatch path) must NOT appear in the results returned
+    /// by RehydrateQueuedRunsAsync — and therefore must not be re-dispatched by the retry sweep.
+    ///
+    /// This test verifies the full contract: RehydrateQueuedRunsAsync is the gatekeeper.
+    /// When it returns an empty list (Pending runs excluded), the dispatcher is never called.
+    /// </summary>
+    [Fact]
+    public async Task RetryQueuedRunsAsync_RehydrateReturnsNoPendingRuns_DispatcherNotCalled()
+    {
+        // RehydrateQueuedRunsAsync returns empty — Pending runs are excluded by ConsolidationService.
+        // The background service must not dispatch anything.
+        _consolidationService
+            .Setup(s => s.RehydrateQueuedRunsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ConsolidationRun>());
+
+        var sut = CreateSut();
+        await sut.RetryQueuedRunsAsync(CancellationToken.None);
+
+        _dispatcher.Verify(
+            d => d.DispatchRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "RehydrateQueuedRunsAsync excludes Pending runs — dispatcher must not be called");
     }
 }

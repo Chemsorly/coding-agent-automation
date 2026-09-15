@@ -47,6 +47,11 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
 
             var selectorLabels = ResolveSelector(run, liveConfig, profiles);
 
+            // Null return means no profiles are available (startup race) — skip dispatch so
+            // the run genuinely stays Queued for ConsolidationRetryBackgroundService to retry.
+            if (selectorLabels is null)
+                return;
+
             var request = new JobDistributionRequest
             {
                 IssueIdentifier = run.RunId,
@@ -69,11 +74,23 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
             };
 
             var result = await _workDistributor.DistributeAsync(request, ct);
-            if (result.Success)
+            if (result.Success && !result.Queued)
             {
                 Log.Information(
                     "ConsolidationDispatcher: dispatched run {RunId} ({Type}) → WorkItem {WorkItemId}",
                     run.RunId, run.Type, result.WorkItemId);
+            }
+            else if (result.Success && result.Queued)
+            {
+                // Unified dispatch path: the work item was enqueued as Pending in the WorkItem queue.
+                // Transition the ConsolidationRun to Pending so RehydrateQueuedRunsAsync will NOT
+                // re-select it on the next sweep — avoiding a recurring 409 loop where every
+                // retry hits the existing Pending WorkItem and gets an idempotent success.
+                Log.Information(
+                    "ConsolidationDispatcher: run {RunId} ({Type}) enqueued as Pending WorkItem {WorkItemId}. " +
+                    "Transitioning ConsolidationRun to Pending.",
+                    run.RunId, run.Type, result.WorkItemId);
+                await TransitionToPendingSafelyAsync(run);
             }
             else if (result.IsPermanentFailure)
             {
@@ -88,10 +105,11 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
             }
             else
             {
-                // Transient failure — leave the run Queued; startup rehydration retries on next pod restart.
+                // Transient failure — leave the run Queued; the retry background service
+                // will attempt again on the next sweep interval.
                 Log.Warning(
                     "ConsolidationDispatcher: transient dispatch failure for run {RunId} ({Type}): {Error}. " +
-                    "Run remains Queued; will retry on next orchestrator restart.",
+                    "Run remains Queued; will retry on next sweep.",
                     run.RunId, run.Type, result.ErrorMessage);
             }
         }
@@ -107,6 +125,8 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
 
     /// <summary>
     /// Resolves the agent selector labels for the given run.
+    /// Returns <c>null</c> when no profiles are available (startup race) — the caller must
+    /// skip the dispatch call so the run stays <c>Queued</c> for the retry background service.
     /// <para>
     /// Resolution order:
     /// <list type="number">
@@ -114,8 +134,7 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
     ///   <item>Fall back to <see cref="PipelineConfiguration.DefaultRequiredAgentLabels"/> (live config),
     ///         then resolve through the profile store.</item>
     ///   <item>If no default is configured, pick the first enabled profile's MatchLabels as the selector.</item>
-    ///   <item>If no profiles exist (startup race), return an empty selector and let the dispatch 409 keep
-    ///         the run Queued for rehydration on the next restart.</item>
+    ///   <item>If no profiles exist (startup race), return <c>null</c> — no dispatch attempt is made.</item>
     /// </list>
     /// </para>
     /// <para>
@@ -126,7 +145,7 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
     /// the resolver.
     /// </para>
     /// </summary>
-    private static IReadOnlyList<string> ResolveSelector(
+    private static IReadOnlyList<string>? ResolveSelector(
         ConsolidationRun run,
         PipelineConfiguration liveConfig,
         IReadOnlyList<AgentProfile> profiles)
@@ -189,22 +208,48 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
         }
 
         // 4. No profiles available at all (startup race — profile store not yet populated).
-        //    Return an empty selector; dispatch will 422 (no template), and since that's
-        //    indistinguishable from a real config gap, we log a specific warning so operators
-        //    know this is a transient startup race rather than a configuration error.
-        // TODO [WARNING]: An empty selector causes the API to return 422 → KubernetesWorkDistributor
-        // catches it as IsPermanentFailure=true → FailRunSafelyAsync cascades run to Failed.
-        // The comment below documents "run stays Queued" but the actual code path cascades to
-        // Failed — a startup-race (transient) is indistinguishable from a genuine config gap.
-        // Fix options: (a) update comment to reflect actual behavior (cascade-to-Failed may be
-        // acceptable), or (b) return early without calling DistributeAsync when selector is empty,
-        // so the run genuinely stays Queued for ConsolidationRetryBackgroundService to retry.
-        // (review-findings.md DotNetSpecialist finding, ConsolidationDispatcher.cs:176)
+        //    Return null so the caller skips DistributeAsync entirely and the run genuinely stays
+        //    Queued for ConsolidationRetryBackgroundService to retry on the next sweep.
+        //    An empty selector would cause the API to return 422 → IsPermanentFailure=true →
+        //    FailRunSafelyAsync would cascade the run to Failed — which is wrong for a transient
+        //    startup race (the config gap may clear once profiles are loaded).
         Log.Warning(
             "ConsolidationDispatcher: run {RunId} has no QueuedRequiredLabels, no DefaultRequiredAgentLabels, " +
-            "and no enabled profiles (startup race?). Empty selector will cause dispatch failure; run stays Queued.",
+            "and no enabled profiles (startup race?). Skipping dispatch; run stays Queued for next retry sweep.",
             run.RunId);
-        return [];
+        return null;
+    }
+
+    /// <summary>
+    /// Transitions the run to <see cref="ConsolidationRunStatus.Pending"/> via
+    /// <see cref="IConsolidationService.UpdateRunAsync"/>. Errors are swallowed and logged.
+    /// Called when <c>DistributeAsync</c> returns <c>Success=true, Queued=true</c> (unified
+    /// dispatch path) to prevent <c>RehydrateQueuedRunsAsync</c> from re-dispatching the run.
+    /// </summary>
+    private async Task TransitionToPendingSafelyAsync(ConsolidationRun run)
+    {
+        try
+        {
+            // CancellationToken.None is intentional: the WorkItem has already been durably
+            // persisted by DistributeAsync. This bookkeeping write must not be skipped on
+            // request cancellation — if it were, the run would stay Queued and the retry sweep
+            // would re-dispatch it, producing the recurring 409 loop this change eliminates.
+            await _consolidationService.UpdateRunAsync(
+                new RunId(run.RunId),
+                ConsolidationRunStatus.Pending,
+                "WorkItem enqueued as Pending — awaiting Scheduler dispatch",
+                CancellationToken.None);
+            Log.Information(
+                "ConsolidationDispatcher: run {RunId} ({Type}) transitioned to Pending.",
+                run.RunId, run.Type);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex,
+                "ConsolidationDispatcher: failed to transition run {RunId} to Pending (status update threw). " +
+                "Run may remain Queued and be retried unnecessarily.",
+                run.RunId);
+        }
     }
 
     /// <summary>

@@ -339,6 +339,44 @@ public sealed class ConsolidationServiceStoreDelegationTests
         result.Should().BeEmpty();
     }
 
+    /// <summary>
+    /// Regression test for issue #2584: a Pending run (successfully submitted to the unified
+    /// WorkItem queue) must NOT be returned by RehydrateQueuedRunsAsync. If it were returned,
+    /// the retry background service would re-dispatch it every sweep, hitting the existing
+    /// Pending WorkItem and getting an idempotent 409 each time — a no-op but incorrect loop.
+    /// </summary>
+    [Fact]
+    public async Task RehydrateQueuedRunsAsync_ExcludesPendingRuns()
+    {
+        var pendingRun = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.BrainConsolidation,
+            TemplateId = "t1",
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            Status = ConsolidationRunStatus.Pending // Already submitted to unified queue
+        };
+        var queuedRun = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.RefactoringDetection,
+            TemplateId = "t1",
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            Status = ConsolidationRunStatus.Queued // Genuinely needs retry
+        };
+        _mockRunStore.Setup(s => s.LoadAllRunsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ConsolidationRun> { pendingRun, queuedRun });
+
+        var sut = CreateSut();
+        var result = await sut.RehydrateQueuedRunsAsync(CancellationToken.None);
+
+        // Only the Queued run must be returned — Pending must be excluded.
+        result.Should().HaveCount(1,
+            because: "Pending runs have a live WorkItem in the queue and must not be retried");
+        result[0].RunId.Should().Be(queuedRun.RunId);
+        result[0].Status.Should().Be(ConsolidationRunStatus.Queued);
+    }
+
     [Fact]
     public async Task SaveHarnessSuggestionsAsync_WhenStoreThrows_LogsAndSwallowsException()
     {

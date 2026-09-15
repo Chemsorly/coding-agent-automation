@@ -19,7 +19,22 @@ public enum ConsolidationRunStatus
     Succeeded,
     Failed,
     Queued,
-    Cancelled
+    Cancelled,
+    /// <summary>
+    /// The work item has been successfully submitted to the unified dispatch queue as
+    /// <c>Pending</c> (i.e. <see cref="DistributionResult.Queued"/> was true on success).
+    /// The WorkItem already exists in the database — the Scheduler's
+    /// <c>WorkItemDispatchPoller</c> will pick it up and create the K8s Job when
+    /// capacity is available.
+    /// <para>
+    /// This state is intentionally excluded from
+    /// <c>ConsolidationService.RehydrateQueuedRunsAsync</c> so the retry background
+    /// service does not re-dispatch it (which would produce an idempotent 409 each cycle).
+    /// The run will be transitioned to <c>Running</c> by the agent drain service when the
+    /// K8s Job starts.
+    /// </para>
+    /// </summary>
+    Pending
 }
 
 /// <summary>

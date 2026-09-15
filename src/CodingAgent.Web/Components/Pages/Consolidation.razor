@@ -200,7 +200,7 @@
                                 </td>
                                 <td class="consolidation-summary-cell" title="@(run.Summary ?? "—")">@(run.Summary ?? "—")</td>
                                 <td>
-                                    @if (run.Status == ConsolidationRunStatus.Queued)
+                                    @if (run.Status == ConsolidationRunStatus.Queued || run.Status == ConsolidationRunStatus.Pending)
                                     {
                                         <button class="btn-cancel-run" @onclick="() => CancelQueuedRun(run.RunId)">Cancel</button>
                                     }
@@ -481,7 +481,8 @@
     {
         return _runHistory.Any(r => r.Type == type
             && r.TemplateId == templateId
-            && (r.Status == ConsolidationRunStatus.Running || r.Status == ConsolidationRunStatus.Queued));
+            && (r.Status == ConsolidationRunStatus.Running || r.Status == ConsolidationRunStatus.Queued
+                || r.Status == ConsolidationRunStatus.Pending));
     }
 
     private async Task CancelQueuedRun(string runId)
