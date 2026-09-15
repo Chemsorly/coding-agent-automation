@@ -627,4 +627,4 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         await manager.Connection.InvokeAsync(HubMethodNames.Heartbeat, heartbeat, ct);
     }
 
-    }
+}

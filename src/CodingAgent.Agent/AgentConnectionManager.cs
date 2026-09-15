@@ -472,4 +472,4 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
         }
     }
 
-    }
+}
