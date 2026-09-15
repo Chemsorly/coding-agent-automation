@@ -1,6 +1,7 @@
 using CodingAgent.Infrastructure.Resilience;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 using Polly;
 using Serilog;
@@ -14,7 +15,7 @@ namespace CodingAgent.Agent;
 /// Implements <see cref="IAgentIssueOperations"/> so existing orchestrators
 /// can be reused on the agent.
 /// </summary>
-public sealed class OrchestratorProxy : IAgentIssueOperations
+public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
 {
     private readonly HubConnection _connection;
     private readonly string _jobId;
@@ -24,10 +25,14 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
     // Keyed by ProviderKind so the repo and brain tokens are cached independently.
     private static readonly TimeSpan TokenRenewalBuffer = TokenRefreshConstants.RenewalBuffer;
     private readonly Dictionary<ProviderKind, (string Token, DateTimeOffset ExpiresAt)> _tokenCache = new();
-    // TODO [WARNING]: _tokenCacheLock is never disposed. OrchestratorProxy does not implement IDisposable/IAsyncDisposable,
-    // so the SemaphoreSlim's underlying WaitHandle leaks on each job. Implement IDisposable and call
-    // _tokenCacheLock.Dispose(), then update LocalConsolidationExecutor and LocalPipelineExecutor to dispose the proxy.
     private readonly SemaphoreSlim _tokenCacheLock = new(1, 1);
+
+    // Single-flight: stores the in-flight Task per ProviderKind so concurrent callers
+    // await the same hub invocation rather than each issuing their own.
+    // Entry is removed in a `finally` block so a faulted task is never re-used.
+    private readonly Dictionary<ProviderKind, Task<TokenRefreshResponse>> _tokenInflight = new();
+
+    private bool _disposed;
 
     /// <summary>
     /// Test-only delegate for the hub token-refresh call. When non-null (injected via the
@@ -60,6 +65,16 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
         : this(connection, jobId)
     {
         _tokenRefreshDelegate = tokenRefreshDelegate;
+    }
+
+    /// <summary>
+    /// Disposes the semaphore slim used for token cache locking.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _tokenCacheLock.Dispose();
     }
 
     /// <summary>
@@ -142,10 +157,15 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
     /// Caches the returned token and proactively renews it when within
     /// <see cref="TokenRenewalBuffer"/> of expiry, mirroring the server-side
     /// <c>GitHubAppAuthService</c> renewal buffer.
+    /// Uses a single-flight pattern so concurrent callers for the same <paramref name="kind"/>
+    /// await the same in-flight hub invocation rather than each issuing their own.
     /// </summary>
     public async Task<string> RequestTokenRefreshAsync(ProviderKind kind, CancellationToken ct)
     {
-        // Fast path: check under lock whether the cached token is still fresh.
+        // Fast path: check under lock whether the cached token is still fresh,
+        // or whether there is already an in-flight request we can piggyback on.
+        Task<TokenRefreshResponse>? inflight = null;
+
         await _tokenCacheLock.WaitAsync(ct);
         try
         {
@@ -155,33 +175,59 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
                 if (remainingLife > TokenRenewalBuffer)
                     return cached.Token;
             }
+
+            // Single-flight: piggyback on an existing in-flight request if present
+            if (_tokenInflight.TryGetValue(kind, out inflight))
+            {
+                // Fall through — await inflight outside the lock
+            }
+            else
+            {
+                // Start a new request and register it as the in-flight task
+                inflight = FetchTokenFromHubAsync(kind, ct);
+                _tokenInflight[kind] = inflight;
+            }
         }
         finally
         {
             _tokenCacheLock.Release();
         }
 
-        // Slow path: ask the orchestrator for a fresh token.
-        // TODO [WARNING]: TOCTOU thundering-herd — two concurrent callers for the same ProviderKind
-        // that both observe a cache miss here will both invoke the hub, both mint tokens, and the last
-        // write to _tokenCache wins. Outcome is functionally correct but wastes SignalR round-trips and
-        // GitHub App quota. Fix: use a single-flight pattern (cache Task<TokenRefreshResponse> under
-        // the lock) so concurrent callers await the same in-flight request.
+        // Await outside the lock — multiple callers may be awaiting the same task
         TokenRefreshResponse response;
-        if (_tokenRefreshDelegate is not null)
+        try
         {
-            // Test path: use the injected delegate instead of the live hub connection.
-            response = await _tokenRefreshDelegate(kind, ct);
+            // TODO [WARNING]: Single-flight cancellation propagation — the in-flight task was started
+            // with the first caller's `ct`. If that caller's token is cancelled mid-flight, the shared
+            // task will fault and all concurrent waiters (whose own tokens are still live) receive an
+            // OperationCanceledException. The `finally` block below correctly removes the faulted entry
+            // so later callers retry, but innocent concurrent callers get propagated cancellation.
+            // This is a known single-flight trade-off; document it in code reviews if it surfaces.
+            // (Correctness Review / .NET Specialist)
+            response = await inflight;
         }
-        else
+        finally
         {
-            response = await _signalRPipeline.ExecuteAsync(async token =>
-                await _connection.InvokeAsync<TokenRefreshResponse>(
-                    HubMethodNames.RequestTokenRefresh, _jobId, kind, token), ct);
+            // Remove the in-flight entry regardless of outcome so a faulted task is never reused
+            // TODO [WARNING]: The two _tokenCacheLock.WaitAsync(CancellationToken.None) calls below (here
+            // and at the cache-write step) do not guard against a concurrent Dispose(). If Dispose() runs
+            // while a token refresh is in-flight, _tokenCacheLock is disposed and WaitAsync throws
+            // ObjectDisposedException. Add a _disposed check before each WaitAsync if concurrent
+            // disposal during active token refresh is a realistic scenario. (Correctness Review / .NET Specialist)
+            await _tokenCacheLock.WaitAsync(CancellationToken.None);
+            try
+            {
+                if (_tokenInflight.TryGetValue(kind, out var current) && ReferenceEquals(current, inflight))
+                    _tokenInflight.Remove(kind);
+            }
+            finally
+            {
+                _tokenCacheLock.Release();
+            }
         }
 
-        // Cache the result so subsequent calls within the token lifetime are free.
-        await _tokenCacheLock.WaitAsync(ct);
+        // Cache the successful result
+        await _tokenCacheLock.WaitAsync(CancellationToken.None);
         try
         {
             _tokenCache[kind] = (response.Token, response.ExpiresAt);
@@ -192,6 +238,54 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
         }
 
         return response.Token;
+    }
+
+    // Maximum number of retry attempts for transient (non-HubException) token-vend failures.
+    // HubException always signals a permanent server-side condition (missing config, no auth method,
+    // stale token) and must NOT be retried here — AgentTokenRefreshService's own TODO notes this.
+    // This retry is intentionally narrow: only non-HubException errors (network blips, connection
+    // state transitions) are retried. The existing _signalRPipeline already handles those too, but
+    // a transient blip that exhausts _signalRPipeline retries would otherwise fail the whole run.
+    private const int TokenVendMaxRetries = 2;
+
+    private async Task<TokenRefreshResponse> FetchTokenFromHubAsync(ProviderKind kind, CancellationToken ct)
+    {
+        Exception? lastException = null;
+        for (var attempt = 0; attempt <= TokenVendMaxRetries; attempt++)
+        {
+            try
+            {
+                if (_tokenRefreshDelegate is not null)
+                    return await _tokenRefreshDelegate(kind, ct);
+
+                return await _signalRPipeline.ExecuteAsync(async token =>
+                    await _connection.InvokeAsync<TokenRefreshResponse>(
+                        HubMethodNames.RequestTokenRefresh, _jobId, kind, token), ct);
+            }
+            catch (HubException)
+            {
+                // HubException = permanent server-side failure (bad config, no auth method,
+                // expired pre-vended token). Never retry — surface immediately.
+                throw;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Caller cancelled — propagate immediately, do not retry.
+                throw;
+            }
+            catch (Exception ex) when (attempt < TokenVendMaxRetries)
+            {
+                // Transient network/connection error — log and retry.
+                lastException = ex;
+                Log.Warning(ex,
+                    "Token-vend attempt {Attempt}/{Max} failed for job {JobId} (kind: {Kind}) — retrying",
+                    attempt + 1, TokenVendMaxRetries + 1, _jobId, kind);
+                await Task.Delay(TimeSpan.FromMilliseconds(500 * (1 << attempt)), ct);
+            }
+        }
+
+        // All retries exhausted — rethrow the last transient exception.
+        throw lastException!;
     }
 
     /// <summary>

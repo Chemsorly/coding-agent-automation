@@ -182,6 +182,15 @@ public static class PipelineTelemetry
     public static readonly Counter<long> AgentSignalRFailures = Meter.CreateCounter<long>(
         "agent.signalr.failures", "{failure}", "Failed or dropped SignalR messages from agent");
 
+    /// <summary>
+    /// Hub-auth rejection counter tagged by <c>reason</c> (closed set).
+    /// Reason values: <c>reconnect_race</c>, <c>not_registered</c>,
+    /// <c>job_mismatch</c>, <c>operator_forbidden</c>.
+    /// </summary>
+    public static readonly Counter<long> HubAuthRejections = Meter.CreateCounter<long>(
+        "agent.hub.auth_rejections", "{rejection}",
+        "Hub-auth rejections by reason (reconnect_race | not_registered | job_mismatch | operator_forbidden)");
+
     internal static class LoopDecisions
     {
         public const string Dispatched = "dispatched";
@@ -197,6 +206,21 @@ public static class PipelineTelemetry
         public const string Busy = "busy";
         public const string ShuttingDown = "shutting_down";
         public const string Unknown = "unknown";
+    }
+
+    /// <summary>
+    /// Reason tag values for <see cref="HubAuthRejections"/> (closed set — do not add cardinality).
+    /// </summary>
+    public static class HubAuthRejectionReasons
+    {
+        /// <summary>Agent connected but RegisterAgent not yet complete (reconnect-race window).</summary>
+        public const string ReconnectRace = "reconnect_race";
+        /// <summary>Connection ID not found in the registry at all.</summary>
+        public const string NotRegistered = "not_registered";
+        /// <summary>Agent is registered but the jobId does not match its active job.</summary>
+        public const string JobMismatch = "job_mismatch";
+        /// <summary>Operator connection tried to call an agent-only method.</summary>
+        public const string OperatorForbidden = "operator_forbidden";
     }
 
     internal static class QualityGateNames

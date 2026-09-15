@@ -22,7 +22,7 @@ public static class ResiliencePipelineFactory
     internal static readonly TimeSpan DefaultOuterTimeout = TimeSpan.FromMinutes(5);
     internal static readonly TimeSpan GitNetworkTimeout = TimeSpan.FromSeconds(120);
     internal static readonly TimeSpan GitNetworkOuterTimeout = TimeSpan.FromMinutes(5);
-    internal static readonly TimeSpan SignalRTimeout = TimeSpan.FromSeconds(30);
+    public static readonly TimeSpan SignalRTimeout = TimeSpan.FromSeconds(30);
     internal static readonly TimeSpan SignalROuterTimeout = TimeSpan.FromMinutes(2);
     internal static readonly TimeSpan HttpOuterTimeout = TimeSpan.FromMinutes(3);
     internal static readonly TimeSpan GitLabOuterTimeout = TimeSpan.FromMinutes(3);

@@ -74,4 +74,13 @@ public interface IAgentConnectionManager : IAsyncDisposable
     /// Call this when the agent's state changes (e.g., starts a new job).
     /// </summary>
     void UpdateRegistration(AgentRegistrationMessage registration);
+
+    /// <summary>
+    /// Waits until the agent's registration with the orchestrator is complete.
+    /// Returns immediately if already registered.
+    /// Blocks callers during the reconnect-race window (from reconnect until
+    /// <c>RegisterAgent</c> succeeds) so hub invocations are not rejected.
+    /// </summary>
+    /// <param name="ct">Cancellation token; times out at <c>SignalRTimeout</c> by default.</param>
+    Task WaitForRegistrationAsync(CancellationToken ct);
 }

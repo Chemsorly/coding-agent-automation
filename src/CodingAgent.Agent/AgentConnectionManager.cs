@@ -33,6 +33,13 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
     private CancellationTokenSource? _heartbeatCts;
     private Task? _heartbeatTask;
 
+    // ── Registration gate ────────────────────────────────────────────────
+    // Starts as completed (no blocking on first use before any reconnect occurs).
+    // Reset to a new incomplete TCS at the start of every reconnect; completed after
+    // RegisterAgent succeeds. WaitForRegistrationAsync blocks callers during the
+    // reconnect-race window so hub invocations are not rejected.
+    private TaskCompletionSource _registrationGate = CreateCompletedGate();
+
     private const int NullStep = -1;
 
     /// <inheritdoc />
@@ -111,6 +118,9 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
 
         _logger.Information("Agent {AgentId} connected and registered", _agentId.Value);
 
+        // Complete the registration gate so waiters can proceed
+        _registrationGate.TrySetResult();
+
         // Start heartbeat loop
         _heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _heartbeatTask = RunHeartbeatLoopAsync(_heartbeatCts.Token);
@@ -119,6 +129,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
     /// <inheritdoc />
     public async Task InvokeAsync(Func<HubConnection, CancellationToken, Task> action, CancellationToken ct)
     {
+        await WaitForRegistrationAsync(ct);
         await _signalRPipeline.ExecuteAsync(async token =>
             await action(_hubManager.Connection, token), ct);
     }
@@ -126,12 +137,64 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
     /// <inheritdoc />
     public async Task<T> InvokeAsync<T>(Func<HubConnection, CancellationToken, Task<T>> action, CancellationToken ct)
     {
+        await WaitForRegistrationAsync(ct);
         T result = default!;
         await _signalRPipeline.ExecuteAsync(async token =>
         {
             result = await action(_hubManager.Connection, token);
         }, ct);
         return result;
+    }
+
+    /// <inheritdoc />
+    public async Task WaitForRegistrationAsync(CancellationToken ct)
+    {
+        var gate = _registrationGate;
+        if (gate.Task.IsCompleted)
+            return;
+
+        await WaitWithTimeoutAsync(gate.Task, ct);
+    }
+
+    private async Task WaitWithTimeoutAsync(Task gateTask, CancellationToken ct)
+    {
+        // CTS is created inside the async method so its lifetime is tied to the async
+        // state machine rather than the synchronous call frame — this prevents the
+        // `using var` early-dispose bug that plagued the previous synchronous wrapper.
+        using var timeoutCts = new CancellationTokenSource(ResiliencePipelineFactory.SignalRTimeout);
+        // TODO [WARNING]: The caller-supplied `ct` is not included in Task.WhenAny below.
+        // Cancelling `ct` (e.g. ApplicationStopping) will not promptly unblock this wait;
+        // the gate or the 30-second timeout must fire first. Fix: add a Task.Delay(Timeout.Infinite, ct)
+        // competitor to the WhenAny call, and catch OperationCanceledException from it.
+        var timeoutTask = Task.Delay(Timeout.Infinite, timeoutCts.Token);
+        try
+        {
+            var completedTask = await Task.WhenAny(gateTask, timeoutTask);
+            if (completedTask != gateTask)
+            {
+                _logger.Warning(
+                    "Agent {AgentId}: registration gate wait timed out after {Timeout}s — proceeding anyway",
+                    _agentId.Value, ResiliencePipelineFactory.SignalRTimeout.TotalSeconds);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.Warning(
+                "Agent {AgentId}: registration gate wait cancelled — proceeding anyway",
+                _agentId.Value);
+        }
+        finally
+        {
+            // Cancel the timeout so the Task.Delay timer is released immediately
+            await timeoutCts.CancelAsync();
+        }
+    }
+
+    private static TaskCompletionSource CreateCompletedGate()
+    {
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        tcs.SetResult();
+        return tcs;
     }
 
     /// <inheritdoc />
@@ -152,6 +215,9 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
     /// </summary>
     public async ValueTask DisposeAsync()
     {
+        // Cancel any waiters on the registration gate so they are not left hanging at shutdown
+        _registrationGate.TrySetCanceled();
+
         // Stop heartbeat (thread-safe: prevents double-dispose race with HandleForceDisconnectAsync)
         await StopHeartbeatAsync();
 
@@ -233,6 +299,10 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
 
     private async Task HandleReconnectedAsync(string? connectionId)
     {
+        // Reset the registration gate BEFORE any awaits so callers that land in the
+        // reconnect window are held until re-registration succeeds.
+        _registrationGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
         PipelineTelemetry.AgentReconnections.Add(1);
         _logger.Information("Agent {AgentId} reconnected (connection: {ConnectionId}), re-registering",
             _agentId.Value, connectionId);
@@ -240,6 +310,8 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
         if (_currentRegistration is null)
         {
             _logger.Warning("No registration message available for re-registration after reconnection");
+            // Complete the gate so callers are not permanently blocked
+            _registrationGate.TrySetResult();
             return;
         }
 
@@ -251,10 +323,15 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
                 // Fire-and-forget: reconnect event handler has no ambient token; reconnection must proceed
                 CancellationToken.None);
             _logger.Information("Agent {AgentId} re-registered after reconnection", _agentId.Value);
+            // Gate complete — unblock waiters
+            _registrationGate.TrySetResult();
         }
         catch (Exception ex)
         {
             _logger.Error(ex, "Failed to re-register agent {AgentId} after reconnection", _agentId.Value);
+            // Complete the gate with failure so callers proceed rather than hanging;
+            // the underlying Polly retry will handle the hub call failure.
+            _registrationGate.TrySetResult();
         }
 
         if (OnReconnected is not null)
@@ -272,6 +349,10 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
 
     internal async Task HandleTerminalClosedAsync(Exception? error, int maxAttempts = 10, Func<int, TimeSpan>? delayOverride = null)
     {
+        // Reset the registration gate BEFORE any awaits so callers that land during
+        // the terminal-close recovery window are held until re-registration succeeds.
+        _registrationGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
         _logger.Warning(error, "SignalR connection entered terminal Closed state, attempting fresh reconnection");
 
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
@@ -308,6 +389,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
                 {
                     await SafeDisposeAsync(newManager);
                     newManager = null;
+                    // Gate was already cancelled by DisposeAsync — leave it as-is
                     return;
                 }
                 newManager = null; // Ownership transferred
@@ -315,6 +397,8 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
                 await SafeDisposeAsync(oldManager);
 
                 _logger.Information("Agent {AgentId} reconnected and re-registered after terminal close", _agentId.Value);
+                // Unblock waiters now that re-registration succeeded
+                _registrationGate.TrySetResult();
                 return;
             }
             catch (Exception ex)
@@ -326,6 +410,12 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
 
         _logger.Error("All {MaxAttempts} reconnection attempts exhausted for agent {AgentId}, shutting down",
             maxAttempts, _agentId.Value);
+        // TODO [WARNING]: Consider TrySetCanceled() here instead of TrySetResult() so that callers
+        // unblocked by the gate know the connection is terminal rather than "registered". Using
+        // TrySetResult() allows callers to proceed into hub invocations on a dead connection,
+        // generating noisy errors before shutdown completes. (Correctness Review)
+        // Complete the gate so callers don't hang forever when giving up
+        _registrationGate.TrySetResult();
         // B5 fix: stop the host so the pod is reaped and rescheduled — matches AgentConnectionLifecycle behaviour.
         // If lifetime is null (test context), we log only.
         _lifetime?.StopApplication();

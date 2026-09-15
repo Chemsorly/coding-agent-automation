@@ -4,6 +4,7 @@ using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Orchestration.Health;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Telemetry;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.SignalR;
 using ILogger = Serilog.ILogger;
@@ -97,6 +98,8 @@ public sealed class AgentAuthorizationFilter : IHubFilter
         if (OperatorAllowedMethods.Contains(ctx.HubMethodName))
             return;
 
+        PipelineTelemetry.HubAuthRejections.Add(1,
+            new KeyValuePair<string, object?>("reason", PipelineTelemetry.HubAuthRejectionReasons.OperatorForbidden));
         _logger.Warning(
             "Hub method {Method} rejected — operator connection {ConnectionId} may only invoke UI subscription methods",
             ctx.HubMethodName, ctx.Context.ConnectionId);
@@ -129,6 +132,7 @@ public sealed class AgentAuthorizationFilter : IHubFilter
         // before InvokeMethodAsync — the `is not null` guard is redundant and misleading. The real
         // null-safety is provided by the ?. null-conditional on GetHttpContext() below. Remove this
         // guard in a future cleanup pass. (WARNING — Correctness Review / .NET Specialist / Security)
+        var queryAgentId = (string?)null;
         if (agent is null && ctx.Context.Features is not null)
         {
             // TODO: Query["agentId"].ToString() on a StringValues struct returns a comma-joined string
@@ -140,7 +144,7 @@ public sealed class AgentAuthorizationFilter : IHubFilter
             // Any caller with a valid API key can probe Redis for arbitrary agent keys on a cold pod.
             // Add a max-length and character allowlist check here if Redis key enumeration is a concern.
             // (WARNING — Security Review)
-            var queryAgentId = ctx.Context.GetHttpContext()?.Request.Query["agentId"].ToString();
+            queryAgentId = ctx.Context.GetHttpContext()?.Request.Query["agentId"].ToString();
             if (!string.IsNullOrEmpty(queryAgentId))
             {
                 var candidate = _registry.GetByAgentId(new AgentId(queryAgentId));
@@ -151,9 +155,40 @@ public sealed class AgentAuthorizationFilter : IHubFilter
 
         if (agent is null)
         {
-            _logger.Warning(
-                "Hub method {Method} rejected — connection {ConnectionId} is not a registered agent",
-                ctx.HubMethodName, ctx.Context.ConnectionId);
+            // Classify: if the request carries an agentId query param, the agent is likely in the
+            // reconnect-race window (connected but RegisterAgent not yet complete). Demote to Debug
+            // and tag the counter accordingly. Without the query param we treat it as a true
+            // unregistered connection and keep the Warning log level.
+            // TODO [WARNING]: The reconnect-race heuristic (isReconnectRace = !string.IsNullOrEmpty(queryAgentId))
+            // is based solely on a user-controlled HTTP query parameter. Any caller with a valid API key
+            // that includes ?agentId=anything will have their rejection silently demoted to Debug and
+            // tagged as reconnect_race — even if they are a genuinely unregistered or malicious connection.
+            // This over-demotes some true auth failures and inflates the reconnect_race metric. A more
+            // precise classification would require a Redis lookup confirming the agentId is a known agent
+            // (even if not yet registered on this connection). Acknowledged as an accepted trade-off in
+            // the issue spec. (Correctness Review / Security Review)
+            var isReconnectRace = !string.IsNullOrEmpty(queryAgentId);
+            var rejectionReason = isReconnectRace
+                ? PipelineTelemetry.HubAuthRejectionReasons.ReconnectRace
+                : PipelineTelemetry.HubAuthRejectionReasons.NotRegistered;
+
+            PipelineTelemetry.HubAuthRejections.Add(1,
+                new KeyValuePair<string, object?>("reason", rejectionReason));
+
+            if (isReconnectRace)
+                // TODO [WARNING]: `queryAgentId` is user-controlled input logged verbatim. Serilog
+                // structured logging protects against newline injection in text sinks, but JSON sinks
+                // or forwarding pipelines that parse the raw value may misinterpret crafted payloads.
+                // Consider adding a max-length and character-allowlist sanitization step here,
+                // consistent with the existing TODO at line ~148. (Security Review)
+                _logger.Debug(
+                    "Hub method {Method} rejected — connection {ConnectionId} is reconnecting (agentId={AgentId}, likely reconnect-race window)",
+                    ctx.HubMethodName, ctx.Context.ConnectionId, queryAgentId);
+            else
+                _logger.Warning(
+                    "Hub method {Method} rejected — connection {ConnectionId} is not a registered agent",
+                    ctx.HubMethodName, ctx.Context.ConnectionId);
+
             throw new HubException($"Agent not registered (connection {ctx.Context.ConnectionId})");
         }
 
@@ -169,6 +204,8 @@ public sealed class AgentAuthorizationFilter : IHubFilter
     {
         if (ctx.HubMethodArguments.Count == 0 || ctx.HubMethodArguments[0] is not JobId jobId)
         {
+            PipelineTelemetry.HubAuthRejections.Add(1,
+                new KeyValuePair<string, object?>("reason", PipelineTelemetry.HubAuthRejectionReasons.JobMismatch));
             _logger.Warning(
                 "Hub method {Method} rejected — missing or invalid jobId parameter from agent {AgentId}",
                 ctx.HubMethodName, agent.AgentId);
@@ -177,6 +214,8 @@ public sealed class AgentAuthorizationFilter : IHubFilter
 
         if (!string.Equals(agent.ActiveJobId, jobId.Value, StringComparison.Ordinal))
         {
+            PipelineTelemetry.HubAuthRejections.Add(1,
+                new KeyValuePair<string, object?>("reason", PipelineTelemetry.HubAuthRejectionReasons.JobMismatch));
             _logger.Warning(
                 "Hub method {Method} rejected — job {JobId} not assigned to agent {AgentId} (active job: {ActiveJobId})",
                 ctx.HubMethodName, jobId.Value, agent.AgentId, agent.ActiveJobId ?? "none");
