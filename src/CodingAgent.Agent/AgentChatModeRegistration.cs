@@ -46,6 +46,7 @@ internal static class AgentChatModeRegistration
                 {
                     var connectionLifecycle = sp.GetRequiredService<AgentConnectionLifecycle>();
                     var lifetime = sp.GetRequiredService<IHostApplicationLifetime>();
+                    await connectionLifecycle.WaitForRegistrationAsync(lifetime.ApplicationStopping);
                     await connectionLifecycle.Connection.InvokeAsync(
                         HubMethodNames.AgentReady, agentId, lifetime.ApplicationStopping);
                 }
@@ -90,6 +91,7 @@ internal static class AgentChatModeRegistration
                         // instances from the outer factory scope rather than re-resolving on each call.
                         var lifecycle = sp.GetRequiredService<AgentConnectionLifecycle>();
                         var lifetime = sp.GetRequiredService<IHostApplicationLifetime>();
+                        await lifecycle.WaitForRegistrationAsync(lifetime.ApplicationStopping);
                         await lifecycle.Connection.InvokeAsync(HubMethodNames.AgentReady, agentId, lifetime.ApplicationStopping);
                     }
                     catch (Exception ex)

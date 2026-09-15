@@ -92,7 +92,6 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         instrumentation.Activity?.SetTag("pipeline.agent_id", _agentId.Value);
 
         var config = job.PipelineConfiguration;
-        var issueOps = new OrchestratorProxy(connection, job.JobId);
 
         // Resolve provider configs from the job assignment
         // TODO: These two mandatory lookups use TryGetProviderConfig + manual null-check-and-throw rather than
@@ -120,6 +119,12 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         // so the factory always receives the final config state.
         // TODO: Add a test that sets a repo-level blacklist override and asserts the factory receives the
         // overridden config, to permanently protect the ordering invariant against future refactors.
+        var issueOps = new OrchestratorProxy(connection, job.JobId);
+        // TODO [WARNING]: The two-variable pattern here (issueOps + issueOpsDisposable pointing to the
+        // same object) is redundant and potentially confusing. Prefer `using var issueOps = new OrchestratorProxy(...)`
+        // as done in LocalConsolidationExecutor. Not a defect since Dispose() is idempotent, but
+        // the alias introduces maintenance risk around ownership. (.NET Specialist Review)
+        using var issueOpsDisposable = issueOps; // ensure _tokenCacheLock is disposed after the job completes
         var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config, issueOps);
 
         IRepositoryProvider? repoProvider = null;

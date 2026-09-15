@@ -7,6 +7,8 @@ namespace CodingAgent.Agent.UnitTests;
 /// Test double for <see cref="IHubConnectionManager"/>.
 /// Allows scripting StartAsync success/failure and manually firing lifecycle events
 /// to exercise <see cref="AgentConnectionLifecycle"/> reconnection logic.
+/// Also provides a scriptable <see cref="InvokeAsyncDelegate"/> hook so gate-ordering
+/// tests can control whether hub invocations succeed or fail without a real connection.
 /// </summary>
 internal sealed class FakeHubConnectionManager : IHubConnectionManager
 {
@@ -17,6 +19,21 @@ internal sealed class FakeHubConnectionManager : IHubConnectionManager
     public int StartCallCount { get; private set; }
     public int StopCallCount { get; private set; }
     public int DisposeCallCount { get; private set; }
+
+    /// <summary>
+    /// Optional delegate invoked instead of the real <see cref="HubConnection.InvokeAsync"/> call
+    /// when tests need to control invocation outcome (success, fault, delay) without a live server.
+    /// Method name and arguments are passed in; return null to simulate void invocations.
+    /// </summary>
+    public Func<string, object?[], CancellationToken, Task>? InvokeAsyncDelegate { get; set; }
+
+    /// <summary>
+    /// Optional delegate that replaces the default <see cref="StartAsync"/> implementation.
+    /// When set, this is called instead of the built-in success/failure logic, allowing tests
+    /// to block StartAsync on a <see cref="TaskCompletionSource"/> to exercise gate-ordering
+    /// scenarios where the registration window needs to be held open for concurrent assertions.
+    /// </summary>
+    public Func<CancellationToken, Task>? StartFunc { get; set; }
 
     // Events (wired by WireEventHandlers)
     // CS0067 suppressed: events are wired via += in WireEventHandlers; the compiler cannot see external subscribers
@@ -47,6 +64,8 @@ internal sealed class FakeHubConnectionManager : IHubConnectionManager
     {
         StartCallCount++;
         ct.ThrowIfCancellationRequested();
+        if (StartFunc is not null)
+            return StartFunc(ct);
         if (StartException is not null)
             throw StartException;
         return Task.CompletedTask;

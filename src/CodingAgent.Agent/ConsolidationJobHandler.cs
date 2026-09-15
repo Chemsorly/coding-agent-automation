@@ -77,6 +77,7 @@ public sealed class ConsolidationJobHandler
             jobId, busyWith);
         try
         {
+            await _connectionLifecycle.WaitForRegistrationAsync(CancellationToken.None);
             await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.JobRejected, jobId, "Agent is busy", CancellationToken.None);
         }
         catch (Exception ex)
@@ -115,6 +116,7 @@ public sealed class ConsolidationJobHandler
                 Success = false,
                 ErrorMessage = errorMessage
             };
+            await _connectionLifecycle.WaitForRegistrationAsync(CancellationToken.None);
             await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportConsolidationComplete, failResult,
                 CancellationToken.None); // intentional: failure report must reach orchestrator even when jobToken is cancelled
         }

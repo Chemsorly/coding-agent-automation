@@ -73,10 +73,7 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
         // Create an OrchestratorProxy for the consolidation run so that the repository
         // provider uses the proactive token-refresh path instead of the static dispatch token.
         // This mirrors what LocalPipelineExecutor does for regular pipeline jobs.
-        // TODO [WARNING]: OrchestratorProxy is not disposed after use. Once IDisposable is added to
-        // OrchestratorProxy (to dispose _tokenCacheLock), this site will silently suppress the disposal
-        // obligation. Wrap in a using block here, and do the same in LocalPipelineExecutor. (DotNetSpecialist review finding)
-        var orchestratorProxy = new OrchestratorProxy(connection, job.JobId);
+        using var orchestratorProxy = new OrchestratorProxy(connection, job.JobId);
 
         ConsolidationJobResult result;
         try

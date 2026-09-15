@@ -120,6 +120,7 @@ public sealed class ChatJobHandler
                     SessionId = message.SessionId,
                     Lines = lines.ToList()
                 };
+                await _connectionLifecycle.WaitForRegistrationAsync(CancellationToken.None);
                 await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportChatResponse, response, CancellationToken.None);
             }
             catch (Exception ex)
@@ -193,6 +194,7 @@ public sealed class ChatJobHandler
                 ExitCode = exitCode,
                 Error = error
             };
+            await _connectionLifecycle.WaitForRegistrationAsync(CancellationToken.None);
             await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportChatCompleted, completed,
                 CancellationToken.None); // intentional: completion report must reach orchestrator even when chatToken is cancelled
         }
@@ -367,6 +369,7 @@ public sealed class ChatJobHandler
                 }
             }
 
+            await _connectionLifecycle.WaitForRegistrationAsync(CancellationToken.None);
             await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportFetchModelsResult, new FetchModelsResponse
             {
                 RequestId = request.RequestId,
@@ -384,6 +387,7 @@ public sealed class ChatJobHandler
     {
         try
         {
+            await _connectionLifecycle.WaitForRegistrationAsync(CancellationToken.None);
             await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportFetchModelsResult, new FetchModelsResponse
             {
                 RequestId = requestId,
