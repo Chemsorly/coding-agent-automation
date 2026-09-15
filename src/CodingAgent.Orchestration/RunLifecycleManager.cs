@@ -98,8 +98,11 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         // 5. Clear agent state
         await ClearAgentStateAsync(run.AgentId);
 
-        // 6. Swap label to error
-        await _labelService.TrySwapLabelAsync(run, AgentLabels.Error, _logger, "RunLifecycleManager", ct);
+        // 6. Swap label — respect pipeline-determined FinalLabel, fall back to agent:error
+        var errorLabel = run.FinalLabel is not null && AgentLabels.All.Contains(run.FinalLabel)
+            ? run.FinalLabel
+            : AgentLabels.Error;
+        await _labelService.TrySwapLabelAsync(run, errorLabel, _logger, "RunLifecycleManager", ct);
 
         // 7. Delete K8s Job to prevent pod retries consuming backoffLimit (mirrors CancelRunAsync step 7).
         // Best-effort: if the Job is already gone or K8s is unavailable, the warning is logged by KubernetesJobCleanup.

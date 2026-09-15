@@ -220,6 +220,39 @@ public sealed class RunLifecycleManagerTests
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task FailRunAsync_WithFinalLabel_UsesRunFinalLabelInsteadOfError()
+    {
+        // FinalLabel on the run takes precedence over the hardcoded agent:error.
+        // In production, run.FinalLabel is set by the analysis gate (AgentPhaseExecutor.FailPhaseAsync)
+        // before FailRunAsync is called by the timeout/reconciliation path.
+        // TODO: run.AgentId is intentionally not set here (omits RegisterAgent call), so ClearAgentStateAsync
+        // executes its no-op path for a null/unregistered agent. If a future refactor makes ClearAgentStateAsync
+        // non-null-safe for a missing AgentId (and any exception is swallowed before step 6), this test could give
+        // a false-positive green. Consider setting run.AgentId and calling RegisterAgent to match the happy-path
+        // pattern in FailRunAsync_RemovesRun_PersistsHistory_ClearsAgent_SwapsLabel. (Correctness/TestQuality review)
+        var run = CreateRun("run-finallabel-fail", PipelineRunType.Implementation);
+        run.FinalLabel = AgentLabels.NeedsRefinement;
+        _runService.AddRun(run);
+
+        // Act
+        var result = await _sut.FailRunAsync("run-finallabel-fail", "Analysis gate: needs refinement", CancellationToken.None);
+
+        // Assert: run was processed
+        result.Should().NotBeNull();
+        result!.CurrentStep.Should().Be(PipelineStep.Failed);
+
+        // Label swapped to needs-refinement, NOT error
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.NeedsRefinement, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // agent:error must NOT be applied
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.Error,
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     // ── CompleteRunAsync ────────────────────────────────────────────────
 
     [Fact]
@@ -944,6 +977,47 @@ public sealed class RunLifecycleManagerErrorPathTests
         _mockLabelService.Verify(l => l.SwapLabelAsync(
             "ip-1", "org/repo#1", AgentLabels.Error, LabelTargetKind.Issue,
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── FailRunAsync — FinalLabel guard ───────────────────────────────────
+
+    [Fact]
+    public async Task FailRunAsync_WithInvalidFinalLabel_FallsBackToAgentError()
+    {
+        // A FinalLabel value not in AgentLabels.All must be treated as unset — falls back to agent:error.
+        var runId = Guid.NewGuid().ToString();
+        var run = CreateRun(runId, PipelineRunType.Implementation);
+        run.FinalLabel = "some-unknown-label"; // not in AgentLabels.All
+        _runService.AddRun(run);
+
+        await _sut.FailRunAsync(runId, "reason", CancellationToken.None);
+
+        // Must swap to agent:error (fallback), NOT the unknown label
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.Error,
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), "some-unknown-label",
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task FailRunAsync_WithWontDoFinalLabel_UsesWontDoLabel()
+    {
+        // WontDo is a valid agent label — must be respected just like NeedsRefinement.
+        var runId = Guid.NewGuid().ToString();
+        var run = CreateRun(runId, PipelineRunType.Implementation);
+        run.FinalLabel = AgentLabels.WontDo;
+        _runService.AddRun(run);
+
+        await _sut.FailRunAsync(runId, "Won't do", CancellationToken.None);
+
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.WontDo,
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.Error,
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── CancelRunAsync — resilience ───────────────────────────────────────
