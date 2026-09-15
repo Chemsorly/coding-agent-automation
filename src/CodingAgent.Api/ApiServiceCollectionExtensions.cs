@@ -343,8 +343,8 @@ public static class ApiServiceCollectionExtensions
         // KubernetesJobClient which would NRE on the first dispatch attempt.
 
         // ── IConsolidationJobPreparationService ────────────────────────────
-        // Required by the ConsolidationWorkItemEndpoints (POST /api/consolidation-work-items/{id}/claim)
-        // to resolve provider configs and vend short-lived tokens at claim time.
+        // Required by AssignmentEnricher to resolve provider configs and vend short-lived tokens
+        // at assignment time (GET /api/work-items/{id}/assignment).
         // Also used by ReportConsolidationComplete hub handling.
         services.AddSingleton<IConsolidationJobPreparationService>(sp =>
             new ConsolidationJobPreparationService(

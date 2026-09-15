@@ -6,18 +6,23 @@ using CodingAgent.Web.Services;
 namespace CodingAgent.Web;
 
 /// <summary>
-/// Extension methods for cleaning up orphaned consolidation runs and rehydrating
-/// queued consolidation runs at application startup.
+/// Extension methods for cleaning up orphaned consolidation runs at application startup.
 /// </summary>
 internal static class ConsolidationRehydrationExtensions
 {
     /// <summary>
-    /// Cleans up orphaned consolidation runs from previous sessions and rehydrates
-    /// queued consolidation runs via <see cref="IConsolidationDispatcher"/> (unified dispatch path).
+    /// Cleans up orphaned consolidation runs from previous sessions.
     /// </summary>
     /// <remarks>
-    /// Must run after <see cref="EndpointRegistration.MapApplicationEndpoints"/> so that
-    /// middleware is configured before background work begins.
+    /// Pending runs are now poller-owned: consolidation WorkItems are created as
+    /// <c>Pending</c> via <c>POST /api/work-items</c> and claimed by the
+    /// <c>WorkItemDispatchPoller</c>. Queued runs not yet dispatched before a pod restart
+    /// will be picked up by <see cref="Services.ConsolidationRetryBackgroundService"/>
+    /// on its first sweep (default 2-minute interval) — no startup rehydration needed.
+    /// <para>
+    /// Must run after endpoint registration so that middleware is configured before
+    /// background work begins.
+    /// </para>
     /// </remarks>
     public static async Task RunConsolidationStartupAsync(this WebApplication app)
     {
@@ -47,23 +52,5 @@ internal static class ConsolidationRehydrationExtensions
             liveAgentDtos.Where(a => a.ActiveJobId != null).Select(a => a.ActiveJobId!),
             StringComparer.OrdinalIgnoreCase);
         await consolidationService.CleanupOrphanedRunsAsync(activeAgentJobIds, CancellationToken.None);
-
-        // Rehydrate queued consolidation runs via IConsolidationDispatcher (unified dispatch path).
-        // IConsolidationDispatcher is shared with the UI trigger path so both use identical
-        // JobDistributionRequest construction.
-        // TODO [WARNING]: This startup rehydration only runs once per pod restart. Transient
-        // dispatch failures (409 capacity / 503 PVC) that occur while the orchestrator is
-        // running are now retried by ConsolidationRetryBackgroundService, but this path still
-        // handles the initial rehydration on startup. See ConsolidationRetryBackgroundService
-        // for the bounded background retry sweep added as part of issue #2536.
-        var queuedRuns = await consolidationService.RehydrateQueuedRunsAsync(CancellationToken.None);
-        if (queuedRuns.Count > 0)
-        {
-            var dispatcher = app.Services.GetRequiredService<IConsolidationDispatcher>();
-            foreach (var run in queuedRuns)
-            {
-                await dispatcher.DispatchRunAsync(run, CancellationToken.None);
-            }
-        }
     }
 }

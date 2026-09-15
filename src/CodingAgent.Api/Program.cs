@@ -171,7 +171,6 @@ app.MapWorkItemEndpoints();
 app.MapPipelineRunEndpoints();
 app.MapConfigEndpoints();
 app.MapConsolidationRunEndpoints();
-app.MapConsolidationWorkItemEndpoints();
 app.MapHarnessSuggestionEndpoints();
 app.MapFeedbackCommentOutboxEndpoints();
 app.MapAgentEndpoints();

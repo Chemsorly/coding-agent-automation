@@ -1266,27 +1266,24 @@ public static class WorkItemEndpoints
 
     /// <summary>
     /// GET /api/work-items/pending
-    /// Returns Pending work items, ordered by CreatedAt ASC.
-    /// When <c>Consolidation:UnifiedDispatch:Enabled</c> is false (default), consolidation items
-    /// are excluded. When the flag is true, consolidation Pending items are included so the
-    /// <c>WorkItemDispatchPoller</c> can pick them up via the unified dispatch path.
+    /// Returns Pending work items for all task types (including Consolidation), ordered by
+    /// PriorityWeight DESC, CreatedAt ASC.
     /// Query param: maxResults (default 50).
     /// Includes display fields (IssueTitle, InitiatedBy, ProjectName, ProjectId) extracted from
     /// the Payload JSONB column for the Agent Monitoring Job Queue UI.
     /// </summary>
+    // TODO: [WARNING] IConfiguration was removed from this method's parameter list as part of #2566
+    // (the flag read was deleted). The MapGet registration at line 75 uses a method group reference
+    // (GetPendingWorkItems), so ASP.NET Core's minimal API binder resolves parameters by type from
+    // DI/route/query — no IConfiguration argument is passed explicitly and none will leak. Confirmed
+    // correct: the registration site does not pass IConfiguration positionally. If IConfiguration
+    // is ever re-added here, verify the registration site matches.
     internal static async Task<IResult> GetPendingWorkItems(
         IDbContextFactory<PipelineDbContext> dbFactory,
-        IConfiguration configuration,
         int maxResults = 50,
         string? projectId = null,
         CancellationToken ct = default)
     {
-        // TODO: Replace IConfiguration.GetValue<bool> with IOptions<ConsolidationUnifiedDispatchOptions>
-        // to match the strongly-typed options pattern used elsewhere in the codebase. The raw key-path
-        // string here will silently diverge if the section name or property name is ever renamed.
-        var unifiedDispatchEnabled = configuration.GetValue<bool>(
-            $"{ConsolidationUnifiedDispatchOptions.SectionName}:{nameof(ConsolidationUnifiedDispatchOptions.Enabled)}");
-
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
         // Phase 1: SQL projection — include Payload and ProjectId alongside the 7 scalar fields.
@@ -1295,10 +1292,6 @@ public static class WorkItemEndpoints
             .AsNoTracking()
             .Where(w => w.Status == WorkItemStatus.Pending);
 
-        // When the unified dispatch flag is off (default), exclude consolidation items — identical
-        // to the pre-flag behavior. When on, the poller must see consolidation Pending items.
-        if (!unifiedDispatchEnabled)
-            pending = pending.Where(w => w.TaskType != WorkItemTaskType.Consolidation);
         // Optional project scope. WorkItem.ProjectId is a uuid column while the switcher passes the
         // project's id as a string (PipelineProject.Id is a Guid-string), so parse before comparing.
         if (!string.IsNullOrEmpty(projectId) && Guid.TryParse(projectId, out var scopeProjectId))

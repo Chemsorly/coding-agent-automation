@@ -17,9 +17,11 @@ namespace CodingAgent.Infrastructure.UnitTests.Persistence;
 public class WorkItemTransitionServiceTests
 {
     [Theory]
-    // Pending→Dispatched and Dispatched→Pending are kept in the state machine for the consolidation
-    // dispatch path (ClaimWorkItem endpoint). The regular live dispatch path no longer creates Pending
-    // items (issue #2322), but the transitions remain valid for the consolidation path.
+    // Pending→Dispatched: used by ClaimWorkItem (POST /api/work-items/{id}/claim) for all task types.
+    // Dispatched→Pending: used by RequeueWorkItem (POST /api/work-items/{id}/requeue) when K8s Job
+    // creation fails after a successful claim — item must return to Pending for retry.
+    // The consolidation-specific TODO comments on these transitions are removed in #2566;
+    // the transitions themselves remain valid for the general dispatch and requeue paths.
     [InlineData(WorkItemStatus.Pending, WorkItemStatus.Dispatched, true)]
     [InlineData(WorkItemStatus.Pending, WorkItemStatus.Cancelled, true)]
     [InlineData(WorkItemStatus.Pending, WorkItemStatus.Running, false)]
@@ -74,6 +76,27 @@ public class WorkItemTransitionServiceTests
             WorkItemTransitionService.IsValidTransition(status, status).Should().BeFalse(
                 $"Same-state {status} → {status} should return false (idempotency handled separately)");
         }
+    }
+
+    [Fact]
+    public void PendingToDispatched_IsValid_ForClaimWorkItemEndpoint()
+    {
+        // Pending→Dispatched is used by ClaimWorkItem (POST /api/work-items/{id}/claim),
+        // which the Scheduler's WorkItemDispatchPoller calls for all task types.
+        WorkItemTransitionService.IsValidTransition(WorkItemStatus.Pending, WorkItemStatus.Dispatched)
+            .Should().BeTrue("Pending→Dispatched is used by ClaimWorkItem for all task types via the Scheduler");
+    }
+
+    [Fact]
+    public void DispatchedToPending_IsValid_ForRequeueWorkItemEndpoint()
+    {
+        // Dispatched→Pending is used by RequeueWorkItem (POST /api/work-items/{id}/requeue)
+        // when K8s Job creation fails after a successful claim — the item must be returned
+        // to the Pending queue for retry rather than being stuck in Dispatched state.
+        // The consolidation-specific TODO comments on this transition are removed in #2566;
+        // the transition itself remains valid for the general requeue path.
+        WorkItemTransitionService.IsValidTransition(WorkItemStatus.Dispatched, WorkItemStatus.Pending)
+            .Should().BeTrue("Dispatched→Pending is used by RequeueWorkItem when K8s Job creation fails after claim");
     }
 
     // ── TryRecoverFromInfrastructureFailureAsync Concurrency Retry Tests ─────
