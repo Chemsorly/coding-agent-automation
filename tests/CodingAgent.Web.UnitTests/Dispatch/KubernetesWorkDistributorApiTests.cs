@@ -1,11 +1,8 @@
 using System.Net;
 using AwesomeAssertions;
 using CodingAgent.Api.Client;
-using CodingAgent.Infrastructure.Persistence;
-using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline.Models;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
 
@@ -14,7 +11,8 @@ namespace CodingAgent.Web.UnitTests.Dispatch;
 /// <summary>
 /// Verifies that <see cref="KubernetesWorkDistributor.DistributeAsync"/> calls
 /// <see cref="IPipelineApiWorkItemClient.CreateAsync"/> (the Pending enqueue endpoint)
-/// and returns <c>Queued=true</c> (item is in the visible UI queue, not yet dispatched).
+/// and returns <c>Queued=true</c> for all task types including Consolidation.
+/// The legacy synchronous dispatch path (DispatchAsync) has been retired (#2566).
 /// </summary>
 public class KubernetesWorkDistributorApiTests
 {
@@ -53,7 +51,7 @@ public class KubernetesWorkDistributorApiTests
                 It.IsAny<CancellationToken>()),
             Times.Once);
 
-        // Verify DispatchAsync was NOT called (synchronous dispatch path is bypassed)
+        // Verify DispatchAsync was NOT called (synchronous dispatch path is retired)
         _mockClient.Verify(
             c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()),
             Times.Never);
@@ -127,27 +125,68 @@ public class KubernetesWorkDistributorApiTests
         result.ErrorMessage.Should().Contain("server error", "error message must propagate the underlying failure text");
     }
 
+    // ── Consolidation — now uses unified Pending enqueue path ────────────
+
     [Fact]
-    public async Task DistributeAsync_ConsolidationRequest_CallsDispatchAsync_NotCreateAsync()
+    public async Task DistributeAsync_ConsolidationRequest_CallsCreateAsync_NotDispatchAsync()
     {
-        // Flag off (default): Consolidation must use the legacy synchronous DispatchAsync path
-        // so the WorkItem is not orphaned in a Pending state with no poller to claim it.
-        // _sut is constructed without the flag (unifiedDispatchEnabled=false by default).
+        // Consolidation uses the same Pending enqueue path as all other task types (#2566).
         var workItemId = Guid.NewGuid();
         var request = CreateConsolidationRequest();
 
         _mockClient
-            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(workItemId);
 
         var result = await _sut.DistributeAsync(request, CancellationToken.None);
 
         result.Success.Should().BeTrue();
-        result.Queued.Should().BeFalse("Consolidation is dispatched synchronously, not via Pending queue");
         result.WorkItemId.Should().Be(workItemId.ToString());
+        result.Queued.Should().BeTrue("consolidated dispatch path enqueues as Pending, not Dispatched");
 
-        _mockClient.Verify(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
-        _mockClient.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockClient.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockClient.Verify(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DistributeAsync_ConsolidationRequest_When409_ReturnsSuccess_Idempotent()
+    {
+        // 409 on the Pending enqueue path means a live WorkItem already exists for this
+        // consolidation run — treated as idempotent success (Queued=true), same as all other
+        // task types. This prevents a requeue loop if rehydration calls dispatch twice for the
+        // same run.
+        var request = CreateConsolidationRequest();
+
+        _mockClient
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("conflict", null, HttpStatusCode.Conflict));
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeTrue("409 on the enqueue path is treated as already-queued, not a failure");
+        result.Queued.Should().BeTrue("existing live WorkItem means the item is effectively queued");
+        result.ErrorMessage.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DistributeAsync_ConsolidationRequest_NeverCallsDispatchAsync()
+    {
+        // DispatchAsync (POST /api/work-items/dispatch) is retired — no task type should call it.
+        // TODO: [WARNING] This test is a pure negative verification (DispatchAsync is never called)
+        // with no assertion on the return value (Success, Queued, WorkItemId). It is essentially a
+        // subset of DistributeAsync_ConsolidationRequest_CallsCreateAsync_NotDispatchAsync above, which
+        // already verifies both the mock interaction and the result. Either remove this test as redundant
+        // or strengthen it with result assertions so it catches regressions independently.
+        var workItemId = Guid.NewGuid();
+        var request = CreateConsolidationRequest();
+
+        _mockClient
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workItemId);
+
+        await _sut.DistributeAsync(request, CancellationToken.None);
+
+        _mockClient.Verify(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -175,141 +214,6 @@ public class KubernetesWorkDistributorApiTests
     {
         var act = () => _sut.DistributeAsync(null!, CancellationToken.None);
         await act.Should().ThrowAsync<ArgumentNullException>();
-    }
-
-    // ── Consolidation (synchronous dispatch) error paths ─────────────────
-
-    [Fact]
-    public async Task DistributeAsync_ConsolidationRequest_When409Conflict_ReturnsFailureNoCapacity()
-    {
-        // The synchronous dispatch endpoint returns 409 when the concurrency cap is reached.
-        // This is surfaced as a failure result (no capacity), not a thrown exception.
-        var request = CreateConsolidationRequest();
-
-        _mockClient
-            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new HttpRequestException("conflict", null, HttpStatusCode.Conflict));
-
-        var result = await _sut.DistributeAsync(request, CancellationToken.None);
-
-        result.Success.Should().BeFalse();
-        result.Queued.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("No capacity", "409 on the consolidation dispatch path means no capacity");
-    }
-
-    [Fact]
-    public async Task DistributeAsync_ConsolidationRequest_When503ServiceUnavailable_ReturnsFailureNoCapacity()
-    {
-        // 503 (no PVC available / K8s failure) on the synchronous dispatch path is also treated
-        // as a no-capacity failure so the Scheduler can retry the issue next cycle.
-        var request = CreateConsolidationRequest();
-
-        _mockClient
-            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new HttpRequestException("server error", null, HttpStatusCode.ServiceUnavailable));
-
-        var result = await _sut.DistributeAsync(request, CancellationToken.None);
-
-        result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("No capacity");
-    }
-
-    [Fact]
-    public async Task DistributeAsync_ConsolidationRequest_WhenDispatchThrowsUnexpected_ReturnsFailure()
-    {
-        // A non-HTTP error from the dispatch endpoint is caught by the general handler and
-        // returned as a failure result rather than propagating out of DistributeAsync.
-        var request = CreateConsolidationRequest();
-
-        _mockClient
-            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("unexpected dispatch error"));
-
-        var result = await _sut.DistributeAsync(request, CancellationToken.None);
-
-        result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("unexpected dispatch error");
-    }
-
-    // ── Consolidation (unified dispatch path, flag=on) ────────────────────
-
-    [Fact]
-    public async Task DistributeAsync_ConsolidationRequest_FlagOn_CallsCreateAsync_NotDispatchAsync()
-    {
-        // Flag on: Consolidation must use the Pending enqueue path (CreateAsync), same as all
-        // other task types. The poller applies RunType tier ordering (#2563) before pod creation.
-        var workItemId = Guid.NewGuid();
-        var request = CreateConsolidationRequest();
-        var sut = CreateFlagOnSut();
-
-        _mockClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(workItemId);
-
-        var result = await sut.DistributeAsync(request, CancellationToken.None);
-
-        result.Success.Should().BeTrue();
-        result.WorkItemId.Should().Be(workItemId.ToString());
-        result.Queued.Should().BeTrue("unified dispatch path enqueues as Pending, not Dispatched");
-
-        _mockClient.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
-        _mockClient.Verify(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task DistributeAsync_ConsolidationRequest_FlagOn_When409_ReturnsSuccess_Idempotent()
-    {
-        // Flag on: 409 on the Pending enqueue path means a live WorkItem already exists for this
-        // consolidation run — treated as idempotent success (Queued=true), same as all other task
-        // types. This prevents a requeue loop if rehydration calls dispatch twice for the same run.
-        var request = CreateConsolidationRequest();
-        var sut = CreateFlagOnSut();
-
-        _mockClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new HttpRequestException("conflict", null, HttpStatusCode.Conflict));
-
-        var result = await sut.DistributeAsync(request, CancellationToken.None);
-
-        result.Success.Should().BeTrue("409 on unified dispatch path is treated as already-queued, not a failure");
-        result.Queued.Should().BeTrue("existing live WorkItem means the item is effectively queued");
-        result.ErrorMessage.Should().BeNull();
-        // TODO: WorkItemId is not asserted here. On the 409 idempotent path, WorkItemId may be
-        // null (no new item was created). Callers that log or store the WorkItemId from the result
-        // would silently receive null. Add an assertion on result.WorkItemId (expected null on 409)
-        // once the expected contract for the idempotent case is confirmed. (#2564 review finding)
-    }
-
-    [Fact]
-    public async Task DistributeAsync_ConsolidationRequest_FlagOn_FlagOff_RoutesToDifferentPaths()
-    {
-        // Verify the flag routes correctly in both states for the same Consolidation request.
-        // Flag off → DispatchAsync (synchronous). Flag on → CreateAsync (Pending enqueue).
-        var workItemId = Guid.NewGuid();
-        var request = CreateConsolidationRequest();
-
-        _mockClient
-            .Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(workItemId);
-        _mockClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(workItemId);
-
-        // Flag off (default _sut) → synchronous path
-        var flagOffResult = await _sut.DistributeAsync(request, CancellationToken.None);
-        flagOffResult.Queued.Should().BeFalse("flag=off dispatches synchronously, not via Pending queue");
-
-        // Flag on → Pending enqueue path
-        var flagOnResult = await CreateFlagOnSut().DistributeAsync(request, CancellationToken.None);
-        flagOnResult.Queued.Should().BeTrue("flag=on enqueues as Pending");
-        // TODO: This combination test only asserts on Queued, not on which mock methods were
-        // called. If the routing condition were accidentally inverted, this test would still pass
-        // because both mocks are set up and Queued is set by whichever path runs. The per-flag
-        // dedicated tests (FlagOn_CallsCreateAsync_NotDispatchAsync and the existing flag-off test)
-        // carry the method-call verification. If this combination test is ever strengthened, add
-        // Verify(DispatchAsync, Times.Once) after the flag-off call and Verify(CreateAsync,
-        // Times.Once) after the flag-on call, using a fresh mock per invocation to avoid
-        // accumulated call history. (#2564 review finding)
     }
 
     [Fact]
@@ -352,11 +256,4 @@ public class KubernetesWorkDistributorApiTests
         AgentSelector = "dotnet,kiro",
         TimeoutSeconds = 3600
     };
-
-    /// <summary>
-    /// Creates a <see cref="KubernetesWorkDistributor"/> with the unified dispatch flag enabled.
-    /// Uses the shared <see cref="_mockClient"/> so that Moq <c>Verify</c> calls work correctly.
-    /// </summary>
-    private KubernetesWorkDistributor CreateFlagOnSut() =>
-        new(_mockClient.Object, Mock.Of<ILogger<KubernetesWorkDistributor>>(), unifiedDispatchEnabled: true);
 }

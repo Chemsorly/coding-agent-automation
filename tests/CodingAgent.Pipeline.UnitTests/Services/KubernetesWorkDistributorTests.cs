@@ -120,73 +120,48 @@ public sealed class KubernetesWorkDistributorTests
     }
 
     [Fact]
-    public async Task DistributeAsync_Consolidation_CallsDispatchAsync_ReturnsQueuedFalse()
+    public async Task DistributeAsync_Consolidation_CallsCreateAsync_ReturnsQueuedTrue()
     {
-        // Consolidation routes through the synchronous DispatchAsync path (Dispatched directly).
+        // Consolidation uses the unified Pending enqueue path (#2566), same as all other task types.
         var workItemId = Guid.NewGuid();
         var request = MakeRequest(taskType: WorkItemTaskType.Consolidation);
-        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+        _client.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(workItemId);
 
         var result = await _sut.DistributeAsync(request, CancellationToken.None);
 
         result.Success.Should().BeTrue();
-        result.Queued.Should().BeFalse("Consolidation uses synchronous dispatch, not Pending queue");
-        _client.Verify(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
-        _client.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        result.Queued.Should().BeTrue("consolidation uses Pending enqueue path, not synchronous dispatch");
+        _client.Verify(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        _client.Verify(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     /// <summary>
-    /// 422 from DispatchAsync = permanent failure (no job template for selector).
-    /// Must return IsPermanentFailure=true so ConsolidationDispatcher can cascade to Failed.
+    /// 409 from CreateAsync for consolidation = already-queued idempotent success, same as other task types.
     /// </summary>
     [Fact]
-    public async Task DistributeAsync_Consolidation_When422_ReturnsPermanentFailure()
+    public async Task DistributeAsync_Consolidation_When409_ReturnsIdempotentSuccess()
     {
         var request = MakeRequest(taskType: WorkItemTaskType.Consolidation);
-        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new HttpRequestException("Unprocessable Entity", null,
-                System.Net.HttpStatusCode.UnprocessableEntity));
-
-        var result = await _sut.DistributeAsync(request, CancellationToken.None);
-
-        result.Success.Should().BeFalse();
-        result.IsPermanentFailure.Should().BeTrue(
-            "422 means no job template exists for the selector — retrying will not help; cascade to Failed");
-        result.ErrorMessage.Should().NotBeNullOrEmpty();
-    }
-
-    /// <summary>
-    /// 409 from DispatchAsync = transient capacity failure — must NOT be marked as permanent.
-    /// Run should stay Queued and be retried on restart.
-    /// </summary>
-    [Fact]
-    public async Task DistributeAsync_Consolidation_When409_ReturnsTransientFailure()
-    {
-        var request = MakeRequest(taskType: WorkItemTaskType.Consolidation);
-        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+        _client.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("Conflict", null,
                 System.Net.HttpStatusCode.Conflict));
 
         var result = await _sut.DistributeAsync(request, CancellationToken.None);
 
-        result.Success.Should().BeFalse();
-        result.IsPermanentFailure.Should().BeFalse(
-            "409 is a transient capacity limit — the run should remain Queued and retry on restart");
-        // TODO [WARNING]: ErrorMessage is not asserted here for symmetry with the 422 test above.
-        // ConsolidationDispatcher.FailRunSafelyAsync propagates result.ErrorMessage as the failure
-        // note written to the run record; a null/empty message produces a misleading Attention view entry.
-        // Add: result.ErrorMessage.Should().NotBeNullOrEmpty(); (review-findings.md TestQualityReviewer warning)
+        result.Success.Should().BeTrue("409 is treated as already-queued, not a failure");
+        result.Queued.Should().BeTrue();
+        result.ErrorMessage.Should().BeNull();
     }
 
     /// <summary>
-    /// 503 from DispatchAsync = transient PVC/capacity failure — must NOT be permanent.
+    /// 503 from CreateAsync for consolidation = transient failure.
     /// </summary>
     [Fact]
     public async Task DistributeAsync_Consolidation_When503_ReturnsTransientFailure()
     {
         var request = MakeRequest(taskType: WorkItemTaskType.Consolidation);
-        _client.Setup(c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+        _client.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("Service Unavailable", null,
                 System.Net.HttpStatusCode.ServiceUnavailable));
 
@@ -194,9 +169,28 @@ public sealed class KubernetesWorkDistributorTests
 
         result.Success.Should().BeFalse();
         result.IsPermanentFailure.Should().BeFalse(
-            "503 is a transient PVC/capacity issue — the run should remain Queued and retry on restart");
-        // TODO [WARNING]: ErrorMessage is not asserted here for symmetry with the 422 test above.
-        // Add: result.ErrorMessage.Should().NotBeNullOrEmpty(); (review-findings.md TestQualityReviewer warning)
+            "503 is a transient failure — the run should remain Queued and retry");
+        // TODO: [WARNING] ErrorMessage is not asserted here. The 503 path in EnqueueAsPendingAsync
+        // propagates the exception message into ErrorMessage; if it were accidentally swallowed and
+        // returned as null/empty, the Attention view would show a blank failure note. The parallel
+        // non-Consolidation 503 test (line ~110) asserts result.ErrorMessage.Should().Contain("server error").
+        // Add the same assertion here for parity: result.ErrorMessage.Should().NotBeNullOrEmpty();
+    }
+
+    /// <summary>
+    /// Unexpected exception from CreateAsync for consolidation = transient failure.
+    /// </summary>
+    [Fact]
+    public async Task DistributeAsync_Consolidation_WhenUnexpectedException_ReturnsTransientFailure()
+    {
+        var request = MakeRequest(taskType: WorkItemTaskType.Consolidation);
+        _client.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("unexpected error"));
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("unexpected error");
     }
 
     [Fact]
