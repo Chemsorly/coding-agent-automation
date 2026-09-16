@@ -97,8 +97,19 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
         writtenCount += await WriteIssueFilesAsync(issueOps, openIdentifiers, outputDir, isClosed: false, ct);
         writtenCount += await WriteIssueFilesAsync(issueOps, closedIdentifiers, outputDir, isClosed: true, ct);
 
-        _logger.Information("Wrote {WrittenCount} issue context files (open={OpenCount}, closed={ClosedCount})",
-            writtenCount, openIdentifiers.Count, closedIdentifiers.Count);
+        var totalIdentifiers = openIdentifiers.Count + closedIdentifiers.Count;
+        if (writtenCount == 0 && totalIdentifiers > 0)
+        {
+            _logger.Warning(
+                "WriteOpenIssueContext wrote 0 files despite {TotalIdentifiers} identifiers collected " +
+                "(open={OpenCount}, closed={ClosedCount}) — all RequestGetIssue calls may have failed",
+                totalIdentifiers, openIdentifiers.Count, closedIdentifiers.Count);
+        }
+        else
+        {
+            _logger.Information("Wrote {WrittenCount} issue context files (open={OpenCount}, closed={ClosedCount})",
+                writtenCount, openIdentifiers.Count, closedIdentifiers.Count);
+        }
 
         return writtenCount;
     }

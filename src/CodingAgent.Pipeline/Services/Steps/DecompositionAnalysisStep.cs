@@ -40,12 +40,20 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
         context.Callbacks.EmitOutputLine("🔍 Starting decomposition analysis...");
 
         // 2. Write epic issue body + comments to .agent/issue-context.md
+        // TODO: epicContextFailed only tracks failure of WriteEpicContextAsync (the single epic issue fetch).
+        // If WriteOpenIssueContext silently writes 0 files due to hub errors (AC2 scenario) but
+        // WriteEpicContextAsync succeeds, this flag remains false and the failure reason will use the generic
+        // "Agent did not produce" message rather than "context was unavailable" — even though the agent was
+        // deprived of all deduplication context. Consider also capturing the open-issue context degradation
+        // signal (e.g. writtenCount == 0 && totalIdentifiers > 0) in this flag or a separate one.
+        var epicContextFailed = false;
         try
         {
             await WriteEpicContextAsync(context, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            epicContextFailed = true;
             logger.Warning(ex, "Failed to write epic context for run {RunId}, continuing without it", run.RunId);
             context.Callbacks.EmitOutputLine("⚠️ Failed to write epic context — continuing without it");
         }
@@ -95,11 +103,24 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
 
         if (!File.Exists(planFilePath))
         {
-            logger.Warning("Decomposition plan file not found at {Path} for run {RunId}",
-                planFilePath, run.RunId);
-            context.Callbacks.EmitOutputLine("❌ Agent did not produce a decomposition plan file");
-            await context.FailRunAsync("Agent did not produce a decomposition plan file at " +
-                                AgentWorkspacePaths.DecompositionPlanFilePath, ct);
+            var reason = epicContextFailed
+                ? "Agent could not produce a decomposition plan because epic context was unavailable " +
+                  "(RequestGetIssue failed — possible cross-replica state miss). " +
+                  $"Expected file: {AgentWorkspacePaths.DecompositionPlanFilePath}"
+                : "Agent did not produce a decomposition plan file at " +
+                  AgentWorkspacePaths.DecompositionPlanFilePath;
+
+            logger.Warning("Decomposition plan file not found at {Path} for run {RunId} (epicContextFailed={EpicContextFailed})",
+                planFilePath, run.RunId, epicContextFailed);
+            context.Callbacks.EmitOutputLine("❌ " + (epicContextFailed
+                ? "Agent could not produce plan — epic context was unavailable (check API logs for RequestGetIssue errors)"
+                : "Agent did not produce a decomposition plan file"));
+            // TODO: Pass a FailureReason enum to FailRunAsync on the epicContextFailed path to distinguish
+            // infrastructure/context failures from ordinary missing-output failures. The
+            // FailRunAsync(string, FailureReason, CancellationToken) overload already exists and operators
+            // who filter PipelineRun records by FailureCategory cannot currently distinguish this mode
+            // from a normal agent no-output failure.
+            await context.FailRunAsync(reason, ct);
             return StepResult.Stop;
         }
 
