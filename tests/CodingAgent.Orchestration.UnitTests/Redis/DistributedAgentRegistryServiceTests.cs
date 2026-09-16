@@ -707,6 +707,109 @@ public sealed class DistributedAgentRegistryServiceTests
         entry.Should().NotBeNull();
         entry!.ActiveJobId.Should().BeNull("unknown field must not corrupt existing snapshot fields");
     }
+
+    [Fact]
+    public void SetLocalSnapshotField_ActiveChatSessionId_ImmediatelyReflectedByGetByConnectionId()
+    {
+        // Arrange
+        _sut.Register(Msg("agent-1"), "conn-1");
+
+        // Act: update activeChatSessionId synchronously.
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "activeChatSessionId", "session-42");
+
+        // Assert: GetByConnectionId must return the updated value immediately.
+        var entry = _sut.GetByConnectionId("conn-1");
+        entry.Should().NotBeNull();
+        entry!.ActiveChatSessionId.Should().Be("session-42",
+            "SetLocalSnapshotField must update ActiveChatSessionId in _localSnapshot synchronously");
+    }
+
+    [Fact]
+    public void SetLocalSnapshotField_ActiveChatSessionId_NullValue_ClearsField()
+    {
+        // Arrange: register and set an initial active chat session.
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "activeChatSessionId", "session-42");
+
+        // Act: clear it with null/empty.
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "activeChatSessionId", null);
+
+        // Assert
+        var entry = _sut.GetByConnectionId("conn-1");
+        entry.Should().NotBeNull();
+        entry!.ActiveChatSessionId.Should().BeNull(
+            "null value must clear the ActiveChatSessionId field");
+    }
+
+    [Fact]
+    public void SetLocalSnapshotField_Disabled_TrueValue_SetsDisabled()
+    {
+        // Arrange
+        _sut.Register(Msg("agent-1"), "conn-1");
+
+        // Act
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "disabled", "true");
+
+        // Assert
+        var entry = _sut.GetByConnectionId("conn-1");
+        entry.Should().NotBeNull();
+        entry!.Disabled.Should().BeTrue(
+            "SetLocalSnapshotField must update Disabled=true in _localSnapshot synchronously");
+    }
+
+    [Fact]
+    public void SetLocalSnapshotField_Disabled_FalseValue_ClearsDisabled()
+    {
+        // Arrange: start disabled, then clear.
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "disabled", "true");
+
+        // Act
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "disabled", "false");
+
+        // Assert
+        var entry = _sut.GetByConnectionId("conn-1");
+        entry.Should().NotBeNull();
+        entry!.Disabled.Should().BeFalse(
+            "SetLocalSnapshotField must update Disabled=false in _localSnapshot synchronously");
+    }
+
+    [Fact]
+    public void SetLocalSnapshotField_Disabled_MalformedValue_IsNoOp()
+    {
+        // Arrange
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "disabled", "true");
+
+        // Act: malformed bool — TryParse returns false, snap is unchanged.
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "disabled", "not-a-bool");
+
+        // Assert: field must remain true (no clobber from bad parse).
+        var entry = _sut.GetByConnectionId("conn-1");
+        entry.Should().NotBeNull();
+        entry!.Disabled.Should().BeTrue(
+            "malformed bool value must leave the existing Disabled field unchanged");
+    }
+
+    [Fact]
+    public void SetLocalSnapshotField_OrphanRestoredAt_MalformedValue_IsNoOp()
+    {
+        // Arrange: register and set an initial OrphanRestoredAt.
+        _sut.Register(Msg("agent-1"), "conn-1");
+        var now = DateTimeOffset.UtcNow;
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "orphanRestoredAt", now.ToString("O"));
+
+        // Act: malformed date — TryParse returns false, snap is unchanged.
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "orphanRestoredAt", "not-a-date");
+
+        // Assert: field must remain at the previously set value (not cleared or clobbered).
+        var entry = _sut.GetByConnectionId("conn-1");
+        entry.Should().NotBeNull();
+        entry!.OrphanRestoredAt.Should().NotBeNull(
+            "malformed date string must leave the existing OrphanRestoredAt field unchanged");
+        entry.OrphanRestoredAt!.Value.Should().BeCloseTo(now, TimeSpan.FromSeconds(1),
+            "the OrphanRestoredAt must remain at the previously set value");
+    }
 }
 
 /// <summary>

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Text.Json;
 using CodingAgent.Orchestration.Redis;
 using CodingAgent.Pipeline.Models;
@@ -735,7 +736,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         _localSnapshot[agentId.Value] = field switch
         {
             "activeJobId"         => snap with { ActiveJobId         = string.IsNullOrEmpty(value) ? null : value },
-            "orphanRestoredAt"    => DateTimeOffset.TryParse(value, out var ora) ? snap with { OrphanRestoredAt    = ora } : snap,
+            "orphanRestoredAt"    => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, out var ora) ? snap with { OrphanRestoredAt    = ora } : snap,
             "activeChatSessionId" => snap with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
             "disabled"            => bool.TryParse(value, out var d) ? snap with { Disabled = d } : snap,
             _                     => snap
