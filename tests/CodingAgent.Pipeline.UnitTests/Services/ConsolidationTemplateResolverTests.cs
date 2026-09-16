@@ -44,6 +44,12 @@ public class ConsolidationTemplateResolverTests
         var template = new PipelineJobTemplate { Id = "t1", Name = "BrainConsolidation", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true };
         var project = new PipelineProject
         {
+            // TODO [WARNING]: "p1" is a short non-GUID string. In production, ConsolidationDispatcher
+            // parses ProjectId with Guid.TryParse, which silently produces null for "p1". This test
+            // verifies the resolver returns the raw string, but the end-to-end path (resolver → service
+            // → dispatcher) would produce a null ProjectId for this fixture value. The dedicated test
+            // ResolveTemplateWithProject_TemplateExistsInEnabledProject_ReturnsProjectId covers the
+            // full-GUID case. If this fixture is ever promoted to an integration test, use a real GUID.
             Id = "p1", Name = "MyProject", Enabled = true,
             TemplateIds = ["t1"]
         };
@@ -52,12 +58,37 @@ public class ConsolidationTemplateResolverTests
         SetupTemplates(template);
 
         var sut = CreateSut();
-        var (resolvedTemplate, projectName) =
+        var (resolvedTemplate, projectName, projectId) =
             await sut.ResolveTemplateWithProjectAsync(new TemplateId("t1"), CancellationToken.None);
 
         resolvedTemplate.Should().NotBeNull();
         resolvedTemplate!.Id.Should().Be("t1");
         projectName.Should().Be("MyProject");
+        projectId.Should().Be("p1");
+    }
+
+    [Fact]
+    public async Task ResolveTemplateWithProject_TemplateExistsInEnabledProject_ReturnsProjectId()
+    {
+        // Verifies that the actual project.Id GUID string round-trips through the resolver.
+        var projectGuid = Guid.NewGuid().ToString();
+        var template = new PipelineJobTemplate { Id = "t-guid", Name = "GuidTemplate", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true };
+        var project = new PipelineProject
+        {
+            Id = projectGuid, Name = "GuidProject", Enabled = true,
+            TemplateIds = ["t-guid"]
+        };
+
+        SetupProjects(project);
+        SetupTemplates(template);
+
+        var sut = CreateSut();
+        var (resolvedTemplate, _, projectId) =
+            await sut.ResolveTemplateWithProjectAsync(new TemplateId("t-guid"), CancellationToken.None);
+
+        resolvedTemplate.Should().NotBeNull();
+        projectId.Should().Be(projectGuid,
+            "the exact project.Id GUID string must be returned as the third tuple element");
     }
 
     [Fact]
@@ -71,11 +102,12 @@ public class ConsolidationTemplateResolverTests
         SetupTemplates(new PipelineJobTemplate { Id = "other-id", Name = "Other", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true });
 
         var sut = CreateSut();
-        var (resolvedTemplate, projectName) =
+        var (resolvedTemplate, projectName, projectId) =
             await sut.ResolveTemplateWithProjectAsync(new TemplateId("t-missing"), CancellationToken.None);
 
         resolvedTemplate.Should().BeNull();
         projectName.Should().BeNull();
+        projectId.Should().BeNull();
     }
 
     [Fact]
@@ -92,11 +124,12 @@ public class ConsolidationTemplateResolverTests
         SetupTemplates(template);
 
         var sut = CreateSut();
-        var (resolvedTemplate, projectName) =
+        var (resolvedTemplate, projectName, projectId) =
             await sut.ResolveTemplateWithProjectAsync(new TemplateId("t1"), CancellationToken.None);
 
         resolvedTemplate.Should().BeNull("disabled projects must not contribute templates");
         projectName.Should().BeNull();
+        projectId.Should().BeNull();
     }
 
     [Fact]
@@ -106,11 +139,12 @@ public class ConsolidationTemplateResolverTests
         SetupTemplates();
 
         var sut = CreateSut();
-        var (resolvedTemplate, projectName) =
+        var (resolvedTemplate, projectName, projectId) =
             await sut.ResolveTemplateWithProjectAsync(new TemplateId("t1"), CancellationToken.None);
 
         resolvedTemplate.Should().BeNull();
         projectName.Should().BeNull();
+        projectId.Should().BeNull();
     }
 
     // ── GetEnabledTemplatesFromProjectsAsync ───────────────────────────────────

@@ -78,6 +78,17 @@ public sealed class ConsolidationRun
     public string? ProjectName { get; set; }
 
     /// <summary>
+    /// GUID of the owning PipelineProject, resolved from template membership at trigger time.
+    /// Null for global consolidation runs (no owning project).
+    /// </summary>
+    // TODO [WARNING]: ProjectId is intended to be "baked at trigger time" and immutable thereafter,
+    // but the public setter is wider than that invariant requires. The analogous ProjectName also uses
+    // a public setter (consistent with existing pattern), and UpdateRunAsync does not currently
+    // modify ProjectId, so there is no active regression. If the design shifts toward stricter
+    // immutability, consider narrowing to `init` or removing the setter alongside ProjectName.
+    public string? ProjectId { get; set; }
+
+    /// <summary>
     /// When true, created refactoring issues will receive both <c>agent:generated</c> and
     /// <c>agent:next</c> labels, immediately dispatching them for agent execution.
     /// Defaults to <c>false</c> for backward compatibility with old persisted runs.

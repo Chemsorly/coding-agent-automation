@@ -825,4 +825,103 @@ public sealed class ConsolidationDispatcherTests
         Assert.NotNull(captured);
         Assert.Equal(AgentSelectorKey.From(profileA.MatchLabels), captured!.AgentSelector);
     }
+
+    // ── ProjectId and ProjectName forwarding ──────────────────────────────────
+
+    /// <summary>
+    /// Template-scoped consolidation run with a valid ProjectId must forward both
+    /// ProjectId (parsed to Guid?) and ProjectName to the JobDistributionRequest.
+    /// This is the acceptance criterion: WorkItemEntity.ProjectId will be non-null
+    /// and the Work queue UI PROJECT column will show the project name.
+    /// </summary>
+    [Fact]
+    public async Task DispatchRunAsync_TemplateRunWithProjectId_ForwardsProjectIdToRequest()
+    {
+        SetupDefaults();
+        var someGuid = Guid.NewGuid();
+        JobDistributionRequest? captured = null;
+        _workDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDistributionRequest, CancellationToken>((r, _) => captured = r)
+            .ReturnsAsync(new DistributionResult(true, "wi-1", null));
+
+        var run = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.BrainConsolidation,
+            Status = ConsolidationRunStatus.Queued,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            ProjectId = someGuid.ToString(),
+            ProjectName = "MyProject"
+        };
+
+        var sut = CreateSut();
+        await sut.DispatchRunAsync(run, CancellationToken.None);
+
+        Assert.NotNull(captured);
+        Assert.Equal(someGuid, captured!.ProjectId);
+        Assert.Equal("MyProject", captured.ProjectName);
+    }
+
+    /// <summary>
+    /// Global HarnessSuggestions run (no template, no project) must produce null ProjectId
+    /// and null ProjectName in the request — the Work queue shows "—" as expected.
+    /// </summary>
+    [Fact]
+    public async Task DispatchRunAsync_GlobalRunWithNullProjectId_ProjectIdIsNullInRequest()
+    {
+        SetupDefaults();
+        JobDistributionRequest? captured = null;
+        _workDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDistributionRequest, CancellationToken>((r, _) => captured = r)
+            .ReturnsAsync(new DistributionResult(true, "wi-1", null));
+
+        var run = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.HarnessSuggestions,
+            Status = ConsolidationRunStatus.Queued,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            ProjectId = null,
+            ProjectName = null
+        };
+
+        var sut = CreateSut();
+        await sut.DispatchRunAsync(run, CancellationToken.None);
+
+        Assert.NotNull(captured);
+        Assert.Null(captured!.ProjectId);
+        Assert.Null(captured.ProjectName);
+    }
+
+    /// <summary>
+    /// When ConsolidationRun.ProjectId is not a valid GUID string, the Guid.TryParse guard
+    /// must produce null without throwing — ProjectId in the request is null, not an exception.
+    /// </summary>
+    [Fact]
+    public async Task DispatchRunAsync_RunWithInvalidProjectIdGuid_ProjectIdIsNullInRequest()
+    {
+        SetupDefaults();
+        JobDistributionRequest? captured = null;
+        _workDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDistributionRequest, CancellationToken>((r, _) => captured = r)
+            .ReturnsAsync(new DistributionResult(true, "wi-1", null));
+
+        var run = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.BrainConsolidation,
+            Status = ConsolidationRunStatus.Queued,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            ProjectId = "not-a-guid"
+        };
+
+        var sut = CreateSut();
+        await sut.DispatchRunAsync(run, CancellationToken.None);
+
+        Assert.NotNull(captured);
+        Assert.Null(captured!.ProjectId); // Guid.TryParse returns false for "not-a-guid" → null, not an exception
+    }
 }

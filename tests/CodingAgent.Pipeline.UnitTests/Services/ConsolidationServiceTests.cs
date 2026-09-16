@@ -430,8 +430,9 @@ public sealed class ConsolidationServiceTests : IDisposable
     [Fact]
     public async Task TriggerAsync_ValidTemplate_SetsProjectNameFromOwningProject()
     {
-        // Validates: ConsolidationRun must carry the owning project's display name
-        // so the UI PROJECT column shows the project instead of "—".
+        // Validates: ConsolidationRun must carry the owning project's display name and ID
+        // so the UI PROJECT column shows the project instead of "—" and WorkItemEntity.ProjectId
+        // is populated.
         var sut = CreateSut();
 
         var run = await sut.TriggerAsync(
@@ -439,6 +440,8 @@ public sealed class ConsolidationServiceTests : IDisposable
 
         run.Should().NotBeNull();
         run!.ProjectName.Should().Be("Default");
+        run.ProjectId.Should().Be(WellKnownIds.DefaultProjectId,
+            "ProjectId must be populated from the owning PipelineProject.Id at trigger time");
     }
 
     [Fact]
@@ -452,6 +455,33 @@ public sealed class ConsolidationServiceTests : IDisposable
 
         run.Should().NotBeNull();
         run!.ProjectName.Should().BeNull();
+        run.ProjectId.Should().BeNull("global runs have no owning project");
+    }
+
+    [Fact]
+    public async Task TriggerAsync_WithProjectId_ProjectIdSurvivesPersistenceRoundTrip()
+    {
+        // Validates: ConsolidationRun.ProjectId is persisted at trigger time and survives
+        // serialization/deserialization (scheduler restart rehydration requirement).
+        var sut = CreateSut();
+
+        var run = await sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
+
+        run.Should().NotBeNull();
+        run!.ProjectId.Should().NotBeNull("template-scoped run must have a non-null ProjectId");
+
+        // Reload from the file-system store — simulates what happens after a scheduler restart
+        var history = await sut.GetRunHistoryAsync(CancellationToken.None);
+        // TODO [WARNING]: ContainSingle(predicate) passes as long as exactly one element satisfies
+        // the predicate, but succeeds even when the collection contains other non-matching elements.
+        // This is safe here because _runsDir is Guid-suffixed per test instance (no cross-test pollution),
+        // but a future copy-paste into a test class with a shared _runsDir could produce a false-positive.
+        // If this test is ever moved or the fixture is refactored, prefer a stricter assertion such as
+        // history.Should().HaveCount(1).And.ContainSingle(r => r.RunId == run.RunId).
+        var reloaded = history.Should().ContainSingle(r => r.RunId == run.RunId).Subject;
+        reloaded.ProjectId.Should().Be(WellKnownIds.DefaultProjectId,
+            "ProjectId must survive the JSON serialization round-trip through FileSystemConsolidationRunStore");
     }
 
     #endregion
