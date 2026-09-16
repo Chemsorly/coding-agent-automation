@@ -45,7 +45,7 @@ RUN apt-get update && \
         nodejs \
         npm \
         libasound2t64 \
-        libvips42 \
+        libvips42t64 \
     && rm -rf /var/lib/apt/lists/*
 
 # JAVA_HOME varies by architecture — set dynamically via symlink

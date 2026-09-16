@@ -46,7 +46,7 @@ RUN apt-get update && \
         curl \
         ca-certificates \
         git \
-        libvips42 \
+        libvips42t64 \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and install OpenCode binary (pinned version, architecture-aware)

@@ -51,7 +51,7 @@ RUN apt-get update && \
         python3-venv \
         nodejs \
         npm \
-        libvips42 \
+        libvips42t64 \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and install OpenCode binary (pinned version, architecture-aware)
