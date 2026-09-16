@@ -164,7 +164,12 @@ public sealed partial class AgentHub
 
         var run = _facade.GetRun(jobId);
         if (run is null)
+        {
+            _logger.Warning(
+                "ResolveIssueProviderForRunAsync: no active run found for job {JobId} (possible cross-replica state miss)",
+                jobId);
             throw new HubException($"No active run found for job {jobId}");
+        }
 
         // TODO: Thread the caller-supplied CancellationToken (or a SignalR connection-lifetime token)
         // through LoadProviderConfigsAsync instead of CancellationToken.None. The ct parameter is
@@ -174,7 +179,12 @@ public sealed partial class AgentHub
         var issueConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
         var issueConfig = issueConfigs.TryGetProviderConfig(run.IssueProviderConfigId);
         if (issueConfig is null)
+        {
+            _logger.Warning(
+                "ResolveIssueProviderForRunAsync: issue provider config {IssueProviderConfigId} not found for job {JobId}",
+                run.IssueProviderConfigId, jobId);
             throw new HubException($"Issue provider config '{run.IssueProviderConfigId}' not found for job {jobId}");
+        }
 
         return (run, _facade.CreateIssueProvider(issueConfig));
     }
