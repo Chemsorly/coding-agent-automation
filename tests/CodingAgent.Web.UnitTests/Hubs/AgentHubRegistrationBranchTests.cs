@@ -670,6 +670,186 @@ public sealed class AgentHubRegistrationBranchTests
             "registration must run to completion (orphan recovery) despite the label-swap failure");
     }
 
+    // ── RegisterAgent — ForceDisconnect guard (mid-run reconnect vs pod replacement) ──
+
+    [Fact]
+    public async Task RegisterAgent_MidRunReconnect_NoActiveJob_DoesNotForceDisconnect()
+    {
+        // When the same agent reconnects without an ActiveJob while an active job is in flight
+        // (existingEntry.ActiveJobId is non-null), ForceDisconnect must NOT be sent. The existing
+        // connection is still being used by the running pipeline's OrchestratorProxy; killing it
+        // severs all subsequent hub calls (RequestGetIssue, etc.) silently.
+        var ctx = BuildContext("conn-new", agentIdQueryParam: "agent-1", user: null);
+
+        var mockOldClientProxy = new Mock<IAgentHubClient>();
+        mockOldClientProxy.Setup(p => p.ForceDisconnect()).Returns(Task.CompletedTask);
+
+        var mockClients = new Mock<IHubCallerClients<IAgentHubClient>>();
+        mockClients.Setup(c => c.Client("conn-old")).Returns(mockOldClientProxy.Object);
+
+        var hub = new AgentHub(new AgentHubDependencies(
+            Facade: _facade.Object,
+            ChatNotifier: _chatNotifier.Object,
+            ChangeNotifier: _changeNotifier.Object,
+            ConsolidationOps: Mock.Of<IHubConsolidationOperations>(),
+            IssueOps: _issueOps.Object,
+            LifecycleService: _lifecycleService.Object,
+            TokenRefreshService: _tokenRefreshService.Object,
+            GateCommentFormatter: _gateCommentFormatter.Object,
+            Logger: Log.Logger,
+            OrphanRecoveryService: _orphanRecoveryService.Object,
+            UiContext: HubTestHelpers.CreateNoOpHubContext()));
+        hub.Context = ctx;
+        hub.Clients = mockClients.Object;
+        hub.Groups = new Mock<IGroupManager>().Object;
+
+        // Existing entry has an active job in flight
+        var existingEntry = CreateEntry("agent-1", "conn-old", AgentStatus.Busy);
+        existingEntry.ActiveJobId = "job-123";
+        var newEntry = CreateEntry("agent-1", "conn-new");
+
+        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "agent-1"))).Returns(existingEntry);
+        _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-new")).Returns(newEntry);
+        _orphanRecoveryService
+            .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
+            .Returns(Task.CompletedTask);
+
+        var message = new AgentRegistrationMessage
+        {
+            AgentId = "agent-1",
+            Hostname = "host",
+            Labels = []
+            // no ActiveJob — mid-run kiro-cli sub-process restart
+        };
+
+        await hub.RegisterAgent(message);
+
+        // ForceDisconnect must NOT be called — the pipeline connection must be preserved
+        mockOldClientProxy.Verify(p => p.ForceDisconnect(), Times.Never,
+            "mid-run reconnect without ActiveJob must not ForceDisconnect the existing pipeline connection");
+        // Registration must still complete
+        _facade.Verify(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-new"), Times.Once,
+            "registration must complete even when ForceDisconnect is skipped");
+    }
+
+    [Fact]
+    public async Task RegisterAgent_PodReplacement_WithActiveJob_StillForceDisconnects()
+    {
+        // When an agent reconnects WITH an ActiveJob (pod replacement scenario), ForceDisconnect
+        // must still fire on the old connection — the new pod is taking over the run.
+        var ctx = BuildContext("conn-new", agentIdQueryParam: "agent-1", user: null);
+
+        var mockOldClientProxy = new Mock<IAgentHubClient>();
+        mockOldClientProxy.Setup(p => p.ForceDisconnect()).Returns(Task.CompletedTask);
+
+        var mockClients = new Mock<IHubCallerClients<IAgentHubClient>>();
+        mockClients.Setup(c => c.Client("conn-old")).Returns(mockOldClientProxy.Object);
+
+        var runId = Guid.NewGuid().ToString();
+        var hub = new AgentHub(new AgentHubDependencies(
+            Facade: _facade.Object,
+            ChatNotifier: _chatNotifier.Object,
+            ChangeNotifier: _changeNotifier.Object,
+            ConsolidationOps: Mock.Of<IHubConsolidationOperations>(),
+            IssueOps: _issueOps.Object,
+            LifecycleService: _lifecycleService.Object,
+            TokenRefreshService: _tokenRefreshService.Object,
+            GateCommentFormatter: _gateCommentFormatter.Object,
+            Logger: Log.Logger,
+            OrphanRecoveryService: _orphanRecoveryService.Object,
+            UiContext: HubTestHelpers.CreateNoOpHubContext()));
+        hub.Context = ctx;
+        hub.Clients = mockClients.Object;
+        hub.Groups = new Mock<IGroupManager>().Object;
+
+        var existingEntry = CreateEntry("agent-1", "conn-old", AgentStatus.Busy);
+        existingEntry.ActiveJobId = runId;
+        var newEntry = CreateEntry("agent-1", "conn-new");
+
+        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "agent-1"))).Returns(existingEntry);
+        _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-new")).Returns(newEntry);
+        // TODO: [WARNING] This GetRun setup is never invoked by the RegisterAgent ForceDisconnect
+        // path under test — RegisterAgent does not call GetRun during the disconnect guard. Its
+        // presence is misleading and suggests the test author believed GetRun is part of the
+        // ForceDisconnect flow. Remove this setup to avoid false impressions about the control flow.
+        // (It is invoked later in the run if message.ActiveJob.RunId is non-null, but verifying
+        // that path is not the intent of this test.)
+        _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
+        _orphanRecoveryService
+            .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
+            .Returns(Task.CompletedTask);
+
+        var message = new AgentRegistrationMessage
+        {
+            AgentId = "agent-1",
+            Hostname = "host",
+            Labels = [],
+            ActiveJob = MakeActiveJob(runId)  // non-null → pod replacement
+        };
+
+        await hub.RegisterAgent(message);
+
+        // ForceDisconnect MUST be called — pod replacement must evict the old connection
+        mockOldClientProxy.Verify(p => p.ForceDisconnect(), Times.Once,
+            "pod replacement (ActiveJob non-null) must still send ForceDisconnect to the old connection");
+    }
+
+    [Fact]
+    public async Task RegisterAgent_ExistingEntryHasNoActiveJob_StillForceDisconnects()
+    {
+        // When existingEntry.ActiveJobId is null (agent is idle), the guard does not apply
+        // regardless of message.ActiveJob — ForceDisconnect fires as before.
+        // This covers the idle-to-idle reconnect case (e.g. double registration from same worker).
+        var ctx = BuildContext("conn-new", agentIdQueryParam: "agent-1", user: null);
+
+        var mockOldClientProxy = new Mock<IAgentHubClient>();
+        mockOldClientProxy.Setup(p => p.ForceDisconnect()).Returns(Task.CompletedTask);
+
+        var mockClients = new Mock<IHubCallerClients<IAgentHubClient>>();
+        mockClients.Setup(c => c.Client("conn-old")).Returns(mockOldClientProxy.Object);
+
+        var hub = new AgentHub(new AgentHubDependencies(
+            Facade: _facade.Object,
+            ChatNotifier: _chatNotifier.Object,
+            ChangeNotifier: _changeNotifier.Object,
+            ConsolidationOps: Mock.Of<IHubConsolidationOperations>(),
+            IssueOps: _issueOps.Object,
+            LifecycleService: _lifecycleService.Object,
+            TokenRefreshService: _tokenRefreshService.Object,
+            GateCommentFormatter: _gateCommentFormatter.Object,
+            Logger: Log.Logger,
+            OrphanRecoveryService: _orphanRecoveryService.Object,
+            UiContext: HubTestHelpers.CreateNoOpHubContext()));
+        hub.Context = ctx;
+        hub.Clients = mockClients.Object;
+        hub.Groups = new Mock<IGroupManager>().Object;
+
+        // Existing entry has NO active job
+        var existingEntry = CreateEntry("agent-1", "conn-old", AgentStatus.Idle);
+        // existingEntry.ActiveJobId is null by default
+        var newEntry = CreateEntry("agent-1", "conn-new");
+
+        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "agent-1"))).Returns(existingEntry);
+        _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-new")).Returns(newEntry);
+        _orphanRecoveryService
+            .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
+            .Returns(Task.CompletedTask);
+
+        var message = new AgentRegistrationMessage
+        {
+            AgentId = "agent-1",
+            Hostname = "host",
+            Labels = []
+            // no ActiveJob — but existingEntry.ActiveJobId is also null, so guard doesn't apply
+        };
+
+        await hub.RegisterAgent(message);
+
+        // ForceDisconnect MUST be called — guard only skips when existingEntry.ActiveJobId is non-null
+        mockOldClientProxy.Verify(p => p.ForceDisconnect(), Times.Once,
+            "when existingEntry has no active job, ForceDisconnect must fire regardless of message.ActiveJob");
+    }
+
     // ── Test helpers ──────────────────────────────────────────────────────
 
     private sealed class TestHttpContextFeature : IHttpContextFeature
