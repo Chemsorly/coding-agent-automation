@@ -21,19 +21,22 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
     private readonly IConsolidationWorkspaceManager _workspaceManager;
     private readonly IPipelineConfigStore _configStore;
     private readonly IConsolidationService _consolidationService;
+    private readonly IProjectStore _projectStore;
 
     public ConsolidationDispatcher(
         IWorkDistributor workDistributor,
         IAgentProfileStore profileStore,
         IConsolidationWorkspaceManager workspaceManager,
         IPipelineConfigStore configStore,
-        IConsolidationService consolidationService)
+        IConsolidationService consolidationService,
+        IProjectStore projectStore)
     {
         _workDistributor = workDistributor;
         _profileStore = profileStore;
         _workspaceManager = workspaceManager;
         _configStore = configStore;
         _consolidationService = consolidationService;
+        _projectStore = projectStore;
     }
 
     /// <inheritdoc />
@@ -52,11 +55,35 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
             if (selectorLabels is null)
                 return;
 
+            // Resolve the repo provider config ID from the template so WorkItems.Payload
+            // carries a non-empty value. AgentTokenRefreshService reads this field directly
+            // from the DB payload (consolidation jobs never create an in-memory PipelineRun)
+            // and throws HubException if it is empty — causing 100% startup failure for all
+            // template-scoped runs. Global runs (null TemplateId) are unaffected.
+            var repoProviderId = "";
+            if (!string.IsNullOrEmpty(run.TemplateId))
+            {
+                // TODO: If LoadAllTemplatesAsync throws (transient DB error), the exception propagates
+                // to the outer catch handler which swallows it and leaves the run Queued indefinitely
+                // until ConsolidationRetryBackgroundService picks it up. This is consistent with the
+                // existing error-handling pattern but means a store outage will silently stall all
+                // template-scoped consolidation dispatches. Consider distinguishing this failure mode
+                // (e.g. log a specific warning) so the silent-drop is easier to diagnose in production.
+                var templates = await _projectStore.LoadAllTemplatesAsync(ct);
+                // TODO: Template ID comparison is ordinal/case-sensitive (default string.Equals).
+                // Template IDs are lowercase GUIDs in practice, but if any code path stores a
+                // non-normalized ID (different casing), FirstOrDefault returns null and RepoProviderConfigId
+                // falls back to "", reproducing the original token-vend failure. Consider adding
+                // StringComparison.OrdinalIgnoreCase as a defensive measure.
+                var template = templates.FirstOrDefault(t => t.Id == run.TemplateId);
+                repoProviderId = template?.RepoProviderId ?? "";
+            }
+
             var request = new JobDistributionRequest
             {
                 IssueIdentifier = run.RunId,
                 IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
-                RepoProviderConfigId = "",
+                RepoProviderConfigId = repoProviderId,
                 InitiatedBy = ConsolidationConstants.InitiatedBy,
                 TaskType = WorkItemTaskType.Consolidation,
                 AgentSelector = AgentSelectorKey.From(selectorLabels),

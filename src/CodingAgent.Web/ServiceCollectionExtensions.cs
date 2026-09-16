@@ -127,7 +127,8 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IAgentProfileStore>(),
             sp.GetRequiredService<IConsolidationWorkspaceManager>(),
             sp.GetRequiredService<IPipelineConfigStore>(),
-            sp.GetRequiredService<IConsolidationService>()));
+            sp.GetRequiredService<IConsolidationService>(),
+            sp.GetRequiredService<IProjectStore>()));
 
         // Background retry sweep for transient dispatch failures (409 capacity / 503 PVC).
         // Startup rehydration only runs once; this service fills the gap for runs that fail
