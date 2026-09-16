@@ -100,6 +100,7 @@ public sealed class ConsolidationServiceEvictionTests : IDisposable
         _mockRunHistory.Object,
         _mockRunStore.Object,
         new Mock<IHarnessSuggestionStore>().Object,
+        new Mock<IProviderConfigStore>().Object,
         WorkspaceManager: new ConsolidationWorkspaceManager(_logger, _config)));
 
     /// <summary>

@@ -100,7 +100,8 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
             mockProjectStore.Object,
             mockHistory.Object,
             store,
-            harnessStore));
+            harnessStore,
+            new Mock<IProviderConfigStore>().Object));
 
         var first = await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "t1", CancellationToken.None);
         var second = await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "t1", CancellationToken.None);

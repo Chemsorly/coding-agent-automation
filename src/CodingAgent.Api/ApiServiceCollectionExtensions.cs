@@ -277,7 +277,8 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<IProjectStore>(),
                 sp.GetRequiredService<IPipelineRunHistoryService>(),
                 sp.GetRequiredService<IConsolidationRunStore>(),
-                sp.GetRequiredService<IHarnessSuggestionStore>())));
+                sp.GetRequiredService<IHarnessSuggestionStore>(),
+                sp.GetRequiredService<IProviderConfigStore>())));
 
         // ── ModelFetchService ────────────────────────────────────────────────
         services.AddSingleton<ModelFetchService>(sp => new ModelFetchService(

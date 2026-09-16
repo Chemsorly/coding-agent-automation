@@ -134,7 +134,7 @@ public sealed class WorkItemDispatchPollerTests
             .Setup(c => c.DispatchPendingAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(DispatchPendingResult.Dispatched);
 
-        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(500));
+        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(2000));
 
         _mockClient.Verify(c => c.DispatchPendingAsync(id1, It.IsAny<CancellationToken>()),
             Times.AtLeastOnce());

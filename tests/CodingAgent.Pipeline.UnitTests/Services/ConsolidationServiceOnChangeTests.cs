@@ -47,6 +47,7 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
             mockHistory.Object,
             new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs")),
             new FileSystemHarnessSuggestionStore(Path.Combine(_tempDir, "h.json")),
+            new Mock<IProviderConfigStore>().Object,
             WorkspaceManager: new ConsolidationWorkspaceManager(
                 new LoggerConfiguration().CreateLogger(),
                 new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir })));

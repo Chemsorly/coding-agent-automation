@@ -14,6 +14,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
 {
     private readonly ILogger _logger;
     private readonly PipelineConfiguration _config;
+    private readonly IProviderConfigStore _providerConfigStore;
     private readonly IConsolidationRunStore _runStore;
     private readonly IHarnessSuggestionStore _harnessSuggestionStore;
     private readonly IConsolidationWorkspaceManager _workspaceManager;
@@ -45,9 +46,11 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         ArgumentNullException.ThrowIfNull(deps.RunHistoryService);
         ArgumentNullException.ThrowIfNull(deps.RunStore);
         ArgumentNullException.ThrowIfNull(deps.HarnessSuggestionStore);
+        ArgumentNullException.ThrowIfNull(deps.ProviderConfigStore);
 
         _logger = deps.Logger;
         _config = deps.Config;
+        _providerConfigStore = deps.ProviderConfigStore;
         _runStore = deps.RunStore;
         _harnessSuggestionStore = deps.HarnessSuggestionStore;
         _workspaceManager = deps.WorkspaceManager ?? new ConsolidationWorkspaceManager(deps.Logger, deps.Config);
@@ -98,6 +101,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         // Resolve template name for display
         string? templateName;
         string? projectName = null;
+        ProviderConfig? repoConfig = null;
         if (templateId is not null)
         {
             var (template, resolvedProjectName) = await _templateResolver.ResolveTemplateWithProjectAsync(templateIdValue!, ct);
@@ -108,23 +112,32 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             }
             templateName = template.Name;
             projectName = resolvedProjectName;
+
+            // Load the repo ProviderConfig so label resolution matches the regular dispatch path
+            // (DispatchOrchestrationService.ResolveRequiredLabelsInternalAsync). Template-scoped
+            // runs use template.RepoProviderId → ProviderConfig.RequiredLabels; global runs
+            // (templateId is null) skip this block and fall back to DefaultRequiredAgentLabels.
+            if (!string.IsNullOrEmpty(template.RepoProviderId))
+                repoConfig = await _providerConfigStore.GetProviderConfigByIdAsync(
+                    template.RepoProviderId, ProviderKind.Repository, ct);
         }
         else
         {
             templateName = "Global";
         }
 
-        // Note: when DefaultRequiredAgentLabels is empty, BuildNewRun sets QueuedRequiredLabels
-        // to null. ConsolidationDispatcher.ResolveSelector will fall back to the first enabled
-        // profile (step 3), which may have no job template. In that case the dispatch endpoint
-        // returns 422, KubernetesWorkDistributor maps this to IsPermanentFailure=true, and
-        // DispatchRunAsync cascades the run to Failed via FailRunSafelyAsync. This is the correct
-        // behavior: the run is queued (visible to the operator), attempted, and fails with a clear
-        // error message rather than being silently rejected at trigger time. The operator can then
-        // configure DefaultRequiredAgentLabels and re-trigger.
+        // Note: when repoConfig has no RequiredLabels and DefaultRequiredAgentLabels is also
+        // empty, BuildNewRun sets QueuedRequiredLabels to null. ConsolidationDispatcher.ResolveSelector
+        // will fall back to the first enabled profile (step 3), which may have no job template.
+        // In that case the dispatch endpoint returns 422, KubernetesWorkDistributor maps this to
+        // IsPermanentFailure=true, and DispatchRunAsync cascades the run to Failed via
+        // FailRunSafelyAsync. This is the correct behavior: the run is queued (visible to the
+        // operator), attempted, and fails with a clear error message rather than being silently
+        // rejected at trigger time. The operator can then configure RequiredLabels on the repo
+        // provider config or DefaultRequiredAgentLabels and re-trigger.
         // Rejection at trigger time (returning null) would cause the UI to show "rejected — already
         // running/queued or template not found", which is misleading for a config-gap scenario.
-        var run = BuildNewRun(type, templateIdValue, templateName, projectName, autoDispatch, _config);
+        var run = BuildNewRun(type, templateIdValue, templateName, projectName, autoDispatch, _config, repoConfig);
 
         if (!_runningRuns.TryAdd(key, run))
         {
@@ -418,7 +431,8 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         string templateName,
         string? projectName,
         bool autoDispatch,
-        PipelineConfiguration config) => new()
+        PipelineConfiguration config,
+        ProviderConfig? repoConfig = null) => new()
         {
             RunId = Guid.NewGuid().ToString(),
             Type = type,
@@ -434,9 +448,10 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             // Resolve required agent labels at trigger time so the dispatcher has a deterministic
             // selector without guessing from runtime profile state. Mirrors the label resolution
             // used by the regular pipeline dispatch loop (LabelResolver.ResolveRequiredLabels).
-            // Consolidation runs have no per-run repo provider config, so repoConfig is null and
-            // resolution falls back to DefaultRequiredAgentLabels → empty (any agent).
-            QueuedRequiredLabels = LabelResolver.ResolveRequiredLabels(repoConfig: null, config)
+            // Template-scoped runs load repoConfig from template.RepoProviderId (see TriggerAsync);
+            // global HarnessSuggestions runs (templateId is null) pass repoConfig=null and fall
+            // back to DefaultRequiredAgentLabels → empty (any agent).
+            QueuedRequiredLabels = LabelResolver.ResolveRequiredLabels(repoConfig, config)
                                     is { Count: > 0 } resolvedLabels ? resolvedLabels : null,
             // Capture trace context at trigger time (inside the HTTP request span).
             // Stored on the run so it survives restart/rehydration even when Activity.Current
