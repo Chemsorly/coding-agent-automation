@@ -155,20 +155,53 @@ public sealed partial class AgentHub
 
     /// <summary>
     /// Resolves the <see cref="IIssueProvider"/> for the given job's run configuration.
-    /// Validates the job ID, finds the run, loads the issue provider config, and creates the provider.
+    /// Validates the job ID, finds the run (or falls back to the DB WorkItem), loads the issue
+    /// provider config, and creates the provider.
     /// </summary>
-    /// <exception cref="HubException">Thrown when the job ID is invalid or the provider config is not found.</exception>
-    private async Task<(PipelineRun Run, IIssueProvider Provider)> ResolveIssueProviderForRunAsync(string jobId)
+    /// <returns>
+    /// A tuple of <c>(PipelineRun? Run, IIssueProvider Provider)</c>. <c>Run</c> may be null when
+    /// the in-memory run is absent but the WorkItem exists in the database (cross-replica miss or
+    /// mid-run restart). Callers that do not need the run should discard it; callers that require
+    /// a non-null run must handle the null case explicitly.
+    /// </returns>
+    /// <exception cref="HubException">Thrown when the job ID is invalid, the run and WorkItem are
+    /// both absent, or the provider config is not found.</exception>
+    private async Task<(PipelineRun? Run, IIssueProvider Provider)> ResolveIssueProviderForRunAsync(string jobId)
     {
         ArgumentNullException.ThrowIfNull(jobId);
 
         var run = _facade.GetRun(jobId);
-        if (run is null)
+
+        string issueProviderConfigId;
+        if (run is not null)
         {
+            issueProviderConfigId = run.IssueProviderConfigId;
+        }
+        else
+        {
+            // Fallback: resolve from WorkItem payload in DB (no in-memory run found).
+            // This mirrors the pattern in AgentTokenRefreshService.ResolveProviderConfigIdsAsync
+            // and handles cross-replica state misses and mid-run kiro-cli sub-process restarts.
             _logger.Warning(
-                "ResolveIssueProviderForRunAsync: no active run found for job {JobId} (possible cross-replica state miss)",
+                "ResolveIssueProviderForRunAsync: no active run found for job {JobId} — attempting DB fallback",
                 jobId);
-            throw new HubException($"No active run found for job {jobId}");
+
+            var meta = await _facade.GetWorkItemIssueMetadataAsync(new JobId(jobId), CancellationToken.None);
+            // TODO: [WARNING] CancellationToken.None is passed here for the same reason as the
+            // LoadProviderConfigsAsync call below — the method signature does not currently accept
+            // a cancellation token. If a SignalR connection is aborted while this DB query is in
+            // flight, it cannot be cancelled and will run to completion. When the method signature
+            // is updated to accept and propagate a token (see the existing TODO below), this call
+            // site should be updated at the same time.
+            if (meta is null)
+            {
+                _logger.Warning(
+                    "ResolveIssueProviderForRunAsync: no active run or work item found for job {JobId}",
+                    jobId);
+                throw new HubException($"No active run or work item found for job {jobId}");
+            }
+
+            issueProviderConfigId = meta.Value.IssueProviderConfigId;
         }
 
         // TODO: Thread the caller-supplied CancellationToken (or a SignalR connection-lifetime token)
@@ -177,13 +210,13 @@ public sealed partial class AgentHub
         // cannot currently be cancelled, giving callers a false impression that the full call chain
         // is cancellable. Requires updating the method signature to accept and propagate ct here.
         var issueConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
-        var issueConfig = issueConfigs.TryGetProviderConfig(run.IssueProviderConfigId);
+        var issueConfig = issueConfigs.TryGetProviderConfig(issueProviderConfigId);
         if (issueConfig is null)
         {
             _logger.Warning(
                 "ResolveIssueProviderForRunAsync: issue provider config {IssueProviderConfigId} not found for job {JobId}",
-                run.IssueProviderConfigId, jobId);
-            throw new HubException($"Issue provider config '{run.IssueProviderConfigId}' not found for job {jobId}");
+                issueProviderConfigId, jobId);
+            throw new HubException($"Issue provider config '{issueProviderConfigId}' not found for job {jobId}");
         }
 
         return (run, _facade.CreateIssueProvider(issueConfig));
