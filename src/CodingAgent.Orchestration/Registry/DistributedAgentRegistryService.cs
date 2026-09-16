@@ -703,6 +703,48 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         }
     }
 
+    // ── SetLocalSnapshotField ─────────────────────────────────────────
+
+    /// <inheritdoc />
+    public void SetLocalSnapshotField(AgentId agentId, string field, string? value)
+    {
+        // TODO (WARNING): ThrowIfNull checks agentId.Value (the inner string), not the AgentId
+        // struct itself — AgentId is a value type and cannot be null. This is intentional and
+        // consistent with sibling methods (UpdateAgentFieldAsync, TransitionStatusAsync) that
+        // use the same guard pattern. (DotNetSpecialist WARNING, issue #2616)
+        ArgumentNullException.ThrowIfNull(agentId.Value);
+        if (!_localSnapshot.TryGetValue(agentId.Value, out var snap)) return;
+        // TODO (WARNING): This read-then-write on _localSnapshot is non-atomic. A concurrent
+        // UpdateAgentFieldAsync or TransitionStatusAsync completing between TryGetValue and the
+        // indexer assignment can be silently clobbered (lost update), reverting a concurrent
+        // field change. This is the same pre-existing pattern used by UpdateAgentFieldAsync
+        // and TransitionStatusAsync. For full correctness, all _localSnapshot record swaps
+        // should use ConcurrentDictionary.TryUpdate in a compare-and-swap loop, or be funnelled
+        // through a single lock. Fixing this in isolation without fixing the sibling methods
+        // would create an inconsistent guarantee. (Correctness WARNING, issue #2616)
+        // TODO (WARNING): The entry lock in DetectAndRestoreOrphans (the only caller) guards
+        // only the live entry object — not this _localSnapshot dictionary. This write is
+        // therefore unsynchronized against Register, TransitionStatusAsync, and
+        // UpdateAgentFieldAsync. See AgentOrphanRecoveryService.cs for the corresponding note.
+        // TODO (WARNING): The activeChatSessionId and disabled switch arms are currently
+        // unreachable from any production caller (only activeJobId and orphanRestoredAt are
+        // passed by DetectAndRestoreOrphans). Callers must NOT use this method for disabled or
+        // activeChatSessionId as a substitute for UpdateAgentFieldAsync — SetLocalSnapshotField
+        // is local-only and never writes to Redis, so invoking it for cross-replica fields would
+        // diverge this replica's snapshot from Redis and all other replicas. (Correctness WARNING)
+        _localSnapshot[agentId.Value] = field switch
+        {
+            "activeJobId"         => snap with { ActiveJobId         = string.IsNullOrEmpty(value) ? null : value },
+            "orphanRestoredAt"    => DateTimeOffset.TryParse(value, out var ora) ? snap with { OrphanRestoredAt    = ora } : snap,
+            "activeChatSessionId" => snap with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
+            "disabled"            => bool.TryParse(value, out var d) ? snap with { Disabled = d } : snap,
+            _                     => snap
+        };
+        // TODO (WARNING): _allAgentsCache is not updated here (consistent with UpdateAgentFieldAsync).
+        // GetBusyAgentCount/GetAllAgents/GetAgentsByLabel sync reads will not reflect the restored
+        // ActiveJobId until the next Register or TransitionStatusAsync call. Out of scope per issue #2616.
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────
 
     /// <summary>

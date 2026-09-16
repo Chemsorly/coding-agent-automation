@@ -193,4 +193,11 @@ public interface IAgentHubFacade
     /// visible to all replicas under <c>DistributedAgentRegistryService</c>.
     /// </summary>
     Task UpdateAgentFieldAsync(AgentId agentId, string field, string? value);
+
+    /// <summary>
+    /// Synchronously updates the local in-memory snapshot for the specified agent.
+    /// Does <b>not</b> write to Redis. Use when <see cref="GetByConnectionId"/> must reflect
+    /// the new field value immediately — before a fire-and-forget Redis write completes.
+    /// </summary>
+    void SetLocalAgentSnapshotField(AgentId agentId, string field, string? value);
 }

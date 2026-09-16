@@ -320,4 +320,11 @@ public sealed class AgentRegistryService : IAgentRegistryService
 
         return Task.CompletedTask;
     }
+
+    /// <inheritdoc />
+    public void SetLocalSnapshotField(AgentId agentId, string field, string? value)
+    {
+        // No-op: in-memory path. GetByAgentId returns the live AgentEntry reference directly,
+        // so DetectAndRestoreOrphans mutations are already visible to GetByConnectionId.
+    }
 }

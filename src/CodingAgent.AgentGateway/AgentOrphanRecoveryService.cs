@@ -366,10 +366,25 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
                 }
                 else
                 {
+                    var now = DateTimeOffset.UtcNow;
                     entry.ActiveJobId = mostRecent.RunId;
-                    entry.OrphanRestoredAt = DateTimeOffset.UtcNow;
+                    entry.OrphanRestoredAt = now;
+                    // Synchronously update _localSnapshot so GetByConnectionId returns the correct
+                    // ActiveJobId immediately — before the fire-and-forget Redis write completes.
+                    // Without this, [RequiresActiveJob] hub calls made during the async write window
+                    // see the stale snapshot (ActiveJobId = null) and throw HubException (issue #2616).
+                    // TODO (WARNING): lock(entry.SyncRoot) above guards the live entry object but does
+                    // NOT protect the _localSnapshot mutation triggered by SetLocalAgentSnapshotField.
+                    // The snapshot write in DistributedAgentRegistryService.SetLocalSnapshotField is
+                    // unsynchronized against Register, TransitionStatusAsync, and UpdateAgentFieldAsync.
+                    // The entry lock is entry-scoped; _localSnapshot has no dedicated lock here. This is
+                    // consistent with other _localSnapshot writes in this file that also run outside
+                    // any snapshot-scoped lock. See DistributedAgentRegistryService.SetLocalSnapshotField
+                    // for the full non-atomic read-then-write WARNING. (Correctness WARNING, issue #2616)
+                    _facade.SetLocalAgentSnapshotField(agentId, "activeJobId", mostRecent.RunId);
+                    _facade.SetLocalAgentSnapshotField(agentId, "orphanRestoredAt", now.ToString("O"));
                     _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", mostRecent.RunId);
-                    _ = _facade.UpdateAgentFieldAsync(agentId, "orphanRestoredAt", DateTimeOffset.UtcNow.ToString("O"));
+                    _ = _facade.UpdateAgentFieldAsync(agentId, "orphanRestoredAt", now.ToString("O"));
                 }
             }
 

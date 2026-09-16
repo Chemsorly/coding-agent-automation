@@ -484,11 +484,14 @@ public partial class LayerBoundaryTests
             // constructs a new AgentEntry snapshot; the object is not yet shared.
             // Also: _localSnapshot update via record `with { ActiveJobId = ... }` in UpdateAgentFieldAsync
             // (immutable `with` expression creates a new snapshot record, not a mutation of a live entry).
+            // Also: _localSnapshot update via record `with { ActiveJobId = ... }` in SetLocalSnapshotField
+            // (same pattern: immutable `with` expression on a local snapshot copy, not a live shared entry).
             // Also: BuildAgentEntryFromHashEntries object-initializer reading from Redis hash.
             ["DistributedAgentRegistryService.cs"] = new(StringComparer.Ordinal)
             {
                 "ActiveJobId = activeJobId,",
                 "\"activeJobId\" => snapshot with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },",
+                "\"activeJobId\"         => snap with { ActiveJobId         = string.IsNullOrEmpty(value) ? null : value },",
                 "ActiveJobId = dict.GetValueOrDefault(\"activeJobId\") is { Length: > 0 } aj ? aj : null,",
             },
 

@@ -282,4 +282,8 @@ public sealed class AgentHubFacade : IAgentHubFacade
     /// <inheritdoc />
     public Task UpdateAgentFieldAsync(AgentId agentId, string field, string? value)
         => _registry.UpdateAgentFieldAsync(agentId, field, value);
+
+    /// <inheritdoc />
+    public void SetLocalAgentSnapshotField(AgentId agentId, string field, string? value)
+        => _registry.SetLocalSnapshotField(agentId, field, value);
 }
