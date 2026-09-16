@@ -110,6 +110,7 @@ public static partial class ServiceCollectionExtensions
                 sp.GetRequiredService<IPipelineRunHistoryService>(),
                 sp.GetRequiredService<IConsolidationRunStore>(),
                 sp.GetRequiredService<IHarnessSuggestionStore>(),
+                sp.GetRequiredService<IProviderConfigStore>(),
                 sp.GetRequiredService<IConsolidationWorkspaceManager>(),
                 sp.GetRequiredService<IConsolidationFeedbackCache>())));
 

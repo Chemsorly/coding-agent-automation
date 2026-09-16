@@ -119,6 +119,7 @@ public class ConsolidationServicePropertyTests : IDisposable
             Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
             new FileSystemConsolidationRunStore(runsDir),
             new FileSystemHarnessSuggestionStore(Path.Combine(runsDir, "harness.json")),
+            new Mock<IProviderConfigStore>().Object,
             WorkspaceManager: new ConsolidationWorkspaceManager(Serilog.Log.Logger, config)));
 
         var count = Math.Min(runCount.Get, 5);
@@ -198,6 +199,7 @@ public class ConsolidationServicePropertyTests : IDisposable
             Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
             new FileSystemConsolidationRunStore(runsDir),
             new FileSystemHarnessSuggestionStore(Path.Combine(runsDir, "harness.json")),
+            new Mock<IProviderConfigStore>().Object,
             WorkspaceManager: new ConsolidationWorkspaceManager(Serilog.Log.Logger, config)));
 
         // First trigger succeeds

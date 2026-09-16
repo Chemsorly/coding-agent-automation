@@ -88,6 +88,7 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
         _mockRunHistory.Object,
         new FileSystemConsolidationRunStore(_runsDir),
         new FileSystemHarnessSuggestionStore(_suggestionsPath),
+        new Mock<IProviderConfigStore>().Object,
         WorkspaceManager: _workspaceManager));
 
     // ── Workspace uses separate directory from pipeline ───────────────────
