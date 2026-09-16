@@ -491,7 +491,7 @@ public partial class LayerBoundaryTests
             {
                 "ActiveJobId = activeJobId,",
                 "\"activeJobId\" => snapshot with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },",
-                "\"activeJobId\"         => snap with { ActiveJobId         = string.IsNullOrEmpty(value) ? null : value },",
+                "\"activeJobId\" => snap with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },",
                 "ActiveJobId = dict.GetValueOrDefault(\"activeJobId\") is { Length: > 0 } aj ? aj : null,",
             },
 

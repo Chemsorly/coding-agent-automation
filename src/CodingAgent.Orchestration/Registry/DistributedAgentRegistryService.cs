@@ -735,11 +735,11 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // diverge this replica's snapshot from Redis and all other replicas. (Correctness WARNING)
         _localSnapshot[agentId.Value] = field switch
         {
-            "activeJobId"         => snap with { ActiveJobId         = string.IsNullOrEmpty(value) ? null : value },
-            "orphanRestoredAt"    => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, out var ora) ? snap with { OrphanRestoredAt    = ora } : snap,
+            "activeJobId" => snap with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
+            "orphanRestoredAt" => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, out var ora) ? snap with { OrphanRestoredAt = ora } : snap,
             "activeChatSessionId" => snap with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
-            "disabled"            => bool.TryParse(value, out var d) ? snap with { Disabled = d } : snap,
-            _                     => snap
+            "disabled" => bool.TryParse(value, out var d) ? snap with { Disabled = d } : snap,
+            _ => snap
         };
         // TODO (WARNING): _allAgentsCache is not updated here (consistent with UpdateAgentFieldAsync).
         // GetBusyAgentCount/GetAllAgents/GetAgentsByLabel sync reads will not reflect the restored

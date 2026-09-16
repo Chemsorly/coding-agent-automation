@@ -307,11 +307,11 @@ public sealed class AgentRegistryService : IAgentRegistryService
         {
             switch (field)
             {
-                case "activeJobId":         entry.ActiveJobId = value; break;
-                case "orphanRestoredAt":    entry.OrphanRestoredAt = value is null ? null : DateTimeOffset.Parse(value); break;
+                case "activeJobId": entry.ActiveJobId = value; break;
+                case "orphanRestoredAt": entry.OrphanRestoredAt = value is null ? null : DateTimeOffset.Parse(value); break;
                 case "activeChatSessionId": entry.ActiveChatSessionId = value; break;
-                case "lastJobCompletedAt":  entry.LastJobCompletedAt = value is null ? null : DateTimeOffset.Parse(value); break;
-                case "disabled":            entry.Disabled = value is not null && bool.Parse(value); break;
+                case "lastJobCompletedAt": entry.LastJobCompletedAt = value is null ? null : DateTimeOffset.Parse(value); break;
+                case "disabled": entry.Disabled = value is not null && bool.Parse(value); break;
                 default:
                     _logger.Warning("UpdateAgentFieldAsync: unknown field '{Field}' for agent {AgentId}", field, agentId);
                     break;
