@@ -39,7 +39,7 @@
     <!-- Pin Polly.Core to 8.6.6 for .NET 10 compatibility.
          Microsoft.Extensions.Resilience 10.6.0 pulls in Polly.Core 8.4.2 which uses
          [Range(typeof(TimeSpan), ...)] attributes incompatible with .NET 10's RangeAttribute. -->
-    <PackageVersion Include="Polly.Core" Version="8.7.0" />
+    <PackageVersion Include="Polly.Core" Version="8.8.0" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.12" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.12" />
