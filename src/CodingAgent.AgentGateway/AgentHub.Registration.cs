@@ -50,20 +50,53 @@ public sealed partial class AgentHub
 
         // If an agent with the same ID is already connected with a different connectionId,
         // force-disconnect the old connection before re-registering.
+        // Exception: when the reconnecting agent carries no ActiveJob but the existing registry
+        // entry has one, this is a mid-run kiro-cli sub-process restart — the old connection is
+        // still being used by the running pipeline's OrchestratorProxy. Killing it here severs all
+        // subsequent hub calls (RequestGetIssue, etc.) on that connection without any server-side
+        // error log. Skip ForceDisconnect to preserve the pipeline connection.
+        // A pod replacement always arrives with an ActiveJob (the new pod knows its assignment), so
+        // the (message.ActiveJob is not null) case continues to trigger ForceDisconnect as before.
+        // TODO: [WARNING] The guard relies on the convention that pod replacements always supply
+        // ActiveJob, but this is unenforced. If a replacement pod re-registers with message.ActiveJob
+        // == null while existingEntry.ActiveJobId is still set (e.g. the new pod has not yet been
+        // assigned a job), the guard will suppress ForceDisconnect. The new connection takes
+        // ownership in the registry, but the old connection is left alive. A secondary signal
+        // (run ownership, pod identity from hostname, or a dedicated replacement flag) would make
+        // this distinction explicit and verifiable rather than relying on an implicit contract.
         var existingEntry = _facade.GetByAgentId(message.AgentId);
         if (existingEntry is not null && existingEntry.ConnectionId != Context.ConnectionId
             && existingEntry.Status != AgentStatus.Disconnected)
         {
-            _logger.Information("Agent {AgentId} re-registered (connection={NewConn}), force-disconnecting old connection {OldConn}",
-                message.AgentId, Context.ConnectionId, existingEntry.ConnectionId);
-            try
+            if (message.ActiveJob is null && existingEntry.ActiveJobId is not null)
             {
-                await Clients.Client(existingEntry.ConnectionId).ForceDisconnect();
+                // Mid-run kiro-cli reconnect: preserve the active pipeline connection.
+                // TODO: [WARNING] After skipping ForceDisconnect, _facade.Register below replaces
+                // the registry entry with the new connection ID (conn-new). The old connection
+                // (conn-old) remains live and is still used by the running pipeline's
+                // OrchestratorProxy, but any server-side lookup of the agent by AgentId will now
+                // return conn-new. Server-push messages dispatched by AgentId lookup during the
+                // window between this guard skip and the pipeline's completion on the old connection
+                // will be misdirected to conn-new. Impact is limited because current pipeline calls
+                // are agent-initiated (agent calls RequestGetIssue, etc.) rather than server-pushed,
+                // but this gap should be addressed if server-push patterns are added in future.
+                _logger.Warning(
+                    "RegisterAgent: agent {AgentId} reconnected without ActiveJob while job {JobId} is in flight — skipping ForceDisconnect to preserve pipeline connection",
+                    message.AgentId, existingEntry.ActiveJobId);
             }
-            catch (Exception ex)
+            else
             {
-                _logger.Warning(ex, "Failed to send ForceDisconnect to old connection {OldConn} for agent {AgentId}",
-                    existingEntry.ConnectionId, message.AgentId);
+                _logger.Information("Agent {AgentId} re-registered (connection={NewConn}), force-disconnecting old connection {OldConn}",
+                    message.AgentId, Context.ConnectionId, existingEntry.ConnectionId);
+                try
+                {
+                    await Clients.Client(existingEntry.ConnectionId).ForceDisconnect();
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Failed to send ForceDisconnect to old connection {OldConn} for agent {AgentId}",
+                        existingEntry.ConnectionId, message.AgentId);
+                }
             }
         }
 

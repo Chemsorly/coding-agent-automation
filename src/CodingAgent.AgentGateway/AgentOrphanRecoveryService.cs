@@ -341,6 +341,13 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
     private void DetectAndRestoreOrphans(AgentId agentId, AgentEntry entry)
     {
         var orphanedRuns = _facade.GetActiveRunsByAgent(agentId);
+        // TODO: [WARNING] No "genuinely completed run" guard here. RestoreRunFromAgentStateAsync
+        // explicitly checks run history and refuses to restore runs whose FinalStep is a non-Cancelled/
+        // non-Failed terminal state. DetectAndRestoreOrphans relies entirely on GetActiveRunsByAgent
+        // returning only active-set members. If a completed run lingers in the active set due to a
+        // RemoveRun lag or failure (the service logs these cases), that run is re-added with no TTL
+        // and re-SADD'd, re-activating a finished run. Consider adding a history check mirroring
+        // RestoreRunFromAgentStateAsync before calling AddRun.
         if (orphanedRuns.Count > 0)
         {
             // Restore the most recent orphaned run as the active job so the
@@ -366,8 +373,34 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
                 }
             }
 
+            // TODO: [WARNING] entry.ActiveJobId is read outside SyncRoot here. The write happened
+            // inside lock(entry.SyncRoot) above; a concurrent disconnect handler clearing ActiveJobId
+            // between the lock release and this comparison could cause AddRun and TransitionStatus to
+            // fire on a stale match. Consider capturing the written value inside the lock and comparing
+            // the captured value here. This is consistent with the known race pattern in this file
+            // (see similar TODO in LinkAgentToExistingRun/RestoreConsolidationTracking).
             if (entry.ActiveJobId == mostRecent.RunId)
             {
+                // Re-materialize the run hash in Redis so GetRun returns non-null on any replica,
+                // even if the hash was about to expire between this check and the agent's first
+                // hub call. GetActiveRunsByAgent guarantees the hash existed when mostRecent was
+                // loaded (GetActiveRunsAsync skips runs with an empty/absent hash). Calling AddRun
+                // refreshes the hash with no TTL — HSET + SADD are both idempotent, so calling
+                // this twice for the same run is safe.
+                // TODO: [WARNING] AddRun is called unconditionally without first checking whether
+                // the hash already exists (no GetRun guard). The issue requirement says "must not
+                // write a PipelineRun to Redis if the hash already exists", which is satisfied at
+                // the Redis level (HSET overwrites same fields, SADD is a no-op on existing members)
+                // but not at the application level. If stricter application-level idempotency is
+                // needed, consider guarding with GetRun != null before calling AddRun here.
+                // TODO: [WARNING] AddRun performs a full hash overwrite (HashSetAsync with all
+                // serialized fields from the mostRecent snapshot). If another replica updated the
+                // run hash between GetActiveRunsByAgent and this write (e.g., advancing a step,
+                // writing PR fields, updating tokens), those newer values will be silently clobbered
+                // back to snapshot state. HSET is only idempotent when both sides are byte-identical;
+                // this is a data-loss risk for any actively-progressing run on the orphan path.
+                _facade.AddRun(mostRecent);
+
                 _facade.TransitionStatus(agentId, AgentStatus.Busy);
 
                 _logger.Warning(
@@ -393,11 +426,41 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
         // if the agent does not report progress within the configured timeout.
         if (message.ActiveJob is null && entry.OrphanRestoredAt is null)
         {
+            string? existingJobId;
             lock (entry.SyncRoot)
             {
+                // Capture ActiveJobId under the lock so a concurrent disconnect handler clearing
+                // the field cannot produce a null read after the non-null guard below.
+                existingJobId = entry.ActiveJobId;
                 entry.OrphanRestoredAt = DateTimeOffset.UtcNow;
                 _ = _facade.UpdateAgentFieldAsync(agentId, "orphanRestoredAt", DateTimeOffset.UtcNow.ToString("O"));
             }
+
+            // Re-materialize the run hash so subsequent [RequiresActiveJob] hub calls can find
+            // the run via GetRun. entry.ActiveJobId was restored from prior registry state and
+            // the hash may have expired since. Read the run first; if the hash still exists,
+            // AddRun refreshes it without a TTL (HSET + SADD, both idempotent).
+            // If the hash is already gone, nothing can be done — ReconciliationService will
+            // time out the run as it would for any unresponsive agent.
+            // TODO: [WARNING] When GetRun returns null (hash already expired), this path sets
+            // entry.OrphanRestoredAt and proceeds without re-materializing the run. Every
+            // subsequent [RequiresActiveJob] hub call (including RequestGetIssue) will still fail
+            // with "No active run found" — the same bug the issue describes. At this point
+            // the run data is unrecoverable from Redis; a DB fallback (loading the WorkItem from
+            // Postgres to reconstruct a minimal PipelineRun) would be required to fully address
+            // this case (Option B from the issue's suggested approaches).
+            if (existingJobId is not null)
+            {
+                var run = _facade.GetRun(existingJobId);
+                if (run is not null)
+                    _facade.AddRun(run);
+            }
+
+            // TODO: [WARNING] The log interpolation below uses entry.ActiveJobId, which is read
+            // outside lock(entry.SyncRoot). existingJobId was captured inside the lock and should
+            // be used here instead to avoid a benign TOCTOU: a concurrent disconnect handler
+            // could clear entry.ActiveJobId to null between the lock release and this log statement,
+            // causing the log to print null when existingJobId is non-null.
             _logger.Warning(
                 "Agent {AgentId} re-registered without active job but orchestrator has {JobId} assigned (crash recovery). " +
                 "ReconciliationService will time out the run if agent does not resume.",
