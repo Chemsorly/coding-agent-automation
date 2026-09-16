@@ -66,6 +66,10 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
                 ConsolidationWorkspacePath = _workspaceManager.GetWorkspacePath(run.RunId),
                 RunId = run.RunId,
                 AutoDispatch = run.AutoDispatch,
+                ProjectId = !string.IsNullOrEmpty(run.ProjectId) && Guid.TryParse(run.ProjectId, out var pid)
+                    ? pid
+                    : (Guid?)null,
+                ProjectName = run.ProjectName,
                 // Carry the traceparent stored at trigger time so the resulting WorkItem
                 // inherits the original trace even when dispatched asynchronously.
                 TraceContext = !string.IsNullOrEmpty(run.TraceParent)

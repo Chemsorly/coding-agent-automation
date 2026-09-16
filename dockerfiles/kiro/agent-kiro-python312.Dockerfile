@@ -46,7 +46,7 @@ RUN apt-get update && \
         nodejs \
         npm \
         libasound2t64 \
-        libvips42 \
+        libvips42t64 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /home/ubuntu/.local/bin /home/ubuntu/.kiro && \

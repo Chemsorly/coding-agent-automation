@@ -44,7 +44,15 @@ public class ConsolidationTemplateResolverTests
         var template = new PipelineJobTemplate { Id = "t1", Name = "BrainConsolidation", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true };
         var project = new PipelineProject
         {
-            Id = "p1", Name = "MyProject", Enabled = true,
+            // TODO [WARNING]: "p1" is a short non-GUID string. In production, ConsolidationDispatcher
+            // parses ProjectId with Guid.TryParse, which silently produces null for "p1". This test
+            // verifies the resolver returns the raw string, but the end-to-end path (resolver → service
+            // → dispatcher) would produce a null ProjectId for this fixture value. The dedicated test
+            // ResolveTemplateWithProject_TemplateExistsInEnabledProject_ReturnsProjectId covers the
+            // full-GUID case. If this fixture is ever promoted to an integration test, use a real GUID.
+            Id = "p1",
+            Name = "MyProject",
+            Enabled = true,
             TemplateIds = ["t1"]
         };
 
@@ -52,12 +60,39 @@ public class ConsolidationTemplateResolverTests
         SetupTemplates(template);
 
         var sut = CreateSut();
-        var (resolvedTemplate, projectName) =
+        var (resolvedTemplate, projectName, projectId) =
             await sut.ResolveTemplateWithProjectAsync(new TemplateId("t1"), CancellationToken.None);
 
         resolvedTemplate.Should().NotBeNull();
         resolvedTemplate!.Id.Should().Be("t1");
         projectName.Should().Be("MyProject");
+        projectId.Should().Be("p1");
+    }
+
+    [Fact]
+    public async Task ResolveTemplateWithProject_TemplateExistsInEnabledProject_ReturnsProjectId()
+    {
+        // Verifies that the actual project.Id GUID string round-trips through the resolver.
+        var projectGuid = Guid.NewGuid().ToString();
+        var template = new PipelineJobTemplate { Id = "t-guid", Name = "GuidTemplate", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true };
+        var project = new PipelineProject
+        {
+            Id = projectGuid,
+            Name = "GuidProject",
+            Enabled = true,
+            TemplateIds = ["t-guid"]
+        };
+
+        SetupProjects(project);
+        SetupTemplates(template);
+
+        var sut = CreateSut();
+        var (resolvedTemplate, _, projectId) =
+            await sut.ResolveTemplateWithProjectAsync(new TemplateId("t-guid"), CancellationToken.None);
+
+        resolvedTemplate.Should().NotBeNull();
+        projectId.Should().Be(projectGuid,
+            "the exact project.Id GUID string must be returned as the third tuple element");
     }
 
     [Fact]
@@ -65,17 +100,20 @@ public class ConsolidationTemplateResolverTests
     {
         SetupProjects(new PipelineProject
         {
-            Id = "p1", Name = "MyProject", Enabled = true,
+            Id = "p1",
+            Name = "MyProject",
+            Enabled = true,
             TemplateIds = ["other-id"]
         });
         SetupTemplates(new PipelineJobTemplate { Id = "other-id", Name = "Other", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true });
 
         var sut = CreateSut();
-        var (resolvedTemplate, projectName) =
+        var (resolvedTemplate, projectName, projectId) =
             await sut.ResolveTemplateWithProjectAsync(new TemplateId("t-missing"), CancellationToken.None);
 
         resolvedTemplate.Should().BeNull();
         projectName.Should().BeNull();
+        projectId.Should().BeNull();
     }
 
     [Fact]
@@ -84,7 +122,9 @@ public class ConsolidationTemplateResolverTests
         var template = new PipelineJobTemplate { Id = "t1", Name = "BrainConsolidation", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true };
         var disabledProject = new PipelineProject
         {
-            Id = "p1", Name = "DisabledProject", Enabled = false,
+            Id = "p1",
+            Name = "DisabledProject",
+            Enabled = false,
             TemplateIds = ["t1"]
         };
 
@@ -92,11 +132,12 @@ public class ConsolidationTemplateResolverTests
         SetupTemplates(template);
 
         var sut = CreateSut();
-        var (resolvedTemplate, projectName) =
+        var (resolvedTemplate, projectName, projectId) =
             await sut.ResolveTemplateWithProjectAsync(new TemplateId("t1"), CancellationToken.None);
 
         resolvedTemplate.Should().BeNull("disabled projects must not contribute templates");
         projectName.Should().BeNull();
+        projectId.Should().BeNull();
     }
 
     [Fact]
@@ -106,11 +147,12 @@ public class ConsolidationTemplateResolverTests
         SetupTemplates();
 
         var sut = CreateSut();
-        var (resolvedTemplate, projectName) =
+        var (resolvedTemplate, projectName, projectId) =
             await sut.ResolveTemplateWithProjectAsync(new TemplateId("t1"), CancellationToken.None);
 
         resolvedTemplate.Should().BeNull();
         projectName.Should().BeNull();
+        projectId.Should().BeNull();
     }
 
     // ── GetEnabledTemplatesFromProjectsAsync ───────────────────────────────────
@@ -122,7 +164,9 @@ public class ConsolidationTemplateResolverTests
         var disabled = new PipelineJobTemplate { Id = "t-disabled", Name = "Disabled", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = false };
         var project = new PipelineProject
         {
-            Id = "p1", Name = "P1", Enabled = true,
+            Id = "p1",
+            Name = "P1",
+            Enabled = true,
             TemplateIds = ["t-enabled", "t-disabled"]
         };
 
@@ -143,7 +187,9 @@ public class ConsolidationTemplateResolverTests
         var template = new PipelineJobTemplate { Id = "t1", Name = "T1", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true };
         var disabledProject = new PipelineProject
         {
-            Id = "p1", Name = "Disabled", Enabled = false,
+            Id = "p1",
+            Name = "Disabled",
+            Enabled = false,
             TemplateIds = ["t1"]
         };
 
@@ -163,9 +209,9 @@ public class ConsolidationTemplateResolverTests
         var tB = new PipelineJobTemplate { Id = "t-beta", Name = "TBeta", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true };
         var tZ = new PipelineJobTemplate { Id = "t-zeta", Name = "TZeta", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true };
 
-        var projectAlpha = new PipelineProject { Id = "pA", Name = "Alpha",  Enabled = true, TemplateIds = ["t-alpha"] };
-        var projectZeta  = new PipelineProject { Id = "pZ", Name = "Zeta",   Enabled = true, TemplateIds = ["t-zeta"]  };
-        var projectBeta  = new PipelineProject { Id = "pB", Name = "Beta",   Enabled = true, TemplateIds = ["t-beta"]  };
+        var projectAlpha = new PipelineProject { Id = "pA", Name = "Alpha", Enabled = true, TemplateIds = ["t-alpha"] };
+        var projectZeta = new PipelineProject { Id = "pZ", Name = "Zeta", Enabled = true, TemplateIds = ["t-zeta"] };
+        var projectBeta = new PipelineProject { Id = "pB", Name = "Beta", Enabled = true, TemplateIds = ["t-beta"] };
 
         // Intentionally out of order — resolver must order by project name
         SetupProjects(projectZeta, projectAlpha, projectBeta);
@@ -176,8 +222,8 @@ public class ConsolidationTemplateResolverTests
 
         result.Should().HaveCount(3);
         result[0].Id.Should().Be("t-alpha", "Alpha project comes first alphabetically");
-        result[1].Id.Should().Be("t-beta",  "Beta project comes second");
-        result[2].Id.Should().Be("t-zeta",  "Zeta project comes last");
+        result[1].Id.Should().Be("t-beta", "Beta project comes second");
+        result[2].Id.Should().Be("t-zeta", "Zeta project comes last");
     }
 
     [Fact]

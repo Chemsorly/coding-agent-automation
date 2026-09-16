@@ -69,7 +69,7 @@ ENV MSBUILDTERMINALLOGGER=off
 
 # Install libvips for NetVips image processing (used by pipeline under test)
 # Install PowerShell (needed for playwright.ps1 browser installer)
-RUN apt-get update && apt-get install -y --no-install-recommends libvips42 wget apt-transport-https \
+RUN apt-get update && apt-get install -y --no-install-recommends libvips42t64 wget apt-transport-https \
     && wget -q https://packages.microsoft.com/config/ubuntu/24.04/packages-microsoft-prod.deb \
     && dpkg -i packages-microsoft-prod.deb && rm packages-microsoft-prod.deb \
     && apt-get update && apt-get install -y --no-install-recommends powershell \

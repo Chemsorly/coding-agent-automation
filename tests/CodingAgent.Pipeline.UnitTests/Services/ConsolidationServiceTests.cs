@@ -14,6 +14,9 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// </summary>
 public sealed class ConsolidationServiceTests : IDisposable
 {
+    private static readonly string[] DotNetLabels = ["kiro", "dotnet", "dotnet10"];
+    private static readonly string[] PythonLabels = ["kiro", "python", "python312"];
+
     private readonly string _tempDir;
     private readonly string _runsDir;
     private readonly string _suggestionsPath;
@@ -271,7 +274,7 @@ public sealed class ConsolidationServiceTests : IDisposable
         run!.QueuedRequiredLabels.Should().NotBeNull(
             "QueuedRequiredLabels must be resolved from ProviderConfig.RequiredLabels when available");
         run.QueuedRequiredLabels.Should().BeEquivalentTo(
-            new[] { "kiro", "dotnet", "dotnet10" },
+            DotNetLabels,
             "labels must match ProviderConfig.RequiredLabels for the template's repo provider");
     }
 
@@ -317,7 +320,7 @@ public sealed class ConsolidationServiceTests : IDisposable
         // Assert: falls back to DefaultRequiredAgentLabels
         run.Should().NotBeNull();
         run!.QueuedRequiredLabels.Should().BeEquivalentTo(
-            new[] { "kiro", "python", "python312" },
+            PythonLabels,
             "when ProviderConfig.RequiredLabels is null, LabelResolver falls back to DefaultRequiredAgentLabels");
     }
 
@@ -356,7 +359,7 @@ public sealed class ConsolidationServiceTests : IDisposable
         // Assert: graceful degradation — falls back to DefaultRequiredAgentLabels
         run.Should().NotBeNull();
         run!.QueuedRequiredLabels.Should().BeEquivalentTo(
-            new[] { "kiro", "dotnet", "dotnet10" },
+            DotNetLabels,
             "when provider config is not found, LabelResolver falls back to DefaultRequiredAgentLabels");
     }
 
@@ -403,7 +406,7 @@ public sealed class ConsolidationServiceTests : IDisposable
         // Assert: labels from DefaultRequiredAgentLabels, not from provider config
         run.Should().NotBeNull();
         run!.QueuedRequiredLabels.Should().BeEquivalentTo(
-            new[] { "kiro", "dotnet", "dotnet10" },
+            DotNetLabels,
             "global runs must use DefaultRequiredAgentLabels — they have no repo-scoped provider config");
 
         // Assert: provider store was never consulted (global runs don't load repo config)
@@ -430,8 +433,9 @@ public sealed class ConsolidationServiceTests : IDisposable
     [Fact]
     public async Task TriggerAsync_ValidTemplate_SetsProjectNameFromOwningProject()
     {
-        // Validates: ConsolidationRun must carry the owning project's display name
-        // so the UI PROJECT column shows the project instead of "—".
+        // Validates: ConsolidationRun must carry the owning project's display name and ID
+        // so the UI PROJECT column shows the project instead of "—" and WorkItemEntity.ProjectId
+        // is populated.
         var sut = CreateSut();
 
         var run = await sut.TriggerAsync(
@@ -439,6 +443,8 @@ public sealed class ConsolidationServiceTests : IDisposable
 
         run.Should().NotBeNull();
         run!.ProjectName.Should().Be("Default");
+        run.ProjectId.Should().Be(WellKnownIds.DefaultProjectId,
+            "ProjectId must be populated from the owning PipelineProject.Id at trigger time");
     }
 
     [Fact]
@@ -452,6 +458,39 @@ public sealed class ConsolidationServiceTests : IDisposable
 
         run.Should().NotBeNull();
         run!.ProjectName.Should().BeNull();
+        run.ProjectId.Should().BeNull("global runs have no owning project");
+    }
+
+    [Fact]
+    public async Task TriggerAsync_WithProjectId_ProjectIdSurvivesPersistenceRoundTrip()
+    {
+        // Validates: ConsolidationRun.ProjectId is persisted at trigger time and survives
+        // serialization/deserialization (scheduler restart rehydration requirement).
+        var sut = CreateSut();
+
+        var run = await sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
+
+        run.Should().NotBeNull();
+        // TODO [WARNING]: This assertion only checks NotBeNull, not the concrete GUID value.
+        // If run.ProjectId were set to a non-null but wrong value (e.g. empty string), this
+        // assertion would pass while the round-trip assertion below would fail with a confusing
+        // null-vs-value mismatch rather than a clear "wrong value before reload" message.
+        // Prefer asserting the concrete GUID here as well:
+        //   run!.ProjectId.Should().Be(WellKnownIds.DefaultProjectId, "in-memory run must have the correct ProjectId before reload");
+        run!.ProjectId.Should().NotBeNull("template-scoped run must have a non-null ProjectId");
+
+        // Reload from the file-system store — simulates what happens after a scheduler restart
+        var history = await sut.GetRunHistoryAsync(CancellationToken.None);
+        // TODO [WARNING]: ContainSingle(predicate) passes as long as exactly one element satisfies
+        // the predicate, but succeeds even when the collection contains other non-matching elements.
+        // This is safe here because _runsDir is Guid-suffixed per test instance (no cross-test pollution),
+        // but a future copy-paste into a test class with a shared _runsDir could produce a false-positive.
+        // If this test is ever moved or the fixture is refactored, prefer a stricter assertion such as
+        // history.Should().HaveCount(1).And.ContainSingle(r => r.RunId == run.RunId).
+        var reloaded = history.Should().ContainSingle(r => r.RunId == run.RunId).Subject;
+        reloaded.ProjectId.Should().Be(WellKnownIds.DefaultProjectId,
+            "ProjectId must survive the JSON serialization round-trip through FileSystemConsolidationRunStore");
     }
 
     #endregion
