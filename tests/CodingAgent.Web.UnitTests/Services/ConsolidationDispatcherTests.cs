@@ -694,6 +694,12 @@ public sealed class ConsolidationDispatcherTests
         var sut = CreateSut();
         // Must not throw — secondary failure in UpdateRunAsync is swallowed.
         await sut.DispatchRunAsync(run, CancellationToken.None);
+
+        // Assert: DistributeAsync was still called (the primary dispatch succeeded before the secondary failure)
+        _workDistributor.Verify(
+            d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "DistributeAsync must be called even when UpdateRunAsync subsequently throws");
     }
 
     // ── Empty selector: no profiles (startup race) ─────────────────────────
@@ -834,6 +840,17 @@ public sealed class ConsolidationDispatcherTests
     /// This is the acceptance criterion: WorkItemEntity.ProjectId will be non-null
     /// and the Work queue UI PROJECT column will show the project name.
     /// </summary>
+    // TODO [WARNING]: This test validates dispatcher forwarding in isolation — the ConsolidationRun
+    // fixture is constructed directly with ProjectId and ProjectName already set, bypassing
+    // ConsolidationService.TriggerAsync. There is no single test that exercises the full path:
+    // TriggerAsync → ProjectName/ProjectId populated on run → dispatcher forwards both values
+    // to JobDistributionRequest. TriggerAsync_ValidTemplate_SetsProjectNameFromOwningProject
+    // (ConsolidationServiceTests) validates run.ProjectName == "Default" from the service side,
+    // and this test validates captured.ProjectName == "MyProject" from the dispatcher side, but
+    // these use different fixture values. If the dispatcher forwarded ProjectName from the wrong
+    // field, neither test would catch it. Consider adding an integration-style test that creates
+    // a run via TriggerAsync and then dispatches it, asserting that the exact ProjectName from
+    // the owning project flows through to JobDistributionRequest.
     [Fact]
     public async Task DispatchRunAsync_TemplateRunWithProjectId_ForwardsProjectIdToRequest()
     {

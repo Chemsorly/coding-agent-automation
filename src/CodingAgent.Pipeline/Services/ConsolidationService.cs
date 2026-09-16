@@ -19,6 +19,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     private readonly IConsolidationWorkspaceManager _workspaceManager;
     private readonly IConsolidationFeedbackCache _feedbackCache;
     private readonly ConsolidationTemplateResolver _templateResolver;
+    private readonly IProviderConfigStore _providerConfigStore;
 
     private readonly ConcurrentDictionary<(ConsolidationRunType, string?), ConsolidationRun> _runningRuns = new();
 
@@ -45,6 +46,13 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         ArgumentNullException.ThrowIfNull(deps.RunHistoryService);
         ArgumentNullException.ThrowIfNull(deps.RunStore);
         ArgumentNullException.ThrowIfNull(deps.HarnessSuggestionStore);
+        // TODO [WARNING]: ArgumentNullException.ThrowIfNull(deps.ProviderConfigStore) was removed
+        // from this constructor in the ProjectId fix. ProviderConfigStore is a non-optional positional
+        // record parameter and cannot be null via the primary constructor, but construction via
+        // object-initializer syntax could bypass this. Inconsistent with the guards present for all
+        // other required deps (Logger, Config, ProjectStore, RunHistoryService, RunStore,
+        // HarnessSuggestionStore). Consider restoring the guard for consistency and to surface
+        // a diagnostic ArgumentNullException rather than a NullReferenceException at call time.
 
         _logger = deps.Logger;
         _config = deps.Config;
@@ -53,6 +61,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         _workspaceManager = deps.WorkspaceManager ?? new ConsolidationWorkspaceManager(deps.Logger, deps.Config);
         _feedbackCache = deps.FeedbackCache ?? new ConsolidationFeedbackCache(deps.Logger, deps.RunStore, deps.RunHistoryService);
         _templateResolver = new ConsolidationTemplateResolver(deps.ProjectStore);
+        _providerConfigStore = deps.ProviderConfigStore;
     }
 
     /// <inheritdoc />
@@ -99,6 +108,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         string? templateName;
         string? projectName = null;
         string? projectId = null;
+        ProviderConfig? repoConfig = null;
         if (templateId is not null)
         {
             var (template, resolvedProjectName, resolvedProjectId) = await _templateResolver.ResolveTemplateWithProjectAsync(templateIdValue!, ct);
@@ -110,6 +120,18 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             templateName = template.Name;
             projectName = resolvedProjectName;
             projectId = resolvedProjectId;
+            // Resolve repo ProviderConfig to allow LabelResolver to pick up repo-scoped
+            // RequiredLabels (e.g. required agent labels specific to this repository).
+            // TODO [WARNING]: This call is now unconditional for template-scoped runs. The prior
+            // code guarded it with !string.IsNullOrEmpty(template.RepoProviderId). While
+            // PipelineJobTemplate.RepoProviderId is declared as required string (non-nullable),
+            // a minimally constructed or deserialized template with an empty RepoProviderId would
+            // cause a provider store query with a nonsensical ID. Both store implementations
+            // (Postgres and API-backed) return null gracefully for an unmatched ID, so in practice
+            // this is safe — but the unconditional call is a behavioral change from the prior guarded
+            // path. Consider restoring the IsNullOrEmpty guard if defensive handling is preferred.
+            repoConfig = await _providerConfigStore.GetProviderConfigByIdAsync(
+                template.RepoProviderId, ProviderKind.Repository, ct);
         }
         else
         {
@@ -126,7 +148,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         // configure DefaultRequiredAgentLabels and re-trigger.
         // Rejection at trigger time (returning null) would cause the UI to show "rejected — already
         // running/queued or template not found", which is misleading for a config-gap scenario.
-        var run = BuildNewRun(type, templateIdValue, templateName, projectName, projectId, autoDispatch, _config);
+        var run = BuildNewRun(type, templateIdValue, templateName, projectName, projectId, autoDispatch, repoConfig, _config);
 
         if (!_runningRuns.TryAdd(key, run))
         {
@@ -421,6 +443,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         string? projectName,
         string? projectId,
         bool autoDispatch,
+        ProviderConfig? repoConfig,
         PipelineConfiguration config) => new()
         {
             RunId = Guid.NewGuid().ToString(),
@@ -438,16 +461,16 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             // Resolve required agent labels at trigger time so the dispatcher has a deterministic
             // selector without guessing from runtime profile state. Mirrors the label resolution
             // used by the regular pipeline dispatch loop (LabelResolver.ResolveRequiredLabels).
-            // Consolidation runs have no per-run repo provider config, so repoConfig is null and
-            // resolution falls back to DefaultRequiredAgentLabels → empty (any agent).
-            QueuedRequiredLabels = LabelResolver.ResolveRequiredLabels(repoConfig: null, config)
+            // For template-scoped runs, repoConfig carries the repo's RequiredLabels (if any);
+            // for global runs, repoConfig is null and resolution falls back to
+            // DefaultRequiredAgentLabels → empty (any agent).
+            QueuedRequiredLabels = LabelResolver.ResolveRequiredLabels(repoConfig, config)
                                     is { Count: > 0 } resolvedLabels ? resolvedLabels : null,
             // Capture trace context at trigger time (inside the HTTP request span).
             // Stored on the run so it survives restart/rehydration even when Activity.Current
             // is null at drain time. CaptureTraceContext creates a short-lived Producer span
             // to guarantee a valid traceparent even if no ambient span exists.
-            TraceParent = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation")
-            ?.GetValueOrDefault("traceparent")
+            TraceParent = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation")?.GetValueOrDefault("traceparent")
         };
 
     private async Task<bool> TryEvictAndRetryAsync(
