@@ -13,7 +13,7 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgent.Web.UnitTests;
 
 /// <summary>
-/// Unit tests for the <see cref="WorkItemEndpoints.GetActiveWorkItems"/> handler's
+/// Unit tests for the <see cref="WorkItemQueryEndpoints.GetActiveWorkItems"/> handler's
 /// <see cref="ActiveWorkItemDto.CurrentStep"/> enrichment logic.
 /// Tests call the internal handler directly to avoid full host-build overhead
 /// (InternalsVisibleTo("CodingAgent.Web.UnitTests") is set in the Api csproj).
@@ -109,7 +109,7 @@ public sealed class GetActiveWorkItemsStepEnrichmentTests : IDisposable
         // throw a confusing error. A more robust approach: seed DispatchedAt sufficiently in the
         // past (e.g. AddMinutes(-90)) and pass a positive olderThanSeconds that the seeded item
         // actually satisfies, exercising the real filter path. Applies to all three tests below.
-        var result = await WorkItemEndpoints.GetActiveWorkItems(
+        var result = await WorkItemQueryEndpoints.GetActiveWorkItems(
             olderThanSeconds: -3600,
             dbFactory: _dbFactory,
             runService: runService,
@@ -135,7 +135,7 @@ public sealed class GetActiveWorkItemsStepEnrichmentTests : IDisposable
         var runService = CreateRunService(); // empty — no runs added
 
         // Act
-        var result = await WorkItemEndpoints.GetActiveWorkItems(
+        var result = await WorkItemQueryEndpoints.GetActiveWorkItems(
             olderThanSeconds: -3600,
             dbFactory: _dbFactory,
             runService: runService,
@@ -160,7 +160,7 @@ public sealed class GetActiveWorkItemsStepEnrichmentTests : IDisposable
         var workItemId = await SeedRunningWorkItemAsync();
 
         // Act — pass null explicitly for the optional runService
-        var result = await WorkItemEndpoints.GetActiveWorkItems(
+        var result = await WorkItemQueryEndpoints.GetActiveWorkItems(
             olderThanSeconds: -3600,
             dbFactory: _dbFactory,
             runService: null,

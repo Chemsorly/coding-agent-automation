@@ -224,46 +224,33 @@ public class QualityGateValidator : IQualityGateValidator
         catch (TimeoutException ex)
         {
             outcome = "timeout";
-            sw.Stop();
             _processTimeouts.Add(1,
                 new KeyValuePair<string, object?>(TagGateName, ctx.GateName),
                 new KeyValuePair<string, object?>(TagQgcName, ctx.QgcDisplayName));
             ctx.Activity?.SetTag("qgc.timed_out", true);
             ctx.Activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            _processDuration.Record(sw.Elapsed.TotalSeconds,
-                new KeyValuePair<string, object?>(TagGateName, ctx.GateName),
-                new KeyValuePair<string, object?>(TagQgcName, ctx.QgcDisplayName),
-                new KeyValuePair<string, object?>(TagOutcome, outcome));
             throw new QgcProcessTimedOutException(ctx.TimeoutSeconds, ex);
         }
         catch (OperationCanceledException)
         {
             outcome = "cancelled";
-            sw.Stop();
-            _processDuration.Record(sw.Elapsed.TotalSeconds,
-                new KeyValuePair<string, object?>(TagGateName, ctx.GateName),
-                new KeyValuePair<string, object?>(TagQgcName, ctx.QgcDisplayName),
-                new KeyValuePair<string, object?>(TagOutcome, outcome));
             throw;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             outcome = "error";
+            ctx.Activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            ctx.Activity?.AddException(ex);
+            throw;
+        }
+        finally
+        {
             sw.Stop();
             _processDuration.Record(sw.Elapsed.TotalSeconds,
                 new KeyValuePair<string, object?>(TagGateName, ctx.GateName),
                 new KeyValuePair<string, object?>(TagQgcName, ctx.QgcDisplayName),
                 new KeyValuePair<string, object?>(TagOutcome, outcome));
-            ctx.Activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            ctx.Activity?.AddException(ex);
-            throw;
         }
-
-        sw.Stop();
-        _processDuration.Record(sw.Elapsed.TotalSeconds,
-            new KeyValuePair<string, object?>(TagGateName, ctx.GateName),
-            new KeyValuePair<string, object?>(TagQgcName, ctx.QgcDisplayName),
-            new KeyValuePair<string, object?>(TagOutcome, outcome));
 
         return (exitCode, stdout, stderr);
     }

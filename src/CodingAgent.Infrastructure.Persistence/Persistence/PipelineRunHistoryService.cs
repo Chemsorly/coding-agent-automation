@@ -146,12 +146,29 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     public Task AddRunSummaryAsync(PipelineRunSummary summary, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(summary);
+
+        // Defense-in-depth: reject consolidation summaries from being written to file-backed history.
+        // Mirrors the guard in AddRunToHistoryAsync(PipelineRun). Uses the InitiatedBy prefix because
+        // PipelineRunSummary has no IssueProviderConfigId property.
+        // Note: LoadRunHistory already filters consolidation entries on reload, so this guard
+        // prevents the JSON file from being created on disk in the first place.
+        if (summary.InitiatedBy?.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal) == true)
+        {
+            _logger.Debug("AddRunSummaryAsync: skipping consolidation summary {RunId}", summary.RunId);
+            return Task.CompletedTask;
+        }
+
         lock (_lock)
         {
             _runHistory.Insert(0, summary);
             if (_runHistory.Count > MaxHistorySize)
                 _runHistory.RemoveAt(_runHistory.Count - 1);
         }
+        // TODO: the CancellationToken parameter (ct) accepted by AddRunSummaryAsync is not forwarded
+        // to PersistRunSummaryAsync (fire-and-forget disk write). Callers that supply a live token
+        // will not have cancellation honoured for the underlying AtomicFileWriter.WriteAsync call.
+        // Fix: propagate ct into PersistRunSummaryAsync and through to AtomicFileWriter.WriteAsync.
+        // See review finding from issue #2629.
         _ = PersistRunSummaryAsync(summary);
         return Task.CompletedTask;
     }

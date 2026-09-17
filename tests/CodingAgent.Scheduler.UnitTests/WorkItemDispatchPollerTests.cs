@@ -70,7 +70,6 @@ public sealed class WorkItemDispatchPollerTests
     {
         var itemId = Guid.NewGuid();
         _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(true);
-        // Set up mock BEFORE StartAsync so the immediate first tick sees a configured mock.
         _mockClient
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeItem(itemId)]);
@@ -78,7 +77,17 @@ public sealed class WorkItemDispatchPollerTests
             .Setup(c => c.DispatchPendingAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(DispatchPendingResult.Dispatched);
 
-        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(500));
+        // Use PollAndDispatchAsync directly instead of the BackgroundService loop to avoid
+        // wall-clock timing flakiness: the loop-based approach (RunPollerForDurationAsync)
+        // depends on the service starting and firing a tick within a fixed window, which can
+        // fail under CI load. PollAndDispatchAsync executes exactly one poll cycle deterministically.
+        var poller = new WorkItemDispatchPoller(
+            _mockClient.Object,
+            _mockLeaderGate.Object,
+            _mockLogger.Object,
+            rateLimitPerSecond: 100);
+        await poller.PollAndDispatchAsync(CancellationToken.None);
+        poller.Dispose();
 
         _mockClient.Verify(c => c.DispatchPendingAsync(itemId, It.IsAny<CancellationToken>()),
             Times.AtLeastOnce(), "leader poller must dispatch the pending item");
