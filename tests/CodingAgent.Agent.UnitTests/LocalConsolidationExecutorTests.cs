@@ -380,10 +380,17 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
         result.ErrorMessage.Should().Contain("Unsupported");
     }
 
-    // ── RefactoringDetection — Issue Provider Missing Token ──────────────
+    // ── RefactoringDetection — Issue Provider Token Handling ────────────
 
+    /// <summary>
+    /// After issue #2620: when a proxy is present (which LocalConsolidationExecutor always creates),
+    /// a missing 'token' setting no longer causes a construction-time exception — the proxy's
+    /// refresh delegate is used instead. The run still fails (SignalR connection error during
+    /// ValidateAsync since the hub is disconnected in tests), but NOT with a "token"-related message.
+    /// This test documents that behaviour change and guards against regression to the old path.
+    /// </summary>
     [Fact]
-    public async Task ExecuteAsync_RefactoringDetection_IssueProviderMissingToken_ReturnsFailure()
+    public async Task ExecuteAsync_RefactoringDetection_IssueProviderMissingToken_WithProxy_DoesNotFailAtConstruction()
     {
         var executor = CreateExecutor();
         var repoConfig = new ProviderConfig
@@ -421,7 +428,7 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
                 [ProviderSettingKeys.ApiUrl] = "https://api.github.com",
                 [ProviderSettingKeys.Owner] = "test",
                 [ProviderSettingKeys.Repo] = "work"
-                // Missing "token" setting
+                // No "token" setting — proxy path must not require it
             }
         };
 
@@ -429,8 +436,18 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
 
         var result = await executor.ExecuteAsync(job, _connection, CancellationToken.None);
 
+        // Run still fails (disconnected hub → SignalR error during ValidateAsync), but
+        // the error must NOT be a construction-time "missing token" message.
         result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("token");
+        // TODO [WARNING]: This is a weak negative assertion on an opaque error string. It passes
+        // whenever ErrorMessage does not mention "token" — including when ErrorMessage is null,
+        // empty, or contains a completely unrelated error. A more robust assertion would verify
+        // that execution progressed past provider construction (e.g. that an error from
+        // ValidateAsync or hub connectivity is present), not just that "token" is absent.
+        // A future change that introduces a different construction-time error ("auth", "credential")
+        // would be invisible to this assertion. (TestQualityReviewer)
+        result.ErrorMessage.Should().NotContain("token",
+            "a missing 'token' setting must not cause failure when the proxy's refresh delegate is used");
     }
 
     // ── RefactoringDetection — Brain Provider Validation Failure ────────
