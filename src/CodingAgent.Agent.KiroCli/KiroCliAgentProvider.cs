@@ -38,7 +38,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
     public IReadOnlyList<string> PipelineInjectedPaths { get; } = [".kiro"];
 
     /// <inheritdoc />
-    public bool SupportsVisionInput => !IsTextOnlyModel(_model);
+    public bool SupportsVisionInput => !AgentModelCapabilities.IsTextOnlyModel(_model);
 
     /// <summary>The model configured for this agent provider, or null/auto for default.</summary>
     public string? Model => _model;
@@ -277,18 +277,6 @@ public partial class KiroCliAgentProvider : IAgentProvider
         // miss these rejection events. If scoped-logger visibility is required, intercept
         // the result or duplicate the validation check here. See review warning (issue #2346).
         await KiroCliSettingsWriter.ApplyAsync(_model!, _effort.ToCliValue(), ct, settingsPathOverride);
-    }
-
-    /// <summary>
-    /// Determines if a model identifier refers to a text-only (non-vision) model.
-    /// Returns false (not text-only) when model is null or empty (assume capable).
-    /// </summary>
-    internal static bool IsTextOnlyModel(string? model)
-    {
-        if (string.IsNullOrEmpty(model))
-            return false;
-
-        return model.Contains("deepseek", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <inheritdoc />

@@ -55,7 +55,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     public bool SupportsParallelExecution => true;
 
     /// <inheritdoc />
-    public bool SupportsVisionInput => !IsTextOnlyModel(_model);
+    public bool SupportsVisionInput => !AgentModelCapabilities.IsTextOnlyModel(_model);
 
     /// <inheritdoc />
     public IReadOnlyList<string> PipelineInjectedPaths { get; } = ["AGENTS.md"];
@@ -346,11 +346,11 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         // 404/410 are handled above and fall through with ErrorCategory.None (the default).
         var category = response.StatusCode switch
         {
-            HttpStatusCode.TooManyRequests    => AgentErrorCategory.ProviderRateLimit,   // 429
+            HttpStatusCode.TooManyRequests => AgentErrorCategory.ProviderRateLimit,   // 429
             HttpStatusCode.ServiceUnavailable => AgentErrorCategory.ProviderOverload,    // 503
-            HttpStatusCode.Unauthorized       => AgentErrorCategory.PermanentAuthFailure, // 401
-            HttpStatusCode.Forbidden          => AgentErrorCategory.PermanentAuthFailure, // 403
-            _                                 => AgentErrorCategory.None
+            HttpStatusCode.Unauthorized => AgentErrorCategory.PermanentAuthFailure, // 401
+            HttpStatusCode.Forbidden => AgentErrorCategory.PermanentAuthFailure, // 403
+            _ => AgentErrorCategory.None
         };
 
         return new AgentResult
@@ -1059,18 +1059,6 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             return string.Empty;
 
         return KiroCliLib.Core.AnsiStripper.Strip(input);
-    }
-
-    /// <summary>
-    /// Determines if a model identifier refers to a text-only (non-vision) model.
-    /// Returns false (not text-only) when model is null or empty (assume capable).
-    /// </summary>
-    internal static bool IsTextOnlyModel(string? model)
-    {
-        if (string.IsNullOrEmpty(model))
-            return false;
-
-        return model.Contains("deepseek", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
