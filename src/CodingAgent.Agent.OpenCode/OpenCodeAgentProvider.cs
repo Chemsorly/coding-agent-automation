@@ -55,7 +55,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     public bool SupportsParallelExecution => true;
 
     /// <inheritdoc />
-    public bool SupportsVisionInput => !IsTextOnlyModel(_model);
+    public bool SupportsVisionInput => !AgentModelCapabilities.IsTextOnlyModel(_model);
 
     /// <inheritdoc />
     public IReadOnlyList<string> PipelineInjectedPaths { get; } = ["AGENTS.md"];
@@ -1059,18 +1059,6 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             return string.Empty;
 
         return KiroCliLib.Core.AnsiStripper.Strip(input);
-    }
-
-    /// <summary>
-    /// Determines if a model identifier refers to a text-only (non-vision) model.
-    /// Returns false (not text-only) when model is null or empty (assume capable).
-    /// </summary>
-    internal static bool IsTextOnlyModel(string? model)
-    {
-        if (string.IsNullOrEmpty(model))
-            return false;
-
-        return model.Contains("deepseek", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
