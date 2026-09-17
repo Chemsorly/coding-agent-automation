@@ -379,7 +379,7 @@ public class QualityGateExecutorConflictRestartAppendTests
         // FinalizePullRequest (draft PR finalization/promotion) must NOT be called — ConflictRestart
         // exits before the PR promotion step. This is the primary guard against creating a visible PR.
         _mockCallbacks.Verify(c => c.FinalizePullRequest(
-                It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
+                It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "FinalizeDraftPrAsync must not be called for ConflictRestart");
 
@@ -388,7 +388,7 @@ public class QualityGateExecutorConflictRestartAppendTests
         // when the PR already exists), but CreatePullRequest would create a new visible PR, which must not
         // happen on the ConflictRestart path.
         _mockCallbacks.Verify(c => c.CreatePullRequest(
-                It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
+                It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "CreatePullRequest must not be called for ConflictRestart");
     }
@@ -557,9 +557,9 @@ public class QualityGateExecutorConflictRestartRetryLoopTests
             .Returns(Task.CompletedTask);
         _mockCallbacks.Setup(c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockCallbacks.Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        _mockCallbacks.Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockCallbacks.Setup(c => c.CreatePullRequest(It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        _mockCallbacks.Setup(c => c.CreatePullRequest(It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -639,7 +639,7 @@ public class QualityGateExecutorConflictRestartRetryLoopTests
         // FinalizePullRequest must not be called — the run is already re-queued via agent:next
         _mockCallbacks.Verify(
             c => c.FinalizePullRequest(
-                It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
+                It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "FinalizePullRequest must not be called when ConflictRestart exits the retry loop");
     }

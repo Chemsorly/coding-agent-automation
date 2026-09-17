@@ -358,13 +358,13 @@ public sealed class AgentHubIssueProxyTests
         var run = CreateRun();
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
         var (_, mockProvider) = SetupIssueProvider();
-        mockProvider.Setup(p => p.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), "comment-1", "updated body", It.IsAny<CancellationToken>()))
+        mockProvider.Setup(p => p.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), 1L, "updated body", It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var hub = CreateHub();
-        await hub.RequestUpdateComment("job-1", "issue-1", "comment-1", "updated body");
+        await hub.RequestUpdateComment("job-1", "issue-1", "1", "updated body");
 
-        mockProvider.Verify(p => p.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), "comment-1", "updated body", It.IsAny<CancellationToken>()), Times.Once);
+        mockProvider.Verify(p => p.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), 1L, "updated body", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -373,11 +373,11 @@ public sealed class AgentHubIssueProxyTests
         var run = CreateRun();
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
         var (_, mockProvider) = SetupIssueProvider();
-        mockProvider.Setup(p => p.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockProvider.Setup(p => p.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<long>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Permission denied"));
 
         var hub = CreateHub();
-        var act = () => hub.RequestUpdateComment("job-1", "issue-1", "comment-1", "body");
+        var act = () => hub.RequestUpdateComment("job-1", "issue-1", "1", "body");
         await act.Should().ThrowAsync<HubException>().WithMessage("*update comment*");
     }
 

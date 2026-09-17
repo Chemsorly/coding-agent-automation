@@ -64,7 +64,7 @@ public interface IAgentIssueOperations
     /// <summary>
     /// Updates an existing comment by ID.
     /// </summary>
-    Task UpdateCommentAsync(IssueIdentifier issueIdentifier, string commentId, string body, CancellationToken ct)
+    Task UpdateCommentAsync(IssueIdentifier issueIdentifier, long commentId, string body, CancellationToken ct)
         => throw new NotSupportedException("UpdateCommentAsync is not implemented by this provider.");
 
     /// <summary>

@@ -83,9 +83,9 @@ public class QualityGateExecutorRetryTests
             .Returns(Task.CompletedTask);
         _mockCallbacks.Setup(c => c.UpdateFileChangeStats(It.IsAny<PipelineRun>()))
             .Returns(Task.CompletedTask);
-        _mockCallbacks.Setup(c => c.CreatePullRequest(It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        _mockCallbacks.Setup(c => c.CreatePullRequest(It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockCallbacks.Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        _mockCallbacks.Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockCallbacks.Setup(c => c.CreateDraftPrIfNotExists(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -123,7 +123,7 @@ public class QualityGateExecutorRetryTests
         await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
 
         _mockCallbacks.Verify(c => c.FinalizePullRequest(
-            _run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()), Times.Once);
+            _run, true, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -295,7 +295,7 @@ public class QualityGateExecutorRetryTests
 
         _run.RetryCount.Should().Be(0);
         _mockCallbacks.Verify(c => c.FinalizePullRequest(
-            _run, It.IsAny<QualityGateReport>(), false, It.IsAny<CancellationToken>()), Times.Once);
+            _run, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -500,7 +500,7 @@ public class QualityGateExecutorRetryTests
 
         // Run finalized as draft (validator always fails, retries exhausted)
         _mockCallbacks.Verify(
-            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -543,7 +543,7 @@ public class QualityGateExecutorRetryTests
             a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
             Times.Exactly(11));
         _mockCallbacks.Verify(
-            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -578,7 +578,7 @@ public class QualityGateExecutorRetryTests
             a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
             Times.Exactly(11));
         _mockCallbacks.Verify(
-            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -636,7 +636,7 @@ public class QualityGateExecutorRetryTests
         _run.RetryCount.Should().Be(1,
             "the transient counter reset after the successful fix, so the loop continued to standard exhaustion");
         _mockCallbacks.Verify(
-            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -716,7 +716,7 @@ public class QualityGateExecutorRetryTests
             a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
             Times.Exactly(11));
         _mockCallbacks.Verify(
-            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -900,7 +900,7 @@ public class QualityGateExecutorFailureCategoryTests
             .Returns(Task.CompletedTask);
         _mockCallbacks.Setup(c => c.RemoveAllAgentLabels(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockCallbacks.Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        _mockCallbacks.Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockCallbacks.Setup(c => c.CreateDraftPrIfNotExists(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);

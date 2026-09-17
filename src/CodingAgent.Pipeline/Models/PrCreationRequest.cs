@@ -4,13 +4,12 @@ using CodingAgent.Pipeline.Services;
 namespace CodingAgent.Pipeline.Models;
 
 /// <summary>
-/// Groups the 16 parameters of <see cref="Services.PullRequestFinalizationService.RunFullPrCreationAsync"/>
+/// Groups the parameters of <see cref="Services.PullRequestFinalizationService.RunFullPrCreationAsync"/>
 /// into a single parameter object to satisfy S107.
 /// </summary>
 public sealed record PrCreationRequest
 {
     public required PipelineRun Run { get; init; }
-    public required QualityGateReport Report { get; init; }
     public required bool IsDraft { get; init; }
     public required PullRequestOrchestrator PrOrchestrator { get; init; }
     public required IRepositoryProvider RepoProvider { get; init; }
