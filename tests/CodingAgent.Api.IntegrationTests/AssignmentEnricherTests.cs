@@ -520,6 +520,12 @@ public sealed class AssignmentEnricherTests
         // Arrange + Act: passing null logger to the protected ctor should not throw.
         // The ctor has: _logger = logger ?? Serilog.Log.Logger
         // We verify the object is constructed without exception.
+        // TODO: [WARNING] The assertion `enricherSubclass.Should().NotBeNull()` can never fail
+        // because constructing any reference type and storing it in a local variable guarantees
+        // non-null. It does not verify that _logger was actually set to Serilog.Log.Logger.
+        // A stronger test would call a method that exercises the logger (e.g. pass the subclass
+        // a mock sink or check that no exception is thrown during a log call) to confirm the
+        // fallback logger is functional. As-is, the test only proves the constructor does not throw.
         var enricherSubclass = new NullLoggerEnricher(null!);
         enricherSubclass.Should().NotBeNull();
     }
@@ -1035,6 +1041,38 @@ public sealed class AssignmentEnricherTests
     // protected AssignmentEnricher(ILogger, IConsolidationJobPreparationService?) constructor
     // without a preparer, pass a TaskType=Consolidation request, and assert the result is null
     // and no exception is thrown.
+
+    [Fact]
+    public async Task EnrichAsync_ConsolidationTask_NoOpPreparerViaProtectedCtor_ThrowsInvalidOperationException()
+    {
+        // ARRANGE: construct via the protected (logger + profileStore) constructor, which assigns
+        // NoOpConsolidationPreparer.Instance when no preparer is supplied.
+        // Wire a mock profile store so the enricher can resolve a profile before hitting the sentinel.
+        var profileStoreMock = new Mock<IAgentProfileStore>();
+        profileStoreMock
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakeProfile()]);
+
+        var enricher = new WithProfileStoreEnricher(Serilog.Log.Logger, profileStoreMock.Object);
+        var identity = MakeConsolidationIdentity();
+        var project = MakeProject();
+
+        // ACT + ASSERT: the NoOpConsolidationPreparer.PrepareAsync sentinel must throw
+        // InvalidOperationException to prevent silent mis-enrichment when a test subclass
+        // constructed via the protected ctor receives a Consolidation task.
+        var act = () => enricher.EnrichAsync(identity, project, CancellationToken.None);
+        await act.Should().ThrowAsync<InvalidOperationException>(
+            "NoOpConsolidationPreparer.PrepareAsync must throw to provide a clear fail-fast diagnostic " +
+            "rather than silently producing an empty-config assignment");
+    }
+
+    private sealed class WithProfileStoreEnricher : AssignmentEnricher
+    {
+        // Uses the protected (logger + profileStore) constructor without a real preparer,
+        // so _consolidationPreparer defaults to NoOpConsolidationPreparer.Instance.
+        public WithProfileStoreEnricher(Serilog.ILogger logger, IAgentProfileStore profileStore)
+            : base(logger, profileStore) { }
+    }
 
     // ── BrainProviderConfigId forwarding (issue #2618) ───────────────────────────
 

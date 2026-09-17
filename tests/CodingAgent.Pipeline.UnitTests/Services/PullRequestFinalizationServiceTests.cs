@@ -28,12 +28,6 @@ public class PullRequestFinalizationServiceTests
         StartedAt = DateTime.UtcNow.AddMinutes(-5)
     };
 
-    private static QualityGateReport CreateReport() => new()
-    {
-        Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
-        Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
-    };
-
     // ── RunReflectionAsync ──
 
     [Fact]
@@ -846,7 +840,6 @@ public class PullRequestFinalizationServiceTests
     {
         var run = CreateRun();
         run.BranchName = "agent/test-1";
-        var report = CreateReport();
         var repoProvider = new Mock<IRepositoryProvider>();
         var agentProvider = new Mock<IAgentProvider>();
         var feedbackService = new FeedbackService(_logger.Object);
@@ -880,7 +873,6 @@ public class PullRequestFinalizationServiceTests
             new PrCreationRequest
             {
                 Run = run,
-                Report = report,
                 IsDraft = false,
                 PrOrchestrator = prOrchestrator,
                 RepoProvider = repoProvider.Object,
@@ -909,7 +901,6 @@ public class PullRequestFinalizationServiceTests
     {
         var run = CreateRun();
         run.BranchName = "agent/test-1";
-        var report = CreateReport();
         var repoProvider = new Mock<IRepositoryProvider>();
         var config = new PipelineConfiguration();
         var transitions = new List<PipelineStep>();
@@ -932,7 +923,6 @@ public class PullRequestFinalizationServiceTests
             new PrCreationRequest
             {
                 Run = run,
-                Report = report,
                 IsDraft = false,
                 PrOrchestrator = prOrchestrator,
                 RepoProvider = repoProvider.Object,
@@ -961,7 +951,6 @@ public class PullRequestFinalizationServiceTests
     {
         var run = CreateRun();
         run.BranchName = "agent/test-1";
-        var report = CreateReport();
         var repoProvider = new Mock<IRepositoryProvider>();
         var agentProvider = new Mock<IAgentProvider>();
         var feedbackService = new FeedbackService(_logger.Object);
@@ -992,7 +981,6 @@ public class PullRequestFinalizationServiceTests
             new PrCreationRequest
             {
                 Run = run,
-                Report = report,
                 IsDraft = true,
                 PrOrchestrator = prOrchestrator,
                 RepoProvider = repoProvider.Object,
@@ -1027,7 +1015,6 @@ public class PullRequestFinalizationServiceTests
             BranchName = "agent/issue-41",
             IsDraft = false
         };
-        var report = CreateReport();
         var repoProvider = new Mock<IRepositoryProvider>();
         var agentProvider = new Mock<IAgentProvider>();
         var feedbackService = new FeedbackService(_logger.Object);
@@ -1058,7 +1045,6 @@ public class PullRequestFinalizationServiceTests
             new PrCreationRequest
             {
                 Run = run,
-                Report = report,
                 IsDraft = false,
                 PrOrchestrator = prOrchestrator,
                 RepoProvider = repoProvider.Object,
@@ -1087,7 +1073,6 @@ public class PullRequestFinalizationServiceTests
     {
         var run = CreateRun();
         run.BranchName = "agent/test-1";
-        var report = CreateReport();
         var repoProvider = new Mock<IRepositoryProvider>();
         var config = new PipelineConfiguration();
 
@@ -1107,7 +1092,6 @@ public class PullRequestFinalizationServiceTests
             new PrCreationRequest
             {
                 Run = run,
-                Report = report,
                 IsDraft = false,
                 PrOrchestrator = prOrchestrator,
                 RepoProvider = repoProvider.Object,
@@ -1135,7 +1119,6 @@ public class PullRequestFinalizationServiceTests
         // run.MarkCompleted() fires on all exit paths including OperationCanceledException.
         var run = CreateRun();
         run.BranchName = "agent/test-1";
-        var report = CreateReport();
         var repoProvider = new Mock<IRepositoryProvider>();
         var agentProvider = new Mock<IAgentProvider>();
         var feedbackService = new FeedbackService(_logger.Object);
@@ -1188,7 +1171,6 @@ public class PullRequestFinalizationServiceTests
             new PrCreationRequest
             {
                 Run = run,
-                Report = report,
                 IsDraft = false,
                 PrOrchestrator = prOrchestrator,
                 RepoProvider = repoProvider.Object,

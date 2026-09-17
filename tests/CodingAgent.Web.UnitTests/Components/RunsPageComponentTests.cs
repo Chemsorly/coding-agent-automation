@@ -757,4 +757,72 @@ public class RunsPageComponentTests : BunitContext
         cut.FindAll(".monitoring-table tbody tr").Count.Should().Be(2,
             "clearing the InitiatedBy filter should restore all rows");
     }
+
+    // ── Consolidation row navigation (issue #2629) ────────────────────────────
+
+    // 24. Clicking a consolidation row must NOT navigate and must lack monitoring-row-clickable
+    [Fact]
+    public async Task ConsolidationRow_Click_DoesNotNavigate_AndIsVisuallyInert()
+    {
+        var runId = Guid.NewGuid().ToString();
+        _mockRunHistory
+            .Setup(c => c.GetRunHistoryAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(OnePage(MakeSummary(runId, runType: PipelineRunType.Consolidation,
+                initiatedBy: "consolidation:manual")));
+
+        var cut = Render<Runs>();
+
+        var nav = Services.GetRequiredService<NavigationManager>();
+        var uriBefore = nav.Uri;
+
+        // (a) Row must NOT carry monitoring-row-clickable CSS class.
+        var row = cut.Find(".monitoring-table tbody tr");
+        row.ClassList.Should().NotContain("monitoring-row-clickable",
+            "consolidation rows must not be visually presented as clickable");
+
+        // (b) Clicking the row must not change the navigation URI.
+        await cut.InvokeAsync(() => row.Click());
+        nav.Uri.Should().Be(uriBefore,
+            "clicking a consolidation row must not trigger navigation");
+
+        // (c) Row must have a non-empty title tooltip directing to the Consolidation page.
+        var title = row.GetAttribute("title");
+        title.Should().NotBeNullOrEmpty(
+            "consolidation row must have a tooltip directing users to the Consolidation page");
+        title.Should().Contain("Consolidation",
+            "tooltip must reference the Consolidation page");
+    }
+
+    // 25. Clicking an Implementation row MUST navigate to /runs/{runId} (regression guard)
+    // TODO: add equivalent tests for PipelineRunType.Review and PipelineRunType.DecompositionAnalysis /
+    // PipelineRunType.Decomposition — the acceptance criteria for issue #2629 explicitly require
+    // that all non-consolidation run types continue to navigate. TryOpenRun's single != Consolidation
+    // branch would not be caught by test coverage if it is accidentally broadened.
+    // See review finding from issue #2629.
+    [Fact]
+    public async Task ImplementationRow_Click_NavigatesToRunDetail()
+    {
+        var runId = Guid.NewGuid().ToString();
+        _mockRunHistory
+            .Setup(c => c.GetRunHistoryAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(OnePage(MakeSummary(runId, runType: PipelineRunType.Implementation)));
+
+        var cut = Render<Runs>();
+
+        var nav = Services.GetRequiredService<NavigationManager>();
+
+        // Row must carry monitoring-row-clickable.
+        var row = cut.Find(".monitoring-table tbody tr");
+        row.ClassList.Should().Contain("monitoring-row-clickable",
+            "implementation rows must be visually presented as clickable");
+
+        // Clicking must navigate to /runs/{runId}.
+        await cut.InvokeAsync(() => row.Click());
+        nav.Uri.Should().EndWith($"runs/{runId}",
+            "clicking an implementation row must navigate to the run detail page");
+    }
 }

@@ -73,9 +73,9 @@ public class QualityGateExecutorFeedbackTests
             .Returns(Task.CompletedTask);
         _mockCallbacks.Setup(c => c.UpdateFileChangeStats(It.IsAny<PipelineRun>()))
             .Returns(Task.CompletedTask);
-        _mockCallbacks.Setup(c => c.CreatePullRequest(It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        _mockCallbacks.Setup(c => c.CreatePullRequest(It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockCallbacks.Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        _mockCallbacks.Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockCallbacks.Setup(c => c.CreateDraftPrIfNotExists(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -223,7 +223,7 @@ public class QualityGateExecutorFeedbackTests
 
         // Assert: FinalizePullRequest was called with isDraft = true
         _mockCallbacks.Verify(c => c.FinalizePullRequest(
-            _run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()), Times.Once);
+            _run, true, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -245,7 +245,7 @@ public class QualityGateExecutorFeedbackTests
 
         // Assert: FinalizePullRequest was still called with isDraft = true
         _mockCallbacks.Verify(c => c.FinalizePullRequest(
-            _run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()), Times.Once);
+            _run, true, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -267,7 +267,7 @@ public class QualityGateExecutorFeedbackTests
 
         // Assert: FinalizePullRequest was still called with isDraft = true
         _mockCallbacks.Verify(c => c.FinalizePullRequest(
-            _run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()), Times.Once);
+            _run, true, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

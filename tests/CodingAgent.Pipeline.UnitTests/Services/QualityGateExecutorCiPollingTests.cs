@@ -680,28 +680,28 @@ public class QualityGateExecutorBranchMovedCancellationTests
         TimeSpan? ciNotStartedTimeout = null,
         int maxInfraRetries = 2,
         int ciCancelledMoveMaxRetries = 3) => new()
-    {
-        Run = run,
-        Config = new PipelineConfiguration
         {
-            AgentTimeout = TimeSpan.FromMinutes(10),
-            MaxRetries = 0,
-            MaxInfrastructureRetries = maxInfraRetries,
-            CiCancelledMoveMaxRetries = ciCancelledMoveMaxRetries,
-            ExternalCiTimeout = TimeSpan.FromMinutes(5),
-            ExternalCiPollInterval = TimeSpan.FromMilliseconds(10),
-            CiNotStartedTimeout = ciNotStartedTimeout ?? TimeSpan.FromMinutes(5),
-            CiNotStartedMaxRetries = 1,
-            StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromHours(1)
-        },
-        AgentProvider = new Mock<IAgentProvider>().Object,
-        IssueOps = _mockIssueOps.Object,
-        Callbacks = _mockCallbacks.Object,
-        RepoProvider = _mockRepoProvider.Object,
-        PipelineProvider = _mockPipelineProvider.Object,
-        QualityGateConfigs = new List<QualityGateConfiguration>()
-    };
+            Run = run,
+            Config = new PipelineConfiguration
+            {
+                AgentTimeout = TimeSpan.FromMinutes(10),
+                MaxRetries = 0,
+                MaxInfrastructureRetries = maxInfraRetries,
+                CiCancelledMoveMaxRetries = ciCancelledMoveMaxRetries,
+                ExternalCiTimeout = TimeSpan.FromMinutes(5),
+                ExternalCiPollInterval = TimeSpan.FromMilliseconds(10),
+                CiNotStartedTimeout = ciNotStartedTimeout ?? TimeSpan.FromMinutes(5),
+                CiNotStartedMaxRetries = 1,
+                StallPollInterval = TimeSpan.FromMilliseconds(50),
+                StallWarningInterval = TimeSpan.FromHours(1)
+            },
+            AgentProvider = new Mock<IAgentProvider>().Object,
+            IssueOps = _mockIssueOps.Object,
+            Callbacks = _mockCallbacks.Object,
+            RepoProvider = _mockRepoProvider.Object,
+            PipelineProvider = _mockPipelineProvider.Object,
+            QualityGateConfigs = new List<QualityGateConfiguration>()
+        };
 }
 
 
@@ -916,7 +916,7 @@ public class QualityGateExecutorCiNotStartedExhaustionTests
                 It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockCallbacks.Setup(c => c.FinalizePullRequest(
-                It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
     }
 

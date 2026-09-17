@@ -46,7 +46,7 @@ public interface IPipelineCallbacks
     Task RemoveAllAgentLabels(IssueIdentifier issueIdentifier, CancellationToken ct);
 
     /// <summary>Creates a pull request for the completed pipeline run.</summary>
-    Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct);
+    Task CreatePullRequest(PipelineRun run, bool isDraft, CancellationToken ct);
 
     /// <summary>
     /// Creates a draft pull request if one does not already exist for this run.
@@ -61,7 +61,7 @@ public interface IPipelineCallbacks
     /// Finalizes an existing draft pull request: updates the body with quality gate results
     /// and marks it ready for review (or leaves it as draft if quality gates failed).
     /// </summary>
-    Task FinalizePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct);
+    Task FinalizePullRequest(PipelineRun run, bool isDraft, CancellationToken ct);
 
     /// <summary>Reports brain sync result immediately after the brain sync step completes.</summary>
     Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount);
