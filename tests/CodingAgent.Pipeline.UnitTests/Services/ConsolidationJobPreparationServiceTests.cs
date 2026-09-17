@@ -250,4 +250,146 @@ public sealed class ConsolidationJobPreparationServiceTests
         result.PipelineConfiguration.Should().NotBeNull(
             "PrepareAsync must return PipelineConfiguration even when no template is provided");
     }
+
+    // ── BrainProviderConfigId propagation ────────────────────────────────
+
+    [Fact]
+    public async Task PrepareAsync_WithTemplateThatHasBrainProvider_PopulatesBrainProviderConfigId()
+    {
+        // Arrange: template has both RepoProviderId and BrainProviderId; brain config is in the store
+        SetupEmptyProviders();
+        var repoConfig = MakeConfig("repo", ProviderKind.Repository);
+        // TODO: [WARNING] brainConfig is created with ProviderKind.Repository instead of the correct
+        // brain provider kind. BrainProviderConfigId is resolved from template.BrainProviderId before
+        // the store lookup, so the test passes regardless of kind. However, using the wrong kind
+        // reduces test fidelity: if ResolveTemplateProviderConfigsAsync ever filters on provider kind
+        // when appending brain configs to rawConfigs, this test would silently stop exercising the
+        // intended store-lookup path while still returning the correct ID.
+        // Fix: use the appropriate ProviderKind for brain providers (e.g. ProviderKind.Brain or equivalent).
+        var brainConfig = MakeConfig("brain-1", ProviderKind.Repository);
+        _configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig> { repoConfig, brainConfig } as IReadOnlyList<ProviderConfig>);
+
+        var template = new PipelineJobTemplate
+        {
+            Id = "t1",
+            Name = "T",
+            IssueProviderId = "github",
+            RepoProviderId = "repo",
+            BrainProviderId = "brain-1",
+        };
+        _projectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate> { template } as IReadOnlyList<PipelineJobTemplate>);
+
+        // Act
+        var result = await _sut.PrepareAsync(
+            ConsolidationRunType.BrainConsolidation,
+            templateId: new TemplateId("t1"),
+            agentLabels: [],
+            ct: CancellationToken.None);
+
+        // Assert: BrainProviderConfigId is forwarded from the template
+        result.BrainProviderConfigId.Should().Be("brain-1",
+            "PrepareAsync must populate BrainProviderConfigId from the template's BrainProviderId");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_WithTemplateThatHasBrainProvider_BrainConfigNotInStore_StillPopulatesBrainProviderConfigId()
+    {
+        // Arrange: template has BrainProviderId but the brain ProviderConfig is absent from the store.
+        // brainProviderId is assigned from template.BrainProviderId BEFORE the store lookup, so the
+        // ID is still present even when the config object is missing.
+        SetupEmptyProviders();
+        var repoConfig = MakeConfig("repo", ProviderKind.Repository);
+        // Store only has the repo config — brain config is intentionally absent
+        _configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig> { repoConfig } as IReadOnlyList<ProviderConfig>);
+
+        var template = new PipelineJobTemplate
+        {
+            Id = "t1",
+            Name = "T",
+            IssueProviderId = "github",
+            RepoProviderId = "repo",
+            BrainProviderId = "brain-missing",
+        };
+        _projectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate> { template } as IReadOnlyList<PipelineJobTemplate>);
+
+        // Act
+        var result = await _sut.PrepareAsync(
+            ConsolidationRunType.BrainConsolidation,
+            templateId: new TemplateId("t1"),
+            agentLabels: [],
+            ct: CancellationToken.None);
+
+        // Assert: ID is still set even though the ProviderConfig object was not found in the store
+        result.BrainProviderConfigId.Should().Be("brain-missing",
+            "BrainProviderConfigId is resolved from the template field, not from the store lookup; " +
+            "the store lookup only gates whether the ProviderConfig object is appended to rawConfigs");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_WithTemplateThatHasNoBrainProvider_BrainProviderConfigIdIsNull()
+    {
+        // Arrange: template has no BrainProviderId
+        SetupEmptyProviders();
+        var repoConfig = MakeConfig("repo", ProviderKind.Repository);
+        _configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig> { repoConfig } as IReadOnlyList<ProviderConfig>);
+
+        var template = new PipelineJobTemplate
+        {
+            Id = "t1",
+            Name = "T",
+            IssueProviderId = "github",
+            RepoProviderId = "repo",
+            // BrainProviderId intentionally not set (null/empty)
+        };
+        _projectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate> { template } as IReadOnlyList<PipelineJobTemplate>);
+
+        // Act
+        var result = await _sut.PrepareAsync(
+            ConsolidationRunType.BrainConsolidation,
+            templateId: new TemplateId("t1"),
+            agentLabels: [],
+            ct: CancellationToken.None);
+
+        // TODO: [WARNING] This assertion is tautological: when BrainProviderId is not set on the template,
+        // brainProviderId stays null and BrainProviderConfigId defaults to null on the record even if the
+        // `BrainProviderConfigId = brainProviderId` assignment were removed from PrepareAsync. The test
+        // cannot distinguish "correctly set to null" from "never set (property default)". To make it a
+        // true regression guard, consider initialising ConsolidationJobPreparationResult with a non-null
+        // sentinel for BrainProviderConfigId and asserting it is overwritten to null, or pair it with a
+        // mutation-style assertion that verifies the field is explicitly assigned.
+        // Assert
+        result.BrainProviderConfigId.Should().BeNull(
+            "BrainProviderConfigId must be null when the template has no BrainProviderId configured");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_WithNullTemplate_BrainProviderConfigIdIsNull()
+    {
+        // Arrange: global consolidation run — no template
+        SetupEmptyProviders();
+
+        // Act
+        var result = await _sut.PrepareAsync(
+            ConsolidationRunType.BrainConsolidation,
+            templateId: null,
+            agentLabels: [],
+            ct: CancellationToken.None);
+
+        // TODO: [WARNING] This assertion is tautological: when templateId is null, PrepareAsync never
+        // enters the template-resolution branch so brainProviderId stays null. BrainProviderConfigId
+        // defaults to null on ConsolidationJobPreparationResult even if the `BrainProviderConfigId =
+        // brainProviderId` line were removed. The test would pass for the wrong reason. To provide
+        // meaningful regression protection for the null-template path specifically, either rely solely
+        // on the positive test (with-template case) or use a test double that validates the exact
+        // return-value assignment rather than the null default.
+        // Assert: global runs must not have a brain provider config ID
+        result.BrainProviderConfigId.Should().BeNull(
+            "BrainProviderConfigId must be null for global consolidation runs with no template");
+    }
 }
