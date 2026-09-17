@@ -1794,6 +1794,173 @@ public sealed class ReconciliationLoopErrorTests
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // ─── Items = null guard (Issue #2643) ─────────────────────────────────────
+
+    /// <summary>
+    /// Regression guard (Issue #2643): when ListJobsAsync returns V1JobList { Items = null }
+    /// (valid K8s API behaviour on an empty cluster), EnforceDispatchedTimeoutAsync must not
+    /// throw a NullReferenceException. Before the fix the NRE was caught by the outer try/catch
+    /// and the entire sweep was silently skipped.
+    ///
+    /// Uses K8sJobName = null so the label-lookup branch (Site 2) is also exercised in addition
+    /// to the liveJobNames.Select call (Site 1). PostStatusAsync must fire because the item has
+    /// no matching K8s Job (null Items → empty set → isLive = false → DispatchTimeout).
+    /// </summary>
+    [Fact]
+    public async Task EnforceDispatchedTimeoutAsync_WhenItemsIsNull_DoesNotThrow()
+    {
+        var id = Guid.NewGuid();
+        var dispatchedItem = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Dispatched,
+            K8sJobName = null, // ensures the label-lookup branch (Site 2) is reached
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatPodConnectTimeoutSeconds + 1)),
+            AgentSelector = "dotnet10,opencode",
+            IssueIdentifier = "owner/repo#1"
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds),
+                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dispatchedItem]);
+
+        // K8s returns a valid response but with Items = null (the bug trigger)
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = null });
+
+        _workItemClient.Setup(c => c.PostStatusAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var loop = CreateLoop();
+        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+
+        // null Items treated as empty → no live job found → item is orphaned → must be marked Failed
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "DispatchTimeout"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Regression guard (Issue #2643): when the label-selector ListJobsAsync returns
+    /// V1JobList { Items = null } (valid K8s API behaviour), EnforceTimeoutsAsync must not
+    /// throw a NullReferenceException. Before the fix the NRE at labelJobs.Items.FirstOrDefault()
+    /// (Site 3) was caught by the per-item try/catch and logged as an error, but the item was
+    /// never marked Failed. After the fix the method posts Timeout status and skips deletion.
+    /// </summary>
+    [Fact]
+    public async Task EnforceTimeoutsAsync_WhenLabelJobsItemsIsNull_DoesNotThrow()
+    {
+        var id = Guid.NewGuid();
+        const int itemTimeoutSeconds = 1800;
+
+        var runningItem = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Running,
+            K8sJobName = null, // routes to label-selector path (Site 3)
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(itemTimeoutSeconds + 1)),
+            AgentSelector = "dotnet10,opencode",
+            IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = itemTimeoutSeconds
+        };
+
+        // TODO: 60 is the value of the private constant TimeoutCanaryMinAgeSeconds in ReconciliationLoop.
+        // If that constant ever changes, this matcher will silently not match and GetActiveAsync will
+        // return an empty list, making the test vacuously pass (PostStatusAsync never called but
+        // Times.Once would then fail — so the test is not silently green, but the failure would appear
+        // unrelated to the constant change). Consider exposing the constant via a public property or
+        // InternalsVisibleTo so the test can reference it directly rather than hardcoding 60.
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([runningItem]);
+
+        // Label-selector call returns a valid response but with Items = null (the bug trigger)
+        // TODO: This mock only intercepts calls whose label-selector contains "caa/work-item-id".
+        // The ReconciliationLoopErrorTests constructor does NOT set a catch-all ListJobsAsync default,
+        // so any unmatched ListJobsAsync call (e.g. the "app.kubernetes.io/managed-by=caa-orchestrator"
+        // selector used by EnforceDispatchedTimeoutAsync) will return null from Moq for the V1JobList
+        // reference itself — not null Items, but a null list object — which could cause an NRE on a
+        // different code path. EnforceTimeoutsAsync does not currently call that selector, so this is
+        // safe today. If EnforceTimeoutsAsync is ever refactored to add a bulk pre-fetch, add a
+        // catch-all default here (ReturnsAsync(new V1JobList { Items = [] })) to cover that path.
+        _k8sClient.Setup(c => c.ListJobsAsync(
+                _options.Namespace,
+                It.Is<string>(s => s.Contains("caa/work-item-id")),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = null });
+
+        _workItemClient.Setup(c => c.PostStatusAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // null Items treated as empty → no job resolved → status posted, deletion skipped
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // No job name resolved from null Items → DeleteJobAsync must not be called
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Regression guard (Issue #2643): when ListJobsAsync returns V1JobList { Items = null },
+    /// ReconcileOnceAsync must not throw a NullReferenceException. Before the fix the NRE on the
+    /// foreach at jobs.Items (Site 4) would propagate out of the try block and return early,
+    /// skipping all job processing. After the fix the foreach iterates an empty set cleanly.
+    /// </summary>
+    [Fact]
+    public async Task ReconcileOnceAsync_WhenItemsIsNull_DoesNotThrow()
+    {
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = null });
+
+        var loop = CreateLoop();
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        // null Items treated as empty → no jobs to process → no status updates
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        // Confirm ListJobsAsync was actually called (guards against vacuous Times.Never pass)
+        _k8sClient.Verify(c => c.ListJobsAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Regression guard (Issue #2643): when ListJobsAsync returns V1JobList { Items = null },
+    /// CleanupOrphansAsync must not throw a NullReferenceException. Before the fix the NRE on the
+    /// foreach at jobs.Items (Site 5) would propagate out of the try block and return early,
+    /// skipping all orphan cleanup. After the fix the foreach iterates an empty set cleanly.
+    /// </summary>
+    [Fact]
+    public async Task CleanupOrphansAsync_WhenItemsIsNull_DoesNotThrow()
+    {
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = null });
+
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var loop = CreateLoop();
+        await loop.CleanupOrphansAsync(CancellationToken.None);
+
+        // null Items treated as empty → no orphans to delete
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        // Confirm ListJobsAsync was actually called (guards against vacuous Times.Never pass)
+        _k8sClient.Verify(c => c.ListJobsAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
 }
 
 // ─── Metric / telemetry tests ─────────────────────────────────────────────────

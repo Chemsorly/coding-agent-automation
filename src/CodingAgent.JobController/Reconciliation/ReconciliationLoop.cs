@@ -119,7 +119,7 @@ public sealed class ReconciliationLoop
             return;
         }
 
-        foreach (var job in jobs.Items)
+        foreach (var job in jobs.Items ?? [])
         {
             if (ct.IsCancellationRequested) break;
             await HandleJobAsync(job, ct);
@@ -273,13 +273,13 @@ public sealed class ReconciliationLoop
                         labelJobs = new V1JobList { Items = [] };
                     }
 
-                    // TODO: V1JobList.Items can be null when the K8s API returns an empty result
+                    // V1JobList.Items can be null when the K8s API returns an empty result
                     // without the "items" field in the JSON body (the KubernetesClient deserialiser
                     // leaves Items null rather than an empty list in that case). Use
                     // (labelJobs.Items ?? []).FirstOrDefault() here to avoid a NullReferenceException
                     // on a successful call that returns null Items. The catch above only guards the
                     // exception path; a null Items on a successful response bypasses it entirely.
-                    var resolved = labelJobs.Items.FirstOrDefault();
+                    var resolved = (labelJobs.Items ?? []).FirstOrDefault();
                     if (resolved?.Metadata?.Name is null)
                     {
                         Log.Warning("WorkItem {Id} timed out but no K8s Job found via label selector caa/work-item-id={WorkItemId} — job already deleted or never started", item.Id, item.Id);
@@ -347,13 +347,13 @@ public sealed class ReconciliationLoop
                 _options.Namespace,
                 "app.kubernetes.io/managed-by=caa-orchestrator",
                 ct);
-            // TODO: V1JobList.Items can be null when the K8s API omits the "items" field for an
+            // V1JobList.Items can be null when the K8s API omits the "items" field for an
             // empty result set. Use (liveJobs.Items ?? []).Select(...) here to guard against a
             // NullReferenceException on a successful API call that returns null Items. If Items is
-            // null the NRE is currently caught by the catch below, which returns early — a spurious
-            // skip on an otherwise-successful API call. (Same pattern needed at the liveJobs.Items
+            // null the NRE was previously caught by the catch below, which returned early — a spurious
+            // skip on an otherwise-successful API call. (Same null-guard is applied at the liveJobs.Items
             // dereference further below in the foreach for the label-based null-K8sJobName branch.)
-            liveJobNames = liveJobs.Items.Select(j => j.Metadata?.Name ?? "").ToHashSet(StringComparer.Ordinal);
+            liveJobNames = (liveJobs.Items ?? []).Select(j => j.Metadata?.Name ?? "").ToHashSet(StringComparer.Ordinal);
         }
         catch (Exception ex)
         {
@@ -382,12 +382,12 @@ public sealed class ReconciliationLoop
             }
             else
             {
-                // TODO: If the TODO at the liveJobNames assignment above is resolved by using
-                // (liveJobs.Items ?? []).Select(...), apply the same null-guard here:
-                // (liveJobs.Items ?? []).FirstOrDefault(j => ...) to ensure consistency. Currently
-                // if Items is null, the NRE would have already fired at the Select() call above,
-                // so this is a secondary concern — but both sites should be fixed together.
-                var resolvedJob = liveJobs.Items.FirstOrDefault(j =>
+                // The null-guard (liveJobs.Items ?? []).Select(...) applied above ensures
+                // liveJobNames is always a valid empty set rather than causing an NRE when
+                // Items is null. Apply the same null-guard here for consistency:
+                // (liveJobs.Items ?? []).FirstOrDefault(j => ...) covers the case where Items
+                // is null on a successful K8s API call (Items null → empty → no match → isLive=false).
+                var resolvedJob = (liveJobs.Items ?? []).FirstOrDefault(j =>
                 {
                     var labels = j.Metadata?.Labels;
                     return labels is not null
@@ -452,7 +452,7 @@ public sealed class ReconciliationLoop
 
         var activeIds = activeItems.Select(i => i.Id).ToHashSet();
 
-        foreach (var job in jobs.Items)
+        foreach (var job in jobs.Items ?? [])
         {
             if (ct.IsCancellationRequested) break;
 
