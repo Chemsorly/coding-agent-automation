@@ -346,11 +346,11 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         // 404/410 are handled above and fall through with ErrorCategory.None (the default).
         var category = response.StatusCode switch
         {
-            HttpStatusCode.TooManyRequests    => AgentErrorCategory.ProviderRateLimit,   // 429
+            HttpStatusCode.TooManyRequests => AgentErrorCategory.ProviderRateLimit,   // 429
             HttpStatusCode.ServiceUnavailable => AgentErrorCategory.ProviderOverload,    // 503
-            HttpStatusCode.Unauthorized       => AgentErrorCategory.PermanentAuthFailure, // 401
-            HttpStatusCode.Forbidden          => AgentErrorCategory.PermanentAuthFailure, // 403
-            _                                 => AgentErrorCategory.None
+            HttpStatusCode.Unauthorized => AgentErrorCategory.PermanentAuthFailure, // 401
+            HttpStatusCode.Forbidden => AgentErrorCategory.PermanentAuthFailure, // 403
+            _ => AgentErrorCategory.None
         };
 
         return new AgentResult
