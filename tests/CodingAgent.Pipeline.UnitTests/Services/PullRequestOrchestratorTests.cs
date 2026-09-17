@@ -317,7 +317,10 @@ public class PullRequestOrchestratorTests
         var run = CreateRun();
         run.LinkedPullRequest = new LinkedPullRequest
         {
-            Number = 10, BranchName = "feature/x", Url = "https://github.com/org/repo/pull/10", IsDraft = false
+            Number = 10,
+            BranchName = "feature/x",
+            Url = "https://github.com/org/repo/pull/10",
+            IsDraft = false
         };
 
         var result = await _sut.CreateDraftPrIfNotExistsAsync(run, _mockRepo.Object, CancellationToken.None);

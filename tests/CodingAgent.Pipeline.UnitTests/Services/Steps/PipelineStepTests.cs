@@ -582,8 +582,11 @@ public class PipelineStepTests
     {
         _run.LinkedPullRequest = new LinkedPullRequest
         {
-            Number = 5, BranchName = "feature/auto-42", Url = "http://pr/5",
-            IsDraft = false, ReviewComments = []
+            Number = 5,
+            BranchName = "feature/auto-42",
+            Url = "http://pr/5",
+            IsDraft = false,
+            ReviewComments = []
         };
 
         var step = new GenerateCodeStep();
