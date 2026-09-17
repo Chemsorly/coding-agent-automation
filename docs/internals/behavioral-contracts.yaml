@@ -1,0 +1,21 @@
+# Behavioral contracts for the pipeline's code-review orchestration.
+# Each entry describes a specific scenario and the expected behavior.
+# These are human-readable assertions — not executable tests.
+# See docs/label-routing.md for the user-facing documentation of these behaviors.
+
+- component: "CodeReviewOrchestrator"
+  scenario: "No reviewer configurations match the job's labels (or all are disabled)"
+  assertion: >
+    When no reviewer configs match, review phase is skipped with Warning log and
+    _reviewSkipped counter increment (warn-and-skip, no fallback to DefaultReviewAgents).
+    See docs/label-routing.md — "Reviewer Configurations" section.
+  observable_signals:
+    - log_level: Warning
+      message_pattern: "Pipeline {RunId} no reviewer configurations matched — review phase skipped"
+    - metric: "pipeline.review.skipped"
+      increment: 1
+  option: "B"
+  last_verified: "2026-09-17"
+  related_issues:
+    - "#2454"
+    - "#2638"

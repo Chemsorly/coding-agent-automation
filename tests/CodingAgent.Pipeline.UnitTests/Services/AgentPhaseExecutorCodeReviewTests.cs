@@ -126,6 +126,12 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
                 "To restore review, add or re-enable a reviewer configuration in Settings → Reviewers.",
                 It.IsAny<string>()),
             Times.Once);
+        // TODO [WARNING]: This test does not assert that _reviewSkipped counter is incremented. The
+        // behavioral contract (docs/internals/behavioral-contracts.yaml) lists "pipeline.review.skipped"
+        // as a required observable signal alongside the Warning log. A refactor that removes the
+        // _reviewSkipped.Add(1, ...) call would leave this test green while silently breaking the contract.
+        // Add a _mockReviewSkipped.Verify(..., Times.Once) assertion here. See WhenFlattenedAgentsIsEmpty_IncrementsReviewSkippedCounter
+        // for the existing pattern. (TestQuality review, issue #2638)
         _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
     }
 
@@ -143,6 +149,10 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
                 "To restore review, add or re-enable a reviewer configuration in Settings → Reviewers.",
                 It.IsAny<string>()),
             Times.Once);
+        // TODO [WARNING]: This test does not assert that _reviewSkipped counter is incremented. The
+        // behavioral contract (docs/internals/behavioral-contracts.yaml) lists "pipeline.review.skipped"
+        // as a required observable signal alongside the Warning log. Add a _mockReviewSkipped.Verify(...)
+        // assertion here, mirroring WhenFlattenedAgentsIsEmpty_IncrementsReviewSkippedCounter. (TestQuality review, issue #2638)
         _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
     }
 
