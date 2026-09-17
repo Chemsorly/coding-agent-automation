@@ -66,9 +66,7 @@ public partial class QualityGateExecutor
             // Create draft PR if not exists — ensures CI results (coverage comments) land on the PR
             await callbacks.CreateDraftPrIfNotExists(run, ct);
 
-            string? commitSha = null;
-            try { commitSha = await context.RepoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, ct); }
-            catch (Exception ex) { _logger.Debug(ex, "Pipeline {RunId} could not read HEAD commit SHA", run.RunId); }
+            string? commitSha = await TryReadHeadShaAsync(context, "could not read HEAD commit SHA", ct);
 
             callbacks.EmitOutputLine("⏳ Waiting for external CI...");
             var ciPollStopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -248,21 +246,7 @@ public partial class QualityGateExecutor
                && run.WorkspacePath != null
                && branchMovedRetries < config.CiCancelledMoveMaxRetries)
         {
-            string? currentHead = null;
-            try { currentHead = await context.RepoProvider.GetHeadCommitShaAsync(run.WorkspacePath, pollCt); }
-            catch (OperationCanceledException) { throw; }
-            // TODO [WARNING]: catch (Exception) here swallows any non-cancellation exception from
-            // GetHeadCommitShaAsync, logging it at Debug and leaving currentHead null (which causes
-            // the break below). This is intentional for transient errors, but differs from the
-            // explicit catch (OperationCanceledException) { throw; } guard used in WaitForCiRunsToAppearAsync.
-            // Consider aligning the pattern if GetHeadCommitShaAsync gains non-transient failure modes.
-            // Additionally, if GetHeadCommitShaAsync internally uses Task.WhenAll or similar, it may throw
-            // AggregateException wrapping OperationCanceledException. The explicit OCE guard above does NOT
-            // catch AggregateException, so such a cancellation would be swallowed here — leaving currentHead
-            // null and causing the loop to break (falling through to infra-retry) instead of propagating
-            // cancellation. Consider unwrapping AggregateException or calling ex.IsCancellation() if the
-            // provider implementation ever uses aggregate tasks internally.
-            catch (Exception ex) { _logger.Debug(ex, "Pipeline {RunId} could not read HEAD after Cancelled", run.RunId); }
+            var currentHead = await TryReadHeadShaAsync(context, "could not read HEAD after Cancelled", pollCt);
 
             if (currentHead == null || currentHead == pollSha)
                 break;  // HEAD unchanged — genuine pre-emption or unreadable HEAD, fall through to infra-retry path
@@ -360,9 +344,7 @@ public partial class QualityGateExecutor
             config.PipelineInjectedPaths);
         await context.RepoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, forcePush: true, ct);
 
-        string? retrySha = null;
-        try { retrySha = await context.RepoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, ct); }
-        catch (Exception ex) { _logger.Debug(ex, "Pipeline {RunId} could not read HEAD commit SHA for infra retry", run.RunId); }
+        var retrySha = await TryReadHeadShaAsync(context, "could not read HEAD commit SHA for infra retry", ct);
 
         callbacks.EmitOutputLine("⏳ Waiting for external CI (infrastructure retry)...");
         var ciStatus = await PollCiWithNotStartedRetryAsync(context, retrySha, config, callbacks, ct);
@@ -511,8 +493,7 @@ public partial class QualityGateExecutor
             await context.RepoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, forcePush: true, ct);
 
             // Update the poll SHA to the new commit
-            try { pollSha = await context.RepoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, ct); }
-            catch (Exception shaEx) { _logger.Debug(shaEx, "Pipeline {RunId} could not read HEAD after re-push", run.RunId); }
+            pollSha = await TryReadHeadShaAsync(context, "could not read HEAD after re-push", ct);
         }
 
         // Should not reach here — the attempt >= maxRetries branch always returns.
