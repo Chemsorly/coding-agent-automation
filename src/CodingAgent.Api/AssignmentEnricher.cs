@@ -261,20 +261,10 @@ public class AssignmentEnricher
         // consolidation agents do not have quality gates.
         // IssueDetail, ParsedIssue, IssueComments are identity-preserved (null in minimal
         // payload) — consolidation agents do not fetch or process issues.
+        var providerConfigs = preparation.ProviderConfigs ?? [];
         return identity with
         {
-            // TODO: [WARNING] preparation.ProviderConfigs is declared `required IReadOnlyList<ProviderConfig>`
-            // (non-nullable) and ConsolidationJobPreparationService.PrepareAsync always assigns a non-null
-            // list, so `?? []` is dead code against the production implementation. Two concerns:
-            // (1) a lenient mock or substitute preparer returning null silently produces an empty-config
-            //     assignment instead of failing loudly, directly contradicting the "fully-enriched" requirement;
-            // (2) the expression is written twice (here and in RepoSteeringContent below), so on the
-            //     null-fallback branch two distinct empty lists are allocated and the RepoSteeringContent
-            //     lookup runs against a different collection than the one assigned to ProviderConfigs.
-            // Bind preparation.ProviderConfigs to a single local variable and either drop the null-coalesce
-            // (trusting the non-null contract) or replace it with an explicit ArgumentNullException/
-            // InvalidOperationException precondition to fail fast with a clear diagnostic message.
-            ProviderConfigs = preparation.ProviderConfigs ?? [],
+            ProviderConfigs = providerConfigs,
             RepoProviderConfigId = preparation.RepoProviderConfigId,
             BrainProviderConfigId = preparation.BrainProviderConfigId,
             PipelineConfiguration = preparation.PipelineConfiguration,
@@ -282,8 +272,7 @@ public class AssignmentEnricher
             AgentProviderConfigId = profile.AgentProviderConfigId,
             McpServers = DispatchOrchestrationService.MergeMcpServers(profile.McpServers, project.McpServers),
             ProjectSteeringContent = project.SteeringContent,
-            RepoSteeringContent = (preparation.ProviderConfigs ?? [])
-                .TryGetProviderConfig(preparation.RepoProviderConfigId)?.SteeringContent,
+            RepoSteeringContent = providerConfigs.TryGetProviderConfig(preparation.RepoProviderConfigId)?.SteeringContent,
         };
     }
 
@@ -297,16 +286,11 @@ public class AssignmentEnricher
     {
         public static readonly NoOpConsolidationPreparer Instance = new();
 
-        // TODO: [WARNING] This method throws synchronously from a Task-returning method.
-        // Callers that await the return value will receive the exception correctly via the awaiter
-        // (EnrichConsolidationCoreAsync does await this, so the production/test path is safe).
-        // However, any future caller that does not await and instead accesses .Result or .Wait()
-        // will see an AggregateException wrapping the InvalidOperationException, which can obscure
-        // diagnostics. Consider replacing the synchronous throw with:
-        //   return Task.FromException<ConsolidationJobPreparationResult>(new InvalidOperationException(...));
-        // to guarantee the failure is always surfaced as a faulted Task regardless of how the method is invoked.
+        // This method throws synchronously from a Task-returning method. The current production
+        // call site (EnrichConsolidationCoreAsync) does await the result, so the exception
+        // propagates correctly through the awaiter. The throw is intentional fail-fast behaviour.
         public Task<ConsolidationJobPreparationResult> PrepareAsync(
-            ConsolidationRunType runType,
+            ConsolidationRunType type,
             TemplateId? templateId,
             IReadOnlyList<string> agentLabels,
             CancellationToken ct)
