@@ -16,6 +16,9 @@ public sealed record ConsolidationJobPreparationResult
     /// <summary>Resolved repo provider config ID (from template). Empty if no template/repo.</summary>
     public required string RepoProviderConfigId { get; init; }
 
+    /// <summary>Resolved brain provider config ID (from template). Null if no template or no brain provider configured.</summary>
+    public string? BrainProviderConfigId { get; init; }
+
     /// <summary>
     /// Pipeline configuration resolved via <see cref="Pipeline.Services.PipelineConfigurationResolver.ResolveAsync"/>,
     /// with project overrides and template overrides applied. Never null — falls back to global
