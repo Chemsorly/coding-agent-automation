@@ -367,14 +367,13 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
     /// <summary>
     /// Updates an existing comment by ID via the orchestrator.
     /// </summary>
-    public Task UpdateCommentAsync(IssueIdentifier issueIdentifier, string commentId, string body, CancellationToken ct)
+    public Task UpdateCommentAsync(IssueIdentifier issueIdentifier, long commentId, string body, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
-        ArgumentNullException.ThrowIfNull(commentId);
         ArgumentNullException.ThrowIfNull(body);
 
         return _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync(
-                HubMethodNames.RequestUpdateComment, _jobId, issueIdentifier, commentId, body, token), ct).AsTask();
+                HubMethodNames.RequestUpdateComment, _jobId, issueIdentifier, commentId.ToString(), body, token), ct).AsTask();
     }
 }
