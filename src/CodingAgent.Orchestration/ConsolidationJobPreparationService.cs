@@ -93,6 +93,7 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
         {
             ProviderConfigs = vendedConfigs,
             RepoProviderConfigId = repoProviderId,
+            BrainProviderConfigId = brainProviderId,
             PipelineConfiguration = pipelineConfiguration
         };
     }
