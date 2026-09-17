@@ -74,6 +74,12 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         PipelineConfiguration result;
         if (entity?.Configuration is not null)
         {
+            // TODO: PipelineConfiguration is still deserialized with JsonOptions (PipelineJsonOptions.Default),
+            // which lacks PropertyNameCaseInsensitive=true. If PipelineConfiguration contains any
+            // camelCase-stored fields that are silently nulled during deserialization (the same class of
+            // bug fixed in DeserializeFromEntity for issue #2633), those fields will not be covered by
+            // this path. Switching to PipelineJsonOptions.Lenient here would close that gap, but the
+            // impact of changing this deserialization path should be assessed separately.
             result = JsonSerializer.Deserialize<PipelineConfiguration>(
                 entity.Configuration, JsonOptions)
                 ?? new PipelineConfiguration();
@@ -136,6 +142,9 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             PipelineConfiguration current;
             if (entity?.Configuration is not null)
             {
+                // TODO: Same as LoadPipelineConfigAsync — PipelineConfiguration is deserialized
+                // with JsonOptions (PipelineJsonOptions.Default), which lacks PropertyNameCaseInsensitive=true.
+                // See the comment in LoadPipelineConfigAsync for details.
                 var deserialized = JsonSerializer.Deserialize<PipelineConfiguration>(
                     entity.Configuration, JsonOptions);
                 if (deserialized is null)
@@ -883,10 +892,22 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         entity.Settings = SerializeToJson(synced);
     }
 
+    // TODO: PipelineJsonOptions.Lenient adds PropertyNameCaseInsensitive=true (required for
+    // correct camelCase JSONB deserialization) but does NOT include TimeSpanJsonConverter.
+    // The four types currently passed through this method (PipelineJobTemplate, AgentProfile,
+    // QualityGateConfiguration, ReviewerConfiguration) have no TimeSpan properties, so there
+    // is no active defect. However, if any of these models gain a TimeSpan property in the
+    // future, STJ will throw a JsonException at runtime (not silently null the property) for
+    // an unrecognised TimeSpan string format — this would surface as an unhandled deserialization
+    // exception in LoadAllTemplatesAsync / LoadTemplatesForProjectAsync and take those load paths
+    // down entirely, with no compile-time warning. Consider replacing Lenient with a dedicated
+    // read-options instance that mirrors Lenient but also includes TimeSpanJsonConverter to
+    // eliminate this future-regression risk. If TimeSpan support is needed sooner, either add
+    // TimeSpanJsonConverter to a dedicated read-options instance or extend PipelineJsonOptions.Lenient.
     private static T? DeserializeFromEntity<T>(string? json) where T : class
     {
         if (json is null) return null;
-        return JsonSerializer.Deserialize<T>(json, JsonOptions);
+        return JsonSerializer.Deserialize<T>(json, PipelineJsonOptions.Lenient);
     }
 
     private static ProviderConfig? DeserializeProviderConfig(ProviderConfigEntity entity)

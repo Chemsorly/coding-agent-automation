@@ -365,6 +365,100 @@ public sealed class ConsolidationDispatcherTests
         // RepoProviderId to verify that the dispatcher selects by run.TemplateId, not by position.
     }
 
+    // ── BrainProviderConfigId propagation (regression for issue #2633) ─────
+
+    /// <summary>
+    /// Regression test for issue #2633: when a template-scoped consolidation run has a
+    /// BrainProviderId on the template, the dispatcher must forward it as BrainProviderConfigId
+    /// on the JobDistributionRequest. Before the fix, BrainProviderConfigId was entirely absent
+    /// from the request construction, so WorkItems.Payload always had "brainProviderConfigId": null,
+    /// causing BrainConsolidation jobs to throw HubException at token-vend time.
+    /// </summary>
+    [Fact]
+    public async Task DispatchRunAsync_TemplateScopedRun_PopulatesBrainProviderConfigIdFromTemplate()
+    {
+        SetupDefaults();
+        const string expectedBrainProviderId = "61eaea4b-fa65-41b4-a142-1448771eba17";
+        _projectStore
+            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[]
+            {
+                new PipelineJobTemplate
+                {
+                    Id = "tmpl-1",
+                    Name = "Test Template",
+                    IssueProviderId = "issue-provider-1",
+                    RepoProviderId = "dab78805-69da-48ad-a1c2-763befcd3cbd",
+                    BrainProviderId = expectedBrainProviderId
+                }
+            });
+
+        JobDistributionRequest? captured = null;
+        _workDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDistributionRequest, CancellationToken>((r, _) => captured = r)
+            .ReturnsAsync(new DistributionResult(true, "wi-1", null));
+
+        var run = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.BrainConsolidation,
+            TemplateId = "tmpl-1",
+            Status = ConsolidationRunStatus.Queued,
+            StartedAtUtc = DateTimeOffset.UtcNow
+        };
+
+        var sut = CreateSut();
+        await sut.DispatchRunAsync(run, CancellationToken.None);
+
+        Assert.NotNull(captured);
+        Assert.Equal(expectedBrainProviderId, captured!.BrainProviderConfigId);
+    }
+
+    /// <summary>
+    /// When the template has no BrainProviderId (null), BrainProviderConfigId in the request
+    /// must be null — this is correct for non-brain-enabled templates and must not throw.
+    /// </summary>
+    [Fact]
+    public async Task DispatchRunAsync_TemplateScopedRun_NullBrainProviderId_BrainProviderConfigIdIsNull()
+    {
+        SetupDefaults();
+        _projectStore
+            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[]
+            {
+                new PipelineJobTemplate
+                {
+                    Id = "tmpl-no-brain",
+                    Name = "No Brain Template",
+                    IssueProviderId = "issue-provider-1",
+                    RepoProviderId = "dab78805-69da-48ad-a1c2-763befcd3cbd",
+                    BrainProviderId = null   // no brain configured
+                }
+            });
+
+        JobDistributionRequest? captured = null;
+        _workDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDistributionRequest, CancellationToken>((r, _) => captured = r)
+            .ReturnsAsync(new DistributionResult(true, "wi-1", null));
+
+        var run = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.RefactoringDetection,
+            TemplateId = "tmpl-no-brain",
+            Status = ConsolidationRunStatus.Queued,
+            StartedAtUtc = DateTimeOffset.UtcNow
+        };
+
+        var sut = CreateSut();
+        await sut.DispatchRunAsync(run, CancellationToken.None);
+
+        Assert.NotNull(captured);
+        Assert.Null(captured!.BrainProviderConfigId);
+    }
+
     /// <summary>
     /// When a run has a TemplateId but the template is not found in the store (e.g. deleted),
     /// RepoProviderConfigId must fall back to "" — same as before the fix; the job will fail
@@ -400,6 +494,10 @@ public sealed class ConsolidationDispatcherTests
         Assert.NotNull(captured);
         // Template not found → fallback to "" (pre-existing degraded behaviour, not a regression)
         Assert.Equal("", captured!.RepoProviderConfigId);
+        // TODO: Add assertion for BrainProviderConfigId == null in the template-not-found scenario.
+        // When a template lookup fails, brainProviderId remains null (initialized before the if block).
+        // Without this assertion, a regression that accidentally propagates a stale or default brain
+        // provider ID in this path would go undetected.
         // TODO: This assertion does not distinguish "lookup was performed but found nothing" from
         // "lookup was skipped entirely". Add _projectStore.Verify(s => s.LoadAllTemplatesAsync(...),
         // Times.Once) to confirm that the store was actually consulted when TemplateId is non-empty.
@@ -435,6 +533,11 @@ public sealed class ConsolidationDispatcherTests
 
         Assert.NotNull(captured);
         Assert.Equal("", captured!.RepoProviderConfigId);
+        // TODO: Add assertion: Assert.Null(captured!.BrainProviderConfigId) for global runs.
+        // The global-run code path initializes brainProviderId = null outside the TemplateId
+        // guard block, so BrainProviderConfigId should always be null here. A future refactor
+        // that accidentally reads a default brain provider for global runs would not be caught
+        // without this assertion.
 
         // Must not call LoadAllTemplatesAsync — no TemplateId, no lookup needed
         _projectStore.Verify(

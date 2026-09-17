@@ -534,6 +534,152 @@ public class PostgresConfigurationStoreTests : IDisposable
         loaded.Should().BeEmpty();
     }
 
+    // ── BrainProviderId deserialization (regression for issue #2633) ──────
+
+    /// <summary>
+    /// Regression test for issue #2633: the primary acceptance criterion.
+    /// Seeds the InMemory DbContext directly with a raw camelCase JSON entity (bypassing
+    /// SaveTemplateAsync), mimicking data that already exists in production JSONB columns.
+    /// Before the fix, DeserializeFromEntity used PipelineJsonOptions.Default which lacks
+    /// PropertyNameCaseInsensitive, so "brainProviderId" (camelCase) never matched the C#
+    /// property BrainProviderId (PascalCase) and always deserialized as null.
+    /// </summary>
+    [Fact]
+    public async Task LoadAllTemplatesAsync_DeserializesBrainProviderIdFromRawCamelCaseJson()
+    {
+        // Arrange: insert a raw camelCase JSON entity directly into the DB,
+        // bypassing SaveTemplateAsync so we prove deserialization of existing DB data
+        // (not just a round-trip through our own serializer).
+        var brainId = Guid.NewGuid().ToString();
+        var templateId = Guid.NewGuid().ToString();
+        var projectId = Guid.NewGuid().ToString();
+
+        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.Projects.Add(new ProjectEntity
+            {
+                Id = Guid.Parse(projectId),
+                Name = "P",
+                Enabled = true,
+                TemplateIds = [templateId]
+            });
+            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
+            {
+                Id = Guid.Parse(templateId),
+                ProjectId = Guid.Parse(projectId),
+                Name = "T",
+                // Raw camelCase JSON matching what SerializeToJson (PipelineJsonOptions.Default) writes.
+                // The key "brainProviderId" (camelCase) must survive deserialization to BrainProviderId.
+                Configuration =
+                    $"{{\"id\":\"{templateId}\",\"name\":\"T\",\"issueProviderId\":\"i1\"," +
+                    $"\"repoProviderId\":\"r1\",\"brainProviderId\":\"{brainId}\"}}"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Act: fresh store (cache TTL=0 → no cache)
+        var freshStore = new PostgresConfigurationStore(
+            new InMemoryDbContextFactory(_dbOptions), cacheTtl: TimeSpan.Zero);
+        var all = await freshStore.LoadAllTemplatesAsync(CancellationToken.None);
+
+        // Assert
+        // TODO: Add an intermediate assertion that `loaded` is not null before asserting the field,
+        // e.g. `loaded.Should().NotBeNull("deserialization of the minimal JSON seed must not return null")`.
+        // If the deserializer silently returns null (e.g. due to a missing required field), ContainSingle()
+        // fails with a misleading "expected 1 but found 0" message rather than exposing the deserialization
+        // failure directly — making failures harder to diagnose.
+        // TODO: Consider adding a near-direct test for DeserializeFromEntity<PipelineJobTemplate> that
+        // exercises the method with a minimal JSON string (bypassing the full store stack) to lock in the
+        // contract on PipelineJsonOptions.Lenient explicitly. DeserializeFromEntity is private static, so
+        // this would require InternalsVisibleTo, a test-seam overload, or a direct JsonSerializer.Deserialize
+        // call using PipelineJsonOptions.Lenient as a proxy. This would prevent a regression where the
+        // options were reverted on a different overload while store-level tests still pass.
+        var loaded = all.Should().ContainSingle().Subject;
+        loaded.BrainProviderId.Should().Be(brainId);
+    }
+
+    /// <summary>
+    /// Regression test for issue #2633: round-trip variant.
+    /// Saves a template with BrainProviderId set via SaveTemplateAsync (which serializes to camelCase),
+    /// then reloads via a fresh store. Confirms the end-to-end save/load path works after the fix.
+    /// </summary>
+    [Fact]
+    public async Task LoadAllTemplatesAsync_RoundTrip_PreservesBrainProviderId()
+    {
+        // Arrange
+        var projectId = Guid.NewGuid().ToString();
+        await _store.SaveProjectAsync(
+            new PipelineProject { Id = projectId, Name = "P", Enabled = true, TemplateIds = [] },
+            CancellationToken.None);
+
+        var brainId = Guid.NewGuid().ToString();
+        var template = new PipelineJobTemplate
+        {
+            Id = Guid.NewGuid().ToString(), Name = "T",
+            IssueProviderId = "i1", RepoProviderId = "r1",
+            BrainProviderId = brainId
+        };
+        await _store.SaveTemplateAsync(projectId, template, CancellationToken.None);
+
+        // Act: fresh store (cache TTL=0 → no cache)
+        var freshStore = new PostgresConfigurationStore(
+            new InMemoryDbContextFactory(_dbOptions), cacheTtl: TimeSpan.Zero);
+        var all = await freshStore.LoadAllTemplatesAsync(CancellationToken.None);
+
+        // Assert
+        all.Should().ContainSingle()
+            .Which.BrainProviderId.Should().Be(brainId);
+    }
+
+    /// <summary>
+    /// Regression test for issue #2633: LoadTemplatesForProjectAsync path.
+    /// LoadTemplatesForProjectAsync also calls DeserializeFromEntity so the fix covers it too.
+    /// This test seeds a raw camelCase JSON entity and loads via LoadTemplatesForProjectAsync
+    /// to prevent regression if the two load paths ever diverge.
+    /// </summary>
+    [Fact]
+    public async Task LoadTemplatesForProjectAsync_DeserializesBrainProviderIdFromRawCamelCaseJson()
+    {
+        // Arrange: insert raw camelCase JSON directly, bypassing SaveTemplateAsync
+        var brainId = Guid.NewGuid().ToString();
+        var templateId = Guid.NewGuid().ToString();
+        var projectId = Guid.NewGuid().ToString();
+
+        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.Projects.Add(new ProjectEntity
+            {
+                Id = Guid.Parse(projectId),
+                Name = "P",
+                Enabled = true,
+                TemplateIds = [templateId]
+            });
+            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
+            {
+                Id = Guid.Parse(templateId),
+                ProjectId = Guid.Parse(projectId),
+                Name = "T",
+                Configuration =
+                    $"{{\"id\":\"{templateId}\",\"name\":\"T\",\"issueProviderId\":\"i1\"," +
+                    $"\"repoProviderId\":\"r1\",\"brainProviderId\":\"{brainId}\"}}"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Act: fresh store
+        var freshStore = new PostgresConfigurationStore(
+            new InMemoryDbContextFactory(_dbOptions), cacheTtl: TimeSpan.Zero);
+        var templates = await freshStore.LoadTemplatesForProjectAsync(projectId, CancellationToken.None);
+
+        // Assert
+        // TODO: Add an intermediate assertion that the deserialized object is non-null before
+        // asserting the specific field, to improve failure diagnosability. If the deserializer
+        // silently returns null on the minimal JSON seed, ContainSingle().Which.BrainProviderId
+        // produces a confusing failure message that obscures the real cause.
+        templates.Should().ContainSingle()
+            .Which.BrainProviderId.Should().Be(brainId);
+    }
+
     // ── Cache Invalidation ─────────────────────────────────────────────
 
     [Fact]
