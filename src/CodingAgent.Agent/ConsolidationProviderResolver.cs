@@ -103,7 +103,7 @@ internal sealed class ConsolidationProviderResolver
             var agentProvider = factory.CreateAgentProvider(agentConfig);
             if (agentProvider is IAsyncDisposable ad) disposables.Add(ad);
 
-            var issueProvider = CreateIssueProviderForConsolidation(issueConfig);
+            var issueProvider = CreateIssueProviderForConsolidation(issueConfig, orchestratorProxy);
             if (issueProvider is IAsyncDisposable id) disposables.Add(id);
 
             var brainProvider = brainConfig is not null
@@ -214,11 +214,14 @@ internal sealed class ConsolidationProviderResolver
     /// Creates an issue provider for consolidation runs. Unlike regular pipeline jobs where
     /// issue operations are proxied through the orchestrator, consolidation runs need direct
     /// issue creation capability for refactoring proposals.
+    /// When <paramref name="orchestratorProxy"/> is non-null, GitHub providers use the proxy's
+    /// token-refresh delegate so that long-running jobs survive GitHub App token expiry (~1 hr).
     /// </summary>
-    private static IIssueProvider CreateIssueProviderForConsolidation(ProviderConfig issueConfig)
+    private static IIssueProvider CreateIssueProviderForConsolidation(
+        ProviderConfig issueConfig, OrchestratorProxy? orchestratorProxy)
     {
         if (issueConfig.ProviderType.Equals("GitHub", StringComparison.OrdinalIgnoreCase))
-            return CreateGitHubIssueProvider(issueConfig);
+            return CreateGitHubIssueProvider(issueConfig, orchestratorProxy);
 
         if (issueConfig.ProviderType.Equals("GitLab", StringComparison.OrdinalIgnoreCase))
             return CreateGitLabIssueProvider(issueConfig);
@@ -228,16 +231,13 @@ internal sealed class ConsolidationProviderResolver
             $"Unsupported issue provider type for consolidation: '{issueConfig.ProviderType}'");
     }
 
-    private static GitHubIssueProvider CreateGitHubIssueProvider(ProviderConfig issueConfig)
+    private static GitHubIssueProvider CreateGitHubIssueProvider(
+        ProviderConfig issueConfig, OrchestratorProxy? orchestratorProxy)
     {
         var apiUrl = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ApiUrl, "https://api.github.com");
-        var token = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Token);
-        if (token is null)
-        {
-            Serilog.Log.Error("Issue provider '{DisplayName}' is missing 'token' setting for consolidation", issueConfig.DisplayName);
-            throw new InvalidOperationException(
-                $"Issue provider '{issueConfig.DisplayName}' is missing 'token' setting for consolidation");
-        }
+
+        // owner and repo are required unconditionally — they are needed to construct GitHubConnectionInfo
+        // regardless of whether a proxy (refresh delegate) or a static token is used.
         var owner = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Owner);
         if (owner is null)
         {
@@ -254,6 +254,39 @@ internal sealed class ConsolidationProviderResolver
         }
 
         var connection = new GitHubConnectionInfo(apiUrl, owner, repo);
+
+        // When a proxy is available, use the refresh-capable constructor so the provider
+        // automatically obtains a fresh token after expiry. GitHub App installation tokens
+        // are valid for ~1 hour; RefactoringDetection jobs can exceed this when AgentTimeout
+        // is high. ProviderKind.Repository is correct because VendProviderConfigsAsync sets
+        // includeIssuePermission = true for RefactoringDetection, so the repo token already
+        // carries issues:write scope — no separate ProviderKind.Issue path exists.
+        //
+        // NOTE: owner and repo null-checks above are intentionally evaluated BEFORE this branch.
+        // The proxy path returns early here and skips the token null-check below, but
+        // GitHubConnectionInfo construction still requires non-null owner and repo. Any future
+        // refactor that moves this branch earlier (before the owner/repo guards) would construct
+        // GitHubConnectionInfo with null values. Keep the owner/repo guards above this branch.
+        // TODO [WARNING]: The lambda captures orchestratorProxy by reference. OrchestratorProxy
+        // is IDisposable and is owned by LocalConsolidationExecutor, which disposes it after the
+        // consolidation run completes. If issue-creation retries in RefactoringExecutor.CreateIssuesAsync
+        // outlive the proxy's disposal, the delegate will invoke a disposed object. This widens the
+        // same risk that already exists on the repo provider closure. Consider passing a scoped refresh
+        // func with a clear lifetime boundary rather than closing over the proxy directly.
+        // (Correctness / DotNetSpecialist)
+        if (orchestratorProxy is not null)
+            return new GitHubIssueProvider(connection,
+                refreshCt => orchestratorProxy.RequestTokenRefreshAsync(ProviderKind.Repository, refreshCt));
+
+        // Fallback: static token path for PAT-configured providers and test scenarios where
+        // no proxy is available (orchestratorProxy is null).
+        var token = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Token);
+        if (token is null)
+        {
+            Serilog.Log.Error("Issue provider '{DisplayName}' is missing 'token' setting for consolidation", issueConfig.DisplayName);
+            throw new InvalidOperationException(
+                $"Issue provider '{issueConfig.DisplayName}' is missing 'token' setting for consolidation");
+        }
         return new GitHubIssueProvider(connection, token);
     }
 
@@ -284,6 +317,16 @@ internal sealed class ConsolidationProviderResolver
 
         return new GitLabIssueProvider(apiUrl, accessToken, projectId);
     }
+
+    /// <summary>
+    /// Internal test-only entry point: directly constructs the <see cref="GitHubIssueProvider"/>
+    /// for the given config and optional proxy, without running the full resolution pipeline.
+    /// This allows unit tests to verify constructor-path selection (refresh delegate vs. static
+    /// token) without depending on SignalR handshake behaviour or provider validation.
+    /// </summary>
+    internal static GitHubIssueProvider CreateGitHubIssueProviderForTest(
+        ProviderConfig issueConfig, OrchestratorProxy? orchestratorProxy)
+        => CreateGitHubIssueProvider(issueConfig, orchestratorProxy);
 }
 
 /// <summary>
