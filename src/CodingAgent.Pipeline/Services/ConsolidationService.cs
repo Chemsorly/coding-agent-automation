@@ -333,25 +333,32 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         var queuedRuns = new List<ConsolidationRun>();
         var allRuns = await _runStore.LoadAllRunsAsync(ct);
 
-        // Only select runs with Queued status. Pending runs already have a live WorkItem in
-        // the database — the Scheduler's WorkItemDispatchPoller will pick them up and create
-        // the K8s Job when capacity is available. Re-dispatching Pending runs would cause a
-        // recurring 409 loop (each POST /api/work-items returns Conflict, which is treated as
-        // idempotent Queued=true, which re-triggers this path indefinitely).
-        // TODO [WARNING]: Pending runs are intentionally excluded from dispatch here, but they are
-        // also not re-added to _runningRuns after an orchestrator restart. CleanupOrphanedRunsAsync
-        // only restores Running runs (with live agents) into _runningRuns; RehydrateQueuedRunsAsync
-        // only restores Queued runs. This means: after a restart, the (type, templateId) key for a
-        // Pending run is absent from _runningRuns, so TriggerAsync's TryAdd succeeds and a new
-        // ConsolidationRun (with a new RunId/WorkItem) is created — a genuine duplicate consolidation.
-        // Fix: also re-add Pending runs to _runningRuns during startup rehydration (for dedup only,
-        // without re-dispatching them), mirroring how CleanupOrphanedRunsAsync handles Running runs.
+        // Only select runs with Queued status for dispatch. Pending runs already have a live
+        // WorkItem in the database — the Scheduler's WorkItemDispatchPoller will pick them up
+        // and create the K8s Job when capacity is available. Re-dispatching Pending runs would
+        // cause a recurring 409 loop (each POST /api/work-items returns Conflict, which is
+        // treated as idempotent Queued=true, which re-triggers this path indefinitely).
         foreach (var run in allRuns.Where(r => r.Status == ConsolidationRunStatus.Queued))
         {
             var key = (run.Type, run.TemplateId);
             _runningRuns.TryAdd(key, run);
             queuedRuns.Add(run);
             _logger.Information("Rehydrated queued consolidation run {RunId} ({Type}) for re-enqueuing", run.RunId, run.Type);
+        }
+
+        // Re-add Pending runs to _runningRuns for dedup only — do NOT add them to queuedRuns
+        // (which would re-dispatch them). Their WorkItem already exists in the DB; the Scheduler
+        // will pick it up. Without this, a restart with a Pending run leaves the (type, templateId)
+        // key absent from _runningRuns, so TriggerAsync's TryAdd succeeds and creates a duplicate
+        // ConsolidationRun + WorkItem. Mirrors how CleanupOrphanedRunsAsync handles Running runs
+        // with live agents (line 84). Fix for issue #2619.
+        foreach (var run in allRuns.Where(r => r.Status == ConsolidationRunStatus.Pending))
+        {
+            var key = (run.Type, run.TemplateId);
+            _runningRuns.TryAdd(key, run);
+            _logger.Information(
+                "Rehydrated pending consolidation run {RunId} ({Type}) into dedup tracker (not re-dispatched)",
+                run.RunId, run.Type);
         }
 
         return queuedRuns;
