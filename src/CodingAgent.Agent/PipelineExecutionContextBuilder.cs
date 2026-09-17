@@ -359,13 +359,6 @@ internal sealed class PipelineExecutionContextBuilder
             => context.IssueOps.SwapLabelAsync(issueIdentifier, string.Empty, GetLabelTargetKind(), ct);
         public override Task CreatePullRequest(PipelineRun run, bool isDraft, CancellationToken ct)
         {
-            // TODO: [WARNING] ReportQualityGateResult is only called when LatestQualityReport is non-null.
-            // In the normal production flow LogAndRecordReport always sets LatestQualityReport before
-            // FinalizePullRequest/CreatePullRequest is invoked, so this is safe on the happy path.
-            // However if a caller invokes CreatePullRequest on a run that never passed through
-            // LogAndRecordReport (e.g. early exit, cancellation, or a future callback implementation),
-            // the SignalR quality-gate report will be silently dropped with no error or log entry.
-            // Add a test covering the LatestQualityReport == null branch to verify intended behavior.
             if (context.Run.LatestQualityReport is { } latestReport)
                 context.ReportQualityGateResult(latestReport);
             return context.CreatePullRequest(run, isDraft, ct);
