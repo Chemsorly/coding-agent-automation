@@ -644,30 +644,30 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
 
     private static ConsolidationJobMessage CreateBrainConsolidationJob(
         IReadOnlyList<ProviderConfig>? providerConfigs = null) => new()
-    {
-        JobId = $"job-brain-{Guid.NewGuid():N}",
-        Type = ConsolidationRunType.BrainConsolidation,
-        ProviderConfigs = providerConfigs ?? [],
-        PipelineConfiguration = new PipelineConfiguration()
-    };
+        {
+            JobId = $"job-brain-{Guid.NewGuid():N}",
+            Type = ConsolidationRunType.BrainConsolidation,
+            ProviderConfigs = providerConfigs ?? [],
+            PipelineConfiguration = new PipelineConfiguration()
+        };
 
     private static ConsolidationJobMessage CreateRefactoringDetectionJob(
         IReadOnlyList<ProviderConfig>? providerConfigs = null) => new()
-    {
-        JobId = $"job-refactor-{Guid.NewGuid():N}",
-        Type = ConsolidationRunType.RefactoringDetection,
-        ProviderConfigs = providerConfigs ?? [],
-        PipelineConfiguration = new PipelineConfiguration()
-    };
+        {
+            JobId = $"job-refactor-{Guid.NewGuid():N}",
+            Type = ConsolidationRunType.RefactoringDetection,
+            ProviderConfigs = providerConfigs ?? [],
+            PipelineConfiguration = new PipelineConfiguration()
+        };
 
     private static ConsolidationJobMessage CreateHarnessSuggestionsJob(
         IReadOnlyList<ProviderConfig>? providerConfigs = null) => new()
-    {
-        JobId = $"job-harness-{Guid.NewGuid():N}",
-        Type = ConsolidationRunType.HarnessSuggestions,
-        ProviderConfigs = providerConfigs ?? [],
-        PipelineConfiguration = new PipelineConfiguration()
-    };
+        {
+            JobId = $"job-harness-{Guid.NewGuid():N}",
+            Type = ConsolidationRunType.HarnessSuggestions,
+            ProviderConfigs = providerConfigs ?? [],
+            PipelineConfiguration = new PipelineConfiguration()
+        };
 
     private static HubConnection CreateDisconnectedHubConnection()
     {
