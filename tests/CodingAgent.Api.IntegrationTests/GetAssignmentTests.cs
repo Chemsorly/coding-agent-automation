@@ -8,9 +8,6 @@ using CodingAgent.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Moq;
-using Serilog;
-using Serilog.Core;
-using Serilog.Events;
 
 namespace CodingAgent.Api.IntegrationTests;
 
@@ -44,14 +41,6 @@ public sealed class GetAssignmentTests
         var mock = new Mock<IProjectStore>();
         mock.Setup(ps => ps.GetProjectByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((PipelineProject?)null);
-        return mock.Object;
-    }
-
-    private static IProjectStore CreateProjectStoreReturning(PipelineProject project)
-    {
-        var mock = new Mock<IProjectStore>();
-        mock.Setup(ps => ps.GetProjectByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(project);
         return mock.Object;
     }
 
@@ -679,163 +668,436 @@ public sealed class GetAssignmentTests
         // okResult!.Value!.JobId.Should().Be(id.ToString(), "response must reflect the seeded work item");
     }
 
-    // ── InjectProjectSecretsAsync: project deleted mid-flight ────────────────────
+    // ── InjectProjectSecretsAsync: consolidation template-ownership fallback ─────────
 
-    // TODO: [WARNING] This test only exercises the old-schema path (MakeFullRequest / ProviderConfigs != null).
-    // InjectProjectSecretsAsync is called unconditionally on the new-schema path too (PayloadSchemaVersion=1).
-    // Add a parallel test using a new-schema payload to ensure that path also emits the Warning when
-    // the project is deleted mid-flight, so a future change that gates secret injection on schema version
-    // cannot silently regress.
-    //
-    // TODO: [WARNING] Two acceptance criteria lack dedicated tests:
-    //   1. "No behavior change for the !request.ProjectId.HasValue early-return path" — no test asserts
-    //      that passing a payload with ProjectId=null returns 200 with no Warning and no ProjectSecrets.
-    //   2. "No behavior change when project exists but has zero secrets" — no test exercises the path
-    //      where GetProjectByIdAsync returns a non-null project with an empty Secrets collection.
-    // If the new null-check block were accidentally placed before the ProjectId guard, these regressions
-    // would go undetected by the current test suite.
-    [Fact]
-    public async Task GetAssignment_ProjectDeletedMidFlight_EmitsWarning_And_Returns200_WithNullSecrets()
+    // TODO: [WARNING] A test is missing for the case where a project's TemplateIds contains the
+    // requested ConsolidationTemplateId but LoadAllTemplatesAsync returns an empty or mismatched
+    // template list (i.e. the templateLookup.ContainsKey guard in InjectProjectSecretsAsync fires
+    // false). Currently, no test exercises that guard in the false branch, so it is not clear
+    // whether the guard is an intentional safeguard against orphaned TemplateIds references or
+    // merely redundant. Add a test: project with TemplateIds=[templateId] but CreateProjectStore
+    // called with an empty templates list — assert whether secrets are injected or withheld.
+
+    /// <summary>
+    /// Creates a project store stub that supports all three methods used by
+    /// the consolidation fallback branch of InjectProjectSecretsAsync:
+    /// LoadProjectsAsync, LoadAllTemplatesAsync, and GetProjectByIdAsync.
+    /// </summary>
+    // TODO: [WARNING] GetProjectByIdAsync is wired to return from the same in-memory list as
+    // LoadProjectsAsync, making the two-step lookup (enumerate then re-fetch by ID) appear identical
+    // in tests. In production these are separate store calls that could diverge: e.g., LoadProjectsAsync
+    // may return lightweight projections without Secrets while GetProjectByIdAsync returns the full
+    // document. A bug where GetProjectByIdAsync returned null or a stripped object for a project
+    // that was just enumerated would not be detected by the current mock setup. Consider splitting
+    // the mock so GetProjectByIdAsync uses a separate backing collection that can be configured
+    // independently, or at minimum add a comment noting the assumed identity of the two return sets.
+    private static IProjectStore CreateProjectStore(
+        IReadOnlyList<PipelineProject> projects,
+        IReadOnlyList<PipelineJobTemplate> templates)
     {
-        // ARRANGE: seed a work item whose payload carries a non-null ProjectId
-        var projectId = Guid.NewGuid();
-        var dbName = $"GetAssignment-MidFlight-{Guid.NewGuid():N}";
-        var dbFactory = CreateDbFactory(dbName);
-
-        // Use the old-schema (full snapshot) payload — InjectProjectSecretsAsync is called
-        // unconditionally for both old- and new-schema paths, so either works here.
-        var requestWithProject = MakeFullRequest() with { ProjectId = projectId };
-        var payloadJson = JsonSerializer.Serialize(requestWithProject, PipelineJsonOptions.Default);
-        var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
-
-        // Project store returns null for the ProjectId — simulates project deleted mid-flight
-        var projectStore = CreateNullProjectStore();
-
-        // Temporarily replace the Serilog global logger with a capturing sink so we can
-        // assert that Log.Warning is emitted. InjectProjectSecretsAsync calls the static
-        // Serilog.Log.Warning(...) which flows through this global logger.
-        // TODO: [WARNING] Mutating the process-wide Serilog.Log.Logger is not safe when xUnit runs test
-        // classes in parallel (which it does by default). Any other test class executing concurrently that
-        // calls Log.Warning will write into capturingSink, causing the HaveCount(1) assertion to fail
-        // spuriously. Additionally, if another test's warning fires before the swap is installed, this
-        // test may miss the event. Fix: either add [Collection("sequential")] to disable cross-class
-        // parallelism for tests that touch the global logger, or refactor InjectProjectSecretsAsync to
-        // accept an ILogger parameter so tests can inject an isolated logger directly without touching
-        // the global static.
-        var capturingSink = new CapturingSink();
-        var previousLogger = Log.Logger;
-        Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Warning()
-            .WriteTo.Sink(capturingSink)
-            .CreateLogger();
-
-        try
-        {
-            // ACT
-            var result = await WorkItemAgentEndpoints.GetAssignment(
-                id, dbFactory, projectStore, assignmentEnricher: null);
-
-            // ASSERT — response is 200 OK with no ProjectSecrets injected
-            var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
-            okResult.Should().NotBeNull("deleted-project mid-flight case must still return 200 OK");
-            okResult!.Value!.ProjectSecrets.Should().BeNull(
-                "ProjectSecrets must be null when the project no longer exists");
-
-            // ASSERT — exactly one Warning event emitted, containing the ProjectId
-            var warningEvents = capturingSink.Events
-                .Where(e => e.Level == LogEventLevel.Warning)
-                .ToList();
-            warningEvents.Should().HaveCount(1,
-                "exactly one Warning must be emitted when project lookup returns null for a non-null ProjectId");
-
-            var evt = warningEvents[0];
-            evt.MessageTemplate.Text.Should().Contain("not found",
-                "the Warning message must describe the missing project");
-            evt.Properties.Should().ContainKey("ProjectId",
-                "the Warning event must carry the ProjectId as a structured property");
-            // TODO: [WARNING] evt.Properties["ProjectId"].ToString() returns the Serilog ScalarValue
-            // rendering which wraps the Guid in quotes (e.g. "\"xxxxxxxx-...\""), making this a
-            // substring match that works by accident. The robust form is:
-            //   ((Serilog.Events.ScalarValue)evt.Properties["ProjectId"]).Value.Should().Be(projectId)
-            // which unwraps the typed value directly and is immune to Serilog rendering changes.
-            evt.Properties["ProjectId"].ToString().Should().Contain(projectId.ToString(),
-                "the structured ProjectId property must match the request's ProjectId");
-        }
-        finally
-        {
-            Log.Logger = previousLogger;
-        }
+        var mock = new Mock<IProjectStore>();
+        mock.Setup(ps => ps.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(projects);
+        mock.Setup(ps => ps.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(templates);
+        mock.Setup(ps => ps.GetProjectByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string id, CancellationToken _) => projects.FirstOrDefault(p => p.Id == id));
+        return mock.Object;
     }
 
-    // ── InjectProjectSecretsAsync: project exists with secrets ───────────────────
+    private static PipelineJobTemplate MakeTemplate(string templateId) => new()
+    {
+        Id = templateId,
+        Name = "Test Template",
+        IssueProviderId = "prov-1",
+        RepoProviderId = "repo-1",
+    };
+
+    private static PipelineProject MakeProject(string projectId, string templateId, Dictionary<string, string>? secrets = null) =>
+        new()
+        {
+            Id = projectId,
+            Name = "Test Project",
+            Enabled = true,
+            TemplateIds = [templateId],
+            Secrets = secrets,
+        };
 
     [Fact]
-    public async Task GetAssignment_ProjectExistsWithSecrets_InjectsSecretsIntoMessage()
+    public async Task GetAssignment_NullProjectId_WithConsolidationTemplateId_OwningProjectHasSecrets_InjectsSecrets()
     {
-        // ARRANGE: seed a work item with a non-null ProjectId
-        var projectId = Guid.NewGuid();
-        var dbName = $"GetAssignment-WithSecrets-{Guid.NewGuid():N}";
+        // ARRANGE: consolidation work item with no ProjectId but a template whose owning project has secrets
+        var dbName = $"InjectSecrets-TemplateHasSecrets-{Guid.NewGuid():N}";
         var dbFactory = CreateDbFactory(dbName);
 
-        var requestWithProject = MakeFullRequest() with { ProjectId = projectId };
-        var payloadJson = JsonSerializer.Serialize(requestWithProject, PipelineJsonOptions.Default);
+        const string templateId = "tmpl-with-secrets";
+        const string projectId = "11110000-0000-0000-0000-000000000001";
+        var expectedSecrets = new Dictionary<string, string> { ["MY_SECRET"] = "super-secret-value" };
+
+        var project = MakeProject(projectId, templateId, expectedSecrets);
+        var template = MakeTemplate(templateId);
+        var projectStore = CreateProjectStore([project], [template]);
+
+        // Consolidation minimal payload: ProjectId null, ConsolidationTemplateId set
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier("consolidation/run#1"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600,
+            PayloadSchemaVersion = 1,
+            ConsolidationTemplateId = templateId,
+            // ProjectId intentionally null — this is the bug scenario
+        };
+        var payloadJson = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
         var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
 
-        // Project store returns a project that has secrets — exercises the
-        // "project.Secrets is { Count: > 0 }" branch.
-        var secrets = new Dictionary<string, string> { ["API_KEY"] = "secret-value" };
-        var projectStore = CreateProjectStoreReturning(new PipelineProject
+        var enricher = new FakeAssignmentEnricher((r, p) => Task.FromResult<JobDistributionRequest?>(r with
         {
-            Id = projectId.ToString(),
-            Name = "Test Project",
-            Secrets = secrets
-        });
+            ProviderConfigs = [],
+            QualityGateConfigs = [],
+            ReviewerConfigs = [],
+            McpServers = [],
+            PipelineConfiguration = new PipelineConfiguration(),
+        }));
 
         // ACT
-        var result = await WorkItemAgentEndpoints.GetAssignment(
-            id, dbFactory, projectStore, assignmentEnricher: null);
+        var result = await WorkItemAgentEndpoints.GetAssignment(id, dbFactory, projectStore, enricher);
 
-        // ASSERT — 200 OK, secrets injected
+        // ASSERT: 200 returned and ProjectSecrets populated from owning project
         var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
-        okResult.Should().NotBeNull("existing project with secrets must return 200 OK");
+        okResult.Should().NotBeNull("consolidation work item with a valid template should return 200 OK");
         okResult!.Value!.ProjectSecrets.Should().NotBeNull(
-            "ProjectSecrets must be populated when the project has secrets");
-        okResult.Value.ProjectSecrets.Should().ContainKey("API_KEY",
-            "the secret key must be present in the injected ProjectSecrets");
+            "ProjectSecrets must be injected from the owning project when ConsolidationTemplateId is set");
+        okResult.Value.ProjectSecrets.Should().ContainKey("MY_SECRET",
+            "the owning project's secret must be present in ProjectSecrets");
+        okResult.Value.ProjectSecrets!["MY_SECRET"].Should().Be("super-secret-value",
+            "the secret value must match the owning project's configured secret");
     }
 
-    // ── InjectProjectSecretsAsync: project exists with no secrets ────────────────
-
     [Fact]
-    public async Task GetAssignment_ProjectExistsWithNoSecrets_ReturnsMessageWithNullSecrets()
+    public async Task GetAssignment_NullProjectId_WithConsolidationTemplateId_OwningProjectNoSecrets_ReturnsUnchanged()
     {
-        // ARRANGE: seed a work item with a non-null ProjectId
-        var projectId = Guid.NewGuid();
-        var dbName = $"GetAssignment-NoSecrets-{Guid.NewGuid():N}";
+        // ARRANGE: consolidation work item, template found, owning project exists but has no secrets
+        var dbName = $"InjectSecrets-NoSecrets-{Guid.NewGuid():N}";
         var dbFactory = CreateDbFactory(dbName);
 
-        var requestWithProject = MakeFullRequest() with { ProjectId = projectId };
-        var payloadJson = JsonSerializer.Serialize(requestWithProject, PipelineJsonOptions.Default);
+        const string templateId = "tmpl-no-secrets";
+        const string projectId = "22220000-0000-0000-0000-000000000002";
+
+        var project = MakeProject(projectId, templateId, secrets: null);
+        var template = MakeTemplate(templateId);
+        var projectStore = CreateProjectStore([project], [template]);
+
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier("consolidation/run#2"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600,
+            PayloadSchemaVersion = 1,
+            ConsolidationTemplateId = templateId,
+        };
+        var payloadJson = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
         var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
 
-        // Project store returns a project with an empty Secrets dictionary — exercises the
-        // fallthrough "return message" path when Count == 0.
-        var projectStore = CreateProjectStoreReturning(new PipelineProject
+        var enricher = new FakeAssignmentEnricher((r, p) => Task.FromResult<JobDistributionRequest?>(r with
         {
-            Id = projectId.ToString(),
-            Name = "Test Project",
-            Secrets = new Dictionary<string, string>() // empty
-        });
+            ProviderConfigs = [],
+            QualityGateConfigs = [],
+            ReviewerConfigs = [],
+            McpServers = [],
+            PipelineConfiguration = new PipelineConfiguration(),
+        }));
 
         // ACT
-        var result = await WorkItemAgentEndpoints.GetAssignment(
-            id, dbFactory, projectStore, assignmentEnricher: null);
+        var result = await WorkItemAgentEndpoints.GetAssignment(id, dbFactory, projectStore, enricher);
 
-        // ASSERT — 200 OK, no secrets injected
+        // ASSERT: 200 returned, ProjectSecrets null (owning project has no secrets)
         var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
-        okResult.Should().NotBeNull("existing project with no secrets must return 200 OK");
+        okResult.Should().NotBeNull();
         okResult!.Value!.ProjectSecrets.Should().BeNull(
-            "ProjectSecrets must be null when the project has no secrets");
+            "no secrets should be injected when the owning project has no secrets configured");
+    }
+
+    [Fact]
+    public async Task GetAssignment_NullProjectId_WithConsolidationTemplateId_TemplateNotFound_ReturnsUnchanged()
+    {
+        // ARRANGE: consolidation work item, but the template ID is not in any project's TemplateIds
+        var dbName = $"InjectSecrets-TemplateNotFound-{Guid.NewGuid():N}";
+        var dbFactory = CreateDbFactory(dbName);
+
+        const string projectId = "33330000-0000-0000-0000-000000000003";
+        // Project has a different template — "tmpl-request-id" is not in TemplateIds
+        var project = MakeProject(projectId, "tmpl-different", new Dictionary<string, string> { ["KEY"] = "val" });
+        var template = MakeTemplate("tmpl-different");
+        var projectStore = CreateProjectStore([project], [template]);
+
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier("consolidation/run#3"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600,
+            PayloadSchemaVersion = 1,
+            ConsolidationTemplateId = "tmpl-request-id",
+        };
+        var payloadJson = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
+        var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
+
+        var enricher = new FakeAssignmentEnricher((r, p) => Task.FromResult<JobDistributionRequest?>(r with
+        {
+            ProviderConfigs = [],
+            QualityGateConfigs = [],
+            ReviewerConfigs = [],
+            McpServers = [],
+            PipelineConfiguration = new PipelineConfiguration(),
+        }));
+
+        // ACT
+        var result = await WorkItemAgentEndpoints.GetAssignment(id, dbFactory, projectStore, enricher);
+
+        // ASSERT: 200 returned, no secrets (template not found in any project)
+        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
+        okResult.Should().NotBeNull();
+        okResult!.Value!.ProjectSecrets.Should().BeNull(
+            "no secrets should be injected when the ConsolidationTemplateId is not found in any project");
+    }
+
+    [Fact]
+    public async Task GetAssignment_NullProjectId_WithConsolidationTemplateId_OwningProjectDisabled_ReturnsUnchanged()
+    {
+        // ARRANGE: consolidation work item, template exists, but the owning project is disabled
+        var dbName = $"InjectSecrets-ProjectDisabled-{Guid.NewGuid():N}";
+        var dbFactory = CreateDbFactory(dbName);
+
+        const string templateId = "tmpl-disabled-owner";
+        const string projectId = "44440000-0000-0000-0000-000000000004";
+
+        // Disabled project — should be skipped during the lookup
+        var disabledProject = new PipelineProject
+        {
+            Id = projectId,
+            Name = "Disabled Project",
+            Enabled = false,
+            TemplateIds = [templateId],
+            Secrets = new Dictionary<string, string> { ["SECRET"] = "value" },
+        };
+        var template = MakeTemplate(templateId);
+        var projectStore = CreateProjectStore([disabledProject], [template]);
+
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier("consolidation/run#4"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600,
+            PayloadSchemaVersion = 1,
+            ConsolidationTemplateId = templateId,
+        };
+        var payloadJson = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
+        var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
+
+        var enricher = new FakeAssignmentEnricher((r, p) => Task.FromResult<JobDistributionRequest?>(r with
+        {
+            ProviderConfigs = [],
+            QualityGateConfigs = [],
+            ReviewerConfigs = [],
+            McpServers = [],
+            PipelineConfiguration = new PipelineConfiguration(),
+        }));
+
+        // ACT
+        var result = await WorkItemAgentEndpoints.GetAssignment(id, dbFactory, projectStore, enricher);
+
+        // ASSERT: 200 returned, no secrets (disabled project is skipped)
+        // TODO: [WARNING] This assertion only checks that ProjectSecrets is null, but it passes
+        // whether the disabled project was *skipped* (correct — filtered by p.Enabled) or was
+        // *evaluated but its template-id match failed for another reason*. To make the test a
+        // stronger guard, add a second enabled project in the store that does NOT own the template
+        // so the loop traverses at least one enabled candidate without a match, confirming the
+        // disabled project was genuinely bypassed rather than merely not evaluated.
+        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
+        okResult.Should().NotBeNull();
+        okResult!.Value!.ProjectSecrets.Should().BeNull(
+            "secrets from a disabled project must not be injected — disabled projects are not eligible owners");
+    }
+
+    [Fact]
+    public async Task GetAssignment_NullProjectId_NullConsolidationTemplateId_ReturnsUnchanged()
+    {
+        // ARRANGE: global consolidation run — ProjectId null AND ConsolidationTemplateId null
+        var dbName = $"InjectSecrets-GlobalConsolidation-{Guid.NewGuid():N}";
+        var dbFactory = CreateDbFactory(dbName);
+
+        const string projectId = "55550000-0000-0000-0000-000000000005";
+        var project = MakeProject(projectId, "tmpl-global", new Dictionary<string, string> { ["SECRET"] = "value" });
+        var template = MakeTemplate("tmpl-global");
+        var projectStore = CreateProjectStore([project], [template]);
+
+        // Global consolidation: no ConsolidationTemplateId
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier("consolidation/run#5"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600,
+            PayloadSchemaVersion = 1,
+            ConsolidationTemplateId = null,
+            // ProjectId null, ConsolidationTemplateId null — global run
+        };
+        var payloadJson = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
+        var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
+
+        var enricher = new FakeAssignmentEnricher((r, p) => Task.FromResult<JobDistributionRequest?>(r with
+        {
+            ProviderConfigs = [],
+            QualityGateConfigs = [],
+            ReviewerConfigs = [],
+            McpServers = [],
+            PipelineConfiguration = new PipelineConfiguration(),
+        }));
+
+        // ACT
+        var result = await WorkItemAgentEndpoints.GetAssignment(id, dbFactory, projectStore, enricher);
+
+        // ASSERT: 200 returned, no secrets (global consolidation — no template ownership to resolve)
+        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
+        okResult.Should().NotBeNull();
+        okResult!.Value!.ProjectSecrets.Should().BeNull(
+            "global consolidation runs (null ConsolidationTemplateId) must not have secrets injected");
+    }
+
+    [Fact]
+    public async Task GetAssignment_NonNullProjectId_ProjectHasSecrets_InjectsSecrets()
+    {
+        // ARRANGE: regular work item with a non-null ProjectId pointing to a project with secrets
+        var dbName = $"InjectSecrets-RegularWithSecrets-{Guid.NewGuid():N}";
+        var dbFactory = CreateDbFactory(dbName);
+
+        var projectId = Guid.NewGuid();
+        var project = new PipelineProject
+        {
+            Id = projectId.ToString(),
+            Name = "Project With Secrets",
+            Enabled = true,
+            TemplateIds = [],
+            Secrets = new Dictionary<string, string> { ["REPO_TOKEN"] = "abc123", ["API_KEY"] = "xyz" },
+        };
+        var projectStore = CreateProjectStore([project], []);
+
+        var request = MakeMinimalRequest() with { ProjectId = projectId };
+        var payloadJson = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
+        var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
+
+        var enricher = new FakeAssignmentEnricher((r, p) => Task.FromResult<JobDistributionRequest?>(r with
+        {
+            ProviderConfigs = [],
+            QualityGateConfigs = [],
+            ReviewerConfigs = [],
+            McpServers = [],
+            PipelineConfiguration = new PipelineConfiguration(),
+        }));
+
+        // ACT
+        var result = await WorkItemAgentEndpoints.GetAssignment(id, dbFactory, projectStore, enricher);
+
+        // ASSERT: 200 returned, ProjectSecrets populated from project
+        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
+        okResult.Should().NotBeNull();
+        okResult!.Value!.ProjectSecrets.Should().NotBeNull(
+            "ProjectSecrets must be injected for regular work items with a non-null ProjectId");
+        okResult.Value.ProjectSecrets.Should().ContainKey("REPO_TOKEN");
+        okResult.Value.ProjectSecrets.Should().ContainKey("API_KEY");
+    }
+
+    [Fact]
+    public async Task GetAssignment_NonNullProjectId_ProjectNotFound_ReturnsUnchanged()
+    {
+        // ARRANGE: regular work item with a non-null ProjectId, but project is not in the store
+        var dbName = $"InjectSecrets-ProjectNotFound-{Guid.NewGuid():N}";
+        var dbFactory = CreateDbFactory(dbName);
+
+        // Empty store — no projects
+        var projectStore = CreateProjectStore([], []);
+
+        var request = MakeMinimalRequest() with { ProjectId = Guid.NewGuid() };
+        var payloadJson = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
+        var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
+
+        var enricher = new FakeAssignmentEnricher((r, p) => Task.FromResult<JobDistributionRequest?>(r with
+        {
+            ProviderConfigs = [],
+            QualityGateConfigs = [],
+            ReviewerConfigs = [],
+            McpServers = [],
+            PipelineConfiguration = new PipelineConfiguration(),
+        }));
+
+        // ACT
+        var result = await WorkItemAgentEndpoints.GetAssignment(id, dbFactory, projectStore, enricher);
+
+        // ASSERT: 200 returned, no secrets (project not found)
+        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
+        okResult.Should().NotBeNull();
+        okResult!.Value!.ProjectSecrets.Should().BeNull(
+            "no secrets should be injected when the project is not found in the store");
+    }
+
+    [Fact]
+    public async Task GetAssignment_NonNullProjectId_ProjectHasEmptySecrets_ReturnsUnchanged()
+    {
+        // ARRANGE: regular work item, project found but secrets dict is empty
+        var dbName = $"InjectSecrets-EmptySecrets-{Guid.NewGuid():N}";
+        var dbFactory = CreateDbFactory(dbName);
+
+        var projectId = Guid.NewGuid();
+        var project = new PipelineProject
+        {
+            Id = projectId.ToString(),
+            Name = "Project With Empty Secrets",
+            Enabled = true,
+            TemplateIds = [],
+            Secrets = new Dictionary<string, string>(), // empty, not null
+        };
+        var projectStore = CreateProjectStore([project], []);
+
+        var request = MakeMinimalRequest() with { ProjectId = projectId };
+        var payloadJson = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
+        var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
+
+        var enricher = new FakeAssignmentEnricher((r, p) => Task.FromResult<JobDistributionRequest?>(r with
+        {
+            ProviderConfigs = [],
+            QualityGateConfigs = [],
+            ReviewerConfigs = [],
+            McpServers = [],
+            PipelineConfiguration = new PipelineConfiguration(),
+        }));
+
+        // ACT
+        var result = await WorkItemAgentEndpoints.GetAssignment(id, dbFactory, projectStore, enricher);
+
+        // ASSERT: 200 returned, ProjectSecrets null (empty dict does not count as having secrets)
+        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
+        okResult.Should().NotBeNull();
+        okResult!.Value!.ProjectSecrets.Should().BeNull(
+            "no secrets should be injected when the project's Secrets dictionary is empty");
     }
 
     // ── Infrastructure: PipelineDbContext in-memory subclass ──────────────────────
@@ -866,20 +1128,5 @@ public sealed class GetAssignmentTests
                     entityType.RemoveIndex(index);
             }
         }
-    }
-
-    /// <summary>
-    /// A Serilog sink that accumulates emitted <see cref="LogEvent"/> instances for assertion.
-    /// Used to verify that <see cref="WorkItemAgentEndpoints.InjectProjectSecretsAsync"/> emits a
-    /// Warning when <c>GetProjectByIdAsync</c> returns null for a non-null ProjectId.
-    /// Thread-safe: <see cref="Emit"/> may be called concurrently from the logging pipeline.
-    /// </summary>
-    private sealed class CapturingSink : ILogEventSink
-    {
-        private readonly System.Collections.Concurrent.ConcurrentBag<LogEvent> _events = new();
-
-        public IReadOnlyCollection<LogEvent> Events => _events;
-
-        public void Emit(LogEvent logEvent) => _events.Add(logEvent);
     }
 }

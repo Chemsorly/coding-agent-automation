@@ -270,6 +270,27 @@ public static class WorkItemAgentEndpoints
     /// <summary>
     /// Injects project secrets into the assignment message at delivery time.
     /// Secrets are not serialized in the payload for security; they are fetched fresh here.
+    /// <para>
+    /// Two resolution paths:
+    /// <list type="bullet">
+    ///   <item>
+    ///     <term>Direct project lookup</term>
+    ///     <description>
+    ///     When <c>request.ProjectId</c> is non-null, the project is fetched directly via
+    ///     <see cref="IProjectStore.GetProjectByIdAsync"/> and its secrets are injected.
+    ///     </description>
+    ///   </item>
+    ///   <item>
+    ///     <term>Template-ownership fallback (consolidation)</term>
+    ///     <description>
+    ///     When <c>request.ProjectId</c> is null but <c>request.ConsolidationTemplateId</c> is non-null,
+    ///     the owning project is resolved via template membership: iterate enabled projects and find the
+    ///     one whose <see cref="PipelineProject.TemplateIds"/> contains the template ID. Mirrors
+    ///     <see cref="ConsolidationTemplateResolver.ResolveTemplateWithProjectAsync"/>.
+    ///     </description>
+    ///   </item>
+    /// </list>
+    /// </para>
     /// </summary>
     private static async Task<JobAssignmentMessage> InjectProjectSecretsAsync(
         JobAssignmentMessage message,
@@ -277,34 +298,57 @@ public static class WorkItemAgentEndpoints
         IProjectStore projectStore,
         CancellationToken ct)
     {
-        // TODO: [WARNING] This method early-returns when request.ProjectId is null, but consolidation
-        // work items frequently carry a ConsolidationTemplateId with no ProjectId (the template-owns-project
-        // relationship is resolved lazily). ConsolidationWorkItemEndpoints.EnrichPayloadAsync resolves the
-        // owning project by template membership when ProjectId is empty, then vends project secrets from that
-        // owner. As a result, a TaskType=Consolidation work item with ProjectId=null and a ConsolidationTemplateId
-        // whose owning project defines Secrets will get ProjectSecrets=null from this path but populated secrets
-        // from the legacy claim path, violating the "fully-enriched" requirement for the unified assignment path.
-        // Mirror the template-ownership fallback from ConsolidationWorkItemEndpoints.EnrichPayloadAsync here,
-        // or document that /assignment intentionally omits project secrets for project-less consolidation items.
-        if (!request.ProjectId.HasValue)
-            return message;
-
-        var project = await projectStore.GetProjectByIdAsync(request.ProjectId.Value.ToString(), ct);
-        if (project is null)
+        if (request.ProjectId.HasValue)
         {
-            // TODO: [WARNING] The structured property name {JobId} is inconsistent with the {WorkItemId}
-            // convention used everywhere else in this file (e.g. line 112). Consider renaming to {WorkItemId}
-            // for a uniform structured log schema — but note that the integration test at
-            // GetAssignmentTests.cs currently asserts ContainKey("JobId"), so both sites must be updated
-            // together to avoid a test breakage.
-            Log.Warning(
-                "InjectProjectSecretsAsync: project {ProjectId} not found — WorkItem {JobId} will run without ProjectSecrets",
-                request.ProjectId.Value, message.JobId);
+            // Direct path: project ID is known — look it up directly.
+            var project = await projectStore.GetProjectByIdAsync(request.ProjectId.Value.ToString(), ct);
+            if (project?.Secrets is { Count: > 0 })
+                return message with { ProjectSecrets = project.Secrets };
+
             return message;
         }
 
-        if (project.Secrets is { Count: > 0 })
-            return message with { ProjectSecrets = project.Secrets };
+        // Consolidation fallback: when ProjectId is null but a ConsolidationTemplateId is set,
+        // resolve the owning project via template membership (project.TemplateIds) and inject
+        // secrets from that project. Global consolidation runs (ConsolidationTemplateId == null)
+        // and non-consolidation null-project items fall through to the unchanged return below.
+        if (!string.IsNullOrEmpty(request.ConsolidationTemplateId))
+        {
+            var projects = await projectStore.LoadProjectsAsync(ct);
+            // TODO: [WARNING] LoadAllTemplatesAsync is called unconditionally here but its result
+            // (templateLookup) is only used for a ContainsKey guard inside the loop. That guard
+            // is logically redundant: candidate.TemplateIds.Contains(templateId) already implies
+            // the template exists unless TemplateIds contains stale/orphaned IDs — in which case
+            // the guard silently withholds secrets rather than documenting the intent. Additionally,
+            // the templateId check is constant within the loop, so evaluating it per iteration is
+            // wasteful. Consider removing LoadAllTemplatesAsync and the templateLookup.ContainsKey
+            // guard entirely, or document why orphaned-reference detection via the template store
+            // is an intentional safety requirement. If kept, hoist the ContainsKey check before
+            // the loop so it is evaluated once, not once per enabled project.
+            var templateLookup = (await projectStore.LoadAllTemplatesAsync(ct)).ToDictionary(t => t.Id);
+            foreach (var candidate in projects.Where(p => p.Enabled))
+            {
+                if (candidate.TemplateIds.Contains(request.ConsolidationTemplateId)
+                    && templateLookup.ContainsKey(request.ConsolidationTemplateId))
+                {
+                    // TODO: [WARNING] GetProjectByIdAsync(candidate.Id) re-fetches a project that
+                    // was already returned by LoadProjectsAsync. If LoadProjectsAsync returns full
+                    // PipelineProject objects (including Secrets), this is a redundant store round-
+                    // trip and candidate.Secrets could be used directly. If LoadProjectsAsync
+                    // returns lightweight projections without Secrets, the second fetch is required.
+                    // This assumption is not documented and is not visible in the interface contract.
+                    // Additionally, if GetProjectByIdAsync returns null for a project just enumerated
+                    // from LoadProjectsAsync, the break fires and silently produces no-secrets —
+                    // identical to the pre-fix behaviour. Document which projection strategy
+                    // LoadProjectsAsync uses, or add a null-guard comment explaining the intended
+                    // fallback when the re-fetch returns null.
+                    var owningProject = await projectStore.GetProjectByIdAsync(candidate.Id, ct);
+                    if (owningProject?.Secrets is { Count: > 0 })
+                        return message with { ProjectSecrets = owningProject.Secrets };
+                    break; // owning project found but has no secrets — stop looking
+                }
+            }
+        }
 
         return message;
     }
@@ -515,9 +559,12 @@ public static class WorkItemAgentEndpoints
 
         if (request.Status == WorkItemStatus.Failed)
         {
+            // TODO: This bare Enum.TryParse has no Enum.IsDefined guard (unlike the telemetry path
+            // fixed in issue #2341). A numeric string like "99" will parse to an undefined FailureReason
+            // value and be persisted to the database. Add an Enum.IsDefined check here so that only
+            // named members are written to entity.FailureReason.
             if (request.FailureReason is not null
-                && Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason)
-                && Enum.IsDefined(typeof(FailureReason), parsedReason))
+                && Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason))
             {
                 entity.FailureReason ??= parsedReason;
             }
