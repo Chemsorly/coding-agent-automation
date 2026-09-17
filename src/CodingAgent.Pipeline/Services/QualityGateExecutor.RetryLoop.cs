@@ -195,9 +195,7 @@ public partial class QualityGateExecutor
         _logger.Information("Pipeline {RunId} waiting for post-PR CI on branch {BranchName}", run.RunId, run.BranchName);
         callbacks.EmitOutputLine("⏳ Waiting for post-PR CI...");
 
-        string? commitSha = null;
-        try { commitSha = await context.RepoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, ct); }
-        catch (Exception ex) { _logger.Debug(ex, "Pipeline {RunId} could not read HEAD SHA for post-PR CI wait", run.RunId); }
+        var commitSha = await TryReadHeadShaAsync(context, "could not read HEAD SHA for post-PR CI wait", ct);
 
         // Snapshot and reset InfrastructureRetryCount so post-PR CI gets its own fresh budget.
         // The pre-PR CI poll (AppendExternalCiIfNeededAsync) may have consumed some or all of
