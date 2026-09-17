@@ -47,14 +47,14 @@ public sealed class AgentHubDecompositionPartialTests
         string runId = "job-1",
         string projectId = "proj-A",
         string issueProviderConfigId = "ip-1") => new()
-    {
-        RunId = runId,
-        IssueIdentifier = "org/repo#1",
-        IssueTitle = "Test",
-        IssueProviderConfigId = issueProviderConfigId,
-        RepoProviderConfigId = "rp-1",
-        ProjectId = projectId
-    };
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = issueProviderConfigId,
+            RepoProviderConfigId = "rp-1",
+            ProjectId = projectId
+        };
 
     private static ProviderConfig MakeProviderConfig(string id) => new()
     {
