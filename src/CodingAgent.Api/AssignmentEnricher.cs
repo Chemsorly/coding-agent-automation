@@ -296,6 +296,7 @@ public class AssignmentEnricher
             // InvalidOperationException precondition to fail fast with a clear diagnostic message.
             ProviderConfigs = preparation.ProviderConfigs ?? [],
             RepoProviderConfigId = preparation.RepoProviderConfigId,
+            BrainProviderConfigId = preparation.BrainProviderConfigId,
             PipelineConfiguration = preparation.PipelineConfiguration,
             ResolvedProfileId = profile.Id,
             AgentProviderConfigId = profile.AgentProviderConfigId,
