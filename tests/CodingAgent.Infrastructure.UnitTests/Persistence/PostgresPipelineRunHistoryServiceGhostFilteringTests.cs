@@ -94,6 +94,65 @@ public sealed class PostgresPipelineRunHistoryServiceGhostFilteringTests : IDisp
         }
     }
 
+    // ── AddRunSummaryAsync: consolidation guard (issue #2629) ────────────
+
+    [Fact]
+    public async Task AddRunSummaryAsync_ConsolidationSummary_IsNotPersisted()
+    {
+        // Regression test for issue #2629: AddRunSummaryAsync (direct-summary path) previously had
+        // no consolidation guard, allowing consolidation summaries to reach PipelineRuns.
+        // This test asserts that a consolidation-prefixed summary is silently dropped.
+        // TODO: add a second variant using ConsolidationConstants.ConsolidationAuto ("consolidation:auto")
+        // to verify the StartsWith prefix guard covers all consolidation:* variants, not just
+        // ConsolidationConstants.InitiatedBy ("consolidation:manual"). See review finding from issue #2629.
+        var runId = Guid.NewGuid();
+        var summary = new PipelineRunSummary
+        {
+            RunId = runId.ToString(),
+            IssueIdentifier = "consolidation-direct",
+            IssueTitle = "Should not be persisted",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            // InitiatedBy prefix "consolidation" is the detection key used by AddRunSummaryAsync guard.
+            // The guard uses InitiatedBy because PipelineRunSummary has no IssueProviderConfigId property.
+            InitiatedBy = ConsolidationConstants.InitiatedBy,   // "consolidation:manual"
+        };
+
+        await _sut.AddRunSummaryAsync(summary);
+
+        // TODO: strengthen this assertion to check that PipelineRuns is entirely empty (or that the
+        // total row count did not increase) rather than checking by RunId. If a serialisation bug
+        // persisted the row under a different RunId, the current .Any(r => r.RunId == runId) check
+        // would still pass and the data leak would be invisible. See review finding from issue #2629.
+        using var db = new TestPipelineDbContext(_dbOptions);
+        db.PipelineRuns.Any(r => r.RunId == runId).Should().BeFalse(
+            "AddRunSummaryAsync must not persist consolidation summaries to the PipelineRuns table");
+    }
+
+    [Fact]
+    public async Task AddRunSummaryAsync_NormalSummary_IsPersisted()
+    {
+        // Regression guard: non-consolidation summaries must still be persisted normally.
+        var runId = Guid.NewGuid();
+        var summary = new PipelineRunSummary
+        {
+            RunId = runId.ToString(),
+            IssueIdentifier = "org/repo#77",
+            IssueTitle = "Normal summary",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            InitiatedBy = "manual",
+        };
+
+        await _sut.AddRunSummaryAsync(summary);
+
+        using var db = new TestPipelineDbContext(_dbOptions);
+        db.PipelineRuns.Any(r => r.RunId == runId).Should().BeTrue(
+            "non-consolidation summaries must still be persisted via AddRunSummaryAsync");
+    }
+
     // ── DeserializeSummary fallback: InitiatedBy reconstruction ─────────
 
     [Fact]

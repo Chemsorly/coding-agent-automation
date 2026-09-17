@@ -499,7 +499,10 @@ public partial class AgentPhaseExecutor
 
             if (existingComment is not null)
             {
-                await issueOps.UpdateCommentAsync(run.IssueIdentifier, existingComment.Id, markdown, ct);
+                // TODO: long.Parse throws FormatException if a provider returns a non-numeric comment ID.
+                // Use long.TryParse with a fallback to PostCommentAsync and a descriptive log warning
+                // once non-GitHub/GitLab providers are introduced. See review finding on AgentPhaseExecutor.Analysis.cs:502.
+                await issueOps.UpdateCommentAsync(run.IssueIdentifier, long.Parse(existingComment.Id), markdown, ct);
                 _logger.Information("Pipeline {RunId} updated existing analysis comment on issue {IssueIdentifier}",
                     run.RunId, run.IssueIdentifier);
             }

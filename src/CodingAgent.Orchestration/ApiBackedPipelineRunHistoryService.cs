@@ -55,6 +55,16 @@ public sealed class ApiBackedPipelineRunHistoryService : IPipelineRunHistoryServ
     public async Task AddRunSummaryAsync(PipelineRunSummary summary, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(summary);
+
+        // Defense-in-depth: reject consolidation summaries before forwarding to the API.
+        // Mirrors the guard in AddRunToHistoryAsync(PipelineRun). Uses the InitiatedBy prefix
+        // because PipelineRunSummary has no IssueProviderConfigId property.
+        if (summary.InitiatedBy?.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal) == true)
+        {
+            _logger.Debug("ApiBackedPipelineRunHistoryService: skipping consolidation summary {RunId}", summary.RunId);
+            return;
+        }
+
         try
         {
             await _client.AddRunToHistoryAsync(summary, ct);

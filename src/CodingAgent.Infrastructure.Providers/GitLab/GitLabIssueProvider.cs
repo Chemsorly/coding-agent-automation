@@ -153,19 +153,11 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
     }
 
     /// <inheritdoc />
-    public async Task UpdateCommentAsync(IssueIdentifier issueIdentifier, string commentId, string body, CancellationToken ct)
+    public async Task UpdateCommentAsync(IssueIdentifier issueIdentifier, long commentId, string body, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
-        ArgumentNullException.ThrowIfNull(commentId);
         ArgumentNullException.ThrowIfNull(body);
         var iid = ParseIdentifier(issueIdentifier);
-
-        if (!long.TryParse(commentId, out var noteId))
-        {
-            Log.Warning("Invalid comment identifier '{CommentId}' — expected numeric note ID", commentId);
-            throw new ArgumentException(
-                $"Invalid comment identifier: '{commentId}'. Expected a numeric note ID.", nameof(commentId));
-        }
 
         try
         {
@@ -173,7 +165,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
                 client =>
                 {
                     var noteClient = client.GetProjectIssueNoteClient(ProjectId);
-                    return Task.Run(() => noteClient.Edit(new ProjectIssueNoteEdit { NoteId = noteId, IssueId = iid, Body = body }), ct);
+                    return Task.Run(() => noteClient.Edit(new ProjectIssueNoteEdit { NoteId = commentId, IssueId = iid, Body = body }), ct);
                 },
                 "UpdateComment", ct);
         }

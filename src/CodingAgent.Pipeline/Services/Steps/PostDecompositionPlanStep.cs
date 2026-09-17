@@ -56,8 +56,12 @@ public sealed class PostDecompositionPlanStep : IPipelineStep
             if (existingComment is not null)
             {
                 // Update existing comment to avoid duplicates
+                // TODO: long.Parse throws FormatException if a provider returns a non-numeric comment ID.
+                // Inside TryCriticalAsync this will abort the pipeline step. Use long.TryParse with a
+                // descriptive error once non-GitHub/GitLab providers are introduced.
+                // See review finding on PostDecompositionPlanStep.cs:60.
                 await context.IssueOps.UpdateCommentAsync(
-                    context.Run.IssueIdentifier, existingComment.Id, commentBody, ct);
+                    context.Run.IssueIdentifier, long.Parse(existingComment.Id), commentBody, ct);
                 context.Logger.Information(
                     "Updated existing decomposition plan comment {CommentId} on issue {IssueId}",
                     existingComment.Id, context.Run.IssueIdentifier);

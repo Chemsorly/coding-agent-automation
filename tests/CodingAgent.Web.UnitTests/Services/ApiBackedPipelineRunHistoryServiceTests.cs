@@ -117,6 +117,35 @@ public sealed class ApiBackedPipelineRunHistoryServiceTests
     // ── AddRunSummaryAsync — exception is swallowed (non-fatal) ──────────
 
     [Fact]
+    public async Task AddRunSummaryAsync_ConsolidationSummary_DoesNotCallHttpClient()
+    {
+        // Regression test for issue #2629: AddRunSummaryAsync must silently skip consolidation
+        // summaries without forwarding them to the API. Mirrors the guard already present on
+        // AddRunToHistoryAsync(PipelineRun) for the IssueProviderConfigId == sentinel check.
+        // TODO: add a second variant using ConsolidationConstants.ConsolidationAuto ("consolidation:auto")
+        // to verify the StartsWith prefix guard covers all consolidation:* variants, not just
+        // ConsolidationConstants.InitiatedBy ("consolidation:manual"). See review finding from issue #2629.
+        var sut = CreateSut();
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "consolidation-test",
+            IssueTitle = "Should be skipped",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            InitiatedBy = ConsolidationConstants.InitiatedBy,   // "consolidation:manual"
+        };
+
+        await sut.AddRunSummaryAsync(summary);
+
+        // The HTTP client must never be called when the summary is a consolidation run.
+        _client.Verify(
+            c => c.AddRunToHistoryAsync(It.IsAny<PipelineRunSummary>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "consolidation summaries must be dropped before reaching the HTTP client");
+    }
+
+    [Fact]
     public async Task AddRunSummaryAsync_ClientThrows_DoesNotPropagate()
     {
         _client
