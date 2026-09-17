@@ -166,21 +166,22 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         return comment?.HtmlUrl?.ToString();
     }
 
-    public async Task UpdateCommentAsync(IssueIdentifier issueIdentifier, string commentId, string body, CancellationToken ct)
+    public async Task UpdateCommentAsync(IssueIdentifier issueIdentifier, long commentId, string body, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
-        ArgumentNullException.ThrowIfNull(commentId);
         ArgumentNullException.ThrowIfNull(body);
         ParseIssueIdentifier(issueIdentifier);
 
-        if (!int.TryParse(commentId, out var commentIdParsed))
-        {
-            Log.Warning("Invalid comment identifier '{CommentId}' — expected numeric comment ID", commentId);
-            throw new ArgumentException($"Invalid comment identifier: '{commentId}'. Expected a numeric comment ID.", nameof(commentId));
-        }
+        // GitHub's REST API returns comment IDs as long, but Octokit's Update signature takes int.
+        // IDs > int.MaxValue would overflow; use checked cast to surface this explicitly.
+        // TODO: GitHub comment IDs already exceed int.MaxValue in production. Once Octokit exposes
+        // a long-based overload (or is replaced), remove this cast and pass commentId directly.
+        // Until then, callers receive OverflowException for IDs > 2,147,483,647 — see test
+        // UpdateCommentAsync_CommentIdExceedsIntMaxValue_ThrowsOverflowException.
+        var commentIdInt = checked((int)commentId);
 
         await ExecuteWithResilienceAsync(
-            client => client.Issue.Comment.Update(Owner, Repo, commentIdParsed, body),
+            client => client.Issue.Comment.Update(Owner, Repo, commentIdInt, body),
             "UpdateComment", ct);
     }
 

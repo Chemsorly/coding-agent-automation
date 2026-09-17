@@ -156,29 +156,6 @@ public class ThrowLoggingTests : IDisposable
 
     #endregion
 
-    #region GitHubIssueProvider.UpdateCommentAsync invalid comment ID logging
-
-    [Fact]
-    public async Task UpdateCommentAsync_InvalidCommentId_LogsWarningBeforeThrowing()
-    {
-        var mockClient = new Mock<IGitHubClient>();
-        var provider = new GitHubIssueProvider(
-            new GitHubConnectionInfo("https://api.github.com", "owner", "repo"),
-            mockClient.Object);
-
-        _sink.Clear();
-
-        var act = () => provider.UpdateCommentAsync("123", "not-a-number", "body", CancellationToken.None);
-
-        await act.Should().ThrowAsync<ArgumentException>();
-
-        _sink.Events.Should().Contain(e =>
-            e.Level == LogEventLevel.Warning &&
-            e.MessageTemplate.Text.Contains("Invalid comment identifier"));
-    }
-
-    #endregion
-
     #region ExecuteWithRateLimitHandlingAsync logging
 
     [Fact]

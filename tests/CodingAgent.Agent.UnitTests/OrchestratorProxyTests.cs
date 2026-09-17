@@ -318,6 +318,30 @@ public class OrchestratorProxyTests
         return new OrchestratorProxy(connection, "job-1", tokenRefreshDelegate);
     }
 
+    [Fact]
+    public async Task UpdateCommentAsync_LongCommentId_ThrowsBecauseNotConnected()
+    {
+        // Verifies that the proxy accepts a long commentId parameter (type compliance).
+        // The actual SignalR invocation will fail because the connection is not started —
+        // this proves the method signature is correct without needing a live hub.
+        // TODO: This test does not verify the serialized wire value ("99") forwarded to InvokeAsync.
+        // A test using a captured-arguments mock that asserts commentId.ToString() = "99" is passed
+        // to the SignalR hub would give stronger confidence in the long → string conversion.
+        // See review finding on OrchestratorProxyTests.cs:322.
+        var proxy = CreateProxy();
+        var act = () => proxy.UpdateCommentAsync("issue-1", 99L, "Updated body", CancellationToken.None);
+        await act.Should().ThrowAsync<InvalidOperationException>();
+    }
+
+    [Fact]
+    public async Task UpdateCommentAsync_NullBody_ThrowsArgumentNullException()
+    {
+        // Guard: body null check fires before SignalR invocation.
+        var proxy = CreateProxy();
+        var act = () => proxy.UpdateCommentAsync("issue-1", 99L, null!, CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("body");
+    }
+
     /// <summary>
     /// A no-op HTTP handler that returns 200 OK for connection building purposes.
     /// The connection won't actually be started in these tests.

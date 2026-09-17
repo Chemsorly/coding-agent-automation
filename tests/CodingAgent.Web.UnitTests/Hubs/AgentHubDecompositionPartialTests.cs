@@ -47,14 +47,14 @@ public sealed class AgentHubDecompositionPartialTests
         string runId = "job-1",
         string projectId = "proj-A",
         string issueProviderConfigId = "ip-1") => new()
-    {
-        RunId = runId,
-        IssueIdentifier = "org/repo#1",
-        IssueTitle = "Test",
-        IssueProviderConfigId = issueProviderConfigId,
-        RepoProviderConfigId = "rp-1",
-        ProjectId = projectId
-    };
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = issueProviderConfigId,
+            RepoProviderConfigId = "rp-1",
+            ProjectId = projectId
+        };
 
     private static ProviderConfig MakeProviderConfig(string id) => new()
     {
@@ -272,5 +272,22 @@ public sealed class AgentHubDecompositionPartialTests
         var hub = CreateHub();
         var act = () => hub.RequestUpdateComment(new JobId("job-1"), "issue-1", "comment-1", null!);
         await act.Should().ThrowAsync<ArgumentNullException>();
+    }
+
+    [Fact]
+    public async Task RequestUpdateComment_NonNumericCommentId_ThrowsHubException()
+    {
+        // After the type change, the hub parses the wire-string commentId to long before
+        // calling IIssueProvider. A non-numeric commentId must surface as HubException
+        // (wrapped by ExecuteWithIssueProviderAsync) rather than silently failing.
+        _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
+
+        var hub = CreateHub();
+        var act = () => hub.RequestUpdateComment(
+            new JobId("job-1"), "issue-1", "not-a-number", "body");
+
+        // ExecuteWithIssueProviderAsync wraps all failures as HubException,
+        // so the ArgumentException from the parse guard becomes a HubException.
+        await act.Should().ThrowAsync<HubException>();
     }
 }

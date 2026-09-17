@@ -120,17 +120,24 @@ public class PostDecompositionPlanStepTests : IDisposable
         _issueOps.Verify(x => x.PostCommentAsync("42",
             It.Is<string>(body => body.Contains(CommentMarkers.DecompositionPlan)),
             It.IsAny<CancellationToken>()), Times.Once);
-        _issueOps.Verify(x => x.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _issueOps.Verify(x => x.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<long>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
     public async Task ExecuteAsync_ExistingPlanComment_UpdatesInsteadOfPosting()
     {
+        // TODO: No test covers the case where existingComment.Id is non-numeric (e.g. "comment-99" —
+        // the exact value used in this test before the long migration, visible in the diff context).
+        // long.Parse in PostDecompositionPlanStep.cs:64 would throw FormatException inside TryCriticalAsync,
+        // aborting the pipeline step rather than falling back to PostCommentAsync. A test asserting the
+        // observable behavior (StepResult.Stop, or a FormatException-derived abort) would lock in this
+        // behavior and prevent a silent-failure regression. See review finding on
+        // PostDecompositionPlanStepTests.cs:131.
         WritePlanFile("This is a valid decomposition plan with enough content to pass validation.");
 
         var existingComment = new IssueComment
         {
-            Id = "comment-99",
+            Id = "99",
             Body = $"{CommentMarkers.DecompositionPlan}\n\nOld plan content",
             Author = "bot",
             CreatedAt = DateTime.UtcNow.AddHours(-1)
@@ -138,7 +145,7 @@ public class PostDecompositionPlanStepTests : IDisposable
 
         _issueOps.Setup(x => x.ListCommentsAsync("42", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment> { existingComment });
-        _issueOps.Setup(x => x.UpdateCommentAsync("42", "comment-99", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _issueOps.Setup(x => x.UpdateCommentAsync("42", 99L, It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _issueOps.Setup(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -150,7 +157,7 @@ public class PostDecompositionPlanStepTests : IDisposable
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
         result.Should().Be(StepResult.Continue);
-        _issueOps.Verify(x => x.UpdateCommentAsync("42", "comment-99",
+        _issueOps.Verify(x => x.UpdateCommentAsync("42", 99L,
             It.Is<string>(body => body.Contains(CommentMarkers.DecompositionPlan)),
             It.IsAny<CancellationToken>()), Times.Once);
         _issueOps.Verify(x => x.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -163,14 +170,14 @@ public class PostDecompositionPlanStepTests : IDisposable
 
         var olderComment = new IssueComment
         {
-            Id = "comment-1",
+            Id = "1",
             Body = $"{CommentMarkers.DecompositionPlan}\n\nOlder plan",
             Author = "bot",
             CreatedAt = DateTime.UtcNow.AddHours(-2)
         };
         var newerComment = new IssueComment
         {
-            Id = "comment-5",
+            Id = "5",
             Body = $"{CommentMarkers.DecompositionPlan}\n\nNewer plan",
             Author = "bot",
             CreatedAt = DateTime.UtcNow.AddHours(-1)
@@ -178,7 +185,7 @@ public class PostDecompositionPlanStepTests : IDisposable
 
         _issueOps.Setup(x => x.ListCommentsAsync("42", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment> { olderComment, newerComment });
-        _issueOps.Setup(x => x.UpdateCommentAsync("42", "comment-5", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _issueOps.Setup(x => x.UpdateCommentAsync("42", 5L, It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _issueOps.Setup(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -190,7 +197,7 @@ public class PostDecompositionPlanStepTests : IDisposable
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
         result.Should().Be(StepResult.Continue);
-        _issueOps.Verify(x => x.UpdateCommentAsync("42", "comment-5", It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(x => x.UpdateCommentAsync("42", 5L, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
