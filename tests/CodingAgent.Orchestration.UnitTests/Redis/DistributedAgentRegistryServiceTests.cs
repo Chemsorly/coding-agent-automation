@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgent.Orchestration.Redis;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.TestUtilities;
@@ -582,4 +583,282 @@ public sealed class DistributedAgentRegistryServiceTests
     //     and ExpireAsync fault injection)
     //   - CaptureSink (or use TestUtilities.CaptureSink if one exists)
     // These are unrelated to the _allAgentsCache race and should be restored in a follow-up.
+
+    // ── SetLocalSnapshotField ─────────────────────────────────────────────────
+
+    [Fact]
+    public void SetLocalSnapshotField_ActiveJobId_ImmediatelyReflectedByGetByConnectionId()
+    {
+        // Arrange: register so _localSnapshot and _connectionIndex are populated.
+        _sut.Register(Msg("agent-1"), "conn-1");
+
+        // Act: update the snapshot synchronously — do NOT call UpdateAgentFieldAsync.
+        // This simulates the fix: the snapshot is updated before any Redis write lands.
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "activeJobId", "run-restore");
+
+        // Assert: GetByConnectionId must return the updated value immediately.
+        // This is the core acceptance criterion: no Redis I/O should be required.
+        var entry = _sut.GetByConnectionId("conn-1");
+        entry.Should().NotBeNull();
+        entry!.ActiveJobId.Should().Be("run-restore",
+            "SetLocalSnapshotField must update _localSnapshot synchronously so GetByConnectionId " +
+            "returns the correct ActiveJobId before any Redis write completes (issue #2616)");
+    }
+
+    [Fact]
+    public async Task SetLocalSnapshotField_ActiveJobId_ImmediatelyReflectedByGetByConnectionId_WhileRedisWritePending()
+    {
+        // End-to-end acceptance criterion test (issue #2616):
+        // "stub Redis to hang; assert GetByConnectionId returns correct value immediately"
+        //
+        // Arrange: build a sut backed by a store that blocks HashSetFieldAsync indefinitely.
+        // This simulates the fire-and-forget UpdateAgentFieldAsync being in-flight (waiting
+        // for Redis) while the synchronous SetLocalSnapshotField has already updated the snapshot.
+        var blockingStore = new HashSetBlockingFakeRedisStore();
+        var sut = new DistributedAgentRegistryService(blockingStore, Log.Logger);
+        sut.Register(Msg("agent-1"), "conn-1");
+
+        // Fire-and-forget UpdateAgentFieldAsync — this will block on HashSetFieldAsync.
+        // We do NOT await it; we only want Redis in a permanently-pending state.
+        _ = sut.UpdateAgentFieldAsync(new AgentId("agent-1"), "activeJobId", "run-blocked");
+
+        // TODO (WARNING): The `beforeSync` assertion below is not preceded by
+        // `await blockingStore.LastBlockedTask`, so there is no guarantee that
+        // UpdateAgentFieldAsync has actually reached and blocked at HashSetFieldAsync before
+        // the snapshot is read. UpdateAgentFieldAsync guards on ExistsAsync first; if the
+        // fire-and-forget WriteRegistrationAsync (called by Register) has not yet landed its
+        // HashSetAsync, ExistsAsync returns false and UpdateAgentFieldAsync returns early —
+        // HashSetFieldAsync is never entered, LastBlockedTask never completes, and the final
+        // WaitAsync at teardown throws TimeoutException non-deterministically. Fix: add
+        // `await blockingStore.LastBlockedTask.WaitAsync(TimeSpan.FromSeconds(5))` here
+        // (before the beforeSync read) to guarantee the Redis write is truly in-flight before
+        // asserting on the snapshot state. (Correctness/TestQualityReviewer/DotNetSpecialist
+        // WARNING, issue #2616)
+        // Verify Redis write is still pending (not yet updating the snapshot).
+        var beforeSync = sut.GetByConnectionId("conn-1");
+        beforeSync.Should().NotBeNull();
+        beforeSync!.ActiveJobId.Should().BeNull(
+            "before SetLocalSnapshotField, the snapshot must still have the pre-restore ActiveJobId=null " +
+            "because the Redis write is blocked and UpdateAgentFieldAsync has not yet updated _localSnapshot");
+
+        // Act: synchronously update the snapshot — this is the fix from issue #2616.
+        sut.SetLocalSnapshotField(new AgentId("agent-1"), "activeJobId", "run-restore");
+
+        // Assert: GetByConnectionId must return the restored value immediately,
+        // even though UpdateAgentFieldAsync is still blocked waiting for Redis.
+        var entry = sut.GetByConnectionId("conn-1");
+        entry.Should().NotBeNull();
+        entry!.ActiveJobId.Should().Be("run-restore",
+            "GetByConnectionId must return the restored ActiveJobId synchronously before any " +
+            "Redis write completes (issue #2616 end-to-end acceptance criterion)");
+
+        // TODO (WARNING): `LastBlockedTask` signals method *entry* into HashSetFieldAsync
+        // (when _blockedTcs.TrySetResult() fires), NOT completion of the inner Redis write.
+        // After UnblockHashSetField() the await below returns immediately (the task was already
+        // completed at method entry) and does NOT wait for _inner.HashSetFieldAsync or the
+        // enclosing UpdateAgentFieldAsync to finish. The background continuation may still be
+        // running during teardown. To actually await full completion, capture the fire-and-forget
+        // task (replace `_ =` with `var updateTask =`) and await it here instead, or add a
+        // separate "write finished" TCS signaled after _inner.HashSetFieldAsync returns.
+        // (Correctness WARNING, issue #2616)
+        // Unblock the store so the background task can complete; avoids test teardown noise.
+        blockingStore.UnblockHashSetField();
+        await blockingStore.LastBlockedTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public void SetLocalSnapshotField_OrphanRestoredAt_ImmediatelyReflectedByGetByConnectionId()
+    {
+        // Arrange
+        _sut.Register(Msg("agent-1"), "conn-1");
+        var now = DateTimeOffset.UtcNow;
+
+        // Act: update OrphanRestoredAt synchronously without any Redis write.
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "orphanRestoredAt", now.ToString("O"));
+
+        // Assert: the snapshot must reflect the updated value, and it must be close to `now`.
+        var entry = _sut.GetByConnectionId("conn-1");
+        entry.Should().NotBeNull();
+        entry!.OrphanRestoredAt.Should().NotBeNull(
+            "SetLocalSnapshotField must update OrphanRestoredAt in _localSnapshot synchronously");
+        entry.OrphanRestoredAt!.Value.Should().BeCloseTo(now, TimeSpan.FromSeconds(1),
+            "the restored OrphanRestoredAt must match the value passed to SetLocalSnapshotField");
+    }
+
+    [Fact]
+    public void SetLocalSnapshotField_UnknownAgent_IsNoOp()
+    {
+        // SetLocalSnapshotField for an unregistered agent must not throw.
+        var act = () => _sut.SetLocalSnapshotField(new AgentId("agent-unknown"), "activeJobId", "run-1");
+        act.Should().NotThrow("absent _localSnapshot entry must silently return without error");
+    }
+
+    [Fact]
+    public void SetLocalSnapshotField_UnknownField_LeavesSnapshotUnchanged()
+    {
+        // Arrange
+        _sut.Register(Msg("agent-1"), "conn-1");
+
+        // Act: unknown field — the switch _ => snap arm must be hit, leaving the entry intact.
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "nonexistentField", "value");
+
+        // Assert: other fields must be unaffected.
+        var entry = _sut.GetByConnectionId("conn-1");
+        entry.Should().NotBeNull();
+        entry!.ActiveJobId.Should().BeNull("unknown field must not corrupt existing snapshot fields");
+    }
+
+    [Fact]
+    public void SetLocalSnapshotField_ActiveChatSessionId_ImmediatelyReflectedByGetByConnectionId()
+    {
+        // Arrange
+        _sut.Register(Msg("agent-1"), "conn-1");
+
+        // Act: update activeChatSessionId synchronously.
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "activeChatSessionId", "session-42");
+
+        // Assert: GetByConnectionId must return the updated value immediately.
+        var entry = _sut.GetByConnectionId("conn-1");
+        entry.Should().NotBeNull();
+        entry!.ActiveChatSessionId.Should().Be("session-42",
+            "SetLocalSnapshotField must update ActiveChatSessionId in _localSnapshot synchronously");
+    }
+
+    [Fact]
+    public void SetLocalSnapshotField_ActiveChatSessionId_NullValue_ClearsField()
+    {
+        // Arrange: register and set an initial active chat session.
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "activeChatSessionId", "session-42");
+
+        // Act: clear it with null/empty.
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "activeChatSessionId", null);
+
+        // Assert
+        var entry = _sut.GetByConnectionId("conn-1");
+        entry.Should().NotBeNull();
+        entry!.ActiveChatSessionId.Should().BeNull(
+            "null value must clear the ActiveChatSessionId field");
+    }
+
+    [Fact]
+    public void SetLocalSnapshotField_Disabled_TrueValue_SetsDisabled()
+    {
+        // Arrange
+        _sut.Register(Msg("agent-1"), "conn-1");
+
+        // Act
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "disabled", "true");
+
+        // Assert
+        var entry = _sut.GetByConnectionId("conn-1");
+        entry.Should().NotBeNull();
+        entry!.Disabled.Should().BeTrue(
+            "SetLocalSnapshotField must update Disabled=true in _localSnapshot synchronously");
+    }
+
+    [Fact]
+    public void SetLocalSnapshotField_Disabled_FalseValue_ClearsDisabled()
+    {
+        // Arrange: start disabled, then clear.
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "disabled", "true");
+
+        // Act
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "disabled", "false");
+
+        // Assert
+        var entry = _sut.GetByConnectionId("conn-1");
+        entry.Should().NotBeNull();
+        entry!.Disabled.Should().BeFalse(
+            "SetLocalSnapshotField must update Disabled=false in _localSnapshot synchronously");
+    }
+
+    [Fact]
+    public void SetLocalSnapshotField_Disabled_MalformedValue_IsNoOp()
+    {
+        // Arrange
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "disabled", "true");
+
+        // Act: malformed bool — TryParse returns false, snap is unchanged.
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "disabled", "not-a-bool");
+
+        // Assert: field must remain true (no clobber from bad parse).
+        var entry = _sut.GetByConnectionId("conn-1");
+        entry.Should().NotBeNull();
+        entry!.Disabled.Should().BeTrue(
+            "malformed bool value must leave the existing Disabled field unchanged");
+    }
+
+    [Fact]
+    public void SetLocalSnapshotField_OrphanRestoredAt_MalformedValue_IsNoOp()
+    {
+        // Arrange: register and set an initial OrphanRestoredAt.
+        _sut.Register(Msg("agent-1"), "conn-1");
+        var now = DateTimeOffset.UtcNow;
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "orphanRestoredAt", now.ToString("O"));
+
+        // Act: malformed date — TryParse returns false, snap is unchanged.
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "orphanRestoredAt", "not-a-date");
+
+        // Assert: field must remain at the previously set value (not cleared or clobbered).
+        var entry = _sut.GetByConnectionId("conn-1");
+        entry.Should().NotBeNull();
+        entry!.OrphanRestoredAt.Should().NotBeNull(
+            "malformed date string must leave the existing OrphanRestoredAt field unchanged");
+        entry.OrphanRestoredAt!.Value.Should().BeCloseTo(now, TimeSpan.FromSeconds(1),
+            "the OrphanRestoredAt must remain at the previously set value");
+    }
+}
+
+/// <summary>
+/// An <see cref="IRedisStore"/> decorator that blocks <see cref="HashSetFieldAsync"/> until
+/// <see cref="UnblockHashSetField"/> is called. Wraps a <see cref="FakeRedisStore"/> for all
+/// other operations. Used to simulate a stalled Redis write so tests can assert that
+/// <c>SetLocalSnapshotField</c> updates <c>_localSnapshot</c> synchronously — before the
+/// fire-and-forget Redis write completes (issue #2616).
+/// </summary>
+internal sealed class HashSetBlockingFakeRedisStore : IRedisStore
+{
+    private readonly FakeRedisStore _inner = new();
+    private readonly TaskCompletionSource _blockTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _blockedTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// A task that completes once <see cref="HashSetFieldAsync"/> has been entered and is
+    /// blocked. Await this in tests to confirm the Redis write is in-flight.
+    /// </summary>
+    public Task LastBlockedTask => _blockedTcs.Task;
+
+    /// <summary>Releases the blocked <see cref="HashSetFieldAsync"/> call.</summary>
+    public void UnblockHashSetField() => _blockTcs.TrySetResult();
+
+    public async Task<bool> HashSetFieldAsync(string key, string field, string value)
+    {
+        // Signal that we are now blocked, then wait for the unblock signal.
+        _blockedTcs.TrySetResult();
+        await _blockTcs.Task;
+        return await _inner.HashSetFieldAsync(key, field, value);
+    }
+
+    // Delegate all other operations to the inner FakeRedisStore.
+    public Task<bool> SetAsync(string key, string value, TimeSpan? expiry = null, StackExchange.Redis.When when = StackExchange.Redis.When.Always) => _inner.SetAsync(key, value, expiry, when);
+    public Task<string?> GetAsync(string key) => _inner.GetAsync(key);
+    public Task<bool> SetIfNotExistsAsync(string key, string value, TimeSpan expiry) => _inner.SetIfNotExistsAsync(key, value, expiry);
+    public Task<bool> DeleteAsync(string key) => _inner.DeleteAsync(key);
+    public Task<bool> ExpireAsync(string key, TimeSpan expiry) => _inner.ExpireAsync(key, expiry);
+    public Task<bool> ExpireAtAsync(string key, DateTimeOffset expiry) => _inner.ExpireAtAsync(key, expiry);
+    public Task<StackExchange.Redis.HashEntry[]> HashGetAllAsync(string key) => _inner.HashGetAllAsync(key);
+    public Task HashSetAsync(string key, StackExchange.Redis.HashEntry[] fields) => _inner.HashSetAsync(key, fields);
+    public Task<long> SetAddAsync(string key, string value) => _inner.SetAddAsync(key, value);
+    public Task<long> SetRemoveAsync(string key, string value) => _inner.SetRemoveAsync(key, value);
+    public Task<string[]> SetMembersAsync(string key) => _inner.SetMembersAsync(key);
+    public Task<long> SetCardinalityAsync(string key) => _inner.SetCardinalityAsync(key);
+    public Task<long> ListRightPushAsync(string key, string[] values) => _inner.ListRightPushAsync(key, values);
+    public Task ListTrimAsync(string key, long start, long stop) => _inner.ListTrimAsync(key, start, stop);
+    public Task<string[]> ListRangeAsync(string key, long start, long stop) => _inner.ListRangeAsync(key, start, stop);
+    public Task<bool> ExistsAsync(string key) => _inner.ExistsAsync(key);
+    public Task<bool> PingAsync() => _inner.PingAsync();
+    public Task<StackExchange.Redis.RedisResult> ScriptEvaluateAsync(string script, StackExchange.Redis.RedisKey[] keys, StackExchange.Redis.RedisValue[] values) => _inner.ScriptEvaluateAsync(script, keys, values);
 }

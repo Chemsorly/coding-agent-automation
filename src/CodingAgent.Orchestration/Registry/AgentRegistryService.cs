@@ -307,11 +307,11 @@ public sealed class AgentRegistryService : IAgentRegistryService
         {
             switch (field)
             {
-                case "activeJobId":         entry.ActiveJobId = value; break;
-                case "orphanRestoredAt":    entry.OrphanRestoredAt = value is null ? null : DateTimeOffset.Parse(value); break;
+                case "activeJobId": entry.ActiveJobId = value; break;
+                case "orphanRestoredAt": entry.OrphanRestoredAt = value is null ? null : DateTimeOffset.Parse(value); break;
                 case "activeChatSessionId": entry.ActiveChatSessionId = value; break;
-                case "lastJobCompletedAt":  entry.LastJobCompletedAt = value is null ? null : DateTimeOffset.Parse(value); break;
-                case "disabled":            entry.Disabled = value is not null && bool.Parse(value); break;
+                case "lastJobCompletedAt": entry.LastJobCompletedAt = value is null ? null : DateTimeOffset.Parse(value); break;
+                case "disabled": entry.Disabled = value is not null && bool.Parse(value); break;
                 default:
                     _logger.Warning("UpdateAgentFieldAsync: unknown field '{Field}' for agent {AgentId}", field, agentId);
                     break;
@@ -319,5 +319,12 @@ public sealed class AgentRegistryService : IAgentRegistryService
         }
 
         return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public void SetLocalSnapshotField(AgentId agentId, string field, string? value)
+    {
+        // No-op: in-memory path. GetByAgentId returns the live AgentEntry reference directly,
+        // so DetectAndRestoreOrphans mutations are already visible to GetByConnectionId.
     }
 }

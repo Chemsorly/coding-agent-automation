@@ -225,6 +225,16 @@ public sealed class ApiAgentRegistryService : IAgentRegistryService
         return Task.CompletedTask;
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// No-op: this process holds a read-only snapshot of the registry populated by polling
+    /// the Pipeline API. Local snapshot updates have no meaning here.
+    /// </remarks>
+    public void SetLocalSnapshotField(AgentId agentId, string field, string? value)
+    {
+        // No-op: read-only replica. The snapshot is rebuilt on the next RefreshAsync call.
+    }
+
     // ── Snapshot ────────────────────────────────────────────────────────────
 
     /// <summary>

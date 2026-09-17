@@ -133,6 +133,22 @@ public sealed class AgentHubFacadeTests
         _facade.GetByAgentId("a1")!.LastHeartbeatAt.Should().Be(ts);
     }
 
+    [Fact]
+    public void SetLocalAgentSnapshotField_DelegatesToRegistry()
+    {
+        // Arrange: register an agent so the registry has a live entry.
+        var msg = new AgentRegistrationMessage { AgentId = "a1", Hostname = "h1", Labels = Array.Empty<string>() };
+        _facade.Register(msg, "conn-1");
+
+        // Act: the in-memory AgentRegistryService.SetLocalSnapshotField is a no-op (the live
+        // AgentEntry reference is already returned by GetByConnectionId). The test verifies the
+        // facade method delegates through without throwing — covering line 288 of AgentHubFacade.
+        var act = () => _facade.SetLocalAgentSnapshotField(new AgentId("a1"), "activeJobId", "run-facade-test");
+        act.Should().NotThrow(
+            "SetLocalAgentSnapshotField must delegate to IAgentRegistryService.SetLocalSnapshotField " +
+            "without throwing for a registered agent (issue #2616)");
+    }
+
     #endregion
 
     #region Run state delegation

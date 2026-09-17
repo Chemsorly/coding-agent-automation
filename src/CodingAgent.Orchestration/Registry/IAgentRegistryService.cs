@@ -103,4 +103,16 @@ public interface IAgentRegistryService
     /// a deserialized snapshot and direct mutations are silently lost.
     /// </summary>
     Task UpdateAgentFieldAsync(AgentId agentId, string field, string? value);
+
+    /// <summary>
+    /// Synchronously updates the local in-memory snapshot for the specified agent.
+    /// Does <b>not</b> write to Redis. Use when the caller needs <see cref="GetByConnectionId"/>
+    /// to reflect the new field value immediately, before a fire-and-forget Redis write completes.
+    /// <para>
+    /// Only meaningful for <see cref="DistributedAgentRegistryService"/>; all other implementations
+    /// are no-ops because they either return live object references (in-memory) or hold read-only
+    /// snapshots (API replica).
+    /// </para>
+    /// </summary>
+    void SetLocalSnapshotField(AgentId agentId, string field, string? value);
 }
