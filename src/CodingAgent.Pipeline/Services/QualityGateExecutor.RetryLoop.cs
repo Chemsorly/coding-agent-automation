@@ -224,39 +224,18 @@ public partial class QualityGateExecutor
                     ciPollStopwatch.Elapsed.TotalSeconds,
                     PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
 
-                ciGate = new GateResult
-                {
-                    GateName = "External CI",
-                    Passed = ciPassed,
-                    Details = ciPassed
-                        ? $"Post-PR CI passed. {ciStatus.Jobs.Count} job(s) completed."
-                        : QualityGateValidator.BuildCiFailureDetails(ciStatus, ciLogPaths)
-                };
-
-                callbacks.EmitOutputLine(ciPassed
-                    ? $"✅ Post-PR CI passed ({ciStatus.Jobs.Count} jobs)"
-                    : $"❌ Post-PR CI failed: {ciGate.Details}");
+                ciGate = BuildCiGateResult(ciPassed, ciStatus, ciLogPaths, "Post-PR CI", "Post-PR CI", callbacks);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                ciGate = new GateResult
-                {
-                    GateName = "External CI",
-                    Passed = false,
-                    Details = $"Post-PR CI timed out after {config.ExternalCiTimeout}"
-                };
+                ciGate = BuildCiTimeoutGateResult(config.ExternalCiTimeout, "Post-PR CI");
                 callbacks.EmitOutputLine($"❌ Post-PR CI timed out after {config.ExternalCiTimeout}");
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
                 _logger.Warning(ex, "Pipeline {RunId} post-PR CI check failed, treating as gate failure", run.RunId);
-                ciGate = new GateResult
-                {
-                    GateName = "External CI",
-                    Passed = false,
-                    Details = $"Post-PR CI error: {ex.Message}"
-                };
+                ciGate = BuildCiErrorGateResult("Post-PR CI", ex.Message);
             }
             finally
             {
