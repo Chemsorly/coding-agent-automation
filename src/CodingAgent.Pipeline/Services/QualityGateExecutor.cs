@@ -229,4 +229,44 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         if (priorRetryErrors.Distinct().Count() == 1)
             sb.AppendLine("⚠️ All prior attempts produced identical failures — this is likely a transient infrastructure failure (e.g. OOM, flaky test environment). Consider whether a code fix is appropriate before retrying.");
     }
+
+    /// <summary>
+    /// Best-effort read of the HEAD commit SHA for the current run's workspace.
+    /// Returns <see langword="null"/> and logs at Debug level when the read fails for any
+    /// non-cancellation reason. Callers use the result as an optional SHA hint for CI polling;
+    /// a null value causes CI polling to fall back to branch-only filtering.
+    /// </summary>
+    /// <param name="context">The quality gate context supplying <c>RepoProvider</c> and <c>Run</c>.</param>
+    /// <param name="purpose">A short phrase identifying the call site (e.g. <c>"could not read HEAD commit SHA"</c>).
+    /// Emitted as the <c>{Purpose}</c> structured log property so each origin is distinguishable in log sinks.</param>
+    /// <param name="ct">Cancellation token. <see cref="OperationCanceledException"/> is always rethrown.</param>
+    private async Task<string?> TryReadHeadShaAsync(
+        QualityGateContext context, string purpose, CancellationToken ct)
+    {
+        // TODO [WARNING]: The log template here uses a structured {Purpose} property rather than
+        // embedding the purpose text as a literal message suffix (e.g. the originals used
+        // "Pipeline {RunId} could not read HEAD commit SHA"). The rendered string is identical in
+        // Serilog, but the log event structure differs — each event now carries a Purpose property
+        // instead of a constant message template. Any log-sink alert, dashboard query, or aggregation
+        // rule that matches on the exact old message template (e.g. "Pipeline * could not read HEAD
+        // commit SHA") will no longer match and must be updated to query the Purpose property value.
+        // TODO [WARNING]: The explicit `catch (OperationCanceledException) { throw; }` guard was absent
+        // in four of the five original call sites (ExternalCi.cs L71, L365, L515 and RetryLoop.cs L200
+        // previously only had `catch (Exception)`, so OCE was swallowed and null was returned). This
+        // helper now propagates OCE at all five sites. If `GetHeadCommitShaAsync` uses Task.WhenAll or
+        // similar aggregate-task patterns internally, AggregateException wrapping OCE will still be
+        // swallowed here (catch (OperationCanceledException) does not match AggregateException). Consider
+        // using ex.IsCancellation() or unwrapping AggregateException if the provider ever uses aggregate
+        // tasks internally.
+        try
+        {
+            return await context.RepoProvider.GetHeadCommitShaAsync(context.Run.WorkspacePath!, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "Pipeline {RunId} {Purpose}", context.Run.RunId, purpose);
+            return null;
+        }
+    }
 }

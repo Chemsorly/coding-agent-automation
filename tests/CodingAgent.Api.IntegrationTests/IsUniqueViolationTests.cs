@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 namespace CodingAgent.Api.IntegrationTests;
 
 /// <summary>
-/// Unit tests for <see cref="WorkItemEndpoints.IsUniqueViolation"/>.
+/// Unit tests for <see cref="WorkItemDispatchEndpoints.IsUniqueViolation"/>.
 /// Exercises each branch of the method to ensure new code paths have coverage:
 /// - DbUpdateException wrapping a "duplicate key" inner message (Postgres fallback path)
 /// - DbUpdateException wrapping a "unique constraint" inner message (Postgres fallback path)
@@ -23,7 +23,7 @@ public sealed class IsUniqueViolationTests
         var inner = new InvalidOperationException("ERROR: duplicate key value violates unique constraint");
         var ex = new DbUpdateException("save failed", inner);
 
-        WorkItemEndpoints.IsUniqueViolation(ex).Should().BeTrue(
+        WorkItemDispatchEndpoints.IsUniqueViolation(ex).Should().BeTrue(
             "DbUpdateException whose inner message contains 'duplicate key' is a unique violation");
     }
 
@@ -33,7 +33,7 @@ public sealed class IsUniqueViolationTests
         var inner = new InvalidOperationException("ERROR: unique constraint violation");
         var ex = new DbUpdateException("save failed", inner);
 
-        WorkItemEndpoints.IsUniqueViolation(ex).Should().BeTrue(
+        WorkItemDispatchEndpoints.IsUniqueViolation(ex).Should().BeTrue(
             "DbUpdateException whose inner message contains 'unique constraint' is a unique violation");
     }
 
@@ -43,7 +43,7 @@ public sealed class IsUniqueViolationTests
         var inner = new InvalidOperationException("connection refused");
         var ex = new DbUpdateException("save failed", inner);
 
-        WorkItemEndpoints.IsUniqueViolation(ex).Should().BeFalse(
+        WorkItemDispatchEndpoints.IsUniqueViolation(ex).Should().BeFalse(
             "DbUpdateException with an unrelated inner message is not a unique violation");
     }
 
@@ -54,7 +54,7 @@ public sealed class IsUniqueViolationTests
     {
         var ex = new InvalidOperationException("duplicate key value violates unique constraint");
 
-        WorkItemEndpoints.IsUniqueViolation(ex).Should().BeTrue(
+        WorkItemDispatchEndpoints.IsUniqueViolation(ex).Should().BeTrue(
             "exception whose message contains 'duplicate key' is a unique violation");
     }
 
@@ -63,7 +63,7 @@ public sealed class IsUniqueViolationTests
     {
         var ex = new InvalidOperationException("unique constraint failed: work_items.ix_unique");
 
-        WorkItemEndpoints.IsUniqueViolation(ex).Should().BeTrue(
+        WorkItemDispatchEndpoints.IsUniqueViolation(ex).Should().BeTrue(
             "exception whose message contains 'unique constraint' is a unique violation");
     }
 
@@ -73,7 +73,7 @@ public sealed class IsUniqueViolationTests
         // EF Core InMemory throws ArgumentException with this exact phrase for PK duplicates.
         var ex = new ArgumentException("An item with the same key has already been added. Key: some-guid");
 
-        WorkItemEndpoints.IsUniqueViolation(ex).Should().BeTrue(
+        WorkItemDispatchEndpoints.IsUniqueViolation(ex).Should().BeTrue(
             "EF InMemory PK-duplicate ArgumentException must be recognised as a unique violation");
     }
 
@@ -82,7 +82,7 @@ public sealed class IsUniqueViolationTests
     {
         var ex = new InvalidOperationException("timeout expired");
 
-        WorkItemEndpoints.IsUniqueViolation(ex).Should().BeFalse(
+        WorkItemDispatchEndpoints.IsUniqueViolation(ex).Should().BeFalse(
             "exceptions unrelated to uniqueness must not be recognised as a unique violation");
     }
 
@@ -94,7 +94,7 @@ public sealed class IsUniqueViolationTests
         // a custom subclass, since Exception(null) normalises to an empty string in .NET.
         var ex = new InvalidOperationException(string.Empty);
 
-        WorkItemEndpoints.IsUniqueViolation(ex).Should().BeFalse(
+        WorkItemDispatchEndpoints.IsUniqueViolation(ex).Should().BeFalse(
             "exception with empty message must not be recognised as a unique violation");
     }
 
@@ -109,7 +109,7 @@ public sealed class IsUniqueViolationTests
     {
         var ex = new InvalidOperationException(message);
 
-        WorkItemEndpoints.IsUniqueViolation(ex).Should().BeTrue(
+        WorkItemDispatchEndpoints.IsUniqueViolation(ex).Should().BeTrue(
             "the check must be case-insensitive");
     }
 }

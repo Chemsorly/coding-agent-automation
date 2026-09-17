@@ -982,7 +982,10 @@ public sealed class AgentJobLifecycleServiceTests
 
         // Act
         await _sut.HandleJobRejectedAsync(jobId, agent, "reason", CancellationToken.None);
-        WaitForLoggerWarningContaining(_logger, "HandleJobRejectedAsync");
+        // Use a generous timeout: Task.FromException produces an already-faulted task, so the
+        // ContinueWith callback is queued to the thread pool immediately, but under heavy CI load
+        // (10k+ parallel tests) thread-pool starvation can delay execution past the default 5 s.
+        WaitForLoggerWarningContaining(_logger, "HandleJobRejectedAsync", timeoutMs: 30_000);
 
         // Assert: a Warning is logged for the lastJobCompletedAt fault path
         _logger.Verify(
