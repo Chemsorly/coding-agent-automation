@@ -166,39 +166,61 @@ public class GitHubIssueProviderTests
         var mockComments = new Mock<IIssueCommentsClient>();
         _mockIssues.Setup(i => i.Comment).Returns(mockComments.Object);
 
-        await _provider.UpdateCommentAsync("42", "100", "Updated body", CancellationToken.None);
+        await _provider.UpdateCommentAsync("42", 100L, "Updated body", CancellationToken.None);
 
         mockComments.Verify(c => c.Update("owner", "repo", 100, "Updated body"), Times.Once);
     }
 
-    [Theory]
-    [InlineData("42", null, "body", "commentId")]
-    [InlineData("42", "100", null, "body")]
-    public async Task UpdateCommentAsync_NullParams_ThrowsArgumentNullException(
-        string? issueIdentifier, string? commentId, string? body, string expectedParamName)
+    /// <summary>
+    /// Characterization test — prerequisite for the long commentId migration.
+    /// Verifies that a numeric comment ID round-trips correctly to the Octokit int parameter.
+    /// </summary>
+    [Fact]
+    public async Task UpdateCommentAsync_NumericCommentIdRoundTrips_CallsOctokitWithCorrectInt()
     {
-        var act = () => _provider.UpdateCommentAsync(issueIdentifier!, commentId!, body!, CancellationToken.None);
+        var mockComments = new Mock<IIssueCommentsClient>();
+        _mockIssues.Setup(i => i.Comment).Returns(mockComments.Object);
+
+        await _provider.UpdateCommentAsync("42", 12345678L, "Round-trip body", CancellationToken.None);
+
+        mockComments.Verify(c => c.Update("owner", "repo", 12345678, "Round-trip body"), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateCommentAsync_NullBody_ThrowsArgumentNullException()
+    {
+        var act = () => _provider.UpdateCommentAsync("42", 100L, null!, CancellationToken.None);
         (await act.Should().ThrowAsync<ArgumentNullException>())
-            .Which.ParamName.Should().Be(expectedParamName);
+            .Which.ParamName.Should().Be("body");
     }
 
     [Fact]
     public async Task UpdateCommentAsync_EmptyIdentifier_ThrowsArgumentException()
     {
-        var act = () => _provider.UpdateCommentAsync(default(IssueIdentifier), "100", "body", CancellationToken.None);
+        var act = () => _provider.UpdateCommentAsync(default(IssueIdentifier), 100L, "body", CancellationToken.None);
         (await act.Should().ThrowAsync<ArgumentException>())
             .Which.ParamName.Should().Be("issueIdentifier.Value");
     }
 
-    [Theory]
-    [InlineData("not-a-number", "100", "identifier")]
-    [InlineData("42", "not-a-number", "commentId")]
-    public async Task UpdateCommentAsync_NonNumericIdentifier_ThrowsArgumentException(
-        string issueIdentifier, string commentId, string expectedParamName)
+    [Fact]
+    public async Task UpdateCommentAsync_NonNumericIssueIdentifier_ThrowsArgumentException()
     {
-        var act = () => _provider.UpdateCommentAsync(issueIdentifier, commentId, "body", CancellationToken.None);
+        var act = () => _provider.UpdateCommentAsync("not-a-number", 100L, "body", CancellationToken.None);
         (await act.Should().ThrowAsync<ArgumentException>())
-            .Which.ParamName.Should().Be(expectedParamName);
+            .Which.ParamName.Should().Be("identifier");
+    }
+
+    [Fact]
+    public async Task UpdateCommentAsync_CommentIdExceedsIntMaxValue_ThrowsOverflowException()
+    {
+        // GitHub comment IDs are 64-bit integers and already exceed int.MaxValue in practice.
+        // Octokit's IssueCommentsClient.Update takes int, so UpdateCommentAsync performs a
+        // checked cast. Passing int.MaxValue + 1 must surface as OverflowException so callers
+        // receive a deterministic, diagnosable failure rather than silent ID truncation.
+        var oversizedId = (long)int.MaxValue + 1; // 2_147_483_648L
+
+        var act = () => _provider.UpdateCommentAsync("42", oversizedId, "body", CancellationToken.None);
+        await act.Should().ThrowAsync<OverflowException>();
     }
 
     [Fact]

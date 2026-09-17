@@ -41,7 +41,7 @@ public interface IIssueProvider : IAsyncDisposable
     /// Posts a comment on the issue and returns the comment's HTML URL (or null if unavailable).
     /// </summary>
     Task<string?> PostCommentAsync(IssueIdentifier identifier, string body, CancellationToken ct);
-    Task UpdateCommentAsync(IssueIdentifier issueIdentifier, string commentId, string body, CancellationToken ct);
+    Task UpdateCommentAsync(IssueIdentifier issueIdentifier, long commentId, string body, CancellationToken ct);
 
     /// <summary>
     /// Adds labels to an issue identified by <paramref name="identifier"/>.
