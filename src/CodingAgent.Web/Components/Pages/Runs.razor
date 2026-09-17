@@ -167,7 +167,9 @@
                                 PipelineRunType.Consolidation => "Consolidation",
                                 _ => "Implementation"
                             };
-                            <tr class="monitoring-row-clickable" @onclick="() => OpenRun(run.RunId)">
+                            <tr class="@(run.RunType == PipelineRunType.Consolidation ? "" : "monitoring-row-clickable")"
+                                title="@(run.RunType == PipelineRunType.Consolidation ? "View consolidation history on the Consolidation page" : "")"
+                                @onclick="() => TryOpenRun(run)">
                                 <td>
                                     <span class="step-badge @resultClass" title="@run.FinalStep.ToDisplayName()">@resultLabel</span>
                                 </td>
@@ -560,6 +562,22 @@
     // NavigationManager.NavigateTo with a bare relative path resolves against BaseUri (the app
     // root), not the current page URL — this is the correct Blazor Server behaviour.
     private void OpenRun(string runId) => Nav.NavigateTo($"runs/{runId}");
+
+    /// <summary>
+    /// Navigates to the run detail page, but only for non-consolidation run types.
+    /// Consolidation runs are stored in a separate table and have no /runs/{id} detail page.
+    /// Issue #2629: unconditionally calling OpenRun for all rows caused consolidation rows to
+    /// navigate to /runs/{id} → 404 "Run not found."
+    ///
+    /// Note: the guard uses run.RunType (already present in PipelineRunSummary) rather than
+    /// InitiatedBy, because RunType is set from the DB/JSON summary and is the correct
+    /// discriminator at the UI layer.
+    /// </summary>
+    private void TryOpenRun(PipelineRunSummary run)
+    {
+        if (run.RunType != PipelineRunType.Consolidation)
+            OpenRun(run.RunId);
+    }
 
     private static string Truncate(string? s, int n)
         => string.IsNullOrEmpty(s) ? "" : (s.Length > n ? s[..n] + "…" : s);

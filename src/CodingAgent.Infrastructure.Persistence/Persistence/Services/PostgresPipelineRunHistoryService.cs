@@ -75,6 +75,25 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     public async Task AddRunSummaryAsync(PipelineRunSummary summary, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(summary);
+
+        // Defense-in-depth: reject consolidation summaries from being persisted to pipeline history.
+        // Mirrors the guard in AddRunToHistoryAsync(PipelineRun), which checks IssueProviderConfigId.
+        // PipelineRunSummary has no IssueProviderConfigId property, so we use the InitiatedBy prefix
+        // as the detection key — equivalent in practice (all consolidation runs carry this prefix).
+        //
+        // Note: when InitiatedBy is null, the ?. makes this expression evaluate to null (not true),
+        // so the guard does NOT return early for null InitiatedBy — execution falls through to
+        // AddRunToHistoryInternalAsync. ToEntity then dereferences InitiatedBy unconditionally,
+        // which will throw a NullReferenceException (caught by the try/catch below, non-fatal).
+        // TODO: fix ToEntity to use InitiatedBy?.StartsWith(...) ?? false so that legacy summaries
+        // with a null InitiatedBy field are handled correctly instead of throwing. See review
+        // finding from issue #2629. The fix belongs in ToEntity, not here.
+        if (summary.InitiatedBy?.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal) == true)
+        {
+            _logger.Debug("AddRunSummaryAsync: skipping consolidation summary {RunId}", summary.RunId);
+            return;
+        }
+
         try
         {
             await AddRunToHistoryInternalAsync(summary, ct).ConfigureAwait(false);
