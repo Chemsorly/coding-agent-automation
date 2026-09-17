@@ -42,6 +42,12 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
 
     // TODO(#1776): Add a test that invokes the PrContext.CreatePullRequest callback and verifies it delegates
     // to PullRequestFinalizationService.RunFullPrCreationAsync to cover the fixed null-dereference path.
+    // TODO: [WARNING] The LatestQualityReport conditional in PipelineExecutionContextBuilder.CreatePullRequest
+    // (added when the QualityGateReport report parameter was removed) is completely uncovered at the agent level.
+    // Add tests for both branches: (a) LatestQualityReport is non-null → ReportQualityGateResult is called, and
+    // (b) LatestQualityReport is null → ReportQualityGateResult is silently skipped. The current only test
+    // (Build_CreatePullRequestCallback_WhenFinalizationNull_ThrowsInvalidOperationException) hits the
+    // _finalization == null guard before the conditional is ever evaluated.
     private PipelineExecutionContextBuilder CreateBuilder(
         IBrainUpdateService? brainUpdateService = null,
         IPipelineRunHistoryService? historyService = null)
@@ -856,13 +862,8 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
         var stepCtx = builderWithoutFinalization.CreateStepContext(
             result.ExecutionContext, (PipelineSignalRReporter)result.Reporter, CancellationToken.None);
 
-        var report = new QualityGateReport
-        {
-            Compilation = new GateResult { GateName = "Compilation", Passed = true },
-            Tests = new GateResult { GateName = "Tests", Passed = true }
-        };
         var act = () => stepCtx.Callbacks.CreatePullRequest(
-            result.Run, report, isDraft: false, CancellationToken.None);
+            result.Run, isDraft: false, CancellationToken.None);
 
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("*PullRequestFinalizationService*");

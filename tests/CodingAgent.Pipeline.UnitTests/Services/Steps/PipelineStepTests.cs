@@ -823,9 +823,9 @@ public class PipelineStepTests
         public Task UpdateFileChangeStats(PipelineRun run) => Task.CompletedTask;
         public Task SwapAgentLabel(IssueIdentifier issueIdentifier, string label, CancellationToken ct) => Task.CompletedTask;
         public Task RemoveAllAgentLabels(IssueIdentifier issueIdentifier, CancellationToken ct) => Task.CompletedTask;
-        public Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct) => Task.CompletedTask;
+        public Task CreatePullRequest(PipelineRun run, bool isDraft, CancellationToken ct) => Task.CompletedTask;
         public Task CreateDraftPrIfNotExists(PipelineRun run, CancellationToken ct) => Task.CompletedTask;
-        public Task FinalizePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct) => Task.CompletedTask;
+        public Task FinalizePullRequest(PipelineRun run, bool isDraft, CancellationToken ct) => Task.CompletedTask;
         public Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)
         {
             BrainSyncReports.Add((contextLoaded, knowledgeFileCount));

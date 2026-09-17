@@ -132,7 +132,7 @@ public partial class QualityGateExecutor
 
         if (report.AllPassed)
         {
-            await callbacks.FinalizePullRequest(run, report, false, linkedCt);
+            await callbacks.FinalizePullRequest(run, false, linkedCt);
 
             // Wait for post-PR CI and handle retry/draft if it fails.
             // Extracted to keep RunPostRetryCleanupAndFinalizeAsync within complexity threshold.
@@ -317,7 +317,7 @@ public partial class QualityGateExecutor
         // (b) if FinalizePullRequest throws, the category is still recorded on the run object
         // and the metric will emit "quality_gate_exhausted" instead of "unknown".
         run.FailureCategory = FailureReason.QualityGateExhausted;
-        await callbacks.FinalizePullRequest(run, report, true, ct);
+        await callbacks.FinalizePullRequest(run, true, ct);
     }
 
     /// <summary>
