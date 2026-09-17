@@ -47,6 +47,14 @@ public sealed class GetAssignmentTests
         return mock.Object;
     }
 
+    private static IProjectStore CreateProjectStoreReturning(PipelineProject project)
+    {
+        var mock = new Mock<IProjectStore>();
+        mock.Setup(ps => ps.GetProjectByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(project);
+        return mock.Object;
+    }
+
     private static async Task<Guid> SeedWorkItemAsync(
         IDbContextFactory<PipelineDbContext> dbFactory,
         WorkItemStatus status,
@@ -757,6 +765,77 @@ public sealed class GetAssignmentTests
         {
             Log.Logger = previousLogger;
         }
+    }
+
+    // ── InjectProjectSecretsAsync: project exists with secrets ───────────────────
+
+    [Fact]
+    public async Task GetAssignment_ProjectExistsWithSecrets_InjectsSecretsIntoMessage()
+    {
+        // ARRANGE: seed a work item with a non-null ProjectId
+        var projectId = Guid.NewGuid();
+        var dbName = $"GetAssignment-WithSecrets-{Guid.NewGuid():N}";
+        var dbFactory = CreateDbFactory(dbName);
+
+        var requestWithProject = MakeFullRequest() with { ProjectId = projectId };
+        var payloadJson = JsonSerializer.Serialize(requestWithProject, PipelineJsonOptions.Default);
+        var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
+
+        // Project store returns a project that has secrets — exercises the
+        // "project.Secrets is { Count: > 0 }" branch.
+        var secrets = new Dictionary<string, string> { ["API_KEY"] = "secret-value" };
+        var projectStore = CreateProjectStoreReturning(new PipelineProject
+        {
+            Id = projectId.ToString(),
+            Name = "Test Project",
+            Secrets = secrets
+        });
+
+        // ACT
+        var result = await WorkItemAgentEndpoints.GetAssignment(
+            id, dbFactory, projectStore, assignmentEnricher: null);
+
+        // ASSERT — 200 OK, secrets injected
+        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
+        okResult.Should().NotBeNull("existing project with secrets must return 200 OK");
+        okResult!.Value!.ProjectSecrets.Should().NotBeNull(
+            "ProjectSecrets must be populated when the project has secrets");
+        okResult.Value.ProjectSecrets.Should().ContainKey("API_KEY",
+            "the secret key must be present in the injected ProjectSecrets");
+    }
+
+    // ── InjectProjectSecretsAsync: project exists with no secrets ────────────────
+
+    [Fact]
+    public async Task GetAssignment_ProjectExistsWithNoSecrets_ReturnsMessageWithNullSecrets()
+    {
+        // ARRANGE: seed a work item with a non-null ProjectId
+        var projectId = Guid.NewGuid();
+        var dbName = $"GetAssignment-NoSecrets-{Guid.NewGuid():N}";
+        var dbFactory = CreateDbFactory(dbName);
+
+        var requestWithProject = MakeFullRequest() with { ProjectId = projectId };
+        var payloadJson = JsonSerializer.Serialize(requestWithProject, PipelineJsonOptions.Default);
+        var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
+
+        // Project store returns a project with an empty Secrets dictionary — exercises the
+        // fallthrough "return message" path when Count == 0.
+        var projectStore = CreateProjectStoreReturning(new PipelineProject
+        {
+            Id = projectId.ToString(),
+            Name = "Test Project",
+            Secrets = new Dictionary<string, string>() // empty
+        });
+
+        // ACT
+        var result = await WorkItemAgentEndpoints.GetAssignment(
+            id, dbFactory, projectStore, assignmentEnricher: null);
+
+        // ASSERT — 200 OK, no secrets injected
+        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
+        okResult.Should().NotBeNull("existing project with no secrets must return 200 OK");
+        okResult!.Value!.ProjectSecrets.Should().BeNull(
+            "ProjectSecrets must be null when the project has no secrets");
     }
 
     // ── Infrastructure: PipelineDbContext in-memory subclass ──────────────────────
