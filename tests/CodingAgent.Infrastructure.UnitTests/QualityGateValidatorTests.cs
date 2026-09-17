@@ -605,7 +605,14 @@ public class QualityGateValidatorTests
             return _behavior switch
             {
                 ProcessBehavior.Timeout => throw new TimeoutException($"Process '{fileName} {arguments}' timed out after {timeout.TotalSeconds}s"),
+                // TODO: The Cancel arm throws plain OperationCanceledException. Consider adding a CancelViaTask behavior
+                // that throws TaskCanceledException (which derives from OperationCanceledException) to explicitly lock in
+                // that TaskCanceledException is routed to the "cancelled" outcome path and not the "error" path.
                 ProcessBehavior.Cancel => throw new OperationCanceledException("Cancelled"),
+                // TODO: ThrowError only covers InvalidOperationException. The production catch clause handles all
+                // non-OperationCanceledException exceptions. If the catch clause is ever narrowed, IOException or
+                // other exception types could escape undetected. Consider adding additional error-path behaviors
+                // (e.g., ProcessBehavior.ThrowIoError) to document and lock in the generic catch coverage.
                 ProcessBehavior.ThrowError => throw new InvalidOperationException("Simulated process error"),
                 _ => Task.FromResult((0, "Passed: 5\nTest summary: total: 5; failed: 0; succeeded: 5; skipped: 0; duration: 0.1s", ""))
             };
