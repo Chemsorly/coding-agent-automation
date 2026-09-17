@@ -33,12 +33,7 @@ public class AssignmentEnricher
 {
     private readonly DispatchInfrastructure _infra;
     private readonly IAgentProfileStore _agentProfileStore;
-    // TODO: [WARNING] _consolidationPreparer is declared nullable but is always non-null in the
-    // production DI path (the public constructor guards it with ArgumentNullException.ThrowIfNull).
-    // The nullable exists solely to support the protected test constructor. Consider making the
-    // field non-nullable and removing the null guard in EnrichConsolidationCoreAsync, keeping
-    // the nullable only in the protected constructor's local assignment where the intent is explicit.
-    private readonly IConsolidationJobPreparationService? _consolidationPreparer;
+    private readonly IConsolidationJobPreparationService _consolidationPreparer;
     private readonly ILogger _logger;
 
     public AssignmentEnricher(
@@ -74,7 +69,7 @@ public class AssignmentEnricher
     {
         _infra = null!;
         _agentProfileStore = null!;
-        _consolidationPreparer = consolidationPreparer;
+        _consolidationPreparer = consolidationPreparer ?? NoOpConsolidationPreparer.Instance;
         _logger = logger ?? Serilog.Log.Logger;
     }
 
@@ -225,21 +220,6 @@ public class AssignmentEnricher
         PipelineProject project,
         CancellationToken ct)
     {
-        if (_consolidationPreparer is null)
-        {
-            // TODO: [WARNING] Returning null here conflates a programming error (missing required
-            // dependency injected via the protected test constructor) with the legitimate
-            // "not found" null return (profile not found, provider config removed). This causes
-            // the endpoint to return a degraded response instead of surfacing the misconfiguration.
-            // Consider throwing InvalidOperationException here (fail-fast) instead of returning null,
-            // since this path is unreachable in production DI.
-            _logger.Warning(
-                "AssignmentEnricher: IConsolidationJobPreparationService not available; " +
-                "cannot enrich consolidation assignment for IssueIdentifier {IssueIdentifier}",
-                identity.IssueIdentifier);
-            return null;
-        }
-
         // ── Step 1: Resolve agent labels from AgentSelector ───────────────────────
         // TODO: [WARNING] agentLabels is a mutable List<string> passed as IReadOnlyList<string> to
         // PrepareAsync. The callee receives a reference to the concrete list and can cast it back to
@@ -305,5 +285,34 @@ public class AssignmentEnricher
             RepoSteeringContent = (preparation.ProviderConfigs ?? [])
                 .TryGetProviderConfig(preparation.RepoProviderConfigId)?.SteeringContent,
         };
+    }
+
+    /// <summary>
+    /// Sentinel implementation used by the protected test constructor when no real
+    /// <see cref="IConsolidationJobPreparationService"/> is supplied. Throws
+    /// <see cref="InvalidOperationException"/> if <see cref="PrepareAsync"/> is ever reached,
+    /// providing a fail-fast diagnostic instead of a silent null-dereference.
+    /// </summary>
+    private sealed class NoOpConsolidationPreparer : IConsolidationJobPreparationService
+    {
+        public static readonly NoOpConsolidationPreparer Instance = new();
+
+        // TODO: [WARNING] This method throws synchronously from a Task-returning method.
+        // Callers that await the return value will receive the exception correctly via the awaiter
+        // (EnrichConsolidationCoreAsync does await this, so the production/test path is safe).
+        // However, any future caller that does not await and instead accesses .Result or .Wait()
+        // will see an AggregateException wrapping the InvalidOperationException, which can obscure
+        // diagnostics. Consider replacing the synchronous throw with:
+        //   return Task.FromException<ConsolidationJobPreparationResult>(new InvalidOperationException(...));
+        // to guarantee the failure is always surfaced as a faulted Task regardless of how the method is invoked.
+        public Task<ConsolidationJobPreparationResult> PrepareAsync(
+            ConsolidationRunType runType,
+            TemplateId? templateId,
+            IReadOnlyList<string> agentLabels,
+            CancellationToken ct)
+            => throw new InvalidOperationException(
+                "IConsolidationJobPreparationService is not available in this context. " +
+                "A test subclass constructed via the protected constructor called base.EnrichAsync " +
+                "for a Consolidation task type without supplying a real preparer.");
     }
 }

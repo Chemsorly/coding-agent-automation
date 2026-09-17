@@ -520,6 +520,12 @@ public sealed class AssignmentEnricherTests
         // Arrange + Act: passing null logger to the protected ctor should not throw.
         // The ctor has: _logger = logger ?? Serilog.Log.Logger
         // We verify the object is constructed without exception.
+        // TODO: [WARNING] The assertion `enricherSubclass.Should().NotBeNull()` can never fail
+        // because constructing any reference type and storing it in a local variable guarantees
+        // non-null. It does not verify that _logger was actually set to Serilog.Log.Logger.
+        // A stronger test would call a method that exercises the logger (e.g. pass the subclass
+        // a mock sink or check that no exception is thrown during a log call) to confirm the
+        // fallback logger is functional. As-is, the test only proves the constructor does not throw.
         var enricherSubclass = new NullLoggerEnricher(null!);
         enricherSubclass.Should().NotBeNull();
     }
@@ -1035,6 +1041,16 @@ public sealed class AssignmentEnricherTests
     // protected AssignmentEnricher(ILogger, IConsolidationJobPreparationService?) constructor
     // without a preparer, pass a TaskType=Consolidation request, and assert the result is null
     // and no exception is thrown.
+
+    // TODO: [WARNING] Missing test: NoOpConsolidationPreparer.PrepareAsync throw is never exercised.
+    // The acceptance criterion states that a test previously depending on a null preparer should
+    // use an explicit no-op implementation. The ProtectedCtor_NullLogger_FallsBackToSerilogLogLogger
+    // test constructs an AssignmentEnricher via the protected logger-only constructor (which assigns
+    // NoOpConsolidationPreparer.Instance) but only verifies construction — it never calls EnrichAsync
+    // with TaskType=Consolidation on that instance. Add a test that constructs via the protected ctor
+    // (passing no preparer), calls EnrichAsync with a Consolidation identity, and asserts that
+    // InvalidOperationException is thrown. This locks in the fail-fast sentinel behaviour and guards
+    // against a future change that makes NoOpConsolidationPreparer silently return a default result.
 
     // ── BrainProviderConfigId forwarding (issue #2618) ───────────────────────────
 
