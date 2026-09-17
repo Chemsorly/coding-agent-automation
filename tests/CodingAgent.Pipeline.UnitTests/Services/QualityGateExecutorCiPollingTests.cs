@@ -115,6 +115,13 @@ public class QualityGateExecutorCiPollingTests
             run.BranchName!, null, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // TODO [WARNING]: The infra-retry SHA read (retrySha, QualityGateExecutor.ExternalCi.cs ~L344) and the
+    // post-re-push SHA read (pollSha, QualityGateExecutor.ExternalCi.cs ~L493) have no failure-path tests.
+    // Both will correctly return null via TryReadHeadShaAsync on non-cancellation exceptions, but this
+    // behaviour is untested. Consider adding tests analogous to AppendExternalCi_WhenShaReadFails_PassesNullToPoller
+    // for those two code paths (infra-retry branch and re-push loop branch) to lock in the graceful-degradation
+    // contract introduced by the TryReadHeadShaAsync extraction (issue #2622).
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private void SetupDefaultMocks()
