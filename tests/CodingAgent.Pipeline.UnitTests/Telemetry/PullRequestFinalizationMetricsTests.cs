@@ -571,16 +571,10 @@ public class PullRequestFinalizationMetricsTests : IDisposable
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
 
         var prOrchestrator = new PullRequestOrchestrator(_logger.Object);
-        var report = new QualityGateReport
-        {
-            Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
-            Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
-        };
 
         var request = new PrCreationRequest
         {
             Run = run,
-            Report = report,
             IsDraft = isDraft,
             PrOrchestrator = prOrchestrator,
             RepoProvider = repoProvider.Object,

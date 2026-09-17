@@ -59,7 +59,6 @@ public sealed class PullRequestFinalizationService
     {
         ArgumentNullException.ThrowIfNull(request);
         var run = request.Run;
-        var report = request.Report;
         var isDraft = request.IsDraft;
         var prOrchestrator = request.PrOrchestrator;
         var repoProvider = request.RepoProvider;
@@ -98,7 +97,7 @@ public sealed class PullRequestFinalizationService
             }
 
             var prUrl = await prOrchestrator.CreatePullRequestAsync(
-                run, report, isDraft, repoProvider, issue, issueComments, config, ct,
+                run, isDraft, repoProvider, issue, issueComments, config, ct,
                 emitOutputLine, isRework: run.LinkedPullRequest is not null);
 
             if (prUrl is null)

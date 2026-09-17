@@ -333,7 +333,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
             catch { /* match production: swallow label failures */ }
         }
 
-        public async Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
+        public async Task CreatePullRequest(PipelineRun run, bool isDraft, CancellationToken ct)
         {
             lifecycle.TransitionTo(run, PipelineStep.CreatingPullRequest);
             try
@@ -345,7 +345,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                     run.PullRequestNumber = run.LinkedPullRequest.Number.ToString();
                 }
 
-                var prUrl = await prOrchestrator.CreatePullRequestAsync(run, report, isDraft, providerManager.ActiveRepoProvider!, ctxAccessor()?.Issue,
+                var prUrl = await prOrchestrator.CreatePullRequestAsync(run, isDraft, providerManager.ActiveRepoProvider!, ctxAccessor()?.Issue,
                     ctxAccessor()?.IssueComments, ctxAccessor()?.Config ?? new PipelineConfiguration(), ct,
                     line => lifecycle.EmitOutputLine(line),
                     isRework: run.LinkedPullRequest != null,
@@ -383,7 +383,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
         public Task CreateDraftPrIfNotExists(PipelineRun run, CancellationToken ct)
             => Task.CompletedTask;
 
-        public async Task FinalizePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
+        public async Task FinalizePullRequest(PipelineRun run, bool isDraft, CancellationToken ct)
         {
             lifecycle.TransitionTo(run, PipelineStep.CreatingPullRequest);
             try
@@ -391,11 +391,11 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                 // If no draft PR was created, fall back to the original CreatePullRequest flow
                 if (string.IsNullOrEmpty(run.PullRequestNumber))
                 {
-                    await CreatePullRequest(run, report, isDraft, ct);
+                    await CreatePullRequest(run, isDraft, ct);
                     return;
                 }
 
-                var prUrl = await prOrchestrator.FinalizePullRequestAsync(run, report, isDraft, providerManager.ActiveRepoProvider!, ctxAccessor()?.Issue,
+                var prUrl = await prOrchestrator.FinalizePullRequestAsync(run, isDraft, providerManager.ActiveRepoProvider!, ctxAccessor()?.Issue,
                     ctxAccessor()?.IssueComments, ctxAccessor()?.Config ?? new PipelineConfiguration(), ct,
                     line => lifecycle.EmitOutputLine(line),
                     issueReference: providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier));
