@@ -12,10 +12,10 @@ using Moq;
 namespace CodingAgent.Api.IntegrationTests;
 
 /// <summary>
-/// Unit tests for <see cref="WorkItemEndpoints.GetAssignment"/>.
+/// Unit tests for <see cref="WorkItemAgentEndpoints.GetAssignment"/>.
 /// Tests both the old-payload (full snapshot with ProviderConfigs != null)
 /// and the new minimal-payload + fresh-fetch path (ProviderConfigs == null).
-/// Also covers: <see cref="WorkItemEndpoints.BuildMinimalPayload"/> stripping mutable config.
+/// Also covers: <see cref="WorkItemDispatchEndpoints.BuildMinimalPayload"/> stripping mutable config.
 /// </summary>
 public sealed class GetAssignmentTests
 {
@@ -173,7 +173,7 @@ public sealed class GetAssignmentTests
         var enricher = new FakeAssignmentEnricher((r, p) => Task.FromResult<JobDistributionRequest?>(r));
 
         // ACT
-        var result = await WorkItemEndpoints.GetAssignment(
+        var result = await WorkItemAgentEndpoints.GetAssignment(
             id, dbFactory, CreateNullProjectStore(), enricher);
 
         // ASSERT: 200 returned, enricher NOT called (old schema served from snapshot)
@@ -199,7 +199,7 @@ public sealed class GetAssignmentTests
         var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
 
         // ACT
-        var result = await WorkItemEndpoints.GetAssignment(
+        var result = await WorkItemAgentEndpoints.GetAssignment(
             id, dbFactory, CreateNullProjectStore(), null);
 
         // ASSERT: JobId in returned message matches the WorkItem GUID
@@ -249,7 +249,7 @@ public sealed class GetAssignmentTests
         var enricher = new FakeAssignmentEnricher((r, p) => Task.FromResult<JobDistributionRequest?>(enrichedRequest));
 
         // ACT
-        var result = await WorkItemEndpoints.GetAssignment(
+        var result = await WorkItemAgentEndpoints.GetAssignment(
             id, dbFactory, CreateNullProjectStore(), enricher);
 
         // ASSERT: 200 returned, enricher called once, fresh steering in response
@@ -282,7 +282,7 @@ public sealed class GetAssignmentTests
         var enricher = new FakeAssignmentEnricher((r, p) => Task.FromResult<JobDistributionRequest?>(enrichedRequest));
 
         // ACT
-        var result = await WorkItemEndpoints.GetAssignment(
+        var result = await WorkItemAgentEndpoints.GetAssignment(
             id, dbFactory, CreateNullProjectStore(), enricher);
 
         // ASSERT: JobId matches WorkItem ID even after enrichment
@@ -306,7 +306,7 @@ public sealed class GetAssignmentTests
         var enricher = new ThrowingAssignmentEnricher(new InvalidOperationException("DB timeout"));
 
         // ACT
-        var result = await WorkItemEndpoints.GetAssignment(
+        var result = await WorkItemAgentEndpoints.GetAssignment(
             id, dbFactory, CreateNullProjectStore(), enricher);
 
         // ASSERT: 503 returned — agent must retry rather than proceed with an invalid job spec
@@ -336,7 +336,7 @@ public sealed class GetAssignmentTests
         var enricher = new FakeAssignmentEnricher((r, p) => Task.FromResult<JobDistributionRequest?>(null));
 
         // ACT
-        var result = await WorkItemEndpoints.GetAssignment(
+        var result = await WorkItemAgentEndpoints.GetAssignment(
             id, dbFactory, CreateNullProjectStore(), enricher);
 
         // ASSERT: 503 returned — degraded identity-only 200 must not be served
@@ -362,7 +362,7 @@ public sealed class GetAssignmentTests
         var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
 
         // ACT: no enricher → skip fresh-fetch path
-        var result = await WorkItemEndpoints.GetAssignment(
+        var result = await WorkItemAgentEndpoints.GetAssignment(
             id, dbFactory, CreateNullProjectStore(), assignmentEnricher: null);
 
         // ASSERT: 200 but without enriched data (ProviderConfigs will be empty defaults)
@@ -385,7 +385,7 @@ public sealed class GetAssignmentTests
         var id = await SeedWorkItemAsync(dbFactory, status,
             JsonSerializer.Serialize(MakeFullRequest(), PipelineJsonOptions.Default));
 
-        var result = await WorkItemEndpoints.GetAssignment(
+        var result = await WorkItemAgentEndpoints.GetAssignment(
             id, dbFactory, CreateNullProjectStore(), null);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult>()
@@ -398,7 +398,7 @@ public sealed class GetAssignmentTests
         var dbName = $"GetAssignment-NotFound-{Guid.NewGuid():N}";
         var dbFactory = CreateDbFactory(dbName);
 
-        var result = await WorkItemEndpoints.GetAssignment(
+        var result = await WorkItemAgentEndpoints.GetAssignment(
             Guid.NewGuid(), dbFactory, CreateNullProjectStore(), null);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.NotFound>();
@@ -411,7 +411,7 @@ public sealed class GetAssignmentTests
         var dbFactory = CreateDbFactory(dbName);
         var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson: null);
 
-        var result = await WorkItemEndpoints.GetAssignment(
+        var result = await WorkItemAgentEndpoints.GetAssignment(
             id, dbFactory, CreateNullProjectStore(), null);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.NotFound>();
@@ -423,7 +423,7 @@ public sealed class GetAssignmentTests
     public void BuildMinimalPayload_StripsProviderConfigs()
     {
         var full = MakeFullRequest("some-steering");
-        var minimal = WorkItemEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
         minimal.ProviderConfigs.Should().BeNull("ProviderConfigs must be null in minimal payload");
     }
 
@@ -431,7 +431,7 @@ public sealed class GetAssignmentTests
     public void BuildMinimalPayload_StripsRepoSteeringContent()
     {
         var full = MakeFullRequest("some-steering");
-        var minimal = WorkItemEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
         minimal.RepoSteeringContent.Should().BeNull("RepoSteeringContent must be null in minimal payload");
     }
 
@@ -439,7 +439,7 @@ public sealed class GetAssignmentTests
     public void BuildMinimalPayload_StripsQualityGateConfigs()
     {
         var full = MakeFullRequest();
-        var minimal = WorkItemEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
         minimal.QualityGateConfigs.Should().BeNull("QualityGateConfigs must be null in minimal payload");
     }
 
@@ -447,7 +447,7 @@ public sealed class GetAssignmentTests
     public void BuildMinimalPayload_StripsMcpServers()
     {
         var full = MakeFullRequest();
-        var minimal = WorkItemEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
         minimal.McpServers.Should().BeNull("McpServers must be null in minimal payload");
     }
 
@@ -461,7 +461,7 @@ public sealed class GetAssignmentTests
                 new IssueComment { Body = "a comment", Author = "bob", CreatedAt = DateTime.UtcNow, Id = "c1" }
             ]
         };
-        var minimal = WorkItemEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
         minimal.IssueComments.Should().BeNull("IssueComments must be null in minimal payload");
     }
 
@@ -478,7 +478,7 @@ public sealed class GetAssignmentTests
             ProjectName = "My Project",
             TraceContext = new Dictionary<string, string> { ["traceparent"] = "00-abc-def-01" }
         };
-        var minimal = WorkItemEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
 
         minimal.IssueIdentifier.Value.Should().Be(full.IssueIdentifier.Value);
         minimal.IssueProviderConfigId.Should().Be(full.IssueProviderConfigId);
@@ -522,7 +522,7 @@ public sealed class GetAssignmentTests
             ReviewPrDescription = "Fix the bug",
             ReviewPrAuthor = "alice",
         };
-        var minimal = WorkItemEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
 
         minimal.LinkedPullRequest.Should().NotBeNull();
         minimal.LinkedPullRequest!.Url.Should().Be("https://example.com/pr/99");
@@ -555,7 +555,7 @@ public sealed class GetAssignmentTests
         };
 
         // ACT
-        var minimal = WorkItemEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
 
         // ASSERT: all four non-reconstructable consolidation identity fields survive stripping
         minimal.TaskType.Should().Be(WorkItemTaskType.Consolidation,
@@ -588,7 +588,7 @@ public sealed class GetAssignmentTests
                 Labels = ["bug", "priority:high"]
             }
         };
-        var minimal = WorkItemEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
 
         // Title kept for display in GetPendingWorkItems
         minimal.IssueDetail.Should().NotBeNull();
@@ -606,7 +606,7 @@ public sealed class GetAssignmentTests
     public void BuildMinimalPayload_SetsPayloadSchemaVersion()
     {
         var full = MakeFullRequest("some-steering");
-        var minimal = WorkItemEndpoints.BuildMinimalPayload(full);
+        var minimal = WorkItemDispatchEndpoints.BuildMinimalPayload(full);
         minimal.PayloadSchemaVersion.Should().Be(1,
             "BuildMinimalPayload must set PayloadSchemaVersion = 1 so GetAssignment can detect new-schema rows");
         // TODO: [WARNING] This test does not assert that PayloadSchemaVersion round-trips through JSON
@@ -650,7 +650,7 @@ public sealed class GetAssignmentTests
         var enricher = new FakeAssignmentEnricher((r, p) => Task.FromResult<JobDistributionRequest?>(r));
 
         // ACT
-        var result = await WorkItemEndpoints.GetAssignment(
+        var result = await WorkItemAgentEndpoints.GetAssignment(
             id, dbFactory, CreateNullProjectStore(), enricher);
 
         // ASSERT: 200 returned, enricher NOT called

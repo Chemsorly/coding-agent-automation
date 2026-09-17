@@ -29,7 +29,7 @@ namespace CodingAgent.Api.IntegrationTests;
 public sealed class PostStatusIdempotencyCollection { }
 
 /// <summary>
-/// Direct unit tests for <see cref="WorkItemEndpoints.PostStatus"/> covering the idempotent
+/// Direct unit tests for <see cref="WorkItemAgentEndpoints.PostStatus"/> covering the idempotent
 /// already-at-terminal-state path (issue #2226).
 ///
 /// These tests call the internal static method directly rather than going through the HTTP stack
@@ -152,7 +152,7 @@ public sealed class PostStatusIdempotencyTests
         try
         {
             // Act — call PostStatus directly (not via HTTP)
-            var result = await WorkItemEndpoints.PostStatus(
+            var result = await WorkItemAgentEndpoints.PostStatus(
                 item.Id, request, transitionService, runService, lifecycleManager, dbFactory);
 
             // Assert — structural guard proven above; no timing dependency on Task.Delay.
@@ -198,7 +198,7 @@ public sealed class PostStatusIdempotencyTests
         var request = new WorkItemStatusRequest { Status = terminal };
 
         // Act
-        var result = await WorkItemEndpoints.PostStatus(
+        var result = await WorkItemAgentEndpoints.PostStatus(
             item.Id, request, transitionService, runService, lifecycleManager.Object, null);
 
         // Assert
@@ -233,7 +233,7 @@ public sealed class PostStatusIdempotencyTests
         var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
 
         // Act — dbFactory is null (no secondary DB read path)
-        var result = await WorkItemEndpoints.PostStatus(
+        var result = await WorkItemAgentEndpoints.PostStatus(
             Guid.NewGuid(), request, transitionService, runService, lifecycleManager, null);
 
         // Assert
@@ -255,7 +255,7 @@ public sealed class PostStatusIdempotencyTests
         var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
 
         // Act
-        var result = await WorkItemEndpoints.PostStatus(
+        var result = await WorkItemAgentEndpoints.PostStatus(
             item.Id, request, transitionService, runService, lifecycleManager, null);
 
         // Assert
@@ -296,7 +296,7 @@ public sealed class PostStatusIdempotencyTests
         // Act — pass awaitTelemetry: true so PostStatus awaits EmitTerminalStatusTelemetryAsync
         // before returning. This eliminates the Task.Delay(200) race: the metric is recorded
         // synchronously (from the test's perspective) before the assertion runs.
-        var result = await WorkItemEndpoints.PostStatus(
+        var result = await WorkItemAgentEndpoints.PostStatus(
             item.Id, request, transitionService, runService, lifecycleManager, dbFactory,
             ct: default, awaitTelemetry: true);
 
@@ -336,7 +336,7 @@ public sealed class PostStatusIdempotencyTests
         // The test only verifies lifecycle manager invocations, not the telemetry side-effect.
         // Pass a real dbFactory here so that a null-dereference regression in the telemetry path
         // surfaces as an observable unobserved task exception.
-        await WorkItemEndpoints.PostStatus(
+        await WorkItemAgentEndpoints.PostStatus(
             item.Id, request, transitionService, runService, lifecycleManager.Object, null);
 
         // Assert
@@ -374,7 +374,7 @@ public sealed class PostStatusIdempotencyTests
         // The fire-and-forget EmitTerminalStatusTelemetryAsync task will receive a null factory on the
         // Transitioned path. Pass a real dbFactory to surface any null-dereference regression in the
         // background task as an observable failure.
-        await WorkItemEndpoints.PostStatus(
+        await WorkItemAgentEndpoints.PostStatus(
             item.Id, request, transitionService, runService, lifecycleManager.Object, null);
 
         // Assert
@@ -426,7 +426,7 @@ public sealed class PostStatusIdempotencyTests
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Running };
 
         // Act
-        var result = await WorkItemEndpoints.PostStatus(
+        var result = await WorkItemAgentEndpoints.PostStatus(
             item.Id, request, transitionService, runService, lifecycleManager, dbFactory: null);
 
         // Assert — HTTP 200 confirms the recovery path was taken
@@ -466,7 +466,7 @@ public sealed class PostStatusIdempotencyTests
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Running };
 
         // Act
-        var result = await WorkItemEndpoints.PostStatus(
+        var result = await WorkItemAgentEndpoints.PostStatus(
             item.Id, request, transitionService, runService, lifecycleManager, dbFactory: null);
 
         // Assert — HTTP 400: AgentError is non-recoverable
@@ -556,7 +556,7 @@ public sealed class PostStatusIdempotencyTests
         // Act — pass awaitTelemetry: true so PostStatus awaits EmitTerminalStatusTelemetryAsync.
         // This eliminates the Task.Delay(200) race and the cross-test meter-listener leakage
         // that caused {"Timeout"} to appear instead of {"none"} on loaded CI hosts.
-        var result = await WorkItemEndpoints.PostStatus(
+        var result = await WorkItemAgentEndpoints.PostStatus(
             item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory,
             ct: default, awaitTelemetry: true);
 
@@ -627,7 +627,7 @@ public sealed class PostStatusIdempotencyTests
             .ReturnsAsync((PipelineRun?)null);
 
         // Act — pass awaitTelemetry: true so PostStatus awaits EmitTerminalStatusTelemetryAsync.
-        var result = await WorkItemEndpoints.PostStatus(
+        var result = await WorkItemAgentEndpoints.PostStatus(
             item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory,
             ct: default, awaitTelemetry: true);
 
@@ -691,7 +691,7 @@ public sealed class PostStatusIdempotencyTests
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Failed, ErrorMessage = "Late K8s callback" };
 
         // Act
-        var result = await WorkItemEndpoints.PostStatus(
+        var result = await WorkItemAgentEndpoints.PostStatus(
             item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory);
 
         // Assert 1: endpoint returns 200
@@ -748,7 +748,7 @@ public sealed class PostStatusIdempotencyTests
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Failed, ErrorMessage = "Late K8s callback" };
 
         // Act
-        var result = await WorkItemEndpoints.PostStatus(
+        var result = await WorkItemAgentEndpoints.PostStatus(
             item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory);
 
         // Assert 1: endpoint returns 200
