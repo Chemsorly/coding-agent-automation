@@ -271,20 +271,26 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
     public async Task Analysis_ForceRefresh_ExistingComment_UpdatesInsteadOfPosting()
     {
         // Existing analysis comment present + force-refresh → should update, not post new
+        // TODO: No test covers the case where existingComment.Id is non-numeric (e.g. "c1").
+        // long.Parse in AgentPhaseExecutor.Analysis.cs:505 would throw FormatException, propagating
+        // uncaught through the catch block (which only handles non-OperationCanceledException) and
+        // aborting the analysis phase. A test with a non-numeric Id should assert the observable
+        // behavior (exception propagates or fallback fires). See review finding on
+        // AgentPhaseExecutorAnalysisTests.cs:276.
         var comments = new[]
         {
-            new IssueComment { Id = "comment-42", Body = $"{CommentMarkers.AnalysisHeader}\nOld analysis content", Author = "bot", CreatedAt = DateTime.UtcNow.AddHours(-1) }
+            new IssueComment { Id = "42", Body = $"{CommentMarkers.AnalysisHeader}\nOld analysis content", Author = "bot", CreatedAt = DateTime.UtcNow.AddHours(-1) }
         };
 
         SetupAgentWithValidAnalysis("ready");
-        _mockIssueOps.Setup(o => o.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueOps.Setup(o => o.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<long>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), comments, forceRefreshFromDispatch: true, CancellationToken.None);
 
         result.Should().BeTrue();
         _mockIssueOps.Verify(o => o.UpdateCommentAsync(
-            "42", "comment-42",
+            "42", 42L,
             It.Is<string>(body => body.Contains("<!-- agent:analysis-body-hash:")),
             It.IsAny<CancellationToken>()), Times.Once);
         _mockIssueOps.Verify(o => o.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -303,7 +309,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
             "42",
             It.Is<string>(body => body.Contains("<!-- agent:analysis-body-hash:")),
             It.IsAny<CancellationToken>()), Times.Once);
-        _mockIssueOps.Verify(o => o.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockIssueOps.Verify(o => o.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<long>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

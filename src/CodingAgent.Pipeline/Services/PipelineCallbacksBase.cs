@@ -55,7 +55,7 @@ public abstract class PipelineCallbacksBase : IPipelineCallbacks
     public abstract Task RemoveAllAgentLabels(IssueIdentifier issueIdentifier, CancellationToken ct);
 
     /// <inheritdoc />
-    public abstract Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct);
+    public abstract Task CreatePullRequest(PipelineRun run, bool isDraft, CancellationToken ct);
 
     /// <summary>
     /// Creates a draft pull request if one does not already exist for this run.
@@ -105,7 +105,7 @@ public abstract class PipelineCallbacksBase : IPipelineCallbacks
     }
 
     /// <inheritdoc />
-    public abstract Task FinalizePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct);
+    public abstract Task FinalizePullRequest(PipelineRun run, bool isDraft, CancellationToken ct);
 
     /// <inheritdoc />
     public abstract Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount);

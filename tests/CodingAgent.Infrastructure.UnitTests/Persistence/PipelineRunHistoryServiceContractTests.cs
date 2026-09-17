@@ -181,6 +181,36 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
     }
 
     [Fact]
+    public async Task AddRunSummaryAsync_ConsolidationSummary_NotPersisted()
+    {
+        // Regression guard for issue #2629: AddRunSummaryAsync (direct-summary path) must reject
+        // consolidation-prefixed summaries, matching the guard already present on AddRunToHistoryAsync.
+        // TODO: add a second variant using ConsolidationConstants.ConsolidationAuto ("consolidation:auto")
+        // to verify the StartsWith prefix guard covers all consolidation:* variants, not just
+        // ConsolidationConstants.InitiatedBy ("consolidation:manual"). See review finding from issue #2629.
+        var service = CreateService();
+
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "consolidation-summary-test",
+            IssueTitle = "Should not be persisted",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            InitiatedBy = ConsolidationConstants.InitiatedBy,   // "consolidation:manual"
+        };
+
+        // Should not throw
+        await service.AddRunSummaryAsync(summary);
+
+        // Must not appear in history — consolidation summaries are silently dropped.
+        var history = await service.GetRunHistoryAsync();
+        history.Should().BeEmpty(
+            "AddRunSummaryAsync must reject consolidation-prefixed summaries just like AddRunToHistoryAsync does");
+    }
+
+    [Fact]
     public async Task AddRun_PreservesKeyProperties()
     {
         var service = CreateService();

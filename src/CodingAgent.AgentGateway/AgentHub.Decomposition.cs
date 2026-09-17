@@ -154,6 +154,13 @@ public sealed partial class AgentHub
         ArgumentNullException.ThrowIfNull(body);
 
         return ExecuteWithIssueProviderAsync(jobId.Value, $"update comment '{commentId}' on issue '{issueId}'",
-            (provider, ct) => provider.UpdateCommentAsync(issueId, commentId, body, ct));
+            (provider, ct) =>
+            {
+                if (!long.TryParse(commentId, out var parsedCommentId))
+                    throw new ArgumentException(
+                        $"Invalid comment identifier: '{commentId}'. Expected a numeric comment ID.",
+                        nameof(commentId));
+                return provider.UpdateCommentAsync(issueId, parsedCommentId, body, ct);
+            });
     }
 }

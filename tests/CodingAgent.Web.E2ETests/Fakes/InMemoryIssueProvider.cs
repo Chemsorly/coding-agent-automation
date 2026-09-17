@@ -60,7 +60,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
         return Task.FromResult<string?>(null);
     }
 
-    public Task UpdateCommentAsync(IssueIdentifier issueIdentifier, string commentId, string body, CancellationToken ct) =>
+    public Task UpdateCommentAsync(IssueIdentifier issueIdentifier, long commentId, string body, CancellationToken ct) =>
         Task.CompletedTask;
 
     public Task AddLabelsAsync(IssueIdentifier identifier, IReadOnlyList<string> labels, CancellationToken ct)
