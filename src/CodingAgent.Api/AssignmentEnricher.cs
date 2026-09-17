@@ -74,6 +74,23 @@ public class AssignmentEnricher
     }
 
     /// <summary>
+    /// Protected constructor for test subclasses that need a real profile store alongside the
+    /// default no-op consolidation preparer. Use this overload when the test exercises a
+    /// Consolidation task type path that calls <see cref="IAgentProfileStore.LoadAgentProfilesAsync"/>
+    /// but does not supply a real <see cref="IConsolidationJobPreparationService"/>.
+    /// </summary>
+    protected internal AssignmentEnricher(
+        ILogger logger,
+        IAgentProfileStore agentProfileStore,
+        IConsolidationJobPreparationService? consolidationPreparer = null)
+    {
+        _infra = null!;
+        _agentProfileStore = agentProfileStore ?? throw new ArgumentNullException(nameof(agentProfileStore));
+        _consolidationPreparer = consolidationPreparer ?? NoOpConsolidationPreparer.Instance;
+        _logger = logger ?? Serilog.Log.Logger;
+    }
+
+    /// <summary>
     /// Enriches a minimal-payload <see cref="JobDistributionRequest"/> with fresh config resolved
     /// from the database at the time of assignment.
     /// </summary>
