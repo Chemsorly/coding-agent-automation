@@ -56,6 +56,11 @@ public partial class QualityGateExecutor
             || context.PipelineProvider == null)
             return report;
 
+        // TryReadHeadShaAsync does not swallow OCE — it rethrows. The catch clauses in this method
+        // handle the two sources of OCE within the try block (4 call sites in ExternalCi.cs):
+        //   • Per-poll CancellationTokenSource timeout (!ct.IsCancellationRequested) → degrade gracefully
+        //   • Pipeline CT cancelled → propagate intentionally (run is being torn down)
+        // Note: WaitForPostPrCiAsync (RetryLoop.cs) has a parallel handler for the post-PR CI path.
         GateResult? ciGate = null;
         try
         {
