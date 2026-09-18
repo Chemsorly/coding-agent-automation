@@ -97,6 +97,7 @@ public partial class AgentPhaseExecutor
         }
         else
         {
+            // Design: warn-and-skip (Option B) — see docs/internals/behavioral-contracts.yaml for the updated contract assertion
             _logger.Warning(
                 "Pipeline {RunId} no reviewer configurations matched — review phase skipped (no configs or all disabled). " +
                 "To restore review, add or re-enable a reviewer configuration in Settings → Reviewers.",

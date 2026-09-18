@@ -61,6 +61,7 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
             // and throws HubException if it is empty — causing 100% startup failure for all
             // template-scoped runs. Global runs (null TemplateId) are unaffected.
             var repoProviderId = "";
+            string? brainProviderId = null;
             if (!string.IsNullOrEmpty(run.TemplateId))
             {
                 // TODO: If LoadAllTemplatesAsync throws (transient DB error), the exception propagates
@@ -77,6 +78,7 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
                 // StringComparison.OrdinalIgnoreCase as a defensive measure.
                 var template = templates.FirstOrDefault(t => t.Id == run.TemplateId);
                 repoProviderId = template?.RepoProviderId ?? "";
+                brainProviderId = template?.BrainProviderId;
             }
 
             var request = new JobDistributionRequest
@@ -84,6 +86,7 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
                 IssueIdentifier = run.RunId,
                 IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
                 RepoProviderConfigId = repoProviderId,
+                BrainProviderConfigId = brainProviderId,
                 InitiatedBy = ConsolidationConstants.InitiatedBy,
                 TaskType = WorkItemTaskType.Consolidation,
                 AgentSelector = AgentSelectorKey.From(selectorLabels),
