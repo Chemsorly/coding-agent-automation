@@ -212,7 +212,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// <summary>
     /// Strips newline characters from a user-supplied string before it is written to a log entry,
     /// preventing log injection / log forging attacks.
+    /// Delegates to the shared <see cref="CodingAgent.Pipeline.Services.LogSanitizer"/> utility.
     /// </summary>
-    private static string SanitizeForLog(string? value)
-        => value?.Replace("\r", "\\r", StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal) ?? "";
+    private static string SanitizeForLog(string? value) => CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(value);
 }
