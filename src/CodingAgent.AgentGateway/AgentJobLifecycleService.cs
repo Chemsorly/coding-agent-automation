@@ -21,6 +21,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     private const string FieldActiveJobId = "activeJobId";
     private const string FieldLastJobCompletedAt = "lastJobCompletedAt";
     private const string FieldOrphanRestoredAt = "orphanRestoredAt";
+    private const string UpdateFieldFailedTemplate = "HandleJobRejectedAsync: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'";
 
     private readonly IAgentHubFacade _facade;
     private readonly ILabelService _labelService;
@@ -101,34 +102,50 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         if (run is not null)
         {
             _facade.RemoveRun(jobId);
-            await HandleRejectedRunCleanupAsync(jobId, run, reason, ct);
+            try
+            {
+                await HandleRejectedRunCleanupAsync(jobId, run, reason, ct);
+            }
+            finally
+            {
+                // Transition agent back to Idle unconditionally — even if cleanup throws.
+                // Placed in finally so a DB/network failure inside HandleRejectedRunCleanupAsync
+                // does not leave the agent stuck Busy until ReconciliationService timeout.
+                ResetAgentToIdle(agent);
+            }
+            return; // agent state already reset in finally above; skip the no-run path below
         }
         else
         {
             _logger.Warning("Agent rejected job {JobId} but no active run found — may have been cleaned up already", jobId.Value);
         }
 
-        // Transition agent back to Idle (it may still be marked Busy from reservation)
-        if (agent is not null)
-        {
-            agent.ActiveJobId = null;
-            agent.LastJobCompletedAt = DateTimeOffset.UtcNow; // Push to back of FIFO queue to prevent same-agent re-dispatch loop
-            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldActiveJobId, null)
-                .ContinueWith(t => _logger.Warning(t.Exception,
-                        "HandleJobRejectedAsync: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
-                        agent.AgentId, FieldActiveJobId),
-                    CancellationToken.None,
-                    TaskContinuationOptions.OnlyOnFaulted,
-                    TaskScheduler.Default);
-            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldLastJobCompletedAt, DateTimeOffset.UtcNow.ToString("O"))
-                .ContinueWith(t => _logger.Warning(t.Exception,
-                        "HandleJobRejectedAsync: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
-                        agent.AgentId, FieldLastJobCompletedAt),
-                    CancellationToken.None,
-                    TaskContinuationOptions.OnlyOnFaulted,
-                    TaskScheduler.Default);
-            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-        }
+        // Reached only when run is null — transition agent back to Idle for the no-run path
+        ResetAgentToIdle(agent);
+    }
+
+    private void ResetAgentToIdle(AgentEntry? agent)
+    {
+        if (agent is null) return;
+
+        var now = DateTimeOffset.UtcNow;
+        agent.ActiveJobId = null;
+        agent.LastJobCompletedAt = now; // Push to back of FIFO queue to prevent same-agent re-dispatch loop
+        _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldActiveJobId, null)
+            .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
+                    UpdateFieldFailedTemplate,
+                    agent.AgentId, FieldActiveJobId),
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
+        _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldLastJobCompletedAt, now.ToString("O"))
+            .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
+                    UpdateFieldFailedTemplate,
+                    agent.AgentId, FieldLastJobCompletedAt),
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
+        _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
     }
 
     private async Task HandleRejectedRunCleanupAsync(JobId jobId, PipelineRun run, string reason, CancellationToken ct)
@@ -429,14 +446,21 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             _logger.Information("Job {JobId} PostIssueFeedbackCommentAsync completed in {ElapsedMs}ms", jobId.Value, swComment.ElapsedMilliseconds);
 
             // Inline fast-path succeeded — mark the outbox row Completed so the relay skips it.
-            // Using CancellationToken.None: if this write fails, the relay will re-post (at-least-once).
-            // Follow-up: wrap MarkCompletedAsync in its own exception handler (log + continue).
-            // The outer catch only handles OperationCanceledException; a DbUpdateException or
-            // DbUpdateConcurrencyException from MarkCompletedAsync will escape PostCompletionBookkeepingAsync
-            // and fail the hub method even though label swap and comment post already succeeded.
+            // This is best-effort: a transient DB failure here does not undo the already-committed
+            // label swap and comment post. The outbox row remains Pending and FeedbackCommentRelayService
+            // will redeliver the comment (at-least-once). Failing the hub call for this is wrong.
             if (outboxEntryId != Guid.Empty)
             {
-                await _outbox.MarkCompletedAsync(outboxEntryId, CancellationToken.None);
+                try
+                {
+                    await _outbox.MarkCompletedAsync(outboxEntryId, CancellationToken.None);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Warning(ex,
+                        "Failed to mark outbox entry {OutboxEntryId} completed — row will be redelivered",
+                        outboxEntryId);
+                }
             }
         }
         catch (OperationCanceledException)
