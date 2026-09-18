@@ -289,15 +289,12 @@ public static class WorkItemDispatchEndpoints
 
         var agentSelector = quickCheck.AgentSelector;
         var normalizedSelector = JobTemplateStore.NormalizeLabels(agentSelector);
-
-        // TODO [WARNING]: agentSelector originates from a database column set by POST /api/work-items callers.
-        // It is embedded verbatim in Conflict response bodies (e.g. "No job template for agent selector: {value}")
-        // and passed directly to Log.Warning / Log.Information calls below. A crafted selector containing
-        // newline characters (\r\n) can inject fake log lines, obscuring audit trails. A selector containing
-        // HTML/script markup is reflected in the 409 response body (Content-Type is text/plain for minimal-API
-        // Conflict<string>, which reduces XSS risk, but does not eliminate it for browser-side consumers).
-        // Validate and/or sanitize agentSelector at the WorkItem write boundary, or at minimum truncate/escape
-        // the value before embedding it in log messages and response strings.
+        // Sanitize agentSelector before embedding it in any log message or HTTP response body.
+        // agentSelector originates from a database column set by POST /api/work-items callers;
+        // a crafted value containing \r\n can inject fake log lines (log forging). All log and
+        // Conflict call sites below use sanitizedSelector / sanitized normalizedSelector instead
+        // of the raw values. See also: LogSanitizer in CodingAgent.Pipeline.Services.
+        var sanitizedSelector = CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(agentSelector);
 
         // Acquire advisory lock keyed on the normalized selector.
         // This serialises all concurrent calls to this endpoint for the same selector,
@@ -323,7 +320,12 @@ public static class WorkItemDispatchEndpoints
             // PostgresDistributedLockProvider retries with pg_try_advisory_lock for up to 60s.
             // A timeout means another call has held the lock for that entire window (e.g. a slow
             // K8s API response). Return 503 — transient, the Scheduler should retry next cycle.
-            Log.Warning("DispatchPendingWorkItem: advisory lock acquisition timed out for selector {Selector} — returning 503", normalizedSelector);
+            // TODO [WARNING]: normalizedSelector is sanitized inline here instead of using a pre-computed
+            // sanitizedNormalizedSelector variable. All other log/Conflict sites use the pre-computed
+            // sanitizedSelector. If a second log call using normalizedSelector is added in this method,
+            // the author may miss sanitizing it. Consider declaring a sanitizedNormalizedSelector variable
+            // alongside sanitizedSelector at the top of this method for consistency.
+            Log.Warning("DispatchPendingWorkItem: advisory lock acquisition timed out for selector {Selector} — returning 503", CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(normalizedSelector));
             return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
 
@@ -411,8 +413,8 @@ public static class WorkItemDispatchEndpoints
 
         if (template is null)
         {
-            Log.Warning("DispatchPendingWorkItem: no job template for selector {Selector} — returning 409", agentSelector);
-            return TypedResults.Conflict($"No job template for agent selector: {agentSelector}");
+            Log.Warning("DispatchPendingWorkItem: no job template for selector {Selector} — returning 409", sanitizedSelector);
+            return TypedResults.Conflict($"No job template for agent selector: {sanitizedSelector}");
         }
 
         // Concurrency gate.
@@ -420,8 +422,8 @@ public static class WorkItemDispatchEndpoints
         {
             var currentCount = concurrencyBySelector.GetValueOrDefault(normalizedSelector, 0);
             Log.Information("DispatchPendingWorkItem: concurrency limit reached for selector {Selector} ({Current}/{Max}) — returning 409",
-                agentSelector, currentCount, template.MaxConcurrent);
-            return TypedResults.Conflict($"Concurrency limit reached for selector '{agentSelector}' ({currentCount}/{template.MaxConcurrent}).");
+                sanitizedSelector, currentCount, template.MaxConcurrent);
+            return TypedResults.Conflict($"Concurrency limit reached for selector '{sanitizedSelector}' ({currentCount}/{template.MaxConcurrent}).");
         }
 
         // PVC gate.
@@ -429,7 +431,7 @@ public static class WorkItemDispatchEndpoints
         if (isKiroAgent && pvcResult.AvailablePvcs.Count == 0)
         {
             WorkDistributionTelemetry.PvcPoolExhaustions.Add(1);
-            Log.Information("DispatchPendingWorkItem: no PVC available for kiro agent selector {Selector} — returning 503", agentSelector);
+            Log.Information("DispatchPendingWorkItem: no PVC available for kiro agent selector {Selector} — returning 503", sanitizedSelector);
             return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
 
@@ -569,7 +571,7 @@ public static class WorkItemDispatchEndpoints
         if (template is null)
         {
             Log.Warning("DispatchWorkItem: no job template for selector {Selector} — returning 422",
-                request.AgentSelector);
+                CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(request.AgentSelector));
             // 422 Unprocessable Entity — permanent config error (no job template for this selector).
             // Distinct from 409 Conflict (transient capacity limit) so callers can differentiate
             // permanent failures (cascade run to Failed) from transient ones (leave Queued, retry later).
@@ -603,9 +605,10 @@ public static class WorkItemDispatchEndpoints
             var currentCount = concurrencyBySelector.GetValueOrDefault(lookupKey, 0);
             if (currentCount >= maxConcurrent)
             {
+                var sanitizedReqSelector = CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(request.AgentSelector);
                 Log.Information("DispatchWorkItem: concurrency limit reached for selector {Selector} ({Current}/{Max}) — returning 409",
-                    request.AgentSelector, currentCount, maxConcurrent);
-                return TypedResults.Conflict($"Concurrency limit reached for selector '{request.AgentSelector}' ({currentCount}/{maxConcurrent}).");
+                    sanitizedReqSelector, currentCount, maxConcurrent);
+                return TypedResults.Conflict($"Concurrency limit reached for selector '{sanitizedReqSelector}' ({currentCount}/{maxConcurrent}).");
             }
         }
 
@@ -632,7 +635,7 @@ public static class WorkItemDispatchEndpoints
         if (isKiroAgent && availablePvcs.Count == 0)
         {
             Log.Information("DispatchWorkItem: no PVC available for kiro agent selector {Selector} — returning 503",
-                request.AgentSelector);
+                CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(request.AgentSelector));
             return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
 

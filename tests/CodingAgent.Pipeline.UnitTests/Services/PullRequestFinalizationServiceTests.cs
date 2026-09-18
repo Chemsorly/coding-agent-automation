@@ -1199,14 +1199,94 @@ public class PullRequestFinalizationServiceTests
         // the preferred property. The acceptance criterion specifies CompletedAt != null; MarkCompleted()
         // sets both atomically, so this assertion covers the requirement. If CompletedAtOffset were ever
         // decoupled from CompletedAt, this assertion would need to be updated to also check run.CompletedAt.
-        // TODO: Only the IsDraft=false path is tested here. The IsDraft=true + OCE path — where FinalLabel
-        // should be AgentLabels.Error — is untested. A regression that incorrectly sets Done instead of
-        // Error for a cancelled draft run would not be caught by this test.
+        // The IsDraft=true + OCE path — where FinalLabel should be AgentLabels.Error — is covered
+        // by RunFullPrCreationAsync_DraftOce_SetsFinalLabelError.
         run.CompletedAtOffset.Should().NotBeNull(
             "run.MarkCompleted() must execute in the finally block even when RunPostPrSequenceAsync throws OCE");
         run.CurrentStep.Should().Be(PipelineStep.Completed,
             "terminal step must be set regardless of OCE");
         run.FinalLabel.Should().Be(AgentLabels.Done,
             "FinalLabel must be set in the finally block");
+    }
+
+    [Fact]
+    public async Task RunFullPrCreationAsync_DraftOce_SetsFinalLabelError()
+    {
+        // Regression test: IsDraft=true + OCE from RunPostPrSequenceAsync must still set
+        // FinalLabel = AgentLabels.Error in the finally block.
+        // RunPostPrSequenceAsync now calls ct.ThrowIfCancellationRequested() at entry so that a
+        // pre-cancelled token is observed even on the draft path (which otherwise makes no async calls).
+        var run = CreateRun();
+        run.BranchName = "agent/test-1";
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var agentProvider = new Mock<IAgentProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+
+        // Full IRepositoryProvider mock chain required — if any stub is missing, CreatePullRequestAsync
+        // returns null, prCreationSucceeded stays false, RunFullPrCreationAsync returns early, and the
+        // second finally (which sets FinalLabel) never runs.
+        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>());
+        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        repoProvider.Setup(r => r.GetFileChangesAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<FileChangeSummary>());
+        repoProvider.Setup(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("https://github.com/org/repo/pull/55");
+        repoProvider.Setup(r => r.BaseBranch).Returns("main");
+        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<IssueIdentifier>())).Returns("Closes #1");
+
+        var prOrchestrator = new PullRequestOrchestrator(_logger.Object);
+
+        // TODO: [WARNING] Fragility — Moq stubs silently ignore the pre-cancelled CancellationToken, so
+        // CommitAllAsync/PushBranchAsync/HasCommitsAheadAsync/GetFileChangesAsync/CreatePullRequestAsync all
+        // complete successfully despite cts being already cancelled. The test relies on this to ensure
+        // prCreationSucceeded=true and reach RunPostPrSequenceAsync. If any stub is replaced with a real
+        // or stricter implementation that calls ct.ThrowIfCancellationRequested(), the OCE would be raised
+        // inside the first try block, prCreationSucceeded would remain false, RunFullPrCreationAsync would
+        // return early via the guard, and the second try-finally (the one under test) would never execute.
+        // The test would then give a false green rather than catching the finally-block regression it was
+        // written for. If the mock chain is ever tightened, verify that prCreationSucceeded=true still holds
+        // by asserting run.PullRequestUrl/run.PullRequestNumber, or restructure the test to use a
+        // TransitionCallback-based OCE trigger (like the non-draft sibling test) instead of a pre-cancelled token.
+        // Cancel before the call. Moq setups ignore the token, so PR creation completes normally
+        // (prCreationSucceeded = true, finalStep = PipelineStep.Failed). The OCE is first observed
+        // at ct.ThrowIfCancellationRequested() inside RunPostPrSequenceAsync, propagating through
+        // the second try block and triggering its finally.
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await _sut.Invoking(s => s.RunFullPrCreationAsync(
+            new PrCreationRequest
+            {
+                Run = run,
+                IsDraft = true,
+                PrOrchestrator = prOrchestrator,
+                RepoProvider = repoProvider.Object,
+                AgentProvider = agentProvider.Object,
+                BrainProvider = null,
+                BrainSync = null,
+                Config = config,
+                Issue = null,
+                IssueComments = null,
+                FeedbackService = feedbackService,
+                HistoryService = null,
+                EmitOutputLine = _ => { },
+                TransitionCallback = step => Task.CompletedTask
+            },
+            cts.Token))
+            .Should().ThrowAsync<OperationCanceledException>();
+
+        run.CompletedAtOffset.Should().NotBeNull(
+            "run.MarkCompleted() must execute in the finally block even when RunPostPrSequenceAsync throws OCE");
+        run.CurrentStep.Should().Be(PipelineStep.Failed,
+            "draft run sets finalStep = PipelineStep.Failed before RunPostPrSequenceAsync is called");
+        run.FinalLabel.Should().Be(AgentLabels.Error,
+            "draft run cancelled during post-PR sequence must set FinalLabel to Error");
     }
 }
