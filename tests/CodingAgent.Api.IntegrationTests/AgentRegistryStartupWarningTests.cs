@@ -56,12 +56,6 @@ public sealed class AgentRegistryStartupWarningTests
     // (e.g. when HostBuilder collects multiple startup failures), only the first InnerException
     // chain is walked and the relevant message may be missed, causing a false-negative assertion
     // failure. To handle this, recursively flatten AggregateException.InnerExceptions in addition
-    // to InnerException. See review finding [WARNING] AgentRegistryStartupWarningTests.cs:248.
-    // TODO [WARNING]: FlattenMessages walks InnerException linearly. If the host wraps the
-    // thrown InvalidOperationException inside an AggregateException with multiple InnerExceptions
-    // (e.g. when HostBuilder collects multiple startup failures), only the first InnerException
-    // chain is walked and the relevant message may be missed, causing a false-negative assertion
-    // failure. To handle this, recursively flatten AggregateException.InnerExceptions in addition
     // to InnerException (e.g. via Exception.Flatten() or a queue-based walk).
     // See review finding [WARNING] AgentRegistryStartupWarningTests.cs:71 (Correctness review).
     private static string FlattenMessages(Exception ex)
