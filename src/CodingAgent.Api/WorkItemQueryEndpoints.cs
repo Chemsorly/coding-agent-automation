@@ -69,7 +69,16 @@ public static class WorkItemQueryEndpoints
             pending = pending.Where(w => w.ProjectId == scopeProjectId);
 
         var raw = await pending
-            .OrderByDescending(w => w.PriorityWeight)
+            // Primary sort: RunType tier — Review (0) > Decomposition (1) > Implementation (2) > Consolidation (3).
+            // EF Core translates the ternary chain to a SQL CASE WHEN expression — no stored column needed.
+            // Decision: decisions.md "Dispatch priority: static ordering Review > Decomp > Impl > Consolidation"
+            // and "PriorityWeight: secondary sort key within RunType tier".
+            .OrderBy(w =>
+                w.TaskType == WorkItemTaskType.Review         ? 0 :
+                w.TaskType == WorkItemTaskType.Decomposition  ? 1 :
+                w.TaskType == WorkItemTaskType.Implementation ? 2 :
+                /* Consolidation */                             3)
+            .ThenByDescending(w => w.PriorityWeight)
             .ThenBy(w => w.CreatedAt)
             .Take(maxResults)
             .Select(w => new
