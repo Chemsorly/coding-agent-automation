@@ -146,25 +146,32 @@ public class OutputBatcherFlushTimeoutTests
             }
         };
 
-        // Add first line, then tick to wake the flush loop
+        // Add first line, then tick to wake the flush loop.
+        // Yield after Tick() so the flush loop's Task.Run thread gets scheduled
+        // before the timeout countdown begins — avoids false failures on loaded CI runners.
         await batcher.AddLineAsync("first-line");
         trigger.Tick();
+        await Task.Yield();
 
-        // Wait for the blocking flush handler to start — event-driven, no fixed delay
-        var firstStarted = await Task.WhenAny(firstFlushStarted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        // Wait for the blocking flush handler to start — event-driven, no fixed delay.
+        // 10s guard (up from 5s) to absorb CI scheduler jitter on loaded runners.
+        var firstStarted = await Task.WhenAny(firstFlushStarted.Task, Task.Delay(TimeSpan.FromSeconds(10)));
         firstStarted.Should().Be(firstFlushStarted.Task, "first flush should start after tick");
 
         // The flush timeout (200ms) will fire and release _flushGate.
         // We need to wait at least that long — this is the only unavoidable real-time wait,
         // and it's bounded by the flush timeout we configured, not by scheduler jitter.
-        await Task.Delay(TimeSpan.FromMilliseconds(400)); // 2× timeout for CI headroom
+        // 1000ms = 5× timeout to absorb CI timer precision variance.
+        await Task.Delay(TimeSpan.FromMilliseconds(1000));
 
         // Add second line and tick — the flush loop should now process it normally
         await batcher.AddLineAsync("second-line");
         trigger.Tick();
+        await Task.Yield();
 
-        // Wait for the second flush to complete — event-driven, no fixed delay
-        var secondFired = await Task.WhenAny(secondFlushCompleted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        // Wait for the second flush to complete — event-driven, no fixed delay.
+        // 10s guard to absorb CI scheduler jitter.
+        var secondFired = await Task.WhenAny(secondFlushCompleted.Task, Task.Delay(TimeSpan.FromSeconds(10)));
         secondFired.Should().Be(secondFlushCompleted.Task,
             "after a flush timeout, the tick-based flush loop should recover and " +
             "continue flushing subsequent batches normally");

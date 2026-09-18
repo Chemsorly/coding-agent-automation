@@ -329,13 +329,40 @@ public static class WorkItemDispatchEndpoints
 
         await using var _ = lockHandle;
 
-        // TODO [WARNING]: The item's status is not re-read after acquiring the lock. If another
-        // dispatch path (WorkItemDispatchPoller or DispatchWorkItem) transitioned the item from
-        // Pending to Dispatched between the fast-path check and lock acquisition, the gates may
-        // pass and the lifecycle CAS will then abort (returning !dispatched → 503). The CAS
-        // preserves correctness, but callers receive a transient 503 instead of a permanent 409,
-        // which may cause unnecessary Scheduler retries. Consider re-checking Status inside the
-        // lock and returning 409 immediately if the item is no longer Pending.
+        // Post-lock status re-read: close the TOCTOU window.
+        // Another dispatch path (WorkItemDispatchPoller, DispatchWorkItem, or a concurrent call
+        // to this endpoint) may have transitioned the item from Pending → Dispatched between
+        // the fast-path check above and lock acquisition. The advisory lock serialises concurrent
+        // callers on this endpoint; without this re-read, the loser enters
+        // ExecuteDispatchLifecycleAsync, finds the item no longer Pending, exits early
+        // (dispatched = false), and the endpoint returns 503. The Scheduler interprets 503 as a
+        // transient error and schedules an unnecessary full-cycle retry. 409 is the correct
+        // signal: the item is already dispatched — no retry needed.
+        //
+        // Nullable projection: a missing row returns null (should not happen — WorkItems use
+        // status transitions, not DELETE) and is treated as non-Pending to avoid dispatching a
+        // ghost. Using a nullable projection avoids the default(WorkItemStatus) == Pending pitfall
+        // that a plain .Select(w => w.Status).FirstOrDefaultAsync() would have if the row vanished.
+        // TODO [WARNING]: This re-read relies on READ COMMITTED isolation semantics: the query must
+        // see committed writes from a concurrent transaction that dispatched the item between the
+        // fast-path check and lock acquisition. Postgres defaults to READ COMMITTED, which is safe.
+        // If the DbContext is ever configured with REPEATABLE READ or SERIALIZABLE isolation (via
+        // UseNpgsql options, a migration, or a global EF Core interceptor), this query may return
+        // the snapshot taken before lock acquisition and see stale Pending status — silently
+        // re-opening the TOCTOU window. If isolation level is tightened, obtain this re-read from
+        // a fresh DbContext via dbFactory.CreateDbContextAsync() (outside the existing transaction).
+        var postLockCheck = await db.WorkItems.AsNoTracking()
+            .Select(w => new { w.Id, w.Status })
+            .FirstOrDefaultAsync(w => w.Id == id, ct);
+
+        if (postLockCheck is null || postLockCheck.Status != WorkItemStatus.Pending)
+        {
+            Log.Information(
+                "DispatchPendingWorkItem: WorkItem {WorkItemId} is no longer Pending after lock acquisition (status={Status}) — returning 409",
+                id, postLockCheck?.Status);
+            return TypedResults.Conflict(
+                $"Work item {id} is not in Pending state (current status: {postLockCheck?.Status}).");
+        }
 
         // Build concurrency map inside the lock with normalised keys.
         // NOTE: do NOT use DispatchStateBuilder.BuildStateAsync here — it does NOT normalise

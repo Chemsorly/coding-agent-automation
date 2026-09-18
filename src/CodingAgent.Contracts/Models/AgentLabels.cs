@@ -60,7 +60,7 @@ public static class AgentLabels
     /// </summary>
     public static readonly IReadOnlySet<string> DispatchIneligibleLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        Done, Error, NeedsRefinement, WontDo, Cancelled
+        Done, Error, NeedsRefinement, WontDo, Cancelled, EpicReview
     };
 
     /// <summary>
