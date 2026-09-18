@@ -1148,28 +1148,24 @@ public static class WorkItemDispatchEndpoints
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
         var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;
-
-        var hasActive = await db.WorkItems
-            .AsNoTracking()
-            .AnyAsync(w =>
-                w.IssueIdentifier == issueIdentifier &&
-                w.IssueProviderConfigId == issueProviderConfigId &&
-                activeStatuses.Contains(w.Status), ct);
-
-        if (hasActive)
-            return TypedResults.Ok(new { isDistributed = true });
-
         var recentTerminalCutoff = DateTimeOffset.UtcNow - PipelineConstants.DefaultRestartDedupCooldown;
-        var hasRecentTerminal = await db.WorkItems
+
+        // Single query evaluates both conditions at the same database snapshot, eliminating
+        // the narrow TOCTOU window that existed when the active-status check and the
+        // recently-terminal check were two sequential AnyAsync round-trips. A WorkItem that
+        // transitions from an active status to a terminal status between two separate reads
+        // could cause both reads to return false and the endpoint to incorrectly report
+        // isDistributed = false.
+        var isDistributed = await db.WorkItems
             .AsNoTracking()
             .AnyAsync(w =>
                 w.IssueIdentifier == issueIdentifier &&
                 w.IssueProviderConfigId == issueProviderConfigId &&
-                !activeStatuses.Contains(w.Status) &&
-                w.CompletedAt != null &&
-                w.CompletedAt >= recentTerminalCutoff, ct);
+                (activeStatuses.Contains(w.Status) ||
+                 (w.CompletedAt != null && w.CompletedAt >= recentTerminalCutoff)),
+                ct);
 
-        return TypedResults.Ok(new { isDistributed = hasRecentTerminal });
+        return TypedResults.Ok(new { isDistributed });
     }
 
     // ── GET /active-identifiers ───────────────────────────────────────────
@@ -1190,6 +1186,12 @@ public static class WorkItemDispatchEndpoints
         var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;
         var recentTerminalCutoff = DateTimeOffset.UtcNow - PipelineConstants.DefaultRestartDedupCooldown;
 
+        // TODO: GetActiveIdentifiers issues two sequential ToListAsync round-trips with the same
+        // TOCTOU window that was fixed in GetIsDistributed (see issue #2668). A WorkItem that
+        // transitions between the two queries can produce a false negative for the active-identifier
+        // check. Consider consolidating into a single query with an OR predicate (same pattern as
+        // GetIsDistributed) to eliminate the window. The impact is lower here because
+        // GetActiveIdentifiers is a bulk read used for polling, not a per-issue dedup guard.
         var activePairs = await db.WorkItems
             .AsNoTracking()
             .Where(w => activeStatuses.Contains(w.Status))

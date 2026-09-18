@@ -1048,8 +1048,8 @@ public sealed class ReconciliationLoopErrorTests
         ChatPodConnectTimeoutSeconds = 120
     };
 
-    private ReconciliationLoop CreateLoop() =>
-        new(_workItemClient.Object, _k8sClient.Object, _options);
+    private ReconciliationLoop CreateLoop(Serilog.ILogger? logger = null) =>
+        new(_workItemClient.Object, _k8sClient.Object, _options, logger: logger);
 
     // ─── ReconcileOnceAsync ────────────────────────────────────────────────
 
@@ -2044,6 +2044,178 @@ public sealed class ReconciliationLoopErrorTests
         // Confirm ListJobsAsync was actually called (guards against vacuous Times.Never pass)
         _k8sClient.Verify(c => c.ListJobsAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ─── 400-rejection caching (Issue #2673) ──────────────────────────────
+
+    /// <summary>
+    /// AC: when PostStatusAsync returns 400 (rejected transition), the WorkItem ID is added to
+    /// _reconciledTerminalIds so the next reconciliation cycle does not retry the POST.
+    /// Verifies acceptance criterion: "The retry loop no longer fires for the same WorkItem ID
+    /// on subsequent reconciliation cycles."
+    /// </summary>
+    [Fact]
+    public async Task ReconcileOnce_WhenPostStatusReturns400_ItemIsCached_NextCycleDoesNotRetry()
+    {
+        var id = Guid.NewGuid();
+        var jobName = $"caa-agent-{id:N}"[..21];
+        var job = MakeJob(jobName, id, succeeded: true);
+
+        // Use SetupSequence to explicitly return the same job list on both reconciliation cycles.
+        // This makes the causal proof clear: the job is visible on the second cycle, so the only
+        // reason PostStatusAsync is not called a second time is that the ID was cached in
+        // _reconciledTerminalIds by the 400 handler — not because the job disappeared from the list.
+        _k8sClient.SetupSequence(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] })   // first cycle
+            .ReturnsAsync(new V1JobList { Items = [job] });  // second cycle — job still visible
+
+        // PostStatusAsync: first call throws a 400 (simulates WorkItem still in Pending state).
+        // A second call is configured to throw InvalidOperationException so that if the 400-caching
+        // fix is accidentally removed and the second cycle retries, the test fails loudly rather
+        // than passing vacuously.
+        _workItemClient.SetupSequence(c => c.PostStatusAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("WorkItem not in a transitionable state", null, System.Net.HttpStatusCode.BadRequest))
+            .ThrowsAsync(new InvalidOperationException("PostStatusAsync called a second time — the 400-caching fix must have been removed"));
+
+        var loop = CreateLoop();
+
+        // First cycle — receives 400, must cache the ID
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        // Second cycle — same job is still visible in the K8s list (proven by SetupSequence above),
+        // but the ID is in _reconciledTerminalIds so PostStatusAsync must NOT be called again.
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        // PostStatusAsync must have been called exactly once: the 400 response caused the ID
+        // to be cached, suppressing the retry on the second cycle even though the job was
+        // still present in the K8s list.
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Succeeded"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// AC: when PostStatusAsync returns 400, the log entry is at Warning level — not Error.
+    /// Uses injected Mock&lt;Serilog.ILogger&gt; to capture log calls.
+    /// Verifies acceptance criterion: "The log entry for a 400 rejection is at Warning level
+    /// (not Error)."
+    /// </summary>
+    [Fact]
+    public async Task ReconcileOnce_WhenPostStatusReturns400_LogsWarningNotError()
+    {
+        var id = Guid.NewGuid();
+        var jobName = $"caa-agent-{id:N}"[..21];
+        var job = MakeJob(jobName, id, succeeded: true);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        _workItemClient.Setup(c => c.PostStatusAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("WorkItem not in a transitionable state", null, System.Net.HttpStatusCode.BadRequest));
+
+        // Inject a mock logger so we can verify log level calls
+        var mockLogger = new Mock<Serilog.ILogger>();
+        // ForContext<T>() is called in the constructor — set it up to return the mock itself
+        // so all log calls go to the same mock instance and can be verified.
+        mockLogger.Setup(l => l.ForContext<ReconciliationLoop>()).Returns(mockLogger.Object);
+
+        var loop = CreateLoop(mockLogger.Object);
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        // Must emit exactly one Warning with the WorkItem ID as a parameter.
+        // Serilog uses generic overloads (Warning<T>(string, T)), so Moq correctly intercepts
+        // Warning<Guid> when It.IsAny<Guid>() is used — no boxing ambiguity.
+        // TODO: Times.Once here only matches the Warning<Guid>(string, Guid) overload. If a
+        // future code change adds a Warning call with a different signature in the same code path,
+        // that call would not be counted here and the test would still pass. If broader Warning
+        // coverage is needed, verify against the full message template string instead.
+        // (Review finding: correctness [WARNING], test quality [WARNING])
+        mockLogger.Verify(
+            l => l.Warning(It.IsAny<string>(), It.IsAny<Guid>()),
+            Times.Once,
+            "A 400-rejected completion must log at Warning level, not Error");
+
+        // Must NOT emit any Error for the 400 case
+        // (pair with a positive assertion above to ensure this isn't vacuously true).
+        // TODO: The Error verify matches Error<T0,T1>(Exception, string, T0, T1) with T0=string,
+        // T1=Guid. If the production Error call's signature changes (e.g. parameters reordered or
+        // a type changes), the Times.Never assertion could pass vacuously (no invocation matched
+        // the old signature even though Error was still logged under a new one). If this test
+        // starts failing in unexpected ways, check whether the Error overload still matches.
+        // (Review finding: test quality [WARNING])
+        mockLogger.Verify(
+            l => l.Error(It.IsAny<Exception>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Guid>()),
+            Times.Never,
+            "A 400-rejected completion must NOT log at Error level");
+    }
+
+    /// <summary>
+    /// AC: the 400-caching behaviour applies to Failed K8s jobs as well as Succeeded jobs —
+    /// both phases call the same HandleJobCompletedAsync method.
+    /// </summary>
+    [Fact]
+    public async Task ReconcileOnce_WhenPostStatusReturns400_ForFailedJob_ItemIsCached()
+    {
+        var id = Guid.NewGuid();
+        var jobName = $"caa-agent-{id:N}"[..21];
+        var job = MakeJob(jobName, id, failed: true);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        _workItemClient.Setup(c => c.PostStatusAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("WorkItem not in a transitionable state", null, System.Net.HttpStatusCode.BadRequest));
+
+        var loop = CreateLoop();
+
+        // First cycle receives 400 — must cache
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+        // Second cycle — ID must be cached, no retry
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Regression guard: a transient 5xx HttpRequestException must NOT be treated like a 400 —
+    /// the WorkItem ID must not be cached and the next cycle must retry.
+    /// Verifies acceptance criterion: "Transient HTTP errors (5xx) continue to be retried as before."
+    /// </summary>
+    [Fact]
+    public async Task ReconcileOnce_WhenPostStatusThrows5xx_ItemNotCached_NextCycleStillRetries()
+    {
+        var id = Guid.NewGuid();
+        var jobName = $"caa-agent-{id:N}"[..21];
+        var job = MakeJob(jobName, id, succeeded: true);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        // First call throws a 500 (transient); second call succeeds
+        _workItemClient.SetupSequence(c => c.PostStatusAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Internal server error", null, System.Net.HttpStatusCode.InternalServerError))
+            .Returns(Task.CompletedTask);
+
+        var loop = CreateLoop();
+
+        // First cycle — 5xx is not cached, item must be retried next cycle
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+        // Second cycle — ID was NOT cached after the 5xx, so the POST is retried and succeeds
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        // PostStatusAsync called twice: once for the 5xx (not cached), once for the success
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Succeeded"),
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
 }

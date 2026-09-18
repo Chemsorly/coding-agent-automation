@@ -409,9 +409,58 @@ public class ProviderSectionComponentTests : BunitContext
 
         var editButtons = cut.FindAll(".btn-edit");
         var deleteButtons = cut.FindAll(".btn-delete");
-        // At least 1 edit button (Initialize + Edit = 2 .btn-edit buttons per card)
-        Assert.True(editButtons.Count >= 1);
+        // Exactly 1 .btn-edit button per card (the "Edit" button); "Initialize Provider" uses .btn-initialize
+        Assert.Single(editButtons);
+        // TODO: tighten to Assert.Single(deleteButtons) — with one provider card in the setup exactly one
+        // delete button is expected; the weak >= 1 check would pass even if a bug introduced duplicates.
         Assert.True(deleteButtons.Count >= 1);
+    }
+
+    [Fact]
+    public void IssueSection_InitializeProviderButton_HasBtnInitializeClass_AndEditButtonHasBtnEditClass()
+    {
+        // Verifies AC4: "Initialize Provider" uses .btn-initialize (filled/primary),
+        // "Edit" uses .btn-edit (outline/secondary). They must be visually distinct.
+        var providers = new List<ProviderConfig>
+        {
+            new()
+            {
+                Id = "ip-3",
+                Kind = ProviderKind.Issue,
+                ProviderType = "GitHub",
+                DisplayName = "Class Test Provider",
+                Settings = new Dictionary<string, string>
+                {
+                    [ProviderSettingKeys.Owner] = "org",
+                    [ProviderSettingKeys.Repo] = "repo"
+                }
+            }
+        };
+
+        var cut = Render<IssueProviderSection>(p => p
+            .Add(s => s.Providers, providers)
+            .Add(s => s.ConfigClient, _mockStore.Object)
+            .Add(s => s.GitHubValidator, _gitHubValidator)
+            .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
+
+        var initializeButtons = cut.FindAll(".btn-initialize");
+        var editButtons = cut.FindAll(".btn-edit");
+
+        // "Initialize Provider" button must carry .btn-initialize, not .btn-edit
+        var initBtn = Assert.Single(initializeButtons);
+        Assert.Contains("Initialize Provider", initBtn.TextContent);
+
+        // "Edit" button must carry .btn-edit
+        var editBtn = Assert.Single(editButtons);
+        Assert.Contains("Edit", editBtn.TextContent);
+
+        // The two button classes must be distinct — no button carries both
+        // TODO: this assertion only verifies class-name assignment, not actual visual rendering.
+        // bUnit does not apply CSS, so the filled-accent background on .btn-initialize vs the outline
+        // style on .btn-edit cannot be asserted here. If visual distinctness regresses in CSS, these
+        // tests will still pass. Ideally supplement with a Playwright/E2E snapshot test for AC4.
+        Assert.DoesNotContain("btn-edit", initBtn.ClassName ?? "");
+        Assert.DoesNotContain("btn-initialize", editBtn.ClassName ?? "");
     }
 
     [Fact]
