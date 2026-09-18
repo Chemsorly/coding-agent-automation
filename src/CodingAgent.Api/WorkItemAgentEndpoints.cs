@@ -305,6 +305,10 @@ public static class WorkItemAgentEndpoints
             if (project?.Secrets is { Count: > 0 })
                 return message with { ProjectSecrets = project.Secrets };
 
+            // TODO: Consider restoring a structured Log.Warning (with {ProjectId} and {JobId}) for the
+            // null-project path so operators can correlate silent secret-injection failures at assignment
+            // time. The original diagnostic was removed in this refactor; both "project not found" and
+            // "project exists but has no secrets" now fall through silently.
             return message;
         }
 
@@ -314,34 +318,27 @@ public static class WorkItemAgentEndpoints
         // and non-consolidation null-project items fall through to the unchanged return below.
         if (!string.IsNullOrEmpty(request.ConsolidationTemplateId))
         {
+            // TODO: ConsolidationTemplateId originates from the deserialized work-item payload and is
+            // attacker-influenced. The only authorization checks here are Enabled == true and TemplateIds
+            // membership. Consider adding a secondary authorization check (e.g., verify the work item's
+            // initiating identity is permitted to access the resolved project) or documenting that
+            // agent-claimed-item context is sufficient authorization for secret injection.
             var projects = await projectStore.LoadProjectsAsync(ct);
-            // TODO: [WARNING] LoadAllTemplatesAsync is called unconditionally here but its result
-            // (templateLookup) is only used for a ContainsKey guard inside the loop. That guard
-            // is logically redundant: candidate.TemplateIds.Contains(templateId) already implies
-            // the template exists unless TemplateIds contains stale/orphaned IDs — in which case
-            // the guard silently withholds secrets rather than documenting the intent. Additionally,
-            // the templateId check is constant within the loop, so evaluating it per iteration is
-            // wasteful. Consider removing LoadAllTemplatesAsync and the templateLookup.ContainsKey
-            // guard entirely, or document why orphaned-reference detection via the template store
-            // is an intentional safety requirement. If kept, hoist the ContainsKey check before
-            // the loop so it is evaluated once, not once per enabled project.
+            // TODO: The templateLookup.ContainsKey(ConsolidationTemplateId) guard is constant within the
+            // foreach loop — consider hoisting it before the loop to avoid re-evaluating it per enabled
+            // project. If orphaned-TemplateIds detection is not a requirement, LoadAllTemplatesAsync and
+            // the ContainsKey guard can be removed entirely to save one store round-trip.
             var templateLookup = (await projectStore.LoadAllTemplatesAsync(ct)).ToDictionary(t => t.Id);
             foreach (var candidate in projects.Where(p => p.Enabled))
             {
                 if (candidate.TemplateIds.Contains(request.ConsolidationTemplateId)
                     && templateLookup.ContainsKey(request.ConsolidationTemplateId))
                 {
-                    // TODO: [WARNING] GetProjectByIdAsync(candidate.Id) re-fetches a project that
-                    // was already returned by LoadProjectsAsync. If LoadProjectsAsync returns full
-                    // PipelineProject objects (including Secrets), this is a redundant store round-
-                    // trip and candidate.Secrets could be used directly. If LoadProjectsAsync
-                    // returns lightweight projections without Secrets, the second fetch is required.
-                    // This assumption is not documented and is not visible in the interface contract.
-                    // Additionally, if GetProjectByIdAsync returns null for a project just enumerated
-                    // from LoadProjectsAsync, the break fires and silently produces no-secrets —
-                    // identical to the pre-fix behaviour. Document which projection strategy
-                    // LoadProjectsAsync uses, or add a null-guard comment explaining the intended
-                    // fallback when the re-fetch returns null.
+                    // TODO: GetProjectByIdAsync(candidate.Id) re-fetches a project already returned by
+                    // LoadProjectsAsync. If LoadProjectsAsync returns full PipelineProject objects
+                    // (including Secrets), candidate.Secrets could be used directly. Document which
+                    // projection strategy LoadProjectsAsync uses, or add a comment explaining why the
+                    // re-fetch is required.
                     var owningProject = await projectStore.GetProjectByIdAsync(candidate.Id, ct);
                     if (owningProject?.Secrets is { Count: > 0 })
                         return message with { ProjectSecrets = owningProject.Secrets };
@@ -350,6 +347,10 @@ public static class WorkItemAgentEndpoints
             }
         }
 
+        // TODO: When ConsolidationTemplateId is set but no matching enabled project is found (or the
+        // owning project has no secrets), this method silently returns with no log event. Consider
+        // emitting a diagnostic log (Log.Warning with {ConsolidationTemplateId} and {JobId}) when
+        // ConsolidationTemplateId is non-null but no owning project with secrets was found.
         return message;
     }
 
@@ -559,12 +560,13 @@ public static class WorkItemAgentEndpoints
 
         if (request.Status == WorkItemStatus.Failed)
         {
-            // TODO: This bare Enum.TryParse has no Enum.IsDefined guard (unlike the telemetry path
-            // fixed in issue #2341). A numeric string like "99" will parse to an undefined FailureReason
-            // value and be persisted to the database. Add an Enum.IsDefined check here so that only
-            // named members are written to entity.FailureReason.
+            // Enum.TryParse succeeds for numeric string inputs (e.g. "99") even when they don't
+            // correspond to a named FailureReason member. The IsDefined guard rejects such values
+            // so only named members are persisted to entity.FailureReason. (Issue #2667, mirrors
+            // the telemetry path fixed in issue #2341.)
             if (request.FailureReason is not null
-                && Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason))
+                && Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason)
+                && Enum.IsDefined(typeof(FailureReason), parsedReason))
             {
                 entity.FailureReason ??= parsedReason;
             }

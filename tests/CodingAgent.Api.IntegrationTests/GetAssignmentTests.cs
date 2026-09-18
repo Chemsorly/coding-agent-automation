@@ -770,6 +770,12 @@ public sealed class GetAssignmentTests
         // ASSERT: 200 returned and ProjectSecrets populated from owning project
         var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
         okResult.Should().NotBeNull("consolidation work item with a valid template should return 200 OK");
+        // TODO: [WARNING] This test does not verify which code path supplied the secrets. If a future
+        // regression injects secrets from a source other than InjectProjectSecretsAsync (e.g. the enricher
+        // accidentally populates ProjectSecrets), the assertions below would still pass as long as the
+        // secret value matches. Consider verifying enricher.CallCount == 1 to confirm enrichment ran, and
+        // asserting that the mock's LoadProjectsAsync and GetProjectByIdAsync were each called exactly once,
+        // so the test fails if secrets are injected by a different mechanism.
         okResult!.Value!.ProjectSecrets.Should().NotBeNull(
             "ProjectSecrets must be injected from the owning project when ConsolidationTemplateId is set");
         okResult.Value.ProjectSecrets.Should().ContainKey("MY_SECRET",
@@ -822,6 +828,12 @@ public sealed class GetAssignmentTests
         // ASSERT: 200 returned, ProjectSecrets null (owning project has no secrets)
         var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
         okResult.Should().NotBeNull();
+        // TODO: [WARNING] This test only covers the Secrets = null case. The { Count: > 0 } pattern
+        // guard in InjectProjectSecretsAsync also applies to empty-dict (Secrets = new Dictionary<string, string>()).
+        // The direct-path has a parallel test (GetAssignment_NonNullProjectId_ProjectHasEmptySecrets_ReturnsUnchanged)
+        // that covers the empty-dict case, but the consolidation path has no equivalent. Add a test:
+        // MakeProject with secrets: new Dictionary<string, string>() to confirm the empty-dict case also
+        // returns ProjectSecrets = null via the consolidation fallback.
         okResult!.Value!.ProjectSecrets.Should().BeNull(
             "no secrets should be injected when the owning project has no secrets configured");
     }
@@ -923,12 +935,15 @@ public sealed class GetAssignmentTests
         var result = await WorkItemAgentEndpoints.GetAssignment(id, dbFactory, projectStore, enricher);
 
         // ASSERT: 200 returned, no secrets (disabled project is skipped)
-        // TODO: [WARNING] This assertion only checks that ProjectSecrets is null, but it passes
-        // whether the disabled project was *skipped* (correct — filtered by p.Enabled) or was
-        // *evaluated but its template-id match failed for another reason*. To make the test a
-        // stronger guard, add a second enabled project in the store that does NOT own the template
-        // so the loop traverses at least one enabled candidate without a match, confirming the
-        // disabled project was genuinely bypassed rather than merely not evaluated.
+        // TODO: [WARNING] This test seeds only one project (disabled) with no other enabled projects.
+        // Because the store's project list is [disabledProject] and disabledProject.Enabled = false,
+        // the Where(p => p.Enabled) filter in InjectProjectSecretsAsync produces an empty enumeration —
+        // the loop body never executes at all. The test therefore passes whether the disabled-project
+        // guard is working correctly or whether the filter clause is absent entirely; in either case
+        // no candidate is visited and ProjectSecrets = null. To distinguish "disabled project skipped"
+        // from "loop not entered", add a second enabled project in the store that does NOT own the
+        // template, confirming the loop traversed at least one enabled candidate without a match, and
+        // that the disabled project was genuinely bypassed rather than merely not evaluated.
         var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
         okResult.Should().NotBeNull();
         okResult!.Value!.ProjectSecrets.Should().BeNull(
