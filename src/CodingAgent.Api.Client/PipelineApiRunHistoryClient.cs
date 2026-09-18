@@ -70,16 +70,17 @@ internal sealed class PipelineApiRunHistoryClient : IPipelineApiRunHistoryClient
         // A null/empty result would be indistinguishable from "no active runs" and would defeat
         // the conservative fallback — e.g. a 403 from a misconfigured auth key would cause
         // UpdatePullRequestBranchAsync to be called on live-run branches.
-        // NOTE: GetRunHistoryAsync above uses GetFromJsonAsync which also throws HttpRequestException
-        //   (not a NullReferenceException) on non-2xx responses, because GetFromJsonAsync calls
-        //   EnsureSuccessStatusCode internally. The result! dereference is safe on 2xx where the
-        //   body is expected to be non-null JSON; it will throw NullReferenceException only if the
-        //   server returns a 2xx with an empty or null body, which is not a valid API response here.
         var response = await _http.GetAsync("/api/pipeline-runs/active-branches", ct);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<IReadOnlyList<string>>(
             PipelineJsonOptions.Default,
             ct);
+        // TODO: A 2xx response with a null body is a server-side contract violation and should throw
+        //   rather than silently returning []. The ?? [] fallback is indistinguishable from a genuine
+        //   empty result, which means a misbehaving server returning 200 OK with null body would bypass
+        //   the conservative guard — the same class of problem the fix above closes for non-2xx.
+        //   Consider: return result ?? throw new InvalidOperationException(
+        //       "GET /api/pipeline-runs/active-branches returned a 2xx response with a null body.");
         return result ?? [];
     }
 }

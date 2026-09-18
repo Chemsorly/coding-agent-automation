@@ -205,8 +205,9 @@ public static partial class PipelineFormatting
         return $"🏗️ Quality gates: {string.Join(" | ", parts)}";
     }
 
-    private static string FormatTestGateSummary(GateResult tests)
+    private static string FormatTestGateSummary(GateResult? tests)
     {
+        if (tests is null) return "Tests N/A";
         var status = tests.Passed ? "✅" : "❌";
         if (tests.TestsPassed.HasValue || tests.TestsFailed.HasValue)
             return $"Tests {status} ({tests.TestsPassed ?? 0} passed, {tests.TestsFailed ?? 0} failed)";

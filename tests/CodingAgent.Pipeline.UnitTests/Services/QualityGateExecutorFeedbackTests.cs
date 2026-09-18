@@ -370,4 +370,101 @@ public class QualityGateExecutorFeedbackTests
             }
         };
     }
+
+    // ── Null-Tests guard tests (Issue #2654) ────────────────────────────────
+
+    /// <summary>
+    /// Regression: BuildQualityGateErrorSummary, LogAndRecordReport, and AppendExternalCiIfNeededAsync
+    /// must not throw NullReferenceException when report.Tests is null (build-only QGC with no TestCommand,
+    /// or legacy MessagePack deserialization payload predating Key(5)).
+    /// Compilation.Passed = false causes AppendExternalCiIfNeededAsync to short-circuit before its own
+    /// Tests guard, so this test focuses on the LogAndRecordReport + BuildQualityGateErrorSummary path.
+    /// </summary>
+    [Fact]
+    public async Task ProceedToQualityGatesAsync_WhenTestsIsNull_CompilationFails_DoesNotThrow()
+    {
+        // Arrange
+        var nullTestsReport = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = false, Details = "Build failed" },
+            Tests = null! // Simulates legacy MessagePack deserialization (bypasses 'required' constraint)
+        };
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(nullTestsReport);
+        SetupAgentReturnsValidFeedback();
+
+        var context = BuildContext();
+
+        // Act + Assert: must complete without NullReferenceException
+        var act = async () => await _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
+        await act.Should().NotThrowAsync();
+    }
+
+    /// <summary>
+    /// AC: BuildQualityGateErrorSummary (Site 1) omits the "Tests:" entry when report.Tests is null.
+    /// Verifies via run.RetryErrors which is populated by the exhausted-retries path that calls
+    /// BuildQualityGateErrorSummary. MaxRetries=0 so the path is taken on the first failure.
+    /// </summary>
+    [Fact]
+    public async Task BuildQualityGateErrorSummary_WhenTestsIsNull_CompilationFails_OmitsTestsEntry()
+    {
+        // Arrange: null Tests, Compilation fails → exhausted path writes error summary to run.RetryErrors
+        var nullTestsReport = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = false, Details = "Build failed" },
+            Tests = null! // Simulates legacy MessagePack deserialization (bypasses 'required' constraint)
+        };
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(nullTestsReport);
+        SetupAgentReturnsValidFeedback();
+
+        var context = BuildContext();
+
+        // Act
+        await _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
+
+        // Assert: error summary was enqueued and does not contain a "Tests:" entry
+        _run.RetryErrors.Should().NotBeEmpty();
+        var errorSummary = _run.RetryErrors.First();
+        errorSummary.Should().Contain("Compilation:");
+        errorSummary.Should().NotContain("Tests:");
+    }
+
+    /// <summary>
+    /// Regression: LogAndRecordReport calls FormatQualityGateSummary (which calls FormatTestGateSummary)
+    /// before the logger line. When Compilation passes and Tests is null, the execution reaches
+    /// FormatQualityGateSummary and EmitGateEvaluation — all must handle null Tests without throwing.
+    /// </summary>
+    [Fact]
+    public async Task ProceedToQualityGatesAsync_WhenTestsIsNull_CompilationPasses_DoesNotThrow()
+    {
+        // Arrange: Compilation passes so AppendExternalCiIfNeededAsync reaches its Tests guard.
+        // No PipelineProvider configured so CI check is skipped; AllPassed is false (Tests null
+        // evaluates via AllPassed which is also out-of-scope — this test verifies LogAndRecordReport
+        // site guards only; MaxRetries=0 means no retry agent is invoked).
+        var nullTestsReport = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "Build succeeded" },
+            Tests = null! // Simulates legacy MessagePack deserialization (bypasses 'required' constraint)
+        };
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(nullTestsReport);
+        SetupAgentReturnsValidFeedback();
+
+        var context = BuildContext();
+
+        // Act + Assert: must complete without NullReferenceException
+        var act = async () => await _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
+        await act.Should().NotThrowAsync();
+    }
+
 }
