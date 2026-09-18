@@ -120,6 +120,11 @@ public partial class QualityGateExecutor
                 ? $"✅ External CI passed ({ciStatus.Jobs.Count} jobs)"
                 : $"❌ External CI failed: {ciGate.Details}");
         }
+        // TryReadHeadShaAsync does not swallow OCE — it rethrows. The two catch clauses below
+        // handle the two sources within this function's try block (4 call sites in ExternalCi.cs):
+        //   • Per-poll CancellationTokenSource timeout (!ct.IsCancellationRequested) → degrade gracefully
+        //   • Pipeline CT cancelled → propagate intentionally (run is being torn down)
+        // Note: WaitForPostPrCiAsync (RetryLoop.cs) has a parallel handler for the post-PR CI path.
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             ciGate = new GateResult

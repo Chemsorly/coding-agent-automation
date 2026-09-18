@@ -122,6 +122,144 @@ public class QualityGateExecutorCiPollingTests
     // for those two code paths (infra-retry branch and re-push loop branch) to lock in the graceful-degradation
     // contract introduced by the TryReadHeadShaAsync extraction (issue #2622).
 
+    /// <summary>
+    /// Acceptance criterion (issue #2674): when the per-poll CancellationTokenSource timeout fires
+    /// (e.g. inside PollAndHandleInfraRetryAsync) and propagates as an OperationCanceledException,
+    /// the outer catch in AppendExternalCiIfNeededAsync must intercept it (outer ct is NOT cancelled)
+    /// and return a failing GateResult — the exception must not propagate to the caller.
+    /// This variant exercises the WaitForCompletionAsync call site (inside the polling helper).
+    /// </summary>
+    [Fact]
+    public async Task AppendExternalCi_WhenPerPollTimeoutOceFiredByTryReadHeadSha_ReturnsFailingGateResult()
+    {
+        var run = CreateRun();
+
+        // Simulate per-poll timeout: WaitForCompletionAsync throws OCE with an independent,
+        // already-cancelled CTS — NOT the outer ct. This represents the pollCt (linked timeout token)
+        // being cancelled by timeoutCts firing inside PollAndHandleInfraRetryAsync.
+        // TODO [WARNING]: The OCE here originates from WaitForCompletionAsync, not directly from
+        // GetHeadCommitShaAsync (TryReadHeadShaAsync). The test exercises the outer catch clause
+        // correctly but does not confirm the TryReadHeadShaAsync call site specifically. See the
+        // companion test AppendExternalCi_WhenPerPollTimeoutOceFiredByGetHeadCommitSha_ReturnsFailingGateResult
+        // which injects via GetHeadCommitShaAsync.
+        using var perPollCts = new CancellationTokenSource();
+        perPollCts.Cancel();
+        _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException(perPollCts.Token));
+
+        var context = BuildContext(run);
+
+        // Outer ct = CancellationToken.None — the pipeline CT is NOT cancelled.
+        // The when (!ct.IsCancellationRequested) guard must be true → exception is caught and
+        // converted to a failing GateResult; it must NOT propagate.
+        var result = await _executor.AppendExternalCiIfNeededAsync(context, PassingReport, false, CancellationToken.None);
+
+        result.ExternalCi.Should().NotBeNull("per-poll timeout OCE must be converted to a failing gate, not propagated");
+        result.ExternalCi!.Passed.Should().BeFalse("external CI gate must fail when per-poll timeout fires");
+        // TODO [WARNING]: The "timed out" substring check is coupled to the production message
+        // format ("External CI timed out after {config.ExternalCiTimeout}"). If the wording changes
+        // this assertion fails with an opaque message. The primary contract (no exception, Passed == false)
+        // is already verified above; the string check adds fragility without meaningful additional coverage.
+        result.ExternalCi.Details.Should().Contain("timed out", "Details must identify the timeout as the cause");
+    }
+
+    /// <summary>
+    /// Acceptance criterion (issue #2674): confirms that an OCE originating specifically from
+    /// <c>TryReadHeadShaAsync</c> → <c>GetHeadCommitShaAsync</c> with a per-poll timeout token
+    /// (outer pipeline CT is NOT cancelled) is caught by the
+    /// <c>when (!ct.IsCancellationRequested)</c> guard and converted to a failing GateResult.
+    /// This directly exercises the regression scenario described in the issue: a future refactor
+    /// that makes TryReadHeadShaAsync swallow OCE again would leave this test green while the
+    /// per-poll OCE is silently dropped; the test pins the observable contract from that call site.
+    /// </summary>
+    [Fact]
+    public async Task AppendExternalCi_WhenPerPollTimeoutOceFiredByGetHeadCommitSha_ReturnsFailingGateResult()
+    {
+        var run = CreateRun();
+
+        // Inject OCE from GetHeadCommitShaAsync with an independent cancelled CTS (not the outer ct).
+        // TryReadHeadShaAsync rethrows OCE unconditionally; the outer catch in
+        // AppendExternalCiIfNeededAsync must intercept it because ct.IsCancellationRequested == false.
+        using var perPollCts = new CancellationTokenSource();
+        perPollCts.Cancel();
+        _mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException(perPollCts.Token));
+
+        var context = BuildContext(run);
+
+        // Outer ct = CancellationToken.None — the pipeline CT is NOT cancelled.
+        var result = await _executor.AppendExternalCiIfNeededAsync(context, PassingReport, false, CancellationToken.None);
+
+        result.ExternalCi.Should().NotBeNull("OCE from TryReadHeadShaAsync must be converted to a failing gate, not propagated");
+        result.ExternalCi!.Passed.Should().BeFalse("external CI gate must fail when TryReadHeadShaAsync throws per-poll OCE");
+        result.ExternalCi.Details.Should().Contain("timed out", "Details must identify the timeout as the cause");
+    }
+
+    /// <summary>
+    /// Acceptance criterion (issue #2674): when the pipeline CancellationToken (the outer ct) is
+    /// cancelled and an OperationCanceledException propagates from inside the try block, the outer
+    /// catch in AppendExternalCiIfNeededAsync must rethrow it — the run is being torn down and the
+    /// exception must reach the caller.
+    /// </summary>
+    [Fact]
+    public async Task AppendExternalCi_WhenPipelineCancelled_OcePropagates()
+    {
+        var run = CreateRun();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // CommitAllAsync is the first async call inside the try block. Throwing with the outer ct
+        // (ct.IsCancellationRequested == true) exercises the unconditional rethrow path:
+        //   catch (OperationCanceledException) { throw; }
+        // NOTE: This test confirms the rethrow path fires for pre-TryReadHeadShaAsync pipeline-CT
+        // cancellation. See AppendExternalCi_WhenPipelineCancelledAtTryReadHeadSha_OcePropagates
+        // for the complementary test that injects OCE at the TryReadHeadShaAsync call site itself.
+        _mockRepoProvider.Setup(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ThrowsAsync(new OperationCanceledException(cts.Token));
+
+        var context = BuildContext(run);
+
+        var act = async () => await _executor.AppendExternalCiIfNeededAsync(context, PassingReport, false, cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            "pipeline CT cancellation must propagate out of AppendExternalCiIfNeededAsync");
+    }
+
+    /// <summary>
+    /// Acceptance criterion (issue #2674): when the pipeline CancellationToken (the outer ct) is
+    /// cancelled and an OperationCanceledException propagates specifically from the
+    /// <c>TryReadHeadShaAsync</c> call site (<c>GetHeadCommitShaAsync</c>), the outer catch in
+    /// <c>AppendExternalCiIfNeededAsync</c> must rethrow it via the unconditional
+    /// <c>catch (OperationCanceledException) { throw; }</c> path.
+    /// This test exercises the <c>TryReadHeadShaAsync</c> call site directly — <c>CommitAndPushAsync</c>
+    /// succeeds normally so the OCE originates at the expected location in the try block.
+    /// </summary>
+    [Fact]
+    public async Task AppendExternalCi_WhenPipelineCancelledAtTryReadHeadSha_OcePropagates()
+    {
+        var run = CreateRun();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // CommitAllAsync and PushBranchAsync succeed (default mocks) so execution reaches
+        // TryReadHeadShaAsync → GetHeadCommitShaAsync. Throwing here with the pipeline CT
+        // (ct.IsCancellationRequested == true) must trigger the unconditional rethrow:
+        //   catch (OperationCanceledException) { throw; }
+        // and NOT the per-poll-timeout guard (when !ct.IsCancellationRequested).
+        _mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException(cts.Token));
+
+        var context = BuildContext(run);
+
+        var act = async () => await _executor.AppendExternalCiIfNeededAsync(context, PassingReport, false, cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            "pipeline CT cancellation originating from TryReadHeadShaAsync must propagate out of AppendExternalCiIfNeededAsync");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private void SetupDefaultMocks()
