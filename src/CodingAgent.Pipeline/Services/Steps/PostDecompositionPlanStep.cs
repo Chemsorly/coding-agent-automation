@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
 
@@ -79,12 +80,22 @@ public sealed class PostDecompositionPlanStep : IPipelineStep
         if (postResult == StepResult.Stop)
             return StepResult.Stop;
 
-        // 4. Swap label to agent:epic-review
-        await context.IssueOps.SwapLabelAsync(context.Run.IssueIdentifier, AgentLabels.EpicReview, ct);
+        // 4. Swap label to agent:epic-review (non-fatal on failure — run will complete without label transition)
         context.Run.FinalLabel = AgentLabels.EpicReview;
-        context.Logger.Information(
-            "Swapped label to {Label} on issue {IssueId}",
-            AgentLabels.EpicReview, context.Run.IssueIdentifier);
+        try
+        {
+            await context.IssueOps.SwapLabelAsync(context.Run.IssueIdentifier, AgentLabels.EpicReview, ct);
+            context.Logger.Information(
+                "Swapped label to {Label} on issue {IssueId}",
+                AgentLabels.EpicReview, context.Run.IssueIdentifier);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Activity.Current?.RecordError(ex, ct);
+            context.Logger.Error(ex,
+                "Failed to swap label to {Label} on issue {IssueId}, run will complete without label transition",
+                AgentLabels.EpicReview, context.Run.IssueIdentifier);
+        }
 
         return StepResult.Continue;
     }

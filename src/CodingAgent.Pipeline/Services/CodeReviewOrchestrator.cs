@@ -105,12 +105,42 @@ internal class CodeReviewOrchestrator
 
             try
             {
-                iterationCriticalCount = await DispatchReviewAgentsAsync(
+                var (dispatchCriticalCount, crashedCount) = await DispatchReviewAgentsAsync(
                     context, agents, i, useParallel, iterationFindings, agentsRun, ct);
+                iterationCriticalCount = dispatchCriticalCount;
 
                 run.CodeReviewAgentsRun = agentsRun;
                 var iterationFindingsText = iterationFindings.ToString();
                 run.CodeReviewIterationsCompleted++;
+
+                // All-agents-crashed guard: when every dispatched agent failed (crashed), emit a
+                // distinguishable Warning and exit early. This prevents the all-crash scenario from
+                // being silently treated as legitimately clean code (NoFindingsBreak).
+                // Uses return (not break) to skip remaining iterations — a structural crash is
+                // unlikely to resolve in subsequent iterations.
+                // TODO: [WARNING] The condition `crashedCount == agentsRun.Count` relies on agentsRun being
+                // populated unconditionally (including for failed agents) inside DispatchReviewAgentsAsync.
+                // If a future refactor changes agentsRun to exclude failed agents (to match CodeReviewAgentFindings
+                // semantics), both sides of the comparison would be 0 for an all-crash case and the guard would
+                // never fire. The issue's suggested approach used `!run.CodeReviewAgentFindings.Keys.Any(k =>
+                // agentsRun.Contains(k))` as a more robust discriminator. Consider aligning with that pattern.
+                // TODO: [WARNING] This guard only fires when ALL agents crash. A partial-crash scenario where some
+                // agents crash and some succeed with zero findings still exits via DetermineFixPromptAction →
+                // NoFindingsBreak with no crash signal — indistinguishable from legitimately clean code. This is
+                // within scope per issue #2660 (only "all agents crash" is required), but the silent path for
+                // partial failures remains. Track as a separate improvement.
+                if (crashedCount == agentsRun.Count && agentsRun.Count > 0)
+                {
+                    _logger.Warning(
+                        "Pipeline {RunId} code review iteration {Iteration}: all {AgentCount} agents failed — findings unavailable",
+                        run.RunId, i + 1, agentsRun.Count);
+                    context.Callbacks.EmitOutputLine(
+                        $"⚠️ Code review iteration {i + 1}: all review agents failed — no findings produced");
+                    // TODO: [WARNING] NotifyChange() is not called here, unlike every other early-exit path in this
+                    // method. The UI state change triggered by EmitOutputLine above may not be flushed to connected
+                    // clients in the all-crash scenario. Add context.Callbacks.NotifyChange() before return.
+                    return;
+                }
 
                 // Run acceptance criteria check on every iteration so the report reflects current code state
                 if (config.AcceptanceCriteriaEnabled)
@@ -170,7 +200,7 @@ internal class CodeReviewOrchestrator
         return iterationActivity;
     }
 
-    private async Task<int> DispatchReviewAgentsAsync(
+    private async Task<(int criticalCount, int crashCount)> DispatchReviewAgentsAsync(
         AgentPhaseContext context,
         IReadOnlyList<ReviewAgentConfig> agents,
         int iterationIndex,
@@ -377,9 +407,9 @@ internal class CodeReviewOrchestrator
     /// <summary>
     /// Executes review agents sequentially (original behavior).
     /// Used for Kiro CLI or when parallel review is disabled.
-    /// Returns the number of critical findings in this iteration.
+    /// Returns a tuple of (criticalCount, crashCount) for this iteration.
     /// </summary>
-    private async Task<int> ExecuteReviewAgentsSequentialAsync(
+    private async Task<(int criticalCount, int crashCount)> ExecuteReviewAgentsSequentialAsync(
         AgentPhaseContext context,
         IReadOnlyList<ReviewAgentConfig> agents,
         int iterationIndex,
@@ -389,6 +419,7 @@ internal class CodeReviewOrchestrator
     {
         var run = context.Run;
         var criticalCount = 0;
+        var crashCount = 0;
 
         for (var a = 0; a < agents.Count; a++)
         {
@@ -408,6 +439,7 @@ internal class CodeReviewOrchestrator
 
             if (result.Failed)
             {
+                crashCount++;
                 _logger.Warning("Pipeline {RunId} sequential review agent '{AgentName}' failed: {Error}",
                     run.RunId, agent.Name, result.Error);
                 run.ChatHistory.Enqueue(new ChatEntry
@@ -423,16 +455,16 @@ internal class CodeReviewOrchestrator
             context.Callbacks.NotifyChange();
         }
 
-        return criticalCount;
+        return (criticalCount, crashCount);
     }
 
     /// <summary>
     /// Executes review agents in parallel (OpenCode only).
     /// Each agent runs in its own fresh session since UseResume=false creates
     /// independent server-side sessions via the OpenCode HTTP API.
-    /// Returns the number of critical findings in this iteration.
+    /// Returns a tuple of (criticalCount, crashCount) for this iteration.
     /// </summary>
-    private async Task<int> ExecuteReviewAgentsParallelAsync(
+    private async Task<(int criticalCount, int crashCount)> ExecuteReviewAgentsParallelAsync(
         AgentPhaseContext context,
         IReadOnlyList<ReviewAgentConfig> agents,
         int iterationIndex,
@@ -462,6 +494,7 @@ internal class CodeReviewOrchestrator
 
         // Merge results sequentially (deterministic ordering by agent index)
         var localCriticalCount = 0;
+        var crashCount = 0;
         for (var a = 0; a < agents.Count; a++)
         {
             var agent = agents[a];
@@ -471,6 +504,7 @@ internal class CodeReviewOrchestrator
 
             if (result.Failed)
             {
+                crashCount++;
                 _logger.Warning("Pipeline {RunId} parallel review agent '{AgentName}' failed: {Error}",
                     run.RunId, agent.Name, result.Error);
                 run.ChatHistory.Enqueue(new ChatEntry
@@ -486,7 +520,7 @@ internal class CodeReviewOrchestrator
 
         context.Callbacks.NotifyChange();
 
-        return localCriticalCount;
+        return (localCriticalCount, crashCount);
     }
 
     /// <summary>

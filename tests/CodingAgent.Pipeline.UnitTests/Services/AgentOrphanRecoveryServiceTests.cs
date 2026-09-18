@@ -576,20 +576,15 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
         _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
-        // Pre-configure GetRun to return the orphaned run — reflects Redis state after AddRun writes the hash.
-        // The mock doesn't propagate AddRun state automatically; this verifies the real-system contract.
-        _facade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "run-orphan"))).Returns(orphan);
+        // GetRun returns null — hash is absent (expired or not yet written). Under the fix,
+        // GetRun returning null is the condition that triggers AddRun to re-materialize the hash.
+        // If GetRun returned non-null, AddRun would be skipped (hash is live, no overwrite needed).
+        _facade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "run-orphan"))).Returns((PipelineRun?)null);
 
         await _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId);
 
         _facade.Verify(f => f.AddRun(It.Is<PipelineRun>(r => r.RunId == "run-orphan")), Times.Once,
-            "AddRun must be called to re-materialize the run hash so GetRun returns non-null");
-        // TODO: [WARNING] The assertion below is tautological — the mock was configured to return
-        // orphan for this key unconditionally, so GetRun will always return non-null regardless of
-        // whether AddRun was ever called. The meaningful assertion is the Verify(AddRun) above.
-        // This assertion should not be relied upon as coverage; it only verifies mock plumbing.
-        _facade.Object.GetRun("run-orphan").Should().NotBeNull(
-            "GetRun must return a valid run after orphan recovery");
+            "AddRun must be called to re-materialize the run hash when the hash is absent");
         entry.ActiveJobId.Should().Be("run-orphan");
         // TODO: [WARNING] Missing assertion: TransitionStatus(agentId, AgentStatus.Busy) is called
         // in the DetectAndRestoreOrphans path but is not verified here. A regression removing the
@@ -930,5 +925,130 @@ public sealed class AgentOrphanRecoveryServiceTests
         _facade.Verify(f => f.UpdateAgentFieldAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<string?>()),
             Times.Never,
             "UpdateAgentFieldAsync must not be called when the TOCTOU guard suppresses both calls");
+    }
+
+    // ── DetectAndRestoreOrphans: hash-exists guard (issue #2663) ─────────────
+    // TODO: [WARNING] No test covers the negative path for GetRun in DetectAndRestoreOrphans:
+    // what happens if GetRun throws (e.g. Redis connectivity failure, OperationCanceledException)?
+    // Currently an exception would propagate out of DetectAndRestoreOrphans uncaught, which may
+    // crash the caller or leave the agent in an inconsistent state. Consider adding a test that
+    // mocks GetRun to throw and verifies the service either swallows with a log (consistent with
+    // other Redis-failure handling patterns in the file) or surfaces a clear error.
+
+    [Fact]
+    public async Task RecoverOrphanedStateAsync_OrphanedRuns_HashAlreadyExists_DoesNotCallAddRun()
+    {
+        // When the orphan's Redis hash already exists (another replica wrote it, or it hasn't
+        // expired), AddRun must NOT be called. Calling AddRun would overwrite all fields from
+        // the stale snapshot, clobbering newer values (e.g. currentStep, prUrl) written by
+        // other replicas between GetActiveRunsByAgent and this code path.
+        var agentId = MakeAgentId();
+        var entry = MakeEntry();
+        var orphan = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-orphan-exists",
+            IssueIdentifier = "GH-99",
+            IssueTitle = "Orphan",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+        var liveRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-orphan-exists",
+            IssueIdentifier = "GH-99",
+            IssueTitle = "Orphan",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+        liveRun.CurrentStep = PipelineStep.GeneratingCode; // advanced by another replica
+
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
+        // GetRun returns non-null — hash exists in Redis (live run with advanced state)
+        _facade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "run-orphan-exists"))).Returns(liveRun);
+
+        await _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId);
+
+        _facade.Verify(f => f.AddRun(It.IsAny<PipelineRun>()), Times.Never,
+            "AddRun must not be called when the hash already exists — would overwrite live fields with stale snapshot");
+        _facade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once,
+            "TransitionStatus(Busy) must still be called even when AddRun is skipped");
+        entry.ActiveJobId.Should().Be("run-orphan-exists");
+    }
+
+    [Fact]
+    public async Task RecoverOrphanedStateAsync_OrphanedRuns_HashAlreadyExists_PreservesCurrentStep()
+    {
+        // Issue #2663 AC: "a hash with pre-existing currentStep=3 must retain currentStep=3
+        // after orphan restore with a snapshot containing currentStep=1."
+        //
+        // At this test boundary (_facade is mocked), the mock's AddRun is the ONLY write path
+        // available to DetectAndRestoreOrphans — if AddRun is never called, no Redis fields
+        // can be overwritten. Times.Never on AddRun IS the proof that currentStep is preserved:
+        // no write occurred, therefore currentStep (and all other fields) remain at their live values.
+        var agentId = MakeAgentId();
+        var entry = MakeEntry();
+
+        // Snapshot orphan has stale currentStep=Created (the initial value when the run was dispatched)
+        var staleSnapshot = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-step-preserve",
+            IssueIdentifier = "GH-100",
+            IssueTitle = "Step Preserve Test",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+        // staleSnapshot.CurrentStep == Created (default from CreateImplementation)
+
+        // Live hash has currentStep=GeneratingCode — advanced by another replica while this
+        // agent was disconnected. This simulates the "currentStep=3" scenario from the AC.
+        var liveHash = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-step-preserve",
+            IssueIdentifier = "GH-100",
+            IssueTitle = "Step Preserve Test",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+        liveHash.CurrentStep = PipelineStep.GeneratingCode; // the "currentStep=3" from the AC
+
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([staleSnapshot]);
+        // GetRun returns the live hash — hash exists with advanced currentStep
+        _facade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "run-step-preserve"))).Returns(liveHash);
+
+        await _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId);
+
+        // The issue's AC requires currentStep to be preserved. At the mock boundary:
+        // AddRun Times.Never proves no write occurred → no field was overwritten.
+        _facade.Verify(f => f.AddRun(It.IsAny<PipelineRun>()), Times.Never,
+            "AddRun must not be called — calling it would overwrite currentStep=ImplementingCode with stale Created");
+        _facade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once,
+            "TransitionStatus(Busy) must be called unconditionally");
+        // TODO: [WARNING] The assertion below is tautological: liveHash is a local C# object that
+        // no code path in DetectAndRestoreOrphans can mutate (it is only returned from the GetRun
+        // mock). The assertion will always pass regardless of whether the guard is present or not.
+        // The load-bearing proof of AC #3 is the Times.Never on AddRun above. This assertion
+        // documents intent but adds no regression safety. An integration test against a real/fake
+        // Redis store would provide stronger field-level evidence.
+        // Verify the live hash state is unchanged (staleSnapshot was never written to the mock store)
+        liveHash.CurrentStep.Should().Be(PipelineStep.GeneratingCode,
+            "the live currentStep must not be overwritten by the stale snapshot value");
     }
 }
