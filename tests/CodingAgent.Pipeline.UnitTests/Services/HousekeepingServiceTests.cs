@@ -404,6 +404,57 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ── Per-call cooldown isolation (issue #2684 regression guard) ───────────
+
+    /// <summary>
+    /// Regression guard: see issue #2684.
+    /// Verifies that each ExecuteAsync call uses the triggerCooldownMinutes it was given,
+    /// not the shared TriggerCooldown property value from a prior call.
+    ///
+    /// Scenario:
+    ///   Call 1 — triggerCooldownMinutes:25, clock at t0       → triggers PR (records _lastTriggeredAt = t0)
+    ///   Call 2 — triggerCooldownMinutes:60, clock at t0+26min → elapsed = 26min &lt; 60min → must NOT trigger
+    ///
+    /// Without the local-capture fix, the shared TriggerCooldown property would reflect whatever
+    /// was written last (25 min after call 1), making the second call re-read the old value (25 min)
+    /// and incorrectly trigger the PR (26 min ≥ 25 min). With the fix, each call uses its own
+    /// captured value, so the 60-minute cooldown from call 2 correctly blocks the trigger.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_LocalCooldownCapture_IsolatesCallsFromSubsequentPropertyWrite()
+    {
+        var (svc, provider, issues, _) = Create();
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        var clock = DateTimeOffset.UtcNow;
+        svc.UtcNow = () => clock;
+
+        // Call 1: triggerCooldownMinutes=25 — triggers the PR, records _lastTriggeredAt = t0
+        await ExecAsync(svc, provider, issues, [MakePr(10)], triggerCooldownMinutes: 25);
+
+        // Advance clock 26 minutes — past the 25-min cooldown, but within a 60-min cooldown
+        clock = clock.AddMinutes(26);
+
+        // Call 2: triggerCooldownMinutes=60 — elapsed (26 min) < cooldown (60 min) → must NOT trigger
+        // If the implementation re-read TriggerCooldown (which was left at 25 min by call 1) instead
+        // of using the locally-captured 60-min value, it would incorrectly trigger here.
+        await ExecAsync(svc, provider, issues, [MakePr(10)], triggerCooldownMinutes: 60);
+
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Once,
+            "call 2's 60-min cooldown must block the trigger — local capture must govern, not the shared property");
+
+        // TODO: This test validates the Step 6b guard (skipping an in-flight PR within cooldown) but does
+        // not have a dedicated assertion for the Step 5 ordering lambda (`(now5 - lastTriggered) >= triggerCooldown`).
+        // In practice the PR passes through the Step 5 sorter before Step 6b evaluates it, so the local-capture
+        // path is exercised, but if Step 5 were ever regressed back to reading TriggerCooldown while Step 6b
+        // remained local, this test would still pass. Consider adding a scenario with two PRs where one is
+        // within cooldown and should be deprioritised to tier 2, verifying that the wrong cooldown value would
+        // misclassify it — specifically targeting Step 5 ordering isolation. (Issue #2684 regression guard)
+    }
+
     // ── In-flight absent from list → evicted ─────────────────────────────────
 
     [Fact]
