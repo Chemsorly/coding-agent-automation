@@ -290,7 +290,20 @@ public static class WorkItemAgentEndpoints
             return message;
 
         var project = await projectStore.GetProjectByIdAsync(request.ProjectId.Value.ToString(), ct);
-        if (project?.Secrets is { Count: > 0 })
+        if (project is null)
+        {
+            // TODO: [WARNING] The structured property name {JobId} is inconsistent with the {WorkItemId}
+            // convention used everywhere else in this file (e.g. line 112). Consider renaming to {WorkItemId}
+            // for a uniform structured log schema — but note that the integration test at
+            // GetAssignmentTests.cs currently asserts ContainKey("JobId"), so both sites must be updated
+            // together to avoid a test breakage.
+            Log.Warning(
+                "InjectProjectSecretsAsync: project {ProjectId} not found — WorkItem {JobId} will run without ProjectSecrets",
+                request.ProjectId.Value, message.JobId);
+            return message;
+        }
+
+        if (project.Secrets is { Count: > 0 })
             return message with { ProjectSecrets = project.Secrets };
 
         return message;
