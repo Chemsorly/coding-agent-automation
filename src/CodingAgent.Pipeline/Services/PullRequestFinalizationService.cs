@@ -170,13 +170,12 @@ public sealed class PullRequestFinalizationService
             // panel does not accumulate ghost records with null CompletedAt.
             run.MarkCompleted();
             run.CurrentStep = finalStep;
-            // TODO: FinalLabel is set unconditionally here even when RunPostPrSequenceAsync threw and the
-            // OCE propagates out of RunFullPrCreationAsync. On the OCE path the caller (orchestrator)
-            // may apply its own label-swap via ReportJobCompleted, potentially conflicting with this
-            // unconditional assignment. The draft-path OCE case (FinalLabel = AgentLabels.Error) is also
-            // untested — a regression that incorrectly sets Done instead of Error on a cancelled draft run
-            // would not be caught. Consider whether FinalLabel should be conditioned on whether the finally
-            // is executing normally vs. due to an exception, or document the expected orchestrator behaviour.
+            // FinalLabel is set unconditionally in the finally block so that it is assigned on all
+            // exit paths including OperationCanceledException from RunPostPrSequenceAsync. The OCE
+            // case is covered by RunFullPrCreationAsync_DraftOce_SetsFinalLabelError (draft) and
+            // RunFullPrCreationAsync_OceFromRunPostPrSequenceAsync_StillSetsCompletedAt (non-draft).
+            // The caller (orchestrator) may apply a further label-swap via ReportJobCompleted; that
+            // interaction is intentional and documented in AgentJobLifecycleService.
             run.FinalLabel = isDraft ? AgentLabels.Error : AgentLabels.Done;
         }
     }
@@ -192,6 +191,7 @@ public sealed class PullRequestFinalizationService
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ct.ThrowIfCancellationRequested();
         var run = request.Run;
         var isDraft = request.IsDraft;
         var agentProvider = request.AgentProvider;
