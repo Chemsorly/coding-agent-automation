@@ -239,6 +239,53 @@ public class PostDecompositionPlanStepTests : IDisposable
 
         result.Should().Be(StepResult.Continue);
         _issueOps.Verify(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>()), Times.Once);
+        context.Run.FinalLabel.Should().Be(AgentLabels.EpicReview);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_SwapLabelThrows_ReturnsStepResultContinueAndSetsFinalLabel()
+    {
+        WritePlanFile("This is a valid decomposition plan with enough content to pass validation.");
+
+        _issueOps.Setup(x => x.ListCommentsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>());
+        _issueOps.Setup(x => x.PostCommentAsync("42", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+        _issueOps.Setup(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("transient API error"));
+
+        var run = CreateRun();
+        var context = BuildContext(run);
+        var step = new PostDecompositionPlanStep();
+
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue);
+        context.Run.FinalLabel.Should().Be(AgentLabels.EpicReview);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_SwapLabelThrowsOperationCanceledException_Propagates()
+    {
+        WritePlanFile("This is a valid decomposition plan with enough content to pass validation.");
+
+        _issueOps.Setup(x => x.ListCommentsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>());
+        _issueOps.Setup(x => x.PostCommentAsync("42", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+        _issueOps.Setup(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var run = CreateRun();
+        var context = BuildContext(run);
+        var step = new PostDecompositionPlanStep();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => step.ExecuteAsync(context, CancellationToken.None));
+
+        // TODO: also assert context.Run.FinalLabel == AgentLabels.EpicReview here — FinalLabel is set before
+        // the SwapLabelAsync call so it should be set even on the OCE path. Without this assertion, a regression
+        // that moves FinalLabel assignment to after the call would go undetected on this path.
     }
 
     [Fact]

@@ -275,6 +275,47 @@ public sealed class AgentJobLifecycleServiceTests
             It.IsAny<CancellationToken>(), It.IsAny<string>(), FailureReason.InfrastructureFailure), Times.Once);
     }
 
+    [Fact]
+    public async Task HandleJobRejectedAsync_WhenCleanupThrows_AgentIsResetAndExceptionPropagates()
+    {
+        // Arrange: GetWorkItemRetryCountAsync throws — simulates a DB failure inside
+        // HandleRejectedRunCleanupAsync. The finally block must reset the agent AND the
+        // exception must propagate out of HandleJobRejectedAsync (not be swallowed).
+        var agent = MakeAgent();
+        agent.ActiveJobId = "job-1"; // non-null so the ActiveJobId null assertion is non-trivial
+        agent.Status = AgentStatus.Busy;
+        var jobId = new JobId("job-1");
+        _facade.Setup(f => f.GetRun(jobId)).Returns(MakeRun("job-1"));
+        _facade.Setup(f => f.GetWorkItemRetryCountAsync(jobId, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("DB unavailable"));
+
+        // Act + Assert: exception propagates
+        var act = () => _sut.HandleJobRejectedAsync(jobId, agent, "reason", CancellationToken.None);
+        await act.Should().ThrowAsync<InvalidOperationException>("the exception from cleanup must not be swallowed");
+
+        // Assert: agent state was reset despite the exception
+        _facade.Verify(f => f.TransitionStatus(agent.AgentId, AgentStatus.Idle), Times.Once,
+            "TransitionStatus(Idle) must be called even when HandleRejectedRunCleanupAsync throws");
+        agent.ActiveJobId.Should().BeNull(
+            "ActiveJobId must be cleared even when HandleRejectedRunCleanupAsync throws");
+    }
+
+    [Fact]
+    public async Task HandleJobRejectedAsync_WhenCleanupThrows_AndAgentIsNull_ExceptionStillPropagates()
+    {
+        // Arrange: agent is null and cleanup throws — the finally block guard (agent is not null)
+        // must not shadow the original exception with a NullReferenceException.
+        var jobId = new JobId("job-1");
+        _facade.Setup(f => f.GetRun(jobId)).Returns(MakeRun("job-1"));
+        _facade.Setup(f => f.GetWorkItemRetryCountAsync(jobId, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("DB unavailable"));
+
+        // Act + Assert: original exception propagates cleanly (no NullReferenceException from finally)
+        var act = () => _sut.HandleJobRejectedAsync(jobId, null, "reason", CancellationToken.None);
+        await act.Should().ThrowAsync<InvalidOperationException>(
+            "the original exception must propagate even when agent is null");
+    }
+
     // ── HandleJobCompletedAsync ───────────────────────────────────────────
 
     [Fact]
