@@ -72,4 +72,18 @@ public static class AgentLabels
     {
         EpicApproved
     };
+
+    /// <summary>
+    /// Precedence ordering for resolving dual-label issues (excludes <see cref="Generated"/>,
+    /// which is orthogonal and may legitimately coexist with any status label).
+    /// When multiple agent:* labels are found on a single issue, the label with the lowest
+    /// index in this list is retained and all others are removed.
+    /// Terminal/completed states take priority over active states, reflecting the intended
+    /// direction of the swap that left the issue in the dual-label state.
+    /// </summary>
+    public static readonly IReadOnlyList<string> DualLabelResolutionPrecedence = new[]
+    {
+        Done, Error, NeedsRefinement, WontDo, Cancelled, EpicReview, EpicApproved,
+        InProgress, Epic, Next
+    };
 }

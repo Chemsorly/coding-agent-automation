@@ -439,10 +439,11 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             "SwapLabelAsync should have been called — if this timed out, the sweep either " +
             "never ran or the issue was incorrectly skipped by one of the defense checks");
 
-        // Assert: provider config was only loaded once (deduplicated)
+        // Assert: provider config was loaded twice (once for Pass 1, once for Pass 2) but NOT
+        // four times (which would happen without deduplication of the two templates sharing provider-1).
         _mockConfigClient.Verify(
             s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Exactly(2));
 
         _cts.Cancel();
         await service.StopAsync(CancellationToken.None);
@@ -729,10 +730,11 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
                 It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
-        // Verify GetIssueAsync WAS called (the label check path was exercised)
+        // Verify GetIssueAsync WAS called (the label check path was exercised).
+        // Times.AtLeastOnce because Pass 2 (agent:done scan) also calls GetIssueAsync for this issue.
         mockIssueProvider.Verify(
             p => p.GetIssueAsync("1635", It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.AtLeastOnce);
 
         _cts.Cancel();
         await service.StopAsync(CancellationToken.None);
@@ -814,10 +816,11 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
                 It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
-        // Verify GetIssueAsync WAS called (the Defense 1 label check path was exercised)
+        // Verify GetIssueAsync WAS called (the Defense 1 label check path was exercised).
+        // Times.AtLeastOnce because Pass 2 (agent:done scan) also calls GetIssueAsync for this issue.
         mockIssueProvider.Verify(
             p => p.GetIssueAsync("2481", It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.AtLeastOnce);
 
         _cts.Cancel();
         await service.StopAsync(CancellationToken.None);

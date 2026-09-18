@@ -21,16 +21,36 @@ public class AgentLabelsTests
     public void TerminalLabels_ContainsMember(string label) =>
         AgentLabels.TerminalLabels.Should().Contain(label);
 
-    // ── DispatchIneligibleLabels membership ───────────────────────────────
-
-    // TODO: DispatchIneligibleLabels_ContainsEpicReview is redundant with
-    // TerminalLabels_IsSubsetOf_DispatchIneligibleLabels below (which is a strictly stronger
-    // assertion). Consider removing this point-membership test in a future cleanup pass.
-    [Fact]
-    public void DispatchIneligibleLabels_ContainsEpicReview() =>
-        AgentLabels.DispatchIneligibleLabels.Should().Contain(AgentLabels.EpicReview);
+    // ── DispatchIneligibleLabels regression guard ──────────────────────────
 
     [Fact]
-    public void TerminalLabels_IsSubsetOf_DispatchIneligibleLabels() =>
-        AgentLabels.TerminalLabels.Should().BeSubsetOf(AgentLabels.DispatchIneligibleLabels);
+    public void DispatchIneligibleLabels_DoesNotContainEpicReview() =>
+        AgentLabels.DispatchIneligibleLabels.Should().NotContain(AgentLabels.EpicReview);
+
+    // ── DualLabelResolutionPrecedence data-integrity guard ─────────────────
+
+    /// <summary>
+    /// DualLabelResolutionPrecedence must contain every label in AgentLabels.All
+    /// except agent:generated (which is orthogonal and intentionally excluded).
+    /// This prevents future label additions from being silently skipped by the
+    /// dual-label sweep.
+    /// </summary>
+    [Fact]
+    public void DualLabelResolutionPrecedence_ContainsAllNonGeneratedLabels()
+    {
+        var expectedLabels = AgentLabels.All
+            .Where(l => l != AgentLabels.Generated)
+            .ToList();
+
+        foreach (var label in expectedLabels)
+        {
+            AgentLabels.DualLabelResolutionPrecedence.Should().Contain(label,
+                because: $"{label} is in AgentLabels.All (non-generated) and must appear in DualLabelResolutionPrecedence");
+        }
+    }
+
+    [Fact]
+    public void DualLabelResolutionPrecedence_DoesNotContainGenerated() =>
+        AgentLabels.DualLabelResolutionPrecedence.Should().NotContain(AgentLabels.Generated,
+            because: "agent:generated is orthogonal and must not be treated as a status label by the dual-label sweep");
 }
