@@ -513,6 +513,9 @@ public static class WorkItemAgentEndpoints
         if (request.Result is not null)
             entity.Result = request.Result;
 
+        if (request.BranchName is not null)
+            entity.BranchName = request.BranchName;
+
         if (request.Status == WorkItemStatus.Failed)
         {
             if (request.FailureReason is not null
@@ -588,4 +591,5 @@ public sealed class WorkItemStatusRequest
     public string? Result { get; init; }
     public string? ErrorMessage { get; init; }
     public string? FailureReason { get; init; }
+    public string? BranchName { get; init; }
 }

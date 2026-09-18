@@ -13,4 +13,5 @@ public sealed class WorkItemStatusUpdate
     public string? Result { get; init; }
     public string? ErrorMessage { get; init; }
     public string? FailureReason { get; init; }
+    public string? BranchName { get; init; }
 }
