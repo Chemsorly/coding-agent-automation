@@ -408,7 +408,9 @@ public class IssueDrawerServiceTests
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = (items ?? Enumerable.Empty<IssueSummary>()).ToList(),
-                HasMore = hasMore, Page = 1, PageSize = 15
+                HasMore = hasMore,
+                Page = 1,
+                PageSize = 15
             });
         mockProvider.Setup(p => p.ListRepositoryLabelsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<string>());
