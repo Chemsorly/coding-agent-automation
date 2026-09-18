@@ -1062,6 +1062,23 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var okCount = results.Count(r => r is Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>);
         okCount.Should().Be(1, "exactly one concurrent dispatch must succeed");
 
+        // TODO [WARNING]: The assertion above only confirms that exactly one call returned 200. It
+        // does not constrain what the losing call returned — an unhandled exception (500) or a 503
+        // would also satisfy okCount == 1. Consider adding:
+        //   results.Count(r => r is not Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>).Should().Be(1)
+        // or a tighter assertion on the losing result type to prevent silent exception propagation
+        // from masking test failures.
+
+        // TODO [CRITICAL→REMOVED]: A conflictCount.Should().Be(1) assertion was here, but it was
+        // tautological: task1 and task2 execute cooperatively/sequentially (same sync context, no
+        // Task.Run), so task2 always starts *after* task1 completes. At that point, the item is
+        // already Dispatched and the pre-lock fast-path check (which predates the post-lock re-read
+        // fix) returns 409 immediately — the new post-lock re-read code path is never reached.
+        // Deleting the post-lock re-read block from WorkItemDispatchEndpoints.cs would not cause
+        // this test to fail. The concurrent-dispatch 409 scenario is covered by the dedicated
+        // Test 15 (DispatchPendingWorkItem_ConcurrentDispatch_LosingCallerReceives409Conflict)
+        // which uses a mock lock provider to exercise the exact TOCTOU window.
+
         // K8s Job created exactly once (CAS prevents the second from reaching K8s)
         k8sCallCount.Should().Be(1, "K8s Job must be created exactly once — double-dispatch prevented");
 
@@ -1071,6 +1088,107 @@ public sealed class DispatchPendingWorkItemEndpointTests
             .Where(w => w.Status == WorkItemStatus.Dispatched)
             .ToListAsync();
         dispatched.Should().HaveCount(1, "exactly one WorkItem must be Dispatched");
+    }
+
+    // ── Test 15: Concurrent dispatch — losing caller receives 409 (not 503) ───
+
+    /// <summary>
+    /// AC1 + AC2: When a WorkItem is transitioned to <c>Dispatched</c> by a concurrent caller
+    /// between the fast-path status check and lock acquisition, <c>DispatchPendingWorkItem</c>
+    /// must return 409 Conflict (not 503), so the Scheduler treats it as a permanent rejection
+    /// rather than a transient error requiring a full-cycle retry.
+    ///
+    /// This test simulates the race window directly: a mock lock provider transitions the WorkItem
+    /// to <c>Dispatched</c> during <c>AcquireAsync</c>, after the fast-path check has already
+    /// confirmed the item is <c>Pending</c>. The post-lock status re-read inside the lock then
+    /// detects the non-Pending status and returns 409 before entering the dispatch lifecycle.
+    ///
+    /// Without the post-lock re-read, the loser would enter <c>ExecuteDispatchLifecycleAsync</c>,
+    /// find the item no longer <c>Pending</c>, exit early (<c>dispatched = false</c>), and the
+    /// endpoint would return 503.
+    /// </summary>
+    [Fact]
+    public async Task DispatchPendingWorkItem_ConcurrentDispatch_LosingCallerReceives409Conflict()
+    {
+        var dbFactory = CreateDbFactory();
+        var entity = await SeedPendingItemAsync(dbFactory, "opencode,python");
+
+        // Non-kiro template — PVC gate is skipped entirely (providerType != "kiro")
+        var templateStore = CreateTemplateStore("opencode,python", maxConcurrent: 10, providerType: "opencode");
+        var k8sMock = new Mock<IKubernetesJobClient>();
+        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        // Empty PVC pool — confirms PVC gate is not involved in the result
+        var lifecycle = CreateLifecycleService(k8sMock.Object, pvcPool: []);
+        var resolver = CreateTemplateResolver(templateStore);
+
+        // Mock lock provider that simulates the race: during AcquireAsync (after the fast-path
+        // check has already confirmed Pending), transition the item to Dispatched in the DB.
+        // This opens the exact TOCTOU window that the post-lock re-read is designed to close.
+        // TODO [WARNING]: This test uses a non-kiro (opencode) provider template to bypass the PVC
+        // gate. The post-lock re-read fix is provider-agnostic (it precedes the PVC gate in the
+        // kiro flow as well), but the kiro path with a populated PVC pool is not exercised here.
+        // If the post-lock re-read were accidentally relocated to after the PVC check, this test
+        // would still pass while the kiro path remained broken.
+        // TODO [WARNING]: This test's validity depends on the post-lock re-read using AsNoTracking()
+        // (which issues a fresh SQL query, bypassing EF's first-level cache). If the production
+        // query were changed to tracked mode (dropping AsNoTracking()), the cached entity from the
+        // fast-path check would still report Pending, and the mock-DB write in AcquireAsync would
+        // be invisible to the re-read — the test would silently stop detecting the TOCTOU race.
+        var handle = new Mock<IAsyncDisposable>();
+        handle.Setup(h => h.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        var racingLockMock = new Mock<IDistributedLockProvider>();
+        racingLockMock
+            .Setup(lp => lp.AcquireAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            // TODO [WARNING]: Moq's Returns(async ...) for a Task-returning delegate does not wrap
+            // exceptions thrown inside the async body into a faulted Task before returning — it
+            // returns the Task directly. If SaveChangesAsync inside the lambda throws, the exception
+            // surfaces from the awaited AcquireAsync call in production code and produces an
+            // unhandled exception rather than a Conflict result, causing a misleading test failure.
+            // A more robust setup would use a dedicated async helper or TaskCompletionSource to
+            // make the failure mode explicit if the mock setup itself is broken.
+            .Returns(async (string _, CancellationToken ct) =>
+            {
+                // Simulate a concurrent dispatch path transitioning the item to Dispatched
+                // while this caller is waiting to acquire the lock.
+                await using var db = await dbFactory.CreateDbContextAsync(ct);
+                var item = await db.WorkItems.FindAsync([entity.Id], ct);
+                if (item is { Status: WorkItemStatus.Pending })
+                {
+                    item.Status = WorkItemStatus.Dispatched;
+                    item.DispatchedAt = DateTimeOffset.UtcNow;
+                    await db.SaveChangesAsync(ct);
+                }
+                return (IAsyncDisposable)handle.Object;
+            });
+
+        var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, racingLockMock.Object, CancellationToken.None);
+
+        // The post-lock re-read must detect the non-Pending status and return 409 Conflict.
+        // Without the fix this would return 503 (lifecycle early-return → dispatched=false).
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
+            "when the item is dispatched between fast-path check and lock acquisition, the endpoint must return 409 Conflict");
+
+        // TODO [WARNING]: This test only exercises the Dispatched transition during the TOCTOU
+        // window. The post-lock condition `postLockCheck.Status != WorkItemStatus.Pending` fires
+        // identically for Running, Succeeded, Failed, and Cancelled statuses. None of these are
+        // exercised by any test. If the condition is ever narrowed (e.g. to check only Dispatched),
+        // those paths would silently regress. Consider adding a parameterised test covering all
+        // non-Pending status values.
+
+        // TODO [WARNING]: The `postLockCheck is null` branch (item row deleted between fast-path
+        // check and lock acquisition) is not covered by any test. The production comment explicitly
+        // documents this guard ("a missing row returns null… treated as non-Pending to avoid
+        // dispatching a ghost"), but removing the null guard would cause a NullReferenceException
+        // at runtime and no test would catch it. Consider adding a test where the mock's
+        // AcquireAsync deletes the row rather than updating it.
+
+        // K8s must NOT have been called — the post-lock check must short-circuit before the lifecycle
+        k8sMock.Verify(
+            k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never(),
+            "K8s must not be called when the post-lock re-read detects the item is no longer Pending");
     }
 
     // ── Test 11: K8s failure → 503; item Failed; PVC released ─────────────────

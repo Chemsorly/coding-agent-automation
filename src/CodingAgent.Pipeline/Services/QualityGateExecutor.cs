@@ -114,11 +114,7 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         var errors = new List<string>();
         if (!report.Compilation.Passed)
             errors.Add($"Compilation: {report.Compilation.Details}");
-        // NOTE [WARNING]: report.Tests is accessed without a null-conditional here. A QGC configured
-        // with only a BuildCommand and no TestCommand produces a QualityGateReport where Tests is null,
-        // causing a NullReferenceException before BuildQualityGateRetryPrompt is even reached.
-        // Fix: guard with `if (report.Tests is { Passed: false })` consistent with ExternalCi.
-        if (!report.Tests.Passed)
+        if (report.Tests is { Passed: false })
             errors.Add($"Tests: {report.Tests.Details}");
         if (report.ExternalCi is { Passed: false })
             errors.Add($"External CI: {report.ExternalCi.Details}");
@@ -136,10 +132,8 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"Quality gates failed (attempt {attempt}/{maxRetries}):");
         sb.AppendLine($"- Compilation: {(report.Compilation.Passed ? GateStatusPassed : GateStatusFailed)} ({report.Compilation.Details})");
-        // NOTE [WARNING]: report.Tests is dereferenced without a null-conditional. A QGC configured
-        // with only a BuildCommand and no TestCommand produces a report where Tests is null, causing
-        // a NullReferenceException here. Apply null-conditional pattern for consistency with ExternalCi.
-        sb.AppendLine($"- Tests: {(report.Tests.Passed ? GateStatusPassed : GateStatusFailed)} ({report.Tests.Details})");
+        if (report.Tests != null)
+            sb.AppendLine($"- Tests: {(report.Tests.Passed ? GateStatusPassed : GateStatusFailed)} ({report.Tests.Details})");
         if (report.ExternalCi != null)
             sb.AppendLine($"- External CI: {(report.ExternalCi.Passed ? GateStatusPassed : GateStatusFailed)} ({report.ExternalCi.Details})");
         sb.AppendLine();
@@ -188,10 +182,6 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         // diagnostic files exist. For all other failures, assume output was written.
         // Use null-conditional on report.Tests throughout: required on the model but may be null
         // when constructed outside BuildAggregateReport (e.g., legacy payloads, test helpers).
-        // NOTE [WARNING]: There is no test covering this overload with report.Tests == null (i.e. a run
-        // where no QGC configures a test gate). The null-conditional guards below prevent a NRE, but
-        // the resulting prompt would render "- Tests: FAILED ()" which is misleading. A test with
-        // a report where Tests is null should be added to verify graceful handling.
         var hasQualityGateOutput = !(report.QgcResults.Any(r => r.Tests?.IsInfrastructureFailure == true)
             || report.Tests?.IsInfrastructureFailure == true);
 
