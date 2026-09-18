@@ -1,0 +1,25 @@
+# Feature inventory — tracks propagation correctness of configuration fields across the dispatch chain.
+# Each entry represents a feature flag or configuration field and whether its propagation is confirmed correct.
+# propagation_risk: true  → known gap or unverified; false → confirmed correct as of the noted date.
+
+features:
+  - id: F-006
+    name: BrainReadOnly (template-level)
+    field: PipelineJobTemplate.BrainReadOnly
+    propagation_risk: false
+    notes: >
+      CONFIRMED FIXED (2026-09-17 CFG validation). DispatchScheduler calls PrepareDistributionRequestAsync
+      via DispatchViaOrchestrationAsync → PipelineConfigurationResolver.ResolveAsync → ApplyTemplateOverrides.
+      Template-level BrainReadOnly=true is correctly propagated to PipelineConfiguration on all dispatch paths.
+      Note: the override is ONE-DIRECTIONAL — template BrainReadOnly=true overrides the config to true, but
+      template BrainReadOnly=false does not reset a true global/project value (by design, see ApplyTemplateOverrides).
+
+  - id: F-022
+    name: BrainReadOnly (global/project)
+    field: PipelineConfiguration.BrainReadOnly
+    propagation_risk: false
+    notes: >
+      BrainReadOnly sourced from global config or project override (ProjectOverridable Order=27) is the
+      baseline value entering ApplyTemplateOverrides. Template-level BrainReadOnly (F-006) is propagated
+      via ApplyTemplateOverrides on all dispatch paths (confirmed fixed 2026-09-17). One-directional:
+      template true overrides to true; template false is a no-op.
