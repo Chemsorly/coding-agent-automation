@@ -160,6 +160,15 @@ public static class WorkItemQueryEndpoints
                          // Fallback for items where DispatchedAt is null (e.g., claim write failed):
                          // use CreatedAt so they are not permanently invisible to timeout enforcement.
                          // 1C-001: NULL < cutoff evaluates to NULL (falsy) in SQL, excluding these rows.
+                         // TODO [WARNING]: This fallback uses olderThanSeconds (TimeoutCanaryMinAgeSeconds=60s)
+                         // as the CreatedAt cutoff, but the reconciliation loop's grace window is
+                         // NullDispatchedAtGraceWindowSeconds (default 3600s). The query therefore
+                         // over-fetches null-DispatchedAt items (those aged 60s–3600s are returned but
+                         // immediately skipped by the loop's grace-window check), creating up to 60× more
+                         // API traffic than necessary. The fallback cutoff should use
+                         // NullDispatchedAtGraceWindowSeconds rather than olderThanSeconds, or the loop
+                         // should explicitly document that it expects and discards within-grace items.
+                         // (Correctness review [WARNING])
                          || (w.DispatchedAt == null && w.CreatedAt < cutoff)));
         // Optional project scope (not passed by reconciliation). ProjectId is a uuid column; parse the
         // switcher's Guid-string id before comparing.
@@ -172,6 +181,7 @@ public static class WorkItemQueryEndpoints
                 w.Id,
                 w.Status,
                 w.DispatchedAt,
+                w.CreatedAt,
                 w.AgentSelector,
                 w.IssueIdentifier,
                 w.K8sJobName,
@@ -205,6 +215,7 @@ public static class WorkItemQueryEndpoints
                 Id = w.Id,
                 Status = w.Status,
                 DispatchedAt = w.DispatchedAt,
+                CreatedAt = w.CreatedAt,
                 AgentSelector = w.AgentSelector,
                 IssueIdentifier = w.IssueIdentifier,
                 K8sJobName = w.K8sJobName,

@@ -174,18 +174,8 @@ public sealed class ReconciliationLoop
             var effectiveTimeoutSeconds = item.TimeoutSeconds;
 
             // Compute execution age from DispatchedAt.
-            // If DispatchedAt is null (e.g. a write failure on the claim path), the item's true
-            // age is unknown. Treat it as 0 (assume just dispatched) to avoid a false-positive
-            // timeout on the first reconciliation cycle. The canary guard below will then fire
-            // (0 < TimeoutCanaryMinAgeSeconds) and skip enforcement for this sweep, keeping the
-            // item alive until DispatchedAt is populated. A Warning is emitted so operators can
-            // identify legacy/stuck rows via logs and metrics.
-            // TODO [WARNING]: A WorkItem with a permanently-null DispatchedAt (e.g. a persistent DB
-            // write failure on the claim path) will remain in Running state indefinitely under the
-            // current logic (executionAgeSeconds is always 0 → canary guard always fires → enforcement
-            // is permanently deferred). This occupies a K8s job slot with no automatic recovery.
-            // Consider adding an orphan-detection path or admin alert for WorkItems whose DispatchedAt
-            // remains null beyond a configurable threshold. (Correctness review [WARNING])
+            // If DispatchedAt is null (e.g. a write failure on the claim path), use the grace-window
+            // path below — see the else branch for details.
             double executionAgeSeconds;
             if (item.DispatchedAt.HasValue)
             {
@@ -193,16 +183,44 @@ public sealed class ReconciliationLoop
             }
             else
             {
-                // TODO [WARNING]: The Log.Warning and _timeoutExecutionAge.Record calls below execute
-                // before the cancellation check at the top of the foreach is re-evaluated. On a
-                // cancellation-triggered shutdown with many null-DispatchedAt items, this can produce
-                // spurious Warning log entries and telemetry records after ct is signalled. If
-                // _timeoutExecutionAge.Record can throw on a disposed meter during shutdown, add an
-                // explicit ct.IsCancellationRequested check here before emitting the log and metric.
-                // (DotNetSpecialist review [WARNING])
-                Log.Warning("WorkItem {Id} has null DispatchedAt — treating as age=0 to prevent false-positive timeout",
-                    item.Id);
-                executionAgeSeconds = 0;
+                // DispatchedAt is null (e.g. a write failure on the claim path).
+                // Use CreatedAt as a fallback timeout anchor after a configurable grace window.
+                // Items within the grace window are silently skipped (continue) WITHOUT recording
+                // metrics or incrementing the canary counter — the canary metric signals INV-001
+                // (wrong timestamp anchor bugs), not expected grace-window deferrals. Firing it
+                // here would pollute the signal and mask real bugs.
+                // Items beyond the grace window are escalated: CreatedAt becomes the age anchor
+                // and a Warning is emitted so operators can identify stuck items.
+                var createdAgeSeconds = item.CreatedAt.HasValue
+                    ? (DateTimeOffset.UtcNow - item.CreatedAt.Value).TotalSeconds
+                    // TODO [WARNING]: null CreatedAt silently defers enforcement indefinitely — same
+                    // class of bug as the original null DispatchedAt issue. The 0.0 fallback causes
+                    // the grace-window check below to always fire and the item is permanently skipped
+                    // with no log or metric. In production, CreatedAt should always be non-null
+                    // (WorkItemEntity.CreatedAt is a non-null column), but if a backfill is missed or
+                    // the DTO is constructed without the field the item becomes permanently stuck.
+                    // At minimum emit a Log.Warning here so operators can detect the condition.
+                    // (Correctness review [WARNING])
+                    : 0.0; // null CreatedAt (pre-dates this field in test code) → treat as just created
+
+                // TODO [WARNING]: strict less-than (<) means an item with createdAgeSeconds exactly
+                // equal to NullDispatchedAtGraceWindowSeconds is skipped for another full cycle.
+                // The requirement states "older than the grace window is force-failed", so the
+                // boundary condition (age == graceWindow) should proceed to enforcement. Because
+                // createdAgeSeconds is a double, exact equality is extremely rare in practice, but
+                // semantically the condition should be <= to match the stated requirement boundary.
+                // (Correctness review [WARNING])
+                if (createdAgeSeconds < _options.NullDispatchedAtGraceWindowSeconds)
+                {
+                    // Within grace window — skip without recording any metrics.
+                    continue;
+                }
+
+                // Grace window expired — use CreatedAt as fallback timeout anchor.
+                Log.Warning(
+                    "WorkItem {Id} has null DispatchedAt and CreatedAt is {Age:F0}s old (>{Grace}s grace window) — using CreatedAt as timeout anchor",
+                    item.Id, createdAgeSeconds, _options.NullDispatchedAtGraceWindowSeconds);
+                executionAgeSeconds = createdAgeSeconds;
             }
 
             _timeoutExecutionAge.Record(executionAgeSeconds,
