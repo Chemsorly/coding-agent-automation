@@ -13,6 +13,8 @@ public sealed class AgentOrphanRecoveryService(
     IChangeNotifier changeNotifier,
     ILogger logger) : IAgentOrphanRecoveryService
 {
+    private const string ActiveJobIdField = "activeJobId";
+
     private readonly IAgentHubFacade _facade = facade;
     private readonly IChangeNotifier _changeNotifier = changeNotifier;
     private readonly ILogger _logger = logger;
@@ -119,33 +121,28 @@ public sealed class AgentOrphanRecoveryService(
         var consolEntry = _facade.GetByAgentId(agentId);
         if (consolEntry is not null)
         {
-            // Determine whether to call TransitionStatus atomically with the ActiveJobId write.
-            // A concurrent disconnect handler may clear ActiveJobId after the lock is released;
-            // capturing the decision inside the lock ensures we do not call TransitionStatus(Busy)
-            // on an agent that has already been marked Disconnected.
-            bool shouldTransition;
+            // ActiveJobId is written under SyncRoot. TransitionStatus acquires SyncRoot internally
+            // so it must be called after the lock is released. The write is unconditional here:
+            // this path only runs when the agent self-reported a consolidation job, so the
+            // ActiveJobId assignment is always authoritative.
             lock (consolEntry.SyncRoot)
             {
                 consolEntry.ActiveJobId = activeJob.RunId;
-                shouldTransition = true;
             }
-            if (shouldTransition)
-            {
-                _facade.TransitionStatus(agentId, AgentStatus.Busy);
-                // UpdateAgentFieldAsync is called AFTER TransitionStatus and outside the lock:
-                // the async continuation must not escape the lock scope and potentially
-                // overwrite the Busy status already written to Redis by TransitionStatus.
-                // TODO: [WARNING] The returned Task is discarded (fire-and-forget). If the async
-                // operation faults, the exception is silently swallowed and will not propagate to
-                // any caller. Consider making RestoreConsolidationTracking async Task and awaiting
-                // this call, or attaching a fault-logging continuation:
-                // .ContinueWith(t => _logger.Error(t.Exception, "..."), TaskContinuationOptions.OnlyOnFaulted).
-                // TODO: [WARNING] CancellationToken is not threaded through to UpdateAgentFieldAsync.
-                // RecoverOrphanedStateAsync does not accept a CancellationToken, so this is a structural
-                // limitation at the call site. If cancellation support is added to the enclosing method,
-                // propagate the token here.
-                _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
-            }
+            _facade.TransitionStatus(agentId, AgentStatus.Busy);
+            // UpdateAgentFieldAsync is called AFTER TransitionStatus and outside the lock:
+            // the async continuation must not escape the lock scope and potentially
+            // overwrite the Busy status already written to Redis by TransitionStatus.
+            // TODO: [WARNING] The returned Task is discarded (fire-and-forget). If the async
+            // operation faults, the exception is silently swallowed and will not propagate to
+            // any caller. Consider making RestoreConsolidationTracking async Task and awaiting
+            // this call, or attaching a fault-logging continuation:
+            // .ContinueWith(t => _logger.Error(t.Exception, "..."), TaskContinuationOptions.OnlyOnFaulted).
+            // TODO: [WARNING] CancellationToken is not threaded through to UpdateAgentFieldAsync.
+            // RecoverOrphanedStateAsync does not accept a CancellationToken, so this is a structural
+            // limitation at the call site. If cancellation support is added to the enclosing method,
+            // propagate the token here.
+            _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, activeJob.RunId);
         }
 
         _changeNotifier.NotifyChange();
@@ -173,33 +170,28 @@ public sealed class AgentOrphanRecoveryService(
         var restoredEntry = _facade.GetByAgentId(agentId);
         if (restoredEntry is not null)
         {
-            // Determine whether to call TransitionStatus atomically with the ActiveJobId write.
-            // A concurrent disconnect handler may clear ActiveJobId after the lock is released;
-            // capturing the decision inside the lock ensures we do not call TransitionStatus(Busy)
-            // on an agent that has already been marked Disconnected.
-            bool shouldTransition;
+            // ActiveJobId is written under SyncRoot. TransitionStatus acquires SyncRoot internally
+            // so it must be called after the lock is released. The write is unconditional here:
+            // this path only runs when we have just created a restored run, so the ActiveJobId
+            // assignment is always authoritative.
             lock (restoredEntry.SyncRoot)
             {
                 restoredEntry.ActiveJobId = activeJob.RunId;
-                shouldTransition = true;
             }
-            if (shouldTransition)
-            {
-                _facade.TransitionStatus(agentId, AgentStatus.Busy);
-                // UpdateAgentFieldAsync is called AFTER TransitionStatus and outside the lock:
-                // the async continuation must not escape the lock scope and potentially
-                // overwrite the Busy status already written to Redis by TransitionStatus.
-                // TODO: [WARNING] The returned Task is discarded (fire-and-forget). If the async
-                // operation faults, the exception is silently swallowed and will not propagate to
-                // any caller. Consider making RestorePipelineRun async Task and awaiting this call,
-                // or attaching a fault-logging continuation:
-                // .ContinueWith(t => _logger.Error(t.Exception, "..."), TaskContinuationOptions.OnlyOnFaulted).
-                // TODO: [WARNING] CancellationToken is not threaded through to UpdateAgentFieldAsync.
-                // RecoverOrphanedStateAsync does not accept a CancellationToken, so this is a structural
-                // limitation at the call site. If cancellation support is added to the enclosing method,
-                // propagate the token here.
-                _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
-            }
+            _facade.TransitionStatus(agentId, AgentStatus.Busy);
+            // UpdateAgentFieldAsync is called AFTER TransitionStatus and outside the lock:
+            // the async continuation must not escape the lock scope and potentially
+            // overwrite the Busy status already written to Redis by TransitionStatus.
+            // TODO: [WARNING] The returned Task is discarded (fire-and-forget). If the async
+            // operation faults, the exception is silently swallowed and will not propagate to
+            // any caller. Consider making RestorePipelineRun async Task and awaiting this call,
+            // or attaching a fault-logging continuation:
+            // .ContinueWith(t => _logger.Error(t.Exception, "..."), TaskContinuationOptions.OnlyOnFaulted).
+            // TODO: [WARNING] CancellationToken is not threaded through to UpdateAgentFieldAsync.
+            // RecoverOrphanedStateAsync does not accept a CancellationToken, so this is a structural
+            // limitation at the call site. If cancellation support is added to the enclosing method,
+            // propagate the token here.
+            _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, activeJob.RunId);
         }
 
         _logger.Information(
@@ -309,7 +301,7 @@ public sealed class AgentOrphanRecoveryService(
                 if (trackedEntry.ActiveJobId is null)
                 {
                     trackedEntry.ActiveJobId = activeJob.RunId;
-                    _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
+                    _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, activeJob.RunId);
                     // Transition to Busy only when we actually wrote the ActiveJobId.
                     // The decision is captured inside the lock so a concurrent disconnect handler
                     // that clears ActiveJobId after lock release cannot cause a spurious Busy
@@ -319,18 +311,11 @@ public sealed class AgentOrphanRecoveryService(
                 else
                 {
                     // ActiveJobId already set (same-agent reconnect or DrainService race).
-                    // Still transition to Busy because the agent is actively working this job.
-                    // TODO: [WARNING] This unconditionally sets shouldTransition = true even when
-                    // trackedEntry.ActiveJobId does not match activeJob.RunId (e.g. DrainService
-                    // assigned a different run between GetByAgentId and lock acquisition). The old
-                    // post-lock guard `trackedEntry.ActiveJobId == activeJob.RunId` would have
-                    // evaluated to false in that case and skipped TransitionStatus. The current
-                    // behavior is semantically equivalent to an unconditional Busy transition for
-                    // any re-registration — which is idempotent (Busy→Busy) but is a scope
-                    // expansion beyond what the TOCTOU fix required. Consider:
-                    //   shouldTransition = trackedEntry.ActiveJobId == activeJob.RunId;
-                    // to preserve the same-job guard from the original code.
-                    shouldTransition = true;
+                    // Only transition to Busy if the active job matches the run being linked.
+                    // If DrainService assigned a different run between GetByAgentId and lock
+                    // acquisition, trackedEntry.ActiveJobId != activeJob.RunId and we skip the
+                    // transition to avoid clobbering the DrainService assignment.
+                    shouldTransition = trackedEntry.ActiveJobId == activeJob.RunId;
                 }
             }
             if (shouldTransition)
@@ -386,9 +371,9 @@ public sealed class AgentOrphanRecoveryService(
                     // consistent with other _localSnapshot writes in this file that also run outside
                     // any snapshot-scoped lock. See DistributedAgentRegistryService.SetLocalSnapshotField
                     // for the full non-atomic read-then-write WARNING. (Correctness WARNING, issue #2616)
-                    _facade.SetLocalAgentSnapshotField(agentId, "activeJobId", mostRecent.RunId);
+                    _facade.SetLocalAgentSnapshotField(agentId, ActiveJobIdField, mostRecent.RunId);
                     _facade.SetLocalAgentSnapshotField(agentId, "orphanRestoredAt", now.ToString("O"));
-                    _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", mostRecent.RunId);
+                    _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, mostRecent.RunId);
                     _ = _facade.UpdateAgentFieldAsync(agentId, "orphanRestoredAt", now.ToString("O"));
                     // The decision to call TransitionStatus is captured inside the lock.
                     // This prevents a concurrent disconnect handler from clearing ActiveJobId
