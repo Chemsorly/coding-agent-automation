@@ -7,6 +7,7 @@ using CodingAgent.Pipeline.Telemetry;
 using k8s.Models;
 using Serilog;
 using System.Diagnostics.Metrics;
+using System.Net;
 
 namespace CodingAgent.JobController.Reconciliation;
 
@@ -17,7 +18,7 @@ namespace CodingAgent.JobController.Reconciliation;
 /// </summary>
 public sealed class ReconciliationLoop
 {
-    private static readonly Serilog.ILogger Log = Serilog.Log.ForContext<ReconciliationLoop>();
+    private readonly Serilog.ILogger _log;
 
     // Kubernetes Job phases, distinct from WorkItem statuses despite two of them sharing their
     // text. These are read from the Job's own conditions and counters; a WorkItem status is what
@@ -70,7 +71,8 @@ public sealed class ReconciliationLoop
         IKubernetesJobClient k8sClient,
         DispatchServiceOptions options,
         IMeterFactory? pipelineMeterFactory = null,
-        IMeterFactory? workDistMeterFactory = null)
+        IMeterFactory? workDistMeterFactory = null,
+        Serilog.ILogger? logger = null)
     {
         ArgumentNullException.ThrowIfNull(workItemClient);
         ArgumentNullException.ThrowIfNull(k8sClient);
@@ -78,6 +80,12 @@ public sealed class ReconciliationLoop
         _workItemClient = workItemClient;
         _k8sClient = k8sClient;
         _options = options;
+        _log = (logger ?? Serilog.Log.Logger).ForContext<ReconciliationLoop>();
+        // TODO: If a pre-enriched logger is supplied (one already returned by ForContext<T>()),
+        // calling ForContext<ReconciliationLoop>() on it stacks enrichment contexts. In
+        // production the logger parameter is always null so this is harmless, but callers that
+        // pass an already-contextualised logger would accumulate source-context properties.
+        // (Review finding: .NET specialist [WARNING])
 
         if (workDistMeterFactory is not null)
         {
@@ -115,7 +123,7 @@ public sealed class ReconciliationLoop
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to list K8s Jobs; skipping reconciliation cycle");
+            _log.Warning(ex, "Failed to list K8s Jobs; skipping reconciliation cycle");
             return;
         }
 
@@ -149,7 +157,7 @@ public sealed class ReconciliationLoop
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to query active work items for timeout enforcement");
+            _log.Warning(ex, "Failed to query active work items for timeout enforcement");
             return;
         }
 
@@ -217,7 +225,7 @@ public sealed class ReconciliationLoop
                 }
 
                 // Grace window expired — use CreatedAt as fallback timeout anchor.
-                Log.Warning(
+                _log.Warning(
                     "WorkItem {Id} has null DispatchedAt and CreatedAt is {Age:F0}s old (>{Grace}s grace window) — using CreatedAt as timeout anchor",
                     item.Id, createdAgeSeconds, _options.NullDispatchedAtGraceWindowSeconds);
                 executionAgeSeconds = createdAgeSeconds;
@@ -230,7 +238,7 @@ public sealed class ReconciliationLoop
             // Skip enforcement for this sweep — the item will be re-evaluated next cycle.
             if (executionAgeSeconds < TimeoutCanaryMinAgeSeconds)
             {
-                Log.Warning("WorkItem {Id} timeout canary violation: execution age {AgeSeconds:F1}s < {MinAge}s — skipping enforcement",
+                _log.Warning("WorkItem {Id} timeout canary violation: execution age {AgeSeconds:F1}s < {MinAge}s — skipping enforcement",
                     item.Id, executionAgeSeconds, TimeoutCanaryMinAgeSeconds);
                 _timeoutCanaryViolations.Add(1,
                     new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
@@ -248,7 +256,7 @@ public sealed class ReconciliationLoop
             if (executionAgeSeconds < effectiveTimeoutSeconds)
                 continue;
 
-            Log.Warning("WorkItem {Id} timed out (status={Status}, job={K8sJobName}, issue={IssueIdentifier}) after {Seconds}s — marking Failed",
+            _log.Warning("WorkItem {Id} timed out (status={Status}, job={K8sJobName}, issue={IssueIdentifier}) after {Seconds}s — marking Failed",
                 item.Id, item.Status, item.K8sJobName ?? "none", item.IssueIdentifier ?? "unknown", effectiveTimeoutSeconds);
 
             try
@@ -287,7 +295,7 @@ public sealed class ReconciliationLoop
                     }
                     catch (Exception labelEx)
                     {
-                        Log.Warning(labelEx, "Failed to resolve K8s Job name via label selector for WorkItem {Id} — skipping deletion", item.Id);
+                        _log.Warning(labelEx, "Failed to resolve K8s Job name via label selector for WorkItem {Id} — skipping deletion", item.Id);
                         labelJobs = new V1JobList { Items = [] };
                     }
 
@@ -300,7 +308,7 @@ public sealed class ReconciliationLoop
                     var resolved = (labelJobs.Items ?? []).FirstOrDefault();
                     if (resolved?.Metadata?.Name is null)
                     {
-                        Log.Warning("WorkItem {Id} timed out but no K8s Job found via label selector caa/work-item-id={WorkItemId} — job already deleted or never started", item.Id, item.Id);
+                        _log.Warning("WorkItem {Id} timed out but no K8s Job found via label selector caa/work-item-id={WorkItemId} — job already deleted or never started", item.Id, item.Id);
                         jobName = null;
                     }
                     else
@@ -327,7 +335,7 @@ public sealed class ReconciliationLoop
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "Failed to process timeout for WorkItem {Id}", item.Id);
+                _log.Error(ex, "Failed to process timeout for WorkItem {Id}", item.Id);
             }
         }
     }
@@ -347,7 +355,7 @@ public sealed class ReconciliationLoop
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to query active work items for dispatched timeout enforcement");
+            _log.Warning(ex, "Failed to query active work items for dispatched timeout enforcement");
             return;
         }
 
@@ -375,7 +383,7 @@ public sealed class ReconciliationLoop
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to list Jobs for dispatched timeout check; skipping");
+            _log.Warning(ex, "Failed to list Jobs for dispatched timeout check; skipping");
             return;
         }
 
@@ -417,7 +425,7 @@ public sealed class ReconciliationLoop
 
             if (isLive) continue; // job exists — item is not orphaned
 
-            Log.Warning("WorkItem {Id} stuck in Dispatched for >{Seconds}s with no K8s Job (issue={IssueIdentifier}) — marking Failed",
+            _log.Warning("WorkItem {Id} stuck in Dispatched for >{Seconds}s with no K8s Job (issue={IssueIdentifier}) — marking Failed",
                 item.Id, _options.ChatPodConnectTimeoutSeconds, item.IssueIdentifier ?? "unknown");
 
             try
@@ -436,7 +444,7 @@ public sealed class ReconciliationLoop
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "Failed to post Failed status for orphaned Dispatched WorkItem {Id}", item.Id);
+                _log.Error(ex, "Failed to post Failed status for orphaned Dispatched WorkItem {Id}", item.Id);
             }
         }
     }
@@ -464,7 +472,7 @@ public sealed class ReconciliationLoop
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to fetch data for orphan cleanup; skipping");
+            _log.Warning(ex, "Failed to fetch data for orphan cleanup; skipping");
             return;
         }
 
@@ -502,14 +510,14 @@ public sealed class ReconciliationLoop
             if (completionTime.HasValue &&
                 (DateTimeOffset.UtcNow - new DateTimeOffset(completionTime.Value, TimeSpan.Zero)).TotalSeconds < LogRetentionSeconds)
             {
-                Log.Debug("Skipping orphan/stale K8s Job {JobName} — completed {Age}s ago, within {Retention}s retention window",
+                _log.Debug("Skipping orphan/stale K8s Job {JobName} — completed {Age}s ago, within {Retention}s retention window",
                     jobName,
                     (int)(DateTimeOffset.UtcNow - new DateTimeOffset(completionTime.Value, TimeSpan.Zero)).TotalSeconds,
                     LogRetentionSeconds);
                 continue;
             }
 
-            Log.Information("Deleting orphan/stale K8s Job {JobName} (reason={OrphanReason})", jobName, orphanReason);
+            _log.Information("Deleting orphan/stale K8s Job {JobName} (reason={OrphanReason})", jobName, orphanReason);
             await SafeDeleteJobAsync(jobName, ct);
         }
     }
@@ -551,9 +559,19 @@ public sealed class ReconciliationLoop
     /// Posts a terminal status update for a completed K8s Job and records telemetry.
     /// Returns <c>true</c> if <see cref="IPipelineApiWorkItemClient.PostStatusAsync"/>
     /// succeeded (the caller should then cache the WorkItem ID to suppress duplicate posts on
-    /// subsequent reconciliation cycles), or <c>false</c> if it threw (the caller must NOT cache
-    /// the ID so that the next cycle retries the post).
+    /// subsequent reconciliation cycles), or <c>false</c> if it threw.
+    /// <para>
+    /// NOTE: a <c>false</c> return does NOT always mean the caller must retry. If PostStatusAsync
+    /// returned 400 (rejected transition), this method caches the WorkItem ID internally in
+    /// <c>_reconciledTerminalIds</c> before returning <c>false</c>, so the caller must NOT
+    /// double-cache it. Only non-400 exceptions leave the ID uncached (so the caller's retry
+    /// on the next cycle is correct for those cases).
+    /// </para>
     /// </summary>
+    // TODO: The dual semantics of `false` (transient error → retry vs. 400 → already cached)
+    // are confusing. Consider splitting into a tri-state result (Success / RejectedCached /
+    // TransientError) to make the contract explicit and prevent future regressions where a
+    // caller misreads the return value. (Review finding: correctness [WARNING])
     private async Task<bool> HandleJobCompletedAsync(
         Guid workItemId,
         V1Job job,
@@ -594,12 +612,26 @@ public sealed class ReconciliationLoop
             // whether a real transition occurred.
             WorkDistributionTelemetry.LogTerminalStatus(workItemId, workItemStatus, duration, agentId, failureReasonEnum);
 
-            Log.Information("WorkItem {Id} marked {Status} from K8s Job {Job}", workItemId, status, job.Metadata?.Name);
+            _log.Information("WorkItem {Id} marked {Status} from K8s Job {Job}", workItemId, status, job.Metadata?.Name);
             succeeded = true;
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.BadRequest)
+        {
+            // A 400 response means the API definitively rejected this transition
+            // (e.g. WorkItem is Pending, not yet Running — Pending→Succeeded is invalid).
+            // This is not a transient error; retrying will always produce the same result.
+            // Cache the WorkItem ID to suppress the retry loop and log at Warning level
+            // (expected edge case, not a system error).
+            _log.Warning(
+                "HandleJobCompletedAsync: completion POST for WorkItem {WorkItemId} rejected (400 — " +
+                "WorkItem not in a transitionable state). Caching as processed to prevent retry.",
+                workItemId);
+            _reconciledTerminalIds.Add(workItemId);
+            return false;
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed to post status {Status} for WorkItem {Id}", status, workItemId);
+            _log.Error(ex, "Failed to post status {Status} for WorkItem {Id}", status, workItemId);
         }
 
         return succeeded;
@@ -613,7 +645,7 @@ public sealed class ReconciliationLoop
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to delete K8s Job {JobName}", jobName);
+            _log.Warning(ex, "Failed to delete K8s Job {JobName}", jobName);
         }
     }
 

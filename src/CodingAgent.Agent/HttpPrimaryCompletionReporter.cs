@@ -74,7 +74,20 @@ public sealed class HttpPrimaryCompletionReporter : IJobCompletionReporter
                 : null
         };
 
-        await _lifecycleClient.PostStatusAsync(_workItemId, terminalUpdate, CancellationToken.None);
+        // TODO: CancellationToken.None is passed here (pre-existing pattern) instead of `ct`. If `ct` is cancelled
+        // between the await and the if-branch, a cancellation-induced false return could be misinterpreted as a server
+        // rejection and emit a spurious warning. Consider propagating `ct` here and to the secondary-channel call below.
+        var accepted = await _lifecycleClient.PostStatusAsync(_workItemId, terminalUpdate, CancellationToken.None);
+        if (!accepted)
+        {
+            // TODO: The message contains "was rejected — transition was rejected" which is redundant phrasing.
+            // Simplify to a single occurrence of "transition was rejected" when this area is next touched.
+            _logger.Warning(
+                "HttpPrimaryCompletionReporter: completion POST for WorkItem {WorkItemId} with status {Status} " +
+                "was rejected — transition was rejected (WorkItem may already be in a terminal state or not found). Agent result not recorded.",
+                _workItemId,
+                terminalStatus);
+        }
 
         // Secondary channel: SignalR notification (real-time, non-fatal failure)
         try
