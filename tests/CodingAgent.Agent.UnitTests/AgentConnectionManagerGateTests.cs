@@ -117,10 +117,17 @@ public class AgentConnectionManagerGateTests
         // This keeps HandleTerminalClosedAsync alive (and therefore the gate incomplete) long enough
         // to start a concurrent WaitForRegistrationAsync and assert it has not yet returned.
         var startBlocker = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // startReached is signalled from inside StartFunc so the test can deterministically wait until
+        // the background task has entered StartAsync (and therefore reset the gate) before proceeding.
+        var startReached = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var blockingHub = new FakeHubConnectionManager
         {
-            StartFunc = _ => startBlocker.Task.ContinueWith(_ => { }) // blocks until we release it
+            StartFunc = _ =>
+            {
+                startReached.TrySetResult(true); // signal: gate is now incomplete
+                return startBlocker.Task.ContinueWith(_ => { }); // blocks until we release it
+            }
         };
 
         var (manager, _) = CreateManager(factoryFunc: () => blockingHub);
@@ -131,9 +138,9 @@ public class AgentConnectionManagerGateTests
         var terminalCloseTask = Task.Run(() =>
             manager.HandleTerminalClosedAsync(null, maxAttempts: 1, delayOverride: _ => TimeSpan.Zero));
 
-        // Give the background task time to reset the gate and reach the blocking StartAsync.
-        // The gate is now incomplete (reset at the top of HandleTerminalClosedAsync before any await).
-        await Task.Delay(200);
+        // Wait until the background task has definitively entered StartAsync (gate is now incomplete).
+        // This replaces a blind Task.Delay(200) which was too tight on loaded CI runners.
+        await startReached.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         // WaitForRegistrationAsync should be blocking — gate is still open.
         var waitTask = manager.WaitForRegistrationAsync(CancellationToken.None);
