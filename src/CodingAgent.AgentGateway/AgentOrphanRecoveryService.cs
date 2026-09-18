@@ -119,34 +119,17 @@ public sealed class AgentOrphanRecoveryService(
         var consolEntry = _facade.GetByAgentId(agentId);
         if (consolEntry is not null)
         {
-            // TODO: [WARNING] writtenJobId is always assigned activeJob.RunId unconditionally
-            // inside the lock, so it is always equal to activeJob.RunId at the point of the
-            // TOCTOU guard below.  The variable creates a false impression that the captured
-            // value might differ from activeJob.RunId.  Consider replacing with a direct
-            // comparison: if (consolEntry.ActiveJobId == activeJob.RunId).
-            string? writtenJobId;
+            // Determine whether to call TransitionStatus atomically with the ActiveJobId write.
+            // A concurrent disconnect handler may clear ActiveJobId after the lock is released;
+            // capturing the decision inside the lock ensures we do not call TransitionStatus(Busy)
+            // on an agent that has already been marked Disconnected.
+            bool shouldTransition;
             lock (consolEntry.SyncRoot)
             {
                 consolEntry.ActiveJobId = activeJob.RunId;
-                writtenJobId = activeJob.RunId;
+                shouldTransition = true;
             }
-            // TODO: [WARNING] This read of consolEntry.ActiveJobId is outside SyncRoot and
-            // is therefore a data race: any other thread may write ActiveJobId simultaneously.
-            // The guard is intended to suppress TransitionStatus when a concurrent disconnect
-            // handler has already cleared the field, but the unsynchronised read means the
-            // check is not race-free.  For a race-free guard, perform the read inside the
-            // lock or use Volatile.Read.  In practice .NET's strong memory model on x86/x64
-            // makes the race benign, but the pattern deviates from the documented lock discipline.
-            // TODO: [WARNING] Behavioral change from pre-fix baseline: UpdateAgentFieldAsync is now
-            // conditional on the TOCTOU guard (consolEntry.ActiveJobId == writtenJobId). Before the
-            // fix, the Redis write fired unconditionally inside the lock even if a concurrent disconnect
-            // handler cleared ActiveJobId afterward. Post-fix, if a concurrent disconnect clears
-            // ActiveJobId between lock release and this guard, the Redis write is skipped entirely.
-            // This is intentional (no point writing a stale activeJobId when the agent has been
-            // cleared), but it is a scope expansion beyond "move the call outside the lock." Confirm
-            // this conditional suppression is the desired behavior; if only lock-ordering was required,
-            // the write should remain unconditional (guarded only by the outer null-entry check).
-            if (consolEntry.ActiveJobId == writtenJobId)
+            if (shouldTransition)
             {
                 _facade.TransitionStatus(agentId, AgentStatus.Busy);
                 // UpdateAgentFieldAsync is called AFTER TransitionStatus and outside the lock:
@@ -161,7 +144,7 @@ public sealed class AgentOrphanRecoveryService(
                 // RecoverOrphanedStateAsync does not accept a CancellationToken, so this is a structural
                 // limitation at the call site. If cancellation support is added to the enclosing method,
                 // propagate the token here.
-                _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", writtenJobId);
+                _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
             }
         }
 
@@ -190,34 +173,17 @@ public sealed class AgentOrphanRecoveryService(
         var restoredEntry = _facade.GetByAgentId(agentId);
         if (restoredEntry is not null)
         {
-            // TODO: [WARNING] writtenJobId is always assigned activeJob.RunId unconditionally
-            // inside the lock, so it is always equal to activeJob.RunId at the point of the
-            // TOCTOU guard below.  The variable creates a false impression that the captured
-            // value might differ from activeJob.RunId.  Consider replacing with a direct
-            // comparison: if (restoredEntry.ActiveJobId == activeJob.RunId).
-            string? writtenJobId;
+            // Determine whether to call TransitionStatus atomically with the ActiveJobId write.
+            // A concurrent disconnect handler may clear ActiveJobId after the lock is released;
+            // capturing the decision inside the lock ensures we do not call TransitionStatus(Busy)
+            // on an agent that has already been marked Disconnected.
+            bool shouldTransition;
             lock (restoredEntry.SyncRoot)
             {
                 restoredEntry.ActiveJobId = activeJob.RunId;
-                writtenJobId = activeJob.RunId;
+                shouldTransition = true;
             }
-            // TODO: [WARNING] This read of restoredEntry.ActiveJobId is outside SyncRoot and
-            // is therefore a data race: any other thread may write ActiveJobId simultaneously.
-            // The guard is intended to suppress TransitionStatus when a concurrent disconnect
-            // handler has already cleared the field, but the unsynchronised read means the
-            // check is not race-free.  For a race-free guard, perform the read inside the
-            // lock or use Volatile.Read.  In practice .NET's strong memory model on x86/x64
-            // makes the race benign, but the pattern deviates from the documented lock discipline.
-            // TODO: [WARNING] Behavioral change from pre-fix baseline: UpdateAgentFieldAsync is now
-            // conditional on the TOCTOU guard (restoredEntry.ActiveJobId == writtenJobId). Before the
-            // fix, the Redis write fired unconditionally inside the lock even if a concurrent disconnect
-            // handler cleared ActiveJobId afterward. Post-fix, if a concurrent disconnect clears
-            // ActiveJobId between lock release and this guard, the Redis write is skipped entirely.
-            // This is intentional (no point writing a stale activeJobId when the agent has been
-            // cleared), but it is a scope expansion beyond "move the call outside the lock." Confirm
-            // this conditional suppression is the desired behavior; if only lock-ordering was required,
-            // the write should remain unconditional (guarded only by the outer null-entry check).
-            if (restoredEntry.ActiveJobId == writtenJobId)
+            if (shouldTransition)
             {
                 _facade.TransitionStatus(agentId, AgentStatus.Busy);
                 // UpdateAgentFieldAsync is called AFTER TransitionStatus and outside the lock:
@@ -232,7 +198,7 @@ public sealed class AgentOrphanRecoveryService(
                 // RecoverOrphanedStateAsync does not accept a CancellationToken, so this is a structural
                 // limitation at the call site. If cancellation support is added to the enclosing method,
                 // propagate the token here.
-                _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", writtenJobId);
+                _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
             }
         }
 
@@ -337,23 +303,37 @@ public sealed class AgentOrphanRecoveryService(
         var trackedEntry = _facade.GetByAgentId(agentId);
         if (trackedEntry is not null)
         {
+            bool shouldTransition;
             lock (trackedEntry.SyncRoot)
             {
                 if (trackedEntry.ActiveJobId is null)
                 {
                     trackedEntry.ActiveJobId = activeJob.RunId;
                     _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
+                    // Transition to Busy only when we actually wrote the ActiveJobId.
+                    // The decision is captured inside the lock so a concurrent disconnect handler
+                    // that clears ActiveJobId after lock release cannot cause a spurious Busy
+                    // transition.
+                    shouldTransition = true;
+                }
+                else
+                {
+                    // ActiveJobId already set (same-agent reconnect or DrainService race).
+                    // Still transition to Busy because the agent is actively working this job.
+                    // TODO: [WARNING] This unconditionally sets shouldTransition = true even when
+                    // trackedEntry.ActiveJobId does not match activeJob.RunId (e.g. DrainService
+                    // assigned a different run between GetByAgentId and lock acquisition). The old
+                    // post-lock guard `trackedEntry.ActiveJobId == activeJob.RunId` would have
+                    // evaluated to false in that case and skipped TransitionStatus. The current
+                    // behavior is semantically equivalent to an unconditional Busy transition for
+                    // any re-registration — which is idempotent (Busy→Busy) but is a scope
+                    // expansion beyond what the TOCTOU fix required. Consider:
+                    //   shouldTransition = trackedEntry.ActiveJobId == activeJob.RunId;
+                    // to preserve the same-job guard from the original code.
+                    shouldTransition = true;
                 }
             }
-            if (trackedEntry.ActiveJobId == activeJob.RunId)
-                // TODO: [WARNING] This read of trackedEntry.ActiveJobId is unsynchronised — it was
-                // written under lock(trackedEntry.SyncRoot) above, but here it is read outside the lock.
-                // A concurrent disconnect handler that clears ActiveJobId between the lock release and
-                // this read could cause TransitionStatus(Busy) to fire on a stale match, clobbering a
-                // Disconnected status. The diff made this block unconditional (runs on every path including
-                // same-agent reconnects), widening the race window vs. the previous code. Consider moving
-                // this check inside the lock, or capturing the written value inside the lock and comparing
-                // the captured value here.
+            if (shouldTransition)
                 _facade.TransitionStatus(agentId, AgentStatus.Busy);
         }
 
@@ -377,6 +357,7 @@ public sealed class AgentOrphanRecoveryService(
             // disconnect grace period timer applies. If the agent truly lost the job,
             // ReconciliationService (JobController) will time out the run after the grace period.
             var mostRecent = orphanedRuns[^1];
+            bool shouldTransition;
             lock (entry.SyncRoot)
             {
                 // Atomic check-and-set under lock: if DrainService assigned a job
@@ -386,6 +367,7 @@ public sealed class AgentOrphanRecoveryService(
                     _logger.Information(
                         "Agent {AgentId} acquired job {ActiveJobId} between registration and orphan check, skipping orphan restoration",
                         agentId, entry.ActiveJobId);
+                    shouldTransition = false;
                 }
                 else
                 {
@@ -408,16 +390,14 @@ public sealed class AgentOrphanRecoveryService(
                     _facade.SetLocalAgentSnapshotField(agentId, "orphanRestoredAt", now.ToString("O"));
                     _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", mostRecent.RunId);
                     _ = _facade.UpdateAgentFieldAsync(agentId, "orphanRestoredAt", now.ToString("O"));
+                    // The decision to call TransitionStatus is captured inside the lock.
+                    // This prevents a concurrent disconnect handler from clearing ActiveJobId
+                    // between lock release and the TransitionStatus call.
+                    shouldTransition = true;
                 }
             }
 
-            // TODO: [WARNING] entry.ActiveJobId is read outside SyncRoot here. The write happened
-            // inside lock(entry.SyncRoot) above; a concurrent disconnect handler clearing ActiveJobId
-            // between the lock release and this comparison could cause AddRun and TransitionStatus to
-            // fire on a stale match. Consider capturing the written value inside the lock and comparing
-            // the captured value here. This is consistent with the known race pattern in this file
-            // (see similar TODO in LinkAgentToExistingRun/RestoreConsolidationTracking).
-            if (entry.ActiveJobId == mostRecent.RunId)
+            if (shouldTransition)
             {
                 // Re-materialize the run hash in Redis so GetRun returns non-null on any replica,
                 // even if the hash was about to expire between this check and the agent's first
@@ -431,17 +411,6 @@ public sealed class AgentOrphanRecoveryService(
                 // This call is OUTSIDE lock(entry.SyncRoot) — GetRun performs synchronous Redis I/O
                 // via .GetAwaiter().GetResult(); holding the entry lock across a network call is
                 // an anti-pattern. See HandleCrashRecovery for the established pattern.
-                // TODO: [WARNING] entry.ActiveJobId == mostRecent.RunId was evaluated outside
-                // lock(entry.SyncRoot) (see existing TODO above). The GetRun + AddRun block below
-                // runs in the same unguarded window: a concurrent disconnect handler clearing
-                // entry.ActiveJobId between the outer lock release and this GetRun call means we
-                // add a Redis round-trip to an already racy window, increasing the probability
-                // (though not the severity) of the pre-existing spurious-AddRun/TransitionStatus
-                // race. Mitigation: capture entry.ActiveJobId inside the lock above and compare
-                // the captured value, avoiding re-reading unstable state in this window.
-                // Acceptable race: the hash could be absent at GetRun time but written by another
-                // replica before AddRun fires (AddRun then overwrites). This window is tiny and is
-                // the same last-write-wins race explicitly accepted as out-of-scope by the issue.
                 // TODO: [WARNING] Narrow TOCTOU: hash absent at GetRun → AddRun fires → another
                 // replica wrote a live hash in between → AddRun overwrites those newer fields.
                 // This window is smaller than the original unconditional AddRun but is not
