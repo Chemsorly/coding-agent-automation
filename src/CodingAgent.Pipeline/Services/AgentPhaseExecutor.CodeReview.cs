@@ -41,11 +41,7 @@ public partial class AgentPhaseExecutor
                     OnChange = context.Callbacks.NotifyChange,
                     Logger = _logger,
                     OnOutputLine = line => context.Callbacks.EmitOutputLine(line),
-                    // NOTE [WARNING]: EnvironmentVariables is not set here. Review agents use isolated
-                    // sessions and are documented as read-only, so they likely don't need project secrets.
-                    // However, this creates an asymmetry with analysis, code-generation, and quality-gate
-                    // retry agents which all propagate InjectedSecrets. If a follow-up reviewer ever needs
-                    // secrets (e.g. to call authenticated MCP tools), add: EnvironmentVariables = context.InjectedSecrets
+                    EnvironmentVariables = context.InjectedSecrets,
                     Phase = $"follow_up_{reviewerConfig.DisplayName}"
                 },
                 ct);
@@ -97,6 +93,7 @@ public partial class AgentPhaseExecutor
         }
         else
         {
+            // Design: warn-and-skip (Option B) — see docs/internals/behavioral-contracts.yaml for the updated contract assertion
             _logger.Warning(
                 "Pipeline {RunId} no reviewer configurations matched — review phase skipped (no configs or all disabled). " +
                 "To restore review, add or re-enable a reviewer configuration in Settings → Reviewers.",
@@ -247,9 +244,7 @@ public partial class AgentPhaseExecutor
                     OnChange = context.Callbacks.NotifyChange,
                     Logger = _logger,
                     OnOutputLine = line => context.Callbacks.EmitOutputLine($"[ReviewSummary] {line}"),
-                    // NOTE [WARNING]: EnvironmentVariables is not set here (see follow-up agent NOTE above).
-                    // Review summary agents are read-only; add EnvironmentVariables = context.InjectedSecrets
-                    // if they ever need project secrets.
+                    EnvironmentVariables = context.InjectedSecrets,
                     Phase = "review_summary"
                 },
                 ct);

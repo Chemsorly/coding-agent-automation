@@ -126,6 +126,12 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
                 "To restore review, add or re-enable a reviewer configuration in Settings → Reviewers.",
                 It.IsAny<string>()),
             Times.Once);
+        // TODO [WARNING]: This test does not assert that _reviewSkipped counter is incremented. The
+        // behavioral contract (docs/internals/behavioral-contracts.yaml) lists "pipeline.review.skipped"
+        // as a required observable signal alongside the Warning log. A refactor that removes the
+        // _reviewSkipped.Add(1, ...) call would leave this test green while silently breaking the contract.
+        // Add a _mockReviewSkipped.Verify(..., Times.Once) assertion here. See WhenFlattenedAgentsIsEmpty_IncrementsReviewSkippedCounter
+        // for the existing pattern. (TestQuality review, issue #2638)
         _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
     }
 
@@ -143,6 +149,10 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
                 "To restore review, add or re-enable a reviewer configuration in Settings → Reviewers.",
                 It.IsAny<string>()),
             Times.Once);
+        // TODO [WARNING]: This test does not assert that _reviewSkipped counter is incremented. The
+        // behavioral contract (docs/internals/behavioral-contracts.yaml) lists "pipeline.review.skipped"
+        // as a required observable signal alongside the Warning log. Add a _mockReviewSkipped.Verify(...)
+        // assertion here, mirroring WhenFlattenedAgentsIsEmpty_IncrementsReviewSkippedCounter. (TestQuality review, issue #2638)
         _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
     }
 
@@ -531,6 +541,104 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
         var fullPath = Path.Combine(_workspacePath, relativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         File.WriteAllText(fullPath, content);
+    }
+
+    // TODO: Add tests verifying that follow-up agent (ExecuteFollowUpAsync) and review-summary agent
+    // (GenerateReviewSummarySafeAsync) in AgentPhaseExecutor.CodeReview.cs also forward
+    // EnvironmentVariables = context.InjectedSecrets. A regression removing EnvironmentVariables from
+    // either of those two sites would not be caught by the tests below, which only exercise the fix
+    // agent path in CodeReviewOrchestrator.SendFixPromptAsync. (review finding: TestQualityReviewer / Correctness)
+    [Fact]
+    public async Task CodeReview_WithInjectedSecrets_ForwardsEnvironmentVariablesToFixAgent()
+    {
+        // Arrange
+        // TODO: Consider refactoring this inline AgentPhaseContext construction to use BuildContext() with
+        // an InjectedSecrets override, to avoid silent divergence if BuildContext() gains required invariants.
+        // The inline construction was necessary because BuildContext() does not accept an InjectedSecrets
+        // parameter. (review finding: DotNetSpecialist)
+        var injectedSecrets = new Dictionary<string, string> { ["NUGET_KEY"] = "secret-value" };
+        var context = new AgentPhaseContext
+        {
+            Run = _run,
+            Config = _config,
+            AgentProvider = _mockAgent.Object,
+            IssueOps = _mockIssueOps.Object,
+            Callbacks = _mockCallbacks.Object,
+            OrchestratorCts = null,
+            Issue = new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "Test requirements", AcceptanceCriteria = new[] { "AC1" } },
+            InjectedSecrets = injectedSecrets
+        };
+
+        AgentRequest? capturedFixAgentRequest = null;
+        var callCount = 0;
+
+        // TODO: The ordinal-based capture (callCount == 2 = fix agent) is fragile: if the orchestrator
+        // gains an additional pre-fix agent call or SupportsParallelExecution changes, the ordinal silently
+        // shifts. Consider identifying the fix agent by req.Phase == "fix" instead of by call position.
+        // (review finding: Correctness / TestQualityReviewer)
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, ct, _) =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    // Call 1: review agent — write a [CRITICAL] finding to trigger fix dispatch
+                    WriteFindingsFile("correctness", "[CRITICAL] Critical bug found");
+                }
+                else if (callCount == 2)
+                {
+                    // Call 2: fix agent — capture the request
+                    capturedFixAgentRequest = req;
+                }
+                // Call 3: review summary agent (no action needed)
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        // Act
+        await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers("Correctness"));
+
+        // Assert: fix agent was called (call 2)
+        callCount.Should().BeGreaterThanOrEqualTo(2, "fix agent must have been dispatched after [CRITICAL] finding");
+        capturedFixAgentRequest.Should().NotBeNull("fix agent request must have been captured");
+        // TODO: The null-forgiving operator (!) on the next line bypasses the NotBeNull() guard above —
+        // if capturedFixAgentRequest is null, a NullReferenceException is thrown instead of a clear assertion
+        // failure. Reorder assertions (NotBeNull first) or replace ! with a null-safe access to surface
+        // a readable failure message on regression. (review finding: DotNetSpecialist / TestQualityReviewer)
+        capturedFixAgentRequest!.EnvironmentVariables.Should().NotBeNull();
+        capturedFixAgentRequest.EnvironmentVariables!["NUGET_KEY"].Should().Be("secret-value");
+    }
+
+    [Fact]
+    public async Task CodeReview_WithNullInjectedSecrets_ForwardsNullEnvironmentVariablesToFixAgent()
+    {
+        // Arrange: InjectedSecrets not set (null) — fix agent must receive null EnvironmentVariables
+        var context = BuildContext(); // InjectedSecrets is null by default in BuildContext
+
+        AgentRequest? capturedFixAgentRequest = null;
+        var callCount = 0;
+
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, ct, _) =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    WriteFindingsFile("correctness", "[CRITICAL] Critical bug found");
+                }
+                else if (callCount == 2)
+                {
+                    capturedFixAgentRequest = req;
+                }
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        // Act
+        await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers("Correctness"));
+
+        // Assert: fix agent dispatched and EnvironmentVariables is null (no regression)
+        capturedFixAgentRequest.Should().NotBeNull("fix agent must have been dispatched");
+        capturedFixAgentRequest!.EnvironmentVariables.Should().BeNull();
     }
 
     #region Acceptance Criteria Tests
