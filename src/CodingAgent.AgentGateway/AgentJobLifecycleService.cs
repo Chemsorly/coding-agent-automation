@@ -111,27 +111,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                 // Transition agent back to Idle unconditionally — even if cleanup throws.
                 // Placed in finally so a DB/network failure inside HandleRejectedRunCleanupAsync
                 // does not leave the agent stuck Busy until ReconciliationService timeout.
-                if (agent is not null)
-                {
-                    var now = DateTimeOffset.UtcNow;
-                    agent.ActiveJobId = null;
-                    agent.LastJobCompletedAt = now; // Push to back of FIFO queue to prevent same-agent re-dispatch loop
-                    _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldActiveJobId, null)
-                        .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
-                                UpdateFieldFailedTemplate,
-                                agent.AgentId, FieldActiveJobId),
-                            CancellationToken.None,
-                            TaskContinuationOptions.OnlyOnFaulted,
-                            TaskScheduler.Default);
-                    _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldLastJobCompletedAt, now.ToString("O"))
-                        .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
-                                UpdateFieldFailedTemplate,
-                                agent.AgentId, FieldLastJobCompletedAt),
-                            CancellationToken.None,
-                            TaskContinuationOptions.OnlyOnFaulted,
-                            TaskScheduler.Default);
-                    _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-                }
+                ResetAgentToIdle(agent);
             }
             return; // agent state already reset in finally above; skip the no-run path below
         }
@@ -141,27 +121,31 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         }
 
         // Reached only when run is null — transition agent back to Idle for the no-run path
-        if (agent is not null)
-        {
-            var now = DateTimeOffset.UtcNow;
-            agent.ActiveJobId = null;
-            agent.LastJobCompletedAt = now; // Push to back of FIFO queue to prevent same-agent re-dispatch loop
-            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldActiveJobId, null)
-                .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
-                        UpdateFieldFailedTemplate,
-                        agent.AgentId, FieldActiveJobId),
-                    CancellationToken.None,
-                    TaskContinuationOptions.OnlyOnFaulted,
-                    TaskScheduler.Default);
-            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldLastJobCompletedAt, now.ToString("O"))
-                .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
-                        UpdateFieldFailedTemplate,
-                        agent.AgentId, FieldLastJobCompletedAt),
-                    CancellationToken.None,
-                    TaskContinuationOptions.OnlyOnFaulted,
-                    TaskScheduler.Default);
-            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-        }
+        ResetAgentToIdle(agent);
+    }
+
+    private void ResetAgentToIdle(AgentEntry? agent)
+    {
+        if (agent is null) return;
+
+        var now = DateTimeOffset.UtcNow;
+        agent.ActiveJobId = null;
+        agent.LastJobCompletedAt = now; // Push to back of FIFO queue to prevent same-agent re-dispatch loop
+        _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldActiveJobId, null)
+            .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
+                    UpdateFieldFailedTemplate,
+                    agent.AgentId, FieldActiveJobId),
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
+        _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldLastJobCompletedAt, now.ToString("O"))
+            .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
+                    UpdateFieldFailedTemplate,
+                    agent.AgentId, FieldLastJobCompletedAt),
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
+        _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
     }
 
     private async Task HandleRejectedRunCleanupAsync(JobId jobId, PipelineRun run, string reason, CancellationToken ct)
