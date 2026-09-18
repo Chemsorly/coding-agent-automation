@@ -1758,20 +1758,20 @@ public sealed class WorkItemEndpointTests
         var fixture = items!.Where(i => fixtureIds.Contains(i.Id)).ToList();
         fixture.Should().HaveCount(5, "all 5 seeded items must be in the pending list");
 
-        var reviewIdx       = fixture.FindIndex(i => i.Id == review.Id);
-        var decompIdx       = fixture.FindIndex(i => i.Id == decomposition.Id);
-        var highWeightIdx   = fixture.FindIndex(i => i.Id == highWeightImpl.Id);
-        var implIdx         = fixture.FindIndex(i => i.Id == implementation.Id);
-        var consolidIdx     = fixture.FindIndex(i => i.Id == consolidation.Id);
+        var reviewIdx = fixture.FindIndex(i => i.Id == review.Id);
+        var decompIdx = fixture.FindIndex(i => i.Id == decomposition.Id);
+        var highWeightIdx = fixture.FindIndex(i => i.Id == highWeightImpl.Id);
+        var implIdx = fixture.FindIndex(i => i.Id == implementation.Id);
+        var consolidIdx = fixture.FindIndex(i => i.Id == consolidation.Id);
 
         // Tier ordering: Review < Decomposition < Implementation(both) < Consolidation
-        reviewIdx.Should().BeLessThan(decompIdx,       "Review must come before Decomposition");
-        decompIdx.Should().BeLessThan(highWeightIdx,   "Decomposition must come before Implementation");
-        decompIdx.Should().BeLessThan(implIdx,         "Decomposition must come before Implementation");
+        reviewIdx.Should().BeLessThan(decompIdx, "Review must come before Decomposition");
+        decompIdx.Should().BeLessThan(highWeightIdx, "Decomposition must come before Implementation");
+        decompIdx.Should().BeLessThan(implIdx, "Decomposition must come before Implementation");
         // Within Implementation tier: higher PriorityWeight dispatches first
         highWeightIdx.Should().BeLessThan(implIdx,
             "high-weight Implementation (100) must precede low-weight Implementation (0) within the tier");
-        implIdx.Should().BeLessThan(consolidIdx,       "Implementation must come before Consolidation");
+        implIdx.Should().BeLessThan(consolidIdx, "Implementation must come before Consolidation");
     }
 
     /// <summary>
