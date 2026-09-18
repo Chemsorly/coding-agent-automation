@@ -33,7 +33,7 @@ public sealed class ReconciliationLoop
     /// Canary increments signal that <c>CreatedAt</c> or another wrong anchor is being used
     /// instead of <c>DispatchedAt</c>.
     /// </summary>
-    private const int TimeoutCanaryMinAgeSeconds = 60;
+    private const int TimeoutCanaryMinAgeSeconds = PipelineConstants.TimeoutCanaryMinAgeSeconds;
 
     private readonly IPipelineApiWorkItemClient _workItemClient;
     private readonly IKubernetesJobClient _k8sClient;
