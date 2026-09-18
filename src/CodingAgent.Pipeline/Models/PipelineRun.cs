@@ -471,9 +471,10 @@ public sealed partial class PipelineRun
         }
         else
         {
-            // Legacy mode: the built-in gates that ran (Compilation + Tests are always present).
+            // Legacy mode: Compilation is always present; Tests is included when populated.
             outcomes.Add(new GateOutcome(report.Compilation.GateName, report.Compilation.Passed));
-            outcomes.Add(new GateOutcome(report.Tests.GateName, report.Tests.Passed));
+            if (report.Tests is not null)
+                outcomes.Add(new GateOutcome(report.Tests.GateName, report.Tests.Passed));
         }
         if (report.ExternalCi is { } externalCi) outcomes.Add(new GateOutcome(externalCi.GateName, externalCi.Passed));
         return outcomes;

@@ -52,7 +52,7 @@ public partial class QualityGateExecutor
         var config = context.Config;
         var callbacks = context.Callbacks;
 
-        if (!report.Compilation.Passed || !report.Tests.Passed
+        if (!report.Compilation.Passed || !(report.Tests?.Passed ?? true)
             || context.PipelineProvider == null)
             return report;
 
@@ -97,7 +97,7 @@ public partial class QualityGateExecutor
                 return new QualityGateReport
                 {
                     Compilation = report.Compilation,
-                    Tests = report.Tests,
+                    Tests = report.Tests!, // null when Tests is null (build-only QGC / legacy deserialization path); all downstream consumers are null-guarded
                     ExternalCi = new GateResult
                     {
                         GateName = "External CI",
@@ -144,7 +144,7 @@ public partial class QualityGateExecutor
         return new QualityGateReport
         {
             Compilation = report.Compilation,
-            Tests = report.Tests,
+            Tests = report.Tests!, // null when Tests is null (build-only QGC / legacy deserialization path); all downstream consumers are null-guarded
             ExternalCi = ciGate
         };
     }
