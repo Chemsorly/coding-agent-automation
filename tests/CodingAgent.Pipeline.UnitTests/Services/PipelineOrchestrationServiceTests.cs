@@ -527,10 +527,10 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
-        // After the fault isolation fix, a crashing agent produces a Failure result rather than
-        // breaking the iteration loop. All 3 iterations complete (crashed agents have no findings,
-        // no fix prompt configured, so Skip decision continues each iteration).
-        run.CodeReviewIterationsCompleted.Should().Be(3);
+        // Iteration 1: review agent succeeds (callCount == 1), no findings, no fix prompt → Skip → continues.
+        // Iteration 2: review agent crashes (callCount >= 2), all-crash guard fires → exits the loop.
+        // Iteration 3 is skipped — a structural crash is not retried.
+        run.CodeReviewIterationsCompleted.Should().Be(2);
     }
 
     [Fact]
