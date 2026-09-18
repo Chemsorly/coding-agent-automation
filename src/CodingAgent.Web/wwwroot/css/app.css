@@ -254,6 +254,7 @@ select option { background: var(--surface); color: var(--text); }
 .btn-cancel-run,
 .btn-edit,
 .btn-delete,
+.btn-initialize,
 .btn-add,
 .btn-revert,
 .btn-page,
@@ -299,7 +300,7 @@ select option { background: var(--surface); color: var(--text); }
 .tree-group-header { display: flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 0.82rem; font-weight: 600; color: var(--text-muted); cursor: pointer; user-select: none; text-transform: uppercase; letter-spacing: 0.03em; }
 .tree-group-header:hover { color: var(--text); }
 .tree-chevron { font-size: 0.7rem; width: 12px; text-align: center; }
-.tree-group-children { display: flex; flex-direction: column; }
+.tree-group-children { display: flex; flex-direction: column; padding-top: 4px; }
 .tree-node { padding: 6px 16px 6px 34px; font-size: 0.85rem; color: var(--text-muted); cursor: pointer; transition: background 0.15s, color 0.15s; border-left: 3px solid transparent; }
 .tree-node:hover { background: var(--surface-alt); color: var(--text); }
 .tree-node.active { background: var(--surface-alt); color: var(--accent-light); border-left-color: var(--accent); }
@@ -422,11 +423,14 @@ select option { background: var(--surface); color: var(--text); }
 .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-cancel { padding: 8px 16px; border: 1px solid var(--border); color: var(--text-muted); }
 .btn-cancel:hover { border-color: var(--text-muted); color: var(--text); }
-.btn-edit { padding: 4px 10px; border: 1px solid var(--accent); color: var(--accent-light); font-size: 0.8rem; }
+.btn-edit { padding: 6px 12px; border: 1px solid var(--accent); color: var(--accent-light); font-size: 0.8rem; }
 .btn-edit:hover { background: var(--accent); color: white; }
-.btn-delete { padding: 4px 10px; border: 1px solid var(--error); color: var(--error); font-size: 0.8rem; }
+.btn-delete { padding: 6px 12px; border: 1px solid var(--error); color: var(--error); font-size: 0.8rem; }
 .btn-delete:hover:not(:disabled) { background: var(--error); color: white; }
 .btn-delete:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-initialize { padding: 6px 12px; border: 1px solid var(--accent); background: var(--accent); color: #fff; font-size: 0.8rem; font-weight: 600; }
+.btn-initialize:hover:not(:disabled) { background: var(--accent-light); border-color: var(--accent-light); }
+.btn-initialize:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-add { padding: 8px 16px; border: 1px dashed var(--border); color: var(--text-muted); width: 100%; }
 .btn-add:hover { border-color: var(--accent); color: var(--accent-light); }
 .btn-revert { padding: 4px 10px; color: var(--text-muted); font-size: 0.8rem; text-decoration: underline; margin-top: 4px; }
