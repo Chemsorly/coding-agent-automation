@@ -58,19 +58,10 @@ internal sealed class DispatchStateBuilder
         try
         {
             // Column projection — no Payload loading.
-            // Sort: RunType tier (Review=0 > Decomposition=1 > Implementation=2 > Consolidation=3),
-            // then within a tier: PriorityWeight DESC (manual=100 before automatic=0), then CreatedAt ASC (FIFO).
-            // EF Core translates the ternary to a SQL CASE WHEN … THEN … END expression — no stored column needed.
             var pendingItems = await db.WorkItems
                 .Where(w => w.Status == WorkItemStatus.Pending)
                 .Where(taskTypeFilter)
-                .OrderBy(w =>
-                    w.TaskType == WorkItemTaskType.Review ? 0 :
-                    w.TaskType == WorkItemTaskType.Decomposition ? 1 :
-                    w.TaskType == WorkItemTaskType.Implementation ? 2 :
-                    /* Consolidation */                             3)
-                .ThenByDescending(w => w.PriorityWeight)
-                .ThenBy(w => w.CreatedAt)
+                .ApplyDispatchOrder()
                 .Select(w => new PendingWorkItemProjection
                 {
                     Id = w.Id,

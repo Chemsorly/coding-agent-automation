@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CodingAgent.Api.Dispatch;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Orchestration;
@@ -69,8 +70,7 @@ public static class WorkItemQueryEndpoints
             pending = pending.Where(w => w.ProjectId == scopeProjectId);
 
         var raw = await pending
-            .OrderByDescending(w => w.PriorityWeight)
-            .ThenBy(w => w.CreatedAt)
+            .ApplyDispatchOrder()
             .Take(maxResults)
             .Select(w => new
             {

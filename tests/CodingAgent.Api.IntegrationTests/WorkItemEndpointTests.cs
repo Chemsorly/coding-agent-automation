@@ -1604,4 +1604,120 @@ public sealed class WorkItemEndpointTests
         items!.Should().NotContain(i => i.Id == running.Id,
             "non-Pending consolidation items must not appear in the pending queue");
     }
+
+    /// <summary>
+    /// AC: GET /api/work-items/pending applies RunType tier ordering as the primary sort:
+    /// Review &gt; Decomposition &gt; Implementation &gt; Consolidation, regardless of CreatedAt.
+    /// Within the same tier, higher PriorityWeight comes first (secondary sort).
+    /// Decision: decisions.md "Dispatch priority: static ordering Review > Decomposition > Implementation > Consolidation"
+    /// and "PriorityWeight: secondary sort key within RunType tier".
+    /// </summary>
+    [Fact]
+    public async Task GetPendingWorkItems_OrderedByRunTypeTierThenPriorityWeightThenCreatedAt()
+    {
+        var prefix = $"tier-order-{Guid.NewGuid():N}";
+        var base_ = DateTimeOffset.UtcNow.AddMinutes(-30);
+
+        // Seed one item per tier — all at PriorityWeight=0, Consolidation created first (oldest).
+        // Expected order after tier sort: Review, Decomposition, Implementation, Consolidation.
+        var consolidation = SeedEntity(WorkItemStatus.Pending,
+            issueIdentifier: $"{prefix}-consolidation",
+            taskType: WorkItemTaskType.Consolidation,
+            createdAt: base_);
+        var implementation = SeedEntity(WorkItemStatus.Pending,
+            issueIdentifier: $"{prefix}-implementation",
+            taskType: WorkItemTaskType.Implementation,
+            createdAt: base_.AddMinutes(1));
+        var decomposition = SeedEntity(WorkItemStatus.Pending,
+            issueIdentifier: $"{prefix}-decomposition",
+            taskType: WorkItemTaskType.Decomposition,
+            createdAt: base_.AddMinutes(2));
+        var review = SeedEntity(WorkItemStatus.Pending,
+            issueIdentifier: $"{prefix}-review",
+            taskType: WorkItemTaskType.Review,
+            createdAt: base_.AddMinutes(3));
+
+        // Seed a second Implementation at higher PriorityWeight to verify within-tier secondary sort.
+        var highWeightImpl = SeedEntity(WorkItemStatus.Pending,
+            issueIdentifier: $"{prefix}-implementation-high",
+            taskType: WorkItemTaskType.Implementation,
+            createdAt: base_.AddMinutes(4));
+        highWeightImpl = UpdateEntityPriorityWeight(highWeightImpl.Id, 100);
+
+        var response = await _client.GetAsync("/api/work-items/pending?maxResults=500");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await response.Content.ReadFromJsonAsync<List<PendingWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+
+        // Filter to just the fixture items in original list order.
+        var fixtureIds = new HashSet<Guid> { review.Id, decomposition.Id, implementation.Id, consolidation.Id, highWeightImpl.Id };
+        var fixture = items!.Where(i => fixtureIds.Contains(i.Id)).ToList();
+        fixture.Should().HaveCount(5, "all 5 seeded items must be in the pending list");
+
+        var reviewIdx       = fixture.FindIndex(i => i.Id == review.Id);
+        var decompIdx       = fixture.FindIndex(i => i.Id == decomposition.Id);
+        var highWeightIdx   = fixture.FindIndex(i => i.Id == highWeightImpl.Id);
+        var implIdx         = fixture.FindIndex(i => i.Id == implementation.Id);
+        var consolidIdx     = fixture.FindIndex(i => i.Id == consolidation.Id);
+
+        // Tier ordering: Review < Decomposition < Implementation(both) < Consolidation
+        reviewIdx.Should().BeLessThan(decompIdx,       "Review must come before Decomposition");
+        decompIdx.Should().BeLessThan(highWeightIdx,   "Decomposition must come before Implementation");
+        decompIdx.Should().BeLessThan(implIdx,         "Decomposition must come before Implementation");
+        // Within Implementation tier: higher PriorityWeight dispatches first
+        highWeightIdx.Should().BeLessThan(implIdx,
+            "high-weight Implementation (100) must precede low-weight Implementation (0) within the tier");
+        implIdx.Should().BeLessThan(consolidIdx,       "Implementation must come before Consolidation");
+    }
+
+    /// <summary>
+    /// Starvation boundary: when 51 Review items are pending and maxResults=50, the Take(50)
+    /// window fills entirely with Reviews and the single Implementation item is absent.
+    /// This documents the intentional starvation contract: lower-tier items are invisible to
+    /// the WorkItemDispatchPoller for that cycle whenever a higher tier has 50+ pending items.
+    /// Decision: decisions.md "Dispatch priority: static ordering Review > Decomposition > Implementation > Consolidation".
+    /// </summary>
+    [Fact]
+    public async Task GetPendingWorkItems_HighTierBacklogFillsWindow_LowerTierItemAbsent()
+    {
+        var prefix = $"starvation-{Guid.NewGuid():N}";
+        var base_ = DateTimeOffset.UtcNow.AddMinutes(-60);
+
+        // Seed 51 Review items (one more than the default maxResults=50 window).
+        var reviewIds = new List<Guid>();
+        for (var i = 0; i < 51; i++)
+        {
+            var r = SeedEntity(WorkItemStatus.Pending,
+                issueIdentifier: $"{prefix}-review-{i}",
+                taskType: WorkItemTaskType.Review,
+                createdAt: base_.AddSeconds(i));
+            reviewIds.Add(r.Id);
+        }
+
+        // Seed one Implementation item — older than all Reviews, PriorityWeight=0.
+        // Without tier ordering it would rank near the top (older CreatedAt).
+        // With tier ordering it is pushed out of the 50-slot window.
+        var impl = SeedEntity(WorkItemStatus.Pending,
+            issueIdentifier: $"{prefix}-implementation",
+            taskType: WorkItemTaskType.Implementation,
+            createdAt: base_.AddMinutes(-10));
+
+        var response = await _client.GetAsync("/api/work-items/pending?maxResults=50");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await response.Content.ReadFromJsonAsync<List<PendingWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+        items!.Count.Should().BeLessThanOrEqualTo(50);
+
+        // The Implementation item must NOT appear — the 50-slot window is fully consumed by Reviews.
+        items.Should().NotContain(i => i.Id == impl.Id,
+            "the Implementation item must be absent from the maxResults=50 window when 51 Review items are pending");
+
+        // All returned items must be Review tier (within the fixture, at least).
+        // Verify the 50 Review fixture items that made it into the window are Review type.
+        var fixtureReviews = items.Where(i => reviewIds.Contains(i.Id)).ToList();
+        fixtureReviews.Should().OnlyContain(i => i.TaskType == WorkItemTaskType.Review,
+            "items appearing in the window from our fixture must all be Review tier");
+    }
 }
