@@ -277,6 +277,42 @@ public class HttpPrimaryCompletionReporterTests
         await act.Should().ThrowAsync<HttpRequestException>();
     }
 
+    [Fact]
+    public async Task ReportCompletionAsync_PostStatusReturnsFalse_LogsWarning()
+    {
+        // Arrange: simulate server rejecting the status transition (400 or 404)
+        _lifecycleClient
+            .Setup(c => c.PostStatusAsync(WorkItemId, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _connectionManager
+            .Setup(m => m.InvokeAsync(It.IsAny<Func<Microsoft.AspNetCore.SignalR.Client.HubConnection, CancellationToken, Task>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var sut = CreateSut();
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
+
+        // Act: must not throw — rejection is observable via log, not exception
+        var act = async () => await sut.ReportCompletionAsync("job-1", payload, CancellationToken.None);
+        await act.Should().NotThrowAsync();
+
+        // Assert: Warning is logged with WorkItemId and terminalStatus as structured properties.
+        // Uses the generic Warning<T0,T1>(string, T0, T1) overload — NOT Warning(string, object[]).
+        // C# overload resolution selects the generic form when two explicit typed args are passed.
+        // TODO: Tighten these assertions to pin the actual values rather than accepting any string:
+        //   It.Is<string>(s => s == WorkItemId) for T0 and It.Is<string>(s => s == "Succeeded") for T1.
+        //   As written, the test does not catch argument transposition (wrong order of WorkItemId vs status).
+        // TODO: If the Serilog ILogger overload used in production ever changes (e.g., a third structured
+        //   property is added), this Verify may silently match zero invocations. Add a complementary
+        //   assertion on the message template string to make the test robust against overload shifts.
+        // TODO: Add parameterized cases for PipelineStep.Failed and PipelineStep.Cancelled to cover all
+        //   three terminalStatus values — the current test only exercises the Completed/"Succeeded" path.
+        _logger.Verify(l => l.Warning(
+            It.Is<string>(s => s.Contains("transition was rejected")),
+            It.IsAny<string>(),   // WorkItemId (T0 = string)
+            It.IsAny<string>()),  // terminalStatus (T1 = string)
+            Times.Once);
+    }
+
     // ── Serialize result ─────────────────────────────────────────────────
 
     [Fact]

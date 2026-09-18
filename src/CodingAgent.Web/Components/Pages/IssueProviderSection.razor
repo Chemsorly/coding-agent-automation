@@ -19,7 +19,7 @@
                     <span class="provider-detail">@p.Settings.GetValueOrDefault(ProviderSettingKeys.Owner, "")/@p.Settings.GetValueOrDefault(ProviderSettingKeys.Repo, "")</span>
                 </div>
                 <div class="provider-actions">
-                    <button class="btn-edit" @onclick="() => InitializeRepository(p)"
+                    <button class="btn-initialize" @onclick="() => InitializeRepository(p)"
                             disabled="@(_initializingProviderId != null)">
                         @(_initializingProviderId == p.Id ? "Initializing..." : "Initialize Provider")
                     </button>

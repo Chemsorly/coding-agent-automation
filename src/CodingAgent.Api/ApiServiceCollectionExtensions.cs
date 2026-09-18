@@ -254,25 +254,24 @@ public static class ApiServiceCollectionExtensions
                 var store = new CodingAgent.Orchestration.Redis.RedisStore(mux.GetDatabase());
                 // IsIssueBeingProcessed: direct Postgres query — no HTTP self-call needed.
                 var dbFactory = sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>();
-                var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;
                 var cooldown = PipelineConstants.DefaultRestartDedupCooldown;
                 Func<string, string, CancellationToken, Task<bool>> isIssueDistributed =
                     async (issueId, providerConfigId, ct) =>
                     {
                         await using var db = await dbFactory.CreateDbContextAsync(ct);
-                        // Mirror WorkItemEndpoints.GetIsDistributed: active status OR recently completed.
-                        var hasActive = await db.WorkItems.AsNoTracking().AnyAsync(w =>
-                            w.IssueIdentifier == issueId &&
-                            w.IssueProviderConfigId == providerConfigId &&
-                            activeStatuses.Contains(w.Status), ct);
-                        if (hasActive) return true;
+                        // Mirror WorkItemDispatchEndpoints.GetIsDistributed: single query covering
+                        // active status OR recently completed in one atomic DB read, eliminating
+                        // the TOCTOU window that existed with two sequential AnyAsync round-trips.
+                        // A WorkItem that transitions from active to terminal between two separate
+                        // reads could cause both to return false and the caller to re-dispatch.
+                        var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;
                         var since = DateTimeOffset.UtcNow - cooldown;
                         return await db.WorkItems.AsNoTracking().AnyAsync(w =>
                             w.IssueIdentifier == issueId &&
                             w.IssueProviderConfigId == providerConfigId &&
-                            !activeStatuses.Contains(w.Status) &&
-                            w.CompletedAt != null &&
-                            w.CompletedAt >= since, ct);
+                            (activeStatuses.Contains(w.Status) ||
+                             (w.CompletedAt != null && w.CompletedAt >= since)),
+                            ct);
                     };
                 return new DistributedRunService(store, isIssueDistributed, Log.Logger);
             }

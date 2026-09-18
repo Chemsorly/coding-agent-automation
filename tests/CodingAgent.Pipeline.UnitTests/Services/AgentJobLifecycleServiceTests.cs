@@ -1,5 +1,3 @@
-using System.Linq;
-using System.Threading;
 using AwesomeAssertions;
 using CodingAgent.AgentGateway;
 using CodingAgent.Orchestration.Registry;
@@ -921,90 +919,48 @@ public sealed class AgentJobLifecycleServiceTests
     //     covers the propagation case, but the OperationCanceledException swallowing case is absent.
     // Re-add a test for the cancellation-swallowing behaviour in PostCompletionBookkeepingAsync.
 
-    /// <summary>
-    /// Waits deterministically for the fire-and-forget ContinueWith callback to have
-    /// recorded at least one Warning invocation on <paramref name="loggerMock"/> whose
-    /// message template contains <paramref name="templateFragment"/>. Uses SpinWait polling
-    /// instead of Task.Delay so the barrier is tight (no fixed sleep) and not susceptible
-    /// to thread-pool saturation on a loaded CI agent. Fails if the condition is not met
-    /// within the timeout.
-    /// </summary>
-    private static void WaitForLoggerWarningContaining(Mock<ILogger> loggerMock, string templateFragment,
-        int timeoutMs = 5000)
-    {
-        // TODO: [WARNING] SpinWait.SpinUntil polls the Moq invocation list, which requires the
-        // continuation to have been scheduled and executed on the thread pool. This is more reliable
-        // than a fixed Task.Delay, but the correct long-term fix is to expose the ContinueWith task
-        // from the production code so tests can await it directly without any polling.
-        // TODO: [WARNING] loggerMock.Invocations is accessed from the test thread while the
-        // ContinueWith callback writes to it from a thread-pool thread. Moq's InvocationCollection
-        // uses an internal lock, but this is an undocumented implementation detail. Under load a
-        // SpinWait iteration can observe a torn read: HasMatchingWarning() returns true after the
-        // first continuation fires, SpinWait exits, a second continuation then fires and increments
-        // the count, and Times.Once fails. The fix is to return the continuation task from the
-        // production method so tests can await it directly, eliminating all polling races.
-        bool HasMatchingWarning() =>
-            loggerMock.Invocations.Any(i =>
-                i.Method.Name == nameof(ILogger.Warning) &&
-                i.Arguments.OfType<string>().Any(s => s.Contains(templateFragment)));
-
-        SpinWait.SpinUntil(HasMatchingWarning, timeoutMs);
-
-        if (!HasMatchingWarning())
-            throw new TimeoutException(
-                $"Timed out after {timeoutMs}ms waiting for a Warning invocation containing '{templateFragment}' " +
-                $"on the logger mock. Warning invocations recorded: {loggerMock.Invocations.Count(i => i.Method.Name == nameof(ILogger.Warning))}");
-
-        // Brief pause after the condition is met to ensure the thread-pool write to Moq's
-        // InvocationCollection is fully visible to Verify on the test thread. Under Release
-        // JIT with CPU memory reordering, SpinWait.SpinUntil can exit the moment HasMatchingWarning
-        // returns true, but Verify observes a stale snapshot if the write hasn't propagated
-        // through the CPU cache hierarchy yet. 50ms is well below the 5-second test timeout and
-        // reliably covers any realistic memory-ordering delay on CI hardware.
-        Thread.Sleep(50);
-    }
-
     [Fact]
     public async Task HandleJobRejectedAsync_WhenUpdateAgentFieldFaults_LogsWarning()
     {
-        // Arrange: the activeJobId Redis write fails
+        // Arrange: the activeJobId Redis write fails.
+        // TCS is signalled by the Moq Callback when the matching Warning fires on the thread pool,
+        // so the test thread yields instead of spinning — no SpinWait, no CPU pressure, no torn reads.
+        var warningFired = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var agent = MakeAgent();
         var jobId = new JobId("job-1");
         _facade.Setup(f => f.GetRun(jobId)).Returns((PipelineRun?)null);
         _facade.Setup(f => f.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", null))
             .Returns(Task.FromException(new InvalidOperationException("Redis down")));
-        // TODO: [WARNING] The "lastJobCompletedAt" call is not configured here, so Moq returns its
-        // default. If Moq's default for a Task-returning method is null (not Task.CompletedTask),
-        // the production .ContinueWith() call on that null reference throws NullReferenceException
-        // synchronously inside HandleJobRejectedAsync before the assertion is reached. Add:
-        //   _facade.Setup(f => f.UpdateAgentFieldAsync(agent.AgentId, "lastJobCompletedAt", It.IsAny<string?>()))
-        //       .Returns(Task.CompletedTask);
-        // to make the isolation explicit and guard against Moq version differences.
+        // Wire the Callback before the act so the TCS is signalled as soon as the continuation fires.
+        // Serilog's Warning<T0,T1>(Exception?, string, T0, T1) overload is matched by concrete types:
+        // T0 = AgentId, T1 = string (field name). It.IsAny<object>() would NOT match here.
+        // T1 is pinned to "activeJobId" so the TCS only fires for the correct ContinueWith block —
+        // both blocks in ResetAgentToIdle share the same message template.
+        _logger
+            .Setup(l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("HandleJobRejectedAsync") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.IsAny<AgentId>(),
+                It.Is<string>(f => f == "activeJobId")))
+            .Callback(() => warningFired.TrySetResult(true));
 
         // Act
         await _sut.HandleJobRejectedAsync(jobId, agent, "reason", CancellationToken.None);
 
-        // Wait deterministically for the thread-pool ContinueWith callback to fire.
-        // Task.FromException produces an already-faulted task so the continuation is queued
-        // to the thread pool immediately after the fire-and-forget discard. SpinWait polls
-        // the mock's Invocations list until the Warning is recorded, avoiding the fixed
-        // 2-second sleep that was susceptible to thread-pool saturation on loaded CI agents.
-        WaitForLoggerWarningContaining(_logger, "HandleJobRejectedAsync");
+        // Await the TCS with a 30 s safety net. Task.FromException produces an already-faulted task,
+        // so the ContinueWith callback is queued to the thread pool immediately. The test thread
+        // blocks here without spinning, giving the thread pool uncontested time to drain the callback.
+        await warningFired.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Assert: a Warning is logged with the exception, method context, AgentId, and field name.
-        // Serilog's Warning<T0,T1>(Exception?, string, T0, T1) overload is selected by the compiler
-        // when two typed structural params are present (agent.AgentId = AgentId, field = string).
-        // Moq resolves generic overloads by concrete type — It.IsAny<object>() would NOT match here.
+        // T1 matcher pins to "activeJobId" to confirm the correct fault path fired, not just any
+        // matching template (both ContinueWith blocks in ResetAgentToIdle share the same template).
         _logger.Verify(
             l => l.Warning(
                 It.IsAny<Exception>(),
-                // TODO: [WARNING] Checking for literal Serilog template tokens ("{AgentId}", "{Field}")
-                // couples the assertion to message-template syntax rather than observable behaviour.
-                // Consider asserting on the rendered AgentId value and field name string instead,
-                // so the test survives message-template refactors that preserve the structured data.
                 It.Is<string>(s => s.Contains("HandleJobRejectedAsync") && s.Contains("{AgentId}") && s.Contains("{Field}")),
-                It.IsAny<AgentId>(),    // T0 = AgentId
-                It.IsAny<string>()),    // T1 = string (field name)
+                It.IsAny<AgentId>(),                        // T0 = AgentId
+                It.Is<string>(f => f == "activeJobId")),    // T1 = string (field name) — pin to faulted field
             Times.Once);
     }
 
@@ -1013,6 +969,7 @@ public sealed class AgentJobLifecycleServiceTests
     {
         // Arrange: the lastJobCompletedAt Redis write fails.
         // activeJobId is explicitly configured to succeed so only one Warning fires.
+        var warningFired = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var agent = MakeAgent();
         var jobId = new JobId("job-1");
         _facade.Setup(f => f.GetRun(jobId)).Returns((PipelineRun?)null);
@@ -1020,22 +977,29 @@ public sealed class AgentJobLifecycleServiceTests
             .Returns(Task.CompletedTask);
         _facade.Setup(f => f.UpdateAgentFieldAsync(agent.AgentId, "lastJobCompletedAt", It.IsAny<string?>()))
             .Returns(Task.FromException(new InvalidOperationException("Redis down")));
+        _logger
+            .Setup(l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("HandleJobRejectedAsync") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()))
+            .Callback(() => warningFired.TrySetResult(true));
 
         // Act
         await _sut.HandleJobRejectedAsync(jobId, agent, "reason", CancellationToken.None);
-        // Use a generous timeout: Task.FromException produces an already-faulted task, so the
-        // ContinueWith callback is queued to the thread pool immediately, but under heavy CI load
-        // (10k+ parallel tests) thread-pool starvation can delay execution past the default 5 s.
-        WaitForLoggerWarningContaining(_logger, "HandleJobRejectedAsync", timeoutMs: 30_000);
+        await warningFired.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
-        // Assert: a Warning is logged for the lastJobCompletedAt fault path
+        // Assert: a Warning is logged for the lastJobCompletedAt fault path.
+        // Times.Once is correct here: TCS WaitAsync does not return until the Callback has fired,
+        // so exactly one Warning has been recorded before Verify runs. AtLeastOnce was a defensive
+        // choice under the old SpinWait approach where the count was uncertain; it is no longer needed.
         _logger.Verify(
             l => l.Warning(
                 It.IsAny<Exception>(),
                 It.Is<string>(s => s.Contains("HandleJobRejectedAsync") && s.Contains("{AgentId}") && s.Contains("{Field}")),
                 It.IsAny<AgentId>(),
                 It.IsAny<string>()),
-            Times.AtLeastOnce);
+            Times.Once);
     }
 
     [Fact]
@@ -1043,11 +1007,7 @@ public sealed class AgentJobLifecycleServiceTests
     {
         // Arrange: the activeJobId Redis write fails in HandleJobCompletedAsync (agent path).
         // orphanRestoredAt and lastJobCompletedAt are not configured to fault, so only one Warning fires.
-        // TODO: [WARNING] Times.Once relies on the Moq default (Task.CompletedTask) for the other two
-        // field writes. Tighten the It.Is<string> predicate to also check s.Contains("activeJobId")
-        // to ensure the correct fault path is verified even if other continuations fire.
-        // TODO: [WARNING] SwapLabelAsync is set up with It.IsAny<CancellationToken>(). Verify this
-        // matches the actual overload called by HandleJobCompletedAsync (3-arg with CancellationToken).
+        var warningFired = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var agent = MakeAgent();
         var jobId = new JobId("job-1");
         var run = MakeRun("job-1");
@@ -1058,10 +1018,17 @@ public sealed class AgentJobLifecycleServiceTests
             .Returns(Task.CompletedTask);
         _facade.Setup(f => f.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", null))
             .Returns(Task.FromException(new InvalidOperationException("Redis down")));
+        _logger
+            .Setup(l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("HandleJobCompletedAsync") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()))
+            .Callback(() => warningFired.TrySetResult(true));
 
         // Act
         await _sut.HandleJobCompletedAsync(jobId, agent, MakePayload(), CancellationToken.None);
-        WaitForLoggerWarningContaining(_logger, "HandleJobCompletedAsync");
+        await warningFired.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Assert: a Warning is logged for the activeJobId fault path
         _logger.Verify(
@@ -1078,10 +1045,7 @@ public sealed class AgentJobLifecycleServiceTests
     {
         // Arrange: the orphanRestoredAt Redis write fails in HandleJobCompletedAsync (agent path).
         // activeJobId and lastJobCompletedAt are not configured to fault.
-        // TODO: [WARNING] Times.Once relies on the Moq default for the other two field writes.
-        // Tighten the It.Is<string> predicate to also check s.Contains("orphanRestoredAt").
-        // TODO: [WARNING] SwapLabelAsync is set up with It.IsAny<CancellationToken>(). Verify this
-        // matches the actual overload called by HandleJobCompletedAsync (3-arg with CancellationToken).
+        var warningFired = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var agent = MakeAgent();
         var jobId = new JobId("job-1");
         var run = MakeRun("job-1");
@@ -1092,10 +1056,17 @@ public sealed class AgentJobLifecycleServiceTests
             .Returns(Task.CompletedTask);
         _facade.Setup(f => f.UpdateAgentFieldAsync(agent.AgentId, "orphanRestoredAt", null))
             .Returns(Task.FromException(new InvalidOperationException("Redis down")));
+        _logger
+            .Setup(l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("HandleJobCompletedAsync") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()))
+            .Callback(() => warningFired.TrySetResult(true));
 
         // Act
         await _sut.HandleJobCompletedAsync(jobId, agent, MakePayload(), CancellationToken.None);
-        WaitForLoggerWarningContaining(_logger, "HandleJobCompletedAsync");
+        await warningFired.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Assert: a Warning is logged for the orphanRestoredAt fault path
         _logger.Verify(
@@ -1112,10 +1083,7 @@ public sealed class AgentJobLifecycleServiceTests
     {
         // Arrange: the lastJobCompletedAt Redis write fails in HandleJobCompletedAsync (agent path).
         // activeJobId and orphanRestoredAt are not configured to fault.
-        // TODO: [WARNING] Times.Once relies on the Moq default for the other two field writes.
-        // Tighten the It.Is<string> predicate to also check s.Contains("lastJobCompletedAt").
-        // TODO: [WARNING] SwapLabelAsync is set up with It.IsAny<CancellationToken>(). Verify this
-        // matches the actual overload called by HandleJobCompletedAsync (3-arg with CancellationToken).
+        var warningFired = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var agent = MakeAgent();
         var jobId = new JobId("job-1");
         var run = MakeRun("job-1");
@@ -1126,10 +1094,17 @@ public sealed class AgentJobLifecycleServiceTests
             .Returns(Task.CompletedTask);
         _facade.Setup(f => f.UpdateAgentFieldAsync(agent.AgentId, "lastJobCompletedAt", It.IsAny<string?>()))
             .Returns(Task.FromException(new InvalidOperationException("Redis down")));
+        _logger
+            .Setup(l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("HandleJobCompletedAsync") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()))
+            .Callback(() => warningFired.TrySetResult(true));
 
         // Act
         await _sut.HandleJobCompletedAsync(jobId, agent, MakePayload(), CancellationToken.None);
-        WaitForLoggerWarningContaining(_logger, "HandleJobCompletedAsync");
+        await warningFired.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Assert: a Warning is logged for the lastJobCompletedAt fault path
         _logger.Verify(
@@ -1144,7 +1119,11 @@ public sealed class AgentJobLifecycleServiceTests
     [Fact]
     public async Task HandleJobCompletedAsync_WhenRunFallbackActiveJobIdUpdateFaults_LogsWarning()
     {
-        // Arrange: agent is null (connection dropped), run fallback path — activeJobId Redis write fails
+        // Arrange: agent is null (connection dropped), run fallback path — activeJobId Redis write fails.
+        // The "run fallback path)" fragment is specific to the ContinueWith warning template and
+        // distinct from the unconditional warning at the bottom of the else-if block, preventing
+        // the TCS from being signalled by the wrong warning under parallel load.
+        var warningFired = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var jobId = new JobId("job-1");
         var run = MakeRun("job-1");
         var fallbackAgentId = new AgentId(run.AgentId!);
@@ -1156,14 +1135,17 @@ public sealed class AgentJobLifecycleServiceTests
             .Returns(Task.CompletedTask);
         _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+        _logger
+            .Setup(l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("run fallback path)")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()))
+            .Callback(() => warningFired.TrySetResult(true));
 
         // Act: agent=null triggers the run-fallback path
         await _sut.HandleJobCompletedAsync(jobId, agent: null, MakePayload(), CancellationToken.None);
-        // Wait for the specific ContinueWith warning template that contains "run fallback path)"
-        // (the unconditional warning at the bottom of the else-if block contains "run fallback"
-        // but not "run fallback path)" — using the more specific fragment prevents the SpinWait
-        // from exiting early on the wrong warning and causing a race under parallel load).
-        WaitForLoggerWarningContaining(_logger, "run fallback path)");
+        await warningFired.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Assert: a Warning is logged for the run-fallback activeJobId fault path
         _logger.Verify(
