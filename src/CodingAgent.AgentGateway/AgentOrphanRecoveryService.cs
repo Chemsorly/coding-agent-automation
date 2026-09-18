@@ -136,15 +136,6 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
             {
                 consolEntry.ActiveJobId = activeJob.RunId;
                 writtenJobId = activeJob.RunId;
-                // TODO: [WARNING] UpdateAgentFieldAsync is called while holding SyncRoot.
-                // On the in-memory path (AgentRegistryService) this reacquires SyncRoot
-                // internally — safe only because Monitor is reentrant on the same thread.
-                // On the distributed path the async continuation escapes the lock and may
-                // complete after TransitionStatus, causing transient persisted-state skew
-                // (reconciliation corrects this, but it is an ordering hazard).
-                // Consider hoisting the persistence write outside the lock to make ordering
-                // explicit and remove the nested-lock coupling.
-                _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
             }
             // TODO: [WARNING] This read of consolEntry.ActiveJobId is outside SyncRoot and
             // is therefore a data race: any other thread may write ActiveJobId simultaneously.
@@ -153,8 +144,32 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
             // check is not race-free.  For a race-free guard, perform the read inside the
             // lock or use Volatile.Read.  In practice .NET's strong memory model on x86/x64
             // makes the race benign, but the pattern deviates from the documented lock discipline.
+            // TODO: [WARNING] Behavioral change from pre-fix baseline: UpdateAgentFieldAsync is now
+            // conditional on the TOCTOU guard (consolEntry.ActiveJobId == writtenJobId). Before the
+            // fix, the Redis write fired unconditionally inside the lock even if a concurrent disconnect
+            // handler cleared ActiveJobId afterward. Post-fix, if a concurrent disconnect clears
+            // ActiveJobId between lock release and this guard, the Redis write is skipped entirely.
+            // This is intentional (no point writing a stale activeJobId when the agent has been
+            // cleared), but it is a scope expansion beyond "move the call outside the lock." Confirm
+            // this conditional suppression is the desired behavior; if only lock-ordering was required,
+            // the write should remain unconditional (guarded only by the outer null-entry check).
             if (consolEntry.ActiveJobId == writtenJobId)
+            {
                 _facade.TransitionStatus(agentId, AgentStatus.Busy);
+                // UpdateAgentFieldAsync is called AFTER TransitionStatus and outside the lock:
+                // the async continuation must not escape the lock scope and potentially
+                // overwrite the Busy status already written to Redis by TransitionStatus.
+                // TODO: [WARNING] The returned Task is discarded (fire-and-forget). If the async
+                // operation faults, the exception is silently swallowed and will not propagate to
+                // any caller. Consider making RestoreConsolidationTracking async Task and awaiting
+                // this call, or attaching a fault-logging continuation:
+                // .ContinueWith(t => _logger.Error(t.Exception, "..."), TaskContinuationOptions.OnlyOnFaulted).
+                // TODO: [WARNING] CancellationToken is not threaded through to UpdateAgentFieldAsync.
+                // RecoverOrphanedStateAsync does not accept a CancellationToken, so this is a structural
+                // limitation at the call site. If cancellation support is added to the enclosing method,
+                // propagate the token here.
+                _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", writtenJobId);
+            }
         }
 
         _changeNotifier.NotifyChange();
@@ -192,15 +207,6 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
             {
                 restoredEntry.ActiveJobId = activeJob.RunId;
                 writtenJobId = activeJob.RunId;
-                // TODO: [WARNING] UpdateAgentFieldAsync is called while holding SyncRoot.
-                // On the in-memory path (AgentRegistryService) this reacquires SyncRoot
-                // internally — safe only because Monitor is reentrant on the same thread.
-                // On the distributed path the async continuation escapes the lock and may
-                // complete after TransitionStatus, causing transient persisted-state skew
-                // (reconciliation corrects this, but it is an ordering hazard).
-                // Consider hoisting the persistence write outside the lock to make ordering
-                // explicit and remove the nested-lock coupling.
-                _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
             }
             // TODO: [WARNING] This read of restoredEntry.ActiveJobId is outside SyncRoot and
             // is therefore a data race: any other thread may write ActiveJobId simultaneously.
@@ -209,8 +215,32 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
             // check is not race-free.  For a race-free guard, perform the read inside the
             // lock or use Volatile.Read.  In practice .NET's strong memory model on x86/x64
             // makes the race benign, but the pattern deviates from the documented lock discipline.
+            // TODO: [WARNING] Behavioral change from pre-fix baseline: UpdateAgentFieldAsync is now
+            // conditional on the TOCTOU guard (restoredEntry.ActiveJobId == writtenJobId). Before the
+            // fix, the Redis write fired unconditionally inside the lock even if a concurrent disconnect
+            // handler cleared ActiveJobId afterward. Post-fix, if a concurrent disconnect clears
+            // ActiveJobId between lock release and this guard, the Redis write is skipped entirely.
+            // This is intentional (no point writing a stale activeJobId when the agent has been
+            // cleared), but it is a scope expansion beyond "move the call outside the lock." Confirm
+            // this conditional suppression is the desired behavior; if only lock-ordering was required,
+            // the write should remain unconditional (guarded only by the outer null-entry check).
             if (restoredEntry.ActiveJobId == writtenJobId)
+            {
                 _facade.TransitionStatus(agentId, AgentStatus.Busy);
+                // UpdateAgentFieldAsync is called AFTER TransitionStatus and outside the lock:
+                // the async continuation must not escape the lock scope and potentially
+                // overwrite the Busy status already written to Redis by TransitionStatus.
+                // TODO: [WARNING] The returned Task is discarded (fire-and-forget). If the async
+                // operation faults, the exception is silently swallowed and will not propagate to
+                // any caller. Consider making RestorePipelineRun async Task and awaiting this call,
+                // or attaching a fault-logging continuation:
+                // .ContinueWith(t => _logger.Error(t.Exception, "..."), TaskContinuationOptions.OnlyOnFaulted).
+                // TODO: [WARNING] CancellationToken is not threaded through to UpdateAgentFieldAsync.
+                // RecoverOrphanedStateAsync does not accept a CancellationToken, so this is a structural
+                // limitation at the call site. If cancellation support is added to the enclosing method,
+                // propagate the token here.
+                _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", writtenJobId);
+            }
         }
 
         _logger.Information(
