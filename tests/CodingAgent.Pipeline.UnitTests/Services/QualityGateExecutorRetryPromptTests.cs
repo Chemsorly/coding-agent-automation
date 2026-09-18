@@ -96,4 +96,48 @@ public class QualityGateExecutorRetryPromptTests
             prompt.Should().Contain("Apply the targeted fix");
         }
     }
+
+    /// <summary>
+    /// AC: BuildQualityGateRetryPrompt with null Tests does not throw and omits the Tests line.
+    /// Simulates a QGC configured with only a BuildCommand (no TestCommand) — MessagePack
+    /// deserialization bypasses the 'required' constraint and leaves Tests null.
+    /// </summary>
+    [Fact]
+    public void BuildQualityGateRetryPrompt_WhenTestsIsNull_DoesNotThrow_AndOmitsTestsLine()
+    {
+        var report = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = false, Details = "Build failed" },
+            Tests = null! // Simulates legacy MessagePack deserialization (bypasses 'required' constraint)
+        };
+
+        var act = () => QualityGateExecutor.BuildQualityGateRetryPrompt(report, 1, 3, hasQualityGateOutput: true);
+
+        act.Should().NotThrow();
+        var prompt = act();
+        prompt.Should().NotContain("- Tests:");
+        prompt.Should().Contain("- Compilation: FAILED");
+    }
+
+    /// <summary>
+    /// AC: The priorRetryErrors overload of BuildQualityGateRetryPrompt handles null Tests without
+    /// throwing. The overload derives hasQualityGateOutput internally via report.Tests?.IsInfrastructureFailure;
+    /// this test verifies the null-conditional guard on that derivation path.
+    /// </summary>
+    [Fact]
+    public void BuildQualityGateRetryPrompt_PriorErrorsOverload_WhenTestsIsNull_DoesNotThrow_AndOmitsTestsLine()
+    {
+        var report = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = false, Details = "Build failed" },
+            Tests = null! // Simulates legacy MessagePack deserialization (bypasses 'required' constraint)
+        };
+
+        var act = () => QualityGateExecutor.BuildQualityGateRetryPrompt(report, 1, 3, priorRetryErrors: null);
+
+        act.Should().NotThrow();
+        var prompt = act();
+        prompt.Should().NotContain("- Tests:");
+        prompt.Should().Contain("- Compilation: FAILED");
+    }
 }

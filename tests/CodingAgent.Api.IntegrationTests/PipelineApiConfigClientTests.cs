@@ -104,6 +104,25 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
             e.RequestMessage.Path == "/api/config/pipeline");
     }
 
+    [Fact]
+    public async Task SavePipelineConfigAsync_NonSuccessResponse_ThrowsInvalidOperationExceptionWithBody()
+    {
+        const string errorBody = "AgentTimeout must be at least 60 seconds";
+        _server.Given(Request.Create().WithPath("/api/config/pipeline").UsingPut())
+            .RespondWith(Response.Create()
+                .WithStatusCode(400)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(errorBody));
+
+        var config = new PipelineConfiguration { MaxRetries = 3 };
+        var act = () => _client.SavePipelineConfigAsync(config);
+
+        await act.Should().ThrowAsync<InvalidOperationException>(
+            "a non-2xx response must surface as an exception so callers are not silently swallowed")
+            .WithMessage($"*{errorBody}*",
+                "the exception message must include the response body so operators can diagnose the failure");
+    }
+
     // ── GetProviderConfigsAsync ────────────────────────────────────────────────
 
     [Fact]

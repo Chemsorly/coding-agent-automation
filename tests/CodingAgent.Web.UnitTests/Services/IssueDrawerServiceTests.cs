@@ -408,7 +408,9 @@ public class IssueDrawerServiceTests
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = (items ?? Enumerable.Empty<IssueSummary>()).ToList(),
-                HasMore = hasMore, Page = 1, PageSize = 15
+                HasMore = hasMore,
+                Page = 1,
+                PageSize = 15
             });
         mockProvider.Setup(p => p.ListRepositoryLabelsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<string>());
@@ -448,6 +450,7 @@ public class IssueDrawerServiceTests
     ///   3. Proceed with orchestration dispatch and succeed.
     /// This verifies the fix for the self-reinforcing cancellation loop: without the label clear,
     /// DispatchLoop would see agent:cancelled, cancel the WorkItem, and stamp agent:cancelled again.
+    /// Note: agent:epic-review is intentionally excluded — it is blocked entirely, not cleared+requeued.
     /// </summary>
     [Theory]
     [InlineData(AgentLabels.Cancelled)]
@@ -509,6 +512,72 @@ public class IssueDrawerServiceTests
             It.IsAny<CancellationToken>()),
             Times.Once,
             $"{blockingLabel} must be removed from the issue before WorkItem creation");
+    }
+
+    /// <summary>
+    /// Manual dispatch of an issue carrying agent:epic-review must be rejected with a clean
+    /// error before any label manipulation or WorkItem creation occurs. agent:epic-review marks
+    /// an issue awaiting human approval of an epic plan; re-dispatching it as an implementation
+    /// job would bypass the approval gate. The UI dispatch button should be disabled for such
+    /// issues, but even if the API is called directly the response must be a clear failure.
+    /// </summary>
+    [Fact]
+    public async Task DispatchIssueAsync_WithEpicReviewLabel_ReturnsError_BeforeDispatch()
+    {
+        // Arrange — issue is in the epic-review state
+        var issue = new IssueSummary
+        {
+            Identifier = "99",
+            Title = "Epic issue awaiting approval",
+            Labels = new[] { AgentLabels.EpicReview }
+        };
+        var template = MakeTemplate();
+
+        var mockProvider = new Mock<IIssueProvider>();
+        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockProvider.Object);
+
+        // TODO: This mock returns NoDependencies so execution reaches the EpicReview guard.
+        // However, the test does not assert on *ordering* between the dependency check and the
+        // EpicReview guard. If the guards were ever swapped (EpicReview check moved before the
+        // dependency check), this test would still pass trivially. Consider adding a companion
+        // test where the issue has blocked dependencies AND agent:epic-review, asserting that
+        // the EpicReview rejection message is returned — not the "blocked by dependencies" message
+        // — to verify the EpicReview guard fires first.
+        _mockDependencyChecker
+            .Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(),
+                It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+
+        _service.SetProviderContext(IssueProviders, RepoProviders);
+
+        // Act
+        var (success, error, _) = await _service.DispatchIssueAsync(issue, template, IssueProviders, RepoProviders, null);
+
+        // Assert — dispatch is rejected with a descriptive error
+        Assert.False(success, "Dispatch must be rejected for agent:epic-review issues");
+        Assert.NotNull(error);
+        // TODO: This assertion only verifies the label name appears in the error string. It would
+        // pass even if the message were changed to something unhelpful (e.g., "EpicReview blocked").
+        // The acceptance criterion requires a "clean error", making the message content observable
+        // behavior. Consider strengthening to Assert.Contains("human approval", error, ...) or
+        // Assert.Contains("epic approval workflow", error, ...) to pin the actionable content.
+        Assert.Contains(AgentLabels.EpicReview, error, StringComparison.OrdinalIgnoreCase);
+
+        // No label mutations must have occurred
+        mockProvider.Verify(p => p.AddLabelAsync(
+            It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "Label management must not fire for epic-review issues — dispatch is blocked before the label-clear path");
+        mockProvider.Verify(p => p.RemoveLabelAsync(
+            It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "Label management must not fire for epic-review issues — dispatch is blocked before the label-clear path");
+
+        // Orchestration must not have been invoked
+        _mockDispatchOrchestration.Verify(d => d.PrepareDistributionRequestAsync(
+            It.IsAny<ImplementationDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "Orchestration must not be reached for epic-review issues");
     }
 
     /// <summary>

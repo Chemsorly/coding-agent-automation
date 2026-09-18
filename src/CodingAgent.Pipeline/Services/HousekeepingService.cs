@@ -246,15 +246,10 @@ public sealed class HousekeepingService : IHousekeepingService
             // branches are safe to update. Branch updates are skipped for this cycle (Steps 6a and 6b).
             // Requirement: "If branch name data is unavailable, housekeeping MUST default to
             // conservative behavior: skip branch updates for PRs where branch state cannot be confirmed."
-            // NOTE: The Scheduler-deployment path reaches here when GET /api/pipeline-runs/active-branches
-            //   fails (API pod down, auth misconfiguration, 5xx, etc.). The conservative skip covers correctness,
-            //   but the root causes should also be addressed:
-            //   1. PipelineApiRunHistoryClient.GetActiveBranchesAsync uses GetFromJsonAsync which silently
-            //      returns null (→ []) on non-2xx responses instead of throwing — add EnsureSuccessStatusCode()
-            //      before deserialization so HTTP errors propagate and trigger this conservative path.
-            //   2. The /api/pipeline-runs/active-branches endpoint requires ApiAuthPolicies.Operator — the
-            //      Scheduler HttpClient must authenticate with an operator-tier key, not an agent-tier key,
-            //      or 403s will be silently swallowed as empty lists.
+            // The Scheduler-deployment path reaches here when GET /api/pipeline-runs/active-branches
+            // fails (API pod down, 5xx, or 403 from a misconfigured auth key). PipelineApiRunHistoryClient
+            // uses GetAsync + EnsureSuccessStatusCode so non-2xx responses propagate as HttpRequestException
+            // and reach this catch block rather than being silently swallowed as empty lists.
             _logger.Warning(ex,
                 "HousekeepingService: failed to get active runs for branch exclusion; skipping all branch updates AND conflict rework this cycle (conservative fallback)");
             activeRunBranches = [];

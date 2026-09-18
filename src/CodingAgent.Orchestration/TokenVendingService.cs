@@ -253,15 +253,17 @@ public sealed partial class TokenVendingService : ITokenVendingService
 
             if (!response.IsSuccessStatusCode)
             {
+                const int MaxErrorBodyLength = 500;
                 var errorBody = await response.Content.ReadAsStringAsync(ct);
-                // TODO [WARNING]: errorBody is logged and embedded in the exception message without length capping.
-                // For 4xx responses GitHub may reflect request content in the error body, which could include
-                // credential-adjacent data. Cap errorBody length before logging to prevent log injection from
-                // very large responses and limit exposure of upstream diagnostic information. (SecurityReviewer warning)
+                var safeErrorBody = errorBody.Length > MaxErrorBodyLength
+                    ? errorBody[..MaxErrorBodyLength] + "…"
+                    : errorBody;
                 _logger.Error("GitHub token exchange failed for installation {InstallationId} with HTTP {StatusCode}: {ErrorBody}",
-                    installationId, (int)response.StatusCode, errorBody);
+                    installationId, (int)response.StatusCode, safeErrorBody);
                 throw new HttpRequestException(
-                    $"GitHub token exchange failed (HTTP {(int)response.StatusCode}): {errorBody}");
+                    $"GitHub token exchange failed (HTTP {(int)response.StatusCode}): {safeErrorBody}",
+                    inner: null,
+                    statusCode: response.StatusCode);
             }
 
             var responseJson = await response.Content.ReadAsStringAsync(ct);
@@ -283,14 +285,16 @@ public sealed partial class TokenVendingService : ITokenVendingService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            // TODO [WARNING]: activity?.AddException(ex) records the full exception onto the OTel trace span.
-            // For HttpRequestException failures, ex.Message contains the raw GitHub error response body
-            // (constructed with the full errorBody string). Depending on the OTLP collector configuration
-            // and who has read access to traces, this may leak upstream diagnostic information.
-            // Consider truncating errorBody before embedding it in the exception message, or recording
-            // a sanitised summary on the span instead of the full exception. (SecurityReviewer warning)
-            activity?.AddException(ex);
+            var statusCode = (ex as HttpRequestException)?.StatusCode;
+            var spanMessage = statusCode.HasValue
+                ? $"GitHub token exchange failed (HTTP {(int)statusCode.Value})"
+                : "GitHub token exchange failed";
+            activity?.SetStatus(ActivityStatusCode.Error, spanMessage);
+            // TODO [WARNING]: AddException wraps the original HttpRequestException as InnerException. The OTel SDK
+            // serialises the full exception tree by default, so safeErrorBody (≤501 chars) is still reachable via
+            // the inner exception chain in traces. Use activity?.AddException(new Exception(spanMessage)) without
+            // an inner exception to fully suppress the truncated body from OTLP backends if required.
+            activity?.AddException(new Exception(spanMessage, ex));
             PipelineTelemetry.TokenVendingFailures.Add(1);
             throw;
         }

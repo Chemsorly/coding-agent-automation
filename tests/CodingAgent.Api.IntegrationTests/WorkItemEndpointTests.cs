@@ -884,6 +884,103 @@ public sealed class WorkItemEndpointTests
     // asserts HTTP 200 with InitiatedBy == null and IssueTitle == null for that entity. This validates the
     // catch (JsonException) guard and ensures a regression that removes it would be caught.
 
+    /// <summary>
+    /// The SQL fallback <c>|| (w.DispatchedAt == null &amp;&amp; w.CreatedAt &lt; cutoff)</c>
+    /// in GetActiveWorkItems must return a Running item with null DispatchedAt once its
+    /// CreatedAt exceeds the olderThanSeconds cutoff.
+    /// Covers the untested 1C-001 path added to guard against NULL &lt; cutoff being falsy in SQL.
+    /// Also verifies that CreatedAt is included in the response DTO.
+    /// </summary>
+    [Fact]
+    public async Task GetActiveWorkItems_NullDispatchedAt_OlderThanCutoff_IsReturnedWithCreatedAt()
+    {
+        var createdAt = DateTimeOffset.UtcNow.AddSeconds(-300);
+        Guid entityId;
+        // TODO [WARNING]: synchronous `using` wrapping an async operation — if the scheduler yields
+        // inside SaveChangesAsync the context may be disposed mid-operation, causing an
+        // ObjectDisposedException. Change to `await using var db = _factory.CreateDbContext();`
+        // (or the block form `await using (var db = ...)`) to ensure async disposal.
+        // (DotNetSpecialist review [WARNING])
+        using (var db = _factory.CreateDbContext())
+        {
+            var entity = new WorkItemEntity
+            {
+                Id = Guid.NewGuid(),
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = $"issue-{Guid.NewGuid():N}",
+                IssueProviderConfigId = "prov-seed",
+                Status = WorkItemStatus.Running,
+                Payload = JsonSerializer.Serialize(MakeRequest(), PipelineJsonOptions.Default),
+                AgentSelector = "",
+                TimeoutSeconds = 3600,
+                CreatedAt = createdAt,
+                DispatchedAt = null // never written — the bug scenario
+            };
+            db.WorkItems.Add(entity);
+            await db.SaveChangesAsync();
+            entityId = entity.Id;
+        }
+
+        // olderThanSeconds=60: CreatedAt is 300s old, so it should be returned via the SQL fallback
+        var response = await _client.GetAsync("/api/work-items/active?olderThanSeconds=60");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await response.Content.ReadFromJsonAsync<List<ActiveWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+        var found = items!.FirstOrDefault(i => i.Id == entityId);
+        found.Should().NotBeNull(
+            "a null-DispatchedAt Running item with CreatedAt older than the cutoff must be returned " +
+            "via the SQL fallback (w.DispatchedAt == null && w.CreatedAt < cutoff)");
+        found!.DispatchedAt.Should().BeNull("DispatchedAt was not set");
+        found.CreatedAt.Should().NotBeNull("CreatedAt must be projected into ActiveWorkItemDto");
+        found.CreatedAt!.Value.Should().BeCloseTo(createdAt, TimeSpan.FromSeconds(2),
+            "CreatedAt in the DTO must match the entity's CreatedAt");
+    }
+
+    /// <summary>
+    /// A null-DispatchedAt item whose CreatedAt is within the olderThanSeconds cutoff
+    /// must NOT be returned — it has not yet aged out of the grace period at the SQL layer.
+    /// </summary>
+    [Fact]
+    public async Task GetActiveWorkItems_NullDispatchedAt_WithinCutoff_IsNotReturned()
+    {
+        Guid entityId;
+        // TODO [WARNING]: synchronous `using` wrapping an async operation — same IAsyncDisposable
+        // mismatch as GetActiveWorkItems_NullDispatchedAt_OlderThanCutoff_IsReturnedWithCreatedAt above.
+        // Change to `await using var db = _factory.CreateDbContext();` to avoid potential
+        // ObjectDisposedException if the context is disposed while SaveChangesAsync is in-flight.
+        // (DotNetSpecialist review [WARNING])
+        using (var db = _factory.CreateDbContext())
+        {
+            var entity = new WorkItemEntity
+            {
+                Id = Guid.NewGuid(),
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = $"issue-{Guid.NewGuid():N}",
+                IssueProviderConfigId = "prov-seed",
+                Status = WorkItemStatus.Running,
+                Payload = JsonSerializer.Serialize(MakeRequest(), PipelineJsonOptions.Default),
+                AgentSelector = "",
+                TimeoutSeconds = 3600,
+                CreatedAt = DateTimeOffset.UtcNow, // just created — within any reasonable cutoff
+                DispatchedAt = null
+            };
+            db.WorkItems.Add(entity);
+            await db.SaveChangesAsync();
+            entityId = entity.Id;
+        }
+
+        // olderThanSeconds=60: CreatedAt is ~0s old, so it should NOT be returned
+        var response = await _client.GetAsync("/api/work-items/active?olderThanSeconds=60");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await response.Content.ReadFromJsonAsync<List<ActiveWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+        items!.Should().NotContain(i => i.Id == entityId,
+            "a null-DispatchedAt item whose CreatedAt is within the olderThanSeconds cutoff " +
+            "must not be returned — it is not yet eligible for grace-window escalation");
+    }
+
     // ── LabelSwap ─────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -1506,5 +1603,121 @@ public sealed class WorkItemEndpointTests
         items.Should().NotBeNull();
         items!.Should().NotContain(i => i.Id == running.Id,
             "non-Pending consolidation items must not appear in the pending queue");
+    }
+
+    /// <summary>
+    /// AC: GET /api/work-items/pending applies RunType tier ordering as the primary sort:
+    /// Review &gt; Decomposition &gt; Implementation &gt; Consolidation, regardless of CreatedAt.
+    /// Within the same tier, higher PriorityWeight comes first (secondary sort).
+    /// Decision: decisions.md "Dispatch priority: static ordering Review > Decomposition > Implementation > Consolidation"
+    /// and "PriorityWeight: secondary sort key within RunType tier".
+    /// </summary>
+    [Fact]
+    public async Task GetPendingWorkItems_OrderedByRunTypeTierThenPriorityWeightThenCreatedAt()
+    {
+        var prefix = $"tier-order-{Guid.NewGuid():N}";
+        var base_ = DateTimeOffset.UtcNow.AddMinutes(-30);
+
+        // Seed one item per tier — all at PriorityWeight=0, Consolidation created first (oldest).
+        // Expected order after tier sort: Review, Decomposition, Implementation, Consolidation.
+        var consolidation = SeedEntity(WorkItemStatus.Pending,
+            issueIdentifier: $"{prefix}-consolidation",
+            taskType: WorkItemTaskType.Consolidation,
+            createdAt: base_);
+        var implementation = SeedEntity(WorkItemStatus.Pending,
+            issueIdentifier: $"{prefix}-implementation",
+            taskType: WorkItemTaskType.Implementation,
+            createdAt: base_.AddMinutes(1));
+        var decomposition = SeedEntity(WorkItemStatus.Pending,
+            issueIdentifier: $"{prefix}-decomposition",
+            taskType: WorkItemTaskType.Decomposition,
+            createdAt: base_.AddMinutes(2));
+        var review = SeedEntity(WorkItemStatus.Pending,
+            issueIdentifier: $"{prefix}-review",
+            taskType: WorkItemTaskType.Review,
+            createdAt: base_.AddMinutes(3));
+
+        // Seed a second Implementation at higher PriorityWeight to verify within-tier secondary sort.
+        var highWeightImpl = SeedEntity(WorkItemStatus.Pending,
+            issueIdentifier: $"{prefix}-implementation-high",
+            taskType: WorkItemTaskType.Implementation,
+            createdAt: base_.AddMinutes(4));
+        highWeightImpl = UpdateEntityPriorityWeight(highWeightImpl.Id, 100);
+
+        var response = await _client.GetAsync("/api/work-items/pending?maxResults=500");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await response.Content.ReadFromJsonAsync<List<PendingWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+
+        // Filter to just the fixture items in original list order.
+        var fixtureIds = new HashSet<Guid> { review.Id, decomposition.Id, implementation.Id, consolidation.Id, highWeightImpl.Id };
+        var fixture = items!.Where(i => fixtureIds.Contains(i.Id)).ToList();
+        fixture.Should().HaveCount(5, "all 5 seeded items must be in the pending list");
+
+        var reviewIdx       = fixture.FindIndex(i => i.Id == review.Id);
+        var decompIdx       = fixture.FindIndex(i => i.Id == decomposition.Id);
+        var highWeightIdx   = fixture.FindIndex(i => i.Id == highWeightImpl.Id);
+        var implIdx         = fixture.FindIndex(i => i.Id == implementation.Id);
+        var consolidIdx     = fixture.FindIndex(i => i.Id == consolidation.Id);
+
+        // Tier ordering: Review < Decomposition < Implementation(both) < Consolidation
+        reviewIdx.Should().BeLessThan(decompIdx,       "Review must come before Decomposition");
+        decompIdx.Should().BeLessThan(highWeightIdx,   "Decomposition must come before Implementation");
+        decompIdx.Should().BeLessThan(implIdx,         "Decomposition must come before Implementation");
+        // Within Implementation tier: higher PriorityWeight dispatches first
+        highWeightIdx.Should().BeLessThan(implIdx,
+            "high-weight Implementation (100) must precede low-weight Implementation (0) within the tier");
+        implIdx.Should().BeLessThan(consolidIdx,       "Implementation must come before Consolidation");
+    }
+
+    /// <summary>
+    /// Starvation boundary: when 51 Review items are pending and maxResults=50, the Take(50)
+    /// window fills entirely with Reviews and the single Implementation item is absent.
+    /// This documents the intentional starvation contract: lower-tier items are invisible to
+    /// the WorkItemDispatchPoller for that cycle whenever a higher tier has 50+ pending items.
+    /// Decision: decisions.md "Dispatch priority: static ordering Review > Decomposition > Implementation > Consolidation".
+    /// </summary>
+    [Fact]
+    public async Task GetPendingWorkItems_HighTierBacklogFillsWindow_LowerTierItemAbsent()
+    {
+        var prefix = $"starvation-{Guid.NewGuid():N}";
+        var base_ = DateTimeOffset.UtcNow.AddMinutes(-60);
+
+        // Seed 51 Review items (one more than the default maxResults=50 window).
+        var reviewIds = new List<Guid>();
+        for (var i = 0; i < 51; i++)
+        {
+            var r = SeedEntity(WorkItemStatus.Pending,
+                issueIdentifier: $"{prefix}-review-{i}",
+                taskType: WorkItemTaskType.Review,
+                createdAt: base_.AddSeconds(i));
+            reviewIds.Add(r.Id);
+        }
+
+        // Seed one Implementation item — older than all Reviews, PriorityWeight=0.
+        // Without tier ordering it would rank near the top (older CreatedAt).
+        // With tier ordering it is pushed out of the 50-slot window.
+        var impl = SeedEntity(WorkItemStatus.Pending,
+            issueIdentifier: $"{prefix}-implementation",
+            taskType: WorkItemTaskType.Implementation,
+            createdAt: base_.AddMinutes(-10));
+
+        var response = await _client.GetAsync("/api/work-items/pending?maxResults=50");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await response.Content.ReadFromJsonAsync<List<PendingWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+        items!.Count.Should().BeLessThanOrEqualTo(50);
+
+        // The Implementation item must NOT appear — the 50-slot window is fully consumed by Reviews.
+        items.Should().NotContain(i => i.Id == impl.Id,
+            "the Implementation item must be absent from the maxResults=50 window when 51 Review items are pending");
+
+        // All returned items must be Review tier (within the fixture, at least).
+        // Verify the 50 Review fixture items that made it into the window are Review type.
+        var fixtureReviews = items.Where(i => reviewIds.Contains(i.Id)).ToList();
+        fixtureReviews.Should().OnlyContain(i => i.TaskType == WorkItemTaskType.Review,
+            "items appearing in the window from our fixture must all be Review tier");
     }
 }

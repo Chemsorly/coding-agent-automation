@@ -150,18 +150,12 @@ public partial class QualityGateExecutor
     {
         var run = context.Run;
         report = await WaitForPostPrCiAsync(context, report, linkedCt);
-        if (run.CurrentStep == PipelineStep.Failed) return;
+        if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart) return;
 
         if (!report.AllPassed)
         {
             report = await RunRetryLoopAsync(context, report, "Post-PR CI retry agent", linkedCt);
-            // TODO [WARNING]: Guard is missing for ConflictRestart. If AppendExternalCiIfNeededAsync
-            // sets ConflictRestart during the post-PR retry loop, RunRetryLoopAsync returns early
-            // (via the inner guard at line ~491), but this call site only checks for Failed.
-            // The !report.AllPassed condition below will be true (ExternalCi.Passed=false on conflict),
-            // causing FinalizeDraftPrAsync to be called on a run already re-queued via agent:next.
-            // Fix: change to `if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart) return;`
-            if (run.CurrentStep == PipelineStep.Failed) return;
+            if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart) return;
 
             if (!report.AllPassed)
                 await FinalizeDraftPrAsync(context, run, report, "post-PR CI failed after retries", linkedCt);
@@ -646,17 +640,13 @@ public partial class QualityGateExecutor
         run.QualityGateHistory.Enqueue(report);
         callbacks.EmitOutputLine(PipelineFormatting.FormatQualityGateSummary(report));
 
-        // TODO [WARNING]: report.Tests is dereferenced without a null-conditional in the log call and
-        // EmitGateEvaluation below. A QGC configured with only a BuildCommand (no TestCommand) produces
-        // a report where Tests is null, which will throw NullReferenceException here. Apply the same
-        // null-conditional guard used for ExternalCi (null check before EmitGateEvaluation).
-        // See review finding: DotNetSpecialist WARNING — QualityGateExecutor.RetryLoop.cs LogAndRecordReport
         _logger.Information("Pipeline {RunId} {Phase}: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}, ExternalCi={ExternalCiResult}",
-            run.RunId, phase, report.AllPassed, report.Compilation.Passed, report.Tests.Passed,
+            run.RunId, phase, report.AllPassed, report.Compilation.Passed, FormatGateLogValue(report.Tests),
             FormatGateLogValue(report.ExternalCi));
 
         EmitGateEvaluation(PipelineTelemetry.QualityGateNames.Compilation, report.Compilation.Passed);
-        EmitGateEvaluation(PipelineTelemetry.QualityGateNames.Tests, report.Tests.Passed);
+        if (report.Tests is not null)
+            EmitGateEvaluation(PipelineTelemetry.QualityGateNames.Tests, report.Tests.Passed);
         if (report.ExternalCi is not null)
             EmitGateEvaluation(PipelineTelemetry.QualityGateNames.ExternalCi, report.ExternalCi.Passed);
 

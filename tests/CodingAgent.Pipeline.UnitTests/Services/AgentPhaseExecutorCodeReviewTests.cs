@@ -317,9 +317,10 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
     [Fact]
     public async Task CodeReview_SequentialException_SingleAgent_IterationCompletesWithFailureResult()
     {
-        // After the fix, ExecuteSingleReviewAgentSafeAsync catches the exception and returns Failure.
-        // The iteration completes normally (no loop break) — the Failure result has no findings,
-        // FixPrompt=null produces Skip (loop continues), so all MaxIterations run.
+        // When all agents in an iteration crash, the all-crash guard fires and returns early from
+        // RunReviewLoopAsync. With a single agent that always throws, the guard fires in iteration 1
+        // and exits the loop — remaining iterations are skipped (a structural crash is unlikely to
+        // resolve by retrying). The summary agent still runs after RunReviewLoopAsync returns.
         _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .ThrowsAsync(new InvalidOperationException("agent crashed"));
 
@@ -327,11 +328,12 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
 
         await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
 
-        // FixPrompt=null → Skip (loop continues all 3 iterations), each iteration: 1 review call.
-        // Then 1 summary call = 4 total.
-        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(4));
-        // All 3 iterations complete (Failure result is returned, not thrown).
-        _run.CodeReviewIterationsCompleted.Should().Be(3);
+        // 1 review call (iteration 1) + 1 summary call = 2 total.
+        // Iterations 2 and 3 are skipped because the all-crash guard exits RunReviewLoopAsync after
+        // iteration 1.
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(2));
+        // Only iteration 1 was counted (guard fires after CodeReviewIterationsCompleted++).
+        _run.CodeReviewIterationsCompleted.Should().Be(1);
         // No findings recorded for crashed agents.
         _run.CodeReviewCriticalCount.Should().Be(0);
         _run.CodeReviewWarningCount.Should().Be(0);
@@ -541,6 +543,104 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
         var fullPath = Path.Combine(_workspacePath, relativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         File.WriteAllText(fullPath, content);
+    }
+
+    // TODO: Add tests verifying that follow-up agent (ExecuteFollowUpAsync) and review-summary agent
+    // (GenerateReviewSummarySafeAsync) in AgentPhaseExecutor.CodeReview.cs also forward
+    // EnvironmentVariables = context.InjectedSecrets. A regression removing EnvironmentVariables from
+    // either of those two sites would not be caught by the tests below, which only exercise the fix
+    // agent path in CodeReviewOrchestrator.SendFixPromptAsync. (review finding: TestQualityReviewer / Correctness)
+    [Fact]
+    public async Task CodeReview_WithInjectedSecrets_ForwardsEnvironmentVariablesToFixAgent()
+    {
+        // Arrange
+        // TODO: Consider refactoring this inline AgentPhaseContext construction to use BuildContext() with
+        // an InjectedSecrets override, to avoid silent divergence if BuildContext() gains required invariants.
+        // The inline construction was necessary because BuildContext() does not accept an InjectedSecrets
+        // parameter. (review finding: DotNetSpecialist)
+        var injectedSecrets = new Dictionary<string, string> { ["NUGET_KEY"] = "secret-value" };
+        var context = new AgentPhaseContext
+        {
+            Run = _run,
+            Config = _config,
+            AgentProvider = _mockAgent.Object,
+            IssueOps = _mockIssueOps.Object,
+            Callbacks = _mockCallbacks.Object,
+            OrchestratorCts = null,
+            Issue = new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "Test requirements", AcceptanceCriteria = new[] { "AC1" } },
+            InjectedSecrets = injectedSecrets
+        };
+
+        AgentRequest? capturedFixAgentRequest = null;
+        var callCount = 0;
+
+        // TODO: The ordinal-based capture (callCount == 2 = fix agent) is fragile: if the orchestrator
+        // gains an additional pre-fix agent call or SupportsParallelExecution changes, the ordinal silently
+        // shifts. Consider identifying the fix agent by req.Phase == "fix" instead of by call position.
+        // (review finding: Correctness / TestQualityReviewer)
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, ct, _) =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    // Call 1: review agent — write a [CRITICAL] finding to trigger fix dispatch
+                    WriteFindingsFile("correctness", "[CRITICAL] Critical bug found");
+                }
+                else if (callCount == 2)
+                {
+                    // Call 2: fix agent — capture the request
+                    capturedFixAgentRequest = req;
+                }
+                // Call 3: review summary agent (no action needed)
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        // Act
+        await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers("Correctness"));
+
+        // Assert: fix agent was called (call 2)
+        callCount.Should().BeGreaterThanOrEqualTo(2, "fix agent must have been dispatched after [CRITICAL] finding");
+        capturedFixAgentRequest.Should().NotBeNull("fix agent request must have been captured");
+        // TODO: The null-forgiving operator (!) on the next line bypasses the NotBeNull() guard above —
+        // if capturedFixAgentRequest is null, a NullReferenceException is thrown instead of a clear assertion
+        // failure. Reorder assertions (NotBeNull first) or replace ! with a null-safe access to surface
+        // a readable failure message on regression. (review finding: DotNetSpecialist / TestQualityReviewer)
+        capturedFixAgentRequest!.EnvironmentVariables.Should().NotBeNull();
+        capturedFixAgentRequest.EnvironmentVariables!["NUGET_KEY"].Should().Be("secret-value");
+    }
+
+    [Fact]
+    public async Task CodeReview_WithNullInjectedSecrets_ForwardsNullEnvironmentVariablesToFixAgent()
+    {
+        // Arrange: InjectedSecrets not set (null) — fix agent must receive null EnvironmentVariables
+        var context = BuildContext(); // InjectedSecrets is null by default in BuildContext
+
+        AgentRequest? capturedFixAgentRequest = null;
+        var callCount = 0;
+
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, ct, _) =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    WriteFindingsFile("correctness", "[CRITICAL] Critical bug found");
+                }
+                else if (callCount == 2)
+                {
+                    capturedFixAgentRequest = req;
+                }
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        // Act
+        await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers("Correctness"));
+
+        // Assert: fix agent dispatched and EnvironmentVariables is null (no regression)
+        capturedFixAgentRequest.Should().NotBeNull("fix agent must have been dispatched");
+        capturedFixAgentRequest!.EnvironmentVariables.Should().BeNull();
     }
 
     #region Acceptance Criteria Tests
@@ -841,6 +941,99 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
         var fullPath = Path.Combine(_workspacePath, AgentWorkspacePaths.AcceptanceCriteriaFilePath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         File.WriteAllText(fullPath, json);
+    }
+
+    #endregion
+
+    #region All-agents-crash tests
+
+    [Fact]
+    public async Task RunReviewLoopAsync_AllAgentsCrash_EmitsWarning()
+    {
+        // Arrange: both review agents throw — all-crash scenario
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new InvalidOperationException("crashed"));
+
+        // FixPrompt = "fix" so that a clean-code run would exit via NoFindingsBreak — the all-crash
+        // path must fire the Warning guard instead.
+        var config = _config with { CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = "fix" } };
+
+        // Act
+        await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("AgentA", "AgentB"));
+
+        // Assert 1: Warning logged with the all-crash template and correct RunId
+        // Production call: _logger.Warning("...{RunId}...{Iteration}...{AgentCount}...", run.RunId, i+1, agentsRun.Count)
+        // → resolves to Warning<string, int, int>(string, string, int, int)
+        // TODO: [WARNING] Both int matchers use It.IsAny<int>(). In this setup iteration is always 1 and
+        // agentsRun.Count is always 2, so a regression that swapped args or hard-coded 0 would still pass.
+        // Consider tightening to It.Is<int>(v => v == 1) and It.Is<int>(v => v == 2), or at minimum
+        // It.Is<int>(v => v > 0) for the agent count to make the contract falsifiable.
+        _mockLogger.Verify(
+            l => l.Warning(
+                It.Is<string>(msg => msg.Contains("all") && msg.Contains("agents failed")),
+                It.Is<string>(id => id == _run.RunId),
+                It.IsAny<int>(),
+                It.IsAny<int>()),
+            Times.Once);
+
+        // Assert 2: UI output line emitted with the crash signal
+        // TODO: [WARNING] Times.Once only asserts the crash line is emitted at least once; the total
+        // EmitOutputLine call count is not checked. A regression that fires the all-crash guard AFTER
+        // the normal "📝 Code review:" line (wrong guard placement) would still pass this assertion.
+        // Consider adding a check that the "📝 Code review:" line is NOT emitted (the guard should
+        // fire before reaching that code path).
+        _mockCallbacks.Verify(
+            c => c.EmitOutputLine(It.Is<string>(s => s.Contains("all review agents failed"))),
+            Times.Once);
+
+        // Assert 3: iteration counted despite crash
+        _run.CodeReviewIterationsCompleted.Should().Be(1);
+
+        // Assert 4: no false findings recorded
+        _run.CodeReviewCriticalCount.Should().Be(0);
+        _run.CodeReviewWarningCount.Should().Be(0);
+
+        // Assert 5: no entries written by crashed agents
+        _run.CodeReviewAgentFindings.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task WhenAgentRunsCleanlyWithNoFindings_DoesNotEmitCrashWarning()
+    {
+        // Arrange: agent runs successfully but writes no findings file (clean-code path)
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        // FixPrompt = "fix" is required: with FixPrompt present and no findings, the loop exits via
+        // NoFindingsBreak. Without FixPrompt it exits via Skip — both look the same if the guard
+        // fires incorrectly. Using FixPrompt makes the two paths distinguishable.
+        var config = _config with { CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = "fix" } };
+
+        // Act
+        await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
+
+        // Assert 1: the all-crash Warning must NOT be emitted for a successful agent with no findings
+        _mockLogger.Verify(
+            l => l.Warning(
+                It.Is<string>(msg => msg.Contains("all") && msg.Contains("agents failed")),
+                It.IsAny<string>(),
+                It.IsAny<int>(),
+                It.IsAny<int>()),
+            Times.Never);
+
+        // Assert 2: the all-crash output line must NOT be emitted
+        _mockCallbacks.Verify(
+            c => c.EmitOutputLine(It.Is<string>(s => s.Contains("all review agents failed"))),
+            Times.Never);
+
+        // Assert 3: iteration still completed normally
+        // TODO: [WARNING] This test only asserts the crash Warning is absent. It does not assert that the
+        // normal NoFindingsBreak path actually ran (e.g., that GenerateReviewSummarySafeAsync was still
+        // invoked, or that the "📝 Code review:" EmitOutputLine was emitted). If the clean-code path were
+        // accidentally short-circuited by a wrong guard placement, this test would still pass. Consider
+        // adding positive assertions that the normal path completed (e.g., summary agent call count,
+        // the cumulative-counts output line, or CodeReviewIterationsCompleted == 1).
+        _run.CodeReviewIterationsCompleted.Should().Be(1);
     }
 
     #endregion

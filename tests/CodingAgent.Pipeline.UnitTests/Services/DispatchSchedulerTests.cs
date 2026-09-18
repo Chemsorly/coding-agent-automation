@@ -1625,4 +1625,160 @@ public class DispatchSchedulerTests
     };
 
     #endregion
+
+    #region Floor Reclaim Tests (#2655)
+
+    // TODO: All three reclaim tests use MinIssueSlots=1 (issueFloor=1), so the
+    // Math.Min(issueFloor, totalBudget - processedCount - failedCount) cap in the reclaim
+    // formula is never the binding constraint. A regression where the cap misbehaves with
+    // issueFloor > 1 (e.g. MinIssueSlots=2, MaxRunsPerCycle=5, issues-only backlog) would
+    // not be detected. Consider adding a test with MinIssueSlots >= 2. (#2655 review warning)
+
+    /// <summary>
+    /// AC1: With MaxRunsPerCycle=5, MinIssueSlots=1, and 10 issues queued (no PRs),
+    /// exactly 5 issues must be dispatched per cycle.
+    ///
+    /// Before the fix the priority-loop budget was reduced to 4 (5-1), so only 4 issues
+    /// were dispatched and the reserved floor slot was silently abandoned once the floor
+    /// pass was skipped (issueDispatchedThisCycle=true). The reclaim fix tops up `remaining`
+    /// by 1 the first time an issue turn makes progress, allowing the loop to reach 5.
+    /// </summary>
+    [Fact]
+    public async Task FloorReclaimScenario_IssuesOnlyBacklog_DispatchesFullBudget()
+    {
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        var issueQueues = new Dictionary<string, List<IssueSummary>>
+        {
+            ["t1"] = Enumerable.Range(1, 10).Select(i => CreateIssueSummary($"issue-{i}")).ToList()
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MinIssueSlots = 1, MaxConcurrentDecompositions = 100 },
+                MaxRunsPerCycle = 5,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
+                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(5, "exactly MaxRunsPerCycle issues must be dispatched when the backlog is issues-only");
+        _issueDispatchCount.Should().Be(5);
+        _prDispatchCount.Should().Be(0);
+    }
+
+    /// <summary>
+    /// AC2: The floor guarantee still dispatches at least MinIssueSlots issues when no issues
+    /// were dispatched in the priority loop and issues are pending.
+    ///
+    /// With PRs=4, Issues=5, budget=5, MinIssueSlots=1: the priority loop dispatches 4 PRs
+    /// (priorityBudget=4, issueDispatchedThisCycle=false). The reclaim block does NOT fire.
+    /// The floor pass then fires and dispatches 1 issue, yielding 5 total.
+    /// </summary>
+    // TODO: This test validates pre-existing floor behaviour (4 PRs exhaust priorityBudget,
+    // floor pass fires). The reclaim path (IssueMadeProgress branch) is never entered here,
+    // so a regression specific to the reclaim code would not be detected by this test alone.
+    // It is effectively equivalent to the pre-existing FloorAllocation_WhenBothPrsAndIssuesPresent
+    // test (same parameters). Consider adding a scenario where PRs partially fill the priority
+    // loop and issues are then dispatched before the budget is exhausted, causing the reclaim
+    // path to fire while the floor guarantee is still preserved. (#2655 review warning)
+    [Fact]
+    public async Task FloorReclaimScenario_PrsExhaustBudget_FloorGuaranteePreserved()
+    {
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        var issueQueues = new Dictionary<string, List<IssueSummary>>
+        {
+            ["t1"] = Enumerable.Range(1, 5).Select(i => CreateIssueSummary($"issue-{i}")).ToList()
+        };
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>
+        {
+            ["t1"] = Enumerable.Range(1, 4).Select(i => CreatePrSummary($"pr-{i}", i)).ToList()
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MinIssueSlots = 1, MaxConcurrentDecompositions = 100 },
+                MaxRunsPerCycle = 5,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(5, "4 PRs from the priority loop plus 1 issue from the floor pass");
+        _prDispatchCount.Should().Be(4, "all 4 PRs consumed the priority-loop budget");
+        _issueDispatchCount.Should().Be(1, "floor guarantee fires because no issues were dispatched in the priority loop");
+    }
+
+    /// <summary>
+    /// Scenario B from the in-code TODO comment: mixed-queue backlog where PRs drain first,
+    /// then issues are dispatched in the priority loop, and the reclaim path restores the
+    /// reserved slot so the full budget is consumed.
+    ///
+    /// MaxRunsPerCycle=5, MinIssueSlots=1, PRs=2, Issues=10 → before fix: 4 dispatched
+    /// (2 PRs + 2 issues against priorityBudget=4, floor skipped). After fix: 5 dispatched
+    /// (2 PRs + 2 issues dispatched before reclaim, then 1 more issue after reclaim = 3 issues total).
+    /// </summary>
+    [Fact]
+    public async Task FloorReclaimScenario_MixedBacklog_DispatchesFullBudget()
+    {
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        var issueQueues = new Dictionary<string, List<IssueSummary>>
+        {
+            ["t1"] = Enumerable.Range(1, 10).Select(i => CreateIssueSummary($"issue-{i}")).ToList()
+        };
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>
+        {
+            ["t1"] = Enumerable.Range(1, 2).Select(i => CreatePrSummary($"pr-{i}", i)).ToList()
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MinIssueSlots = 1, MaxConcurrentDecompositions = 100 },
+                MaxRunsPerCycle = 5,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(5, "full budget must be consumed: 2 PRs + 3 issues (1 reclaimed slot)");
+        _prDispatchCount.Should().Be(2);
+        _issueDispatchCount.Should().Be(3);
+    }
+
+    #endregion
 }
