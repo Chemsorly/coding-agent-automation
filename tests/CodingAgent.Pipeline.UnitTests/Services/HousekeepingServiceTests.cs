@@ -1664,7 +1664,7 @@ public class HousekeepingServiceTests
         provider.Setup(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
 
-        await ExecAsync(svc, provider, issues, [MakePr(1)], triggerCooldownMinutes: 1, maxSlotAgeMinutes: 1);
+        await ExecAsync(svc, provider, issues, [MakePr(1, "feature/pr-1")], triggerCooldownMinutes: 1, maxSlotAgeMinutes: 1);
 
         provider.Verify(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()),
             Times.Once, "PR #1 must be triggered in cycle 1");
@@ -1681,17 +1681,16 @@ public class HousekeepingServiceTests
         provider.Setup(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
 
-        // TODO [WARNING]: limit=1 is passed explicitly because the single-slot constraint is what makes the
-        // starvation scenario observable. With limit>=2 both PRs could acquire slots simultaneously and the
-        // eviction guard would not be exercised. If ExecAsync's default limit ever changes, this must stay 1.
-        // TODO [WARNING]: Both MakePr(1) and MakePr(2) use the default branch name "feature/pr", so they land
-        // in the same sort tier and their relative order is determined by the random tiebreaker
-        // (.ThenBy(_ => Random.Shared.Next())), making this test non-deterministic. If the random order places
-        // PR #2 first, it fills the slot and PR #1 is blocked by the inFlight limit guard — not by
-        // evictedThisCycle — and the test passes even without the fix. To make the test reliably exercise the
-        // evictedThisCycle guard, use distinct branch names (e.g. MakePr(1, "feature/pr-1")) and consider
-        // seeding or controlling the random sort so PR #1 is always evaluated before PR #2 in cycle 2.
-        await ExecAsync(svc, provider, issues, [MakePr(1), MakePr(2)], limit: 1, triggerCooldownMinutes: 1, maxSlotAgeMinutes: 1);
+        // limit=1 is required: the single-slot constraint is what makes the starvation scenario
+        // observable. With limit>=2 both PRs could acquire slots simultaneously and the
+        // evictedThisCycle guard would not be exercised.
+        //
+        // PR #1 uses hasAutoMerge: true (sort tier 0) so it is always evaluated before PR #2
+        // (tier 1, no auto-merge) in Step 6b — regardless of the random tiebreaker. This guarantees
+        // the evictedThisCycle guard on PR #1 is reliably exercised, making the test deterministic.
+        await ExecAsync(svc, provider, issues,
+            [MakePr(1, "feature/pr-1", hasAutoMerge: true), MakePr(2, "feature/pr-2")],
+            limit: 1, triggerCooldownMinutes: 1, maxSlotAgeMinutes: 1);
 
         // PR #2 must get the freed slot — the evictedThisCycle guard prevents PR #1 from re-acquiring.
         provider.Verify(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()),
