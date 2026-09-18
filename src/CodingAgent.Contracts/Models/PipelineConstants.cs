@@ -165,4 +165,20 @@ public static class PipelineConstants
     /// that triggers an automatic analysis refresh. Set to 0 to disable.
     /// </summary>
     public const int DefaultAnalysisCommitThreshold = 30;
+
+    /// <summary>
+    /// Minimum execution age in seconds before <c>ReconciliationLoop.EnforceTimeoutsAsync</c>
+    /// considers a work item eligible for timeout enforcement (the canary guard).
+    /// <para>
+    /// Items whose execution age is below this threshold are skipped — the canary guard exists
+    /// to detect clock-skew bugs where the wrong timestamp anchor (e.g. <c>CreatedAt</c> instead
+    /// of <c>DispatchedAt</c>) makes a freshly-dispatched item appear very old.
+    /// </para>
+    /// <para>
+    /// As a side effect, any <c>AgentTimeout</c> value below this threshold can never be enforced
+    /// because the canary guard fires first on every reconciliation cycle. The API layer
+    /// rejects such values to prevent silent misconfiguration.
+    /// </para>
+    /// </summary>
+    public const int TimeoutCanaryMinAgeSeconds = 60;
 }

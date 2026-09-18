@@ -109,6 +109,12 @@ public static class ConfigEndpoints
         IPipelineConfigStore store,
         CancellationToken ct)
     {
+        if (config.AgentTimeout.TotalSeconds < PipelineConstants.TimeoutCanaryMinAgeSeconds)
+            return TypedResults.BadRequest(
+                $"AgentTimeout must be at least {PipelineConstants.TimeoutCanaryMinAgeSeconds} seconds " +
+                "(reconciliation canary minimum). Values below this threshold can never be enforced " +
+                "because the ReconciliationLoop canary guard fires first on every cycle.");
+
         await store.SavePipelineConfigAsync(config, ct);
         return TypedResults.Ok();
     }
@@ -310,6 +316,13 @@ public static class ConfigEndpoints
         IProjectStore store,
         CancellationToken ct)
     {
+        if (project.AgentTimeout.HasValue &&
+            project.AgentTimeout.Value.TotalSeconds < PipelineConstants.TimeoutCanaryMinAgeSeconds)
+            return TypedResults.BadRequest(
+                $"AgentTimeout must be at least {PipelineConstants.TimeoutCanaryMinAgeSeconds} seconds " +
+                "(reconciliation canary minimum). Values below this threshold can never be enforced " +
+                "because the ReconciliationLoop canary guard fires first on every cycle.");
+
         await store.SaveProjectAsync(project, ct);
         return TypedResults.Ok();
     }
