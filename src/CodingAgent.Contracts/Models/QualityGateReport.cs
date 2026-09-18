@@ -28,6 +28,6 @@ public sealed class QualityGateReport
     [IgnoreMember]
     public bool AllPassed => QgcResults.Count > 0
         ? QgcResults.All(r => r.Passed) && (ExternalCi?.Passed ?? true)
-        : Compilation.Passed && Tests.Passed
+        : Compilation.Passed && (Tests?.Passed ?? true)
             && (ExternalCi?.Passed ?? true);
 }

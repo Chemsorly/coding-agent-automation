@@ -8,21 +8,14 @@ namespace CodingAgent.AgentGateway;
 /// Extracts orphan-restoration logic from <see cref="AgentHub.RegisterAgent"/>.
 /// Handles active-job restoration, orphan detection, and crash recovery.
 /// </summary>
-public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
+public sealed class AgentOrphanRecoveryService(
+    IAgentHubFacade facade,
+    IChangeNotifier changeNotifier,
+    ILogger logger) : IAgentOrphanRecoveryService
 {
-    private readonly IAgentHubFacade _facade;
-    private readonly IChangeNotifier _changeNotifier;
-    private readonly ILogger _logger;
-
-    public AgentOrphanRecoveryService(
-        IAgentHubFacade facade,
-        IChangeNotifier changeNotifier,
-        ILogger logger)
-    {
-        _facade = facade;
-        _changeNotifier = changeNotifier;
-        _logger = logger;
-    }
+    private readonly IAgentHubFacade _facade = facade;
+    private readonly IChangeNotifier _changeNotifier = changeNotifier;
+    private readonly ILogger _logger = logger;
 
     // TODO: Add CancellationToken parameter to RecoverOrphanedStateAsync (and update IAgentOrphanRecoveryService).
     // Currently uses CancellationToken.None for GetRunHistoryAsync — a pre-existing issue preserved
@@ -136,15 +129,6 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
             {
                 consolEntry.ActiveJobId = activeJob.RunId;
                 writtenJobId = activeJob.RunId;
-                // TODO: [WARNING] UpdateAgentFieldAsync is called while holding SyncRoot.
-                // On the in-memory path (AgentRegistryService) this reacquires SyncRoot
-                // internally — safe only because Monitor is reentrant on the same thread.
-                // On the distributed path the async continuation escapes the lock and may
-                // complete after TransitionStatus, causing transient persisted-state skew
-                // (reconciliation corrects this, but it is an ordering hazard).
-                // Consider hoisting the persistence write outside the lock to make ordering
-                // explicit and remove the nested-lock coupling.
-                _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
             }
             // TODO: [WARNING] This read of consolEntry.ActiveJobId is outside SyncRoot and
             // is therefore a data race: any other thread may write ActiveJobId simultaneously.
@@ -153,8 +137,32 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
             // check is not race-free.  For a race-free guard, perform the read inside the
             // lock or use Volatile.Read.  In practice .NET's strong memory model on x86/x64
             // makes the race benign, but the pattern deviates from the documented lock discipline.
+            // TODO: [WARNING] Behavioral change from pre-fix baseline: UpdateAgentFieldAsync is now
+            // conditional on the TOCTOU guard (consolEntry.ActiveJobId == writtenJobId). Before the
+            // fix, the Redis write fired unconditionally inside the lock even if a concurrent disconnect
+            // handler cleared ActiveJobId afterward. Post-fix, if a concurrent disconnect clears
+            // ActiveJobId between lock release and this guard, the Redis write is skipped entirely.
+            // This is intentional (no point writing a stale activeJobId when the agent has been
+            // cleared), but it is a scope expansion beyond "move the call outside the lock." Confirm
+            // this conditional suppression is the desired behavior; if only lock-ordering was required,
+            // the write should remain unconditional (guarded only by the outer null-entry check).
             if (consolEntry.ActiveJobId == writtenJobId)
+            {
                 _facade.TransitionStatus(agentId, AgentStatus.Busy);
+                // UpdateAgentFieldAsync is called AFTER TransitionStatus and outside the lock:
+                // the async continuation must not escape the lock scope and potentially
+                // overwrite the Busy status already written to Redis by TransitionStatus.
+                // TODO: [WARNING] The returned Task is discarded (fire-and-forget). If the async
+                // operation faults, the exception is silently swallowed and will not propagate to
+                // any caller. Consider making RestoreConsolidationTracking async Task and awaiting
+                // this call, or attaching a fault-logging continuation:
+                // .ContinueWith(t => _logger.Error(t.Exception, "..."), TaskContinuationOptions.OnlyOnFaulted).
+                // TODO: [WARNING] CancellationToken is not threaded through to UpdateAgentFieldAsync.
+                // RecoverOrphanedStateAsync does not accept a CancellationToken, so this is a structural
+                // limitation at the call site. If cancellation support is added to the enclosing method,
+                // propagate the token here.
+                _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", writtenJobId);
+            }
         }
 
         _changeNotifier.NotifyChange();
@@ -192,15 +200,6 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
             {
                 restoredEntry.ActiveJobId = activeJob.RunId;
                 writtenJobId = activeJob.RunId;
-                // TODO: [WARNING] UpdateAgentFieldAsync is called while holding SyncRoot.
-                // On the in-memory path (AgentRegistryService) this reacquires SyncRoot
-                // internally — safe only because Monitor is reentrant on the same thread.
-                // On the distributed path the async continuation escapes the lock and may
-                // complete after TransitionStatus, causing transient persisted-state skew
-                // (reconciliation corrects this, but it is an ordering hazard).
-                // Consider hoisting the persistence write outside the lock to make ordering
-                // explicit and remove the nested-lock coupling.
-                _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
             }
             // TODO: [WARNING] This read of restoredEntry.ActiveJobId is outside SyncRoot and
             // is therefore a data race: any other thread may write ActiveJobId simultaneously.
@@ -209,8 +208,32 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
             // check is not race-free.  For a race-free guard, perform the read inside the
             // lock or use Volatile.Read.  In practice .NET's strong memory model on x86/x64
             // makes the race benign, but the pattern deviates from the documented lock discipline.
+            // TODO: [WARNING] Behavioral change from pre-fix baseline: UpdateAgentFieldAsync is now
+            // conditional on the TOCTOU guard (restoredEntry.ActiveJobId == writtenJobId). Before the
+            // fix, the Redis write fired unconditionally inside the lock even if a concurrent disconnect
+            // handler cleared ActiveJobId afterward. Post-fix, if a concurrent disconnect clears
+            // ActiveJobId between lock release and this guard, the Redis write is skipped entirely.
+            // This is intentional (no point writing a stale activeJobId when the agent has been
+            // cleared), but it is a scope expansion beyond "move the call outside the lock." Confirm
+            // this conditional suppression is the desired behavior; if only lock-ordering was required,
+            // the write should remain unconditional (guarded only by the outer null-entry check).
             if (restoredEntry.ActiveJobId == writtenJobId)
+            {
                 _facade.TransitionStatus(agentId, AgentStatus.Busy);
+                // UpdateAgentFieldAsync is called AFTER TransitionStatus and outside the lock:
+                // the async continuation must not escape the lock scope and potentially
+                // overwrite the Busy status already written to Redis by TransitionStatus.
+                // TODO: [WARNING] The returned Task is discarded (fire-and-forget). If the async
+                // operation faults, the exception is silently swallowed and will not propagate to
+                // any caller. Consider making RestorePipelineRun async Task and awaiting this call,
+                // or attaching a fault-logging continuation:
+                // .ContinueWith(t => _logger.Error(t.Exception, "..."), TaskContinuationOptions.OnlyOnFaulted).
+                // TODO: [WARNING] CancellationToken is not threaded through to UpdateAgentFieldAsync.
+                // RecoverOrphanedStateAsync does not accept a CancellationToken, so this is a structural
+                // limitation at the call site. If cancellation support is added to the enclosing method,
+                // propagate the token here.
+                _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", writtenJobId);
+            }
         }
 
         _logger.Information(
@@ -399,22 +422,35 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
                 // Re-materialize the run hash in Redis so GetRun returns non-null on any replica,
                 // even if the hash was about to expire between this check and the agent's first
                 // hub call. GetActiveRunsByAgent guarantees the hash existed when mostRecent was
-                // loaded (GetActiveRunsAsync skips runs with an empty/absent hash). Calling AddRun
-                // refreshes the hash with no TTL — HSET + SADD are both idempotent, so calling
-                // this twice for the same run is safe.
-                // TODO: [WARNING] AddRun is called unconditionally without first checking whether
-                // the hash already exists (no GetRun guard). The issue requirement says "must not
-                // write a PipelineRun to Redis if the hash already exists", which is satisfied at
-                // the Redis level (HSET overwrites same fields, SADD is a no-op on existing members)
-                // but not at the application level. If stricter application-level idempotency is
-                // needed, consider guarding with GetRun != null before calling AddRun here.
-                // TODO: [WARNING] AddRun performs a full hash overwrite (HashSetAsync with all
-                // serialized fields from the mostRecent snapshot). If another replica updated the
-                // run hash between GetActiveRunsByAgent and this write (e.g., advancing a step,
-                // writing PR fields, updating tokens), those newer values will be silently clobbered
-                // back to snapshot state. HSET is only idempotent when both sides are byte-identical;
-                // this is a data-loss risk for any actively-progressing run on the orphan path.
-                _facade.AddRun(mostRecent);
+                // loaded (GetActiveRunsAsync skips runs with an empty/absent hash). Only write if
+                // the hash is absent — if another replica has already written a live hash (e.g.
+                // advancing currentStep, writing prUrl between GetActiveRunsByAgent and now),
+                // calling AddRun would overwrite those newer values with stale snapshot data.
+                // Guard: call GetRun first; if the hash exists, skip AddRun entirely. If absent
+                // (expired between GetActiveRunsByAgent and this point), call AddRun to re-anchor.
+                // This call is OUTSIDE lock(entry.SyncRoot) — GetRun performs synchronous Redis I/O
+                // via .GetAwaiter().GetResult(); holding the entry lock across a network call is
+                // an anti-pattern. See HandleCrashRecovery for the established pattern.
+                // TODO: [WARNING] entry.ActiveJobId == mostRecent.RunId was evaluated outside
+                // lock(entry.SyncRoot) (see existing TODO above). The GetRun + AddRun block below
+                // runs in the same unguarded window: a concurrent disconnect handler clearing
+                // entry.ActiveJobId between the outer lock release and this GetRun call means we
+                // add a Redis round-trip to an already racy window, increasing the probability
+                // (though not the severity) of the pre-existing spurious-AddRun/TransitionStatus
+                // race. Mitigation: capture entry.ActiveJobId inside the lock above and compare
+                // the captured value, avoiding re-reading unstable state in this window.
+                // Acceptable race: the hash could be absent at GetRun time but written by another
+                // replica before AddRun fires (AddRun then overwrites). This window is tiny and is
+                // the same last-write-wins race explicitly accepted as out-of-scope by the issue.
+                // TODO: [WARNING] Narrow TOCTOU: hash absent at GetRun → AddRun fires → another
+                // replica wrote a live hash in between → AddRun overwrites those newer fields.
+                // This window is smaller than the original unconditional AddRun but is not
+                // eliminated. The issue explicitly accepts last-write-wins for this case; no
+                // further action is required unless stricter field-level HSETNX semantics are
+                // needed (see issue requirements for the suggested HSETNX approach).
+                var existingHash = _facade.GetRun(mostRecent.RunId);
+                if (existingHash is null)
+                    _facade.AddRun(mostRecent);
 
                 _facade.TransitionStatus(agentId, AgentStatus.Busy);
 

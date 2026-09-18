@@ -429,14 +429,21 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             _logger.Information("Job {JobId} PostIssueFeedbackCommentAsync completed in {ElapsedMs}ms", jobId.Value, swComment.ElapsedMilliseconds);
 
             // Inline fast-path succeeded — mark the outbox row Completed so the relay skips it.
-            // Using CancellationToken.None: if this write fails, the relay will re-post (at-least-once).
-            // Follow-up: wrap MarkCompletedAsync in its own exception handler (log + continue).
-            // The outer catch only handles OperationCanceledException; a DbUpdateException or
-            // DbUpdateConcurrencyException from MarkCompletedAsync will escape PostCompletionBookkeepingAsync
-            // and fail the hub method even though label swap and comment post already succeeded.
+            // This is best-effort: a transient DB failure here does not undo the already-committed
+            // label swap and comment post. The outbox row remains Pending and FeedbackCommentRelayService
+            // will redeliver the comment (at-least-once). Failing the hub call for this is wrong.
             if (outboxEntryId != Guid.Empty)
             {
-                await _outbox.MarkCompletedAsync(outboxEntryId, CancellationToken.None);
+                try
+                {
+                    await _outbox.MarkCompletedAsync(outboxEntryId, CancellationToken.None);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Warning(ex,
+                        "Failed to mark outbox entry {OutboxEntryId} completed — row will be redelivered",
+                        outboxEntryId);
+                }
             }
         }
         catch (OperationCanceledException)

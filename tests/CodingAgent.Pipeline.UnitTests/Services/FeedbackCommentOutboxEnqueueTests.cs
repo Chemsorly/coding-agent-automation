@@ -5,6 +5,7 @@ using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Moq;
 using ILogger = Serilog.ILogger;
@@ -337,5 +338,84 @@ public sealed class FeedbackCommentOutboxEnqueueTests
         await _sut.HandleJobCompletedAsync(jobId, agent, MakePayload(feedback: feedback), CancellationToken.None);
 
         _outbox.Verify(o => o.EnqueueAsync(It.IsAny<FeedbackCommentOutboxEntry>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── Test: MarkCompletedAsync throws → method succeeds, Warning logged ──
+
+    [Fact]
+    public async Task WhenMarkCompletedThrowsDbUpdateException_MethodSucceedsAndWarningIsLogged()
+    {
+        // Arrange: label swap and comment post both succeed.
+        // MarkCompletedAsync throws DbUpdateException (transient DB failure after side effects have committed).
+        // This is the bug from issue #2646: the unhandled exception escaped PostCompletionBookkeepingAsync
+        // and failed the hub method even though label swap and comment post already succeeded.
+        var agent = new AgentEntry
+        {
+            AgentId = new AgentId("agent-1"),
+            ConnectionId = "c1",
+            Hostname = "h",
+            Labels = [],
+            RegisteredAt = DateTimeOffset.UtcNow,
+            Status = AgentStatus.Idle
+        };
+        var jobId = new JobId("job-1");
+        var run = MakeRun();
+        _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+        // TODO: [WARNING] _lifecycle.CompleteRunAsync is not set up here; Loose mock returns null, causing
+        // RegularJobCompletionStrategy to exercise its warning/fallback branch (TransitionWorkItemAsync called).
+        // If mocks are ever switched to MockBehavior.Strict, this test will fail on an unrelated call rather
+        // than on the MarkCompletedAsync exception-handling path. Fix: add
+        // _lifecycle.Setup(l => l.CompleteRunAsync(...)).ReturnsAsync(run) to make preconditions explicit.
+
+        _issueOps.Setup(o => o.SwapLabelAsync(run, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Capture the enqueued entry so we can confirm EnqueueAsync was actually called.
+        FeedbackCommentOutboxEntry? capturedEntry = null;
+        _outbox
+            .Setup(o => o.EnqueueAsync(It.IsAny<FeedbackCommentOutboxEntry>(), It.IsAny<CancellationToken>()))
+            .Callback<FeedbackCommentOutboxEntry, CancellationToken>((e, _) => capturedEntry = e)
+            .Returns(Task.CompletedTask);
+
+        _outbox
+            .Setup(o => o.MarkCompletedAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DbUpdateException("transient failure"));
+
+        var feedback = MakeFeedbackWithDescription();
+
+        // Act: should NOT throw — the hub method must succeed despite the DB failure in MarkCompletedAsync
+        var act = () => _sut.HandleJobCompletedAsync(jobId, agent, MakePayload(feedback: feedback), CancellationToken.None);
+        await act.Should().NotThrowAsync();
+
+        // Guard: confirm EnqueueAsync was called so outboxEntryId was non-empty going into MarkCompletedAsync.
+        // Without this, capturedEntry would be null and the Warning verify below could pass vacuously.
+        capturedEntry.Should().NotBeNull("EnqueueAsync must have been called for a run with non-null Description");
+
+        // TODO: [WARNING] No Verify on SwapLabelAsync — if a bug were introduced that skipped the label swap
+        // entirely, this test would not catch the regression (the outbox enqueue happens before the swap, so
+        // capturedEntry would still be non-null). Consider adding:
+        // _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Done, It.IsAny<CancellationToken>()), Times.Once)
+        // to confirm bookkeeping actually reached the label-swap step.
+
+        // Assert: Warning<Guid>(Exception, string, Guid) was logged.
+        // Serilog dispatches _logger.Warning(ex, "... {OutboxEntryId} ...", guid) to the generic
+        // Warning<Guid>(Exception, string, Guid) overload — Moq Verify must supply three typed args.
+        // Using It.IsAny<Guid>() avoids Guid.Empty coincidence fragility.
+        // TODO: [WARNING] If Serilog resolves the call to Warning(Exception, string, object?[]) instead of
+        // Warning<Guid>(Exception, string, Guid), the Verify below will pass vacuously (zero invocations).
+        // Confirm by checking that removing the catch block causes this Verify to fail. As a fallback guard,
+        // consider also adding: _logger.Verify(l => l.Warning(It.IsAny<Exception>(), It.IsAny<string>(),
+        // It.IsAny<object>()), Times.AtLeastOnce).
+        // TODO: [WARNING] It.IsAny<Exception>() does not verify that the logged exception is the DbUpdateException
+        // instance thrown by the mock — if the catch block is restructured to swallow the exception before
+        // passing it to Warning, this Verify still passes. Consider: It.Is<Exception>(ex => ex is DbUpdateException).
+        _logger.Verify(
+            l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("{OutboxEntryId}")),
+                It.IsAny<Guid>()),
+            Times.Once);
     }
 }
