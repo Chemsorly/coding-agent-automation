@@ -935,4 +935,44 @@ public sealed class ConfigEndpointTests
         body.Should().Contain("60",
             "the error body must reference the 60-second minimum");
     }
+
+    /// <summary>
+    /// HTTP integration test: PUT /api/config/projects with AgentTimeout = exactly 60s must
+    /// return 200. The boundary value must be accepted (strict less-than comparison).
+    /// </summary>
+    [Fact]
+    public async Task SaveProject_AgentTimeoutExactlyAtMinimum_Returns200()
+    {
+        var project = new PipelineProject
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = "Boundary Project",
+            AgentTimeout = TimeSpan.FromSeconds(60)
+        };
+
+        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK,
+            "AgentTimeout of exactly 60s is the minimum acceptable value and must not be rejected for projects");
+    }
+
+    /// <summary>
+    /// HTTP integration test: PUT /api/config/projects with no AgentTimeout override (null)
+    /// must return 200. A null override means "inherit the global timeout" and must not be validated.
+    /// </summary>
+    [Fact]
+    public async Task SaveProject_NullAgentTimeout_Returns200()
+    {
+        var project = new PipelineProject
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = "No Timeout Override Project",
+            AgentTimeout = null
+        };
+
+        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK,
+            "a project with no AgentTimeout override must be accepted — null means inherit the global timeout");
+    }
 }
