@@ -8,21 +8,14 @@ namespace CodingAgent.AgentGateway;
 /// Extracts orphan-restoration logic from <see cref="AgentHub.RegisterAgent"/>.
 /// Handles active-job restoration, orphan detection, and crash recovery.
 /// </summary>
-public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
+public sealed class AgentOrphanRecoveryService(
+    IAgentHubFacade facade,
+    IChangeNotifier changeNotifier,
+    ILogger logger) : IAgentOrphanRecoveryService
 {
-    private readonly IAgentHubFacade _facade;
-    private readonly IChangeNotifier _changeNotifier;
-    private readonly ILogger _logger;
-
-    public AgentOrphanRecoveryService(
-        IAgentHubFacade facade,
-        IChangeNotifier changeNotifier,
-        ILogger logger)
-    {
-        _facade = facade;
-        _changeNotifier = changeNotifier;
-        _logger = logger;
-    }
+    private readonly IAgentHubFacade _facade = facade;
+    private readonly IChangeNotifier _changeNotifier = changeNotifier;
+    private readonly ILogger _logger = logger;
 
     // TODO: Add CancellationToken parameter to RecoverOrphanedStateAsync (and update IAgentOrphanRecoveryService).
     // Currently uses CancellationToken.None for GetRunHistoryAsync — a pre-existing issue preserved
