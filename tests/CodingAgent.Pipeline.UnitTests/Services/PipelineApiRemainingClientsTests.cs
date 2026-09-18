@@ -125,6 +125,53 @@ public sealed class PipelineApiRemainingClientsTests
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
 
+    [Fact]
+    public async Task RunHistoryClient_GetActiveBranchesAsync_ReturnsBranches()
+    {
+        var (client, handler) = Create(h => new PipelineApiRunHistoryClient(h));
+        handler.Respond = _ => JsonResponse(new[] { "feature/auto-1-branch", "feature/auto-2-branch" });
+
+        var result = await client.GetActiveBranchesAsync();
+
+        result.Should().HaveCount(2);
+        result.Should().Contain("feature/auto-1-branch");
+        result.Should().Contain("feature/auto-2-branch");
+    }
+
+    [Fact]
+    public async Task RunHistoryClient_GetActiveBranchesAsync_WhenForbidden_ThrowsHttpRequestException()
+    {
+        // A 403 from a misconfigured auth key must propagate as HttpRequestException so the
+        // caller (HousekeepingService) sets activeRunBranchesUnavailable=true and applies the
+        // conservative fallback (skip all branch updates this cycle).
+        // TODO: Add an end-to-end HousekeepingService-level test that mocks
+        //   IRunQueryService.GetActiveRunBranchesAsync to throw HttpRequestException (the actual
+        //   exception type this fix introduces) and asserts that activeRunBranchesUnavailable=true /
+        //   conservative skip is activated. Pre-existing HousekeepingService tests use
+        //   InvalidOperationException("API down"), which covers the catch (Exception) block but does
+        //   not pin the specific exception type propagated from the client after this fix.
+        var (client, handler) = Create(h => new PipelineApiRunHistoryClient(h));
+        handler.Respond = _ => new HttpResponseMessage(HttpStatusCode.Forbidden);
+
+        var act = () => client.GetActiveBranchesAsync();
+
+        await act.Should().ThrowAsync<HttpRequestException>(
+            "non-2xx responses must propagate as HttpRequestException so the conservative fallback is triggered");
+    }
+
+    [Fact]
+    public async Task RunHistoryClient_GetActiveBranchesAsync_WhenServerError_ThrowsHttpRequestException()
+    {
+        // A 5xx must propagate as HttpRequestException so the conservative fallback activates.
+        var (client, handler) = Create(h => new PipelineApiRunHistoryClient(h));
+        handler.Respond = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError);
+
+        var act = () => client.GetActiveBranchesAsync();
+
+        await act.Should().ThrowAsync<HttpRequestException>(
+            "5xx responses must propagate so the conservative fallback activates");
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // PipelineApiAgentClient
     // ─────────────────────────────────────────────────────────────────────
