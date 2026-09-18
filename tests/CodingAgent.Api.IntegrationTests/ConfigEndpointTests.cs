@@ -827,4 +827,112 @@ public sealed class ConfigEndpointTests
         var response = await _client.GetAsync($"/api/config/provider-configs/{Guid.NewGuid()}?kind=Issue");
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
+
+    // ── AgentTimeout minimum validation ──────────────────────────────────────────
+
+    /// <summary>
+    /// Unit test: calls <see cref="ConfigEndpoints.SavePipelineConfig"/> directly (no HTTP host)
+    /// with an <c>AgentTimeout</c> below the 60s minimum.
+    /// Verifies the method returns 400 and never calls the store.
+    /// This is the unit test required by the acceptance criterion.
+    /// </summary>
+    [Fact]
+    public async Task SavePipelineConfig_AgentTimeoutBelowMinimum_DirectCall_Returns400()
+    {
+        var config = new PipelineConfiguration
+        {
+            AgentTimeout = TimeSpan.FromSeconds(30)
+        };
+        var mockStore = new Moq.Mock<CodingAgent.Pipeline.Interfaces.IPipelineConfigStore>();
+
+        var result = await ConfigEndpoints.SavePipelineConfig(config, mockStore.Object, CancellationToken.None);
+
+        // Result must be a 400 IResult
+        result.Should().BeAssignableTo<Microsoft.AspNetCore.Http.IResult>("a sub-60s AgentTimeout must be rejected");
+        var badRequest = result as Microsoft.AspNetCore.Http.HttpResults.BadRequest<string>;
+        badRequest.Should().NotBeNull("result must be a typed BadRequest<string>");
+        // TODO: [WARNING] Use PipelineConstants.TimeoutCanaryMinAgeSeconds.ToString() as the expected substring
+        // instead of the hardcoded literal "60". If the constant is ever changed (e.g. to 120), this assertion
+        // will silently pass even though the error message no longer references the correct minimum.
+        badRequest!.Value.Should().Contain("60", "the error message must reference the 60s minimum");
+
+        // Store must never have been called
+        mockStore.Verify(s => s.SavePipelineConfigAsync(
+            Moq.It.IsAny<PipelineConfiguration>(), Moq.It.IsAny<CancellationToken>()), Moq.Times.Never,
+            "the store must not be called when AgentTimeout is below the minimum");
+    }
+
+    /// <summary>
+    /// HTTP integration test: PUT /api/config/pipeline with AgentTimeout = 30s must return 400
+    /// with a descriptive error body that references the 60s minimum.
+    /// </summary>
+    [Fact]
+    public async Task SavePipelineConfig_AgentTimeoutBelowMinimum_Http_Returns400()
+    {
+        var config = new PipelineConfiguration
+        {
+            AgentTimeout = TimeSpan.FromSeconds(30)
+        };
+
+        var response = await _client.PutAsJsonAsync("/api/config/pipeline", config, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest,
+            "AgentTimeout below 60s must be rejected at the API layer");
+
+        var body = await response.Content.ReadAsStringAsync();
+        // TODO: [WARNING] Use PipelineConstants.TimeoutCanaryMinAgeSeconds.ToString() as the expected substring
+        // instead of the hardcoded literal "60". If the constant is ever changed (e.g. to 120), this assertion
+        // will silently pass even though the error message no longer references the correct minimum.
+        body.Should().Contain("60",
+            "the error body must reference the 60-second minimum so the operator knows what to fix");
+    }
+
+    /// <summary>
+    /// HTTP integration test: PUT /api/config/pipeline with AgentTimeout = exactly 60s must
+    /// return 200. The boundary value must be accepted (strict less-than comparison).
+    /// </summary>
+    [Fact]
+    public async Task SavePipelineConfig_AgentTimeoutExactlyAtMinimum_Http_Returns200()
+    {
+        var config = new PipelineConfiguration
+        {
+            AgentTimeout = TimeSpan.FromSeconds(60)
+        };
+
+        var response = await _client.PutAsJsonAsync("/api/config/pipeline", config, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK,
+            "AgentTimeout of exactly 60s is the minimum acceptable value and must not be rejected");
+        // TODO: [WARNING] This test only asserts the HTTP status code. A bug where the endpoint returns 200
+        // but silently drops the write would pass undetected. Add a read-back assertion via the corresponding
+        // GET /api/config/pipeline endpoint to confirm the AgentTimeout was actually persisted.
+    }
+
+    /// <summary>
+    /// HTTP integration test: PUT /api/config/projects with a project whose AgentTimeout override
+    /// is below 60s must return 400. A project-level sub-60s override causes the same silent
+    /// bypass as a global sub-60s timeout.
+    /// </summary>
+    [Fact]
+    public async Task SaveProject_AgentTimeoutBelowMinimum_Returns400()
+    {
+        var project = new PipelineProject
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = "Timeout Test Project",
+            AgentTimeout = TimeSpan.FromSeconds(30)
+        };
+
+        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest,
+            "a project-level AgentTimeout below 60s must be rejected to prevent the same silent bypass");
+
+        var body = await response.Content.ReadAsStringAsync();
+        // TODO: [WARNING] Use PipelineConstants.TimeoutCanaryMinAgeSeconds.ToString() as the expected substring
+        // instead of the hardcoded literal "60". If the constant is ever changed (e.g. to 120), this assertion
+        // will silently pass even though the error message no longer references the correct minimum.
+        body.Should().Contain("60",
+            "the error body must reference the 60-second minimum");
+    }
 }

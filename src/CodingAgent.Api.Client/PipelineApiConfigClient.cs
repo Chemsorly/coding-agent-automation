@@ -31,7 +31,12 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
     public async Task SavePipelineConfigAsync(PipelineConfiguration config, CancellationToken ct = default)
     {
         var response = await _http.PutAsJsonAsync("/api/config/pipeline", config, PipelineJsonOptions.Default, ct);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+            throw new InvalidOperationException(
+                $"SavePipelineConfig failed ({(int)response.StatusCode}): {body}");
+        }
     }
 
     public async Task UpdatePipelineConfigAsync(Func<PipelineConfiguration, PipelineConfiguration> transform, CancellationToken ct = default)
