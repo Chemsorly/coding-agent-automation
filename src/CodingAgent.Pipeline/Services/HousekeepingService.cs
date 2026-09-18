@@ -182,6 +182,12 @@ public sealed class HousekeepingService : IHousekeepingService
         // ── Step 2: Get or create in-flight set ──────────────────────────────
         var inFlight = _inFlight.GetOrAdd(repoProviderId, _ => new HashSet<int>());
 
+        // Tracks PR numbers that were max-age evicted in Step 3 during this cycle.
+        // Step 6b checks this set before re-admitting Behind PRs to prevent an evicted PR
+        // from immediately re-acquiring the slot it was just freed from in the same call.
+        // Allocated fresh on every ExecuteAsync call — no cross-cycle state.
+        var evictedThisCycle = new HashSet<int>();
+
         // ── Step 3: Evict resolved in-flight entries ──────────────────────────
         var currentPrNumbers = new HashSet<int>(agentDonePrs.Select(p => p.Number));
         var now3 = UtcNow();
@@ -214,14 +220,8 @@ public sealed class HousekeepingService : IHousekeepingService
                         prNumber, repoProviderId, slotAge, maxSlotAgeMinutes, status);
                     inFlight.Remove(prNumber);
                     _inFlightAt.TryRemove((repoProviderId, prNumber), out _);
+                    evictedThisCycle.Add(prNumber);
                     PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
-                    // TODO: a PR with current status=Behind whose TriggerCooldown has also elapsed
-                    //   (likely, since maxSlotAgeMinutes is normally >> cooldown) will be immediately
-                    //   re-selected by Step 6b in the same cycle, re-acquiring the slot and re-triggering
-                    //   UpdatePullRequestBranchAsync. The eviction is only effective for Blocked/Unknown
-                    //   PRs (which Step 6b skips). For a chronically-Behind PR the eviction is a no-op.
-                    //   To fix: record the evicted PR number for this pass and skip it in Step 6b, or
-                    //   only apply max-age eviction when status is Blocked/Unknown.
                 }
                 else if (status != PrMergeabilityStatus.Blocked && status != PrMergeabilityStatus.Unknown)
                 {
@@ -323,6 +323,18 @@ public sealed class HousekeepingService : IHousekeepingService
             }
 
             if (activeRunBranches.Contains(pr.BranchName))
+            {
+                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
+                continue;
+            }
+
+            // Max-age eviction guard: if this PR was evicted from the slot in Step 3 during
+            // this same cycle, do not re-admit it. This prevents a chronically-Behind PR from
+            // immediately re-acquiring the slot it was just released from, which would make
+            // max-age eviction a no-op and starve other eligible Behind PRs.
+            // On the next poll tick, evictedThisCycle is re-allocated empty — the PR is freely
+            // eligible for re-selection on subsequent cycles (subject to normal cooldown rules).
+            if (evictedThisCycle.Contains(pr.Number))
             {
                 PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
                 continue;
