@@ -102,7 +102,7 @@ public class QualityGateExecutorPostPrCiTests
         var callOrder = new List<string>();
 
         _mockCallbacks
-            .Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), false, It.IsAny<CancellationToken>()))
+            .Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), false, It.IsAny<CancellationToken>()))
             .Callback(() => callOrder.Add("FinalizePullRequest"))
             .Returns(Task.CompletedTask);
 
@@ -147,13 +147,13 @@ public class QualityGateExecutorPostPrCiTests
 
         // FinalizePullRequest must be called with isDraft=false exactly once (non-draft = success path)
         _mockCallbacks.Verify(
-            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), false, It.IsAny<CancellationToken>()),
+            c => c.FinalizePullRequest(_run, false, It.IsAny<CancellationToken>()),
             Times.Once,
             "run must complete as non-draft when post-PR CI passes");
 
         // Must NOT finalize as draft
         _mockCallbacks.Verify(
-            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
             Times.Never,
             "run must not be finalized as draft when post-PR CI passes");
     }
@@ -180,7 +180,7 @@ public class QualityGateExecutorPostPrCiTests
 
         // On CI failure the run must be demoted to draft
         _mockCallbacks.Verify(
-            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
             Times.Once,
             "run must be finalized as draft when post-PR CI fails");
     }
@@ -205,7 +205,7 @@ public class QualityGateExecutorPostPrCiTests
 
         // Run must still finalize as non-draft
         _mockCallbacks.Verify(
-            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), false, It.IsAny<CancellationToken>()),
+            c => c.FinalizePullRequest(_run, false, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -223,7 +223,7 @@ public class QualityGateExecutorPostPrCiTests
         var callOrder = new List<string>();
 
         _mockCallbacks
-            .Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), false, It.IsAny<CancellationToken>()))
+            .Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), false, It.IsAny<CancellationToken>()))
             .Callback(() => callOrder.Add("FinalizePullRequest"))
             .Returns(Task.CompletedTask);
 
@@ -267,7 +267,7 @@ public class QualityGateExecutorPostPrCiTests
             .Returns(Task.CompletedTask);
         _mockCallbacks.Setup(c => c.RemoveAllAgentLabels(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockCallbacks.Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        _mockCallbacks.Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockCallbacks.Setup(c => c.CreateDraftPrIfNotExists(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -453,7 +453,7 @@ public class QualityGateExecutorEdgeCaseTests
 
         // Run should end as draft (CI failure path)
         _mockCallbacks.Verify(
-            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
             Times.Once, "timed-out CI must finalize as draft");
     }
 
@@ -477,7 +477,7 @@ public class QualityGateExecutorEdgeCaseTests
         await _executor.ProceedToQualityGatesAsync(BuildContext(), CancellationToken.None);
 
         _mockCallbacks.Verify(
-            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
             Times.Once, "CI provider error must finalize as draft");
     }
 
@@ -503,7 +503,7 @@ public class QualityGateExecutorEdgeCaseTests
         await _executor.ProceedToQualityGatesAsync(BuildContext(), CancellationToken.None);
 
         _mockCallbacks.Verify(
-            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), false, It.IsAny<CancellationToken>()),
+            c => c.FinalizePullRequest(_run, false, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -551,7 +551,7 @@ public class QualityGateExecutorEdgeCaseTests
 
         // Pipeline must still call FinalizePullRequest (not abort) despite cleanup error
         _mockCallbacks.Verify(
-            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
+            c => c.FinalizePullRequest(_run, It.IsAny<bool>(), It.IsAny<CancellationToken>()),
             Times.Once, "pipeline must finalize even if cleanup agent throws");
     }
 
@@ -628,7 +628,7 @@ public class QualityGateExecutorEdgeCaseTests
 
         // Post-PR CI timed out → ciGate.Passed=false → run finalized as draft (lines 230-238 covered)
         _mockCallbacks.Verify(
-            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
             Times.Once, "post-PR CI timeout must finalize as draft PR (lines 230-238)");
     }
 
@@ -657,7 +657,7 @@ public class QualityGateExecutorEdgeCaseTests
 
         // Generic exception → ciGate.Passed=false → run finalized as draft (lines 240-248 covered)
         _mockCallbacks.Verify(
-            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
             Times.Once, "post-PR CI exception must finalize as draft PR (lines 240-248)");
     }
 
@@ -693,7 +693,7 @@ public class QualityGateExecutorEdgeCaseTests
 
         // SHA read failed but run continued — post-PR CI passed → finalized as non-draft (line 194 covered)
         _mockCallbacks.Verify(
-            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), false, It.IsAny<CancellationToken>()),
+            c => c.FinalizePullRequest(_run, false, It.IsAny<CancellationToken>()),
             Times.Once, "SHA read failure must be swallowed (line 194) and run completes as non-draft");
     }
 
@@ -732,8 +732,67 @@ public class QualityGateExecutorEdgeCaseTests
 
         // Retry exhausted with still-failing CI → draft finalized (lines 149-157)
         _mockCallbacks.Verify(
-            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
             Times.Once, "post-PR CI retry exhaustion must finalize as draft PR (lines 149-157)");
+    }
+
+    // TODO [WARNING]: The first guard in HandlePostPrCiAsync (line 153 — after WaitForPostPrCiAsync,
+    // before the retry loop) has no dedicated test for ConflictRestart. If that guard were silently
+    // reverted to `== PipelineStep.Failed`, the test below would not catch the regression because
+    // ciConflictRestart is placed at sequence position #4 (inside RunRetryLoopAsync), not #3.
+    // A missing test case: place ciConflictRestart at sequence position #3 (instead of ciFailure)
+    // and omit position #4 — that would validate the first guard independently.
+
+    /// <summary>
+    /// Regression test for issue #2651: when <c>AppendExternalCiIfNeededAsync</c> detects a
+    /// conflict restart during the post-PR CI retry loop, <c>RunRetryLoopAsync</c> exits early
+    /// (via the inner guard at line ~488) and the fixed guard at line 165 in
+    /// <c>HandlePostPrCiAsync</c> must return immediately — <c>FinalizeDraftPrAsync</c> must
+    /// NOT be called on a run already re-queued via <c>agent:next</c>.
+    /// </summary>
+    [Fact]
+    public async Task HandlePostPrCiAsync_ConflictRestartDuringRetry_DoesNotCallFinalizeDraftPr()
+    {
+        SetupValidatorAlwaysPasses();
+
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [new() { Name = "build", State = PipelineRunState.Running }] });
+
+        var ciPassed = new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [new() { Name = "build", State = PipelineRunState.Passed }] };
+        var ciFailure = new PipelineRunStatus { State = PipelineRunState.Failed, Jobs = [new() { Name = "build", State = PipelineRunState.Failed, FailureReason = "CI failure" }] };
+        var ciConflictRestart = new PipelineRunStatus { State = PipelineRunState.ConflictRestart, Jobs = [] };
+
+        // SEQUENCE (position-sensitive — must include all 4 entries in order):
+        //   call #1 — pre-PR CI via ProceedToQualityGatesAsync → AppendExternalCiIfNeededAsync → pass
+        //   call #2 — cleanup-path CI via RunPostRetryCleanupAndFinalizeAsync → AppendExternalCiIfNeededAsync → pass
+        //   call #3 — post-PR CI via WaitForPostPrCiAsync → fail (enters retry loop)
+        //   call #4 — retry CI via RunRetryLoopAsync → AppendExternalCiIfNeededAsync → ConflictRestart (triggers the fix)
+        _mockPipelineProvider
+            .SetupSequence(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ciPassed)           // call #1 — pre-PR CI passes
+            .ReturnsAsync(ciPassed)           // call #2 — cleanup-path CI passes
+            .ReturnsAsync(ciFailure)          // call #3 — post-PR CI fails → enters retry loop
+            .ReturnsAsync(ciConflictRestart); // call #4 — retry CI detects ConflictRestart
+
+        // MaxRetries=1: one retry fires inside RunRetryLoopAsync on the post-PR CI failure.
+        // AppendExternalCiIfNeededAsync receives ConflictRestart from WaitForCompletionAsync
+        // (via PollCiWithNotStartedRetryAsync → PollAndHandleInfraRetryAsync), sets
+        // run.CurrentStep = PipelineStep.ConflictRestart and run.FinalLabel = AgentLabels.Next,
+        // then returns. RunRetryLoopAsync exits early via its inner guard at line ~488.
+        // The fixed guard at line 165 in HandlePostPrCiAsync must then return immediately.
+        var context = BuildContext(maxRetries: 1);
+        await _executor.ProceedToQualityGatesAsync(context, CancellationToken.None);
+
+        // ConflictRestart guard fired → FinalizePullRequest(isDraft=true) must NOT be called
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
+            Times.Never,
+            "FinalizeDraftPrAsync must not be called when ConflictRestart is detected during post-PR CI retry");
+
+        // run state must reflect the ConflictRestart outcome
+        _run.CurrentStep.Should().Be(PipelineStep.ConflictRestart);
+        _run.FinalLabel.Should().Be(AgentLabels.Next);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
@@ -754,7 +813,7 @@ public class QualityGateExecutorEdgeCaseTests
             .Returns(Task.CompletedTask);
         _mockCallbacks.Setup(c => c.RemoveAllAgentLabels(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockCallbacks.Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        _mockCallbacks.Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockCallbacks.Setup(c => c.CreateDraftPrIfNotExists(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -977,7 +1036,7 @@ public class QualityGateExecutorPostPrCiTelemetryTests : IDisposable
             .Returns(Task.CompletedTask);
         _mockCallbacks.Setup(c => c.RemoveAllAgentLabels(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockCallbacks.Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        _mockCallbacks.Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockCallbacks.Setup(c => c.CreateDraftPrIfNotExists(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);

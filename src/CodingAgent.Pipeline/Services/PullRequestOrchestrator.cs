@@ -25,7 +25,6 @@ public sealed class PullRequestOrchestrator
     /// </summary>
     public async Task<string?> CreatePullRequestAsync(
         PipelineRun run,
-        QualityGateReport report,
         bool isDraft,
         IRepositoryProvider repoProvider,
         IssueDetail? issue,
@@ -37,12 +36,6 @@ public sealed class PullRequestOrchestrator
         string? issueReference = null)
     {
         ArgumentNullException.ThrowIfNull(run);
-        // TODO: [WARNING] `report` is no longer consumed by this method (BuildPrBodyAsync was replaced by the
-        // synchronous BuildPrBody which no longer accepts report). The parameter and null-check remain only for
-        // interface compatibility. Remove `report` from CreatePullRequestAsync, FinalizePullRequestAsync, and the
-        // IPipelineCallbacks interface once callers (QualityGateExecutor, PipelineExecutionContextBuilder,
-        // PullRequestFinalizationService) are updated to stop passing it.
-        ArgumentNullException.ThrowIfNull(report);
         ArgumentNullException.ThrowIfNull(repoProvider);
         ArgumentNullException.ThrowIfNull(config);
 
@@ -273,7 +266,6 @@ public sealed class PullRequestOrchestrator
     /// </summary>
     public async Task<string?> FinalizePullRequestAsync(
         PipelineRun run,
-        QualityGateReport report,
         bool isDraft,
         IRepositoryProvider repoProvider,
         IssueDetail? issue,
@@ -284,10 +276,6 @@ public sealed class PullRequestOrchestrator
         string? issueReference = null)
     {
         ArgumentNullException.ThrowIfNull(run);
-        // TODO: [WARNING] `report` is no longer consumed by FinalizePullRequestAsync — BuildPrBody no longer accepts
-        // it. Remove from this method's signature and the callback interface once callers are updated (see parallel
-        // TODO in CreatePullRequestAsync).
-        ArgumentNullException.ThrowIfNull(report);
         ArgumentNullException.ThrowIfNull(repoProvider);
         ArgumentNullException.ThrowIfNull(config);
 

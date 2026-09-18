@@ -42,7 +42,7 @@ public class PullRequestOrchestratorTests
             .ReturnsAsync(false);
 
         var result = await _sut.CreatePullRequestAsync(
-            CreateRun(), CreateReport(), false, _mockRepo.Object,
+            CreateRun(), false, _mockRepo.Object,
             null, null, CreateConfig(), CancellationToken.None);
 
         result.Should().BeNull();
@@ -57,7 +57,7 @@ public class PullRequestOrchestratorTests
         var run = CreateRun();
 
         var result = await _sut.CreatePullRequestAsync(
-            run, CreateReport(), false, _mockRepo.Object,
+            run, false, _mockRepo.Object,
             null, null, CreateConfig(), CancellationToken.None);
 
         result.Should().Be("https://github.com/org/repo/pull/99");
@@ -79,7 +79,7 @@ public class PullRequestOrchestratorTests
 
         var run = CreateRun();
         await _sut.CreatePullRequestAsync(
-            run, CreateReport(), true, _mockRepo.Object,
+            run, true, _mockRepo.Object,
             null, null, CreateConfig(), CancellationToken.None);
 
         capturedInfo!.IsDraft.Should().BeTrue();
@@ -96,7 +96,7 @@ public class PullRequestOrchestratorTests
             .ThrowsAsync(new InvalidOperationException("permission denied"));
 
         var act = () => _sut.CreatePullRequestAsync(
-            CreateRun(), CreateReport(), false, _mockRepo.Object,
+            CreateRun(), false, _mockRepo.Object,
             null, null, CreateConfig(), CancellationToken.None);
 
         await act.Should().ThrowAsync<InvalidOperationException>()
@@ -115,7 +115,7 @@ public class PullRequestOrchestratorTests
 
         var run = CreateRun();
         await _sut.CreatePullRequestAsync(
-            run, CreateReport(), false, _mockRepo.Object,
+            run, false, _mockRepo.Object,
             null, null, CreateConfig(), CancellationToken.None);
 
         run.BlacklistedFilesDetected.Should().Contain(".github/workflows/ci.yml");
@@ -139,7 +139,7 @@ public class PullRequestOrchestratorTests
 
         var run = CreateRun();
         await _sut.CreatePullRequestAsync(
-            run, CreateReport(), false, _mockRepo.Object,
+            run, false, _mockRepo.Object,
             null, null, CreateConfig(), CancellationToken.None);
 
         capturedInfo!.Body.Should().NotContain("## ⚠️ Blacklisted Files Excluded");
@@ -158,7 +158,7 @@ public class PullRequestOrchestratorTests
         var run = CreateRun();
 
         await _sut.CreatePullRequestAsync(
-            run, CreateReport(), false, _mockRepo.Object,
+            run, false, _mockRepo.Object,
             null, null, CreateConfig(), CancellationToken.None);
 
         capturedInfo!.Body.Should().Contain("## Issue Context");
@@ -177,7 +177,7 @@ public class PullRequestOrchestratorTests
         run.PullRequestNumber = "55";
 
         await _sut.CreatePullRequestAsync(
-            run, CreateReport(), false, _mockRepo.Object,
+            run, false, _mockRepo.Object,
             null, null, CreateConfig(), CancellationToken.None, isRework: true);
 
         _mockRepo.Verify(r => r.UpdatePullRequestAsync(55, It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Once);
@@ -197,7 +197,7 @@ public class PullRequestOrchestratorTests
         run.PullRequestNumber = "55";
 
         await _sut.CreatePullRequestAsync(
-            run, CreateReport(), false, _mockRepo.Object,
+            run, false, _mockRepo.Object,
             null, null, CreateConfig(), CancellationToken.None, isRework: true);
 
         _mockRepo.Verify(r => r.UpdatePullRequestAsync(55, It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Once);
@@ -212,7 +212,7 @@ public class PullRequestOrchestratorTests
         // PullRequestNumber is null by default
 
         var result = await _sut.FinalizePullRequestAsync(
-            run, CreateReport(), false, _mockRepo.Object,
+            run, false, _mockRepo.Object,
             null, null, CreateConfig(), CancellationToken.None);
 
         result.Should().BeNull();
@@ -231,14 +231,9 @@ public class PullRequestOrchestratorTests
             .ReturnsAsync("https://github.com/org/repo/pull/99");
 
         var run = CreateRun();
-        var report = new QualityGateReport
-        {
-            Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
-            Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK", TestsPassed = 5, TestsFailed = 0, TestsSkipped = 1 }
-        };
 
         await _sut.CreatePullRequestAsync(
-            run, report, false, _mockRepo.Object,
+            run, false, _mockRepo.Object,
             null, null, CreateConfig(), CancellationToken.None);
         // TODO: [WARNING] Both `issue` and `issueComments` are null here, so issueTitle falls back to run.IssueTitle
         // ("Test Issue"). The `issue?.Title ?? run.IssueTitle` branch in BuildPrBodyAsync where a real IssueDetail
@@ -261,14 +256,9 @@ public class PullRequestOrchestratorTests
         var run = CreateRun();
         run.PullRequestNumber = "55";
         run.PullRequestUrl = "https://github.com/org/repo/pull/55";
-        var report = new QualityGateReport
-        {
-            Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
-            Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK", TestsPassed = 5, TestsFailed = 0, TestsSkipped = 1 }
-        };
 
         await _sut.FinalizePullRequestAsync(
-            run, report, false, _mockRepo.Object,
+            run, false, _mockRepo.Object,
             null, null, CreateConfig(), CancellationToken.None);
 
         capturedBody.Should().NotBeNull();
@@ -292,17 +282,12 @@ public class PullRequestOrchestratorTests
             .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => capturedFinalizeBody = body)
             .Returns(Task.CompletedTask);
 
-        var report = new QualityGateReport
-        {
-            Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
-            Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK", TestsPassed = 3, TestsFailed = 1, TestsSkipped = 0 }
-        };
         var issue = new IssueDetail { Title = "My Issue", Identifier = "42", Description = "", Labels = [] };
 
         // Run CreatePullRequestAsync
         var createRun = CreateRun();
         await _sut.CreatePullRequestAsync(
-            createRun, report, false, _mockRepo.Object,
+            createRun, false, _mockRepo.Object,
             issue, null, CreateConfig(), CancellationToken.None);
 
         // Run FinalizePullRequestAsync with identical inputs
@@ -310,7 +295,7 @@ public class PullRequestOrchestratorTests
         finalizeRun.PullRequestNumber = "88";
         finalizeRun.PullRequestUrl = "https://github.com/org/repo/pull/88";
         await _sut.FinalizePullRequestAsync(
-            finalizeRun, report, false, _mockRepo.Object,
+            finalizeRun, false, _mockRepo.Object,
             issue, null, CreateConfig(), CancellationToken.None);
 
         capturedPrInfo!.Body.Should().Be(capturedFinalizeBody);
@@ -332,7 +317,10 @@ public class PullRequestOrchestratorTests
         var run = CreateRun();
         run.LinkedPullRequest = new LinkedPullRequest
         {
-            Number = 10, BranchName = "feature/x", Url = "https://github.com/org/repo/pull/10", IsDraft = false
+            Number = 10,
+            BranchName = "feature/x",
+            Url = "https://github.com/org/repo/pull/10",
+            IsDraft = false
         };
 
         var result = await _sut.CreateDraftPrIfNotExistsAsync(run, _mockRepo.Object, CancellationToken.None);
@@ -364,12 +352,6 @@ public class PullRequestOrchestratorTests
         RepoProviderConfigId = "rp-1",
         WorkspacePath = "/tmp/workspace",
         BranchName = "feature/auto-42-test"
-    };
-
-    private static QualityGateReport CreateReport() => new()
-    {
-        Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
-        Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
     };
 
     private static PipelineConfiguration CreateConfig() => new()

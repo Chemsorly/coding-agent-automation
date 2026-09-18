@@ -250,7 +250,7 @@ internal sealed class PipelineExecutionContextBuilder
                 inputs.PrOrchestrator,
                 inputs.RepoProvider,
                 inputs.ReportQualityGateResult,
-                (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, inputs.PrContext, token)),
+                (r, isDraft, token) => CreatePullRequestAsync(r, isDraft, inputs.PrContext, token)),
             inputs.TransitionTo,
             inputs.EmitOutputLine,
             async (contextLoaded, fileCount) => await reporter.ReportBrainSyncResultAsync(contextLoaded, fileCount, ct));
@@ -292,7 +292,7 @@ internal sealed class PipelineExecutionContextBuilder
     }
 
     private async Task CreatePullRequestAsync(
-        PipelineRun run, QualityGateReport report, bool isDraft,
+        PipelineRun run, bool isDraft,
         PullRequestCreationContext context, CancellationToken ct)
     {
         if (_finalization is null)
@@ -306,7 +306,6 @@ internal sealed class PipelineExecutionContextBuilder
             new PrCreationRequest
             {
                 Run = run,
-                Report = report,
                 IsDraft = isDraft,
                 PrOrchestrator = context.PrOrchestrator,
                 RepoProvider = context.RepoProvider,
@@ -334,7 +333,7 @@ internal sealed class PipelineExecutionContextBuilder
         PullRequestOrchestrator PrOrchestrator,
         IRepositoryProvider RepoProvider,
         Action<QualityGateReport> ReportQualityGateResult,
-        Func<PipelineRun, QualityGateReport, bool, CancellationToken, Task> CreatePullRequest);
+        Func<PipelineRun, bool, CancellationToken, Task> CreatePullRequest);
 
     /// <summary>
     /// Adapts the agent executor's callback methods to <see cref="IPipelineCallbacks"/>.
@@ -358,10 +357,11 @@ internal sealed class PipelineExecutionContextBuilder
             => context.IssueOps.SwapLabelAsync(issueIdentifier, label, GetLabelTargetKind(), ct);
         public override Task RemoveAllAgentLabels(IssueIdentifier issueIdentifier, CancellationToken ct)
             => context.IssueOps.SwapLabelAsync(issueIdentifier, string.Empty, GetLabelTargetKind(), ct);
-        public override Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
+        public override Task CreatePullRequest(PipelineRun run, bool isDraft, CancellationToken ct)
         {
-            context.ReportQualityGateResult(report);
-            return context.CreatePullRequest(run, report, isDraft, ct);
+            if (context.Run.LatestQualityReport is { } latestReport)
+                context.ReportQualityGateResult(latestReport);
+            return context.CreatePullRequest(run, isDraft, ct);
         }
         protected override Task CreateDraftPrCoreAsync(PipelineRun run, CancellationToken ct)
             => context.PrOrchestrator.CreateDraftPrIfNotExistsAsync(run, context.RepoProvider, ct);
@@ -369,8 +369,8 @@ internal sealed class PipelineExecutionContextBuilder
         {
             Serilog.Log.Warning(ex, "Agent {RunId} failed to create draft PR, continuing", run.RunId);
         }
-        public override Task FinalizePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
-            => CreatePullRequest(run, report, isDraft, ct);
+        public override Task FinalizePullRequest(PipelineRun run, bool isDraft, CancellationToken ct)
+            => CreatePullRequest(run, isDraft, ct);
         public override Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)
             => reportBrainSyncResult(contextLoaded, knowledgeFileCount);
     }

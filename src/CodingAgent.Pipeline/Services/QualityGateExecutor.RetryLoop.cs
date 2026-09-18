@@ -132,7 +132,7 @@ public partial class QualityGateExecutor
 
         if (report.AllPassed)
         {
-            await callbacks.FinalizePullRequest(run, report, false, linkedCt);
+            await callbacks.FinalizePullRequest(run, false, linkedCt);
 
             // Wait for post-PR CI and handle retry/draft if it fails.
             // Extracted to keep RunPostRetryCleanupAndFinalizeAsync within complexity threshold.
@@ -150,18 +150,12 @@ public partial class QualityGateExecutor
     {
         var run = context.Run;
         report = await WaitForPostPrCiAsync(context, report, linkedCt);
-        if (run.CurrentStep == PipelineStep.Failed) return;
+        if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart) return;
 
         if (!report.AllPassed)
         {
             report = await RunRetryLoopAsync(context, report, "Post-PR CI retry agent", linkedCt);
-            // TODO [WARNING]: Guard is missing for ConflictRestart. If AppendExternalCiIfNeededAsync
-            // sets ConflictRestart during the post-PR retry loop, RunRetryLoopAsync returns early
-            // (via the inner guard at line ~491), but this call site only checks for Failed.
-            // The !report.AllPassed condition below will be true (ExternalCi.Passed=false on conflict),
-            // causing FinalizeDraftPrAsync to be called on a run already re-queued via agent:next.
-            // Fix: change to `if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart) return;`
-            if (run.CurrentStep == PipelineStep.Failed) return;
+            if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart) return;
 
             if (!report.AllPassed)
                 await FinalizeDraftPrAsync(context, run, report, "post-PR CI failed after retries", linkedCt);
@@ -315,7 +309,7 @@ public partial class QualityGateExecutor
         // (b) if FinalizePullRequest throws, the category is still recorded on the run object
         // and the metric will emit "quality_gate_exhausted" instead of "unknown".
         run.FailureCategory = FailureReason.QualityGateExhausted;
-        await callbacks.FinalizePullRequest(run, report, true, ct);
+        await callbacks.FinalizePullRequest(run, true, ct);
     }
 
     /// <summary>

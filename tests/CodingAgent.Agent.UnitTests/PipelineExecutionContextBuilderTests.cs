@@ -819,6 +819,112 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
         await result.DisposeAsync();
     }
 
+    // ── CreatePullRequest callback / LatestQualityReport branch coverage ──
+
+    [Fact]
+    public async Task CreatePullRequest_WhenLatestQualityReportIsNull_DoesNotCallReportQualityGateResult()
+    {
+        // Verifies the null branch of the conditional in AgentCallbacks.CreatePullRequest:
+        // when LatestQualityReport is null, ReportQualityGateResult must NOT be called.
+        SetupReporterFactory();
+        var mockRepo = new Mock<IRepositoryProvider>();
+        mockRepo.Setup(r => r.RepositoryFullName).Returns("test/repo");
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(Array.Empty<string>());
+
+        var builder = CreateBuilder();
+        var job = CreateTestJob();
+        var config = new PipelineConfiguration();
+        var proxy = new OrchestratorProxy(_connection, "job-123");
+
+        var result = await builder.Build(
+            job, config, mockRepo.Object, mockAgent.Object, null, null,
+            proxy, _connection, _batcher, null, CancellationToken.None);
+
+        // LatestQualityReport is null by default on a new run — confirm the precondition.
+        result.Run.LatestQualityReport.Should().BeNull();
+
+        // Replace the ReportQualityGateResult delegate with a tracking version.
+        bool reportCalled = false;
+        var trackedContext = result.ExecutionContext with
+        {
+            ReportQualityGateResult = _ => { reportCalled = true; }
+        };
+
+        var stepCtx = builder.CreateStepContext(
+            trackedContext, (PipelineSignalRReporter)result.Reporter, CancellationToken.None);
+
+        // Act — CreatePullRequest will proceed to CreatePullRequestAsync which will throw
+        // (no real providers), but ReportQualityGateResult must NOT be called beforehand.
+        try
+        {
+            await stepCtx.Callbacks.CreatePullRequest(result.Run, isDraft: false, CancellationToken.None);
+        }
+        catch
+        {
+            // Expected: CreatePullRequestAsync throws because mock providers have no real setup.
+            // We only care about whether ReportQualityGateResult was called.
+        }
+
+        reportCalled.Should().BeFalse("ReportQualityGateResult should be skipped when LatestQualityReport is null");
+
+        await result.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task CreatePullRequest_WhenLatestQualityReportIsNotNull_CallsReportQualityGateResult()
+    {
+        // Verifies the non-null branch: when LatestQualityReport is populated,
+        // ReportQualityGateResult must be called with that report before PR creation.
+        SetupReporterFactory();
+        var mockRepo = new Mock<IRepositoryProvider>();
+        mockRepo.Setup(r => r.RepositoryFullName).Returns("test/repo");
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(Array.Empty<string>());
+
+        var builder = CreateBuilder();
+        var job = CreateTestJob();
+        var config = new PipelineConfiguration();
+        var proxy = new OrchestratorProxy(_connection, "job-123");
+
+        var result = await builder.Build(
+            job, config, mockRepo.Object, mockAgent.Object, null, null,
+            proxy, _connection, _batcher, null, CancellationToken.None);
+
+        // Populate LatestQualityReport so the non-null branch is taken.
+        var expectedReport = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
+            Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
+        };
+        result.Run.LatestQualityReport = expectedReport;
+
+        QualityGateReport? capturedReport = null;
+        var trackedContext = result.ExecutionContext with
+        {
+            ReportQualityGateResult = r => { capturedReport = r; }
+        };
+
+        var stepCtx = builder.CreateStepContext(
+            trackedContext, (PipelineSignalRReporter)result.Reporter, CancellationToken.None);
+
+        // Act — CreatePullRequest will call ReportQualityGateResult before proceeding.
+        try
+        {
+            await stepCtx.Callbacks.CreatePullRequest(result.Run, isDraft: false, CancellationToken.None);
+        }
+        catch
+        {
+            // Expected: CreatePullRequestAsync throws because mock providers have no real setup.
+            // We only care that ReportQualityGateResult was called with the correct report.
+        }
+
+        capturedReport.Should().BeSameAs(expectedReport,
+            "ReportQualityGateResult should be called with the run's LatestQualityReport");
+
+        await result.DisposeAsync();
+    }
+
     // ── CreatePullRequest callback / null finalization ────────────────────
 
     [Fact]
@@ -856,13 +962,8 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
         var stepCtx = builderWithoutFinalization.CreateStepContext(
             result.ExecutionContext, (PipelineSignalRReporter)result.Reporter, CancellationToken.None);
 
-        var report = new QualityGateReport
-        {
-            Compilation = new GateResult { GateName = "Compilation", Passed = true },
-            Tests = new GateResult { GateName = "Tests", Passed = true }
-        };
         var act = () => stepCtx.Callbacks.CreatePullRequest(
-            result.Run, report, isDraft: false, CancellationToken.None);
+            result.Run, isDraft: false, CancellationToken.None);
 
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("*PullRequestFinalizationService*");
