@@ -64,6 +64,24 @@ public sealed class DispatchServiceOptionsTests
     }
 
     [Fact]
+    public void ValidateAndClamp_NullDispatchedAtGraceWindow_BelowMinimum_ClampsTo60()
+    {
+        var opts = new DispatchServiceOptions { NullDispatchedAtGraceWindowSeconds = 10 };
+        opts.ValidateAndClamp();
+        opts.NullDispatchedAtGraceWindowSeconds.Should().Be(60,
+            "NullDispatchedAtGraceWindowSeconds must not be shorter than TimeoutCanaryMinAgeSeconds (60s) " +
+            "to prevent the canary guard from re-blocking enforcement after escalation");
+    }
+
+    [Fact]
+    public void ValidateAndClamp_NullDispatchedAtGraceWindow_AboveMinimum_Unchanged()
+    {
+        var opts = new DispatchServiceOptions { NullDispatchedAtGraceWindowSeconds = 3600 };
+        opts.ValidateAndClamp();
+        opts.NullDispatchedAtGraceWindowSeconds.Should().Be(3600);
+    }
+
+    [Fact]
     public void ValidateAndClamp_AtExactMinimum_Unchanged()
     {
         var opts = new DispatchServiceOptions
