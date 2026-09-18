@@ -276,60 +276,44 @@ public sealed class AgentJobLifecycleServiceTests
     }
 
     [Fact]
-    public async Task HandleJobRejectedAsync_WhenCleanupThrows_AgentIsTransitionedToIdle()
+    public async Task HandleJobRejectedAsync_WhenCleanupThrows_AgentIsResetAndExceptionPropagates()
     {
-        // Arrange: GetWorkItemRetryCountAsync throws — simulates the unguarded call inside
-        // HandleRejectedRunCleanupAsync propagating an exception. Agent must still be reset.
+        // Arrange: GetWorkItemRetryCountAsync throws — simulates a DB failure inside
+        // HandleRejectedRunCleanupAsync. The finally block must reset the agent AND the
+        // exception must propagate out of HandleJobRejectedAsync (not be swallowed).
         var agent = MakeAgent();
-        agent.ActiveJobId = "job-1"; // set non-null so the assertion is non-trivial
+        agent.ActiveJobId = "job-1"; // non-null so the ActiveJobId null assertion is non-trivial
         agent.Status = AgentStatus.Busy;
         var jobId = new JobId("job-1");
         _facade.Setup(f => f.GetRun(jobId)).Returns(MakeRun("job-1"));
         _facade.Setup(f => f.GetWorkItemRetryCountAsync(jobId, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("DB unavailable"));
 
-        // Act: absorb the propagated exception so we can Assert on agent state
-        // TODO [WARNING]: Catching only InvalidOperationException is too narrow — if the production
-        // code threw a different exception type (e.g. NullReferenceException), the catch block would
-        // not execute, the assertions below would never run, and the failure mode would be confusing.
-        // Fix: catch Exception here, or combine this test with ExceptionPropagates into a single test
-        // that verifies both the state reset and the exception propagation in one scenario.
-        try
-        {
-            await _sut.HandleJobRejectedAsync(jobId, agent, "reason", CancellationToken.None);
-        }
-        catch (InvalidOperationException)
-        {
-            // expected — exception must propagate (verified separately)
-        }
+        // Act + Assert: exception propagates
+        var act = () => _sut.HandleJobRejectedAsync(jobId, agent, "reason", CancellationToken.None);
+        await act.Should().ThrowAsync<InvalidOperationException>("the exception from cleanup must not be swallowed");
 
         // Assert: agent state was reset despite the exception
         _facade.Verify(f => f.TransitionStatus(agent.AgentId, AgentStatus.Idle), Times.Once,
             "TransitionStatus(Idle) must be called even when HandleRejectedRunCleanupAsync throws");
         agent.ActiveJobId.Should().BeNull(
             "ActiveJobId must be cleared even when HandleRejectedRunCleanupAsync throws");
-        // TODO [WARNING]: agent.Status is set to Busy in Arrange but never asserted afterwards.
-        // TransitionStatus is a mock call that does not mutate agent.Status in the test double, so
-        // a regression that called TransitionStatus without updating the in-memory status field would
-        // still pass this test. Add: agent.Status.Should().Be(AgentStatus.Idle) — or remove the
-        // agent.Status = AgentStatus.Busy setup if agent.Status is not a meaningful post-condition here.
     }
 
     [Fact]
-    public async Task HandleJobRejectedAsync_WhenCleanupThrows_ExceptionPropagates()
+    public async Task HandleJobRejectedAsync_WhenCleanupThrows_AndAgentIsNull_ExceptionStillPropagates()
     {
-        // Arrange: GetWorkItemRetryCountAsync throws — the exception must not be swallowed.
-        var agent = MakeAgent();
-        agent.ActiveJobId = "job-1";
-        agent.Status = AgentStatus.Busy;
+        // Arrange: agent is null and cleanup throws — the finally block guard (agent is not null)
+        // must not shadow the original exception with a NullReferenceException.
         var jobId = new JobId("job-1");
         _facade.Setup(f => f.GetRun(jobId)).Returns(MakeRun("job-1"));
         _facade.Setup(f => f.GetWorkItemRetryCountAsync(jobId, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("DB unavailable"));
 
-        // Act + Assert: the exception propagates out of HandleJobRejectedAsync
-        var act = () => _sut.HandleJobRejectedAsync(jobId, agent, "reason", CancellationToken.None);
-        await act.Should().ThrowAsync<InvalidOperationException>();
+        // Act + Assert: original exception propagates cleanly (no NullReferenceException from finally)
+        var act = () => _sut.HandleJobRejectedAsync(jobId, null, "reason", CancellationToken.None);
+        await act.Should().ThrowAsync<InvalidOperationException>(
+            "the original exception must propagate even when agent is null");
     }
 
     // ── HandleJobCompletedAsync ───────────────────────────────────────────

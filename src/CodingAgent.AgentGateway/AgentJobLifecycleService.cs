@@ -21,6 +21,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     private const string FieldActiveJobId = "activeJobId";
     private const string FieldLastJobCompletedAt = "lastJobCompletedAt";
     private const string FieldOrphanRestoredAt = "orphanRestoredAt";
+    private const string UpdateFieldFailedTemplate = "HandleJobRejectedAsync: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'";
 
     private readonly IAgentHubFacade _facade;
     private readonly ILabelService _labelService;
@@ -112,27 +113,19 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                 // does not leave the agent stuck Busy until ReconciliationService timeout.
                 if (agent is not null)
                 {
+                    var now = DateTimeOffset.UtcNow;
                     agent.ActiveJobId = null;
-                    // TODO [WARNING]: agent.LastJobCompletedAt is captured here, and the UpdateAgentFieldAsync
-                    // call below captures a second DateTimeOffset.UtcNow independently, so the in-memory field
-                    // and the persisted value can diverge by a few milliseconds under scheduler/GC pressure.
-                    // Fix: assign `var now = DateTimeOffset.UtcNow` once and reuse it in both places.
-                    agent.LastJobCompletedAt = DateTimeOffset.UtcNow; // Push to back of FIFO queue to prevent same-agent re-dispatch loop
-                    // TODO [WARNING]: Fire-and-forget tasks created inside a finally block carry a subtle risk —
-                    // if UpdateAgentFieldAsync throws synchronously before ContinueWith attaches, the exception
-                    // propagates out of finally and may replace/suppress the original exception from
-                    // HandleRejectedRunCleanupAsync. Additionally, t.Exception should use .Flatten() to unwrap
-                    // the AggregateException so the inner exception message is logged rather than the outer wrapper.
+                    agent.LastJobCompletedAt = now; // Push to back of FIFO queue to prevent same-agent re-dispatch loop
                     _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldActiveJobId, null)
-                        .ContinueWith(t => _logger.Warning(t.Exception,
-                                "HandleJobRejectedAsync: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
+                        .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
+                                UpdateFieldFailedTemplate,
                                 agent.AgentId, FieldActiveJobId),
                             CancellationToken.None,
                             TaskContinuationOptions.OnlyOnFaulted,
                             TaskScheduler.Default);
-                    _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldLastJobCompletedAt, DateTimeOffset.UtcNow.ToString("O"))
-                        .ContinueWith(t => _logger.Warning(t.Exception,
-                                "HandleJobRejectedAsync: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
+                    _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldLastJobCompletedAt, now.ToString("O"))
+                        .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
+                                UpdateFieldFailedTemplate,
                                 agent.AgentId, FieldLastJobCompletedAt),
                             CancellationToken.None,
                             TaskContinuationOptions.OnlyOnFaulted,
@@ -150,18 +143,19 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // Reached only when run is null — transition agent back to Idle for the no-run path
         if (agent is not null)
         {
+            var now = DateTimeOffset.UtcNow;
             agent.ActiveJobId = null;
-            agent.LastJobCompletedAt = DateTimeOffset.UtcNow; // Push to back of FIFO queue to prevent same-agent re-dispatch loop
+            agent.LastJobCompletedAt = now; // Push to back of FIFO queue to prevent same-agent re-dispatch loop
             _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldActiveJobId, null)
-                .ContinueWith(t => _logger.Warning(t.Exception,
-                        "HandleJobRejectedAsync: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
+                .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
+                        UpdateFieldFailedTemplate,
                         agent.AgentId, FieldActiveJobId),
                     CancellationToken.None,
                     TaskContinuationOptions.OnlyOnFaulted,
                     TaskScheduler.Default);
-            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldLastJobCompletedAt, DateTimeOffset.UtcNow.ToString("O"))
-                .ContinueWith(t => _logger.Warning(t.Exception,
-                        "HandleJobRejectedAsync: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
+            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, FieldLastJobCompletedAt, now.ToString("O"))
+                .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
+                        UpdateFieldFailedTemplate,
                         agent.AgentId, FieldLastJobCompletedAt),
                     CancellationToken.None,
                     TaskContinuationOptions.OnlyOnFaulted,
