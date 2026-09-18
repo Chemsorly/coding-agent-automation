@@ -21,9 +21,16 @@ public class AgentLabelsTests
     public void TerminalLabels_ContainsMember(string label) =>
         AgentLabels.TerminalLabels.Should().Contain(label);
 
-    // ── DispatchIneligibleLabels regression guard ──────────────────────────
+    // ── DispatchIneligibleLabels membership ───────────────────────────────
+
+    // TODO: DispatchIneligibleLabels_ContainsEpicReview is redundant with
+    // TerminalLabels_IsSubsetOf_DispatchIneligibleLabels below (which is a strictly stronger
+    // assertion). Consider removing this point-membership test in a future cleanup pass.
+    [Fact]
+    public void DispatchIneligibleLabels_ContainsEpicReview() =>
+        AgentLabels.DispatchIneligibleLabels.Should().Contain(AgentLabels.EpicReview);
 
     [Fact]
-    public void DispatchIneligibleLabels_DoesNotContainEpicReview() =>
-        AgentLabels.DispatchIneligibleLabels.Should().NotContain(AgentLabels.EpicReview);
+    public void TerminalLabels_IsSubsetOf_DispatchIneligibleLabels() =>
+        AgentLabels.TerminalLabels.Should().BeSubsetOf(AgentLabels.DispatchIneligibleLabels);
 }
