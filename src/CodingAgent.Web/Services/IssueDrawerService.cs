@@ -190,6 +190,15 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
                 return (false, $"Cannot dispatch — issue is blocked by open dependencies: {string.Join(", ", depResult.BlockedBy.Select(n => $"#{n}"))}", null);
         }
 
+        // EpicReview is a terminal state in the epic decomposition workflow. Unlike other terminal
+        // labels (agent:done, agent:cancelled, etc.) which represent completed or aborted
+        // implementation runs and can be force-requeued via manual dispatch, agent:epic-review marks
+        // an issue that is awaiting human approval of the epic plan. Re-dispatching it as an
+        // implementation job would bypass the approval gate entirely. Reject early so the UI shows
+        // a clean error rather than a confusing 409 from the database unique-index constraint.
+        if (issue.Labels.Any(l => StringComparer.OrdinalIgnoreCase.Equals(l, AgentLabels.EpicReview)))
+            return (false, $"Cannot dispatch — issue is in state '{AgentLabels.EpicReview}' which requires human approval before it can proceed. Use the epic approval workflow instead.", null);
+
         // Manual dispatch is an explicit force-requeue: clear any blocking labels and set agent:next
         // before creating the WorkItem. Without this, DispatchLoop would see the blocking label,
         // cancel the WorkItem, and re-stamp the same label — a self-reinforcing cancellation loop.
