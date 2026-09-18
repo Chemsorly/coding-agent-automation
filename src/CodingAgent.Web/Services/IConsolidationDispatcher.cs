@@ -24,6 +24,10 @@ public interface IConsolidationDispatcher
     /// On permanent failure (no job template for the resolved agent selector) the run is
     /// cascaded to <c>Failed</c> so it surfaces in the Attention view rather than staying
     /// <c>Queued</c> forever.
+    /// TODO: The claim above ("surfaces in the Attention view") is incorrect — failed consolidation
+    /// runs are visible on the Consolidation monitoring page (/consolidation), NOT in the Attention
+    /// view (which only surfaces PipelineRun items). Update this XML doc to match the corrected
+    /// inline comment in ConsolidationDispatcher.cs.
     /// </para>
     /// Never throws for runtime failures; logs and swallows them so the caller's status message
     /// is still shown. Throws <see cref="ArgumentNullException"/> if <paramref name="run"/> is null.
