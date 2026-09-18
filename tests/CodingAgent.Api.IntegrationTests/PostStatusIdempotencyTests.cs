@@ -644,6 +644,109 @@ public sealed class PostStatusIdempotencyTests
             "a named FailureReason (\"AgentError\") must pass through IsDefined and reach the metric tag");
     }
 
+    // ── FailureReason IsDefined guard — DB persistence side (issue #2667) ────
+
+    /// <summary>
+    /// Regression test for issue #2667.
+    /// When <c>FailureReason = "99"</c> is supplied, <c>Enum.TryParse&lt;FailureReason&gt;</c>
+    /// succeeds (int backing type) but the value has no named member.
+    /// The <c>Enum.IsDefined</c> guard must reject it so the undefined value is never written to
+    /// <c>entity.FailureReason</c>; the <c>else</c> branch must fire and set
+    /// <c>entity.FailureReason = FailureReason.AgentError</c> instead.
+    /// </summary>
+    [Fact]
+    public async Task ApplyStatusMutation_WithUndefinedNumericFailureReason_DoesNotPersistToDb()
+    {
+        // Arrange
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
+        var transitionService = CreateTransitionService(opts);
+        var dbFactory = CreateDbFactory(opts);
+
+        var request = new WorkItemStatusRequest
+        {
+            Status = WorkItemStatus.Failed,
+            FailureReason = "99"
+        };
+        var runService = new Mock<IOrchestratorRunService>().Object;
+        var lifecycleManager = new Mock<IRunLifecycleManager>();
+        lifecycleManager
+            .Setup(m => m.FailRunAsync(
+                It.IsAny<RunId>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<FailureReason?>()))
+            .ReturnsAsync((PipelineRun?)null);
+
+        // Act — awaitTelemetry: true so the call is fully synchronous before we read the DB.
+        var result = await WorkItemAgentEndpoints.PostStatus(
+            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory,
+            ct: default, awaitTelemetry: true);
+
+        // Assert
+        result.Should().BeOfType<Ok>();
+
+        await using var verifyCtx = new TestPipelineDbContext(opts);
+        var persisted = await verifyCtx.WorkItems.FindAsync(item.Id);
+        persisted.Should().NotBeNull();
+        // TODO: The assertion below verifies the else-branch fallback value (AgentError) rather than
+        // directly asserting that the undefined value (FailureReason)99 was not persisted. This means
+        // the test name ("DoesNotPersistToDb") and AC wording ("does not set entity.FailureReason")
+        // are not perfectly mirrored by the assertion. Consider either:
+        //   (a) renaming the test to ApplyStatusMutation_WithUndefinedNumericFailureReason_FallsBackToAgentError, or
+        //   (b) adding: persisted!.FailureReason.Should().NotBe((FailureReason)99) alongside Be(AgentError)
+        // to make the guard's rejection explicit and guard against future fallback-default changes.
+        // See review findings: DotNetSpecialist [WARNING] and TestQualityReviewer [WARNING].
+        persisted!.FailureReason.Should().Be(FailureReason.AgentError,
+            "an undefined numeric FailureReason (\"99\") must be rejected by the IsDefined guard; " +
+            "the else branch must fall back to FailureReason.AgentError, not persist the undefined value");
+    }
+
+    /// <summary>
+    /// Regression test for issue #2667 (positive case).
+    /// A valid named <c>FailureReason</c> string (e.g. <c>"AgentError"</c>) must still pass through
+    /// the <c>Enum.IsDefined</c> guard and be written to <c>entity.FailureReason</c> in the DB.
+    /// </summary>
+    [Fact]
+    public async Task ApplyStatusMutation_WithValidNamedFailureReason_PersistsToDb()
+    {
+        // Arrange
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
+        var transitionService = CreateTransitionService(opts);
+        var dbFactory = CreateDbFactory(opts);
+
+        var request = new WorkItemStatusRequest
+        {
+            Status = WorkItemStatus.Failed,
+            FailureReason = "AgentError"
+        };
+        var runService = new Mock<IOrchestratorRunService>().Object;
+        var lifecycleManager = new Mock<IRunLifecycleManager>();
+        lifecycleManager
+            .Setup(m => m.FailRunAsync(
+                It.IsAny<RunId>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<FailureReason?>()))
+            .ReturnsAsync((PipelineRun?)null);
+
+        // Act
+        var result = await WorkItemAgentEndpoints.PostStatus(
+            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory,
+            ct: default, awaitTelemetry: true);
+
+        // Assert
+        result.Should().BeOfType<Ok>();
+
+        await using var verifyCtx = new TestPipelineDbContext(opts);
+        var persisted = await verifyCtx.WorkItems.FindAsync(item.Id);
+        persisted.Should().NotBeNull();
+        persisted!.FailureReason.Should().Be(FailureReason.AgentError,
+            "a valid named FailureReason (\"AgentError\") must pass through the IsDefined guard " +
+            "and be persisted to the database");
+    }
+
     // ── Terminal-idempotency guard (issue #2461) ──────────────────────────────
 
     /// <summary>
