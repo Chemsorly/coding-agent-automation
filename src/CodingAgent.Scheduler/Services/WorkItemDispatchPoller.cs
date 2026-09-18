@@ -17,9 +17,12 @@ namespace CodingAgent.Scheduler.Services;
 /// Each poll cycle:
 /// <list type="number">
 ///   <item>Fetches Pending WorkItems via <c>GET /api/work-items/pending</c>
-///     (sorted <c>PriorityWeight DESC, CreatedAt ASC</c>). When
+///     (sorted by RunType tier: Review &gt; Decomposition &gt; Implementation &gt; Consolidation,
+///     then <c>PriorityWeight DESC</c> within a tier, then <c>CreatedAt ASC</c>). When
 ///     <c>Consolidation:UnifiedDispatch:Enabled</c> is false, consolidation items are excluded
-///     by the endpoint; when true, they are included and dispatched via this poller.</item>
+///     by the endpoint; when true, they are included and dispatched via this poller.
+///     The <c>maxResults</c> window (default 50) is filled strictly in tier order — if 50+
+///     items of a higher tier are pending, lower-tier items are invisible to this cycle.</item>
 ///   <item>Dispatches each item sequentially so the endpoint's per-call snapshot stays accurate.</item>
 ///   <item>Applies rate limiting (token bucket, default 10/s) before each dispatch call.</item>
 ///   <item>Per-selector stop: if <c>POST /{id}/dispatch</c> returns 409 for a given
