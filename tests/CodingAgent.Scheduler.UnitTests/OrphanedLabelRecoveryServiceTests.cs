@@ -167,12 +167,6 @@ public sealed class OrphanedLabelRecoveryServiceTests
     /// (the existing agent:in-progress query) and resolved to agent:done (higher precedence).
     /// Acceptance criteria: an issue with both labels is resolved without manual intervention.
     /// </summary>
-    // TODO: Pass 2 is wired to EmptyProvider here, but in production an issue carrying both
-    // agent:in-progress and agent:done WOULD appear in the agent:done Pass 2 query. By returning
-    // empty from Pass 2, this test cannot detect the case where the same issue is processed by
-    // both passes in one sweep (double-swap). Ideally Pass 2 should return the same issue (or the
-    // post-resolution single-label version) and the test should assert SwapLabelAsync is called
-    // Times.Once in total regardless of how many passes surface the issue.
     [Fact]
     public async Task Pass1_WhenInProgressIssueHasDualLabel_ResolvesToDone()
     {
@@ -210,6 +204,40 @@ public sealed class OrphanedLabelRecoveryServiceTests
                 It.IsAny<CancellationToken>()),
             Times.Never,
             "agent:in-progress must not be selected when agent:done is present");
+    }
+
+    /// <summary>
+    /// Production scenario: an issue carrying both agent:in-progress and agent:done appears in BOTH
+    /// the Pass 1 agent:in-progress query AND the Pass 2 agent:done query in the same sweep.
+    /// The pass-1-resolved deduplication guard must ensure SwapLabelAsync is called exactly once,
+    /// not twice (which could cause a duplicate-add / not-found-remove on the second call).
+    /// </summary>
+    [Fact]
+    public async Task WhenDualLabelIssueAppearsInBothPasses_SwapCalledOnlyOnce()
+    {
+        var issue = new IssueSummary
+        {
+            Identifier = "42",
+            Title = "Dual-label issue in both passes",
+            Labels = [AgentLabels.InProgress, AgentLabels.Done]
+        };
+
+        // Both Pass 1 and Pass 2 return the same dual-label issue — the production scenario.
+        WireProviders(BuildProvider(issue).Object, BuildProvider(issue).Object);
+
+        await CreateService().SweepOnceForTestAsync(CancellationToken.None);
+
+        // The pass-1-resolved guard must prevent Pass 2 from processing the same issue.
+        // SwapLabelAsync must be called exactly once across both passes.
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(),
+                It.Is<IssueIdentifier>(i => i.Value == "42"),
+                AgentLabels.Done,
+                LabelTargetKind.Issue,
+                It.IsAny<CancellationToken>()),
+            Times.Once,
+            "SwapLabelAsync must be called exactly once — Pass 2 must skip the issue already resolved by Pass 1");
     }
 
     /// <summary>

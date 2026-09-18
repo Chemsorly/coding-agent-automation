@@ -441,6 +441,12 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
 
         // Assert: provider config was loaded twice (once for Pass 1, once for Pass 2) but NOT
         // four times (which would happen without deduplication of the two templates sharing provider-1).
+        // TODO: Times.Exactly(2) is tied to the current implementation detail of exactly 2 scan passes.
+        // If Pass 2 is removed or the two passes are merged into one, this assertion will become a
+        // false failure. If a third pass is added, deduplication means 3 calls (not 6), but this
+        // assertion will also fail, masking the real intent. Consider replacing with
+        // Times.LessThan(numberOfProviders * 3) or a more semantically meaningful bound that survives
+        // pass count changes while still catching the N-providers × passes deduplication regression.
         _mockConfigClient.Verify(
             s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()),
             Times.Exactly(2));

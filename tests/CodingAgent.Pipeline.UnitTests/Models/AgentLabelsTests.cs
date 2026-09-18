@@ -23,6 +23,13 @@ public class AgentLabelsTests
 
     // ── DispatchIneligibleLabels regression guard ──────────────────────────
 
+    // TODO: TerminalLabels_IsSubsetOf_DispatchIneligibleLabels was removed when EpicReview was
+    // intentionally removed from DispatchIneligibleLabels. That test was the only structural guard
+    // ensuring all terminal labels are also dispatch-ineligible. With EpicReview now in TerminalLabels
+    // but not in DispatchIneligibleLabels, the subset invariant no longer holds universally.
+    // Consider replacing the removed test with one that explicitly documents which TerminalLabels are
+    // intentionally absent from DispatchIneligibleLabels (currently only EpicReview), so that future
+    // label additions to TerminalLabels that accidentally miss DispatchIneligibleLabels are caught.
     [Fact]
     public void DispatchIneligibleLabels_DoesNotContainEpicReview() =>
         AgentLabels.DispatchIneligibleLabels.Should().NotContain(AgentLabels.EpicReview);
