@@ -158,6 +158,72 @@ public static class ApiServiceCollectionExtensions
     }
 
     /// <summary>
+    /// Factory method for <see cref="IAgentRegistryService"/> extracted for testability.
+    /// Called from the <c>AddApiOrchestration</c> DI registration and directly from tests
+    /// to ensure tests exercise the real production code path rather than an inline copy.
+    ///
+    /// Returns <see cref="DistributedAgentRegistryService"/> when Redis is available.
+    /// Otherwise returns the in-memory <see cref="AgentRegistryService"/>, emitting a
+    /// <c>Warning</c>-level log and optionally throwing when multiple replicas are detected.
+    /// </summary>
+    internal static IAgentRegistryService CreateAgentRegistryService(
+        IServiceProvider sp, IConfiguration config)
+    {
+        // TODO [WARNING]: This internal method is called directly from test code as well as from the
+        // DI lambda. It has no ArgumentNullException.ThrowIfNull guards on sp or config. A test that
+        // accidentally passes null for config would produce a NullReferenceException inside
+        // DispatchServiceOptionsFactory.Create(config) with no actionable message. Consider adding
+        // ArgumentNullException.ThrowIfNull(sp) and ArgumentNullException.ThrowIfNull(config) at
+        // the top of this method.
+        // See review finding [WARNING] ApiServiceCollectionExtensions.cs:169 (DotNetSpecialist review).
+        var mux = sp.GetService<StackExchange.Redis.IConnectionMultiplexer>();
+        if (mux is not null)
+        {
+            var store = new CodingAgent.Orchestration.Redis.RedisStore(mux.GetDatabase());
+            Log.Information("AgentRegistry: distributed (Redis)");
+            return new DistributedAgentRegistryService(store, Log.Logger);
+        }
+
+        // Replica-count guard: if multiple API replicas are running without Redis, each
+        // replica maintains an independent in-memory registry — agents registered on one
+        // replica are invisible to dispatchers on other replicas (split-brain).
+        // ChatReplicaCount is injected by Helm from .Values.api.replicas via
+        // WorkDistribution__Dispatch__ChatReplicaCount — the same value used by
+        // ChatJobDispatcher.StartAsync for an analogous keepalive warning.
+        var dispatchOpts = DispatchServiceOptionsFactory.Create(config);
+        var replicaCount = dispatchOpts.ChatReplicaCount;
+        var failOnMultiReplica = bool.TryParse(config["Api:FailOnMultiReplicaWithoutRedis"], out var f) && f;
+
+        if (replicaCount > 1)
+        {
+            // TODO [WARNING]: Log.Warning is emitted here regardless of failOnMultiReplica, so the
+            // fail-fast and log-only branches are asymmetric: the throw path always logs a Warning first.
+            // This is benign (the warning reaches the sink before the process exits), but future readers
+            // may remove the Log.Warning inside the fail-fast branch since "it's going to throw anyway",
+            // silently breaking AC1 coverage for the throw path. If the two branches should stay
+            // symmetric, extract Log.Warning to before the `if (failOnMultiReplica)` guard.
+            // See review finding [WARNING] ApiServiceCollectionExtensions.cs (Correctness review).
+            Log.Warning(
+                "AgentRegistry: in-memory mode with {ReplicaCount} replicas configured — " +
+                "each replica will maintain an independent agent registry (split-brain). " +
+                "Agents registered on one replica will be invisible to dispatchers on other replicas. " +
+                "Configure Redis (signalr.redis.connectionString) to use DistributedAgentRegistryService.",
+                replicaCount);
+
+            if (failOnMultiReplica)
+                throw new InvalidOperationException(
+                    "AgentRegistry: in-memory mode is not safe with multiple replicas. " +
+                    "Set Redis connection string or reduce api.replicas to 1.");
+        }
+        else
+        {
+            Log.Information("AgentRegistry: in-memory (local development — Redis not configured)");
+        }
+
+        return sp.GetRequiredService<AgentRegistryService>();
+    }
+
+    /// <summary>
     /// Registers orchestration services needed by the hub graph:
     /// agent registry, run service, job deduplication, dispatch infrastructure,
     /// lifecycle manager, label/token/consolidation services, and agent communication.
@@ -175,18 +241,7 @@ public static class ApiServiceCollectionExtensions
         // Use DistributedAgentRegistryService when Redis is available (multi-replica mode);
         // fall back to in-memory AgentRegistryService for local dev without Redis.
         services.AddSingleton<AgentRegistryService>();
-        services.AddSingleton<IAgentRegistryService>(sp =>
-        {
-            var mux = sp.GetService<StackExchange.Redis.IConnectionMultiplexer>();
-            if (mux is not null)
-            {
-                var store = new CodingAgent.Orchestration.Redis.RedisStore(mux.GetDatabase());
-                Log.Information("AgentRegistry: distributed (Redis)");
-                return new DistributedAgentRegistryService(store, Log.Logger);
-            }
-            Log.Information("AgentRegistry: in-memory (local development — Redis not configured)");
-            return sp.GetRequiredService<AgentRegistryService>();
-        });
+        services.AddSingleton<IAgentRegistryService>(sp => CreateAgentRegistryService(sp, config));
 
         // ── OrchestratorRunService + IOrchestratorRunService ────────────────
         // Use DistributedRunService when Redis is available; fall back to in-memory.
