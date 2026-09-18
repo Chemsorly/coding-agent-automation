@@ -19,7 +19,6 @@ public sealed class WriteProjectContextStep : IPipelineStep
 
         var workspacePath = context.Run.WorkspacePath!;
         var agentDir = Path.Combine(workspacePath, ".agent");
-        Directory.CreateDirectory(agentDir);
 
         var sb = new StringBuilder();
         sb.AppendLine("# Project Context");
@@ -53,8 +52,18 @@ public sealed class WriteProjectContextStep : IPipelineStep
         sb.AppendLine("- If an issue spans multiple repositories, assign to the PRIMARY repository and note cross-cutting dependencies in the issue body");
         sb.AppendLine("- Issues without `targetRepository` will be created in the default repository");
 
-        await File.WriteAllTextAsync(Path.Combine(agentDir, "project-context.md"), sb.ToString(), ct);
-        context.Callbacks.EmitOutputLine("📋 Wrote .agent/project-context.md with project repository context");
+        try
+        {
+            Directory.CreateDirectory(agentDir);
+            await File.WriteAllTextAsync(Path.Combine(agentDir, "project-context.md"), sb.ToString(), ct);
+            context.Callbacks.EmitOutputLine("📋 Wrote .agent/project-context.md with project repository context");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            context.Logger.Warning(ex,
+                "Pipeline {RunId} failed to write project context file, continuing without it",
+                context.Run.RunId);
+        }
 
         return StepResult.Continue;
     }
