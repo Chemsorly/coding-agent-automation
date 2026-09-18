@@ -49,4 +49,15 @@ public sealed record ActiveWorkItemDto
     /// Populated by the API for display purposes only — not used by the Job Controller.
     /// </summary>
     public string? InitiatedBy { get; init; }
+
+    /// <summary>
+    /// UTC timestamp when the WorkItem was created (enqueued).
+    /// Used by <c>ReconciliationLoop.EnforceTimeoutsAsync</c> as a fallback timeout anchor
+    /// when <c>DispatchedAt</c> is null (e.g. a write failure on the claim path).
+    /// After a configurable grace window (<c>DispatchServiceOptions.NullDispatchedAtGraceWindowSeconds</c>),
+    /// items with null <c>DispatchedAt</c> are force-failed using <c>CreatedAt</c> as the age anchor.
+    /// Null when the DTO was constructed by test code that pre-dates this field;
+    /// the reconciliation loop treats null as "just created" and skips enforcement.
+    /// </summary>
+    public DateTimeOffset? CreatedAt { get; init; }
 }

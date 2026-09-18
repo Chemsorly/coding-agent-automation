@@ -884,6 +884,103 @@ public sealed class WorkItemEndpointTests
     // asserts HTTP 200 with InitiatedBy == null and IssueTitle == null for that entity. This validates the
     // catch (JsonException) guard and ensures a regression that removes it would be caught.
 
+    /// <summary>
+    /// The SQL fallback <c>|| (w.DispatchedAt == null &amp;&amp; w.CreatedAt &lt; cutoff)</c>
+    /// in GetActiveWorkItems must return a Running item with null DispatchedAt once its
+    /// CreatedAt exceeds the olderThanSeconds cutoff.
+    /// Covers the untested 1C-001 path added to guard against NULL &lt; cutoff being falsy in SQL.
+    /// Also verifies that CreatedAt is included in the response DTO.
+    /// </summary>
+    [Fact]
+    public async Task GetActiveWorkItems_NullDispatchedAt_OlderThanCutoff_IsReturnedWithCreatedAt()
+    {
+        var createdAt = DateTimeOffset.UtcNow.AddSeconds(-300);
+        Guid entityId;
+        // TODO [WARNING]: synchronous `using` wrapping an async operation — if the scheduler yields
+        // inside SaveChangesAsync the context may be disposed mid-operation, causing an
+        // ObjectDisposedException. Change to `await using var db = _factory.CreateDbContext();`
+        // (or the block form `await using (var db = ...)`) to ensure async disposal.
+        // (DotNetSpecialist review [WARNING])
+        using (var db = _factory.CreateDbContext())
+        {
+            var entity = new WorkItemEntity
+            {
+                Id = Guid.NewGuid(),
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = $"issue-{Guid.NewGuid():N}",
+                IssueProviderConfigId = "prov-seed",
+                Status = WorkItemStatus.Running,
+                Payload = JsonSerializer.Serialize(MakeRequest(), PipelineJsonOptions.Default),
+                AgentSelector = "",
+                TimeoutSeconds = 3600,
+                CreatedAt = createdAt,
+                DispatchedAt = null // never written — the bug scenario
+            };
+            db.WorkItems.Add(entity);
+            await db.SaveChangesAsync();
+            entityId = entity.Id;
+        }
+
+        // olderThanSeconds=60: CreatedAt is 300s old, so it should be returned via the SQL fallback
+        var response = await _client.GetAsync("/api/work-items/active?olderThanSeconds=60");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await response.Content.ReadFromJsonAsync<List<ActiveWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+        var found = items!.FirstOrDefault(i => i.Id == entityId);
+        found.Should().NotBeNull(
+            "a null-DispatchedAt Running item with CreatedAt older than the cutoff must be returned " +
+            "via the SQL fallback (w.DispatchedAt == null && w.CreatedAt < cutoff)");
+        found!.DispatchedAt.Should().BeNull("DispatchedAt was not set");
+        found.CreatedAt.Should().NotBeNull("CreatedAt must be projected into ActiveWorkItemDto");
+        found.CreatedAt!.Value.Should().BeCloseTo(createdAt, TimeSpan.FromSeconds(2),
+            "CreatedAt in the DTO must match the entity's CreatedAt");
+    }
+
+    /// <summary>
+    /// A null-DispatchedAt item whose CreatedAt is within the olderThanSeconds cutoff
+    /// must NOT be returned — it has not yet aged out of the grace period at the SQL layer.
+    /// </summary>
+    [Fact]
+    public async Task GetActiveWorkItems_NullDispatchedAt_WithinCutoff_IsNotReturned()
+    {
+        Guid entityId;
+        // TODO [WARNING]: synchronous `using` wrapping an async operation — same IAsyncDisposable
+        // mismatch as GetActiveWorkItems_NullDispatchedAt_OlderThanCutoff_IsReturnedWithCreatedAt above.
+        // Change to `await using var db = _factory.CreateDbContext();` to avoid potential
+        // ObjectDisposedException if the context is disposed while SaveChangesAsync is in-flight.
+        // (DotNetSpecialist review [WARNING])
+        using (var db = _factory.CreateDbContext())
+        {
+            var entity = new WorkItemEntity
+            {
+                Id = Guid.NewGuid(),
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = $"issue-{Guid.NewGuid():N}",
+                IssueProviderConfigId = "prov-seed",
+                Status = WorkItemStatus.Running,
+                Payload = JsonSerializer.Serialize(MakeRequest(), PipelineJsonOptions.Default),
+                AgentSelector = "",
+                TimeoutSeconds = 3600,
+                CreatedAt = DateTimeOffset.UtcNow, // just created — within any reasonable cutoff
+                DispatchedAt = null
+            };
+            db.WorkItems.Add(entity);
+            await db.SaveChangesAsync();
+            entityId = entity.Id;
+        }
+
+        // olderThanSeconds=60: CreatedAt is ~0s old, so it should NOT be returned
+        var response = await _client.GetAsync("/api/work-items/active?olderThanSeconds=60");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await response.Content.ReadFromJsonAsync<List<ActiveWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+        items!.Should().NotContain(i => i.Id == entityId,
+            "a null-DispatchedAt item whose CreatedAt is within the olderThanSeconds cutoff " +
+            "must not be returned — it is not yet eligible for grace-window escalation");
+    }
+
     // ── LabelSwap ─────────────────────────────────────────────────────────────────
 
     [Fact]

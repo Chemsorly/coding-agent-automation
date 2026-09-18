@@ -68,6 +68,20 @@ public sealed class DispatchServiceOptions
     private const int MinChatIdleTimeoutSeconds = 10;
 
     /// <summary>
+    /// Grace window in seconds for WorkItems with a null <c>DispatchedAt</c> timestamp.
+    /// After this window expires (measured from <c>CreatedAt</c>), the item is force-failed
+    /// by <c>ReconciliationLoop.EnforceTimeoutsAsync</c> using <c>CreatedAt</c> as the
+    /// timeout anchor.
+    /// Must be at least <c>TimeoutCanaryMinAgeSeconds</c> (60s) so that once the grace window
+    /// is exceeded and the item's execution age is set to <c>createdAgeSeconds</c>, the canary
+    /// guard (<c>executionAgeSeconds &lt; 60s</c>) cannot re-fire and re-skip the item.
+    /// Default: 3600s (2× <c>PipelineConstants.DefaultAgentTimeout</c> of 1800s).
+    /// </summary>
+    public int NullDispatchedAtGraceWindowSeconds { get; set; } = 3600;
+
+    private const int MinNullDispatchedAtGraceWindowSeconds = 60;
+
+    /// <summary>
     /// Validates chat-related config values, clamping to safe minimums.
     /// Called after options binding to prevent zero/negative values that would
     /// immediately kill or never start chat pods.
@@ -97,6 +111,12 @@ public sealed class DispatchServiceOptions
             logger?.Warning("ChatIdleTimeoutSeconds ({Value}) is below minimum ({Min}), clamping",
                 ChatIdleTimeoutSeconds, MinChatIdleTimeoutSeconds);
             ChatIdleTimeoutSeconds = MinChatIdleTimeoutSeconds;
+        }
+        if (NullDispatchedAtGraceWindowSeconds < MinNullDispatchedAtGraceWindowSeconds)
+        {
+            logger?.Warning("NullDispatchedAtGraceWindowSeconds ({Value}) is below minimum ({Min}), clamping",
+                NullDispatchedAtGraceWindowSeconds, MinNullDispatchedAtGraceWindowSeconds);
+            NullDispatchedAtGraceWindowSeconds = MinNullDispatchedAtGraceWindowSeconds;
         }
     }
 }
