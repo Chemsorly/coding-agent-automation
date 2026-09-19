@@ -48,7 +48,7 @@ public interface IAgentHub
     Task RequestUpdateComment(JobId jobId, string issueId, string commentId, string body);
 
     // Token refresh
-    Task<TokenRefreshResponse> RequestTokenRefresh(JobId jobId, ProviderKind providerKind);
+    Task<TokenRefreshResponse> RequestTokenRefresh(JobId jobId, ProviderKind providerKind, bool includeIssuePermission = false);
 
     // Interactive chat
     Task ReportChatResponse(ChatResponseMessage message);

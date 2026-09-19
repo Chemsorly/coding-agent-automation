@@ -513,7 +513,7 @@ public class ConsolidationProviderResolverTests
         return new OrchestratorProxy(
             connection,
             "test-job",
-            (_, _) =>
+            (_, _, _) =>
             {
                 onRefresh?.Invoke();
                 return Task.FromResult(new TokenRefreshResponse

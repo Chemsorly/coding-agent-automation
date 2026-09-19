@@ -14,6 +14,12 @@ public interface IAgentTokenRefreshService
     /// <param name="jobId">The job/run identifier.</param>
     /// <param name="providerKind">The kind of provider to generate a token for (Repository or Brain).</param>
     /// <param name="ct">Cancellation token.</param>
+    /// <param name="includeIssuePermission">
+    /// When <c>true</c>, the generated GitHub App installation token includes <c>issues:write</c>
+    /// permission. Defaults to <c>false</c> so all regular pipeline agents are unaffected.
+    /// Pass <c>true</c> only for consolidation runs that require direct issue creation
+    /// (e.g. RefactoringDetection).
+    /// </param>
     /// <returns>A token refresh response containing the token and expiration.</returns>
-    Task<TokenRefreshResponse> RefreshTokenAsync(string jobId, ProviderKind providerKind, CancellationToken ct);
+    Task<TokenRefreshResponse> RefreshTokenAsync(string jobId, ProviderKind providerKind, CancellationToken ct, bool includeIssuePermission = false);
 }

@@ -319,6 +319,70 @@ public sealed class AgentTokenRefreshServiceTests
     }
 
     #endregion
+
+    #region includeIssuePermission = true path
+
+    [Fact]
+    public async Task RefreshToken_WithIncludeIssuePermission_True_PassesTrueToGenerateAgentTokenAsync()
+    {
+        // Acceptance criterion: AgentTokenRefreshService unit tests cover the
+        // includeIssuePermission = true path through VendTokenAsync → GenerateAgentTokenAsync.
+        // TODO [WARNING]: This test covers the GitHub App path (privateKeyBase64 present). There
+        // is no corresponding test for the PAT/static-token path (no privateKeyBase64). On the
+        // PAT path, VendTokenAsync returns the static token directly without calling
+        // GenerateAgentTokenAsync, so includeIssuePermission is effectively a no-op. Add a test
+        // that passes includeIssuePermission: true with a PAT config and asserts
+        // GenerateAgentTokenAsync is NOT called — this would catch any accidental change to
+        // VendTokenAsync's branching that starts calling GenerateAgentTokenAsync on the PAT path.
+        // (TestQualityReviewer)
+        var config = new ProviderConfig
+        {
+            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
+                [ProviderSettingKeys.ClientId] = "client-1",
+                [ProviderSettingKeys.InstallationId] = "12345"
+            }
+        };
+
+        var run = new PipelineRun
+        {
+            RunId = "job-1",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "issue-1",
+            RepoProviderConfigId = "repo-1"
+        };
+
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var expectedExpiry = DateTimeOffset.UtcNow.AddHours(1);
+        _mockTokenVending
+            .Setup(t => t.GenerateAgentTokenAsync(config, It.IsAny<CancellationToken>(), true))
+            .ReturnsAsync(("ghs_issues_token", expectedExpiry));
+
+        var service = CreateService();
+
+        var result = await service.RefreshTokenAsync("job-1", ProviderKind.Repository, CancellationToken.None, includeIssuePermission: true);
+
+        result.Token.Should().Be("ghs_issues_token");
+        result.ExpiresAt.Should().Be(expectedExpiry);
+
+        // Verify GenerateAgentTokenAsync was called with includeIssuePermission = true
+        _mockTokenVending.Verify(
+            t => t.GenerateAgentTokenAsync(config, It.IsAny<CancellationToken>(), true),
+            Times.Once);
+
+        // Verify GenerateAgentTokenAsync was NOT called with includeIssuePermission = false
+        _mockTokenVending.Verify(
+            t => t.GenerateAgentTokenAsync(config, It.IsAny<CancellationToken>(), false),
+            Times.Never);
+    }
+
+    #endregion
 }
 
 // ── Additional coverage for whitespace token values and K8s empty repoId ──
