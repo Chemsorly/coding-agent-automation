@@ -404,6 +404,57 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ── Per-call cooldown isolation (issue #2684 regression guard) ───────────
+
+    /// <summary>
+    /// Regression guard: see issue #2684.
+    /// Verifies that each ExecuteAsync call uses the triggerCooldownMinutes it was given,
+    /// not the shared TriggerCooldown property value from a prior call.
+    ///
+    /// Scenario:
+    ///   Call 1 — triggerCooldownMinutes:25, clock at t0       → triggers PR (records _lastTriggeredAt = t0)
+    ///   Call 2 — triggerCooldownMinutes:60, clock at t0+26min → elapsed = 26min &lt; 60min → must NOT trigger
+    ///
+    /// Without the local-capture fix, the shared TriggerCooldown property would reflect whatever
+    /// was written last (25 min after call 1), making the second call re-read the old value (25 min)
+    /// and incorrectly trigger the PR (26 min ≥ 25 min). With the fix, each call uses its own
+    /// captured value, so the 60-minute cooldown from call 2 correctly blocks the trigger.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_LocalCooldownCapture_IsolatesCallsFromSubsequentPropertyWrite()
+    {
+        var (svc, provider, issues, _) = Create();
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        var clock = DateTimeOffset.UtcNow;
+        svc.UtcNow = () => clock;
+
+        // Call 1: triggerCooldownMinutes=25 — triggers the PR, records _lastTriggeredAt = t0
+        await ExecAsync(svc, provider, issues, [MakePr(10)], triggerCooldownMinutes: 25);
+
+        // Advance clock 26 minutes — past the 25-min cooldown, but within a 60-min cooldown
+        clock = clock.AddMinutes(26);
+
+        // Call 2: triggerCooldownMinutes=60 — elapsed (26 min) < cooldown (60 min) → must NOT trigger
+        // If the implementation re-read TriggerCooldown (which was left at 25 min by call 1) instead
+        // of using the locally-captured 60-min value, it would incorrectly trigger here.
+        await ExecAsync(svc, provider, issues, [MakePr(10)], triggerCooldownMinutes: 60);
+
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Once,
+            "call 2's 60-min cooldown must block the trigger — local capture must govern, not the shared property");
+
+        // TODO: This test validates the Step 6b guard (skipping an in-flight PR within cooldown) but does
+        // not have a dedicated assertion for the Step 5 ordering lambda (`(now5 - lastTriggered) >= triggerCooldown`).
+        // In practice the PR passes through the Step 5 sorter before Step 6b evaluates it, so the local-capture
+        // path is exercised, but if Step 5 were ever regressed back to reading TriggerCooldown while Step 6b
+        // remained local, this test would still pass. Consider adding a scenario with two PRs where one is
+        // within cooldown and should be deprioritised to tier 2, verifying that the wrong cooldown value would
+        // misclassify it — specifically targeting Step 5 ordering isolation. (Issue #2684 regression guard)
+    }
+
     // ── In-flight absent from list → evicted ─────────────────────────────────
 
     [Fact]
@@ -1641,5 +1692,65 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()),
             Times.Never,
             "maxSlotAgeMinutes=0 disables time-based eviction — slot remains even after long duration");
+    }
+
+    /// <summary>
+    /// Regression test for issue #2683: a Behind PR evicted by max-age must NOT re-acquire
+    /// the in-flight slot in Step 6b of the same ExecuteAsync call. Without the fix, the evicted
+    /// PR passes all Step 6b guards (Behind + not in inFlight + cooldown elapsed) and immediately
+    /// re-acquires the slot, starving other eligible Behind PRs.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_BehindPrEvictedByMaxAge_DoesNotReacquireSlotInSameCycle()
+    {
+        var (svc, provider, issues, _) = Create();
+
+        var baseTime = DateTimeOffset.UtcNow;
+        svc.UtcNow = () => baseTime;
+
+        // ── Cycle 1: PR #1 is Behind, acquires slot ──────────────────────────
+        // After this call: _inFlightAt[(RepoId, 1)] = baseTime, _lastTriggeredAt[(RepoId, 1)] = baseTime
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        await ExecAsync(svc, provider, issues, [MakePr(1, "feature/pr-1")], triggerCooldownMinutes: 1, maxSlotAgeMinutes: 1);
+
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()),
+            Times.Once, "PR #1 must be triggered in cycle 1");
+
+        // ── Advance clock 5 minutes (past maxSlotAgeMinutes=1 AND TriggerCooldown=1m) ──
+        // Slot age for PR #1: 5m >= 1m → max-age eviction fires in Step 3
+        // PR #1 cooldown: (now - lastTriggered) = 5m >= TriggerCooldown = 1m → cooldown elapsed
+        // Without the fix, PR #1 passes all Step 6b guards and re-acquires the slot, starving PR #2.
+        svc.UtcNow = () => baseTime.AddMinutes(5);
+
+        // ── Cycle 2: PR #1 is still Behind (chronically stuck), PR #2 is also Behind ──
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(2, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        // limit=1 is required: the single-slot constraint is what makes the starvation scenario
+        // observable. With limit>=2 both PRs could acquire slots simultaneously and the
+        // evictedThisCycle guard would not be exercised.
+        //
+        // PR #1 uses hasAutoMerge: true (sort tier 0) so it is always evaluated before PR #2
+        // (tier 1, no auto-merge) in Step 6b — regardless of the random tiebreaker. This guarantees
+        // the evictedThisCycle guard on PR #1 is reliably exercised, making the test deterministic.
+        await ExecAsync(svc, provider, issues,
+            [MakePr(1, "feature/pr-1", hasAutoMerge: true), MakePr(2, "feature/pr-2")],
+            limit: 1, triggerCooldownMinutes: 1, maxSlotAgeMinutes: 1);
+
+        // PR #2 must get the freed slot — the evictedThisCycle guard prevents PR #1 from re-acquiring.
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "PR #2 must acquire the slot freed by PR #1's max-age eviction in cycle 2");
+
+        // PR #1 must not be triggered again in cycle 2 (only the cycle-1 call should count).
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "PR #1 must not re-acquire the slot in the same cycle it was max-age evicted");
     }
 }

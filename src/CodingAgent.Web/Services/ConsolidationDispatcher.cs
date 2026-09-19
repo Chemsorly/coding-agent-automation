@@ -1,6 +1,7 @@
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Telemetry;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -130,7 +131,11 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
             {
                 // Permanent failure (e.g. no job template for the resolved selector).
                 // Retrying will always produce the same outcome — cascade to Failed so the run
-                // surfaces in the Attention view instead of staying Queued forever.
+                // is recorded with a clear error reason. Failed consolidation runs are visible
+                // on the Consolidation monitoring page (/consolidation) — they do NOT appear
+                // in the Attention view (which only surfaces PipelineRun items).
+                PipelineTelemetry.ConsolidationDispatchPermanentFailures.Add(1,
+                    new KeyValuePair<string, object?>("run.type", run.Type.ToString()));
                 Log.Error(
                     "ConsolidationDispatcher: permanent dispatch failure for run {RunId} ({Type}): {Error}. " +
                     "Cascading run to Failed.",
