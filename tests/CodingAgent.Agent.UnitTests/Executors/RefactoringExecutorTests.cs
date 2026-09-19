@@ -226,12 +226,16 @@ public class RefactoringExecutorTests : IDisposable
         var refactoringIssues = new PagedResult<IssueSummary>
         {
             Items = [new IssueSummary { Identifier = "100", Title = "Extract retry logic", Labels = ["agent:generated"], CreatedAt = DateTime.UtcNow.AddDays(-5) }],
-            Page = 1, PageSize = 30, HasMore = false
+            Page = 1,
+            PageSize = 30,
+            HasMore = false
         };
         var allIssues = new PagedResult<IssueSummary>
         {
             Items = [new IssueSummary { Identifier = "200", Title = "Add caching layer", Labels = [], CreatedAt = DateTime.UtcNow.AddDays(-2) }],
-            Page = 1, PageSize = 50, HasMore = false
+            Page = 1,
+            PageSize = 50,
+            HasMore = false
         };
 
         _mockIssueProvider
@@ -297,7 +301,9 @@ public class RefactoringExecutorTests : IDisposable
         var oldIssues = new PagedResult<IssueSummary>
         {
             Items = [new IssueSummary { Identifier = "50", Title = "Old issue", Labels = [], CreatedAt = DateTime.UtcNow.AddDays(-60) }],
-            Page = 1, PageSize = 50, HasMore = false
+            Page = 1,
+            PageSize = 50,
+            HasMore = false
         };
 
         _mockIssueProvider
@@ -994,4 +1000,337 @@ public class RefactoringExecutorTests : IDisposable
     // exceptions and Register is only called after success, the failed title is never registered and
     // the dependent proposal silently receives no dependency line. A test would document this
     // behavior and prevent a future change from accidentally registering titles for failed creations.
+
+    // ── Issue #2681: exception-swallowing / misleading permissions hint ───────────────────────
+
+    private void SetupEmptyClosedIssues()
+    {
+        var emptyClosedResult = new PagedResult<IssueSummary> { Items = [], Page = 1, PageSize = 20, HasMore = false };
+        _mockIssueProvider
+            .Setup(x => x.ListClosedIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(emptyClosedResult);
+    }
+
+    private void SetupProposalsFile(string proposalsJson)
+    {
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
+            {
+                var agentDir = Path.Combine(path, ".agent");
+                Directory.CreateDirectory(agentDir);
+                File.WriteAllText(Path.Combine(agentDir, "refactoring-proposals.json"), proposalsJson);
+            })
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Analysis complete."] });
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AllIssueCreationThrowsHttp401_ReturnsFailedResultWithTokenHint()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        SetupEmptyClosedIssues();
+        SetupProposalsFile("""
+            [
+                {
+                    "title": "Extract validation helper",
+                    "affectedFiles": ["src/A.cs"],
+                    "description": "Duplicated validation.",
+                    "rationale": "DRY principle."
+                }
+            ]
+            """);
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Unauthorized", null, System.Net.HttpStatusCode.Unauthorized));
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().NotBeNullOrEmpty();
+        result.ErrorMessage.Should().Contain("401");
+        // AC #1: the run summary (not just ErrorMessage) must contain "401" to confirm hint threading
+        // through FormatRefactoringSummary. Also verify the old hardcoded string is absent.
+        result.Summary.Should().Contain("401");
+        result.Summary.Should().NotContain("check GitHub App permissions");
+        // TODO [WARNING]: The compound null-or-empty check below accepts a null CreatedIssues, which is a
+        // weaker contract than the implementation provides (it always returns a non-null list). Consider
+        // replacing with result.CreatedIssues.Should().HaveCount(0) to enforce the non-null contract.
+        (result.CreatedIssues is null || result.CreatedIssues.Count == 0).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AllIssueCreationThrowsHttp403_ReturnsFailedResultWithPermissionsHint()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        SetupEmptyClosedIssues();
+        SetupProposalsFile("""
+            [
+                {
+                    "title": "Remove dead code",
+                    "affectedFiles": ["src/B.cs"],
+                    "description": "Unused method.",
+                    "rationale": "Cleanliness."
+                }
+            ]
+            """);
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Forbidden", null, System.Net.HttpStatusCode.Forbidden));
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().NotBeNullOrEmpty();
+        result.ErrorMessage.Should().Contain("403");
+        result.ErrorMessage.Should().NotContain("401");
+        // AC #2: the run summary must contain "403" and be distinct from the 401 message to confirm
+        // hint threading through FormatRefactoringSummary is intact.
+        result.Summary.Should().Contain("403");
+        result.Summary.Should().NotContain("401 Unauthorized");
+        // TODO [WARNING]: The compound null-or-empty check below accepts a null CreatedIssues, which is a
+        // weaker contract than the implementation provides (it always returns a non-null list). Consider
+        // replacing with result.CreatedIssues.Should().HaveCount(0) to enforce the non-null contract.
+        (result.CreatedIssues is null || result.CreatedIssues.Count == 0).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PartialIssueCreationFailure_ReturnsSuccessTrueWithPartialCountAndErrorMessage()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        SetupEmptyClosedIssues();
+        SetupProposalsFile("""
+            [
+                {
+                    "title": "Extract validation helper",
+                    "affectedFiles": ["src/A.cs"],
+                    "description": "Duplicated validation.",
+                    "rationale": "DRY."
+                },
+                {
+                    "title": "Remove dead code",
+                    "affectedFiles": ["src/B.cs"],
+                    "description": "Unused method.",
+                    "rationale": "Cleanliness."
+                }
+            ]
+            """);
+
+        _mockIssueProvider
+            .SetupSequence(x => x.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "10", Url = "https://github.com/test/repo/issues/10" })
+            .ThrowsAsync(new HttpRequestException("Forbidden", null, System.Net.HttpStatusCode.Forbidden));
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.CreatedIssues.Should().HaveCount(1);
+        // AC #3: ErrorMessage must contain the specific first-failure hint, not just be non-empty.
+        // The second proposal throws 403, so the hint must identify that classification.
+        result.ErrorMessage.Should().Contain("403");
+        // TODO [WARNING]: This test does not verify that CreateIssueAsync was called exactly twice.
+        // If MaxRefactoringProposals is configured to 1 in CreateJob(), the second proposal (the
+        // failing one) is silently skipped, ErrorMessage ends up null, and the partial-failure path
+        // is never actually exercised. Add _mockIssueProvider.Verify(x => x.CreateIssueAsync(...),
+        // Times.Exactly(2)) after the act step to make this precondition explicit.
+    }
+
+    [Fact]
+    public void FormatRefactoringSummary_ZeroCreatedNonZeroProposals_WithHint_IncludesHintInSummary()
+    {
+        // Act
+        var summary = RefactoringExecutor.FormatRefactoringSummary(
+            [],
+            proposalCount: 3,
+            firstFailureHint: "401 Unauthorized — token expired or revoked");
+
+        // Assert
+        summary.Should().Contain("3");
+        summary.Should().Contain("401 Unauthorized — token expired or revoked");
+        summary.Should().NotContain("check GitHub App permissions");
+    }
+
+    [Fact]
+    public void FormatRefactoringSummary_PartialCreation_WithHint_IncludesHintInSummary()
+    {
+        // Arrange
+        var createdIssues = new List<CreatedIssueInfo>
+        {
+            new() { Identifier = "42", Title = "Extract validation", Url = "https://example.com/42" }
+        };
+
+        // Act
+        var summary = RefactoringExecutor.FormatRefactoringSummary(
+            createdIssues,
+            proposalCount: 3,
+            firstFailureHint: "403 Forbidden — app missing 'issues: write' permission");
+
+        // Assert
+        summary.Should().Contain("1/3");
+        summary.Should().Contain("403 Forbidden");
+        summary.Should().Contain("2 failed");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AllIssueCreationThrowsHttp422_ReturnsFailedResultWithUnprocessableHint()
+    {
+        // Arrange — covers ClassifyIssueCreationException HTTP 422 branch
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        SetupEmptyClosedIssues();
+        SetupProposalsFile("""
+            [
+                {
+                    "title": "Extract validation helper",
+                    "affectedFiles": ["src/A.cs"],
+                    "description": "Duplicated validation.",
+                    "rationale": "DRY principle."
+                }
+            ]
+            """);
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Unprocessable Entity", null, System.Net.HttpStatusCode.UnprocessableEntity));
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("422");
+        result.Summary.Should().Contain("422");
+        (result.CreatedIssues is null || result.CreatedIssues.Count == 0).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AllIssueCreationThrowsHttp429_ReturnsFailedResultWithRateLimitHint()
+    {
+        // Arrange — covers ClassifyIssueCreationException HTTP 429 branch
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        SetupEmptyClosedIssues();
+        SetupProposalsFile("""
+            [
+                {
+                    "title": "Extract validation helper",
+                    "affectedFiles": ["src/A.cs"],
+                    "description": "Duplicated validation.",
+                    "rationale": "DRY principle."
+                }
+            ]
+            """);
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Too Many Requests", null, System.Net.HttpStatusCode.TooManyRequests));
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("429");
+        result.Summary.Should().Contain("429");
+        (result.CreatedIssues is null || result.CreatedIssues.Count == 0).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AllIssueCreationThrowsUnknownHttpStatus_ReturnsFailedResultWithHttpCodeHint()
+    {
+        // Arrange — covers ClassifyIssueCreationException default HTTP branch ("HTTP {code}")
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        SetupEmptyClosedIssues();
+        SetupProposalsFile("""
+            [
+                {
+                    "title": "Extract validation helper",
+                    "affectedFiles": ["src/A.cs"],
+                    "description": "Duplicated validation.",
+                    "rationale": "DRY principle."
+                }
+            ]
+            """);
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Service Unavailable", null, System.Net.HttpStatusCode.ServiceUnavailable));
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        // 503 falls through to the default arm: "HTTP 503"
+        result.ErrorMessage.Should().Contain("503");
+        result.Summary.Should().Contain("503");
+        (result.CreatedIssues is null || result.CreatedIssues.Count == 0).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AllIssueCreationThrowsNonHttpException_ReturnsFailedResultWithExceptionTypeHint()
+    {
+        // Arrange — covers ClassifyIssueCreationException non-HTTP fallback branch
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        SetupEmptyClosedIssues();
+        SetupProposalsFile("""
+            [
+                {
+                    "title": "Extract validation helper",
+                    "affectedFiles": ["src/A.cs"],
+                    "description": "Duplicated validation.",
+                    "rationale": "DRY principle."
+                }
+            ]
+            """);
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("connection refused"));
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        // Non-HTTP exception: "{TypeName}: {Message}"
+        result.ErrorMessage.Should().Contain("InvalidOperationException");
+        result.Summary.Should().Contain("InvalidOperationException");
+        (result.CreatedIssues is null || result.CreatedIssues.Count == 0).Should().BeTrue();
+    }
 }

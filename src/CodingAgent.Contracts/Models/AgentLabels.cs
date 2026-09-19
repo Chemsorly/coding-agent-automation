@@ -56,11 +56,23 @@ public static class AgentLabels
     /// <c>agent:in-progress</c> is intentionally absent: a second WorkItem for an issue that is
     /// already running is blocked by the partial unique index on <c>WorkItems</c>, not this set.
     /// <c>agent:next</c> is also absent: it is the normal pre-dispatch signal and must not block dispatch.
+    /// <c>agent:epic-review</c> is intentionally absent: an epic awaiting human review may still
+    /// be picked up by an agent for processing (e.g. posting a summary comment), so it must not
+    /// block dispatch.
     /// </para>
     /// </summary>
+    // TODO: EpicReview was removed from DispatchIneligibleLabels (previously it blocked dispatch).
+    // The change is intentional — see XML comment above — but it breaks the formerly-established subset
+    // invariant that all TerminalLabels are also DispatchIneligibleLabels. EpicReview is now in
+    // TerminalLabels but NOT in DispatchIneligibleLabels. Any dispatch path that gates solely on
+    // DispatchIneligibleLabels (without independent epic-review guards) will now allow re-dispatch of
+    // epics awaiting human review. Verify all dispatch paths have independent guards for epic-review state.
+    // The test TerminalLabels_IsSubsetOf_DispatchIneligibleLabels was removed to accommodate this change;
+    // consider adding a replacement test that explicitly documents which TerminalLabels are intentionally
+    // absent from DispatchIneligibleLabels (currently only EpicReview) to prevent silent future drift.
     public static readonly IReadOnlySet<string> DispatchIneligibleLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        Done, Error, NeedsRefinement, WontDo, Cancelled, EpicReview
+        Done, Error, NeedsRefinement, WontDo, Cancelled
     };
 
     /// <summary>
@@ -71,5 +83,19 @@ public static class AgentLabels
     public static readonly IReadOnlySet<string> DispatchGatedLabels = new HashSet<string>
     {
         EpicApproved
+    };
+
+    /// <summary>
+    /// Precedence ordering for resolving dual-label issues (excludes <see cref="Generated"/>,
+    /// which is orthogonal and may legitimately coexist with any status label).
+    /// When multiple agent:* labels are found on a single issue, the label with the lowest
+    /// index in this list is retained and all others are removed.
+    /// Terminal/completed states take priority over active states, reflecting the intended
+    /// direction of the swap that left the issue in the dual-label state.
+    /// </summary>
+    public static readonly IReadOnlyList<string> DualLabelResolutionPrecedence = new[]
+    {
+        Done, Error, NeedsRefinement, WontDo, Cancelled, EpicReview, EpicApproved,
+        InProgress, Epic, Next
     };
 }

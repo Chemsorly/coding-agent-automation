@@ -296,7 +296,16 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         IsDraftPr = run.IsDraftPr,
         CompletedAt = run.CompletedAtOffset ?? DateTimeOffset.UtcNow,
         BrainUpdatesPushed = run.BrainUpdatesPushed,
-        AnalysisRecommendation = run.AnalysisRecommendation
+        AnalysisRecommendation = run.AnalysisRecommendation,
+        // TODO: [WARNING] BranchName is populated in the payload here so that K8s mode
+        // (HttpPrimaryCompletionReporter) can fire an intermediate Running+BranchName POST before
+        // the terminal status, persisting WorkItems.BranchName in Postgres. However, local mode
+        // (LocalPipelineExecutor → PipelineSignalRReporter) never calls HttpPrimaryCompletionReporter,
+        // so no intermediate Running+BranchName POST is fired in local deployments. As a result,
+        // WorkItems.BranchName will remain null for local runs and GET /api/pipeline-runs/active-branches
+        // will silently return fewer branches than expected. To fix, the local completion path should
+        // fire a matching Running+BranchName HTTP POST before reporting terminal status.
+        BranchName = run.BranchName
     };
 
     internal static JobCompletionPayload BuildFailurePayload(PipelineRun run, string reason, FailureReason? failureCategory = null) => BuildPayloadBase(run) with

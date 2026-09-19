@@ -313,6 +313,123 @@ public class HttpPrimaryCompletionReporterTests
             Times.Once);
     }
 
+    // ── BranchName intermediate Running POST (issue #2687) ───────────────────
+
+    /// <summary>
+    /// When the payload carries a BranchName, ReportCompletionAsync must fire an intermediate
+    /// Running+BranchName POST before the terminal status POST, so WorkItems.BranchName is
+    /// populated in Postgres before the item transitions out of the active state.
+    /// </summary>
+    [Fact]
+    public async Task ReportCompletionAsync_WithBranchName_PostsRunningBeforeTerminal()
+    {
+        // Arrange: capture all PostStatusAsync calls in order
+        var calls = new List<WorkItemStatusUpdate>();
+        _lifecycleClient
+            .Setup(c => c.PostStatusAsync(WorkItemId, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .Callback<string, WorkItemStatusUpdate, CancellationToken>((_, u, _) => calls.Add(u))
+            .ReturnsAsync(true);
+        _connectionManager
+            .Setup(m => m.InvokeAsync(It.IsAny<Func<Microsoft.AspNetCore.SignalR.Client.HubConnection, CancellationToken, Task>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var sut = CreateSut();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            BranchName = "feature/my-branch"
+        };
+
+        // Act
+        await sut.ReportCompletionAsync("job-1", payload, CancellationToken.None);
+
+        // Assert: exactly two PostStatusAsync calls — Running first, then Succeeded
+        calls.Should().HaveCount(2, "an intermediate Running+BranchName POST and a terminal Succeeded POST are required");
+        calls[0].Status.Should().Be("Running", "the intermediate POST must use Running status");
+        calls[0].BranchName.Should().Be("feature/my-branch", "the intermediate POST must carry the branch name");
+        calls[0].AgentId.Should().Be("test-agent", "AgentId must be set on the intermediate POST");
+        calls[1].Status.Should().Be("Succeeded", "the terminal POST must come after the intermediate POST");
+    }
+
+    /// <summary>
+    /// When the payload has no BranchName (null), no intermediate Running POST is fired.
+    /// Only the terminal status POST is sent — this is the existing behavior and must not change.
+    /// </summary>
+    [Fact]
+    public async Task ReportCompletionAsync_NoBranchName_PostsOnlyTerminalStatus()
+    {
+        // Arrange
+        var calls = new List<WorkItemStatusUpdate>();
+        _lifecycleClient
+            .Setup(c => c.PostStatusAsync(WorkItemId, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .Callback<string, WorkItemStatusUpdate, CancellationToken>((_, u, _) => calls.Add(u))
+            .ReturnsAsync(true);
+        _connectionManager
+            .Setup(m => m.InvokeAsync(It.IsAny<Func<Microsoft.AspNetCore.SignalR.Client.HubConnection, CancellationToken, Task>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var sut = CreateSut();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            BranchName = null     // no branch — no intermediate POST
+        };
+
+        // Act
+        await sut.ReportCompletionAsync("job-1", payload, CancellationToken.None);
+
+        // Assert: exactly one call — the terminal Succeeded POST only
+        calls.Should().ContainSingle("no intermediate POST when BranchName is null");
+        calls[0].Status.Should().Be("Succeeded");
+        calls[0].BranchName.Should().BeNull();
+    }
+
+    /// <summary>
+    /// When the intermediate Running+BranchName POST is rejected (returns false), the reporter
+    /// must log a warning but continue and still send the terminal status POST.
+    /// The terminal transition is what matters for correctness; the BranchName population is best-effort.
+    /// </summary>
+    [Fact]
+    public async Task ReportCompletionAsync_IntermediateRunningPostRejected_LogsWarningAndContinues()
+    {
+        // Arrange: intermediate (Running) POST returns false; terminal POST returns true
+        var callCount = 0;
+        _lifecycleClient
+            .Setup(c => c.PostStatusAsync(WorkItemId, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => ++callCount > 1); // first call returns false, subsequent calls return true
+        _connectionManager
+            .Setup(m => m.InvokeAsync(It.IsAny<Func<Microsoft.AspNetCore.SignalR.Client.HubConnection, CancellationToken, Task>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var sut = CreateSut();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            BranchName = "feature/race-branch"
+        };
+
+        // Act — must not throw
+        var act = async () => await sut.ReportCompletionAsync("job-1", payload, CancellationToken.None);
+        await act.Should().NotThrowAsync("a rejected intermediate POST must not abort the completion sequence");
+
+        // Assert: terminal POST was still sent
+        _lifecycleClient.Verify(
+            c => c.PostStatusAsync(WorkItemId, It.Is<WorkItemStatusUpdate>(u => u.Status == "Succeeded"), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "the terminal Succeeded POST must still be sent even when the intermediate POST was rejected");
+
+        // Assert: warning was logged for the rejection
+        _logger.Verify(
+            l => l.Warning(
+                It.Is<string>(s => s.Contains("BranchName") && s.Contains("Running POST rejected")),
+                It.IsAny<string>()),
+            Times.Once,
+            "a warning must be logged when the intermediate Running POST is rejected");
+    }
+
     // ── Serialize result ─────────────────────────────────────────────────
 
     [Fact]

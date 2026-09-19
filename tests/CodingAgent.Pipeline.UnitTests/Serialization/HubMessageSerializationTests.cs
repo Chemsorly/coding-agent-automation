@@ -78,6 +78,7 @@ public class HubMessageSerializationTests
             BrainUpdatesPushed = true,
             AnalysisRecommendation = AnalysisGateResult.Ready,
             RunMode = RunMode.Rework,
+            BranchName = "feature/test-branch",
             AnalysisConcerns = new[] { "Thread safety concern", "Missing null check" },
             AnalysisBlockingIssues = new[] { "Dependency #99 not merged" },
             BlacklistedFilesDetected = new[] { ".env.production", "secrets/keys.json" },
@@ -130,6 +131,7 @@ public class HubMessageSerializationTests
         deserialized.TotalTokens.Should().Be(125000);
         deserialized.TotalCost.Should().Be(2.47m);
         deserialized.FinalLabel.Should().Be("agent:done");
+        deserialized.BranchName.Should().Be("feature/test-branch");
 
         // Collection properties
         deserialized.AnalysisConcerns.Should().BeEquivalentTo(new[] { "Thread safety concern", "Missing null check" });

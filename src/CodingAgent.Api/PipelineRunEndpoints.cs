@@ -168,18 +168,30 @@ public static class PipelineRunEndpoints
 
     /// <summary>
     /// GET /api/pipeline-runs/active-branches
-    /// Returns the branch names of all currently active (non-terminal) pipeline runs held
-    /// in the orchestrator's in-memory run service.
+    /// Returns the branch names of all currently active (non-terminal) pipeline runs by
+    /// querying the WorkItems table directly. Only WorkItems whose Status is Dispatched or
+    /// Running and whose BranchName column is non-null are returned.
+    ///
+    /// This is structurally immune to ghost runs: WorkItems.Status transitions atomically in
+    /// Postgres, so a completed run is always in a terminal state (Succeeded/Failed/Cancelled)
+    /// regardless of whether RemoveRun was ever called on the in-memory _activeRuns collection.
+    ///
     /// Used by <c>SchedulerRunQueryService</c> to populate <c>GetActiveRunBranchesAsync()</c>
     /// so the housekeeping branch-update guard works correctly in the Scheduler deployment.
-    /// Returns an empty array when no runs are active.
+    /// Returns an empty array when no runs are active or no branches have been registered.
     /// </summary>
-    internal static IResult GetActiveBranches(IOrchestratorRunService runService)
+    internal static async Task<IResult> GetActiveBranches(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        CancellationToken ct)
     {
-        var branches = runService.GetActiveRuns()
-            .Where(r => r.BranchName != null)
-            .Select(r => r.BranchName!)
-            .ToList();
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var branches = await db.WorkItems
+            .AsNoTracking()
+            .WhereActive()                              // Status IN (Dispatched, Running)
+            .Where(w => w.BranchName != null)
+            .Select(w => w.BranchName!)
+            .Distinct()
+            .ToListAsync(ct);
 
         return TypedResults.Ok((IReadOnlyList<string>)branches);
     }
