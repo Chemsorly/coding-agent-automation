@@ -53,7 +53,14 @@ public sealed class AgentRegistryService : IAgentRegistryService
                     AgentId = message.AgentId.Value,
                     ConnectionId = connectionId,
                     Hostname = message.Hostname,
-                    Labels = message.Labels,
+                    // Defensive copy: break the aliasing between AgentEntry.Labels and
+                    // message.Labels. MessagePack deserializes IReadOnlyList<string> as a
+                    // mutable List<string> at runtime. Storing the reference directly means
+                    // external callers holding the same message object could mutate the list
+                    // while OnDisconnectedAsync or GetAgentsByLabel iterates it, causing
+                    // InvalidOperationException. ToArray() produces an immutable fixed-length
+                    // copy that is safe for lock-free concurrent reads.
+                    Labels = message.Labels?.ToArray() ?? Array.Empty<string>(),
                     Status = AgentStatus.Idle,
                     RegisteredAt = now,
                     LastHeartbeatAt = now
@@ -66,6 +73,13 @@ public sealed class AgentRegistryService : IAgentRegistryService
                 {
                     // Remove old connectionId from index before updating
                     _connectionIndex.TryRemove(existing.ConnectionId, out AgentEntry? _);
+
+                    // Note: Labels are intentionally not refreshed on re-registration.
+                    // The stored array is immutable (defensive copy from add-factory), so this
+                    // is not a thread-safety concern. However, GetAgentsByLabel routing will
+                    // observe the original label set after reconnection. If label refresh on
+                    // reconnect is needed, assign message.Labels?.ToArray() ?? Array.Empty<string>()
+                    // to existing.Labels inside this lock block.
 
                     existing.ConnectionId = connectionId;
                     existing.LastHeartbeatAt = now;
