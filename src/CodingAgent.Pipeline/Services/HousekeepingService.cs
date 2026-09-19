@@ -146,14 +146,12 @@ public sealed class HousekeepingService : IHousekeepingService
         ArgumentNullException.ThrowIfNull(issueProviderId);
         ArgumentNullException.ThrowIfNull(agentDonePrs);
 
-        // TODO: TriggerCooldown is a mutable property on a singleton service and is written here
-        // on every ExecuteAsync call, then read at await points further below. If ExecuteAsync is
-        // ever called concurrently on the same instance (e.g. parallel multi-template processing),
-        // the write from one call could race with the read inside another. Consider capturing the
-        // value into a local variable instead of assigning to the shared property:
-        //   var triggerCooldown = TriggerCooldown = TimeSpan.FromMinutes(Math.Max(1, triggerCooldownMinutes));
-        // and using that local everywhere inside the method body.
-        TriggerCooldown = TimeSpan.FromMinutes(Math.Max(1, triggerCooldownMinutes));
+        // Capture locally so concurrent calls don't interfere at downstream await points.
+        // TriggerCooldown is also updated so that test overrides via the property setter are
+        // observable after the call (existing tests set svc.TriggerCooldown before calling
+        // ExecuteAsync; the combined assignment below ensures the property reflects the
+        // per-call value while triggerCooldown governs all reads within this call).
+        var triggerCooldown = TriggerCooldown = TimeSpan.FromMinutes(Math.Max(1, triggerCooldownMinutes));
 
         var limit = Math.Max(1, effectiveConcurrencyLimit);
         var repoTag = new KeyValuePair<string, object?>("repo_provider_id", repoProviderId);
@@ -181,6 +179,12 @@ public sealed class HousekeepingService : IHousekeepingService
 
         // ── Step 2: Get or create in-flight set ──────────────────────────────
         var inFlight = _inFlight.GetOrAdd(repoProviderId, _ => new HashSet<int>());
+
+        // Tracks PR numbers that were max-age evicted in Step 3 during this cycle.
+        // Step 6b checks this set before re-admitting Behind PRs to prevent an evicted PR
+        // from immediately re-acquiring the slot it was just freed from in the same call.
+        // Allocated fresh on every ExecuteAsync call — no cross-cycle state.
+        var evictedThisCycle = new HashSet<int>();
 
         // ── Step 3: Evict resolved in-flight entries ──────────────────────────
         var currentPrNumbers = new HashSet<int>(agentDonePrs.Select(p => p.Number));
@@ -214,14 +218,8 @@ public sealed class HousekeepingService : IHousekeepingService
                         prNumber, repoProviderId, slotAge, maxSlotAgeMinutes, status);
                     inFlight.Remove(prNumber);
                     _inFlightAt.TryRemove((repoProviderId, prNumber), out _);
+                    evictedThisCycle.Add(prNumber);
                     PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
-                    // TODO: a PR with current status=Behind whose TriggerCooldown has also elapsed
-                    //   (likely, since maxSlotAgeMinutes is normally >> cooldown) will be immediately
-                    //   re-selected by Step 6b in the same cycle, re-acquiring the slot and re-triggering
-                    //   UpdatePullRequestBranchAsync. The eviction is only effective for Blocked/Unknown
-                    //   PRs (which Step 6b skips). For a chronically-Behind PR the eviction is a no-op.
-                    //   To fix: record the evicted PR number for this pass and skip it in Step 6b, or
-                    //   only apply max-age eviction when status is Blocked/Unknown.
                 }
                 else if (status != PrMergeabilityStatus.Blocked && status != PrMergeabilityStatus.Unknown)
                 {
@@ -266,7 +264,7 @@ public sealed class HousekeepingService : IHousekeepingService
             .OrderBy(pr =>
             {
                 var lastTriggered = _lastTriggeredAt.GetValueOrDefault((repoProviderId, pr.Number), DateTimeOffset.MinValue);
-                var cooledDown = (now5 - lastTriggered) >= TriggerCooldown;
+                var cooledDown = (now5 - lastTriggered) >= triggerCooldown;
                 if (!cooledDown) return 2;   // recently triggered — back of queue
                 if (pr.HasAutoMerge) return 0;   // auto-merge + cooled — front
                 return 1;                        // no auto-merge + cooled — middle
@@ -328,6 +326,18 @@ public sealed class HousekeepingService : IHousekeepingService
                 continue;
             }
 
+            // Max-age eviction guard: if this PR was evicted from the slot in Step 3 during
+            // this same cycle, do not re-admit it. This prevents a chronically-Behind PR from
+            // immediately re-acquiring the slot it was just released from, which would make
+            // max-age eviction a no-op and starve other eligible Behind PRs.
+            // On the next poll tick, evictedThisCycle is re-allocated empty — the PR is freely
+            // eligible for re-selection on subsequent cycles (subject to normal cooldown rules).
+            if (evictedThisCycle.Contains(pr.Number))
+            {
+                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
+                continue;
+            }
+
             if (inFlight.Contains(pr.Number))
             {
                 PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
@@ -346,11 +356,11 @@ public sealed class HousekeepingService : IHousekeepingService
             // fast-cycle) from immediately re-occupying the slot and starving others.
             var now6b = UtcNow();
             var lastTriggered = _lastTriggeredAt.GetValueOrDefault((repoProviderId, pr.Number), DateTimeOffset.MinValue);
-            if ((now6b - lastTriggered) < TriggerCooldown)
+            if ((now6b - lastTriggered) < triggerCooldown)
             {
                 _logger.Debug(
                     "HousekeepingService: PR #{PrNumber} is behind but was triggered {Elapsed:F0}m ago (cooldown {Cooldown:F0}m) — skipping to allow other PRs to proceed",
-                    pr.Number, (now6b - lastTriggered).TotalMinutes, TriggerCooldown.TotalMinutes);
+                    pr.Number, (now6b - lastTriggered).TotalMinutes, triggerCooldown.TotalMinutes);
                 PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
                 continue;
             }
