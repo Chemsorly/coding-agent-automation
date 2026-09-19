@@ -145,34 +145,34 @@ public sealed class LabelService : ILabelService
             switch (targetKind)
             {
                 case LabelTargetKind.Issue:
-                {
-                    var issueConfig = await _configStore.GetProviderConfigByIdAsync(providerConfigId.Value, ProviderKind.Issue, ct);
-                    if (issueConfig is null)
                     {
-                        _logger.Warning(
-                            "Issue provider config '{ConfigId}' not found for EnsureAgentLabelsAsync",
-                            providerConfigId.Value);
-                        return false;
-                    }
+                        var issueConfig = await _configStore.GetProviderConfigByIdAsync(providerConfigId.Value, ProviderKind.Issue, ct);
+                        if (issueConfig is null)
+                        {
+                            _logger.Warning(
+                                "Issue provider config '{ConfigId}' not found for EnsureAgentLabelsAsync",
+                                providerConfigId.Value);
+                            return false;
+                        }
 
-                    await using var issueProvider = _providerFactory.CreateIssueProvider(issueConfig);
-                    return await issueProvider.EnsureAgentLabelsAsync(ct);
-                }
+                        await using var issueProvider = _providerFactory.CreateIssueProvider(issueConfig);
+                        return await issueProvider.EnsureAgentLabelsAsync(ct);
+                    }
 
                 case LabelTargetKind.PullRequest:
-                {
-                    var repoConfig = await _configStore.GetProviderConfigByIdAsync(providerConfigId.Value, ProviderKind.Repository, ct);
-                    if (repoConfig is null)
                     {
-                        _logger.Warning(
-                            "Repository provider config '{ConfigId}' not found for EnsureAgentLabelsAsync (PR)",
-                            providerConfigId.Value);
-                        return false;
-                    }
+                        var repoConfig = await _configStore.GetProviderConfigByIdAsync(providerConfigId.Value, ProviderKind.Repository, ct);
+                        if (repoConfig is null)
+                        {
+                            _logger.Warning(
+                                "Repository provider config '{ConfigId}' not found for EnsureAgentLabelsAsync (PR)",
+                                providerConfigId.Value);
+                            return false;
+                        }
 
-                    await using var repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig);
-                    return await repoProvider.EnsureAgentLabelsForPullRequestsAsync(ct);
-                }
+                        await using var repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig);
+                        return await repoProvider.EnsureAgentLabelsForPullRequestsAsync(ct);
+                    }
 
                 default:
                     _logger.Warning("Unknown LabelTargetKind {TargetKind} for EnsureAgentLabelsAsync", targetKind);

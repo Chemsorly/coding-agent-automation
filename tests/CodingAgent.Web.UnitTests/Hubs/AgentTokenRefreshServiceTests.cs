@@ -34,7 +34,10 @@ public sealed class AgentTokenRefreshServiceTests
     {
         var config = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
@@ -78,7 +81,10 @@ public sealed class AgentTokenRefreshServiceTests
     {
         var config = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitLab", DisplayName = "Repo",
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitLab",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.AccessToken] = "glpat-secret-token"
@@ -116,7 +122,10 @@ public sealed class AgentTokenRefreshServiceTests
     {
         var config = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.Token] = "pre-vended-token-123"
@@ -191,7 +200,10 @@ public sealed class AgentTokenRefreshServiceTests
     {
         var config = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string>() // No auth keys
         };
 
@@ -224,7 +236,10 @@ public sealed class AgentTokenRefreshServiceTests
     {
         var brainConfig = new ProviderConfig
         {
-            Id = "brain-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Brain",
+            Id = "brain-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Brain",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
@@ -303,7 +318,10 @@ public sealed class AgentTokenRefreshServiceTests
 
         var repoConfig = new ProviderConfig
         {
-            Id = "repo-from-payload", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Id = "repo-from-payload",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.PrivateKeyBase64] = "key",
@@ -343,7 +361,10 @@ public sealed class AgentTokenRefreshServiceTests
         // (TestQualityReviewer)
         var config = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
@@ -441,7 +462,10 @@ public sealed class AgentTokenRefreshServiceAdditionalTests
     {
         var config = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitLab", DisplayName = "Repo",
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitLab",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.AccessToken] = "   " // whitespace only — treated as empty
@@ -468,7 +492,10 @@ public sealed class AgentTokenRefreshServiceAdditionalTests
     {
         var config = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.Token] = "  " // whitespace only
