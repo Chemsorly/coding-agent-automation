@@ -163,4 +163,46 @@ public class SignalRResilienceTests
         await act.Should().ThrowAsync<HubException>();
         callCount.Should().Be(1, "Unrelated HubException should not be retried");
     }
+
+    // ── Fix 3: HubException "No active run or work item found" retry ─────────
+
+    /// <summary>
+    /// AC3: Verifies that a <see cref="HubException"/> with message containing
+    /// "No active run or work item found" is retried by CreateSignalRPipeline.
+    ///
+    /// This covers the cross-replica state-miss scenario where ResolveIssueProviderForRunAsync
+    /// cannot find the in-memory run or the DB WorkItem, throwing the transient HubException.
+    /// The transient nature means a retry after a brief delay should succeed once the
+    /// cross-replica state propagates.
+    /// </summary>
+    [Fact]
+    public async Task SignalRPipeline_NoActiveRunOrWorkItemFoundHubException_Retries()
+    {
+        var callCount = 0;
+        await _pipeline.ExecuteAsync(async _ =>
+        {
+            callCount++;
+            if (callCount == 1)
+                throw new HubException("No active run or work item found for job c6c178ab-dead-beef-0000-000000000000");
+        }, CancellationToken.None);
+
+        callCount.Should().Be(2, "No-active-run HubException should trigger one retry");
+    }
+
+    /// <summary>
+    /// Verifies the "No active run or work item found" predicate is case-insensitive.
+    /// </summary>
+    [Fact]
+    public async Task SignalRPipeline_NoActiveRunOrWorkItemFoundHubException_CaseInsensitive_Retries()
+    {
+        var callCount = 0;
+        await _pipeline.ExecuteAsync(async _ =>
+        {
+            callCount++;
+            if (callCount == 1)
+                throw new HubException("NO ACTIVE RUN OR WORK ITEM FOUND for job abc");
+        }, CancellationToken.None);
+
+        callCount.Should().Be(2, "Case-insensitive match should also trigger retry");
+    }
 }
