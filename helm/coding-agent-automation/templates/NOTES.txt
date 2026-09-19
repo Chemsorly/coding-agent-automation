@@ -10,9 +10,16 @@ To add the Helm repository:
 
 To install (example):
   helm install my-release chemsorly/coding-agent-automation \
-    --set secrets.agentApiKey=YOUR_API_KEY \
     --set database.host=YOUR_POSTGRES_HOST \
     --set database.auth.existingSecret=YOUR_SECRET_NAME
+
+  A cryptographically secure agent-api-key is auto-generated on first install and preserved
+  across upgrades. To retrieve it after install:
+    kubectl get secret my-release-coding-agent-automation -n <namespace> \
+      -o jsonpath='{.data.agent-api-key}' | base64 -d
+
+  To supply your own key instead of auto-generation:
+    --set secrets.agentApiKey=YOUR_API_KEY
 
 The web service is available at:
   http://{{ include "coding-agent-automation.fullname" . }}-web:{{ $web.service.port }}
