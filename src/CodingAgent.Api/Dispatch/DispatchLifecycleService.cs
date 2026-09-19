@@ -21,7 +21,7 @@ namespace CodingAgent.Api.Dispatch;
 /// </summary>
 internal sealed class DispatchLifecycleService : IDisposable
 {
-    private static readonly Serilog.ILogger Log = Serilog.Log.ForContext<DispatchLifecycleService>();
+    private readonly Serilog.ILogger _log;
 
     private readonly SemaphoreSlim _pvcSelectLock = new(1, 1);
 
@@ -32,11 +32,13 @@ internal sealed class DispatchLifecycleService : IDisposable
     public DispatchLifecycleService(
         IKubernetesJobClient kubeClient,
         WorkItemTransitionService transitionService,
-        DispatchServiceOptions options)
+        DispatchServiceOptions options,
+        Serilog.ILogger? logger = null)
     {
         _kubeClient = kubeClient;
         _transitionService = transitionService;
         _options = options;
+        _log = logger ?? Serilog.Log.ForContext<DispatchLifecycleService>();
     }
 
     /// <summary>
@@ -152,7 +154,7 @@ internal sealed class DispatchLifecycleService : IDisposable
         }
         catch (DbUpdateConcurrencyException ex)
         {
-            Log.Warning(ex, "DispatchLifecycleService: concurrency conflict pre-writing {LogPrefix}K8sJobName for {WorkItemId}", logPrefix, item.Id);
+            _log.Warning(ex, "DispatchLifecycleService: concurrency conflict pre-writing {LogPrefix}K8sJobName for {WorkItemId}", logPrefix, item.Id);
             ReleaseClaimedPvc(claimedPvc, availablePvcs);
             return;
         }
@@ -179,7 +181,7 @@ internal sealed class DispatchLifecycleService : IDisposable
         workItem.Status = WorkItemStatus.Dispatched;
         workItem.DispatchedAt = DateTimeOffset.UtcNow;
 
-        await FinalizeDispatchAsync(db, workItem, item, logPrefix, concurrencyBySelector, onDispatchSuccess, ct);
+        await FinalizeDispatchAsync(db, workItem, item, logPrefix, concurrencyBySelector, onDispatchSuccess, _log, ct);
     }
 
     /// <summary>
@@ -205,7 +207,7 @@ internal sealed class DispatchLifecycleService : IDisposable
             var claimedPvc = availablePvcs.FirstOrDefault();
             if (claimedPvc is null)
             {
-                Log.Information("DispatchLifecycleService: {LogPrefix}no PVC available for WorkItem {WorkItemId}, skipping",
+                _log.Information("DispatchLifecycleService: {LogPrefix}no PVC available for WorkItem {WorkItemId}, skipping",
                     logPrefix, workItemId);
                 return null;
             }
@@ -229,6 +231,7 @@ internal sealed class DispatchLifecycleService : IDisposable
         string logPrefix,
         Dictionary<string, int> concurrencyBySelector,
         Func<WorkItemEntity, Task>? onDispatchSuccess,
+        Serilog.ILogger log,
         CancellationToken ct)
     {
         var jobName = workItem.K8sJobName!;
@@ -244,7 +247,7 @@ internal sealed class DispatchLifecycleService : IDisposable
             concurrencyBySelector[item.AgentSelector ?? ""] =
                 concurrencyBySelector.GetValueOrDefault(item.AgentSelector ?? "", 0) + 1;
 
-            Log.Information(
+            log.Information(
                 "DispatchLifecycleService: {LogPrefix}WorkItem {WorkItemId} dispatched as Job {JobName} (selector={Selector}, pvc={Pvc})",
                 logPrefix, item.Id, jobName, item.AgentSelector, workItem.ClaimedPvcName ?? "none");
 
@@ -254,7 +257,7 @@ internal sealed class DispatchLifecycleService : IDisposable
         }
         catch (DbUpdateConcurrencyException ex)
         {
-            Log.Warning(ex, "DispatchLifecycleService: concurrency conflict updating {LogPrefix}WorkItem {WorkItemId} to Dispatched", logPrefix, item.Id);
+            log.Warning(ex, "DispatchLifecycleService: concurrency conflict updating {LogPrefix}WorkItem {WorkItemId} to Dispatched", logPrefix, item.Id);
             // Job exists in K8s — ReconciliationService will reconcile
         }
     }
@@ -272,7 +275,7 @@ internal sealed class DispatchLifecycleService : IDisposable
                 failureReason: FailureReason.InfrastructureFailure),
             ct: ct);
 
-        Log.Warning("DispatchLifecycleService: WorkItem {WorkItemId} failed: {Error}", workItemId, errorMessage);
+        _log.Warning("DispatchLifecycleService: WorkItem {WorkItemId} failed: {Error}", workItemId, errorMessage);
     }
 
     /// <summary>
@@ -363,18 +366,45 @@ internal sealed class DispatchLifecycleService : IDisposable
         catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
         {
             // 409 Conflict = Job already exists = success (idempotent)
-            Log.Information(httpEx, "DispatchLifecycleService: K8s Job {JobName} already exists (409 Conflict), treating as success", ctx.JobName);
+            _log.Information(httpEx, "DispatchLifecycleService: K8s Job {JobName} already exists (409 Conflict), treating as success", ctx.JobName);
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "DispatchLifecycleService: failed to create K8s Job {JobName} for {LogPrefix}WorkItem {WorkItemId}", ctx.JobName, ctx.LogPrefix, ctx.Item.Id);
+            _log.Error(ex, "DispatchLifecycleService: failed to create K8s Job {JobName} for {LogPrefix}WorkItem {WorkItemId}", ctx.JobName, ctx.LogPrefix, ctx.Item.Id);
             if (ctx.ClaimedPvc is not null)
             {
                 ctx.WorkItem.ClaimedPvcName = null;
                 ctx.AvailablePvcs.Add(ctx.ClaimedPvc);
+                // TODO: db.SaveChangesAsync(ct) uses the cancellation token. If ct is already cancelled
+                // at this point, OperationCanceledException propagates out of this catch block uncaught
+                // (the new inner guard below only wraps FailWorkItemAsync). This is pre-existing behaviour
+                // on the PVC-cleanup path and is handled by the outer endpoint catch, but it creates an
+                // asymmetry: cancellation from this save propagates, while cancellation from FailWorkItemAsync
+                // (below) is intentionally allowed to propagate by the 'when (failEx is not OperationCanceledException)'
+                // guard. Consider wrapping this SaveChangesAsync in its own cancellation-aware guard if
+                // the asymmetry becomes a problem.
                 await db.SaveChangesAsync(ct);
             }
-            await FailWorkItemAsync(ctx.Item.Id, $"K8s Job creation failed: {ex.Message}", ct);
+            try
+            {
+                await FailWorkItemAsync(ctx.Item.Id, $"K8s Job creation failed: {ex.Message}", ct);
+            }
+            catch (Exception failEx) when (failEx is not OperationCanceledException)
+            {
+                // FailWorkItemAsync itself threw (e.g. NpgsqlException, InvalidOperationException from
+                // a faulted DB factory). The item remains in Pending state and will be recovered by the
+                // reconciliation loop. Log a Warning with the WorkItem ID so the failure is visible.
+                _log.Warning(failEx,
+                    "DispatchLifecycleService: FailWorkItemAsync threw for WorkItem {WorkItemId} after K8s Job creation failure — item remains Pending for reconciliation",
+                    ctx.Item.Id);
+            }
+            // TODO: OnFailure is invoked unconditionally here, including when FailWorkItemAsync threw
+            // (item is left in Pending state for reconciliation). If OnFailure itself throws a
+            // non-cancellation exception in that branch, the exception propagates out of
+            // CreateK8sJobAsync unguarded — the same class of bug this fix was intended to eliminate.
+            // Currently both callers in WorkItemDispatchEndpoints.cs pass onFailure: null, so this is
+            // not reachable in production today. If a non-null OnFailure caller is added in the future,
+            // consider wrapping this call in a try/catch or suppressing it when FailWorkItemAsync threw.
             if (ctx.OnFailure is not null)
                 await ctx.OnFailure(ctx.Item.Id, $"K8s Job creation failed: {ex.Message}");
             return false;
@@ -407,7 +437,7 @@ internal sealed class DispatchLifecycleService : IDisposable
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "DispatchLifecycleService: failed to create project-secrets K8s Secret for {LogPrefix}Job {JobName}", logPrefix, jobName);
+            _log.Warning(ex, "DispatchLifecycleService: failed to create project-secrets K8s Secret for {LogPrefix}Job {JobName}", logPrefix, jobName);
             // Non-fatal: job can still run without project secrets in degraded mode
         }
     }
@@ -439,11 +469,11 @@ internal sealed class DispatchLifecycleService : IDisposable
             try
             {
                 await _kubeClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
-                Log.Information("DispatchLifecycleService: deleted orphaned K8s Job {JobName} — {LogPrefix}WorkItem {WorkItemId} no longer in expected status {ExpectedStatus}", jobName, logPrefix, workItemId, expectedStatus);
+                _log.Information("DispatchLifecycleService: deleted orphaned K8s Job {JobName} — {LogPrefix}WorkItem {WorkItemId} no longer in expected status {ExpectedStatus}", jobName, logPrefix, workItemId, expectedStatus);
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "DispatchLifecycleService: failed to delete orphaned K8s Job {JobName} for {LogPrefix}WorkItem {WorkItemId}", jobName, logPrefix, workItemId);
+                _log.Warning(ex, "DispatchLifecycleService: failed to delete orphaned K8s Job {JobName} for {LogPrefix}WorkItem {WorkItemId}", jobName, logPrefix, workItemId);
             }
 
             return (false, null);
