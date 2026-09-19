@@ -508,6 +508,81 @@ public sealed class SynchronousDispatchEndpointTests
         item!.Status.Should().Be(WorkItemStatus.Dispatched,
             "non-kiro WorkItem must be Dispatched on success");
     }
+
+    // ── TimeoutSeconds clamping (issue #2745) ─────────────────────────────────
+
+    /// <summary>
+    /// AC (issue #2745): POST /api/work-items/dispatch with TimeoutSeconds = 0 must store
+    /// <c>PipelineConstants.DefaultAgentTimeout</c> (1800s) rather than zero.
+    /// </summary>
+    [Fact]
+    public async Task DispatchWorkItem_WithZeroTimeoutSeconds_StoresDefaultTimeoutSeconds()
+    {
+        var dbFactory = CreateDbFactory();
+        var runService = CreateRunService();
+        var templateStore = CreateTemplateStore(maxConcurrent: 5);
+        var k8sMock = new Mock<IKubernetesJobClient>();
+        k8sMock.Setup(k => k.CreateJobAsync(
+                It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var lifecycle = CreateLifecycleService(k8sMock.Object);
+
+        var request = MakeRequest() with { TimeoutSeconds = 0 };
+
+        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
+            request, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
+
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
+            "dispatch must succeed so we can verify the stored TimeoutSeconds");
+
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var item2 = await db.WorkItems.AsNoTracking()
+            .FirstOrDefaultAsync(w => w.IssueIdentifier == request.IssueIdentifier.Value);
+        item2.Should().NotBeNull();
+        item2!.TimeoutSeconds.Should().Be(
+            (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
+            "a zero TimeoutSeconds must be clamped to DefaultAgentTimeout (1800s) at the dispatch insert path");
+    }
+
+    /// <summary>
+    /// AC (issue #2745): POST /api/work-items/dispatch with a negative TimeoutSeconds must store
+    /// <c>PipelineConstants.DefaultAgentTimeout</c> (1800s) rather than the negative value.
+    /// </summary>
+    [Fact]
+    public async Task DispatchWorkItem_WithNegativeTimeoutSeconds_StoresDefaultTimeoutSeconds()
+    {
+        var dbFactory = CreateDbFactory();
+        var runService = CreateRunService();
+        var templateStore = CreateTemplateStore(maxConcurrent: 5);
+        var k8sMock = new Mock<IKubernetesJobClient>();
+        k8sMock.Setup(k => k.CreateJobAsync(
+                It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var lifecycle = CreateLifecycleService(k8sMock.Object);
+
+        var request = MakeRequest() with { TimeoutSeconds = -1 };
+
+        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
+            request, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
+
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
+            "dispatch must succeed so we can verify the stored TimeoutSeconds");
+
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var item3 = await db.WorkItems.AsNoTracking()
+            .FirstOrDefaultAsync(w => w.IssueIdentifier == request.IssueIdentifier.Value);
+        item3.Should().NotBeNull();
+        item3!.TimeoutSeconds.Should().Be(
+            (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
+            "a negative TimeoutSeconds must be clamped to DefaultAgentTimeout (1800s) at the dispatch insert path");
+    }
+
+    // TODO [WARNING]: Add a positive-value passthrough regression test for the DispatchWorkItem path
+    // (mirroring WorkItemEndpointTests.CreateWorkItem_WithPositiveTimeoutSeconds_StoresAsProvided).
+    // Without it, an accidental inversion of the clamp condition (e.g. `> 0` changed to `>= 0`, or
+    // the branches swapped) would go undetected on this path — the zero and negative tests both
+    // produce the default value regardless of which branch runs when the input is <= 0.
+    // (Correctness + TestQualityReviewer review [WARNING])
 }
 
 /// <summary>
