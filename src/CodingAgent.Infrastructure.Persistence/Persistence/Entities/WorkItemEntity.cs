@@ -61,6 +61,14 @@ public class WorkItemEntity
     /// </summary>
     public string? TraceParent { get; set; }
 
+    /// <summary>
+    /// Git branch name created by the agent. Null until the branch has been pushed.
+    /// Populated via PostStatus(Running) after the agent's CreateBranchStep completes.
+    /// Used by GET /api/pipeline-runs/active-branches to serve a DB-backed branch list
+    /// that is immune to ghost runs caused by lost SignalR completion signals.
+    /// </summary>
+    public string? BranchName { get; set; }
+
     /// <summary>Concurrency token mapped to PostgreSQL xmin system column.</summary>
     public uint RowVersion { get; set; }
 
