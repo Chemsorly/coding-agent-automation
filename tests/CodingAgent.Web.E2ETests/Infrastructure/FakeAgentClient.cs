@@ -455,16 +455,12 @@ public sealed class FakeAgentClient : IAsyncDisposable
     /// Invokes RequestTokenRefresh on the hub (requires prior registration with ActiveJob).
     /// Returns the token response. Throws HubException if the request is rejected.
     /// </summary>
-    // TODO [WARNING]: This method omits the includeIssuePermission parameter (2-arg wire call),
-    // relying on SignalR optional-parameter binding to default it to false. Backward compatibility
-    // is preserved because SignalR binds the missing arg to default(bool), but no E2E test
-    // currently asserts that a 2-arg invocation results in a token WITHOUT issues:write.
-    // Consider adding an E2E/integration assertion confirming that legacy callers (no 3rd arg)
-    // do not receive an issues:write-scoped token. (Correctness Review)
     public async Task<TokenRefreshResponse> RequestTokenRefreshAsync(string jobId, ProviderKind providerKind)
     {
         if (_connection is null) throw new InvalidOperationException("Not connected");
-        return await _connection.InvokeAsync<TokenRefreshResponse>("RequestTokenRefresh", jobId, providerKind);
+        // Pass includeIssuePermission: false explicitly — SignalR positional binding requires
+        // the argument count to match the server method signature exactly.
+        return await _connection.InvokeAsync<TokenRefreshResponse>("RequestTokenRefresh", jobId, providerKind, false);
     }
 
     /// <summary>
