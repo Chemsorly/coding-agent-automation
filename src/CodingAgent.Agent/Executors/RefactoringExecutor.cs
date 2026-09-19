@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Net;
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using CodingAgent.Pipeline;
@@ -333,21 +335,27 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         }
 
         // Create GitHub issues (capped at MaxRefactoringProposals)
-        IReadOnlyList<CreatedIssueInfo> createdIssues;
-        createdIssues = await RunWithTracingAsync("RefactoringDetection.CreateIssues", job.JobId, async activity =>
+        var (createdIssues, firstFailureHint) = await RunWithTracingAsync("RefactoringDetection.CreateIssues", job.JobId, async activity =>
         {
             activity?.SetTag("pipeline.proposal_count", proposals.Count);
             return await CreateIssuesAsync(proposals, issueProvider, job.PipelineConfiguration.MaxRefactoringProposals, job.AutoDispatch, ct);
         });
 
-        var summary = FormatRefactoringSummary(createdIssues, proposals.Count);
+        var summary = FormatRefactoringSummary(createdIssues, proposals.Count, firstFailureHint);
         Logger.Information("{ExecutorName} run {RunId} completed: {Summary}", ExecutorName, job.JobId, summary);
 
+        var allFailed = createdIssues.Count == 0 && proposals.Count > 0;
         return new ConsolidationJobResult
         {
             JobId = job.JobId,
-            Success = true,
+            Success = !allFailed,
             Summary = summary,
+            // TODO [WARNING]: ErrorMessage is non-null for both the all-failed (0/N) and partial-success (k/N, k > 0) cases.
+            // This means Success = true && ErrorMessage != null is a valid intentional state for partial runs.
+            // Downstream consumers (e.g. HubConsolidationOperations, UI) that treat ErrorMessage != null as a failure
+            // indicator will misclassify partial-success runs. Review all consumers before treating non-null ErrorMessage
+            // as equivalent to failure — branch on Success, not ErrorMessage nullability.
+            ErrorMessage = firstFailureHint,
             CreatedIssues = createdIssues,
             ReviewTokenUsage = reviewResult.ReviewTokenUsage,
             RefinementTokenUsage = reviewResult.RefinementTokenUsage
@@ -495,12 +503,37 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     }
 
     /// <summary>
+    /// Classifies an issue-creation exception into a human-readable hint string.
+    /// For <see cref="HttpRequestException"/> with a known status code, returns a specific
+    /// message that distinguishes 401 (token) from 403 (permissions).
+    /// For all other exceptions, falls back to "{TypeName}: {Message}".
+    /// </summary>
+    // TODO [WARNING]: The fallback branch uses ex.GetType().Name + ex.Message for non-HTTP exceptions.
+    // ex.Message may contain sensitive details (connection strings, file paths, internal hostnames) from
+    // lower-level exceptions (SocketException, IOException, etc.) that flow directly into ErrorMessage
+    // (persisted to the DB) and the run Summary (displayed in the UI). Consider sanitizing or truncating
+    // the fallback message to avoid leaking environment-specific details into run history.
+    private static string ClassifyIssueCreationException(Exception ex) =>
+        ex is HttpRequestException { StatusCode: { } code }
+            ? code switch
+            {
+                HttpStatusCode.Unauthorized => "401 Unauthorized — token expired or revoked",
+                HttpStatusCode.Forbidden => "403 Forbidden — app missing 'issues: write' permission",
+                HttpStatusCode.UnprocessableEntity => "422 Unprocessable — invalid issue content",
+                HttpStatusCode.TooManyRequests => "429 Too Many Requests — GitHub rate limit hit",
+                _ => $"HTTP {(int)code}"
+            }
+            : $"{ex.GetType().Name}: {ex.Message}";
+
+    /// <summary>
     /// Creates GitHub issues for each proposal, capped at <paramref name="maxProposals"/>.
     /// Proposals are processed sequentially. For each successful creation the proposal title is
     /// registered with a <see cref="DependencyResolver"/> so that later proposals whose
     /// <see cref="RefactoringProposal.DependsOn"/> lists reference it receive a resolved
     /// "Depends on #N" line prepended to their issue body.
     /// Individual issue creation failures are logged but do not stop processing.
+    /// The first failure hint (classified HTTP status or exception type) is captured and returned
+    /// alongside the list of successfully created issues.
     /// </summary>
     /// <remarks>
     /// TODO: If a proposal's issue creation fails (exception swallowed by the catch block), its
@@ -509,7 +542,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     /// unresolvable title. Document this caveat at the call site or in tests if the contract needs
     /// to be visible to future maintainers.
     /// </remarks>
-    private async Task<IReadOnlyList<CreatedIssueInfo>> CreateIssuesAsync(
+    private async Task<(IReadOnlyList<CreatedIssueInfo> Created, string? FirstFailureHint)> CreateIssuesAsync(
         IReadOnlyList<RefactoringProposal> proposals,
         IIssueProvider issueProvider,
         int maxProposals,
@@ -517,6 +550,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         CancellationToken ct)
     {
         var createdIssues = new List<CreatedIssueInfo>();
+        string? firstFailureHint = null;
         var proposalsToProcess = proposals.Take(maxProposals);
         var labels = autoDispatch
             ? new[] { AgentLabels.Generated, AgentLabels.Next }
@@ -574,12 +608,13 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                firstFailureHint ??= ClassifyIssueCreationException(ex);
                 Logger.Warning(ex, "Failed to create issue for proposal '{Title}', continuing with remaining",
                     proposal.Title);
             }
         }
 
-        return createdIssues;
+        return (createdIssues, firstFailureHint);
     }
 
     /// <summary>
@@ -691,18 +726,26 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     /// <summary>
     /// Formats the refactoring run summary with issue count and identifiers.
     /// Distinguishes between "no proposals found" and "proposals found but issue creation failed".
+    /// When <paramref name="firstFailureHint"/> is provided, it is included in the summary for
+    /// both the all-failed (0/N) and partial-failure (k/N) cases.
     /// </summary>
-    internal static string FormatRefactoringSummary(IReadOnlyList<CreatedIssueInfo> createdIssues, int proposalCount = 0)
+    internal static string FormatRefactoringSummary(IReadOnlyList<CreatedIssueInfo> createdIssues, int proposalCount = 0, string? firstFailureHint = null)
     {
         if (createdIssues.Count == 0 && proposalCount == 0)
             return "No refactoring opportunities identified";
 
         if (createdIssues.Count == 0 && proposalCount > 0)
-            return $"Found {proposalCount} proposal(s) but failed to create issues (check GitHub App permissions)";
+        {
+            var hint = firstFailureHint ?? "check logs for details";
+            return $"Found {proposalCount} proposal(s) but failed to create issues ({hint})";
+        }
 
         var identifiers = string.Join(", ", createdIssues.Select(i => $"#{i.Identifier}"));
         if (createdIssues.Count < proposalCount)
-            return $"Created {createdIssues.Count}/{proposalCount} refactoring issue(s): {identifiers} ({proposalCount - createdIssues.Count} failed)";
+        {
+            var partialHint = firstFailureHint is not null ? $" — first failure: {firstFailureHint}" : "";
+            return $"Created {createdIssues.Count}/{proposalCount} refactoring issue(s): {identifiers} ({proposalCount - createdIssues.Count} failed{partialHint})";
+        }
 
         return $"Created {createdIssues.Count} refactoring issue(s): {identifiers}";
     }

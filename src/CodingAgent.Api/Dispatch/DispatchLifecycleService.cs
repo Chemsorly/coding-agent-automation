@@ -482,10 +482,49 @@ internal sealed class DispatchLifecycleService : IDisposable
         return (true, workItem);
     }
 
+    /// <summary>
+    /// Test-only override for retry delays in <see cref="GetJobUidAsync"/>.
+    /// Mirrors <c>ResiliencePipelineFactory.TestRetryDelayOverride</c>.
+    /// Set to <see cref="TimeSpan.Zero"/> in tests to prevent real wall-clock delays.
+    /// Must be reset to <see langword="null"/> in test teardown.
+    /// </summary>
+    // TODO [WARNING]: TestRetryDelayOverride is a static mutable field on a production type.
+    // xUnit runs test classes in parallel by default; a concurrent test class that also
+    // exercises GetJobUidAsync could observe an unexpected TimeSpan.Zero or null depending
+    // on set/reset ordering. Also, this field is reachable in production builds — consider
+    // gating with #if DEBUG or injecting delay values via constructor/options to eliminate
+    // the production-visible backdoor. See: SecurityReviewer / DotNetSpecialist warnings.
+    internal static TimeSpan? TestRetryDelayOverride { get; set; }
+
+    private static TimeSpan ResolveDelay(TimeSpan configured)
+        => TestRetryDelayOverride ?? configured;
+
     private async Task CreateJobSecretAsync(
         string jobName, Guid workItemId, Dictionary<string, string> secrets, CancellationToken ct)
     {
         var secretName = $"caa-secrets-{workItemId.ToString("N")[..8]}";
+
+        var jobUid = await GetJobUidAsync(jobName, ct);
+
+        List<V1OwnerReference>? ownerReferences = null;
+        if (!string.IsNullOrEmpty(jobUid))
+        {
+            ownerReferences =
+            [
+                new V1OwnerReference
+                {
+                    ApiVersion = "batch/v1",
+                    Kind = "Job",
+                    Name = jobName,
+                    Uid = jobUid
+                }
+            ];
+        }
+        else
+        {
+            Log.Warning("DispatchLifecycleService: creating K8s Secret {SecretName} for Job {JobName} without OwnerReference — secret will not be auto-GC'd",
+                secretName, jobName);
+        }
 
         var secret = new V1Secret
         {
@@ -493,16 +532,7 @@ internal sealed class DispatchLifecycleService : IDisposable
             {
                 Name = secretName,
                 NamespaceProperty = _options.Namespace,
-                OwnerReferences =
-                [
-                    new V1OwnerReference
-                    {
-                        ApiVersion = "batch/v1",
-                        Kind = "Job",
-                        Name = jobName,
-                        Uid = await GetJobUidAsync(jobName, ct) ?? ""
-                    }
-                ]
+                OwnerReferences = ownerReferences
             },
             StringData = secrets
         };
@@ -510,17 +540,51 @@ internal sealed class DispatchLifecycleService : IDisposable
         await _kubeClient.CreateSecretAsync(secret, _options.Namespace, ct);
     }
 
+    /// <summary>
+    /// Attempts to read the UID of the specified K8s Job, retrying up to 3 times on exceptions
+    /// (200 ms then 400 ms backoff). Returns <see langword="null"/> if the UID cannot be obtained
+    /// after all retries, after logging a warning.
+    /// Only retries on exceptions — a null or empty UID from a successful response is returned as-is
+    /// without retrying.
+    /// </summary>
     private async Task<string?> GetJobUidAsync(string jobName, CancellationToken ct)
     {
-        try
+        // retryDelays[i] = delay to apply BEFORE attempt i+1 (i.e. after attempt i fails).
+        // 3 total attempts: attempt 0, delay 200ms, attempt 1, delay 400ms, attempt 2.
+        TimeSpan[] retryDelays =
+        [
+            ResolveDelay(TimeSpan.FromMilliseconds(200)),
+            ResolveDelay(TimeSpan.FromMilliseconds(400))
+        ];
+        Exception? lastException = null;
+
+        for (int attempt = 0; attempt <= retryDelays.Length; attempt++)
         {
-            var job = await _kubeClient.ReadJobAsync(jobName, _options.Namespace, ct);
-            return job.Metadata?.Uid;
+            try
+            {
+                var job = await _kubeClient.ReadJobAsync(jobName, _options.Namespace, ct);
+                return job.Metadata?.Uid;
+            }
+            catch (Exception ex)
+            {
+                // TODO [WARNING]: OperationCanceledException (from ReadJobAsync or Task.Delay) is
+                // caught here and treated as a retryable failure. If ct is cancelled mid-retry,
+                // Task.Delay throws OperationCanceledException which is caught, stored as
+                // lastException, and may trigger another Task.Delay on the now-cancelled token —
+                // delaying cooperative shutdown by up to one extra delay period (max 400ms).
+                // Fix: add `catch (OperationCanceledException) { throw; }` before this block,
+                // or use `when (!ct.IsCancellationRequested)` as the catch predicate.
+                // See: Correctness / DotNetSpecialist / SecurityReviewer [WARNING] findings.
+                lastException = ex;
+                if (attempt < retryDelays.Length)
+                    await Task.Delay(retryDelays[attempt], ct);
+            }
         }
-        catch
-        {
-            return null;
-        }
+
+        Log.Warning(lastException,
+            "DispatchLifecycleService: could not obtain UID for K8s Job {JobName} after {Attempts} attempts — secret will be created without OwnerReference",
+            jobName, retryDelays.Length + 1);
+        return null;
     }
 
     /// <summary>
