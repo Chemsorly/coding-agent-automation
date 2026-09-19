@@ -1693,4 +1693,64 @@ public class HousekeepingServiceTests
             Times.Never,
             "maxSlotAgeMinutes=0 disables time-based eviction — slot remains even after long duration");
     }
+
+    /// <summary>
+    /// Regression test for issue #2683: a Behind PR evicted by max-age must NOT re-acquire
+    /// the in-flight slot in Step 6b of the same ExecuteAsync call. Without the fix, the evicted
+    /// PR passes all Step 6b guards (Behind + not in inFlight + cooldown elapsed) and immediately
+    /// re-acquires the slot, starving other eligible Behind PRs.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_BehindPrEvictedByMaxAge_DoesNotReacquireSlotInSameCycle()
+    {
+        var (svc, provider, issues, _) = Create();
+
+        var baseTime = DateTimeOffset.UtcNow;
+        svc.UtcNow = () => baseTime;
+
+        // ── Cycle 1: PR #1 is Behind, acquires slot ──────────────────────────
+        // After this call: _inFlightAt[(RepoId, 1)] = baseTime, _lastTriggeredAt[(RepoId, 1)] = baseTime
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        await ExecAsync(svc, provider, issues, [MakePr(1, "feature/pr-1")], triggerCooldownMinutes: 1, maxSlotAgeMinutes: 1);
+
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()),
+            Times.Once, "PR #1 must be triggered in cycle 1");
+
+        // ── Advance clock 5 minutes (past maxSlotAgeMinutes=1 AND TriggerCooldown=1m) ──
+        // Slot age for PR #1: 5m >= 1m → max-age eviction fires in Step 3
+        // PR #1 cooldown: (now - lastTriggered) = 5m >= TriggerCooldown = 1m → cooldown elapsed
+        // Without the fix, PR #1 passes all Step 6b guards and re-acquires the slot, starving PR #2.
+        svc.UtcNow = () => baseTime.AddMinutes(5);
+
+        // ── Cycle 2: PR #1 is still Behind (chronically stuck), PR #2 is also Behind ──
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(2, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        // limit=1 is required: the single-slot constraint is what makes the starvation scenario
+        // observable. With limit>=2 both PRs could acquire slots simultaneously and the
+        // evictedThisCycle guard would not be exercised.
+        //
+        // PR #1 uses hasAutoMerge: true (sort tier 0) so it is always evaluated before PR #2
+        // (tier 1, no auto-merge) in Step 6b — regardless of the random tiebreaker. This guarantees
+        // the evictedThisCycle guard on PR #1 is reliably exercised, making the test deterministic.
+        await ExecAsync(svc, provider, issues,
+            [MakePr(1, "feature/pr-1", hasAutoMerge: true), MakePr(2, "feature/pr-2")],
+            limit: 1, triggerCooldownMinutes: 1, maxSlotAgeMinutes: 1);
+
+        // PR #2 must get the freed slot — the evictedThisCycle guard prevents PR #1 from re-acquiring.
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "PR #2 must acquire the slot freed by PR #1's max-age eviction in cycle 2");
+
+        // PR #1 must not be triggered again in cycle 2 (only the cycle-1 call should count).
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "PR #1 must not re-acquire the slot in the same cycle it was max-age evicted");
+    }
 }
