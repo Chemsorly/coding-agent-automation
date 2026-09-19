@@ -29,18 +29,6 @@ public static class InitiatedByConstants
     /// <summary>Epic-decomposition run dispatched by the main polling loop.</summary>
     public const string LoopDecomposition = "loop:decomposition";
 
-    /// <summary>
-    /// Rework run dispatched after the housekeeping loop detected a conflicted PR and
-    /// swapped the linked issue back to <c>agent:next</c>.
-    /// </summary>
-    /// <remarks>
-    /// Not used — rework is now represented by <see cref="RunMode.Rework"/> on the run summary,
-    /// which is set by <c>DetectReworkStep</c> during agent execution. <c>InitiatedBy</c> records
-    /// the dispatch source; <see cref="RunMode"/> records what the pipeline did with the branch.
-    /// </remarks>
-    [Obsolete("Rework is signalled by RunMode.Rework on PipelineRunSummary, not by InitiatedBy. This constant is unused and will be removed in a future version.")]
-    public const string LoopRework = "loop:rework";
-
     // ── Manual (human-initiated via UI) ──────────────────────────────────────
 
     /// <summary>Run dispatched manually from a UI drawer (issue, PR review, or epic).</summary>

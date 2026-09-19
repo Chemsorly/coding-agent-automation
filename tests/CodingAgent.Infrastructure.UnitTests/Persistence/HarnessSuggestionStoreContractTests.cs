@@ -4,7 +4,6 @@ using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
-using CodingAgent.Pipeline.Services;
 using CodingAgent.Web.Services;
 using Microsoft.EntityFrameworkCore;
 using Moq;
@@ -99,29 +98,12 @@ public abstract class HarnessSuggestionStoreContractTests
     }
 }
 
-/// <summary>
-/// Runs <see cref="IHarnessSuggestionStore"/> contract tests against <see cref="FileSystemHarnessSuggestionStore"/>.
-/// </summary>
-public sealed class FileSystemHarnessSuggestionStoreContractTests
-    : HarnessSuggestionStoreContractTests, IDisposable
-{
-    private readonly string _tempDir;
-
-    public FileSystemHarnessSuggestionStoreContractTests()
-    {
-        _tempDir = Path.Combine(Path.GetTempPath(), $"harness-store-contract-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(_tempDir);
-    }
-
-    public void Dispose()
-    {
-        if (Directory.Exists(_tempDir))
-            try { Directory.Delete(_tempDir, recursive: true); } catch { }
-    }
-
-    protected override IHarnessSuggestionStore CreateStore()
-        => new FileSystemHarnessSuggestionStore(Path.Combine(_tempDir, "suggestions.json"));
-}
+// TODO [WARNING]: FileSystemHarnessSuggestionStoreContractTests was deleted along with FileSystemHarnessSuggestionStore.
+// The shared contract suite (HarnessSuggestionStoreContractTests) is now exercised only by
+// PostgresHarnessSuggestionStoreContractTests. Any new concrete IHarnessSuggestionStore implementation
+// (e.g. a future filesystem-backed variant) would start with zero contract coverage. When adding a new
+// implementation, create a corresponding contract subclass here to verify overwrite, directory-creation,
+// and corrupt-file-tolerance semantics.
 
 /// <summary>
 /// Runs <see cref="IHarnessSuggestionStore"/> contract tests against <see cref="PostgresHarnessSuggestionStore"/>.

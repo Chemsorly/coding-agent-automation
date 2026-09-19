@@ -52,18 +52,4 @@ public static class WorkItemMutationFactory
             // is needed at specific call sites.
             item.FailureReason ??= failureReason ?? FailureReason.AgentError;
         };
-
-    /// <summary>
-    /// Returns a mutation action for a <see cref="WorkItemStatus.Succeeded"/> terminal transition.
-    /// Sets only <see cref="WorkItemEntity.CompletedAt"/>.
-    /// </summary>
-    public static Action<WorkItemEntity> Succeeded()
-        => item => item.CompletedAt = DateTimeOffset.UtcNow;
-
-    /// <summary>
-    /// Returns a mutation action for a <see cref="WorkItemStatus.Cancelled"/> terminal transition.
-    /// Sets only <see cref="WorkItemEntity.CompletedAt"/>.
-    /// </summary>
-    public static Action<WorkItemEntity> Cancelled()
-        => item => item.CompletedAt = DateTimeOffset.UtcNow;
 }

@@ -25,9 +25,7 @@ public static class SchedulerLoopEndpoints
     public static void MapSchedulerLoopEndpoints(this IEndpointRouteBuilder app)
     {
         var apiKey = app.ServiceProvider.GetRequiredService<IConfiguration>()
-            .GetValue<string>("AGENT_API_KEY")
-            ?? app.ServiceProvider.GetRequiredService<IConfiguration>()
-                .GetValue<string>("AgentApiKey");
+            .GetValue<string>("AGENT_API_KEY");
 
         // Wire cache update on loop state change — via the DI-scoped LoopStatusCache singleton
         var cache = app.ServiceProvider.GetRequiredService<LoopStatusCache>();

@@ -33,8 +33,7 @@ if (string.IsNullOrEmpty(pipelineApiBaseUrl))
 }
 
 // ── Fast-fail: agent API key required ────────────────────────────────────
-var agentApiKey = builder.Configuration.GetValue<string>("AGENT_API_KEY")
-    ?? builder.Configuration.GetValue<string>("AgentApiKey");
+var agentApiKey = builder.Configuration.GetValue<string>("AGENT_API_KEY");
 if (string.IsNullOrEmpty(agentApiKey))
 {
     Log.Fatal("AGENT_API_KEY is not configured. Exiting.");

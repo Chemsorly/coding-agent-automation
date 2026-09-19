@@ -10,6 +10,7 @@ using FsCheck.Xunit;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.UnitTests.Helpers;
 using Moq;
 
 namespace CodingAgent.Pipeline.UnitTests.Services;
@@ -118,7 +119,7 @@ public class ConsolidationServicePropertyTests : IDisposable
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(
             Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
             new FileSystemConsolidationRunStore(runsDir),
-            new FileSystemHarnessSuggestionStore(Path.Combine(runsDir, "harness.json")),
+            new InMemoryHarnessSuggestionStore(),
             new Mock<IProviderConfigStore>().Object,
             WorkspaceManager: new ConsolidationWorkspaceManager(Serilog.Log.Logger, config)));
 
@@ -198,7 +199,7 @@ public class ConsolidationServicePropertyTests : IDisposable
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(
             Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
             new FileSystemConsolidationRunStore(runsDir),
-            new FileSystemHarnessSuggestionStore(Path.Combine(runsDir, "harness.json")),
+            new InMemoryHarnessSuggestionStore(),
             new Mock<IProviderConfigStore>().Object,
             WorkspaceManager: new ConsolidationWorkspaceManager(Serilog.Log.Logger, config)));
 
