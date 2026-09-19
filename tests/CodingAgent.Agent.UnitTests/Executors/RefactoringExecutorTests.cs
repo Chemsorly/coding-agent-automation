@@ -1187,5 +1187,144 @@ public class RefactoringExecutorTests : IDisposable
         // Assert
         summary.Should().Contain("1/3");
         summary.Should().Contain("403 Forbidden");
+        summary.Should().Contain("2 failed");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AllIssueCreationThrowsHttp422_ReturnsFailedResultWithUnprocessableHint()
+    {
+        // Arrange — covers ClassifyIssueCreationException HTTP 422 branch
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        SetupEmptyClosedIssues();
+        SetupProposalsFile("""
+            [
+                {
+                    "title": "Extract validation helper",
+                    "affectedFiles": ["src/A.cs"],
+                    "description": "Duplicated validation.",
+                    "rationale": "DRY principle."
+                }
+            ]
+            """);
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Unprocessable Entity", null, System.Net.HttpStatusCode.UnprocessableEntity));
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("422");
+        result.Summary.Should().Contain("422");
+        (result.CreatedIssues is null || result.CreatedIssues.Count == 0).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AllIssueCreationThrowsHttp429_ReturnsFailedResultWithRateLimitHint()
+    {
+        // Arrange — covers ClassifyIssueCreationException HTTP 429 branch
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        SetupEmptyClosedIssues();
+        SetupProposalsFile("""
+            [
+                {
+                    "title": "Extract validation helper",
+                    "affectedFiles": ["src/A.cs"],
+                    "description": "Duplicated validation.",
+                    "rationale": "DRY principle."
+                }
+            ]
+            """);
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Too Many Requests", null, System.Net.HttpStatusCode.TooManyRequests));
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("429");
+        result.Summary.Should().Contain("429");
+        (result.CreatedIssues is null || result.CreatedIssues.Count == 0).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AllIssueCreationThrowsUnknownHttpStatus_ReturnsFailedResultWithHttpCodeHint()
+    {
+        // Arrange — covers ClassifyIssueCreationException default HTTP branch ("HTTP {code}")
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        SetupEmptyClosedIssues();
+        SetupProposalsFile("""
+            [
+                {
+                    "title": "Extract validation helper",
+                    "affectedFiles": ["src/A.cs"],
+                    "description": "Duplicated validation.",
+                    "rationale": "DRY principle."
+                }
+            ]
+            """);
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Service Unavailable", null, System.Net.HttpStatusCode.ServiceUnavailable));
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        // 503 falls through to the default arm: "HTTP 503"
+        result.ErrorMessage.Should().Contain("503");
+        result.Summary.Should().Contain("503");
+        (result.CreatedIssues is null || result.CreatedIssues.Count == 0).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AllIssueCreationThrowsNonHttpException_ReturnsFailedResultWithExceptionTypeHint()
+    {
+        // Arrange — covers ClassifyIssueCreationException non-HTTP fallback branch
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        SetupEmptyClosedIssues();
+        SetupProposalsFile("""
+            [
+                {
+                    "title": "Extract validation helper",
+                    "affectedFiles": ["src/A.cs"],
+                    "description": "Duplicated validation.",
+                    "rationale": "DRY principle."
+                }
+            ]
+            """);
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("connection refused"));
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        // Non-HTTP exception: "{TypeName}: {Message}"
+        result.ErrorMessage.Should().Contain("InvalidOperationException");
+        result.Summary.Should().Contain("InvalidOperationException");
+        (result.CreatedIssues is null || result.CreatedIssues.Count == 0).Should().BeTrue();
     }
 }
