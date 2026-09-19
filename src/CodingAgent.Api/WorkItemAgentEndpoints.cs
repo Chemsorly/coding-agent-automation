@@ -270,6 +270,27 @@ public static class WorkItemAgentEndpoints
     /// <summary>
     /// Injects project secrets into the assignment message at delivery time.
     /// Secrets are not serialized in the payload for security; they are fetched fresh here.
+    /// <para>
+    /// Two resolution paths:
+    /// <list type="bullet">
+    ///   <item>
+    ///     <term>Direct project lookup</term>
+    ///     <description>
+    ///     When <c>request.ProjectId</c> is non-null, the project is fetched directly via
+    ///     <see cref="IProjectStore.GetProjectByIdAsync"/> and its secrets are injected.
+    ///     </description>
+    ///   </item>
+    ///   <item>
+    ///     <term>Template-ownership fallback (consolidation)</term>
+    ///     <description>
+    ///     When <c>request.ProjectId</c> is null but <c>request.ConsolidationTemplateId</c> is non-null,
+    ///     the owning project is resolved via template membership: iterate enabled projects and find the
+    ///     one whose <see cref="PipelineProject.TemplateIds"/> contains the template ID. Mirrors
+    ///     <see cref="ConsolidationTemplateResolver.ResolveTemplateWithProjectAsync"/>.
+    ///     </description>
+    ///   </item>
+    /// </list>
+    /// </para>
     /// </summary>
     private static async Task<JobAssignmentMessage> InjectProjectSecretsAsync(
         JobAssignmentMessage message,
@@ -277,35 +298,59 @@ public static class WorkItemAgentEndpoints
         IProjectStore projectStore,
         CancellationToken ct)
     {
-        // TODO: [WARNING] This method early-returns when request.ProjectId is null, but consolidation
-        // work items frequently carry a ConsolidationTemplateId with no ProjectId (the template-owns-project
-        // relationship is resolved lazily). ConsolidationWorkItemEndpoints.EnrichPayloadAsync resolves the
-        // owning project by template membership when ProjectId is empty, then vends project secrets from that
-        // owner. As a result, a TaskType=Consolidation work item with ProjectId=null and a ConsolidationTemplateId
-        // whose owning project defines Secrets will get ProjectSecrets=null from this path but populated secrets
-        // from the legacy claim path, violating the "fully-enriched" requirement for the unified assignment path.
-        // Mirror the template-ownership fallback from ConsolidationWorkItemEndpoints.EnrichPayloadAsync here,
-        // or document that /assignment intentionally omits project secrets for project-less consolidation items.
-        if (!request.ProjectId.HasValue)
-            return message;
-
-        var project = await projectStore.GetProjectByIdAsync(request.ProjectId.Value.ToString(), ct);
-        if (project is null)
+        if (request.ProjectId.HasValue)
         {
-            // TODO: [WARNING] The structured property name {JobId} is inconsistent with the {WorkItemId}
-            // convention used everywhere else in this file (e.g. line 112). Consider renaming to {WorkItemId}
-            // for a uniform structured log schema — but note that the integration test at
-            // GetAssignmentTests.cs currently asserts ContainKey("JobId"), so both sites must be updated
-            // together to avoid a test breakage.
-            Log.Warning(
-                "InjectProjectSecretsAsync: project {ProjectId} not found — WorkItem {JobId} will run without ProjectSecrets",
-                request.ProjectId.Value, message.JobId);
+            // Direct path: project ID is known — look it up directly.
+            var project = await projectStore.GetProjectByIdAsync(request.ProjectId.Value.ToString(), ct);
+            if (project?.Secrets is { Count: > 0 })
+                return message with { ProjectSecrets = project.Secrets };
+
+            // TODO: Consider restoring a structured Log.Warning (with {ProjectId} and {JobId}) for the
+            // null-project path so operators can correlate silent secret-injection failures at assignment
+            // time. The original diagnostic was removed in this refactor; both "project not found" and
+            // "project exists but has no secrets" now fall through silently.
             return message;
         }
 
-        if (project.Secrets is { Count: > 0 })
-            return message with { ProjectSecrets = project.Secrets };
+        // Consolidation fallback: when ProjectId is null but a ConsolidationTemplateId is set,
+        // resolve the owning project via template membership (project.TemplateIds) and inject
+        // secrets from that project. Global consolidation runs (ConsolidationTemplateId == null)
+        // and non-consolidation null-project items fall through to the unchanged return below.
+        if (!string.IsNullOrEmpty(request.ConsolidationTemplateId))
+        {
+            // TODO: ConsolidationTemplateId originates from the deserialized work-item payload and is
+            // attacker-influenced. The only authorization checks here are Enabled == true and TemplateIds
+            // membership. Consider adding a secondary authorization check (e.g., verify the work item's
+            // initiating identity is permitted to access the resolved project) or documenting that
+            // agent-claimed-item context is sufficient authorization for secret injection.
+            var projects = await projectStore.LoadProjectsAsync(ct);
+            // TODO: The templateLookup.ContainsKey(ConsolidationTemplateId) guard is constant within the
+            // foreach loop — consider hoisting it before the loop to avoid re-evaluating it per enabled
+            // project. If orphaned-TemplateIds detection is not a requirement, LoadAllTemplatesAsync and
+            // the ContainsKey guard can be removed entirely to save one store round-trip.
+            var templateLookup = (await projectStore.LoadAllTemplatesAsync(ct)).ToDictionary(t => t.Id);
+            foreach (var candidate in projects.Where(p => p.Enabled))
+            {
+                if (candidate.TemplateIds.Contains(request.ConsolidationTemplateId)
+                    && templateLookup.ContainsKey(request.ConsolidationTemplateId))
+                {
+                    // TODO: GetProjectByIdAsync(candidate.Id) re-fetches a project already returned by
+                    // LoadProjectsAsync. If LoadProjectsAsync returns full PipelineProject objects
+                    // (including Secrets), candidate.Secrets could be used directly. Document which
+                    // projection strategy LoadProjectsAsync uses, or add a comment explaining why the
+                    // re-fetch is required.
+                    var owningProject = await projectStore.GetProjectByIdAsync(candidate.Id, ct);
+                    if (owningProject?.Secrets is { Count: > 0 })
+                        return message with { ProjectSecrets = owningProject.Secrets };
+                    break; // owning project found but has no secrets — stop looking
+                }
+            }
+        }
 
+        // TODO: When ConsolidationTemplateId is set but no matching enabled project is found (or the
+        // owning project has no secrets), this method silently returns with no log event. Consider
+        // emitting a diagnostic log (Log.Warning with {ConsolidationTemplateId} and {JobId}) when
+        // ConsolidationTemplateId is non-null but no owning project with secrets was found.
         return message;
     }
 
@@ -518,6 +563,10 @@ public static class WorkItemAgentEndpoints
 
         if (request.Status == WorkItemStatus.Failed)
         {
+            // Enum.TryParse succeeds for numeric string inputs (e.g. "99") even when they don't
+            // correspond to a named FailureReason member. The IsDefined guard rejects such values
+            // so only named members are persisted to entity.FailureReason. (Issue #2667, mirrors
+            // the telemetry path fixed in issue #2341.)
             if (request.FailureReason is not null
                 && Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason)
                 && Enum.IsDefined(typeof(FailureReason), parsedReason))

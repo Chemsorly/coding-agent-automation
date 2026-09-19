@@ -95,6 +95,10 @@ public static class PipelineTelemetry
     public static readonly Counter<long> ConsolidationJobsExpired = Meter.CreateCounter<long>(
         "consolidation.jobs.expired", "{job}", "Consolidation jobs expired from queue");
 
+    public static readonly Counter<long> ConsolidationDispatchPermanentFailures = Meter.CreateCounter<long>(
+        "consolidation.dispatch.permanent_failures", "{failure}",
+        "Consolidation dispatch permanent failures (e.g. no job template for selector). Tagged by run.type.");
+
     // Brain metrics
     public static readonly Counter<long> BrainSyncsCompleted = Meter.CreateCounter<long>(
         "brain.syncs.completed", "{sync}", "Successful brain pre-run sync operations");
