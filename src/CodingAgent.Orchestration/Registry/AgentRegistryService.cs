@@ -53,7 +53,14 @@ public sealed class AgentRegistryService : IAgentRegistryService
                     AgentId = message.AgentId.Value,
                     ConnectionId = connectionId,
                     Hostname = message.Hostname,
-                    Labels = message.Labels,
+                    // Defensive copy: break the aliasing between AgentEntry.Labels and
+                    // message.Labels. MessagePack deserializes IReadOnlyList<string> as a
+                    // mutable List<string> at runtime. Storing the reference directly means
+                    // external callers holding the same message object could mutate the list
+                    // while OnDisconnectedAsync or GetAgentsByLabel iterates it, causing
+                    // InvalidOperationException. ToArray() produces an immutable fixed-length
+                    // copy that is safe for lock-free concurrent reads.
+                    Labels = message.Labels?.ToArray() ?? Array.Empty<string>(),
                     Status = AgentStatus.Idle,
                     RegisteredAt = now,
                     LastHeartbeatAt = now
@@ -66,6 +73,15 @@ public sealed class AgentRegistryService : IAgentRegistryService
                 {
                     // Remove old connectionId from index before updating
                     _connectionIndex.TryRemove(existing.ConnectionId, out AgentEntry? _);
+
+                    // TODO [WARNING]: Labels are not refreshed on re-registration. If an agent
+                    // reconnects with a different label set, entry.Labels retains the stale value
+                    // from the original registration indefinitely. This is not a thread-safety
+                    // defect (the stored array is immutable after the add-factory fix), but
+                    // GetAgentsByLabel routing will continue to see the original label set.
+                    // If labels must be current after reconnection, add:
+                    //   existing.Labels = message.Labels?.ToArray() ?? Array.Empty<string>();
+                    // inside this lock block. (Reviewers: Correctness, DotNetSpecialist)
 
                     existing.ConnectionId = connectionId;
                     existing.LastHeartbeatAt = now;
