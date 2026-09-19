@@ -112,38 +112,17 @@ public partial class QualityGateExecutor
                 };
             }
 
-            ciGate = new GateResult
-            {
-                GateName = "External CI",
-                Passed = ciPassed,
-                Details = ciPassed
-                    ? $"CI passed. {ciStatus.Jobs.Count} job(s) completed."
-                    : QualityGateValidator.BuildCiFailureDetails(ciStatus, ciLogPaths)
-            };
-
-            callbacks.EmitOutputLine(ciPassed
-                ? $"✅ External CI passed ({ciStatus.Jobs.Count} jobs)"
-                : $"❌ External CI failed: {ciGate.Details}");
+            ciGate = BuildCiGateResult(ciPassed, ciStatus, ciLogPaths, "CI", "External CI", callbacks);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            ciGate = new GateResult
-            {
-                GateName = "External CI",
-                Passed = false,
-                Details = $"External CI timed out after {config.ExternalCiTimeout}"
-            };
+            ciGate = BuildCiTimeoutGateResult(config.ExternalCiTimeout, "External CI");
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             _logger.Warning(ex, "Pipeline {RunId} external CI check failed, treating as gate failure", run.RunId);
-            ciGate = new GateResult
-            {
-                GateName = "External CI",
-                Passed = false,
-                Details = $"External CI error: {ex.Message}"
-            };
+            ciGate = BuildCiErrorGateResult("External CI", ex.Message);
         }
 
         return new QualityGateReport
@@ -595,4 +574,79 @@ public partial class QualityGateExecutor
         }
         return false;
     }
+
+    // ── Shared CI GateResult builders ──────────────────────────────────────────
+
+    /// <summary>
+    /// Builds a <see cref="GateResult"/> for an external CI poll result and emits a UI status line.
+    /// Used by both <see cref="AppendExternalCiIfNeededAsync"/> and <see cref="WaitForPostPrCiAsync"/>.
+    /// </summary>
+    /// <param name="ciPassed">Whether CI passed.</param>
+    /// <param name="ciStatus">The final CI status (used for job count and failure details).</param>
+    /// <param name="ciLogPaths">Optional per-job log paths forwarded to <see cref="QualityGateValidator.BuildCiFailureDetails"/>.</param>
+    /// <param name="detailsPrefix">Prefix used in <see cref="GateResult.Details"/> strings — e.g. "CI" or "Post-PR CI".</param>
+    /// <param name="uiPrefix">Prefix used in <see cref="IPipelineCallbacks.EmitOutputLine"/> messages — e.g. "External CI" or "Post-PR CI".</param>
+    /// <param name="callbacks">Pipeline callbacks for UI output.</param>
+    private static GateResult BuildCiGateResult(
+        bool ciPassed,
+        PipelineRunStatus ciStatus,
+        IReadOnlyDictionary<long, string>? ciLogPaths,
+        string detailsPrefix,
+        string uiPrefix,
+        IPipelineCallbacks callbacks)
+    {
+        // TODO: Add ArgumentNullException.ThrowIfNull(callbacks) guard. All current call sites
+        // pass a non-null callbacks, but the absence of a null check means a future call site
+        // or test that passes null would produce a NullReferenceException at EmitOutputLine
+        // rather than a clear ArgumentNullException at the entry point.
+        var details = ciPassed
+            ? $"{detailsPrefix} passed. {ciStatus.Jobs.Count} job(s) completed."
+            : QualityGateValidator.BuildCiFailureDetails(ciStatus, ciLogPaths);
+
+        // GateName is intentionally "External CI" for all call sites. QualityGateReport exposes a
+        // single ExternalCi slot regardless of whether pre-PR or post-PR CI ran, and downstream
+        // consumers (PipelineRun.BuildCompletionPayload, PipelineFormatting) key on this field name.
+        var gate = new GateResult
+        {
+            GateName = "External CI",
+            Passed = ciPassed,
+            Details = details
+        };
+
+        callbacks.EmitOutputLine(ciPassed
+            ? $"✅ {uiPrefix} passed ({ciStatus.Jobs.Count} jobs)"
+            : $"❌ {uiPrefix} failed: {details}");
+
+        return gate;
+    }
+
+    /// <summary>
+    /// Builds a <see cref="GateResult"/> for an external CI timeout.
+    /// Does NOT emit a UI line — the caller is responsible for any timeout-specific UI output
+    /// (only <see cref="WaitForPostPrCiAsync"/> emits an extra line; <see cref="AppendExternalCiIfNeededAsync"/> does not).
+    /// </summary>
+    /// <param name="timeout">The configured timeout duration (used in the Details string).</param>
+    /// <param name="prefix">Prefix for the Details string — "External CI" or "Post-PR CI".</param>
+    private static GateResult BuildCiTimeoutGateResult(TimeSpan timeout, string prefix) =>
+        // GateName is intentionally "External CI" for all call sites — see BuildCiGateResult above.
+        new GateResult
+        {
+            GateName = "External CI",
+            Passed = false,
+            Details = $"{prefix} timed out after {timeout}"
+        };
+
+    /// <summary>
+    /// Builds a <see cref="GateResult"/> for an unexpected external CI exception.
+    /// </summary>
+    /// <param name="prefix">Prefix for the Details string — "External CI" or "Post-PR CI".</param>
+    /// <param name="message">The exception message.</param>
+    private static GateResult BuildCiErrorGateResult(string prefix, string message) =>
+        // GateName is intentionally "External CI" for all call sites — see BuildCiGateResult above.
+        new GateResult
+        {
+            GateName = "External CI",
+            Passed = false,
+            Details = $"{prefix} error: {message}"
+        };
 }

@@ -62,7 +62,7 @@ Issue/epic backlog with readiness, labels, epic expansion, dependency graph.
 - **Data** — `IPipelineApiRunHistoryClient.GetRunAsync(Guid runId)` → `PipelineRunSummary`.
 - **Fields (all real on the summary):** trace/step from `FinalStep`+`PipelineStep`/`StepOrder`; `PhaseBreakdown` (per-phase token/cost); `TotalTokens`, `TotalCost` (null for Kiro), `CacheRead/WriteTokens`; quality gates from `QualityGateReport`; review findings `CodeReviewCritical/Warning/SuggestionCount`, `CodeReviewAgentsRun`; `FailureReason`; `RetryCount`; `InitiatedBy`; `BrainRepoUsed`/`BrainUpdatesPushed`; `ModelName`; `AgentId`; PR/branch/issue links.
 - **Reuse:** `HistoryRunDetailModal` (same fields, currently a modal — promote to a page).
-- **Note:** quality gates are Build / Tests / Coverage (+ external CI); there is **no** "Security" gate (security is a review-agent concern).
+- **Note:** quality gates are Build / Tests (+ external CI); there is **no** "Security" gate (security is a review-agent concern).
 
 ### Fleet  ·  *split out of Monitoring*
 - **Agents table** — `IPipelineApiAgentClient.GetAgentsAsync()` → `AgentEntry[]` (`Hostname`, `Labels`, `Status`, `ActiveJobId`, `RegisteredAt`, `LastHeartbeatAt`, `DisconnectedAt`, `BusySince`).
@@ -80,7 +80,7 @@ Four sections, each from a real source; every row links to the provider:
 
 ### Insights  ·  *new — trends*
 - **Run outcomes over time / success rate / cycle time / retry rate** — aggregate `IPipelineApiRunHistoryClient.GetRunHistoryAsync` over a window; outcomes are **Completed / Failed / Cancelled** only.
-- **Which gate fails most** — Build / Tests / Coverage / External CI, from `QualityGateReport` per failed run.
+- **Which gate fails most** — Build / Tests / External CI, from `QualityGateReport` per failed run.
 - **Cost** — `PipelineRunSummary.TotalCost`; show coverage honestly ("OpenCode only — Kiro runs report tokens"). This matches `TotalCost` being nullable.
 
 ### Pipelines  ·  *re-shell of Agent Coding*

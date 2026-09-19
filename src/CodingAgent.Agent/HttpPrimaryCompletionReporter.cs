@@ -55,6 +55,32 @@ public sealed class HttpPrimaryCompletionReporter : IJobCompletionReporter
         // but confusing). A guard makes the contract explicit and gives a clear error message.
         // See: review-findings.md [WARNING] HttpPrimaryCompletionReporter.cs:47
 
+        // If the run created a branch, post Running+BranchName before the terminal status.
+        // This populates WorkItems.BranchName in Postgres so GET /api/pipeline-runs/active-branches
+        // can serve a DB-backed branch list that is immune to ghost runs caused by lost SignalR
+        // completion signals. Must fire before the terminal POST: the terminal POST transitions
+        // Status out of Running, after which a Running POST would be rejected (400).
+        // Non-fatal: if rejected (e.g. item already terminal due to a race), log and continue.
+        if (payload.BranchName is not null)
+        {
+            var branchUpdate = new WorkItemStatusUpdate
+            {
+                Status = "Running",
+                AgentId = _agentId.Value,
+                BranchName = payload.BranchName
+            };
+            // TODO: [WARNING] CancellationToken.None is passed here instead of the caller-supplied `ct`.
+            // This is intentional (best-effort, non-fatal call) but means a hung intermediate POST cannot
+            // be interrupted by agent shutdown, potentially delaying teardown. The resilience pipeline has
+            // configured timeouts so the delay is bounded. Consider propagating `ct` here if tight shutdown
+            // latency becomes a concern.
+            var branchAccepted = await _lifecycleClient.PostStatusAsync(_workItemId, branchUpdate, CancellationToken.None);
+            if (!branchAccepted)
+                _logger.Warning(
+                    "BranchName Running POST rejected for WorkItem {WorkItemId} — BranchName will not be persisted in DB",
+                    _workItemId);
+        }
+
         // Primary channel: HTTP POST terminal status (durable)
         var terminalStatus = payload.FinalStep switch
         {
