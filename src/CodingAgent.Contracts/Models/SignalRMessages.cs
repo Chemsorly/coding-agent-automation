@@ -348,6 +348,16 @@ public sealed record JobCompletionPayload
     /// </summary>
     [Key(25)]
     public string? HarnessVersion { get; init; }
+
+    /// <summary>
+    /// Git branch name created during this run. Null for decomposition runs and for runs that
+    /// failed before branch creation. Populated from PipelineRun.BranchName via BuildCompletionPayload.
+    /// Used by HttpPrimaryCompletionReporter to post a Running+BranchName status update before
+    /// reporting terminal status, so WorkItems.BranchName is populated in the DB and
+    /// GET /api/pipeline-runs/active-branches can query it instead of relying on in-memory state.
+    /// </summary>
+    [Key(26)]
+    public string? BranchName { get; init; }
 }
 
 /// <summary>
