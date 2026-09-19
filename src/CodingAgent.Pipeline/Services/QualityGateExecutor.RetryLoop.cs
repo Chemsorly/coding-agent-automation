@@ -10,6 +10,9 @@ public partial class QualityGateExecutor
     /// <summary>Maximum consecutive transient provider errors before the retry loop is aborted.</summary>
     private const int MaxConsecutiveTransientRetries = 10;
 
+    /// <summary>Prefix used for the post-PR CI gate result Details and UI messages.</summary>
+    private const string PostPrCiPrefix = "Post-PR CI";
+
     /// <summary>
     /// Runs quality gate validation with retry logic and PR creation.
     /// </summary>
@@ -218,39 +221,18 @@ public partial class QualityGateExecutor
                     ciPollStopwatch.Elapsed.TotalSeconds,
                     PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
 
-                ciGate = new GateResult
-                {
-                    GateName = "External CI",
-                    Passed = ciPassed,
-                    Details = ciPassed
-                        ? $"Post-PR CI passed. {ciStatus.Jobs.Count} job(s) completed."
-                        : QualityGateValidator.BuildCiFailureDetails(ciStatus, ciLogPaths)
-                };
-
-                callbacks.EmitOutputLine(ciPassed
-                    ? $"✅ Post-PR CI passed ({ciStatus.Jobs.Count} jobs)"
-                    : $"❌ Post-PR CI failed: {ciGate.Details}");
+                ciGate = BuildCiGateResult(ciPassed, ciStatus, ciLogPaths, PostPrCiPrefix, PostPrCiPrefix, callbacks);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                ciGate = new GateResult
-                {
-                    GateName = "External CI",
-                    Passed = false,
-                    Details = $"Post-PR CI timed out after {config.ExternalCiTimeout}"
-                };
-                callbacks.EmitOutputLine($"❌ Post-PR CI timed out after {config.ExternalCiTimeout}");
+                ciGate = BuildCiTimeoutGateResult(config.ExternalCiTimeout, PostPrCiPrefix);
+                callbacks.EmitOutputLine($"❌ {PostPrCiPrefix} timed out after {config.ExternalCiTimeout}");
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
                 _logger.Warning(ex, "Pipeline {RunId} post-PR CI check failed, treating as gate failure", run.RunId);
-                ciGate = new GateResult
-                {
-                    GateName = "External CI",
-                    Passed = false,
-                    Details = $"Post-PR CI error: {ex.Message}"
-                };
+                ciGate = BuildCiErrorGateResult(PostPrCiPrefix, ex.Message);
             }
             finally
             {
