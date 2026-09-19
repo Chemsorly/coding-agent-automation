@@ -1236,6 +1236,132 @@ public sealed class DispatchPendingWorkItemEndpointTests
             "PVC must be released after K8s failure — Failed item no longer holds the credential slot");
     }
 
+    // ── Test 17: FailWorkItemAsync throws → 503, Warning logged, item remains Pending ──
+
+    /// <summary>
+    /// When K8s Job creation fails AND the subsequent <c>FailWorkItemAsync</c> call itself throws
+    /// (e.g. a faulted <see cref="IDbContextFactory{T}"/>), the exception must be caught at the
+    /// <c>FailWorkItemAsync</c> call site inside <c>CreateK8sJobAsync</c>. The endpoint must return
+    /// 503, the WorkItem must remain <c>Pending</c> (for reconciliation), and a <c>Warning</c>-level
+    /// Serilog log entry must be emitted with the WorkItem ID.
+    /// <para>
+    /// Without the fix, the exception from <c>FailWorkItemAsync</c> propagates to
+    /// <c>DispatchPendingWorkItem</c>'s outer catch, which logs a generic <c>Error</c> with no
+    /// WorkItem-ID attribution — this is the bug described in issue #2647.
+    /// </para>
+    /// </summary>
+    // TODO: This test uses providerType: "opencode" to skip the PVC gate (ctx.ClaimedPvc is null),
+    // which means the db.SaveChangesAsync PVC-cleanup path inside CreateK8sJobAsync's catch block is
+    // never exercised. A second test (or parameterised case) with providerType: "kiro" and a single
+    // PVC in the pool would lock in coverage of the kiro-path: K8s throws + FailWorkItemAsync throws
+    // with a claimed PVC in play, verifying that the PVC is released and the Warning is still emitted.
+    // TODO: The OnFailure callback path (ctx.OnFailure is not null) is not exercised in this test.
+    // DispatchPendingWorkItem currently passes onFailure: null at both call sites, but if a non-null
+    // OnFailure is added in the future, a test verifying correct behaviour when both FailWorkItemAsync
+    // and OnFailure throw (or only one of them) should be added.
+    [Fact]
+    public async Task DispatchPendingWorkItem_FailWorkItemAsyncThrows_Returns503_WarningLogged_ItemRemainingPending()
+    {
+        // Arrange: seed a Pending WorkItem via the working factory.
+        var dbFactory = CreateDbFactory();
+        var entity = await SeedPendingItemAsync(dbFactory, "kiro,dotnet");
+
+        // Construct a faulted IDbContextFactory — its CreateDbContextAsync always throws
+        // InvalidOperationException. This factory is ONLY injected into the WorkItemTransitionService
+        // inside the faulted lifecycle; the outer endpoint still receives the working dbFactory.
+        // The faulted factory causes FailWorkItemAsync → TransitionAsync → TransitionCoreAsync →
+        // _dbFactory.CreateDbContextAsync to throw, exercising the new inner try/catch.
+        var faultedFactory = new FaultedDbContextFactory();
+
+        var faultedTransitionSvc = new WorkItemTransitionService(
+            faultedFactory,
+            Mock.Of<ILogger<WorkItemTransitionService>>());
+
+        // K8s mock throws to enter CreateK8sJobAsync's outer catch block.
+        var k8sMock = new Mock<IKubernetesJobClient>();
+        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("K8s API unavailable"));
+
+        // Non-kiro template: PVC gate is skipped entirely, so no PVC cleanup SaveChangesAsync
+        // runs in the catch block — we test only the FailWorkItemAsync throw path.
+        var templateStore = CreateTemplateStore("kiro,dotnet", maxConcurrent: 5, providerType: "opencode");
+        var resolver = CreateTemplateResolver(templateStore);
+        var lockProvider = CreateNoOpLockProvider();
+
+        // Capture Serilog events by injecting a capturing logger directly into the faulted lifecycle.
+        // DispatchLifecycleService now accepts an optional Serilog.ILogger parameter; when provided,
+        // all _log.* calls in the lifecycle route through it instead of the global static logger.
+        // This avoids the static-field-initialization-time capture problem that prevents
+        // Serilog.Log.Logger reassignment from intercepting events emitted via ForContext<T>().
+        var capturedEvents = new List<Serilog.Events.LogEvent>();
+        var capturingSink = new CapturingSink(capturedEvents);
+        var capturingLogger = new Serilog.LoggerConfiguration()
+            .MinimumLevel.Verbose()
+            .WriteTo.Sink(capturingSink)
+            .CreateLogger();
+
+        // Construct the faulted lifecycle directly (not via CreateLifecycleService, which wires
+        // a working factory). The capturing logger is injected so Warning events are observable.
+        var faultedLifecycle = new DispatchLifecycleService(
+            k8sMock.Object,
+            faultedTransitionSvc,
+            new DispatchServiceOptions
+            {
+                Namespace = "test",
+                OrchestratorUrl = "http://test",
+                AgentApiKeySecretName = "secret",
+                AgentServiceAccountName = "sa",
+                KiroPvcPool = []  // non-kiro: no PVC involvement
+            },
+            logger: capturingLogger);
+
+        IResult result;
+        try
+        {
+            // Act — use the working dbFactory for the endpoint's own DB operations, but the
+            // faulted lifecycle so that FailWorkItemAsync throws inside CreateK8sJobAsync.
+            result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
+                entity.Id, dbFactory, faultedLifecycle, templateStore, resolver, lockProvider, CancellationToken.None);
+        }
+        finally
+        {
+            faultedLifecycle.Dispose();
+            if (capturingLogger is IDisposable d) d.Dispose();
+        }
+
+        // Assert 1: result must be 503 — the exception was caught, not propagated.
+        var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
+        statusResult.Should().NotBeNull("FailWorkItemAsync throw must be caught — result must be 503, not an unhandled exception");
+        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+
+        // Assert 2: item must remain Pending — FailWorkItemAsync never wrote the transition
+        // because it threw inside TransitionCoreAsync before reaching SaveChangesAsync.
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == entity.Id);
+        item!.Status.Should().Be(WorkItemStatus.Pending,
+            "FailWorkItemAsync threw before writing the transition — item must remain Pending for reconciliation");
+
+        // Assert 3: a Warning-level log entry must have been emitted at the FailWorkItemAsync call site,
+        // including the WorkItem ID as a structured property.
+        capturedEvents.Should().Contain(
+            e => e.Level == Serilog.Events.LogEventLevel.Warning &&
+                 e.MessageTemplate.Text.Contains("FailWorkItemAsync threw"),
+            "a Warning log must be emitted when FailWorkItemAsync throws in CreateK8sJobAsync");
+
+        var warningEvent = capturedEvents.First(
+            e => e.Level == Serilog.Events.LogEventLevel.Warning &&
+                 e.MessageTemplate.Text.Contains("FailWorkItemAsync threw"));
+        warningEvent.Properties.Should().ContainKey("WorkItemId",
+            "the Warning log must include the WorkItem ID as a structured property");
+        // TODO: This assertion uses a substring match (.Contain) because Serilog's ScalarValue
+        // serialisation wraps GUIDs in double-quotes (e.g. "\"3f2504e0-...\""). While not
+        // exploitable for GUIDs, this is a fragile pattern. Prefer extracting the raw value via
+        // ((Serilog.Events.ScalarValue)warningEvent.Properties["WorkItemId"]).Value and asserting
+        // .Should().Be(entity.Id) for type-safe, exact equality.
+        warningEvent.Properties["WorkItemId"].ToString().Should().Contain(entity.Id.ToString(),
+            "the WorkItem ID in the Warning log must match the seeded entity");
+    }
+
     // ── Test 12: Non-kiro template skips PVC gate ─────────────────────────────
 
     [Fact]
@@ -1504,4 +1630,31 @@ file sealed class TestPipelineDbContext : PipelineDbContext
                 et.RemoveIndex(idx);
         }
     }
+}
+
+/// <summary>
+/// Minimal Serilog sink that collects emitted <see cref="Serilog.Events.LogEvent"/> instances into a
+/// caller-supplied list. Used by tests that temporarily replace <c>Serilog.Log.Logger</c> to assert
+/// on log output from code that writes via the global static Serilog logger
+/// (e.g. <c>Serilog.Log.ForContext&lt;T&gt;()</c>).
+/// </summary>
+file sealed class CapturingSink(List<Serilog.Events.LogEvent> events) : Serilog.Core.ILogEventSink
+{
+    public void Emit(Serilog.Events.LogEvent logEvent) => events.Add(logEvent);
+}
+
+/// <summary>
+/// An <see cref="IDbContextFactory{TContext}"/> that always throws
+/// <see cref="InvalidOperationException"/> from <c>CreateDbContextAsync</c>. Used to simulate a
+/// faulted database factory so that <c>WorkItemTransitionService.TransitionCoreAsync</c> throws
+/// when exercising the <c>FailWorkItemAsync</c>-throws code path inside
+/// <c>DispatchLifecycleService.CreateK8sJobAsync</c>.
+/// </summary>
+file sealed class FaultedDbContextFactory : IDbContextFactory<PipelineDbContext>
+{
+    public PipelineDbContext CreateDbContext() =>
+        throw new InvalidOperationException("DB factory faulted");
+
+    public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default) =>
+        throw new InvalidOperationException("DB factory faulted");
 }
