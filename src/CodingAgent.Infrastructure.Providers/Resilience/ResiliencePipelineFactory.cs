@@ -229,7 +229,11 @@ public static class ResiliencePipelineFactory
                         // document that retrying permanent job-mismatch errors is an accepted trade-off.
                         // (WARNING — Correctness Review / .NET Specialist)
                         ex.Message.Contains("is not assigned to agent", StringComparison.OrdinalIgnoreCase) ||
-                        ex.Message.Contains("Agent not registered", StringComparison.OrdinalIgnoreCase)),
+                        ex.Message.Contains("Agent not registered", StringComparison.OrdinalIgnoreCase) ||
+                        // "No active run or work item found" is thrown by ResolveIssueProviderForRunAsync
+                        // when no in-memory run exists and the DB WorkItem is also absent (cross-replica miss).
+                        // This is a transient failure: a brief retry allows the run state to propagate.
+                        ex.Message.Contains("No active run or work item found", StringComparison.OrdinalIgnoreCase)),
                 OnRetry = args =>
                 {
                     RecordRetryEvent(args, logger, "SignalR", DefaultMaxRetryAttempts);
