@@ -458,7 +458,9 @@ public sealed class FakeAgentClient : IAsyncDisposable
     public async Task<TokenRefreshResponse> RequestTokenRefreshAsync(string jobId, ProviderKind providerKind)
     {
         if (_connection is null) throw new InvalidOperationException("Not connected");
-        return await _connection.InvokeAsync<TokenRefreshResponse>("RequestTokenRefresh", jobId, providerKind);
+        // Pass includeIssuePermission: false explicitly — SignalR positional binding requires
+        // the argument count to match the server method signature exactly.
+        return await _connection.InvokeAsync<TokenRefreshResponse>("RequestTokenRefresh", jobId, providerKind, false);
     }
 
     /// <summary>

@@ -254,8 +254,13 @@ public sealed class AgentHubIssueOpsPartialTests
             Token = "fresh-token",
             ExpiresAt = DateTimeOffset.UtcNow.AddHours(1)
         };
+        // TODO [WARNING]: Setup and Verify use It.IsAny<bool>() for includeIssuePermission.
+        // The hub is called without the flag (default false), but the matcher permits any value.
+        // A regression forwarding true unconditionally would pass undetected. Tighten to
+        // It.Is<bool>(v => !v) or the literal false to enforce the default-false guarantee.
+        // (DotNetSpecialist / TestQualityReviewer)
         _tokenRefreshService
-            .Setup(s => s.RefreshTokenAsync("job-1", ProviderKind.Issue, CancellationToken.None))
+            .Setup(s => s.RefreshTokenAsync("job-1", ProviderKind.Issue, CancellationToken.None, It.IsAny<bool>()))
             .ReturnsAsync(expected);
 
         var hub = CreateHub();
@@ -263,7 +268,7 @@ public sealed class AgentHubIssueOpsPartialTests
 
         result.Should().Be(expected);
         _tokenRefreshService.Verify(
-            s => s.RefreshTokenAsync("job-1", ProviderKind.Issue, CancellationToken.None),
+            s => s.RefreshTokenAsync("job-1", ProviderKind.Issue, CancellationToken.None, It.IsAny<bool>()),
             Times.Once);
     }
 
@@ -275,8 +280,12 @@ public sealed class AgentHubIssueOpsPartialTests
             Token = "agent-token",
             ExpiresAt = DateTimeOffset.UtcNow.AddHours(1)
         };
+        // TODO [WARNING]: Setup uses It.IsAny<bool>() and no Verify is performed — an
+        // implementation that stopped delegating or passed the wrong bool value would not be
+        // caught by this test. Add a Verify call with It.Is<bool>(v => !v) or false to assert
+        // the service is called exactly once with the correct default. (TestQualityReviewer)
         _tokenRefreshService
-            .Setup(s => s.RefreshTokenAsync("job-2", ProviderKind.Agent, CancellationToken.None))
+            .Setup(s => s.RefreshTokenAsync("job-2", ProviderKind.Agent, CancellationToken.None, It.IsAny<bool>()))
             .ReturnsAsync(expected);
 
         var hub = CreateHub();
