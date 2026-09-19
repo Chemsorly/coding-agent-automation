@@ -439,10 +439,17 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             "SwapLabelAsync should have been called — if this timed out, the sweep either " +
             "never ran or the issue was incorrectly skipped by one of the defense checks");
 
-        // Assert: provider config was only loaded once (deduplicated)
+        // Assert: provider config was loaded twice (once for Pass 1, once for Pass 2) but NOT
+        // four times (which would happen without deduplication of the two templates sharing provider-1).
+        // TODO: Times.Exactly(2) is tied to the current implementation detail of exactly 2 scan passes.
+        // If Pass 2 is removed or the two passes are merged into one, this assertion will become a
+        // false failure. If a third pass is added, deduplication means 3 calls (not 6), but this
+        // assertion will also fail, masking the real intent. Consider replacing with
+        // Times.LessThan(numberOfProviders * 3) or a more semantically meaningful bound that survives
+        // pass count changes while still catching the N-providers × passes deduplication regression.
         _mockConfigClient.Verify(
             s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Exactly(2));
 
         _cts.Cancel();
         await service.StopAsync(CancellationToken.None);
@@ -729,10 +736,11 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
                 It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
-        // Verify GetIssueAsync WAS called (the label check path was exercised)
+        // Verify GetIssueAsync WAS called (the label check path was exercised).
+        // Times.AtLeastOnce because Pass 2 (agent:done scan) also calls GetIssueAsync for this issue.
         mockIssueProvider.Verify(
             p => p.GetIssueAsync("1635", It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.AtLeastOnce);
 
         _cts.Cancel();
         await service.StopAsync(CancellationToken.None);
@@ -814,10 +822,11 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
                 It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
-        // Verify GetIssueAsync WAS called (the Defense 1 label check path was exercised)
+        // Verify GetIssueAsync WAS called (the Defense 1 label check path was exercised).
+        // Times.AtLeastOnce because Pass 2 (agent:done scan) also calls GetIssueAsync for this issue.
         mockIssueProvider.Verify(
             p => p.GetIssueAsync("2481", It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.AtLeastOnce);
 
         _cts.Cancel();
         await service.StopAsync(CancellationToken.None);
