@@ -5,9 +5,7 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Git;
-using CodingAgent.Web.IntegrationTests.Helpers;
 using CodingAgent.Web.TestUtilities;
-using TestPipelineConfig = CodingAgent.Web.IntegrationTests.Helpers.TestPipelineConfig;
 
 namespace CodingAgent.Web.IntegrationTests.Pipeline;
 

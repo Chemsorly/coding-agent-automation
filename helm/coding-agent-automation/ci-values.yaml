@@ -1,7 +1,19 @@
 # CI validation overrides — used by helm lint / helm template in CI pipeline.
 # Provides placeholder values for required secrets that would otherwise fail validation.
-secrets:
-  agentApiKey: ci-placeholder
+# Note: secrets.agentApiKey is intentionally absent — the zero-config auto-generation path
+# is the default and must be validated by CI without a placeholder.
+#
+# TODO [WARNING]: helm lint / helm template only validates YAML structure — it does NOT assert
+# behavioral properties. The following critical behaviors are untested in CI:
+#   1. Hook Job renders under auto-generate path (secrets.agentApiKey absent, existingSecret absent)
+#   2. Hook Job is suppressed under existingSecret path
+#   3. secrets.yaml is skipped (no Secret rendered) under auto-generate path to avoid ownership collision
+#   4. RBAC resources carry correct hook-weight ordering (-10 before -5) and hook-succeeded delete policy
+#   5. helm.sh/resource-policy: keep annotation is present on the explicit-key path Secret
+# A regression in any guard condition would produce valid YAML that passes CI while silently
+# breaking a key acceptance criterion. Consider adding a helm unittest suite or a second
+# ci-values file (e.g., ci-values-existing-secret.yaml with existingSecret: my-secret) to
+# assert that the hook Job and RBAC resources are absent when existingSecret is set.
 database:
   host: postgres.coding-agent.svc.cluster.local
   auth:

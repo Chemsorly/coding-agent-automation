@@ -89,3 +89,4 @@ __pycache__/
 local-values.yaml
 postgres-local.yaml
 redis-local.yaml
+build-info.json

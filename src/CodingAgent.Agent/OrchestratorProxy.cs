@@ -22,15 +22,16 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
     private readonly ResiliencePipeline _signalRPipeline;
 
     // ── Proactive token renewal cache ────────────────────────────────────
-    // Keyed by ProviderKind so the repo and brain tokens are cached independently.
+    // Keyed by (ProviderKind, includeIssuePermission) so repo/brain tokens and
+    // issue-permission variants are cached independently.
     private static readonly TimeSpan TokenRenewalBuffer = TokenRefreshConstants.RenewalBuffer;
-    private readonly Dictionary<ProviderKind, (string Token, DateTimeOffset ExpiresAt)> _tokenCache = new();
+    private readonly Dictionary<(ProviderKind, bool), (string Token, DateTimeOffset ExpiresAt)> _tokenCache = new();
     private readonly SemaphoreSlim _tokenCacheLock = new(1, 1);
 
-    // Single-flight: stores the in-flight Task per ProviderKind so concurrent callers
-    // await the same hub invocation rather than each issuing their own.
+    // Single-flight: stores the in-flight Task per (ProviderKind, includeIssuePermission) so
+    // concurrent callers await the same hub invocation rather than each issuing their own.
     // Entry is removed in a `finally` block so a faulted task is never re-used.
-    private readonly Dictionary<ProviderKind, Task<TokenRefreshResponse>> _tokenInflight = new();
+    private readonly Dictionary<(ProviderKind, bool), Task<TokenRefreshResponse>> _tokenInflight = new();
 
     private bool _disposed;
 
@@ -40,7 +41,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
     /// <see cref="RequestTokenRefreshAsync"/> so the caching and renewal logic can be exercised
     /// without a started hub connection.
     /// </summary>
-    private readonly Func<ProviderKind, CancellationToken, Task<TokenRefreshResponse>>? _tokenRefreshDelegate;
+    private readonly Func<ProviderKind, bool, CancellationToken, Task<TokenRefreshResponse>>? _tokenRefreshDelegate;
 
     public OrchestratorProxy(HubConnection connection, string jobId)
     {
@@ -61,7 +62,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
     internal OrchestratorProxy(
         HubConnection connection,
         string jobId,
-        Func<ProviderKind, CancellationToken, Task<TokenRefreshResponse>> tokenRefreshDelegate)
+        Func<ProviderKind, bool, CancellationToken, Task<TokenRefreshResponse>> tokenRefreshDelegate)
         : this(connection, jobId)
     {
         _tokenRefreshDelegate = tokenRefreshDelegate;
@@ -158,10 +159,23 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
     /// <see cref="TokenRenewalBuffer"/> of expiry, mirroring the server-side
     /// <c>GitHubAppAuthService</c> renewal buffer.
     /// Uses a single-flight pattern so concurrent callers for the same <paramref name="kind"/>
-    /// await the same in-flight hub invocation rather than each issuing their own.
+    /// and <paramref name="includeIssuePermission"/> combination await the same in-flight hub
+    /// invocation rather than each issuing their own.
     /// </summary>
-    public async Task<string> RequestTokenRefreshAsync(ProviderKind kind, CancellationToken ct)
+    // TODO [WARNING]: Parameter ordering inconsistency — public client API and server-side service
+    // methods place CancellationToken before includeIssuePermission:
+    //   RequestTokenRefreshAsync(kind, ct, includeIssuePermission)
+    //   RefreshTokenAsync(jobId, kind, ct, includeIssuePermission)
+    // while the hub wire signature and IAgentHub place it last:
+    //   RequestTokenRefresh(jobId, kind, includeIssuePermission)  [no CancellationToken on wire]
+    // This split is functionally harmless today but is a maintenance hazard: a future refactor
+    // that assumes uniform ordering could silently misplace the flag. Consider aligning to
+    // CancellationToken-last convention when next touching these signatures.
+    // (Correctness Review)
+    public async Task<string> RequestTokenRefreshAsync(ProviderKind kind, CancellationToken ct, bool includeIssuePermission = false)
     {
+        var cacheKey = (kind, includeIssuePermission);
+
         // Fast path: check under lock whether the cached token is still fresh,
         // or whether there is already an in-flight request we can piggyback on.
         Task<TokenRefreshResponse>? inflight = null;
@@ -169,7 +183,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
         await _tokenCacheLock.WaitAsync(ct);
         try
         {
-            if (_tokenCache.TryGetValue(kind, out var cached))
+            if (_tokenCache.TryGetValue(cacheKey, out var cached))
             {
                 var remainingLife = cached.ExpiresAt - DateTimeOffset.UtcNow;
                 if (remainingLife > TokenRenewalBuffer)
@@ -177,15 +191,15 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
             }
 
             // Single-flight: piggyback on an existing in-flight request if present
-            if (_tokenInflight.TryGetValue(kind, out inflight))
+            if (_tokenInflight.TryGetValue(cacheKey, out inflight))
             {
                 // Fall through — await inflight outside the lock
             }
             else
             {
                 // Start a new request and register it as the in-flight task
-                inflight = FetchTokenFromHubAsync(kind, ct);
-                _tokenInflight[kind] = inflight;
+                inflight = FetchTokenFromHubAsync(kind, includeIssuePermission, ct);
+                _tokenInflight[cacheKey] = inflight;
             }
         }
         finally
@@ -217,8 +231,8 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
             await _tokenCacheLock.WaitAsync(CancellationToken.None);
             try
             {
-                if (_tokenInflight.TryGetValue(kind, out var current) && ReferenceEquals(current, inflight))
-                    _tokenInflight.Remove(kind);
+                if (_tokenInflight.TryGetValue(cacheKey, out var current) && ReferenceEquals(current, inflight))
+                    _tokenInflight.Remove(cacheKey);
             }
             finally
             {
@@ -230,7 +244,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
         await _tokenCacheLock.WaitAsync(CancellationToken.None);
         try
         {
-            _tokenCache[kind] = (response.Token, response.ExpiresAt);
+            _tokenCache[cacheKey] = (response.Token, response.ExpiresAt);
         }
         finally
         {
@@ -248,7 +262,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
     // a transient blip that exhausts _signalRPipeline retries would otherwise fail the whole run.
     private const int TokenVendMaxRetries = 2;
 
-    private async Task<TokenRefreshResponse> FetchTokenFromHubAsync(ProviderKind kind, CancellationToken ct)
+    private async Task<TokenRefreshResponse> FetchTokenFromHubAsync(ProviderKind kind, bool includeIssuePermission, CancellationToken ct)
     {
         Exception? lastException = null;
         for (var attempt = 0; attempt <= TokenVendMaxRetries; attempt++)
@@ -256,11 +270,11 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
             try
             {
                 if (_tokenRefreshDelegate is not null)
-                    return await _tokenRefreshDelegate(kind, ct);
+                    return await _tokenRefreshDelegate(kind, includeIssuePermission, ct);
 
                 return await _signalRPipeline.ExecuteAsync(async token =>
                     await _connection.InvokeAsync<TokenRefreshResponse>(
-                        HubMethodNames.RequestTokenRefresh, _jobId, kind, token), ct);
+                        HubMethodNames.RequestTokenRefresh, _jobId, kind, includeIssuePermission, token), ct);
             }
             catch (HubException)
             {

@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.UnitTests.Helpers;
 using Moq;
 using CodingAgent.Pipeline.Interfaces;
 using Serilog;
@@ -17,7 +18,6 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
 {
     private readonly string _tempDir;
     private readonly string _runsDir;
-    private readonly string _suggestionsPath;
     private readonly Mock<IPipelineRunHistoryService> _mockRunHistory;
     private readonly Mock<IProjectStore> _mockProjectStore;
     private readonly PipelineConfiguration _config;
@@ -29,7 +29,6 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
         _tempDir = Path.Combine(Path.GetTempPath(), $"workspace-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
         _runsDir = Path.Combine(_tempDir, "runs");
-        _suggestionsPath = Path.Combine(_tempDir, "harness-suggestions.json");
 
         _mockRunHistory = new Mock<IPipelineRunHistoryService>();
         _mockRunHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>());
@@ -87,7 +86,7 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
         _mockProjectStore.Object,
         _mockRunHistory.Object,
         new FileSystemConsolidationRunStore(_runsDir),
-        new FileSystemHarnessSuggestionStore(_suggestionsPath),
+        new InMemoryHarnessSuggestionStore(),
         new Mock<IProviderConfigStore>().Object,
         WorkspaceManager: _workspaceManager));
 

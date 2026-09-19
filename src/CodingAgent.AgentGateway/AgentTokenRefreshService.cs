@@ -29,13 +29,13 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
     }
 
     /// <inheritdoc />
-    public async Task<TokenRefreshResponse> RefreshTokenAsync(string jobId, ProviderKind providerKind, CancellationToken ct)
+    public async Task<TokenRefreshResponse> RefreshTokenAsync(string jobId, ProviderKind providerKind, CancellationToken ct, bool includeIssuePermission = false)
     {
         var (repoProviderConfigId, brainProviderConfigId) = await ResolveProviderConfigIdsAsync(jobId, ct);
 
         var targetConfig = await ResolveTargetConfigAsync(jobId, providerKind, repoProviderConfigId, brainProviderConfigId, ct);
 
-        return await VendTokenAsync(jobId, providerKind, targetConfig, ct);
+        return await VendTokenAsync(jobId, providerKind, targetConfig, ct, includeIssuePermission);
     }
 
     private async Task<(string? repoId, string? brainId)> ResolveProviderConfigIdsAsync(
@@ -102,12 +102,12 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
     }
 
     private async Task<TokenRefreshResponse> VendTokenAsync(
-        string jobId, ProviderKind providerKind, ProviderConfig targetConfig, CancellationToken ct)
+        string jobId, ProviderKind providerKind, ProviderConfig targetConfig, CancellationToken ct, bool includeIssuePermission = false)
     {
         // GitHub App auth: generate a short-lived scoped token via JWT exchange
         if (targetConfig.Settings.ContainsKey(ProviderSettingKeys.PrivateKeyBase64))
         {
-            var (token, expiresAt) = await _tokenVending.GenerateAgentTokenAsync(targetConfig, ct);
+            var (token, expiresAt) = await _tokenVending.GenerateAgentTokenAsync(targetConfig, ct, includeIssuePermission);
 
             _logger.Information("Token refreshed for job {JobId} (kind: {ProviderKind}), expires at {ExpiresAt}",
                 jobId, providerKind, expiresAt);

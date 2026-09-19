@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.UnitTests.Helpers;
 using Moq;
 using Serilog;
 using System.Text.Json;
@@ -79,7 +80,7 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
     public async Task ConsolidationService_ConcurrencyGuard_RejectsDuplicateTrigger()
     {
         var store = new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs"));
-        var harnessStore = new FileSystemHarnessSuggestionStore(Path.Combine(_tempDir, "h.json"));
+        var harnessStore = new InMemoryHarnessSuggestionStore();
         var mockProjectStore = new Mock<IProjectStore>();
         mockProjectStore.Setup(x => x.LoadProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineProject>

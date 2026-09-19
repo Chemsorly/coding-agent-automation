@@ -50,8 +50,7 @@ builder.Services.AddOptions<MonolithRuntimeOptions>()
         if (!string.IsNullOrWhiteSpace(drainDelay) && int.TryParse(drainDelay, out var d))
             opts.ReadinessDrainDelaySeconds = d;
 
-        var loopDelay = cfg.GetValue<int?>("Orchestrator:PipelineLoopStartupDelaySeconds")
-            ?? cfg.GetValue<int?>("Env:PipelineLoopStartupDelaySeconds");
+        var loopDelay = cfg.GetValue<int?>("Orchestrator:PipelineLoopStartupDelaySeconds");
         if (loopDelay.HasValue)
             opts.PipelineLoopStartupDelaySeconds = loopDelay.Value;
 

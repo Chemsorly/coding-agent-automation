@@ -3,6 +3,7 @@ using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.UnitTests.Helpers;
 using Moq;
 using Serilog;
 
@@ -53,7 +54,7 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
             });
 
         _store = new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs"));
-        _harnessStore = new FileSystemHarnessSuggestionStore(Path.Combine(_tempDir, "harness.json"));
+        _harnessStore = new InMemoryHarnessSuggestionStore();
 
         _sut = new ConsolidationService(
             new ConsolidationServiceDependencies(

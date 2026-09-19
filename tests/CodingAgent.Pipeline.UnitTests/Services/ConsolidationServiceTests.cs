@@ -3,6 +3,7 @@ using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.UnitTests.Helpers;
 using Moq;
 using Serilog;
 
@@ -19,7 +20,6 @@ public sealed class ConsolidationServiceTests : IDisposable
 
     private readonly string _tempDir;
     private readonly string _runsDir;
-    private readonly string _suggestionsPath;
     private readonly ILogger _logger;
     private readonly Mock<IPipelineRunHistoryService> _mockRunHistory;
     private readonly Mock<IProjectStore> _mockProjectStore;
@@ -32,7 +32,6 @@ public sealed class ConsolidationServiceTests : IDisposable
         _tempDir = Path.Combine(Path.GetTempPath(), $"consolidation-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
         _runsDir = Path.Combine(_tempDir, "runs");
-        _suggestionsPath = Path.Combine(_tempDir, "harness-suggestions.json");
 
         _logger = new LoggerConfiguration().CreateLogger();
         _mockRunHistory = new Mock<IPipelineRunHistoryService>();
@@ -104,13 +103,18 @@ public sealed class ConsolidationServiceTests : IDisposable
         }
     }
 
+    // TODO [WARNING]: Each CreateSut() call allocates a fresh InMemoryHarnessSuggestionStore(), not a shared
+    // class-level instance. Tests that verify harness-suggestion persistence across calls within the same
+    // ConsolidationService instance will pass even if the service wires the wrong store, because each call
+    // gets its own empty store. Consider promoting the store to a class-level field (like _runsDir) so that
+    // tests can assert SaveAsync results are visible via GetAsync on the same instance the service holds.
     private ConsolidationService CreateSut() => new(new ConsolidationServiceDependencies(
         _logger,
         _config,
         _mockProjectStore.Object,
         _mockRunHistory.Object,
         new FileSystemConsolidationRunStore(_runsDir),
-        new FileSystemHarnessSuggestionStore(_suggestionsPath),
+        new InMemoryHarnessSuggestionStore(),
         _mockProviderConfigStore.Object,
         WorkspaceManager: new ConsolidationWorkspaceManager(_logger, _config)));
 
@@ -168,7 +172,7 @@ public sealed class ConsolidationServiceTests : IDisposable
             _mockProjectStore.Object,
             _mockRunHistory.Object,
             new FileSystemConsolidationRunStore(_runsDir),
-            new FileSystemHarnessSuggestionStore(_suggestionsPath),
+            new InMemoryHarnessSuggestionStore(),
             _mockProviderConfigStore.Object,
             WorkspaceManager: new ConsolidationWorkspaceManager(_logger, configWithLabels)));
 
@@ -203,7 +207,7 @@ public sealed class ConsolidationServiceTests : IDisposable
             _mockProjectStore.Object,
             _mockRunHistory.Object,
             new FileSystemConsolidationRunStore(_runsDir),
-            new FileSystemHarnessSuggestionStore(_suggestionsPath),
+            new InMemoryHarnessSuggestionStore(),
             _mockProviderConfigStore.Object,
             WorkspaceManager: new ConsolidationWorkspaceManager(_logger, configWithoutLabels)));
 
@@ -261,7 +265,7 @@ public sealed class ConsolidationServiceTests : IDisposable
             _mockProjectStore.Object,
             _mockRunHistory.Object,
             new FileSystemConsolidationRunStore(_runsDir),
-            new FileSystemHarnessSuggestionStore(_suggestionsPath),
+            new InMemoryHarnessSuggestionStore(),
             mockProviderStore.Object,
             WorkspaceManager: new ConsolidationWorkspaceManager(_logger, configNoDefault)));
 
@@ -309,7 +313,7 @@ public sealed class ConsolidationServiceTests : IDisposable
             _mockProjectStore.Object,
             _mockRunHistory.Object,
             new FileSystemConsolidationRunStore(_runsDir),
-            new FileSystemHarnessSuggestionStore(_suggestionsPath),
+            new InMemoryHarnessSuggestionStore(),
             mockProviderStore.Object,
             WorkspaceManager: new ConsolidationWorkspaceManager(_logger, configWithDefault)));
 
@@ -348,7 +352,7 @@ public sealed class ConsolidationServiceTests : IDisposable
             _mockProjectStore.Object,
             _mockRunHistory.Object,
             new FileSystemConsolidationRunStore(_runsDir),
-            new FileSystemHarnessSuggestionStore(_suggestionsPath),
+            new InMemoryHarnessSuggestionStore(),
             mockProviderStore.Object,
             WorkspaceManager: new ConsolidationWorkspaceManager(_logger, configWithDefault)));
 
@@ -395,7 +399,7 @@ public sealed class ConsolidationServiceTests : IDisposable
             _mockProjectStore.Object,
             _mockRunHistory.Object,
             new FileSystemConsolidationRunStore(_runsDir),
-            new FileSystemHarnessSuggestionStore(_suggestionsPath),
+            new InMemoryHarnessSuggestionStore(),
             mockProviderStore.Object,
             WorkspaceManager: new ConsolidationWorkspaceManager(_logger, configWithDefault)));
 
@@ -928,7 +932,7 @@ public sealed class ConsolidationServiceTests : IDisposable
                 _mockProjectStore.Object,
                 _mockRunHistory.Object,
                 new FileSystemConsolidationRunStore(blockerDir),
-                new FileSystemHarnessSuggestionStore(_suggestionsPath),
+                new InMemoryHarnessSuggestionStore(),
                 _mockProviderConfigStore.Object));
 
         var run = await sut.TriggerAsync(
@@ -947,7 +951,7 @@ public sealed class ConsolidationServiceTests : IDisposable
                 _mockProjectStore.Object,
                 _mockRunHistory.Object,
                 new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "blocked-runs-retry")),
-                new FileSystemHarnessSuggestionStore(_suggestionsPath),
+                new InMemoryHarnessSuggestionStore(),
                 _mockProviderConfigStore.Object));
 
         // Verify the failed-persist path does not wedge _runningRuns: a fresh sut instance
@@ -996,7 +1000,7 @@ public sealed class ConsolidationServiceTests : IDisposable
                 _mockProjectStore.Object,
                 _mockRunHistory.Object,
                 new FileSystemConsolidationRunStore(blockerDir),
-                new FileSystemHarnessSuggestionStore(_suggestionsPath),
+                new InMemoryHarnessSuggestionStore(),
                 _mockProviderConfigStore.Object,
                 FeedbackCache: mockFeedbackCache.Object));
 
@@ -1041,7 +1045,7 @@ public sealed class ConsolidationServiceTests : IDisposable
                 _mockProjectStore.Object,
                 _mockRunHistory.Object,
                 new FileSystemConsolidationRunStore(blockerDir),
-                new FileSystemHarnessSuggestionStore(_suggestionsPath),
+                new InMemoryHarnessSuggestionStore(),
                 _mockProviderConfigStore.Object,
                 FeedbackCache: mockFeedbackCache.Object));
 
@@ -1121,7 +1125,7 @@ public sealed class ConsolidationServiceTests : IDisposable
 
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(
             _logger, _config, _mockProjectStore.Object, _mockRunHistory.Object,
-            store, new FileSystemHarnessSuggestionStore(_suggestionsPath),
+            store, new InMemoryHarnessSuggestionStore(),
             _mockProviderConfigStore.Object));
 
         // Act: call via RunId (not string)
