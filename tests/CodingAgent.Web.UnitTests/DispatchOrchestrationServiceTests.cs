@@ -17,8 +17,8 @@ namespace CodingAgent.Web.UnitTests;
 /// </summary>
 public class DispatchOrchestrationServiceTests
 {
-    private readonly Mock<IAgentProfileStore>   _mockAgentProfileStore  = new();
-    private readonly Mock<IConfigurationStore>  _mockProviderConfigStore = new();
+    private readonly Mock<IAgentProfileStore> _mockAgentProfileStore = new();
+    private readonly Mock<IConfigurationStore> _mockProviderConfigStore = new();
     private readonly Mock<IPipelineConfigStore> _mockPipelineConfigStore = new();
     private readonly Mock<IProviderFactory> _mockProviderFactory = new();
     private readonly Mock<ILabelService> _mockLabelService = new();
