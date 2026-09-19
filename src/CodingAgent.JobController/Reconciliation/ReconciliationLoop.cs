@@ -137,8 +137,10 @@ public sealed class ReconciliationLoop
     /// <summary>
     /// Enforces the session timeout: marks Running items that have exceeded their per-item
     /// <see cref="ActiveWorkItemDto.TimeoutSeconds"/> as Failed.
-    /// All rows have a positive <see cref="ActiveWorkItemDto.TimeoutSeconds"/> value since
-    /// migration #2405 back-filled any legacy zero rows to 1800 seconds (30 min default).
+    /// Rows written post-migration #2405 and post-insertion-guard (issue #2745) have a positive
+    /// <see cref="ActiveWorkItemDto.TimeoutSeconds"/> value. Items with TimeoutSeconds ≤ 0
+    /// (pre-migration rows or rows written before the insert-path guard was deployed) are
+    /// silently skipped rather than force-failed.
     /// </summary>
     public async Task EnforceTimeoutsAsync(CancellationToken ct)
     {
@@ -168,17 +170,15 @@ public sealed class ReconciliationLoop
             // Only time out Running items here; Dispatched items are handled by EnforceDispatchedTimeoutAsync
             if (item.Status != WorkItemStatus.Running) continue;
 
-            // Resolve the effective timeout for this item.
-            // All rows written after migration #2405 have a positive TimeoutSeconds value.
-            // The migration back-filled any legacy zero rows to 1800 (30 min default),
-            // so TimeoutSeconds is always positive and no fallback is needed.
-            // TODO [WARNING]: In a rolling deployment where the binary is updated before the migration
-            // runs (or if the migration fails silently), in-flight rows with TimeoutSeconds=0 could
-            // reach this path. With effectiveTimeoutSeconds=0 any Running item older than
-            // TimeoutCanaryMinAgeSeconds (60s) is immediately force-failed (executionAge >= 0 is
-            // always true once the canary guard passes). Consider adding a defensive
-            // `if (item.TimeoutSeconds <= 0) continue;` guard here as low-cost insurance against
-            // this deployment-ordering scenario. (Correctness + DotNetSpecialist review [WARNING])
+            // Guard: skip items with a zero or negative TimeoutSeconds.
+            // Post-migration #2405 and post-insert-guard (issue #2745) all rows have a positive value.
+            // Items with TimeoutSeconds <= 0 are pre-migration rows or rows written before the guard
+            // was deployed. With effectiveTimeoutSeconds=0, any Running item older than
+            // TimeoutCanaryMinAgeSeconds (60s) would be immediately force-failed (executionAge >= 0
+            // is always true). Skip instead — these items rely on orphan cleanup and
+            // EnforceDispatchedTimeoutAsync for recovery.
+            if (item.TimeoutSeconds <= 0) continue;
+
             var effectiveTimeoutSeconds = item.TimeoutSeconds;
 
             // Compute execution age from DispatchedAt.
