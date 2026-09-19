@@ -226,12 +226,16 @@ public class RefactoringExecutorTests : IDisposable
         var refactoringIssues = new PagedResult<IssueSummary>
         {
             Items = [new IssueSummary { Identifier = "100", Title = "Extract retry logic", Labels = ["agent:generated"], CreatedAt = DateTime.UtcNow.AddDays(-5) }],
-            Page = 1, PageSize = 30, HasMore = false
+            Page = 1,
+            PageSize = 30,
+            HasMore = false
         };
         var allIssues = new PagedResult<IssueSummary>
         {
             Items = [new IssueSummary { Identifier = "200", Title = "Add caching layer", Labels = [], CreatedAt = DateTime.UtcNow.AddDays(-2) }],
-            Page = 1, PageSize = 50, HasMore = false
+            Page = 1,
+            PageSize = 50,
+            HasMore = false
         };
 
         _mockIssueProvider
@@ -297,7 +301,9 @@ public class RefactoringExecutorTests : IDisposable
         var oldIssues = new PagedResult<IssueSummary>
         {
             Items = [new IssueSummary { Identifier = "50", Title = "Old issue", Labels = [], CreatedAt = DateTime.UtcNow.AddDays(-60) }],
-            Page = 1, PageSize = 50, HasMore = false
+            Page = 1,
+            PageSize = 50,
+            HasMore = false
         };
 
         _mockIssueProvider

@@ -517,11 +517,11 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         ex is HttpRequestException { StatusCode: { } code }
             ? code switch
             {
-                HttpStatusCode.Unauthorized        => "401 Unauthorized — token expired or revoked",
-                HttpStatusCode.Forbidden           => "403 Forbidden — app missing 'issues: write' permission",
+                HttpStatusCode.Unauthorized => "401 Unauthorized — token expired or revoked",
+                HttpStatusCode.Forbidden => "403 Forbidden — app missing 'issues: write' permission",
                 HttpStatusCode.UnprocessableEntity => "422 Unprocessable — invalid issue content",
-                HttpStatusCode.TooManyRequests     => "429 Too Many Requests — GitHub rate limit hit",
-                _                                  => $"HTTP {(int)code}"
+                HttpStatusCode.TooManyRequests => "429 Too Many Requests — GitHub rate limit hit",
+                _ => $"HTTP {(int)code}"
             }
             : $"{ex.GetType().Name}: {ex.Message}";
 
