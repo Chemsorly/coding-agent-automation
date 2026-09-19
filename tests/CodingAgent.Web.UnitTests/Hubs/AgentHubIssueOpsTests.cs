@@ -232,8 +232,13 @@ public sealed class AgentHubIssueOpsTests
             ExpiresAt = DateTimeOffset.UtcNow.AddHours(1)
         };
 
+        // TODO [WARNING]: Setup and Verify use It.IsAny<bool>() for includeIssuePermission.
+        // The call site passes no flag (default false), but the matcher accepts any value —
+        // a regression that accidentally forwarded true would not be caught here.
+        // Tighten to It.Is<bool>(v => !v) or the literal false to enforce the default-false
+        // backward-compatibility guarantee. (DotNetSpecialist / TestQualityReviewer)
         _mockTokenRefresh
-            .Setup(s => s.RefreshTokenAsync("job-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .Setup(s => s.RefreshTokenAsync("job-1", ProviderKind.Repository, It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync(expectedResponse);
 
         var hub = CreateHub();
@@ -242,7 +247,7 @@ public sealed class AgentHubIssueOpsTests
 
         result.Should().Be(expectedResponse);
         _mockTokenRefresh.Verify(s =>
-            s.RefreshTokenAsync("job-1", ProviderKind.Repository, It.IsAny<CancellationToken>()), Times.Once);
+            s.RefreshTokenAsync("job-1", ProviderKind.Repository, It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Once);
     }
 
     [Fact]
@@ -254,8 +259,11 @@ public sealed class AgentHubIssueOpsTests
             ExpiresAt = DateTimeOffset.UtcNow.AddHours(1)
         };
 
+        // TODO [WARNING]: It.IsAny<bool>() does not enforce that includeIssuePermission defaults
+        // to false. Consider using false or It.Is<bool>(v => !v) in the Setup matcher.
+        // (DotNetSpecialist / TestQualityReviewer)
         _mockTokenRefresh
-            .Setup(s => s.RefreshTokenAsync("job-2", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .Setup(s => s.RefreshTokenAsync("job-2", ProviderKind.Issue, It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync(expectedResponse);
 
         var hub = CreateHub();

@@ -121,7 +121,7 @@ public class OrchestratorProxyTests
         // The second call should not invoke the delegate — it should return the cached token.
         var callCount = 0;
         var expiresAt = DateTimeOffset.UtcNow.AddMinutes(30);
-        var proxy = CreateProxyWithDelegate((kind, ct) =>
+        var proxy = CreateProxyWithDelegate((kind, _, ct) =>
         {
             callCount++;
             return Task.FromResult(new TokenRefreshResponse { Token = "tok-1", ExpiresAt = expiresAt });
@@ -142,7 +142,7 @@ public class OrchestratorProxyTests
         // Arrange: first call caches a token expiring 2 minutes from now (within the 5-min buffer).
         // Second call should detect proximity to expiry and invoke the delegate again.
         var callCount = 0;
-        var proxy = CreateProxyWithDelegate((kind, ct) =>
+        var proxy = CreateProxyWithDelegate((kind, _, ct) =>
         {
             callCount++;
             // Return a different token on each call so we can verify which one was returned.
@@ -175,7 +175,7 @@ public class OrchestratorProxyTests
         // A cached Repository token must never be returned for a Brain request (and vice-versa).
         var repoCalls = 0;
         var brainCalls = 0;
-        var proxy = CreateProxyWithDelegate((kind, ct) =>
+        var proxy = CreateProxyWithDelegate((kind, _, ct) =>
         {
             if (kind == ProviderKind.Repository)
             {
@@ -225,7 +225,7 @@ public class OrchestratorProxyTests
         var firstExpiry = DateTimeOffset.UtcNow.AddMinutes(2);  // within buffer → triggers renewal
         var secondExpiry = DateTimeOffset.UtcNow.AddMinutes(30); // beyond buffer → cached
         var callCount = 0;
-        var proxy = CreateProxyWithDelegate((kind, ct) =>
+        var proxy = CreateProxyWithDelegate((kind, _, ct) =>
         {
             callCount++;
             var expiry = callCount == 1 ? firstExpiry : secondExpiry;
@@ -307,7 +307,7 @@ public class OrchestratorProxyTests
     /// unit-tested without a started hub connection.
     /// </summary>
     private static OrchestratorProxy CreateProxyWithDelegate(
-        Func<ProviderKind, CancellationToken, Task<TokenRefreshResponse>> tokenRefreshDelegate)
+        Func<ProviderKind, bool, CancellationToken, Task<TokenRefreshResponse>> tokenRefreshDelegate)
     {
         var connection = new HubConnectionBuilder()
             .WithUrl($"http://localhost{HubRoutes.Agent}", options =>
@@ -316,6 +316,39 @@ public class OrchestratorProxyTests
             })
             .Build();
         return new OrchestratorProxy(connection, "job-1", tokenRefreshDelegate);
+    }
+
+    [Fact]
+    public async Task RequestTokenRefreshAsync_WithIncludeIssuePermission_True_ForwardsParameterToDelegate()
+    {
+        // Verifies that passing includeIssuePermission: true routes the flag through to the
+        // underlying hub call. This is the acceptance-criterion test for OrchestratorProxy.
+        // TODO [WARNING]: This test exercises the _tokenRefreshDelegate injection path, which
+        // replaces the real _connection.InvokeAsync(...) call in FetchTokenFromHubAsync. It proves
+        // the flag reaches the delegate boundary but does NOT verify the live SignalR wire call
+        // places includeIssuePermission as the 3rd positional argument. A regression that dropped
+        // the flag from the InvokeAsync arg list would not be caught here. A captured-args test
+        // against the real InvokeAsync path (or a server-side hub test asserting the received bool)
+        // would fully close this gap. (Correctness Review / TestQualityReviewer)
+        ProviderKind capturedKind = default;
+        bool capturedIncludeIssue = false;
+
+        var proxy = CreateProxyWithDelegate((kind, includeIssue, _) =>
+        {
+            capturedKind = kind;
+            capturedIncludeIssue = includeIssue;
+            return Task.FromResult(new TokenRefreshResponse
+            {
+                Token = "issues-scoped-token",
+                ExpiresAt = DateTimeOffset.UtcNow.AddHours(1)
+            });
+        });
+
+        var token = await proxy.RequestTokenRefreshAsync(ProviderKind.Repository, CancellationToken.None, includeIssuePermission: true);
+
+        token.Should().Be("issues-scoped-token");
+        capturedKind.Should().Be(ProviderKind.Repository);
+        capturedIncludeIssue.Should().BeTrue("includeIssuePermission: true must be forwarded to the SignalR hub invocation");
     }
 
     [Fact]

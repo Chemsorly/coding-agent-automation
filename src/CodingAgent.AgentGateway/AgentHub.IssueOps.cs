@@ -96,8 +96,8 @@ public sealed partial class AgentHub
     /// Supports both SignalR mode (PipelineRun in memory) and K8s mode (WorkItem payload in DB).
     /// </summary>
     [RequiresActiveJob]
-    public Task<TokenRefreshResponse> RequestTokenRefresh(JobId jobId, ProviderKind providerKind)
-        => _tokenRefreshService.RefreshTokenAsync(jobId.Value, providerKind, CancellationToken.None);
+    public Task<TokenRefreshResponse> RequestTokenRefresh(JobId jobId, ProviderKind providerKind, bool includeIssuePermission = false)
+        => _tokenRefreshService.RefreshTokenAsync(jobId.Value, providerKind, CancellationToken.None, includeIssuePermission);
 
     // ── Issue ops private helpers ───────────────────────────────────────
 
