@@ -595,15 +595,17 @@ public partial class QualityGateExecutor
         string uiPrefix,
         IPipelineCallbacks callbacks)
     {
+        // TODO: Add ArgumentNullException.ThrowIfNull(callbacks) guard. All current call sites
+        // pass a non-null callbacks, but the absence of a null check means a future call site
+        // or test that passes null would produce a NullReferenceException at EmitOutputLine
+        // rather than a clear ArgumentNullException at the entry point.
         var details = ciPassed
             ? $"{detailsPrefix} passed. {ciStatus.Jobs.Count} job(s) completed."
             : QualityGateValidator.BuildCiFailureDetails(ciStatus, ciLogPaths);
 
-        // TODO: GateName is hardcoded to "External CI" regardless of prefix. When called from
-        // WaitForPostPrCiAsync (post-PR CI path), GateName is still "External CI" even though
-        // detailsPrefix/uiPrefix are "Post-PR CI". Verify whether downstream consumers
-        // (QualityGateReport serialization, UI display) expect the gate name to match the path,
-        // and if so, accept a gateName parameter or derive it from uiPrefix.
+        // GateName is intentionally "External CI" for all call sites. QualityGateReport exposes a
+        // single ExternalCi slot regardless of whether pre-PR or post-PR CI ran, and downstream
+        // consumers (PipelineRun.BuildCompletionPayload, PipelineFormatting) key on this field name.
         var gate = new GateResult
         {
             GateName = "External CI",
@@ -626,8 +628,7 @@ public partial class QualityGateExecutor
     /// <param name="timeout">The configured timeout duration (used in the Details string).</param>
     /// <param name="prefix">Prefix for the Details string — "External CI" or "Post-PR CI".</param>
     private static GateResult BuildCiTimeoutGateResult(TimeSpan timeout, string prefix) =>
-        // TODO: GateName is hardcoded to "External CI"; same concern as BuildCiGateResult above —
-        // verify whether this is correct for the post-PR CI path or whether it should use prefix.
+        // GateName is intentionally "External CI" for all call sites — see BuildCiGateResult above.
         new GateResult
         {
             GateName = "External CI",
@@ -641,8 +642,7 @@ public partial class QualityGateExecutor
     /// <param name="prefix">Prefix for the Details string — "External CI" or "Post-PR CI".</param>
     /// <param name="message">The exception message.</param>
     private static GateResult BuildCiErrorGateResult(string prefix, string message) =>
-        // TODO: GateName is hardcoded to "External CI"; same concern as BuildCiGateResult above —
-        // verify whether this is correct for the post-PR CI path or whether it should use prefix.
+        // GateName is intentionally "External CI" for all call sites — see BuildCiGateResult above.
         new GateResult
         {
             GateName = "External CI",

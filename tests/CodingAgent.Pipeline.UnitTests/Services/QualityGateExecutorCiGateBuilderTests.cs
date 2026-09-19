@@ -82,6 +82,11 @@ public class QualityGateExecutorCiGateBuilderTests
         result.ExternalCi.Should().NotBeNull();
         result.ExternalCi!.Passed.Should().BeFalse();
         result.ExternalCi.GateName.Should().Be("External CI");
+        // TODO: The Details assertion below is tautological — it calls the same BuildCiFailureDetails
+        // method the production code delegates to, so it would still pass even if BuildCiFailureDetails
+        // were replaced with a stub returning an empty string. Replace expectedDetails with a hardcoded
+        // string (the actual formatted output for this single-job failure scenario) to make the
+        // assertion independently verify the failure message content.
         result.ExternalCi.Details.Should().Be(expectedDetails);
         // TODO: This test calls BuildCiFailureDetails(ciStatus) without ciLogPaths, matching
         // the production call only when ciLogPaths is null. Add a variant that supplies a
@@ -95,11 +100,7 @@ public class QualityGateExecutorCiGateBuilderTests
     public async Task AppendExternalCiIfNeeded_CiTimesOut_GateResultDetailsContainsTimeout()
     {
         var timeout = TimeSpan.FromMinutes(5);
-        // TODO: innerCts is never disposed — CancellationTokenSource implements IDisposable.
-        // Wrap in a using statement. The token state does not affect the catch filter here
-        // (the filter checks the outer ct = CancellationToken.None, not innerCts.Token), so
-        // disposal is safe and eliminates the CA2000 resource-management warning.
-        var innerCts = new CancellationTokenSource();
+        using var innerCts = new CancellationTokenSource();
 
         var (executor, context, mockPipelineProvider, _) = BuildPollingFixture(externalCiTimeout: timeout);
         // Simulate the inner timeout token firing (not the outer cancellation token)
@@ -217,12 +218,12 @@ public class QualityGateExecutorCiGateBuilderTests
         // Passing post-PR CI → non-draft finalization (isDraft=false), run completes successfully
         mockCallbacks.Verify(
             c => c.FinalizePullRequest(
-                It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), false, It.IsAny<CancellationToken>()),
+                It.IsAny<PipelineRun>(), false, It.IsAny<CancellationToken>()),
             Times.Once,
             "post-PR CI pass must finalize as non-draft");
         mockCallbacks.Verify(
             c => c.FinalizePullRequest(
-                It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+                It.IsAny<PipelineRun>(), true, It.IsAny<CancellationToken>()),
             Times.Never,
             "post-PR CI pass must NOT finalize as draft");
     }
@@ -233,13 +234,9 @@ public class QualityGateExecutorCiGateBuilderTests
     public async Task WaitForPostPrCi_CiTimesOut_GateResultDetailsContainsTimeout()
     {
         var timeout = TimeSpan.FromMinutes(5);
-        // TODO: innerCts is never disposed — CancellationTokenSource implements IDisposable.
-        // Wrap in a using statement. The token state does not affect the catch filter here
-        // (the filter checks the outer ct = CancellationToken.None, not innerCts.Token), so
-        // disposal is safe and eliminates the CA2000 resource-management warning.
-        var innerCts = new CancellationTokenSource();
+        using var innerCts = new CancellationTokenSource();
 
-        var (executor, context, mockPipelineProvider, mockCallbacks) = BuildPostPrFixture(externalCiTimeout: timeout);
+        var (executor, context, mockPipelineProvider, _) = BuildPostPrFixture(externalCiTimeout: timeout);
 
         // Sequence: pre-PR CI passes (call #1), cleanup skipped, post-PR CI → inner timeout
         mockPipelineProvider
@@ -248,22 +245,15 @@ public class QualityGateExecutorCiGateBuilderTests
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [] })  // pre-PR CI
             .ThrowsAsync(new OperationCanceledException(innerCts.Token));                          // post-PR CI times out
 
-        // When post-PR CI fails, FinalizePullRequest is called as draft with the post-PR CI report
-        QualityGateReport? capturedReport = null;
-        mockCallbacks
-            .Setup(c => c.FinalizePullRequest(
-                It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()))
-            .Callback<PipelineRun, QualityGateReport, bool, CancellationToken>(
-                (_, report, _, _) => capturedReport = report)
-            .Returns(Task.CompletedTask);
-
         await executor.ProceedToQualityGatesAsync(context, CancellationToken.None);
 
-        capturedReport.Should().NotBeNull("FinalizePullRequest(isDraft=true) must be called on timeout");
-        capturedReport!.ExternalCi.Should().NotBeNull();
-        capturedReport.ExternalCi!.Passed.Should().BeFalse();
-        capturedReport.ExternalCi.GateName.Should().Be("External CI");
-        capturedReport.ExternalCi.Details.Should().Be($"Post-PR CI timed out after {timeout}");
+        // BuildQualityGateErrorSummary includes "External CI: {details}" when ExternalCi failed.
+        // FinalizeDraftPrAsync enqueues that summary into run.RetryErrors, so we can verify
+        // the Details string without needing a FinalizePullRequest callback.
+        var expectedDetails = $"Post-PR CI timed out after {timeout}";
+        context.Run.RetryErrors.Should().ContainSingle(
+            e => e.Contains($"External CI: {expectedDetails}"),
+            "the error summary must contain the timeout details for the post-PR CI gate");
     }
 
     // ── WaitForPostPrCiAsync — error arm ───────────────────────────────────────
@@ -273,7 +263,7 @@ public class QualityGateExecutorCiGateBuilderTests
     {
         const string errorMessage = "network failure during post-PR CI poll";
 
-        var (executor, context, mockPipelineProvider, mockCallbacks) = BuildPostPrFixture();
+        var (executor, context, mockPipelineProvider, _) = BuildPostPrFixture();
 
         // Sequence: pre-PR CI passes (call #1), post-PR CI → generic exception
         mockPipelineProvider
@@ -282,22 +272,15 @@ public class QualityGateExecutorCiGateBuilderTests
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [] })  // pre-PR CI
             .ThrowsAsync(new HttpRequestException(errorMessage));                                  // post-PR CI error
 
-        // When post-PR CI fails, FinalizePullRequest is called as draft with the post-PR CI report
-        QualityGateReport? capturedReport = null;
-        mockCallbacks
-            .Setup(c => c.FinalizePullRequest(
-                It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()))
-            .Callback<PipelineRun, QualityGateReport, bool, CancellationToken>(
-                (_, report, _, _) => capturedReport = report)
-            .Returns(Task.CompletedTask);
-
         await executor.ProceedToQualityGatesAsync(context, CancellationToken.None);
 
-        capturedReport.Should().NotBeNull("FinalizePullRequest(isDraft=true) must be called on error");
-        capturedReport!.ExternalCi.Should().NotBeNull();
-        capturedReport.ExternalCi!.Passed.Should().BeFalse();
-        capturedReport.ExternalCi.GateName.Should().Be("External CI");
-        capturedReport.ExternalCi.Details.Should().Be($"Post-PR CI error: {errorMessage}");
+        // BuildQualityGateErrorSummary includes "External CI: {details}" when ExternalCi failed.
+        // FinalizeDraftPrAsync enqueues that summary into run.RetryErrors, so we can verify
+        // the Details string without needing a FinalizePullRequest callback.
+        var expectedDetails = $"Post-PR CI error: {errorMessage}";
+        context.Run.RetryErrors.Should().ContainSingle(
+            e => e.Contains($"External CI: {expectedDetails}"),
+            "the error summary must contain the error details for the post-PR CI gate");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
