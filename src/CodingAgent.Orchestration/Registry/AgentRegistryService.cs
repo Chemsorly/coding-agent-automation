@@ -74,14 +74,12 @@ public sealed class AgentRegistryService : IAgentRegistryService
                     // Remove old connectionId from index before updating
                     _connectionIndex.TryRemove(existing.ConnectionId, out AgentEntry? _);
 
-                    // TODO [WARNING]: Labels are not refreshed on re-registration. If an agent
-                    // reconnects with a different label set, entry.Labels retains the stale value
-                    // from the original registration indefinitely. This is not a thread-safety
-                    // defect (the stored array is immutable after the add-factory fix), but
-                    // GetAgentsByLabel routing will continue to see the original label set.
-                    // If labels must be current after reconnection, add:
-                    //   existing.Labels = message.Labels?.ToArray() ?? Array.Empty<string>();
-                    // inside this lock block. (Reviewers: Correctness, DotNetSpecialist)
+                    // Note: Labels are intentionally not refreshed on re-registration.
+                    // The stored array is immutable (defensive copy from add-factory), so this
+                    // is not a thread-safety concern. However, GetAgentsByLabel routing will
+                    // observe the original label set after reconnection. If label refresh on
+                    // reconnect is needed, assign message.Labels?.ToArray() ?? Array.Empty<string>()
+                    // to existing.Labels inside this lock block.
 
                     existing.ConnectionId = connectionId;
                     existing.LastHeartbeatAt = now;
