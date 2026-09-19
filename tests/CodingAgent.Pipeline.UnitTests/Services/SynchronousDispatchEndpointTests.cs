@@ -90,6 +90,12 @@ public sealed class SynchronousDispatchEndpointTests
     private static IOrchestratorRunService CreateRunService() =>
         new OrchestratorRunService(Mock.Of<Serilog.ILogger>());
 
+    private static DispatchWorkItemService CreateDispatchService(
+        string labels = "kiro,dotnet",
+        int maxConcurrent = 5,
+        string providerType = "kiro") =>
+        new DispatchWorkItemService(CreateTemplateStore(labels, maxConcurrent, providerType));
+
     private static JobDistributionRequest MakeRequest(
         WorkItemTaskType taskType = WorkItemTaskType.Implementation,
         string selector = "kiro,dotnet",
@@ -124,7 +130,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
+            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), CancellationToken.None);
 
         // Assert: 200 OK with WorkItemId
         var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
@@ -172,7 +178,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
+            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), CancellationToken.None);
 
         // Assert: 409 Conflict
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>();
@@ -211,7 +217,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
+            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), CancellationToken.None);
 
         // Assert: 503 Service Unavailable
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
@@ -233,7 +239,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
+            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), CancellationToken.None);
 
         // Assert: 422 Unprocessable Entity (permanent config error — no job template for selector).
         // Distinct from 409 (transient capacity) so callers can distinguish permanent vs transient failures.
@@ -259,7 +265,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
+            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), CancellationToken.None);
 
         var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
         okResult.Should().NotBeNull();
@@ -291,7 +297,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act: dispatch Review request first (as Scheduler would select it first)
         var reviewResult = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            reviewRequest, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
+            reviewRequest, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), CancellationToken.None);
 
         // Assert: Review dispatched successfully as Dispatched
         var reviewOk = reviewResult as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
@@ -331,7 +337,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act: dispatch Review first (as the Scheduler's priority ordering guarantees)
         var reviewResult = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            reviewRequest, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
+            reviewRequest, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), CancellationToken.None);
 
         // Assert: Review is dispatched — K8s Job created, WorkItem=Dispatched
         var reviewOk = reviewResult as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
@@ -350,7 +356,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act: dispatch Implementation — concurrency limit is now reached (Review occupies the slot)
         var implResult = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            implRequest, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
+            implRequest, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), CancellationToken.None);
 
         // Assert: Implementation blocked by concurrency limit
         implResult.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
@@ -406,9 +412,9 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act: both calls run concurrently, sharing the same lifecycle (same _pvcSelectLock).
         var task1 = WorkItemDispatchEndpoints.DispatchWorkItem(
-            request1, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
+            request1, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), CancellationToken.None);
         var task2 = WorkItemDispatchEndpoints.DispatchWorkItem(
-            request2, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
+            request2, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), CancellationToken.None);
 
         var results = await Task.WhenAll(task1, task2);
 
@@ -456,7 +462,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
+            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), CancellationToken.None);
 
         // Assert: 503 returned
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
@@ -495,7 +501,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
+            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), CancellationToken.None);
 
         // Assert: 200 OK — PVC gate was skipped for non-kiro template
         var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
@@ -652,6 +658,9 @@ public sealed class DispatchPendingWorkItemEndpointTests
         IAgentProfileStore? profileStore = null) =>
         new DispatchTemplateResolver(profileStore, templateStore);
 
+    private static DispatchWorkItemService CreateDispatchService(JobTemplateStore templateStore) =>
+        new DispatchWorkItemService(templateStore);
+
     /// <summary>
     /// Returns a Mock&lt;IDistributedLockProvider&gt; that immediately grants the lock.
     /// </summary>
@@ -739,7 +748,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
         // Assert: 200 returned
         var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
@@ -770,7 +779,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var missingId = Guid.NewGuid();
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            missingId, dbFactory, lifecycle, templateStore, resolver, lockProvider, CancellationToken.None);
+            missingId, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.NotFound>();
     }
@@ -800,7 +809,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             .ReturnsAsync(handle.Object);
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            existingId, dbFactory, lifecycle, templateStore, resolver, mockLock.Object, CancellationToken.None);
+            existingId, dbFactory, lifecycle, templateStore, resolver, mockLock.Object, CreateDispatchService(templateStore), CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
             "a non-Pending item must return 409 immediately");
@@ -820,7 +829,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var lockProvider = CreateNoOpLockProvider();
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>("no template → 409");
 
@@ -864,7 +873,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
         // Assert: profile fallback resolved template → dispatch succeeds
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
@@ -900,7 +909,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var lockProvider = CreateNoOpLockProvider();
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>("concurrency limit → 409");
 
@@ -926,7 +935,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var lockProvider = CreateNoOpLockProvider();
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
         statusResult.Should().NotBeNull();
@@ -960,7 +969,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         // Add a sentinel reset (e.g. -1) before the DispatchPendingWorkItem call, matching the pattern in Test 9.
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>();
 
@@ -998,7 +1007,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             .SetValue(null, 99); // sentinel
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
         statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
@@ -1052,9 +1061,9 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var lockProvider = new InProcessDistributedLockProvider();
 
         var task1 = WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
         var task2 = WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
         var results = await Task.WhenAll(task1, task2);
 
@@ -1163,7 +1172,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             });
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, resolver, racingLockMock.Object, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, racingLockMock.Object, CreateDispatchService(templateStore), CancellationToken.None);
 
         // The post-lock re-read must detect the non-Pending status and return 409 Conflict.
         // Without the fix this would return 503 (lifecycle early-return → dispatched=false).
@@ -1209,7 +1218,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
         // Act — first call with K8s failing
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
         // Assert: 503
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
@@ -1231,7 +1240,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var lifecycle2 = CreateLifecycleService(k8sMock2.Object, ["pvc-0"]);
         var entity2 = await SeedPendingItemAsync(dbFactory, "kiro,dotnet");
         var result2 = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity2.Id, dbFactory, lifecycle2, templateStore, resolver, lockProvider, CancellationToken.None);
+            entity2.Id, dbFactory, lifecycle2, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
         result2.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
             "PVC must be released after K8s failure — Failed item no longer holds the credential slot");
     }
@@ -1321,7 +1330,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             // Act — use the working dbFactory for the endpoint's own DB operations, but the
             // faulted lifecycle so that FailWorkItemAsync throws inside CreateK8sJobAsync.
             result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-                entity.Id, dbFactory, faultedLifecycle, templateStore, resolver, lockProvider, CancellationToken.None);
+                entity.Id, dbFactory, faultedLifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
         }
         finally
         {
@@ -1380,7 +1389,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var lockProvider = CreateNoOpLockProvider();
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
             "non-kiro dispatch must succeed without a PVC");
@@ -1411,7 +1420,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             var lc = CreateLifecycleService();
             var res = CreateTemplateResolver(ts);
             result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-                itemId, dbFactory, lc, ts, res, CreateNoOpLockProvider(), CancellationToken.None);
+                itemId, dbFactory, lc, ts, res, CreateNoOpLockProvider(), CreateDispatchService(ts), CancellationToken.None);
         }
         else if (scenario == "concurrency")
         {
@@ -1423,7 +1432,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             var lc = CreateLifecycleService();
             var res = CreateTemplateResolver(ts);
             result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-                itemId, dbFactory, lc, ts, res, CreateNoOpLockProvider(), CancellationToken.None);
+                itemId, dbFactory, lc, ts, res, CreateNoOpLockProvider(), CreateDispatchService(ts), CancellationToken.None);
         }
         else // pvc-gate
         {
@@ -1434,7 +1443,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             var lc = CreateLifecycleService(pvcPool: ["pvc-0"]);
             var res = CreateTemplateResolver(ts);
             result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-                itemId, dbFactory, lc, ts, res, CreateNoOpLockProvider(), CancellationToken.None);
+                itemId, dbFactory, lc, ts, res, CreateNoOpLockProvider(), CreateDispatchService(ts), CancellationToken.None);
         }
 
         // All gate rejections must be non-200
@@ -1467,7 +1476,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             .ThrowsAsync(new TimeoutException("Advisory lock acquisition timed out"));
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, resolver, timeoutLockMock.Object, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, timeoutLockMock.Object, CreateDispatchService(templateStore), CancellationToken.None);
 
         // Must return 503, not throw
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
@@ -1503,7 +1512,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
         // Assert: result is a 409 Conflict
         var conflictResult = result as Microsoft.AspNetCore.Http.HttpResults.Conflict<string>;
@@ -1570,7 +1579,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
         // Assert: result is a 409 Conflict (concurrency path)
         var conflictResult = result as Microsoft.AspNetCore.Http.HttpResults.Conflict<string>;
