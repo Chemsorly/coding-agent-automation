@@ -31,9 +31,20 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
     /// <inheritdoc />
     public async Task<TokenRefreshResponse> RefreshTokenAsync(string jobId, ProviderKind providerKind, CancellationToken ct, bool includeIssuePermission = false)
     {
-        var (repoProviderConfigId, brainProviderConfigId) = await ResolveProviderConfigIdsAsync(jobId, ct);
+        var (repoId, brainId) = await ResolveProviderConfigIdsAsync(jobId, ct);
 
-        var targetConfig = await ResolveTargetConfigAsync(jobId, providerKind, repoProviderConfigId, brainProviderConfigId, ct);
+        // TODO [WARNING]: The cast `(ProviderConfigId?)repoId` invokes the implicit string→ProviderConfigId
+        // operator, which calls ArgumentException.ThrowIfNullOrEmpty internally. If repoId is an empty
+        // string (non-null), the condition `repoId is null` is false and the cast throws ArgumentException
+        // instead of a HubException with a meaningful diagnostic, breaking the SignalR hub contract.
+        // Replace with string.IsNullOrEmpty guards consistent with the DB-fallback path in
+        // ResolveProviderConfigIdsAsync (line ~60) to ensure clean HubException failure modes.
+        // Same risk applies to brainId. (DotNetSpecialist + Correctness)
+        var targetConfig = await ResolveTargetConfigAsync(
+            jobId, providerKind,
+            repoId is null ? null : (ProviderConfigId?)repoId,
+            brainId is null ? null : (ProviderConfigId?)brainId,
+            ct);
 
         return await VendTokenAsync(jobId, providerKind, targetConfig, ct, includeIssuePermission);
     }
@@ -64,7 +75,7 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
 
     private async Task<ProviderConfig> ResolveTargetConfigAsync(
         string jobId, ProviderKind providerKind,
-        string? repoProviderConfigId, string? brainProviderConfigId,
+        ProviderConfigId? repoProviderConfigId, ProviderConfigId? brainProviderConfigId,
         CancellationToken ct)
     {
         // Resolve the correct provider config based on the requested kind.
@@ -73,41 +84,35 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
         // are stored as Repository kind with RepositoryRole.Brain.
         if (providerKind == ProviderKind.Brain)
         {
-            if (string.IsNullOrEmpty(brainProviderConfigId))
+            if (!brainProviderConfigId.HasValue)
             {
                 _logger.Warning("Brain token refresh for job {JobId}: brainProviderConfigId is null/empty. Brain sync will be disabled.", jobId);
                 throw new HubException($"Brain provider config ID not available for job {jobId}. " +
                     "Brain sync cannot be performed.");
             }
 
-            ProviderConfig? brainConfig = null;
-            for (var attempt = 0; attempt <= 1 && brainConfig is null; attempt++)
-            {
-                if (attempt > 0) await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
-                brainConfig = await _facade.GetProviderConfigByIdAsync(brainProviderConfigId, ProviderKind.Repository, ct);
-            }
+            var brainConfig = await _facade.GetProviderConfigByIdAsync(brainProviderConfigId.Value.Value, ProviderKind.Repository, ct);
             if (brainConfig is null)
             {
-                // TODO: align warning template with repo-branch pattern — use {ConfigId} as the first positional arg
-                // and include ProviderKind for consistency: "Provider config {ConfigId} not found for job {JobId} (kind: {ProviderKind})"
                 _logger.Warning("Brain token refresh for job {JobId}: config {BrainConfigId} not found in store",
-                    jobId, brainProviderConfigId);
+                    jobId, brainProviderConfigId.Value.Value);
                 throw new HubException($"Brain provider config '{brainProviderConfigId}' not found for job {jobId}");
             }
             return brainConfig;
         }
         else
         {
-            ProviderConfig? repoConfig = null;
-            for (var attempt = 0; attempt <= 1 && repoConfig is null; attempt++)
-            {
-                if (attempt > 0) await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
-                repoConfig = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId!, ProviderKind.Repository, ct);
-            }
+            // TODO [WARNING]: `repoProviderConfigId!.Value.Value` uses the null-forgiving operator
+            // without a prior HasValue guard. If repoProviderConfigId is null (e.g. a PipelineRun with
+            // null RepoProviderConfigId or degenerate data), accessing .Value on a null Nullable<T>
+            // throws InvalidOperationException at runtime instead of a clean HubException. The brain
+            // branch above correctly checks `!brainProviderConfigId.HasValue` first; add the equivalent
+            // guard here to mirror that pattern and preserve the same failure-mode semantics as the
+            // prior string-typed code path. (Correctness + DotNetSpecialist + SecurityReviewer)
+            var repoConfig = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId!.Value.Value, ProviderKind.Repository, ct);
             if (repoConfig is null)
             {
-                _logger.Warning("Provider config {ConfigId} not found for job {JobId} (kind: {ProviderKind})",
-                    repoProviderConfigId, jobId, providerKind);
+                _logger.Warning("Provider config not found for job {JobId} (kind: {ProviderKind})", jobId, providerKind);
                 throw new HubException($"Provider config not found for job {jobId} (kind: {providerKind})");
             }
             return repoConfig;

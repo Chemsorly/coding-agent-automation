@@ -191,6 +191,12 @@ public sealed class LabelService : ILabelService
     /// <summary>
     /// Swaps labels on an issue via IIssueProvider.
     /// </summary>
+    // TODO [WARNING]: This private method still accepts a raw `string issueProviderConfigId` parameter.
+    // The issue acceptance criteria require migrating all ...ProviderConfigId parameters in the affected
+    // files to ProviderConfigId. The public SwapLabelAsync overloads above correctly accept ProviderConfigId
+    // and unwrap via .Value before calling here, so the adjacent-same-typed-string risk is one level removed,
+    // but the private method signature is still in scope and should be updated in a follow-up.
+    // Deferred to avoid cascading changes to callers of the private method in this phase. (Correctness)
     private async Task SwapIssueLabelAsync(
         string issueProviderConfigId,
         string issueIdentifier,
@@ -221,6 +227,9 @@ public sealed class LabelService : ILabelService
     /// <summary>
     /// Swaps labels on a pull request via IRepositoryProvider.
     /// </summary>
+    // TODO [WARNING]: Same as SwapIssueLabelAsync above — this private method still accepts a raw
+    // `string repoProviderConfigId` parameter. Should be migrated to ProviderConfigId in a follow-up
+    // phase together with SwapIssueLabelAsync to keep both private helpers consistent. (Correctness)
     private async Task SwapPrLabelAsync(
         string repoProviderConfigId,
         string prIdentifier,
