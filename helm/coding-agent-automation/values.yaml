@@ -124,8 +124,14 @@ web:
 # ── Secrets ──────────────────────────────────────────────────────────────────
 
 secrets:
-  # REQUIRED: API key for agent authentication.
-  # Plain string value. Chart fails if empty and no existingSecret is set.
+  # API key for agent authentication.
+  # When empty (default), a cryptographically secure key is auto-generated on first install
+  # by a pre-install/pre-upgrade hook Job and stored in the chart-managed Secret.
+  # The generated key is preserved across upgrades (the hook is a no-op when the Secret exists).
+  # Set explicitly to use an operator-supplied key instead of auto-generation.
+  # To retrieve the auto-generated key after install:
+  #   kubectl get secret <release>-coding-agent-automation -n <ns> \
+  #     -o jsonpath='{.data.agent-api-key}' | base64 -d
   agentApiKey: ""
 
   # Optional: OTEL exporter authorization header (e.g., "Api-Token dt0c01.xxx" for Dynatrace)
@@ -141,6 +147,37 @@ secrets:
 # The referenced Secret must contain keys: agent-api-key, otel-headers,
 # opencode-config-content
 existingSecret: ""
+
+# ── Secret Initialization Hook ───────────────────────────────────────────────
+# Controls the pre-install/pre-upgrade hook Job that auto-generates the agent-api-key
+# Secret on first install when secrets.agentApiKey is not set explicitly.
+# The hook is skipped entirely when existingSecret or secrets.agentApiKey is set.
+
+secretInit:
+  image:
+    # Official Kubernetes project kubectl image used by the secret-init hook Job.
+    # Pin to a semver tag matching your cluster's minor version (±1 skew is safe per
+    # the Kubernetes version skew policy). For production, override with a digest-pinned
+    # reference: e.g. registry.k8s.io/kubectl@sha256:<digest>
+    # NOTE: Use registry.k8s.io/kubectl — bitnami/kubectl is no longer accessible as of
+    # September 2025 following the Broadcom acquisition.
+    repository: registry.k8s.io/kubectl
+    tag: "v1.32.0"
+  # Maximum seconds the hook Job may run before it is forcibly failed.
+  # Without this bound, a stuck image pull (air-gapped cluster, registry.k8s.io blocked)
+  # would freeze `helm install` indefinitely since pre-install hooks block Helm until they
+  # complete or fail. After this deadline the Job fails with a clear error message.
+  activeDeadlineSeconds: 120
+  # Resource requests/limits for the hook Job container.
+  # Override if your cluster enforces LimitRange or ResourceQuota policies that reject
+  # pods with no explicit resource specification.
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
 
 # ── OpenTelemetry ────────────────────────────────────────────────────────────
 
