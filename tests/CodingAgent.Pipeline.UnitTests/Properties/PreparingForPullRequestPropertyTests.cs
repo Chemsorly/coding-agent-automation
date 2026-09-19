@@ -36,7 +36,7 @@ public class PreparingForPullRequestPropertyTests
         transitionLog.Should().ContainInOrder(
             PipelineStep.RunningQualityGates,
             PipelineStep.PreparingForPullRequest,
-            PipelineStep.CreatingPullRequest);
+            PipelineStep.FinalizingPullRequest);
         run.CurrentStep.Should().Be(PipelineStep.Completed);
     }
 

@@ -184,7 +184,7 @@
         }),
         new("Finalization", "finalization", new[] {
             PipelineStep.PreparingForPullRequest,
-            PipelineStep.CreatingPullRequest,
+            PipelineStep.FinalizingPullRequest,
             PipelineStep.ReflectingOnRun,
             PipelineStep.SyncingBrainRepoPostRun
         })
@@ -241,7 +241,7 @@
         if (step is PipelineStep.VerifyingBaseline or PipelineStep.AnalyzingCode
                 or PipelineStep.ReviewingAnalysis or PipelineStep.PostingAnalysis
                 or PipelineStep.GeneratingCode or PipelineStep.RunningQualityGates
-                or PipelineStep.PreparingForPullRequest or PipelineStep.CreatingPullRequest
+                or PipelineStep.PreparingForPullRequest or PipelineStep.FinalizingPullRequest
                 or PipelineStep.ReflectingOnRun or PipelineStep.SyncingBrainRepoPostRun)
             return true;
 
@@ -291,7 +291,7 @@
                 or PipelineStep.AnalyzingCode or PipelineStep.ReviewingAnalysis or PipelineStep.PostingAnalysis
                 or PipelineStep.GeneratingCode or PipelineStep.ReviewingCode or PipelineStep.RunningQualityGates
                 or PipelineStep.ExtractingLinkedIssues or PipelineStep.PostingFindings
-                or PipelineStep.PreparingForPullRequest or PipelineStep.CreatingPullRequest
+                or PipelineStep.PreparingForPullRequest or PipelineStep.FinalizingPullRequest
                 or PipelineStep.ReflectingOnRun or PipelineStep.SyncingBrainRepoPostRun)
             return true;
 
@@ -430,7 +430,7 @@
         [PipelineStep.ExtractingLinkedIssues] = 12,
         [PipelineStep.PostingFindings] = 13,
         [PipelineStep.PreparingForPullRequest] = 14,
-        [PipelineStep.CreatingPullRequest] = 15,
+        [PipelineStep.FinalizingPullRequest] = 15,
         [PipelineStep.ReflectingOnRun] = 16,
         [PipelineStep.SyncingBrainRepoPostRun] = 17,
         [PipelineStep.DownloadingOpenIssues] = 18,
@@ -531,7 +531,7 @@
         PipelineStep.ExtractingLinkedIssues => true,
         PipelineStep.PostingFindings => true,
         PipelineStep.PreparingForPullRequest => !string.IsNullOrEmpty(Run.PullRequestUrl),
-        PipelineStep.CreatingPullRequest => !string.IsNullOrEmpty(Run.PullRequestUrl),
+        PipelineStep.FinalizingPullRequest => !string.IsNullOrEmpty(Run.PullRequestUrl),
         PipelineStep.ReflectingOnRun => Run.BrainProviderConfigId != null,
         PipelineStep.SyncingBrainRepoPostRun => Run.BrainProviderConfigId != null,
         _ => false
@@ -561,8 +561,8 @@
         PipelineStep.PostingFindings => RenderPostingFindingsDetails(state),
         PipelineStep.PreparingForPullRequest when !string.IsNullOrEmpty(Run.PullRequestUrl)
             => RenderPreparingForPullRequestDetails(state),
-        PipelineStep.CreatingPullRequest when !string.IsNullOrEmpty(Run.PullRequestUrl)
-            => RenderCreatingPullRequestDetails(state),
+        PipelineStep.FinalizingPullRequest when !string.IsNullOrEmpty(Run.PullRequestUrl)
+            => RenderFinalizingPullRequestDetails(state),
         PipelineStep.ReflectingOnRun when Run.BrainProviderConfigId != null
             => RenderReflectingOnRunDetails(state),
         PipelineStep.SyncingBrainRepoPostRun when Run.BrainProviderConfigId != null
@@ -845,7 +845,7 @@
         </div>
     };
 
-    private RenderFragment RenderCreatingPullRequestDetails(StepState state) => __builder =>
+    private RenderFragment RenderFinalizingPullRequestDetails(StepState state) => __builder =>
     {
         <div class="step-detail-box">
             <div>PR @(!string.IsNullOrEmpty(Run.PullRequestNumber) ? $"#{Run.PullRequestNumber}" : "") @(Run.IsDraftPr ? "(draft)" : "(final)")</div>

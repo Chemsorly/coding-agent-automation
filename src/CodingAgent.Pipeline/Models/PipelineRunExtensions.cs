@@ -10,7 +10,7 @@ public static class PipelineRunExtensions
     /// </summary>
     public static PipelineStep GetLastReachedStep(this PipelineRun run)
     {
-        if (!string.IsNullOrEmpty(run.PullRequestUrl)) return PipelineStep.CreatingPullRequest;
+        if (!string.IsNullOrEmpty(run.PullRequestUrl)) return PipelineStep.FinalizingPullRequest;
         if (run.HighWaterMark >= PipelineStep.PreparingForPullRequest && run.LatestQualityReport is not null) return PipelineStep.PreparingForPullRequest;
         if (run.LatestQualityReport is not null) return PipelineStep.RunningQualityGates;
         if (run.CodeReviewIterationsCompleted > 0) return PipelineStep.ReviewingCode;

@@ -40,7 +40,7 @@ public class LocalPipelineExecutorErrorPathTests
     [Fact]
     public void BuildFailurePayload_PreservesFileChangeStats()
     {
-        var run = CreateRunAtStep(PipelineStep.CreatingPullRequest);
+        var run = CreateRunAtStep(PipelineStep.FinalizingPullRequest);
         run.FilesChangedCount = 12;
         run.LinesAdded = 350;
         run.LinesRemoved = 80;

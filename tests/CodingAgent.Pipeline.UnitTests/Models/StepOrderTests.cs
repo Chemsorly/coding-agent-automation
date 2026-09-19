@@ -18,8 +18,7 @@ public class StepOrderTests
     [InlineData(PipelineStep.ReviewingCode, 10)]
     [InlineData(PipelineStep.RunningQualityGates, 11)]
     [InlineData(PipelineStep.PreparingForPullRequest, 12)]
-    [InlineData(PipelineStep.CreatingPullRequest, 13)]
-    [InlineData(PipelineStep.GeneratingPrDescription, 14)]
+    [InlineData(PipelineStep.FinalizingPullRequest, 13)]
     [InlineData(PipelineStep.ReflectingOnRun, 15)]
     [InlineData(PipelineStep.SyncingBrainRepoPostRun, 16)]
     [InlineData(PipelineStep.Completed, 100)]
@@ -70,8 +69,7 @@ public class StepOrderTests
             PipelineStep.ReviewingCode,
             PipelineStep.RunningQualityGates,
             PipelineStep.PreparingForPullRequest,
-            PipelineStep.CreatingPullRequest,
-            PipelineStep.GeneratingPrDescription,
+            PipelineStep.FinalizingPullRequest,
             PipelineStep.ReflectingOnRun,
             PipelineStep.SyncingBrainRepoPostRun,
             PipelineStep.Completed

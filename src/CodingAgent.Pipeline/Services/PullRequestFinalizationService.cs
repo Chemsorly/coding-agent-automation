@@ -88,7 +88,7 @@ public sealed class PullRequestFinalizationService
             // NOTE: QualityGateExecutor already transitions to PreparingForPullRequest
             // during its cleanup phase, so we skip that transition here to avoid duplicates.
 
-            await transitionCallback(PipelineStep.CreatingPullRequest);
+            await transitionCallback(PipelineStep.FinalizingPullRequest);
 
             if (run.LinkedPullRequest is not null)
             {
@@ -206,8 +206,40 @@ public sealed class PullRequestFinalizationService
 
         if (!isDraft && !string.IsNullOrEmpty(run.PullRequestNumber))
         {
-            await transitionCallback(PipelineStep.GeneratingPrDescription);
             await GeneratePrDescriptionAsync(run, agentProvider, repoProvider, config, emitOutputLine, ct);
+
+            // Mark ready-for-review last — after description is applied so reviewers see the complete body.
+            // Non-fatal: a failure to mark-ready is logged but does not abort the post-PR sequence.
+            if (int.TryParse(run.PullRequestNumber, out var prNum))
+            {
+                try
+                {
+                    // TODO [WARNING]: run.PullRequestBody may be stale here when GeneratePrDescriptionAsync
+                    // did not update it (file missing, empty output, or invalid PR number inside
+                    // GeneratePrDescriptionAsync). In those skip paths run.PullRequestBody still holds the
+                    // pre-description body, causing the mark-ready PATCH to send body content that differs
+                    // from what was last written to the API by GeneratePrDescriptionAsync on the happy path.
+                    // Consider always keeping run.PullRequestBody in sync with the latest value sent to the
+                    // API on exit from GeneratePrDescriptionAsync, or passing null for the body argument here
+                    // to make this a state-change-only call that avoids overwriting with potentially stale
+                    // content. The body divergence is functionally harmless (idempotent on the happy path,
+                    // fallback body on skip) but obscures which body revision was used for the final PR state.
+                    // TODO [WARNING]: TaskCanceledException is a subclass of OperationCanceledException, so the
+                    // "when (ex is not OperationCanceledException)" filter correctly excludes both. This is the
+                    // intended behavior matching all other UpdatePullRequestAsync guards in this file.
+                    await repoProvider.UpdatePullRequestAsync(prNum, run.PullRequestBody ?? "", true, ct);
+                    emitOutputLine($"✅ PR #{run.PullRequestNumber} marked ready for review");
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Warning(ex, "Pipeline {RunId} failed to mark PR ready for review, continuing", run.RunId);
+                }
+            }
+            else
+            {
+                _logger.Warning("Pipeline {RunId} mark-ready skipped — PullRequestNumber '{PrNumber}' is not a valid integer",
+                    run.RunId, run.PullRequestNumber);
+            }
         }
         else
         {

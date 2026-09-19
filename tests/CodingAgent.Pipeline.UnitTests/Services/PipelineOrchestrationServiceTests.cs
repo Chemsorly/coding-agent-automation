@@ -413,7 +413,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             PipelineStep.RunningQualityGates,
             PipelineStep.PreparingForPullRequest,
             PipelineStep.RunningQualityGates,
-            PipelineStep.CreatingPullRequest,
+            PipelineStep.FinalizingPullRequest,
             PipelineStep.Completed);
     }
 
@@ -2308,9 +2308,9 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        // Verify pipeline reaches CreatingPullRequest then transitions to Failed
+        // Verify pipeline reaches FinalizingPullRequest then transitions to Failed
         transitions.Should().ContainInOrder(
-            PipelineStep.CreatingPullRequest,
+            PipelineStep.FinalizingPullRequest,
             PipelineStep.Failed);
 
         // Verify terminal state and metadata
@@ -2346,7 +2346,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             PipelineStep.CreatingBranch);
 
         transitions.Should().ContainInOrder(
-            PipelineStep.CreatingPullRequest,
+            PipelineStep.FinalizingPullRequest,
             PipelineStep.ReflectingOnRun,
             PipelineStep.SyncingBrainRepoPostRun,
             PipelineStep.Completed);
@@ -2630,10 +2630,10 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        // Verify transition sequence: ... → RunningQualityGates → CreatingPullRequest → Failed
+        // Verify transition sequence: ... → RunningQualityGates → FinalizingPullRequest → Failed
         transitions.Should().ContainInOrder(
             PipelineStep.RunningQualityGates,
-            PipelineStep.CreatingPullRequest,
+            PipelineStep.FinalizingPullRequest,
             PipelineStep.Failed);
 
         // Verify draft PR was created
@@ -2751,12 +2751,12 @@ public class PipelineOrchestrationServiceTests : IDisposable
             ((int)entry.HWM).Should().BeGreaterThanOrEqualTo((int)PipelineStep.RunningQualityGates,
                 "HighWaterMark should stay at RunningQualityGates (or higher) when stepping back to GeneratingCode");
 
-        // 3. After CreatingPullRequest, HighWaterMark advances to CreatingPullRequest (or higher)
-        var prEntries = transitions.Where(t => t.Current == PipelineStep.CreatingPullRequest).ToList();
-        prEntries.Should().NotBeEmpty("pipeline should reach CreatingPullRequest");
+        // 3. After FinalizingPullRequest, HighWaterMark advances to FinalizingPullRequest (or higher)
+        var prEntries = transitions.Where(t => t.Current == PipelineStep.FinalizingPullRequest).ToList();
+        prEntries.Should().NotBeEmpty("pipeline should reach FinalizingPullRequest");
         foreach (var entry in prEntries)
-            ((int)entry.HWM).Should().BeGreaterThanOrEqualTo((int)PipelineStep.CreatingPullRequest,
-                "HighWaterMark should advance to CreatingPullRequest after reaching that step");
+            ((int)entry.HWM).Should().BeGreaterThanOrEqualTo((int)PipelineStep.FinalizingPullRequest,
+                "HighWaterMark should advance to FinalizingPullRequest after reaching that step");
 
         // 4. Final state should be Completed (quality gates passed on retry)
         run.CurrentStep.Should().Be(PipelineStep.Completed);
@@ -2882,9 +2882,9 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        // Verify transition sequence: ... → CreatingPullRequest → Failed
+        // Verify transition sequence: ... → FinalizingPullRequest → Failed
         transitions.Should().ContainInOrder(
-            PipelineStep.CreatingPullRequest,
+            PipelineStep.FinalizingPullRequest,
             PipelineStep.Failed);
 
         // Verify terminal state and metadata
@@ -2914,7 +2914,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             PipelineStep.RunningQualityGates,
             PipelineStep.PreparingForPullRequest,
             PipelineStep.RunningQualityGates,
-            PipelineStep.CreatingPullRequest);
+            PipelineStep.FinalizingPullRequest);
     }
 
     [Fact]
@@ -2969,13 +2969,13 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.RetryCount.Should().Be(1);
-        // Should have gone: QG(pass) → PreparingForPullRequest → QG(fail) → GeneratingCode → QG(pass) → CreatingPullRequest
+        // Should have gone: QG(pass) → PreparingForPullRequest → QG(fail) → GeneratingCode → QG(pass) → FinalizingPullRequest
         transitions.Should().ContainInOrder(
             PipelineStep.PreparingForPullRequest,
             PipelineStep.RunningQualityGates,
             PipelineStep.GeneratingCode,
             PipelineStep.RunningQualityGates,
-            PipelineStep.CreatingPullRequest);
+            PipelineStep.FinalizingPullRequest);
     }
 
     [Fact]

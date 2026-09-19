@@ -335,7 +335,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
 
         public async Task CreatePullRequest(PipelineRun run, bool isDraft, CancellationToken ct)
         {
-            lifecycle.TransitionTo(run, PipelineStep.CreatingPullRequest);
+            lifecycle.TransitionTo(run, PipelineStep.FinalizingPullRequest);
             try
             {
                 // Set PR info from linked PR before calling the orchestrator (rework mode)
@@ -385,7 +385,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
 
         public async Task FinalizePullRequest(PipelineRun run, bool isDraft, CancellationToken ct)
         {
-            lifecycle.TransitionTo(run, PipelineStep.CreatingPullRequest);
+            lifecycle.TransitionTo(run, PipelineStep.FinalizingPullRequest);
             try
             {
                 // If no draft PR was created, fall back to the original CreatePullRequest flow

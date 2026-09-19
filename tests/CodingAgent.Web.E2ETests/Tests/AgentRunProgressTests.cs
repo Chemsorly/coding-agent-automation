@@ -225,7 +225,7 @@ public sealed class AgentRunProgressTests : E2ETestBase
             PipelineStep.AnalyzingCode,
             PipelineStep.GeneratingCode,
             PipelineStep.RunningQualityGates,
-            PipelineStep.CreatingPullRequest,
+            PipelineStep.FinalizingPullRequest,
             PipelineStep.Completed
         };
 

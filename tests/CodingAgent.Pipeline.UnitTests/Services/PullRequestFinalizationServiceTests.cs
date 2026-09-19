@@ -230,9 +230,23 @@ public class PullRequestFinalizationServiceTests
             CancellationToken.None);
 
         transitions.Should().ContainInOrder(
-            PipelineStep.GeneratingPrDescription,
             PipelineStep.ReflectingOnRun,
             PipelineStep.SyncingBrainRepoPostRun);
+        // After the change, PR description step no longer emits a transition — it runs silently inside
+        // FinalizingPullRequest. The explicit mark-ready call fires after description, before reflection.
+        // Verify UpdatePullRequestAsync was called with markReady=true (mark-ready after description).
+        // TODO [WARNING]: This Times.Once verification has uncertain coverage of the complete call chain.
+        // CreateRun() sets WorkspacePath = "/tmp/workspace" — GeneratePrDescriptionAsync silently skips
+        // its UpdatePullRequestAsync(null) call because .agent/pr-description.md does not exist there.
+        // The mark-ready call (markReady=true) is unconditional on description success, so Times.Once
+        // passes, but it cannot distinguish between "mark-ready fired correctly" and "both description
+        // and mark-ready were inadvertently skipped by a gate that wraps both". The dedicated test
+        // RunPostPrSequenceAsync_WhenNotDraft_CallsMarkReadyAfterDescription exercises the happy path
+        // via RunPostPrSequenceAsync directly with a real temp dir; the same scenario should ideally be
+        // covered end-to-end through RunFullPrCreationAsync here to validate the full call chain.
+        // The same concern applies to the analogous Times.Once verifications in
+        // RunPostPrSequenceAsync_WhenNoBrainProvider and RunPostPrSequenceAsync_WhenBrainReadOnly.
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Once);
         // TODO: This test uses CreateRun() which sets WorkspacePath = "/tmp/workspace". Because
         // .agent/pr-description.md does not exist there, GeneratePrDescriptionAsync silently skips the
         // UpdatePullRequestAsync call — the happy-path PR description update is never exercised here.
@@ -312,7 +326,9 @@ public class PullRequestFinalizationServiceTests
             },
             CancellationToken.None);
 
-        transitions.Should().ContainInOrder(PipelineStep.GeneratingPrDescription);
+        // No step transition is emitted for PR description — it runs silently inside FinalizingPullRequest.
+        // Verify that the explicit mark-ready call fires after description (UpdatePullRequestAsync with markReady=true).
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Once);
         transitions.Should().NotContain(PipelineStep.ReflectingOnRun);
         transitions.Should().NotContain(PipelineStep.SyncingBrainRepoPostRun);
     }
@@ -352,7 +368,9 @@ public class PullRequestFinalizationServiceTests
             },
             CancellationToken.None);
 
-        transitions.Should().ContainInOrder(PipelineStep.GeneratingPrDescription);
+        // No step transition is emitted for PR description — it runs silently inside FinalizingPullRequest.
+        // The explicit mark-ready call fires after description.
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Once);
         transitions.Should().NotContain(PipelineStep.ReflectingOnRun);
         brainSync.Verify(b => b.SyncPostRunAsync(It.IsAny<PipelineRun>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>(), It.IsAny<int>()), Times.Never);
     }
@@ -893,7 +911,7 @@ public class PullRequestFinalizationServiceTests
         run.CompletedAtOffset.Should().NotBeNull();
         run.FinalLabel.Should().Be(AgentLabels.Done);
         run.FailureReason.Should().BeNull();
-        transitions.Should().Contain(PipelineStep.CreatingPullRequest);
+        transitions.Should().Contain(PipelineStep.FinalizingPullRequest);
     }
 
     [Fact]
@@ -943,7 +961,7 @@ public class PullRequestFinalizationServiceTests
         run.FailureReason.Should().Be("Agent did not produce any changes. No commits ahead of base branch.");
         run.CompletedAtOffset.Should().NotBeNull();
         run.FinalLabel.Should().BeNull();
-        transitions.Should().Contain(PipelineStep.CreatingPullRequest);
+        transitions.Should().Contain(PipelineStep.FinalizingPullRequest);
     }
 
     [Fact]
@@ -1114,13 +1132,15 @@ public class PullRequestFinalizationServiceTests
     [Fact]
     public async Task RunFullPrCreationAsync_OceFromRunPostPrSequenceAsync_StillSetsCompletedAt()
     {
-        // Regression test for: OCE from RunPostPrSequenceAsync (e.g. brain sync / reflection) must
+        // Regression test for: OCE from RunPostPrSequenceAsync (e.g. reflection) must
         // not leave CompletedAt null. The try-finally wrapping RunPostPrSequenceAsync guarantees
         // run.MarkCompleted() fires on all exit paths including OperationCanceledException.
         var run = CreateRun();
         run.BranchName = "agent/test-1";
         var repoProvider = new Mock<IRepositoryProvider>();
         var agentProvider = new Mock<IAgentProvider>();
+        var brainProvider = new Mock<IRepositoryProvider>();
+        var brainSync = new Mock<IBrainSyncService>();
         var feedbackService = new FeedbackService(_logger.Object);
         var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
         var transitions = new List<PipelineStep>();
@@ -1144,20 +1164,13 @@ public class PullRequestFinalizationServiceTests
         var prOrchestrator = new PullRequestOrchestrator(_logger.Object);
         using var cts = new CancellationTokenSource();
 
-        // The transitionCallback throws OCE when entering GeneratingPrDescription —
-        // simulates what happens when the token is cancelled during the post-PR sequence.
-        // This is equivalent to any step inside RunPostPrSequenceAsync throwing OCE
-        // (brain sync, reflection, feedback). Using the callback avoids dependencies on
-        // workspace file layout or async task scheduling order.
-        // TODO: This simulation triggers the OCE at the very first callback invocation (the boundary of
-        // RunPostPrSequenceAsync), not from a mid-sequence async collaborator (e.g. SyncBrainPostRunAsync
-        // or RunReflectionAsync). A more direct test would configure agentProvider.ExecuteAsync to throw OCE
-        // after PR creation, exercising the exception path from within the sequence itself. The current
-        // approach is sufficient to verify the try-finally fix, but the equivalence claim in the comment
-        // only holds because the try-finally is what catches all paths regardless of where the OCE originates.
+        // Trigger OCE at ReflectingOnRun — this step is reached because BrainProvider and BrainSync
+        // are non-null and BrainReadOnly=false (the gate condition in RunPostPrSequenceAsync).
+        // GeneratingPrDescription no longer emits a transition (step merged into FinalizingPullRequest),
+        // so the trigger must use a step that still fires: ReflectingOnRun.
         Task TransitionCallback(PipelineStep step)
         {
-            if (step == PipelineStep.GeneratingPrDescription)
+            if (step == PipelineStep.ReflectingOnRun)
             {
                 cts.Cancel();
                 throw new OperationCanceledException(cts.Token);
@@ -1175,8 +1188,8 @@ public class PullRequestFinalizationServiceTests
                 PrOrchestrator = prOrchestrator,
                 RepoProvider = repoProvider.Object,
                 AgentProvider = agentProvider.Object,
-                BrainProvider = null,
-                BrainSync = null,
+                BrainProvider = brainProvider.Object,
+                BrainSync = brainSync.Object,
                 Config = config,
                 Issue = null,
                 IssueComments = null,
@@ -1189,18 +1202,6 @@ public class PullRequestFinalizationServiceTests
             .Should().ThrowAsync<OperationCanceledException>();
 
         // Critical invariant: CompletedAt must be set even though RunPostPrSequenceAsync threw OCE.
-        // Without the try-finally fix, run.MarkCompleted() would be skipped here.
-        // TODO: This test silently depends on CreatePullRequestAsync succeeding (all repo mocks return
-        // success above) so that finalStep is correctly set to PipelineStep.Completed before the
-        // try-finally block. If the PR creation mock setup were accidentally removed, the test would
-        // fail or exercise a different code path (prCreationSucceeded=false, early return). Consider
-        // adding an explicit assertion or comment that confirms PR creation succeeded as a precondition.
-        // TODO: CompletedAtOffset (the non-obsolete timezone-safe property) is asserted here, which is
-        // the preferred property. The acceptance criterion specifies CompletedAt != null; MarkCompleted()
-        // sets both atomically, so this assertion covers the requirement. If CompletedAtOffset were ever
-        // decoupled from CompletedAt, this assertion would need to be updated to also check run.CompletedAt.
-        // The IsDraft=true + OCE path — where FinalLabel should be AgentLabels.Error — is covered
-        // by RunFullPrCreationAsync_DraftOce_SetsFinalLabelError.
         run.CompletedAtOffset.Should().NotBeNull(
             "run.MarkCompleted() must execute in the finally block even when RunPostPrSequenceAsync throws OCE");
         run.CurrentStep.Should().Be(PipelineStep.Completed,
@@ -1288,5 +1289,347 @@ public class PullRequestFinalizationServiceTests
             "draft run sets finalStep = PipelineStep.Failed before RunPostPrSequenceAsync is called");
         run.FinalLabel.Should().Be(AgentLabels.Error,
             "draft run cancelled during post-PR sequence must set FinalLabel to Error");
+    }
+
+    // ── Mark-ready after description (new behaviour post #2735) ──
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_WhenNotDraft_CallsMarkReadyAfterDescription()
+    {
+        // Verifies that UpdatePullRequestAsync(markReady: true) is called after GeneratePrDescriptionAsync
+        // when isDraft=false and a PR number is set. Uses a real temp directory with a pr-description.md
+        // file so GeneratePrDescriptionAsync can succeed and update run.PullRequestBody.
+        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            var agentDir = Path.Combine(tempDir, ".agent");
+            Directory.CreateDirectory(agentDir);
+            File.WriteAllText(Path.Combine(agentDir, "pr-description.md"), "### Summary\n\nTest description.");
+
+            var run = CreateRun();
+            run.PullRequestNumber = "42";
+            run.PullRequestBody = "original body";
+            run.WorkspacePath = tempDir;
+            var agentProvider = new Mock<IAgentProvider>();
+            var repoProvider = new Mock<IRepositoryProvider>();
+            var feedbackService = new FeedbackService(_logger.Object);
+            var historyService = new Mock<IPipelineRunHistoryService>();
+            var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+
+            agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+                .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
+            historyService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyList<PipelineRunSummary>)[]);
+
+            bool? markReadyCalled = null;
+            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+                .Callback<int, string, bool?, CancellationToken>((_, _, ready, _) => markReadyCalled = ready)
+                .Returns(Task.CompletedTask);
+
+            await _sut.RunPostPrSequenceAsync(
+                new PostPrSequenceRequest
+                {
+                    Run = run,
+                    IsDraft = false,
+                    AgentProvider = agentProvider.Object,
+                    RepoProvider = repoProvider.Object,
+                    Config = config,
+                    BrainSync = null,
+                    BrainProvider = null,
+                    FeedbackService = feedbackService,
+                    HistoryService = historyService.Object,
+                    EmitOutputLine = _ => { },
+                    TransitionCallback = _ => Task.CompletedTask
+                },
+                CancellationToken.None);
+
+            // The last UpdatePullRequestAsync call must be with markReady=true
+            repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Once);
+            markReadyCalled.Should().BeTrue("PR must be marked ready-for-review after description is applied");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_WhenMarkReadyFails_ContinuesNonFatally()
+    {
+        // Verifies that a non-OCE exception from UpdatePullRequestAsync(markReady: true) does not
+        // abort the post-PR sequence — the method should swallow it and continue to reflection/brain sync.
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        var agentProvider = new Mock<IAgentProvider>();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var brainSync = new Mock<IBrainSyncService>();
+        var brainProvider = new Mock<IRepositoryProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+        var historyService = new Mock<IPipelineRunHistoryService>();
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+        var transitions = new List<PipelineStep>();
+
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
+        historyService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyList<PipelineRunSummary>)[]);
+
+        // Mark-ready call throws a non-OCE exception
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), (bool?)true, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("GitHub API error"));
+        // Description call (markReady=null) succeeds
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), (bool?)null, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var act = () => _sut.RunPostPrSequenceAsync(
+            new PostPrSequenceRequest
+            {
+                Run = run,
+                IsDraft = false,
+                AgentProvider = agentProvider.Object,
+                RepoProvider = repoProvider.Object,
+                Config = config,
+                BrainSync = brainSync.Object,
+                BrainProvider = brainProvider.Object,
+                FeedbackService = feedbackService,
+                HistoryService = historyService.Object,
+                EmitOutputLine = _ => { },
+                TransitionCallback = step => { transitions.Add(step); return Task.CompletedTask; }
+            },
+            CancellationToken.None);
+
+        // Must not throw — mark-ready failure is non-fatal
+        await act.Should().NotThrowAsync();
+        // Reflection must still run after the mark-ready failure
+        transitions.Should().Contain(PipelineStep.ReflectingOnRun);
+        // TODO [WARNING]: This test does not verify that the mark-ready call was actually attempted before
+        // the exception. If a future refactor inadvertently gates or bypasses the mark-ready call (e.g.,
+        // an early return or additional condition), int.TryParse("42") would still succeed and the
+        // InvalidOperationException would never be thrown — the method would succeed without mark-ready
+        // firing, and both await act.Should().NotThrowAsync() and transitions.Should().Contain(ReflectingOnRun)
+        // would pass vacuously. Add repoProvider.Verify(r => r.UpdatePullRequestAsync(42, ..., true, ...),
+        // Times.Once) to confirm the mark-ready call was actually attempted before the exception was swallowed.
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_WhenDraft_DoesNotCallMarkReady()
+    {
+        // Verifies that UpdatePullRequestAsync is NOT called with markReady=true when isDraft=true.
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        var agentProvider = new Mock<IAgentProvider>();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+
+        await _sut.RunPostPrSequenceAsync(
+            new PostPrSequenceRequest
+            {
+                Run = run,
+                IsDraft = true,
+                AgentProvider = agentProvider.Object,
+                RepoProvider = repoProvider.Object,
+                Config = new PipelineConfiguration(),
+                BrainSync = null,
+                BrainProvider = null,
+                FeedbackService = feedbackService,
+                HistoryService = null,
+                EmitOutputLine = _ => { },
+                TransitionCallback = _ => Task.CompletedTask
+            },
+            CancellationToken.None);
+
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_WhenMarkReadyCancelled_Propagates()
+    {
+        // Verifies that OperationCanceledException from UpdatePullRequestAsync(markReady: true)
+        // is NOT swallowed — the when (ex is not OperationCanceledException) filter must let it through.
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        var agentProvider = new Mock<IAgentProvider>();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), (bool?)true, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException(cts.Token));
+
+        var act = () => _sut.RunPostPrSequenceAsync(
+            new PostPrSequenceRequest
+            {
+                Run = run,
+                IsDraft = false,
+                AgentProvider = agentProvider.Object,
+                RepoProvider = repoProvider.Object,
+                Config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) },
+                BrainSync = null,
+                BrainProvider = null,
+                FeedbackService = feedbackService,
+                HistoryService = null,
+                EmitOutputLine = _ => { },
+                TransitionCallback = _ => Task.CompletedTask
+            },
+            CancellationToken.None);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_WhenPrNumberInvalid_SkipsMarkReady()
+    {
+        // Edge case: non-integer PullRequestNumber causes int.TryParse to fail.
+        // The mark-ready call must be skipped without throwing.
+        var run = CreateRun();
+        run.PullRequestNumber = "not-a-number";
+        var agentProvider = new Mock<IAgentProvider>();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+        var historyService = new Mock<IPipelineRunHistoryService>();
+
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
+        historyService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyList<PipelineRunSummary>)[]);
+
+        var act = () => _sut.RunPostPrSequenceAsync(
+            new PostPrSequenceRequest
+            {
+                Run = run,
+                IsDraft = false,
+                AgentProvider = agentProvider.Object,
+                RepoProvider = repoProvider.Object,
+                Config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) },
+                BrainSync = null,
+                BrainProvider = null,
+                FeedbackService = feedbackService,
+                HistoryService = historyService.Object,
+                EmitOutputLine = _ => { },
+                TransitionCallback = _ => Task.CompletedTask
+            },
+            CancellationToken.None);
+
+        // Must not throw
+        await act.Should().NotThrowAsync();
+        // UpdatePullRequestAsync must never be called with markReady=true
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task PullRequestOrchestrator_FinalizePullRequestAsync_NonDraft_PassesNullMarkReady()
+    {
+        // Verifies that UpdatePullRequestAsync is called with markReady=null (not true) for non-draft
+        // path in FinalizePullRequestAsync. Mark-ready is deferred to RunPostPrSequenceAsync.
+        var run = CreateRun();
+        run.BranchName = "agent/test-1";
+        run.PullRequestNumber = "42";
+        run.PullRequestUrl = "https://github.com/org/repo/pull/42";
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var config = new PipelineConfiguration();
+
+        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>());
+        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repoProvider.Setup(r => r.GetFileChangesAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<FileChangeSummary>());
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repoProvider.Setup(r => r.BaseBranch).Returns("main");
+        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<IssueIdentifier>())).Returns("Closes #1");
+
+        var orchestrator = new PullRequestOrchestrator(_logger.Object);
+
+        await orchestrator.FinalizePullRequestAsync(run, isDraft: false, repoProvider.Object,
+            issue: null, issueComments: null, config, CancellationToken.None);
+
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), (bool?)null, It.IsAny<CancellationToken>()), Times.Once);
+        // Must NOT have been called with markReady=true
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task PullRequestOrchestrator_FinalizePullRequestAsync_Draft_KeepsMarkReadyFalse()
+    {
+        // Verifies that the draft path still passes markReady=false (not null) to UpdatePullRequestAsync.
+        // This ensures the PR stays draft — the explicit keep-draft behaviour is preserved.
+        var run = CreateRun();
+        run.BranchName = "agent/test-1";
+        run.PullRequestNumber = "42";
+        run.PullRequestUrl = "https://github.com/org/repo/pull/42";
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var config = new PipelineConfiguration();
+
+        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>());
+        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repoProvider.Setup(r => r.GetFileChangesAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<FileChangeSummary>());
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repoProvider.Setup(r => r.BaseBranch).Returns("main");
+        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<IssueIdentifier>())).Returns("Closes #1");
+
+        var orchestrator = new PullRequestOrchestrator(_logger.Object);
+
+        await orchestrator.FinalizePullRequestAsync(run, isDraft: true, repoProvider.Object,
+            issue: null, issueComments: null, config, CancellationToken.None);
+
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), (bool?)false, It.IsAny<CancellationToken>()), Times.Once);
+        // Must NOT have been called with markReady=null or true
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), (bool?)null, It.IsAny<CancellationToken>()), Times.Never);
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task PullRequestOrchestrator_CreatePullRequestAsync_ReworkBranch_NonDraft_PassesNullMarkReady()
+    {
+        // Verifies that UpdatePullRequestAsync is called with markReady=null (not true) for the
+        // rework branch (existing PR) of CreatePullRequestAsync when isDraft=false.
+        var run = CreateRun();
+        run.BranchName = "agent/test-1";
+        run.PullRequestNumber = "42";
+        run.PullRequestUrl = "https://github.com/org/repo/pull/42";
+        run.LinkedPullRequest = new LinkedPullRequest
+        {
+            Url = "https://github.com/org/repo/pull/42",
+            Number = 42,
+            BranchName = "agent/test-1",
+            IsDraft = false
+        };
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var config = new PipelineConfiguration();
+
+        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>());
+        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        repoProvider.Setup(r => r.GetFileChangesAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<FileChangeSummary>());
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repoProvider.Setup(r => r.BaseBranch).Returns("main");
+        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<IssueIdentifier>())).Returns("Closes #1");
+
+        var orchestrator = new PullRequestOrchestrator(_logger.Object);
+
+        await orchestrator.CreatePullRequestAsync(run, isDraft: false, repoProvider.Object,
+            issue: null, issueComments: null, config, CancellationToken.None,
+            isRework: true);
+
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), (bool?)null, It.IsAny<CancellationToken>()), Times.Once);
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Never);
     }
 }

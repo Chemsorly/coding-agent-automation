@@ -28,7 +28,7 @@ public class BrainSyncUnitTests
     [Fact]
     public void PipelineStep_BrainPostRun_IsBetweenCreatingPRAndCompleted()
     {
-        var pr = (int)PipelineStep.CreatingPullRequest;
+        var pr = (int)PipelineStep.FinalizingPullRequest;
         var brainPost = (int)PipelineStep.SyncingBrainRepoPostRun;
         var completed = (int)PipelineStep.Completed;
 

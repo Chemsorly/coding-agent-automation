@@ -128,10 +128,10 @@ public class PipelineRunGetLastReachedStepTests
     }
 
     [Fact]
-    public void ReturnsCreatingPullRequest_WhenPullRequestUrlSet()
+    public void ReturnsFinalizingPullRequest_WhenPullRequestUrlSet()
     {
-        var run = CreateRun(PipelineStep.CreatingPullRequest);
+        var run = CreateRun(PipelineStep.FinalizingPullRequest);
         run.PullRequestUrl = "https://github.com/org/repo/pull/1";
-        run.GetLastReachedStep().Should().Be(PipelineStep.CreatingPullRequest);
+        run.GetLastReachedStep().Should().Be(PipelineStep.FinalizingPullRequest);
     }
 }
