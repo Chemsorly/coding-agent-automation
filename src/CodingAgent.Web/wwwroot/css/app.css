@@ -610,8 +610,6 @@ select option { background: var(--surface); color: var(--text); }
 .phase-group-pending { border-color: var(--border); opacity: 0.7; }
 
 .phase-header { display: flex; align-items: center; gap: 6px; padding: 8px 10px; user-select: none; }
-/* TODO: .phase-chevron is dead CSS — the <span class="phase-chevron"> element was removed from PipelineSidebar.razor when the expand/collapse logic was dropped. Remove this rule. */
-.phase-chevron { font-size: 0.75rem; width: 12px; color: var(--text-muted); flex-shrink: 0; }
 .phase-icon { font-size: 0.8rem; width: 18px; text-align: center; flex-shrink: 0; }
 .phase-name { font-size: 0.82rem; font-weight: 600; flex: 1; }
 .phase-counter { font-size: 0.72rem; color: var(--text-muted); white-space: nowrap; }
@@ -629,9 +627,7 @@ select option { background: var(--surface); color: var(--text); }
 .phase-group-retry .phase-counter { color: var(--warning); }
 
 .phase-body { padding: 0 6px 6px 6px; display: flex; flex-direction: column; gap: 2px; }
-/* TODO: .phase-body-collapsed is dead CSS — PipelineSidebar.razor now hardcodes class="phase-body" unconditionally (no collapse toggle). This rule can never match. Remove it. */
 /* TODO: overflow-y: auto was removed from .sidebar-steps when switching to display:grid. Very tall phase columns (many steps) are now silently clipped by the parent .cockpit-card (overflow:hidden) with no scroll access. Consider adding overflow-y: auto to .sidebar-steps or allowing the parent card to scroll for this content. */
-.phase-body-collapsed { max-height: 0; padding: 0 6px; opacity: 0; pointer-events: none; }
 
 /* Step Cards */
 .step-card { border-radius: var(--radius); padding: 6px 8px; cursor: pointer; transition: background 0.15s; border-left: 2px solid transparent; }

@@ -3,6 +3,7 @@ using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.UnitTests.Helpers;
 using Moq;
 #pragma warning disable CS0618 // FileSystemConsolidationRunStore is Obsolete; test-infrastructure use is intentional
 using Serilog;
@@ -46,7 +47,7 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
             mockProjectStore.Object,
             mockHistory.Object,
             new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs")),
-            new FileSystemHarnessSuggestionStore(Path.Combine(_tempDir, "h.json")),
+            new InMemoryHarnessSuggestionStore(),
             new Mock<IProviderConfigStore>().Object,
             WorkspaceManager: new ConsolidationWorkspaceManager(
                 new LoggerConfiguration().CreateLogger(),
