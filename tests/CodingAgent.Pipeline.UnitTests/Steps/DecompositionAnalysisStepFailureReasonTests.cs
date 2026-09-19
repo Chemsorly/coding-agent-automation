@@ -173,6 +173,53 @@ public class DecompositionAnalysisStepFailureReasonTests : IDisposable
     }
 
     /// <summary>
+    /// AC2 (issue #2729): When WriteEpicContextAsync fails (GetIssueAsync throws) AND the agent
+    /// does not produce a plan file, the run FailureCategory must be set to
+    /// <see cref="FailureReason.InfrastructureFailure"/>.
+    ///
+    /// This ensures the DB column WorkItems.FailureReason receives InfrastructureFailure
+    /// (not the default AgentError) — distinguishing infrastructure/context failures from
+    /// ordinary missing-output failures in telemetry and operator tooling.
+    ///
+    /// This test FAILS before the fix (FailureCategory is null / default) and PASSES after.
+    /// </summary>
+    // TODO (WARNING — TestQuality): This test has identical Arrange setup to
+    // ExecuteAsync_WhenEpicContextFails_PlanMissing_FailureReasonMentionsContextUnavailable —
+    // same mocks, same GetIssueAsync throw, same SetupAgentSuccessNoPlanFile, same run/context.
+    // Only the final assertion differs (FailureCategory vs FailureReason string).
+    // Consider merging both tests into a single parameterised or combined test that asserts
+    // both FailureReason and FailureCategory in one Act, reducing the duplicated Arrange block
+    // that must be kept in sync if the shared setup changes.
+    [Fact]
+    public async Task ExecuteAsync_WhenEpicContextFails_PlanMissing_FailureCategoryIsInfrastructureFailure()
+    {
+        // Arrange — same setup as FailureReasonMentionsContextUnavailable
+        _issueOps
+            .Setup(o => o.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("HubException: Failed to invoke 'RequestGetIssue'"));
+        _issueOps
+            .Setup(o => o.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>());
+
+        SetupAgentSuccessNoPlanFile();
+
+        var run = CreateRun();
+        var context = BuildContext(run);
+        var step = new DecompositionAnalysisStep();
+
+        // Act
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        // Assert
+        result.Should().Be(StepResult.Stop,
+            "the step must stop when the plan file is missing");
+
+        run.FailureCategory.Should().Be(FailureReason.InfrastructureFailure,
+            "epicContextFailed path must classify the failure as InfrastructureFailure so operators " +
+            "can distinguish it from ordinary agent failures in WorkItems.FailureReason");
+    }
+
+    /// <summary>
     /// AC3 (issue #2601) regression guard: When WriteEpicContextAsync succeeds but the agent
     /// does not produce a plan file, the failure reason must use the original generic message —
     /// NOT the context-unavailable message.

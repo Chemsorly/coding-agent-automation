@@ -115,12 +115,14 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
             context.Callbacks.EmitOutputLine("❌ " + (epicContextFailed
                 ? "Agent could not produce plan — epic context was unavailable (check API logs for RequestGetIssue errors)"
                 : "Agent did not produce a decomposition plan file"));
-            // TODO: Pass a FailureReason enum to FailRunAsync on the epicContextFailed path to distinguish
+            // Pass FailureReason.InfrastructureFailure on the epicContextFailed path to distinguish
             // infrastructure/context failures from ordinary missing-output failures. The
-            // FailRunAsync(string, FailureReason, CancellationToken) overload already exists and operators
-            // who filter PipelineRun records by FailureCategory cannot currently distinguish this mode
-            // from a normal agent no-output failure.
-            await context.FailRunAsync(reason, ct);
+            // FailureReason.InfrastructureFailure value and the two-argument overload exist and are
+            // confirmed to persist to WorkItems.FailureReason via the completion payload pipeline.
+            if (epicContextFailed)
+                await context.FailRunAsync(reason, FailureReason.InfrastructureFailure, ct);
+            else
+                await context.FailRunAsync(reason, ct);
             return StepResult.Stop;
         }
 
