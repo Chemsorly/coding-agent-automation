@@ -57,7 +57,7 @@ public class OrchestratorProxySingleFlightTests
         var callCount = 0;
         var proxy = new OrchestratorProxy(
             BuildDummyConnection(), "job",
-            (_, _) =>
+            (_, _, _) =>
             {
                 callCount++;
                 return Task.FromResult(new TokenRefreshResponse { Token = "tok", ExpiresAt = FutureExpiry });
@@ -83,7 +83,7 @@ public class OrchestratorProxySingleFlightTests
 
         var proxy = new OrchestratorProxy(
             BuildDummyConnection(), "job",
-            (_, ct) =>
+            (_, _, ct) =>
             {
                 Interlocked.Increment(ref callCount);
                 return gate.Task;
@@ -117,7 +117,7 @@ public class OrchestratorProxySingleFlightTests
         var callCount = 0;
         var proxy = new OrchestratorProxy(
             BuildDummyConnection(), "job",
-            (kind, _) =>
+            (kind, _, _) =>
             {
                 Interlocked.Increment(ref callCount);
                 return Task.FromResult(new TokenRefreshResponse { Token = kind.ToString(), ExpiresAt = FutureExpiry });
@@ -143,7 +143,7 @@ public class OrchestratorProxySingleFlightTests
         var callCount = 0;
         var proxy = new OrchestratorProxy(
             BuildDummyConnection(), "job",
-            (_, _) =>
+            (_, _, _) =>
             {
                 Interlocked.Increment(ref callCount);
                 if (callCount == 1)
@@ -170,7 +170,7 @@ public class OrchestratorProxySingleFlightTests
         var gate = new TaskCompletionSource<TokenRefreshResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
         var proxy = new OrchestratorProxy(
             BuildDummyConnection(), "job",
-            (_, _) => gate.Task);
+            (_, _, _) => gate.Task);
 
         var tasks = Enumerable.Range(0, 3)
             .Select(_ => proxy.RequestTokenRefreshAsync(ProviderKind.Repository, CancellationToken.None))
@@ -198,7 +198,7 @@ public class OrchestratorProxySingleFlightTests
         var callCount = 0;
         var proxy = new OrchestratorProxy(
             BuildDummyConnection(), "job",
-            (_, _) =>
+            (_, _, _) =>
             {
                 Interlocked.Increment(ref callCount);
                 // First call returns near-expiry token; second returns a fresh one
@@ -224,7 +224,7 @@ public class OrchestratorProxySingleFlightTests
         var callCount = 0;
         var proxy = new OrchestratorProxy(
             BuildDummyConnection(), "job",
-            (_, _) =>
+            (_, _, _) =>
             {
                 Interlocked.Increment(ref callCount);
                 if (callCount < 3)
@@ -247,7 +247,7 @@ public class OrchestratorProxySingleFlightTests
         var callCount = 0;
         var proxy = new OrchestratorProxy(
             BuildDummyConnection(), "job",
-            (_, _) =>
+            (_, _, _) =>
             {
                 Interlocked.Increment(ref callCount);
                 return Task.FromException<TokenRefreshResponse>(
@@ -268,7 +268,7 @@ public class OrchestratorProxySingleFlightTests
         var callCount = 0;
         var proxy = new OrchestratorProxy(
             BuildDummyConnection(), "job",
-            (_, _) =>
+            (_, _, _) =>
             {
                 Interlocked.Increment(ref callCount);
                 // Always fail with a transient error — exceeds TokenVendMaxRetries
@@ -281,5 +281,39 @@ public class OrchestratorProxySingleFlightTests
 
         // 1 initial + 2 retries = 3 total attempts (TokenVendMaxRetries = 2)
         callCount.Should().Be(3, "should attempt initial call plus TokenVendMaxRetries retries");
+    }
+
+    // ── Cache key isolation: same kind, different includeIssuePermission ──
+
+    [Fact]
+    public async Task RequestTokenRefreshAsync_SameKind_DifferentIncludeIssuePermission_CachedIndependently()
+    {
+        // Verifies that (Repository, false) and (Repository, true) are cached under separate
+        // keys. A false-scoped token must never be served for a true request and vice versa.
+        var callCount = 0;
+        var proxy = new OrchestratorProxy(
+            BuildDummyConnection(), "job",
+            (kind, includeIssue, _) =>
+            {
+                Interlocked.Increment(ref callCount);
+                var token = includeIssue ? "token-with-issues" : "token-without-issues";
+                return Task.FromResult(new TokenRefreshResponse { Token = token, ExpiresAt = FutureExpiry });
+            });
+
+        // First pair: populate both cache slots
+        var tokenA = await proxy.RequestTokenRefreshAsync(ProviderKind.Repository, CancellationToken.None, includeIssuePermission: false);
+        var tokenB = await proxy.RequestTokenRefreshAsync(ProviderKind.Repository, CancellationToken.None, includeIssuePermission: true);
+
+        callCount.Should().Be(2, "false and true requests must each issue their own hub call");
+        tokenA.Should().Be("token-without-issues");
+        tokenB.Should().Be("token-with-issues");
+
+        // Second pair: both must hit cache (delegate not called again)
+        var tokenA2 = await proxy.RequestTokenRefreshAsync(ProviderKind.Repository, CancellationToken.None, includeIssuePermission: false);
+        var tokenB2 = await proxy.RequestTokenRefreshAsync(ProviderKind.Repository, CancellationToken.None, includeIssuePermission: true);
+
+        callCount.Should().Be(2, "second calls for both variants must use cache");
+        tokenA2.Should().Be("token-without-issues", "false path must return its own cached token");
+        tokenB2.Should().Be("token-with-issues", "true path must return its own cached token");
     }
 }
