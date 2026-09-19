@@ -540,6 +540,14 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchTemplateResolver>(),
                 DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>())));
 
+        // ── DispatchWorkItemService (issue #2743) ─────────────────────────────────────────────
+        // Shared helpers for the two synchronous dispatch handlers (DispatchWorkItem and
+        // DispatchPendingWorkItem): concurrency-snapshot query, gate block, entity factory,
+        // and unique-violation fallback. Singleton — stateless, depends only on JobTemplateStore.
+        services.AddSingleton<CodingAgent.Api.Dispatch.DispatchWorkItemService>(sp =>
+            new CodingAgent.Api.Dispatch.DispatchWorkItemService(
+                sp.GetRequiredService<JobTemplateStore>()));
+
         // ── WorkItemMetricsBackgroundService ──────────────────────────────────────────────────
         // Spec 047: Removed from API hosted services — replaced by WorkItemCountsPoller in
         // CodingAgent.Scheduler. WorkItemCountsPoller polls GET /api/work-items/counts-by-status
