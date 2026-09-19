@@ -24,8 +24,8 @@ public enum PipelineStep
     ReviewingCode = 9,
     RunningQualityGates = 10,
     PreparingForPullRequest = 11,
-    CreatingPullRequest = 12,
-    GeneratingPrDescription = 13,
+    FinalizingPullRequest = 12,
+    // GeneratingPrDescription = 13 intentionally removed — ordinal 13 is vacant; do not reuse
     ReflectingOnRun = 14,
     SyncingBrainRepoPostRun = 15,
     Completed = 16,

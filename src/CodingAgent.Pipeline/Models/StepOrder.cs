@@ -28,8 +28,8 @@ public static class StepOrder
         [PipelineStep.ReviewingCode] = 10,
         [PipelineStep.RunningQualityGates] = 11,
         [PipelineStep.PreparingForPullRequest] = 12,
-        [PipelineStep.CreatingPullRequest] = 13,
-        [PipelineStep.GeneratingPrDescription] = 14,
+        [PipelineStep.FinalizingPullRequest] = 13,
+        // GeneratingPrDescription entry removed — step merged into FinalizingPullRequest
         [PipelineStep.ReflectingOnRun] = 15,
         [PipelineStep.SyncingBrainRepoPostRun] = 16,
 

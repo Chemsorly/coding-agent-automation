@@ -35,7 +35,7 @@ public class PipelineRunTests
     [InlineData(PipelineStep.AnalyzingCode)]
     [InlineData(PipelineStep.GeneratingCode)]
     [InlineData(PipelineStep.RunningQualityGates)]
-    [InlineData(PipelineStep.CreatingPullRequest)]
+    [InlineData(PipelineStep.FinalizingPullRequest)]
     [InlineData(PipelineStep.RunningEnvironmentSetup)]
     public void IsTerminal_NonTerminalSteps_ReturnsFalse(PipelineStep step)
     {

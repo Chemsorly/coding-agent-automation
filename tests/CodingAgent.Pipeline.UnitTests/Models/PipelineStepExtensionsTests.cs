@@ -24,7 +24,7 @@ public class PipelineStepExtensionsTests
     [InlineData(PipelineStep.AnalyzingCode, "Analyzing Code")]
     [InlineData(PipelineStep.GeneratingCode, "Generating Code")]
     [InlineData(PipelineStep.PreparingForPullRequest, "Preparing for Pull Request")]
-    [InlineData(PipelineStep.CreatingPullRequest, "Creating Pull Request")]
+    [InlineData(PipelineStep.FinalizingPullRequest, "Finalizing Pull Request")]
     [InlineData(PipelineStep.Completed, "Completed")]
     [InlineData(PipelineStep.Failed, "Failed")]
     [InlineData(PipelineStep.Cancelled, "Cancelled")]

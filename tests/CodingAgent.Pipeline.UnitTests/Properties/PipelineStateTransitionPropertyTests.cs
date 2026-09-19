@@ -53,7 +53,7 @@ public class PipelineStateTransitionPropertyTests
         {
             // Should have transitioned through PreparingForPullRequest → CreatingPullRequest → Completed
             transitionLog.Should().Contain(PipelineStep.PreparingForPullRequest);
-            transitionLog.Should().Contain(PipelineStep.CreatingPullRequest);
+            transitionLog.Should().Contain(PipelineStep.FinalizingPullRequest);
             transitionLog.Should().Contain(PipelineStep.Completed);
             run.CurrentStep.Should().Be(PipelineStep.Completed);
         }

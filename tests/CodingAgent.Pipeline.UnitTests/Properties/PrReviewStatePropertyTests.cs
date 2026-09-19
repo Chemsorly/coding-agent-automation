@@ -190,7 +190,7 @@ public class PrReviewStatePropertyTests
         expectedSequence.Should().NotContain(PipelineStep.AnalyzingCode);
         expectedSequence.Should().NotContain(PipelineStep.GeneratingCode);
         expectedSequence.Should().NotContain(PipelineStep.RunningQualityGates);
-        expectedSequence.Should().NotContain(PipelineStep.CreatingPullRequest);
+        expectedSequence.Should().NotContain(PipelineStep.FinalizingPullRequest);
         expectedSequence.Should().NotContain(PipelineStep.SyncingBrainRepoPostRun);
 
         // Verify the sequence always starts with Created and ends with Completed

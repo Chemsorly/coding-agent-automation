@@ -147,7 +147,7 @@ public sealed class FleetViewTests : E2ETestBase
 
         // Simulate the agent reporting a PR URL via step transition metadata.
         await agent.ReportStepAsync(runId,
-            PipelineStep.CreatingPullRequest,
+            PipelineStep.FinalizingPullRequest,
             new Dictionary<string, string>
             {
                 ["PullRequestUrl"] = "https://github.com/test/repo/pull/42"

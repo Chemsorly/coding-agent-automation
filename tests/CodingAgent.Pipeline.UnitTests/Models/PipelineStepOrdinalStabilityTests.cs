@@ -25,8 +25,7 @@ public sealed class PipelineStepOrdinalStabilityTests
     [InlineData(PipelineStep.ReviewingCode, 9)]
     [InlineData(PipelineStep.RunningQualityGates, 10)]
     [InlineData(PipelineStep.PreparingForPullRequest, 11)]
-    [InlineData(PipelineStep.CreatingPullRequest, 12)]
-    [InlineData(PipelineStep.GeneratingPrDescription, 13)]
+    [InlineData(PipelineStep.FinalizingPullRequest, 12)]
     [InlineData(PipelineStep.ReflectingOnRun, 14)]
     [InlineData(PipelineStep.SyncingBrainRepoPostRun, 15)]
     [InlineData(PipelineStep.Completed, 16)]
@@ -50,12 +49,12 @@ public sealed class PipelineStepOrdinalStabilityTests
     }
 
     [Fact]
-    public void EnumHasExactly31Members()
+    public void EnumHasExactly30Members()
     {
         // Guard against adding new members without updating the ordinal stability test.
         // If a new step is added, this test forces the developer to add a corresponding
         // [InlineData] assertion above and verify the wire protocol is not broken.
-        Enum.GetValues<PipelineStep>().Should().HaveCount(31);
+        Enum.GetValues<PipelineStep>().Should().HaveCount(30);
     }
 
     [Fact]

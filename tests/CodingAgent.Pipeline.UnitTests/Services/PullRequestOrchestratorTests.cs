@@ -180,14 +180,15 @@ public class PullRequestOrchestratorTests
             run, false, _mockRepo.Object,
             null, null, CreateConfig(), CancellationToken.None, isRework: true);
 
-        _mockRepo.Verify(r => r.UpdatePullRequestAsync(55, It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Once);
+        // After #2735: mark-ready is deferred to RunPostPrSequenceAsync; orchestrator passes null (no state change)
+        _mockRepo.Verify(r => r.UpdatePullRequestAsync(55, It.IsAny<string>(), (bool?)null, It.IsAny<CancellationToken>()), Times.Once);
         _mockRepo.Verify(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    // ── Rework path — marks ready when not draft ──
+    // ── Rework path — passes null markReady (not draft) ──
 
     [Fact]
-    public async Task CreatePullRequest_ReworkNotDraft_MarksReady()
+    public async Task CreatePullRequest_ReworkNotDraft_PassesNullMarkReady()
     {
         _mockRepo.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -200,7 +201,9 @@ public class PullRequestOrchestratorTests
             run, false, _mockRepo.Object,
             null, null, CreateConfig(), CancellationToken.None, isRework: true);
 
-        _mockRepo.Verify(r => r.UpdatePullRequestAsync(55, It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Once);
+        // After #2735: mark-ready is deferred to RunPostPrSequenceAsync; orchestrator must NOT pass true
+        _mockRepo.Verify(r => r.UpdatePullRequestAsync(55, It.IsAny<string>(), (bool?)null, It.IsAny<CancellationToken>()), Times.Once);
+        _mockRepo.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── FinalizePullRequestAsync — no PR number → returns null ──

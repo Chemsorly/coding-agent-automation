@@ -54,7 +54,7 @@ public class PipelineSidebarComponentTests : BunitContext
 
         Assert.Contains("step-card-pending", cut.Find("#step-ReviewingCode").GetAttribute("class"));
         Assert.Contains("step-card-pending", cut.Find("#step-RunningQualityGates").GetAttribute("class"));
-        Assert.Contains("step-card-pending", cut.Find("#step-CreatingPullRequest").GetAttribute("class"));
+        Assert.Contains("step-card-pending", cut.Find("#step-FinalizingPullRequest").GetAttribute("class"));
     }
 
     // --- Retry scenario (HighWaterMark > CurrentStep) ---
@@ -104,7 +104,7 @@ public class PipelineSidebarComponentTests : BunitContext
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.RunningQualityGates);
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
-        Assert.Contains("step-card-pending", cut.Find("#step-CreatingPullRequest").GetAttribute("class"));
+        Assert.Contains("step-card-pending", cut.Find("#step-FinalizingPullRequest").GetAttribute("class"));
     }
 
     [Fact]
@@ -155,7 +155,7 @@ public class PipelineSidebarComponentTests : BunitContext
         Assert.Contains("step-card-completed", cut.Find("#step-GeneratingCode").GetAttribute("class"));
         Assert.Contains("step-card-completed", cut.Find("#step-RunningQualityGates").GetAttribute("class"));
         Assert.Contains("step-card-completed", cut.Find("#step-PreparingForPullRequest").GetAttribute("class"));
-        Assert.Contains("step-card-completed", cut.Find("#step-CreatingPullRequest").GetAttribute("class"));
+        Assert.Contains("step-card-completed", cut.Find("#step-FinalizingPullRequest").GetAttribute("class"));
     }
 
     // --- PreparingForPullRequest step ---
@@ -185,7 +185,7 @@ public class PipelineSidebarComponentTests : BunitContext
 
         Assert.Contains("step-card-active", cut.Find("#step-PreparingForPullRequest").GetAttribute("class"));
         Assert.Contains("step-card-completed", cut.Find("#step-RunningQualityGates").GetAttribute("class"));
-        Assert.Contains("step-card-pending", cut.Find("#step-CreatingPullRequest").GetAttribute("class"));
+        Assert.Contains("step-card-pending", cut.Find("#step-FinalizingPullRequest").GetAttribute("class"));
     }
 
     [Fact]
@@ -241,7 +241,7 @@ public class PipelineSidebarComponentTests : BunitContext
     {
         // Exercises the HasDetails fix (completed step path).
         // When run has moved past PreparingForPullRequest, the step must be expandable and show the detail box.
-        var run = CreateRun(PipelineStep.CreatingPullRequest, PipelineStep.CreatingPullRequest);
+        var run = CreateRun(PipelineStep.FinalizingPullRequest, PipelineStep.FinalizingPullRequest);
         run.PullRequestUrl = "https://github.com/org/repo/pull/47";
         run.PullRequestNumber = "47";
 
