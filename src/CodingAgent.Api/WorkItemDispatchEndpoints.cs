@@ -101,12 +101,13 @@ public static class WorkItemDispatchEndpoints
             Status = WorkItemStatus.Pending,
             Payload = payloadJson,
             AgentSelector = request.AgentSelector ?? "",
-            // TODO: Add a positive-value guard here: if request.TimeoutSeconds <= 0, substitute
-            // (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds. This prevents a legacy or
-            // misconfigured caller from storing a zero (the DB column default) and relying on the
-            // dispatch-path fallback in BuildJobContext. See review finding [WARNING] — zero sentinel
-            // ambiguity in ReconciliationLoop and DispatchLoop.
-            TimeoutSeconds = request.TimeoutSeconds,
+            // Clamp TimeoutSeconds to a positive value. A zero or negative value from a legacy
+            // or misconfigured caller would be stored verbatim and cause ReconciliationLoop to
+            // immediately force-fail any Running item (effectiveTimeoutSeconds=0 makes
+            // executionAge >= 0 trivially true). Substitute DefaultAgentTimeout (1800s) instead.
+            TimeoutSeconds = request.TimeoutSeconds > 0
+                ? request.TimeoutSeconds
+                : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
             ProjectId = request.ProjectId,
             CreatedAt = DateTimeOffset.UtcNow,
             PriorityWeight = InitiatedByConstants.IsManual(request.InitiatedBy) ? 100 : 0,
@@ -659,7 +660,12 @@ public static class WorkItemDispatchEndpoints
             DispatchedAt = DateTimeOffset.UtcNow,
             Payload = payloadJson,
             AgentSelector = JobTemplateStore.NormalizeLabels(request.AgentSelector ?? ""),
-            TimeoutSeconds = request.TimeoutSeconds,
+            // Clamp TimeoutSeconds to a positive value — same guard as CreateWorkItem.
+            // A zero or negative value would cause ReconciliationLoop to immediately force-fail
+            // any Running item once the EnforceTimeoutsAsync migration guard is removed.
+            TimeoutSeconds = request.TimeoutSeconds > 0
+                ? request.TimeoutSeconds
+                : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
             ProjectId = request.ProjectId,
             CreatedAt = DateTimeOffset.UtcNow,
             PriorityWeight = InitiatedByConstants.IsManual(request.InitiatedBy) ? 100 : 0,
