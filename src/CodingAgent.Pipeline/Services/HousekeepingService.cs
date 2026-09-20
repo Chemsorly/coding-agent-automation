@@ -118,6 +118,16 @@ public sealed class HousekeepingService : IHousekeepingService
     /// </summary>
     internal TimeSpan TriggerCooldown { get; set; } = TimeSpan.FromMinutes(25);
 
+    /// <summary>
+    /// Delay inserted between the initial mergeability probe and the re-probe for PRs that
+    /// returned <see cref="PrMergeabilityStatus.Unknown"/>. GitHub computes mergeability
+    /// lazily on-demand: the first <c>GET /pulls/{n}</c> call triggers the background job
+    /// and returns <c>unknown</c> immediately; the second call (a few seconds later) picks up
+    /// the resolved state. Default: 5 seconds. Overridable in tests (set to
+    /// <see cref="TimeSpan.Zero"/> to avoid real delays in unit tests).
+    /// </summary>
+    internal TimeSpan MergeabilityReprobeDelay { get; set; } = TimeSpan.FromSeconds(5);
+
     public HousekeepingService(IOrchestratorRunService runService, ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(runService);
@@ -156,13 +166,26 @@ public sealed class HousekeepingService : IHousekeepingService
         var limit = Math.Max(1, effectiveConcurrencyLimit);
         var repoTag = new KeyValuePair<string, object?>("repo_provider_id", repoProviderId);
 
-        // ── Step 1: Build mergeability map — one call per PR, reused below ──
+        // ── Step 1: Build mergeability map — one call per PR, with re-probe for Unknown ──
+        // GitHub computes mergeable_state lazily on-demand: the first GET /pulls/{n} call
+        // triggers a background job and returns "unknown" immediately. The second call
+        // (after a short delay) returns the resolved state. We re-probe all Unknown PRs
+        // once within the same cycle to avoid skipping Behind PRs that simply haven't
+        // had their mergeability computed yet. This matches the pattern used by automerge
+        // tooling (e.g. automerge-action) and is the documented workaround for this GitHub
+        // API behaviour. If the re-probe also returns Unknown, the conservative fallback
+        // (skip the PR this cycle) is preserved unchanged.
         var mergeabilityMap = new Dictionary<int, PrMergeabilityStatus>(agentDonePrs.Count);
+        var unknownAfterFirstProbe = new List<PullRequestSummary>();
+
         foreach (var pr in agentDonePrs)
         {
             try
             {
-                mergeabilityMap[pr.Number] = await repoProvider.IsPullRequestBehindBaseAsync(pr.Number, ct);
+                var status = await repoProvider.IsPullRequestBehindBaseAsync(pr.Number, ct);
+                mergeabilityMap[pr.Number] = status;
+                if (status == PrMergeabilityStatus.Unknown)
+                    unknownAfterFirstProbe.Add(pr);
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
@@ -174,6 +197,34 @@ public sealed class HousekeepingService : IHousekeepingService
                     "HousekeepingService: mergeability probe failed for PR #{PrNumber} in repo {RepoId} — treating as Unknown (conservative fallback)",
                     pr.Number, repoProviderId);
                 mergeabilityMap[pr.Number] = PrMergeabilityStatus.Unknown;
+            }
+        }
+
+        // Re-probe PRs whose first probe returned Unknown. A single delay fires once for the
+        // entire batch (not once per PR) to keep the added latency proportional regardless of
+        // how many PRs are Unknown. With a high-velocity repo, every base-branch merge
+        // invalidates all open-PR mergeability caches simultaneously, so batching is important.
+        if (unknownAfterFirstProbe.Count > 0)
+        {
+            _logger.Debug(
+                "HousekeepingService: {Count} PR(s) returned Unknown on first probe in repo {RepoId} — waiting {DelayMs}ms then re-probing",
+                unknownAfterFirstProbe.Count, repoProviderId, (int)MergeabilityReprobeDelay.TotalMilliseconds);
+
+            await Task.Delay(MergeabilityReprobeDelay, ct);
+
+            foreach (var pr in unknownAfterFirstProbe)
+            {
+                try
+                {
+                    mergeabilityMap[pr.Number] = await repoProvider.IsPullRequestBehindBaseAsync(pr.Number, ct);
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    _logger.Warning(ex,
+                        "HousekeepingService: re-probe failed for PR #{PrNumber} in repo {RepoId} — keeping Unknown (conservative fallback)",
+                        pr.Number, repoProviderId);
+                    // keep Unknown — already set from first pass
+                }
             }
         }
 

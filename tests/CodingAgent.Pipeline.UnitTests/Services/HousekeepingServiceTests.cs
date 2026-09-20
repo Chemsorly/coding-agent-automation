@@ -214,6 +214,7 @@ public class HousekeepingServiceTests
     public async Task ExecuteAsync_BlockedOrUnknown_IsSkippedAndSlotKept(PrMergeabilityStatus status)
     {
         var (svc, provider, issues, _) = Create();
+        svc.MergeabilityReprobeDelay = TimeSpan.Zero; // avoid real delay in tests
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.Behind);
         provider.Setup(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()))
@@ -476,12 +477,17 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── Mergeability checked once per PR ─────────────────────────────────────
+    // ── Mergeability checked once per PR when already resolved ───────────────
 
+    /// <summary>
+    /// A PR that returns a resolved state (Behind, Blocked, etc.) on the first probe
+    /// must not be re-probed within the same cycle — re-probing is only for Unknown results.
+    /// </summary>
     [Fact]
-    public async Task ExecuteAsync_MergeabilityCheckedOncePerPr()
+    public async Task ExecuteAsync_ResolvedPr_MergeabilityCheckedOncePerPr()
     {
         var (svc, provider, issues, _) = Create();
+        svc.MergeabilityReprobeDelay = TimeSpan.Zero;
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.Behind);
         provider.Setup(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()))
@@ -495,7 +501,9 @@ public class HousekeepingServiceTests
 
         await ExecAsync(svc, provider, issues, [MakePr(10)]);
 
-        provider.Verify(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()), Times.Once);
+        // PR returned Behind (resolved) on the first probe — exactly one probe call per cycle.
+        provider.Verify(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()), Times.Once,
+            "a PR whose first probe returns a resolved state must not be re-probed within the same cycle");
     }
 
     // ── UpdateAsync throws → warning, PR stays in-flight ─────────────────────
@@ -1753,4 +1761,190 @@ public class HousekeepingServiceTests
             Times.Once,
             "PR #1 must not re-acquire the slot in the same cycle it was max-age evicted");
     }
+
+    // ── Unknown mergeability re-probe ─────────────────────────────────────────
+
+    /// <summary>
+    /// When the first probe returns Unknown, the service must re-probe after a short delay
+    /// within the same cycle. GitHub computes mergeability on-demand: the first GET triggers
+    /// the background job; the second GET (a few seconds later) returns the resolved state.
+    /// This test covers the happy path: Unknown → (delay) → Behind → update triggered.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_UnknownPr_IsReprobedAfterDelay_AndTriggeredWhenBehind()
+    {
+        var (svc, provider, issues, _) = Create();
+        svc.MergeabilityReprobeDelay = TimeSpan.Zero; // instant in tests
+
+        var callCount = 0;
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(() =>
+                {
+                    callCount++;
+                    return callCount == 1
+                        ? PrMergeabilityStatus.Unknown  // first call: GitHub hasn't computed yet
+                        : PrMergeabilityStatus.Behind;  // second call: resolved
+                });
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        await ExecAsync(svc, provider, issues, [MakePr(1)]);
+
+        // Must have probed twice (initial + re-probe)
+        provider.Verify(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()),
+            Times.Exactly(2),
+            "Unknown result must trigger a re-probe within the same cycle");
+
+        // Re-probe returned Behind → branch update must fire
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "PR that resolves to Behind on re-probe must have its branch updated");
+    }
+
+    /// <summary>
+    /// When the re-probe also returns Unknown, the PR must still be skipped (conservative
+    /// fallback preserved). No branch update should be triggered.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_UnknownPrStillUnknownAfterReprobe_IsSkipped()
+    {
+        var (svc, provider, issues, _) = Create();
+        svc.MergeabilityReprobeDelay = TimeSpan.Zero;
+
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Unknown);
+
+        await ExecAsync(svc, provider, issues, [MakePr(1)]);
+
+        // Must have probed twice (initial + re-probe) — re-probe fires regardless of result
+        provider.Verify(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()),
+            Times.Exactly(2),
+            "Unknown result must trigger a re-probe even if it also returns Unknown");
+
+        // Both probes returned Unknown → conservative skip, no update
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "a PR that remains Unknown after re-probe must not trigger a branch update");
+    }
+
+    /// <summary>
+    /// Only Unknown PRs are re-probed. Behind, Blocked, UpToDate, and Conflicted PRs must
+    /// not incur an extra API call. Verifies the re-probe is targeted, not a full second pass.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_MixedStatuses_OnlyUnknownPrsAreReprobed()
+    {
+        var (svc, provider, issues, _) = Create();
+        svc.MergeabilityReprobeDelay = TimeSpan.Zero;
+
+        // PR #1: Behind — resolved on first probe, no re-probe
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        // PR #2: Unknown → Behind on re-probe
+        var pr2Calls = 0;
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(2, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(() =>
+                {
+                    pr2Calls++;
+                    return pr2Calls == 1 ? PrMergeabilityStatus.Unknown : PrMergeabilityStatus.Behind;
+                });
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        // PR #3: Blocked — resolved on first probe, no re-probe
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(3, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Blocked);
+
+        await ExecAsync(svc, provider, issues, [MakePr(1), MakePr(2), MakePr(3)], limit: 3);
+
+        // PR #1 (Behind): probed exactly once — no re-probe
+        provider.Verify(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()),
+            Times.Once, "Behind PR must not be re-probed");
+
+        // PR #2 (Unknown→Behind): probed twice — initial + re-probe
+        provider.Verify(p => p.IsPullRequestBehindBaseAsync(2, It.IsAny<CancellationToken>()),
+            Times.Exactly(2), "Unknown PR must be re-probed exactly once");
+
+        // PR #3 (Blocked): probed exactly once — no re-probe
+        provider.Verify(p => p.IsPullRequestBehindBaseAsync(3, It.IsAny<CancellationToken>()),
+            Times.Once, "Blocked PR must not be re-probed");
+
+        // Both Behind PRs (#1 and #2) must be updated (limit=3 so no slot starvation)
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()),
+            Times.Once, "PR #1 (Behind) must be updated");
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()),
+            Times.Once, "PR #2 (Unknown→Behind via re-probe) must be updated");
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(3, It.IsAny<CancellationToken>()),
+            Times.Never, "PR #3 (Blocked) must not be updated");
+    }
+
+    /// <summary>
+    /// Re-probe cancellation: if the CancellationToken is cancelled during the re-probe delay,
+    /// the delay must propagate the cancellation and no further work is done.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_UnknownPr_CancelledDuringReprobeDelay_PropagatesCancellation()
+    {
+        var (svc, provider, issues, _) = Create();
+        // Use a real non-zero delay so the Task.Delay is actually cancellable
+        svc.MergeabilityReprobeDelay = TimeSpan.FromMinutes(10);
+
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Unknown);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel(); // pre-cancelled
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            svc.ExecuteAsync(
+                provider.Object, RepoId, issues.Object, IssueProviderId,
+                [MakePr(1)], 1, false, 60, 25, 0, cts.Token));
+
+        // Re-probe must not have been called after cancellation
+        provider.Verify(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "re-probe must not be called after cancellation; only the initial probe should have fired");
+    }
+
+    /// <summary>
+    /// Multiple Unknown PRs in the same cycle: the single delay fires once (not once per PR),
+    /// then all Unknown PRs are re-probed in batch. This verifies the re-probe pass is not
+    /// serialised with individual per-PR delays.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_MultipleUnknownPrs_SingleDelayThenAllReprobed()
+    {
+        var (svc, provider, issues, _) = Create();
+
+        svc.MergeabilityReprobeDelay = TimeSpan.Zero;
+
+        // Both PRs return Unknown first, then Behind
+        foreach (var prNum in new[] { 1, 2 })
+        {
+            var calls = 0;
+            var num = prNum;
+            provider.Setup(p => p.IsPullRequestBehindBaseAsync(num, It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(() => ++calls == 1 ? PrMergeabilityStatus.Unknown : PrMergeabilityStatus.Behind);
+            provider.Setup(p => p.UpdatePullRequestBranchAsync(num, It.IsAny<CancellationToken>()))
+                    .Returns(Task.CompletedTask);
+        }
+
+        await ExecAsync(svc, provider, issues, [MakePr(1), MakePr(2)], limit: 2);
+
+        // Both PRs re-probed exactly once each
+        provider.Verify(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()),
+            Times.Exactly(2), "PR #1 must be re-probed");
+        provider.Verify(p => p.IsPullRequestBehindBaseAsync(2, It.IsAny<CancellationToken>()),
+            Times.Exactly(2), "PR #2 must be re-probed");
+
+        // Both resolved to Behind → both updated
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()),
+            Times.Once, "PR #1 resolved to Behind — must be updated");
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()),
+            Times.Once, "PR #2 resolved to Behind — must be updated");
+    }
 }
+
