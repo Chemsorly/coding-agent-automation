@@ -14,7 +14,7 @@ public sealed partial class OpenCodeAgentProvider
     {
         // Allow a brief window for late-arriving SSE events (e.g., final
         // message.part.updated) to be processed before tearing down the stream.
-        try { await Task.Delay(500, CancellationToken.None); } catch { }
+        try { await Task.Delay(500, CancellationToken.None); } catch { /* intentional: delay is best-effort; any exception (e.g. TaskCanceledException) is safely ignored here */ }
         await sseCts.CancelAsync();
         try { await sseTask.ConfigureAwait(false); } catch { /* expected cancellation */ }
         sseCts.Dispose();
