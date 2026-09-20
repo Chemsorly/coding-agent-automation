@@ -344,7 +344,21 @@ public class DispatchInfrastructureStalenessTests
 
     // ── BuildIssueContextAsync — agent-error staleness path ──────────────
 
+    // TODO: DetectAnalysisStalenessAsync is never called directly — all staleness-branch coverage
+    // goes through BuildIssueContextAsync. A regression in the extracted method's parameter wiring
+    // (e.g. wrong comment list or identifiers passed) would not be caught by a targeted test.
+    // Consider adding direct tests for DetectAnalysisStalenessAsync mirroring CheckCommitCountStalenessAsync tests.
+
+    // TODO: The gate_rejection and gate_wont_do branches of DetectAnalysisStalenessAsync are only
+    // covered via IssueContextBuilderTests (CodingAgent.Web.UnitTests). Add tests here that exercise
+    // those two staleness signals so a breakage in the pipeline-unit test suite surface is visible
+    // without depending on the web test project.
+
     [Fact]
+    // TODO: Add a test verifying that _workItemClient.GetStalenessAsync is NOT called when
+    // forceRefreshAnalysis is already true (e.g. from a gate_rejection signal). The production code
+    // guards this with `if (!forceRefreshAnalysis && ...)`, but there is no test confirming the
+    // short-circuit when both a gate signal and HasAgentErrorSince=true are present simultaneously.
     public async Task BuildIssueContext_WithWorkItemClient_AgentErrorSince_SetsForceRefresh()
     {
         var issueConfig = new ProviderConfig { Id = "ip-1", Kind = ProviderKind.Issue, ProviderType = "Test", DisplayName = "IP" };
