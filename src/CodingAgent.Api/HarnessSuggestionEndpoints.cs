@@ -23,7 +23,7 @@ public static class HarnessSuggestionEndpoints
         IHarnessSuggestionStore store,
         CancellationToken ct)
     {
-        var suggestions = await store.GetAsync(ct);
+        var suggestions = await store.LoadAsync(ct);
         return suggestions is null ? TypedResults.NoContent() : TypedResults.Ok(suggestions);
     }
 

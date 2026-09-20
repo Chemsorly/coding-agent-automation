@@ -40,7 +40,6 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
 {
     private readonly IKiroCliOrchestrator _orchestrator;
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly IOpenIssueContextWriter _openIssueContextWriter;
     private readonly AgentId _agentId;
     private readonly IAgentProviderResolver _providerResolver;
     private readonly PipelineExecutionContextBuilder _contextBuilder;
@@ -57,7 +56,6 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
 
         _orchestrator = deps.Orchestrator;
         _httpClientFactory = deps.HttpClientFactory;
-        _openIssueContextWriter = deps.OpenIssueContextWriter ?? new OpenIssueContextWriter(deps.Logger);
         _agentId = deps.AgentIdentity ?? new AgentId(Environment.MachineName);
         _providerResolver = new AgentProviderResolver(deps.Logger);
         var reporterFactory = deps.ReporterFactory ?? new PipelineReporterFactory(deps.Logger);
@@ -225,8 +223,8 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             var steps = run.RunType switch
             {
                 PipelineRunType.Review => AgentStepPipelineBuilder.BuildReviewStepPipeline(job, issueOps, repoConfig),
-                PipelineRunType.DecompositionAnalysis => AgentStepPipelineBuilder.BuildDecompositionAnalysisStepPipeline(job, _openIssueContextWriter, issueOps, repoConfig),
-                PipelineRunType.Decomposition => AgentStepPipelineBuilder.BuildDecompositionStepPipeline(job, _openIssueContextWriter, issueOps, repoConfig),
+                PipelineRunType.DecompositionAnalysis => AgentStepPipelineBuilder.BuildDecompositionAnalysisStepPipeline(job, issueOps, repoConfig),
+                PipelineRunType.Decomposition => AgentStepPipelineBuilder.BuildDecompositionStepPipeline(job, issueOps, repoConfig),
                 _ => AgentStepPipelineBuilder.BuildAgentStepPipeline(job, issueOps, repoConfig)
             };
 
