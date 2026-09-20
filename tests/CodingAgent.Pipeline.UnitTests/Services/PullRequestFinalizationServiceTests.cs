@@ -813,8 +813,10 @@ public class PullRequestFinalizationServiceTests
         var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
         try
         {
-            Directory.CreateDirectory(tempDir);
-            // Do NOT create .agent/pr-description.md — tests the OutputLines fallback path
+            Directory.CreateDirectory(Path.Combine(tempDir, ".agent"));
+            // Do NOT create .agent/pr-description.md — tests the OutputLines fallback path.
+            // The .agent/ directory must exist so ReadAllTextAsync throws FileNotFoundException
+            // (missing file) rather than DirectoryNotFoundException (missing directory).
 
             var run = CreateRun();
             run.PullRequestNumber = "42";
@@ -863,8 +865,10 @@ public class PullRequestFinalizationServiceTests
         var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
         try
         {
-            Directory.CreateDirectory(tempDir);
-            // Do NOT create .agent/pr-description.md
+            Directory.CreateDirectory(Path.Combine(tempDir, ".agent"));
+            // Do NOT create .agent/pr-description.md.
+            // The .agent/ directory must exist so ReadAllTextAsync throws FileNotFoundException
+            // (missing file) rather than DirectoryNotFoundException (missing directory).
 
             var run = CreateRun();
             run.PullRequestNumber = "42";
@@ -908,8 +912,10 @@ public class PullRequestFinalizationServiceTests
         var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
         try
         {
-            Directory.CreateDirectory(tempDir);
-            // Do NOT create .agent/pr-description.md
+            Directory.CreateDirectory(Path.Combine(tempDir, ".agent"));
+            // Do NOT create .agent/pr-description.md.
+            // The .agent/ directory must exist so ReadAllTextAsync throws FileNotFoundException
+            // (missing file) rather than DirectoryNotFoundException (missing directory).
 
             var run = CreateRun();
             run.PullRequestNumber = "42";
@@ -955,8 +961,10 @@ public class PullRequestFinalizationServiceTests
         var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
         try
         {
-            Directory.CreateDirectory(tempDir);
-            // Do NOT create .agent/pr-description.md
+            Directory.CreateDirectory(Path.Combine(tempDir, ".agent"));
+            // Do NOT create .agent/pr-description.md.
+            // The .agent/ directory must exist so ReadAllTextAsync throws FileNotFoundException
+            // (missing file) rather than DirectoryNotFoundException (missing directory).
 
             var run = CreateRun();
             run.PullRequestNumber = "42";
@@ -984,8 +992,60 @@ public class PullRequestFinalizationServiceTests
 
     // TODO: Add a test for the branch where run.PullRequestNumber is not a valid integer in the file-absent
     // fallback path (e.g., run.PullRequestNumber = "not-a-number" with non-empty OutputLines). The production
-    // code at PullRequestFinalizationService.cs:332-337 logs a warning and returns early; without a test,
-    // a regression that throws instead of returning gracefully would go undetected.
+    // code logs a warning and returns early; without a test, a regression that throws instead of returning
+    // gracefully would go undetected.
+
+    [Fact]
+    public async Task GeneratePrDescriptionAsync_WhenFileAbsent_LogsFileNotFoundWarningDistinctFromUnexpectedFailure()
+    {
+        // Verifies that a missing pr-description file logs the "file not found" Warning (no exception
+        // argument) rather than the outer handler's Warning(ex, "generation failed") path.
+        // This pins the acceptance criterion: the 'absent' condition is logged distinctly from unexpected failures.
+        // TODO: This test exercises only the empty-OutputLines sub-path of the FileNotFoundException catch block
+        // (OutputLines = [], which skips UpdatePullRequestAsync and logs "OutputLines also empty"). The
+        // non-empty-OutputLines sub-path (which calls UpdatePullRequestAsync) is not verified for the logging
+        // distinctness criterion. Add a companion test with non-empty OutputLines to confirm the file-not-found
+        // warning still fires (and the outer failure handler still does not) when the fallback update path runs.
+        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(tempDir, ".agent"));
+            // Do NOT create .agent/pr-description.md — FileNotFoundException is expected from ReadAllTextAsync.
+            // The .agent/ directory must exist so ReadAllTextAsync throws FileNotFoundException
+            // (missing file) rather than DirectoryNotFoundException (missing directory).
+
+            var run = CreateRun();
+            run.PullRequestNumber = "42";
+            run.WorkspacePath = tempDir;
+            var agentProvider = new Mock<IAgentProvider>();
+            var repoProvider = new Mock<IRepositoryProvider>();
+            var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+
+            agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+                .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+            await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
+
+            // The file-not-found warning uses the two-argument Warning(template, runId, path) overload — no exception.
+            // This is distinct from the outer handler's Warning(ex, template, runId) call on unexpected failures.
+            _logger.Verify(l => l.Warning(
+                It.Is<string>(s => s.Contains("PR description file not found")),
+                It.Is<string>(s => s == run.RunId),
+                It.IsAny<string>()),
+                Times.Once);
+
+            // The outer unexpected-failure handler must NOT have fired — no Warning(ex, ...) call.
+            _logger.Verify(l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("generation failed")),
+                It.IsAny<object[]>()),
+                Times.Never);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
 
     // ── RunFullPrCreationAsync ──
 
