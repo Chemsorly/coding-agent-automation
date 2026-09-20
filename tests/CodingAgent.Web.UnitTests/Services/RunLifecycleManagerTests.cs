@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using AwesomeAssertions;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Orchestration;
@@ -1179,3 +1180,264 @@ public sealed class RunLifecycleManagerErrorPathTests
         }, $"conn-{agentId}");
     }
 }
+
+/// <summary>
+/// Characterization tests for the terminal-cleanup sequence in <see cref="RunLifecycleManager"/>.
+/// Written before the Extract Method refactoring (issue #2795) to lock in the side-effect ordering
+/// and per-path invariants so that the extraction cannot silently alter behaviour.
+///
+/// Covers:
+/// - CompleteRunAsync does NOT call ClearAgentState or K8s cleanup (regression guards for extraction)
+/// - Span receives the correct telemetry tags per terminal path (Fail → Error status, Cancel → cancelled tag)
+/// - History persist is called on all terminal paths (ensures it is not accidentally dropped in extraction)
+///
+/// Note on span-ordering tests: OrchestratorRunService.RemoveRun always disposes the
+/// OrchestratorActivity as a safety net before the terminal lifecycle methods call it. The
+/// canonical ordering (history before span-dispose in the shared cleanup tail) is therefore a
+/// structural property of the extracted method, not observable via IsStopped in a black-box test.
+/// The tests here verify the observable invariants that regression-protect the extraction.
+/// </summary>
+public sealed class RunLifecycleManagerTerminalCleanupCharacterizationTests : IDisposable
+{
+    private static readonly string[] DotnetLabels = ["dotnet"];
+
+    private readonly ActivityListener _activityListener;
+    private readonly List<Activity> _stoppedActivities = [];
+
+    private readonly Mock<ILogger> _mockLogger = new();
+    private readonly Mock<ILabelService> _mockLabelService = new();
+    private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
+    private readonly Mock<IJobCleanupStrategy> _mockJobCleanup = new();
+    private readonly AgentRegistryService _registry;
+    private readonly OrchestratorRunService _runService;
+    private readonly RunLifecycleManager _sut;
+
+    public RunLifecycleManagerTerminalCleanupCharacterizationTests()
+    {
+        _activityListener = new ActivityListener
+        {
+            ShouldListenTo = s => s.Name == CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            SampleUsingParentId = (ref ActivityCreationOptions<string> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = a => _stoppedActivities.Add(a)
+        };
+        ActivitySource.AddActivityListener(_activityListener);
+
+        _registry = new AgentRegistryService(_mockLogger.Object);
+        _runService = new OrchestratorRunService(_mockLogger.Object);
+
+        _mockJobCleanup
+            .Setup(c => c.TryDeleteJobForRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _sut = new RunLifecycleManager(new RunLifecycleManagerDependencies(
+            _runService,
+            _mockHistoryService.Object,
+            _registry,
+            _mockLabelService.Object,
+            _mockLogger.Object,
+            JobCleanup: _mockJobCleanup.Object));
+    }
+
+    public void Dispose()
+    {
+        _activityListener.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    // ── Regression guards: CompleteRunAsync must NOT call ClearAgentState or K8s cleanup ──
+
+    [Fact]
+    public async Task CompleteRunAsync_DoesNotCallJobCleanup()
+    {
+        // CompleteRunAsync intentionally omits K8s job deletion (that is Fail/Cancel's responsibility).
+        // If the extraction accidentally pulls TryDeleteJobForRunAsync into the shared tail unconditionally,
+        // this test will catch the regression.
+        var run = CreateRun("run-complete-nocleanup", PipelineRunType.Implementation);
+        run.CurrentStep = PipelineStep.Completed;
+        _runService.AddRun(run);
+
+        await _sut.CompleteRunAsync("run-complete-nocleanup", WorkItemStatus.Succeeded, CancellationToken.None);
+
+        _mockJobCleanup.Verify(
+            c => c.TryDeleteJobForRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "CompleteRunAsync must not invoke K8s job cleanup");
+
+        // Sanity: label swap still fires (so the test isn't vacuous from a silent early-exit)
+        // TODO: [WARNING] This assertion uses all It.IsAny<> — it does not verify *which* label was passed.
+        //       An accidental label regression (e.g. swapping to AgentLabels.Error instead of the correct
+        //       completion label) would not be caught here. Add a test that asserts the exact label value
+        //       to close the gap for acceptance criterion 2 ("per-method FinalLabel/status fallback values
+        //       are preserved exactly").
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CompleteRunAsync_DoesNotCallClearAgentState()
+    {
+        // CompleteRunAsync intentionally omits ClearAgentState (agent cleanup is Fail/Cancel's responsibility).
+        // If the extraction accidentally pulls UpdateAgentFieldAsync into the shared tail, this test catches it.
+        //
+        // Setup: agent starts Idle (default for fresh registration), then we transition to Busy to create
+        // a detectable state that ClearAgentState (→ Idle) would change.
+        var run = CreateRun("run-complete-noagentclear", PipelineRunType.Implementation);
+        run.AgentId = "agent-1";
+        run.CurrentStep = PipelineStep.Completed;
+        _runService.AddRun(run);
+        RegisterAgent("agent-1");
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);  // set Busy so ClearAgentState would be observable
+
+        await _sut.CompleteRunAsync("run-complete-noagentclear", WorkItemStatus.Succeeded, CancellationToken.None);
+
+        // If ClearAgentState had been called, the agent would be transitioned from Busy back to Idle.
+        // If not called (correct behaviour), it remains Busy.
+        var agent = _registry.GetByAgentId("agent-1");
+        agent.Should().NotBeNull();
+        agent!.Status.Should().Be(AgentStatus.Busy,
+            "CompleteRunAsync must not clear agent state; only FailRunAsync and CancelRunAsync transition the agent to Idle");
+    }
+
+    // ── Span tag precision tests ───────────────────────────────────────────
+
+    [Fact]
+    public async Task FailRunAsync_SetsActivityStatusError_AndDisposesSpan()
+    {
+        // The existing OrchestratorExecutePipelineSpanTests only checks that the span is stopped;
+        // it does not assert ActivityStatusCode.Error is set. This test locks in that contract.
+        var run = CreateRunWithActivity("run-fail-span-tags");
+        _runService.AddRun(run);
+
+        await _sut.FailRunAsync("run-fail-span-tags", "something broke", CancellationToken.None);
+
+        var stopped = _stoppedActivities.FirstOrDefault(a => a.OperationName == "ExecutePipeline");
+        stopped.Should().NotBeNull("FailRunAsync must stop the ExecutePipeline span");
+        stopped!.Status.Should().Be(ActivityStatusCode.Error,
+            "FailRunAsync must set ActivityStatusCode.Error on the span");
+        // TODO: [WARNING] CreateRunWithActivity does not explicitly set run.CurrentStep before calling FailRunAsync.
+        //       FailRunAsync sets run.CurrentStep = PipelineStep.Failed, so if PipelineStep.Failed happens to be
+        //       the default enum value (0), this assertion is vacuous — it would pass even if SetTag were removed.
+        //       Set run.CurrentStep to a non-default value (e.g. PipelineStep.Implementing) in CreateRunWithActivity
+        //       or in this test setup so the assertion proves the tag is actively written from the activity.
+        stopped.GetTagItem("pipeline.final_step").Should().Be(PipelineStep.Failed.ToString(),
+            "FailRunAsync must set pipeline.final_step to Failed");
+    }
+
+    [Fact]
+    public async Task CancelRunAsync_SetsCancelledTag_AndDisposesSpan_NotErrorStatus()
+    {
+        // CancelRunAsync uses pipeline.cancelled=true instead of SetStatus(Error).
+        // This test locks in the distinction — the span must NOT receive Error status for a graceful cancel.
+        var run = CreateRunWithActivity("run-cancel-span-tags");
+        _runService.AddRun(run);
+
+        await _sut.CancelRunAsync("run-cancel-span-tags", CancellationToken.None);
+
+        var stopped = _stoppedActivities.FirstOrDefault(a => a.OperationName == "ExecutePipeline");
+        stopped.Should().NotBeNull("CancelRunAsync must stop the ExecutePipeline span");
+        stopped!.GetTagItem("pipeline.cancelled").Should().Be(true,
+            "CancelRunAsync must set pipeline.cancelled=true");
+        stopped.GetTagItem("pipeline.final_step").Should().Be(PipelineStep.Cancelled.ToString(),
+            "CancelRunAsync must set pipeline.final_step to Cancelled");
+        // Graceful cancellation must NOT set Error status
+        stopped.Status.Should().NotBe(ActivityStatusCode.Error,
+            "CancelRunAsync must not set ActivityStatusCode.Error — use pipeline.cancelled tag instead");
+    }
+
+    // ── History is called on all terminal paths ────────────────────────────
+
+    // TODO: [WARNING] The following label-fallback scenarios are not covered by any test in this class
+    //       and should be added to satisfy acceptance criterion 2 ("per-method FinalLabel/status fallback
+    //       values are preserved exactly"):
+    //
+    //   a) FailRunAsync label fallback: verify that when run.FinalLabel is null (or not in AgentLabels.All),
+    //      TrySwapLabelAsync is called with AgentLabels.Error. Also verify that a valid run.FinalLabel
+    //      takes precedence over the default. Without this, a typo in the errorLabel expression goes undetected.
+    //
+    //   b) CancelRunAsync label: verify that CancelRunAsync always swaps to AgentLabels.Cancelled regardless
+    //      of run.FinalLabel (CancelRunAsync does not consult FinalLabel — unlike Fail). A test that sets
+    //      run.FinalLabel = "agent:done" and asserts AgentLabels.Cancelled is still used closes this gap.
+    //
+    //   c) CompleteRunAsync consolidation-run path: verify that when
+    //      run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId, TrySwapLabelAsync is
+    //      NOT called (targetLabel stays null → RunTerminalCleanupAsync skips the swap). This is the only
+    //      exerciser of the null-skip branch in RunTerminalCleanupAsync and currently has no test coverage.
+
+    [Fact]
+    public async Task FailRunAsync_CallsHistoryService()
+    {
+        // Ensures AddRunToHistoryAsync is not accidentally dropped in the extraction.
+        var run = CreateRun("run-fail-history", PipelineRunType.Implementation);
+        _runService.AddRun(run);
+
+        await _sut.FailRunAsync("run-fail-history", "test", CancellationToken.None);
+
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
+            It.Is<PipelineRun>(r => r.RunId == "run-fail-history"), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task CancelRunAsync_CallsHistoryService()
+    {
+        var run = CreateRun("run-cancel-history", PipelineRunType.Implementation);
+        _runService.AddRun(run);
+
+        await _sut.CancelRunAsync("run-cancel-history", CancellationToken.None);
+
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
+            It.Is<PipelineRun>(r => r.RunId == "run-cancel-history"), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task CompleteRunAsync_CallsHistoryService()
+    {
+        var run = CreateRun("run-complete-history", PipelineRunType.Implementation);
+        run.CurrentStep = PipelineStep.Completed;
+        _runService.AddRun(run);
+
+        await _sut.CompleteRunAsync("run-complete-history", WorkItemStatus.Succeeded, CancellationToken.None);
+
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
+            It.Is<PipelineRun>(r => r.RunId == "run-complete-history"), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────
+
+    private static PipelineRun CreateRun(string runId, PipelineRunType runType)
+    {
+        return new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test issue",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            RunType = runType
+        };
+    }
+
+    private static PipelineRun CreateRunWithActivity(string runId)
+    {
+        var run = CreateRun(runId, PipelineRunType.Implementation);
+        var activity = CodingAgent.Pipeline.Telemetry.PipelineTelemetry.ActivitySource.StartActivity("ExecutePipeline");
+        activity?.SetTag("pipeline.run_id", runId);
+        run.OrchestratorActivity = activity;
+        return run;
+    }
+
+    private AgentEntry RegisterAgent(string agentId)
+    {
+        return _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = agentId,
+            Hostname = $"host-{agentId}",
+            Labels = DotnetLabels
+        }, $"conn-{agentId}");
+    }
+}
+

@@ -85,7 +85,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     // ── Register ──────────────────────────────────────────────────────
 
     /// <inheritdoc />
-    public AgentEntry Register(AgentRegistrationMessage message, string connectionId)
+    public AgentEntry Register(AgentRegistrationMessage message, string connectionId, bool preserveExistingConnectionId = false)
     {
         ArgumentNullException.ThrowIfNull(message);
         ArgumentNullException.ThrowIfNull(connectionId);
@@ -108,8 +108,11 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             disabled = existing.Disabled;
             status = activeJobId is not null ? AgentStatus.Busy : AgentStatus.Idle;
 
-            // Remove old connectionId from local index
-            _connectionIndex.TryRemove(existing.ConnectionId, out _);
+            // Remove old connectionId from local index — unless the caller has asked us to keep it
+            // (mid-run kiro-cli sub-process reconnect: the pipeline is still active on the old
+            // connection and must not lose its AgentAuthorizationFilter authorization context).
+            if (!preserveExistingConnectionId)
+                _connectionIndex.TryRemove(existing.ConnectionId, out _);
 
             _logger.Information(
                 "Agent {AgentId} re-registered after {PreviousStatus} (connection={ConnectionId}, activeJob={JobId})",
@@ -150,8 +153,18 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // Log any Redis write failures so they surface rather than being swallowed silently.
         // Mark the agent as having a pending write so GetAgentRaw can return the snapshot
         // during the fire-and-forget window. Cleared by WriteRegistrationAsync on completion.
+        // TODO (WARNING): _pendingRegistrationWrite is keyed here using the pre-extracted string local
+        // 'agentId', while WriteRegistrationAsync (now accepting AgentId) removes via agentId.Value.
+        // Both evaluate to the same string today, but the asymmetry is a latent hazard if Register is
+        // ever refactored to change how 'agentId' is derived. Consider using message.AgentId.Value here
+        // consistently to eliminate the asymmetry.
         _pendingRegistrationWrite[agentId] = 0;
-        _ = WriteRegistrationAsync(agentId, connectionId, status, fields)
+        _ = WriteRegistrationAsync(message.AgentId, connectionId, status, fields)
+            // TODO (WARNING): The ContinueWith lambda captures the local string 'agentId' while the
+            // WriteRegistrationAsync call above uses message.AgentId (the value-type wrapper). Both
+            // refer to the same identity, but the inconsistency could mislead a future reader or
+            // produce incorrect log output if 'agentId' is mutated before the continuation runs (e.g.
+            // in a loop). Using message.AgentId.Value in the lambda would be more self-contained.
             .ContinueWith(t => _logger.Warning(t.Exception,
                 "WriteRegistrationAsync failed for agent {AgentId}", agentId),
                 TaskContinuationOptions.OnlyOnFaulted);
@@ -191,22 +204,22 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         return entry;
     }
 
-    private async Task WriteRegistrationAsync(string agentId, string connectionId, AgentStatus status, HashEntry[] fields)
+    private async Task WriteRegistrationAsync(AgentId agentId, string connectionId, AgentStatus status, HashEntry[] fields)
     {
-        var key = AgentKey(agentId);
+        var key = AgentKey(agentId.Value);
         await _store.HashSetAsync(key, fields);
         await _store.ExpireAsync(key, AgentTtl);
-        await _store.SetAddAsync(AgentsAllKey, agentId);
+        await _store.SetAddAsync(AgentsAllKey, agentId.Value);
         if (status == AgentStatus.Idle)
-            await _store.SetAddAsync(AgentsIdleKey, agentId);
+            await _store.SetAddAsync(AgentsIdleKey, agentId.Value);
         else
-            await _store.SetRemoveAsync(AgentsIdleKey, agentId);
+            await _store.SetRemoveAsync(AgentsIdleKey, agentId.Value);
 
         // Redis write confirmed — clear the pending flag so GetAgentRaw returns null
         // (rather than the snapshot) if the hash is subsequently force-expired or deleted
         // cross-replica, ensuring stale snapshot entries are not returned after the
         // initial fire-and-forget write window has closed.
-        _pendingRegistrationWrite.TryRemove(agentId, out _);
+        _pendingRegistrationWrite.TryRemove(agentId.Value, out _);
     }
 
     // ── Deregister ────────────────────────────────────────────────────
@@ -257,6 +270,17 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         if (connectionId is not null)
             _connectionIndex.TryRemove(connectionId, out _);
 
+        // TODO (WARNING, issue #2758): When Register was called with preserveExistingConnectionId=true
+        // (mid-run kiro-cli reconnect), _connectionIndex retains both conn-A and conn-B. DeregisterAsync
+        // only removes snap.ConnectionId (conn-B, the primary); conn-A's entry is never removed here.
+        // OnDisconnectedAsync also returns early for stale conn-A (AgentHub.cs guard), so that path
+        // does not clean it up either. The leak is functionally benign — GetByConnectionId("conn-A")
+        // returns null after deregister because GetAgentRaw returns null (hash deleted) — but the
+        // dictionary key is retained for the agent's lifetime. Under sustained mid-run reconnects
+        // (e.g. long decomposition runs) this is O(N) unbounded growth. Consider removing
+        // Context.ConnectionId from _connectionIndex in the OnDisconnectedAsync guard branch so the
+        // stale key is reclaimed at connection close rather than never.
+
         // Unconditionally clear the local snapshot so that a subsequent heartbeat does NOT
         // recreate the entry for an intentionally deregistered agent (issue #2110 AC4).
         // This must NOT be inside the `if (entry is not null)` block: if the Redis hash has
@@ -291,7 +315,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // as a separate fire-and-forget so awaiting LastHeartbeatTask does not throw TaskCanceledException
         // on the success path (OnlyOnFaulted causes the continuation to transition to Canceled when the
         // antecedent succeeds, not RanToCompletion).
-        var heartbeatTask = UpdateHeartbeatAsync(agentId.Value, timestamp);
+        var heartbeatTask = UpdateHeartbeatAsync(agentId, timestamp);
         _ = heartbeatTask.ContinueWith(t => _logger.Warning(t.Exception,
                 "UpdateHeartbeat: Redis write failed for agent {AgentId} — TTL not refreshed, agent may be evicted prematurely",
                 agentId.Value), TaskContinuationOptions.OnlyOnFaulted);
@@ -299,9 +323,9 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         _ = heartbeatTask;
     }
 
-    private async Task UpdateHeartbeatAsync(string agentId, DateTimeOffset timestamp)
+    private async Task UpdateHeartbeatAsync(AgentId agentId, DateTimeOffset timestamp)
     {
-        var key = AgentKey(agentId);
+        var key = AgentKey(agentId.Value);
 
         // Guard: if the hash is absent, distinguish between TTL expiry and explicit deregister.
         // Both conditions produce ExistsAsync == false, so we use _localSnapshot as the discriminator:
@@ -316,14 +340,14 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // serialise re-registration.
         if (!await _store.ExistsAsync(key))
         {
-            if (_localSnapshot.TryGetValue(agentId, out var snapshot))
+            if (_localSnapshot.TryGetValue(agentId.Value, out var snapshot))
             {
                 _logger.Warning(
                     "Heartbeat for TTL-expired agent {AgentId} — re-registering from local snapshot to restore registry",
-                    agentId);
+                    agentId.Value);
 
                 var fields = AgentEntryToHashEntries(
-                    agentId: agentId,
+                    agentId: agentId.Value,
                     connectionId: snapshot.ConnectionId,
                     hostname: snapshot.Hostname,
                     labels: snapshot.Labels,
@@ -343,7 +367,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
                 return;
             }
 
-            _logger.Warning("Heartbeat for unknown/deregistered agent {AgentId} — ignoring", agentId);
+            _logger.Warning("Heartbeat for unknown/deregistered agent {AgentId} — ignoring", agentId.Value);
             return;
         }
 
@@ -352,7 +376,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
 
         // Self-healing: restore set membership in case the cleanup sweep removed this member
         // during a brief hash expiry / re-register race. Only fires when hash is confirmed alive.
-        await _store.SetAddAsync(AgentsAllKey, agentId);
+        await _store.SetAddAsync(AgentsAllKey, agentId.Value);
     }
 
     // ── TransitionStatus ──────────────────────────────────────────────

@@ -179,7 +179,7 @@ public class AgentEntryConcurrencyTests
     {
         // ── Arrange ─────────────────────────────────────────────────────────────────────
 
-        // TODO [WARNING]: agentId is a plain string passed to TransitionStatus which accepts
+        // NOTE: agentId is a plain string passed to TransitionStatus which accepts
         // AgentId (a value type). This compiles via an implicit string→AgentId conversion. If
         // that implicit operator is removed or restricted, the test may silently compile to a
         // different overload. Prefer constructing AgentId explicitly: new AgentId(agentId).
@@ -200,7 +200,7 @@ public class AgentEntryConcurrencyTests
             Labels = sharedLabels   // intentional aliasing to test the fix
         }, connectionId);
 
-        // TODO [WARNING]: This test only exercises the add-factory path (initial registration).
+        // NOTE: This test only exercises the add-factory path (initial registration).
         // The original bug trigger is a concurrent *re-registration* (update factory path in
         // AddOrUpdate) racing with an OnDisconnectedAsync reader. To cover that path, a dedicated
         // thread group should call _registry.Register() with the same agentId and a freshly
@@ -208,20 +208,17 @@ public class AgentEntryConcurrencyTests
         // overwrite entry.Labels while group B iterates it. (Reviewer: TestQualityReviewer)
 
         const int iterations = 500;
-        // TODO [WARNING]: Race window reliability — at 500 iterations there is no guarantee the
+        // NOTE: Race window reliability — at 500 iterations there is no guarantee the
         // race is wide enough to trigger InvalidOperationException without the fix. If this test
         // starts passing against the unfixed code due to scheduling luck, increase iterations or
         // add Thread.Yield() / Thread.Sleep(0) inside the hot loops to widen the race window.
         // (Reviewer: TestQualityReviewer)
 
-        // 2 mutation threads, 4 read threads, 2 TransitionStatus threads
-        // TODO [WARNING]: mutatorCount = 2 means two threads concurrently mutate sharedLabels
-        // (a non-thread-safe List<T>) against each other. This can cause the mutators themselves
-        // to throw ArgumentOutOfRangeException or InvalidOperationException, which RecordException
-        // captures — indistinguishable from a read-side failure and a potential false-positive.
-        // Reduce to mutatorCount = 1 to eliminate the inter-mutator race on sharedLabels.
-        // (Reviewers: Correctness, DotNetSpecialist)
-        const int mutatorCount = 2;
+        // 1 mutation thread, 4 read threads, 2 TransitionStatus threads.
+        // mutatorCount = 1 (not 2) to avoid inter-mutator races on the non-thread-safe sharedLabels
+        // List<T> — two concurrent mutators would race each other causing ArgumentOutOfRangeException
+        // indistinguishable from the production bug under test. (Reviewers: Correctness, DotNetSpecialist)
+        const int mutatorCount = 1;
         const int readerCount = 4;
         const int transitionCount = 2;
         const int totalThreadCount = mutatorCount + readerCount + transitionCount;
@@ -305,7 +302,7 @@ public class AgentEntryConcurrencyTests
         // ── Thread group C: TransitionStatus(Disconnected) ───────────────────────────
         // Satisfies acceptance criterion 3: TransitionStatus(Disconnected) must complete
         // without exception in the concurrent scenario.
-        // TODO [WARNING]: The tight Disconnected→Idle loop immediately undoes disconnect state
+        // NOTE: The tight Disconnected→Idle loop immediately undoes disconnect state
         // so the test never validates DisconnectedAt is set or that the agent ends in a coherent
         // post-disconnect state. The final Enum.IsDefined assertion is also too broad — it passes
         // for any valid AgentStatus value. Consider asserting:

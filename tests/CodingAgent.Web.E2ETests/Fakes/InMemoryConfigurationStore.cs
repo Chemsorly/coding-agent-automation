@@ -239,17 +239,17 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
         return Task.CompletedTask;
     }
 
-    public Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, TemplateId templateId, CancellationToken ct)
+    public Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, TemplateId templateId, CancellationToken ct)
     {
         var templateIdValue = templateId.Value;
-        var source = _projects.FirstOrDefault(p => p.Id == sourceProjectId);
+        var source = _projects.FirstOrDefault(p => p.Id == sourceProjectId.Value);
         if (source is not null)
         {
             _projects.Remove(source);
             _projects.Add(source with { TemplateIds = source.TemplateIds.Where(id => id != templateIdValue).ToList() });
         }
 
-        var target = _projects.FirstOrDefault(p => p.Id == targetProjectId);
+        var target = _projects.FirstOrDefault(p => p.Id == targetProjectId.Value);
         if (target is not null && !target.TemplateIds.Contains(templateIdValue))
         {
             _projects.Remove(target);

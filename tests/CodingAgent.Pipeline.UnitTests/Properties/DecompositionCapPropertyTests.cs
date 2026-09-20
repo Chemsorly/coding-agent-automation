@@ -3,6 +3,7 @@ using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Services.Steps;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
@@ -93,7 +94,7 @@ public class DecompositionCapPropertyTests
             Labels = input.Labels
         };
 
-        var result = OpenIssueContextWriter.FormatIssueMarkdown(detail);
+        var result = WriteOpenIssueContextStep.FormatIssueMarkdown(detail);
 
         // Verify YAML front-matter structure
         var lines = result.Split('\n');
@@ -193,9 +194,46 @@ public class DecompositionCapPropertyTests
 
             // Act
             var logger = new Mock<Serilog.ILogger>();
-            var writer = new OpenIssueContextWriter(logger.Object);
-            var writtenCount = await writer.WriteOpenIssueContextAsync(
-                mockIssueOps.Object, tempDir, input.MaxIssues, CancellationToken.None);
+            var callbacks = new Mock<IPipelineCallbacks>();
+            callbacks.Setup(c => c.TransitionTo(It.IsAny<PipelineStep>()));
+            callbacks.Setup(c => c.EmitOutputLine(It.IsAny<string>()));
+
+            var step = new WriteOpenIssueContextStep();
+            var context = new PipelineStepContext
+            {
+                Run = new PipelineRun
+                {
+                    RunId = Guid.NewGuid().ToString(),
+                    IssueIdentifier = "1",
+                    IssueTitle = "Test",
+                    IssueProviderConfigId = "ip",
+                    RepoProviderConfigId = "rp",
+                    StartedAt = DateTime.UtcNow,
+                    RunType = PipelineRunType.Implementation,
+                    WorkspacePath = tempDir
+                },
+                Config = new PipelineConfiguration
+                {
+                    WorkspaceBaseDirectory = Path.GetTempPath(),
+                    MaxOpenIssuesForContext = input.MaxIssues
+                },
+                RepoProvider = Mock.Of<IRepositoryProvider>(),
+                AgentProvider = Mock.Of<IAgentProvider>(),
+                BrainProvider = null,
+                PipelineProvider = null,
+                Cts = null,
+                ConfigStore = Mock.Of<IConfigurationStore>(),
+                Callbacks = callbacks.Object,
+                IssueOps = mockIssueOps.Object,
+                AgentExecution = Mock.Of<IAgentPhaseExecutor>(),
+                QualityGates = Mock.Of<IQualityGateExecutor>(),
+                BrainSync = null,
+                PrOrchestrator = new PullRequestOrchestrator(logger.Object),
+                Logger = logger.Object
+            };
+
+            await step.ExecuteAsync(context, CancellationToken.None);
+            var writtenCount = context.Run.OpenIssuesDownloaded;
 
             var expectedCount = Math.Min(input.AvailableIssues, input.MaxIssues);
 

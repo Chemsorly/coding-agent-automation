@@ -137,6 +137,10 @@ public class IssueContextBuilderTests
         result!.IssueComments.Should().HaveCount(50);
     }
 
+    // TODO: Add a test covering the case where both gate_rejection AND gate_wont_do comments are
+    // newer than the analysis comment simultaneously. The if/else-if ordering means gate_rejection
+    // wins, but this precedence is untested — a future refactor swapping the branches would produce
+    // no test failure. See DetectAnalysisStalenessAsync in DispatchInfrastructure.cs.
     [Fact]
     public async Task BuildIssueContextAsync_WithExistingAnalysis_DetectsGateRejection()
     {
