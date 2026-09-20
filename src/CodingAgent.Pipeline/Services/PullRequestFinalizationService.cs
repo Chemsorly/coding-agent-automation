@@ -321,12 +321,36 @@ public sealed class PullRequestFinalizationService
             var filePath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.PrDescriptionFilePath);
             if (!File.Exists(filePath))
             {
-                // TODO: The issue requirement stated a fallback to OutputLines-based extraction when the file is
-                // absent. The current implementation skips the update entirely instead. If the agent fails to
-                // write the file (e.g., tool execution error), the PR body receives no description. Consider
-                // whether a best-effort OutputLines fallback is worth restoring for resilience.
-                _logger.Warning("Pipeline {RunId} PR description file not found at {Path}, description skipped",
+                _logger.Warning("Pipeline {RunId} PR description file not found at {Path}, using OutputLines fallback",
                     run.RunId, filePath);
+
+                var fallbackText = StripBlockquotePrefix(string.Join("\n", result.OutputLines));
+                if (!string.IsNullOrWhiteSpace(fallbackText))
+                {
+                    // TODO: The file-present path has the same pattern, but neither checks ct.IsCancellationRequested
+                    // before the int.TryParse guard early-return. Consider adding ct.ThrowIfCancellationRequested()
+                    // before the async call for consistency with general cancellation patterns.
+                    if (!int.TryParse(run.PullRequestNumber, out var prNumberFallback))
+                    {
+                        _logger.Warning("Pipeline {RunId} PR description fallback skipped — PullRequestNumber '{PrNumber}' is not a valid integer",
+                            run.RunId, run.PullRequestNumber);
+                        return;
+                    }
+                    // TODO: When run.PullRequestBody is null (no body set before description generation), ?? ""
+                    // produces an empty string and the resulting body ends with a spurious "\n\n---\n\n" separator.
+                    // The file-present path at line ~371 has the same pattern. Consider omitting the separator
+                    // entirely when currentBody is empty: newBody = string.IsNullOrWhiteSpace(currentBody)
+                    //   ? fallbackText : $"{fallbackText}\n\n---\n\n{currentBody}".
+                    var currentBodyFallback = run.PullRequestBody ?? "";
+                    var newBodyFallback = $"{fallbackText}\n\n---\n\n{currentBodyFallback}";
+                    await repoProvider.UpdatePullRequestAsync(prNumberFallback, newBodyFallback, null, ct);
+                    run.PullRequestBody = newBodyFallback;
+                    _logger.Information("Pipeline {RunId} PR description applied from OutputLines fallback", run.RunId);
+                }
+                else
+                {
+                    _logger.Warning("Pipeline {RunId} PR description fallback: OutputLines also empty, description skipped", run.RunId);
+                }
                 return;
             }
 
