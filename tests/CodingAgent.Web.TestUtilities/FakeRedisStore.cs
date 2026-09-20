@@ -99,6 +99,12 @@ public sealed class FakeRedisStore : IRedisStore
         return Task.FromResult(hash.Select(kv => new HashEntry(kv.Key, kv.Value)).ToArray());
     }
 
+    public Task<HashEntry[]> HashGetAllAsync(string key, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        return HashGetAllAsync(key);
+    }
+
     public Task HashSetAsync(string key, HashEntry[] fields)
     {
         // Clear any stale expiry — real Redis: HSET on a key with a past TTL resurrects it with no TTL.
@@ -141,6 +147,12 @@ public sealed class FakeRedisStore : IRedisStore
         if (IsExpired(key) || !_sets.TryGetValue(key, out var set))
             return Task.FromResult(Array.Empty<string>());
         return Task.FromResult(set.Keys.ToArray());
+    }
+
+    public Task<string[]> SetMembersAsync(string key, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        return SetMembersAsync(key);
     }
 
     public Task<long> SetCardinalityAsync(string key)

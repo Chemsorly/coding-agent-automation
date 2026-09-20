@@ -219,7 +219,7 @@ public sealed class ApiProjectStore : IProjectStore
         lock (_cacheLock) { _templatesCache.Clear(); }
     }
 
-    public async Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, TemplateId templateId, CancellationToken ct)
+    public async Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, TemplateId templateId, CancellationToken ct)
     {
         await _client.MoveTemplateAsync(sourceProjectId, targetProjectId, templateId.ToString(), ct);
         lock (_cacheLock)
@@ -375,7 +375,7 @@ public sealed class ApiConfigurationStore : IConfigurationStore
     public Task DeleteTemplateAsync(string projectId, TemplateId templateId, CancellationToken ct)
         => _projects.DeleteTemplateAsync(projectId, templateId, ct);
 
-    public Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, TemplateId templateId, CancellationToken ct)
+    public Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, TemplateId templateId, CancellationToken ct)
         => _projects.MoveTemplateAsync(sourceProjectId, targetProjectId, templateId, ct);
 
     public Task<bool> HasEnabledTemplatesAsync(CancellationToken ct)

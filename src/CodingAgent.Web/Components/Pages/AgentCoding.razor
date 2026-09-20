@@ -48,12 +48,12 @@
         @* TODO(#1775): Migrate _successMessage/_errorMessage to <InlineStatus> component for inline feedback (issue #876 requirement) *@
         @if (!string.IsNullOrEmpty(_successMessage))
         {
-            <div class="settings-status status-success">@_successMessage</div>
+            <div class="settings-status settings-status-toast status-success">@_successMessage</div>
         }
 
         @if (!string.IsNullOrEmpty(_errorMessage))
         {
-            <div class="settings-status status-error">
+            <div class="settings-status settings-status-toast status-error">
                 <span class="toast-message">@_errorMessage</span>
                 <button class="agent-summary-dismiss" @onclick="DismissError" title="Dismiss">✕</button>
             </div>

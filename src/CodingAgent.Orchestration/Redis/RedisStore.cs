@@ -40,6 +40,18 @@ public sealed class RedisStore : IRedisStore
     public async Task<HashEntry[]> HashGetAllAsync(string key)
         => await _db.HashGetAllAsync(key);
 
+    public async Task<HashEntry[]> HashGetAllAsync(string key, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        // TODO (WARNING): WaitAsync(ct) provides "observe and abandon" cancellation, not true abort.
+        // If ct fires after the Redis command has been sent, WaitAsync throws OperationCanceledException
+        // and discards the Task, but StackExchange.Redis continues the in-flight read on its multiplexer
+        // thread until completion. The result is silently discarded and the connection is not freed early.
+        // This is the correct pattern for a driver that has no native cancellation support — do not
+        // replace WaitAsync with a custom abort mechanism, as none exists for this driver.
+        return await _db.HashGetAllAsync(key).WaitAsync(ct);
+    }
+
     public async Task HashSetAsync(string key, HashEntry[] fields)
         => await _db.HashSetAsync(key, fields);
 
@@ -55,6 +67,19 @@ public sealed class RedisStore : IRedisStore
     public async Task<string[]> SetMembersAsync(string key)
     {
         var members = await _db.SetMembersAsync(key);
+        return members.Select(m => (string)m!).Where(m => m is not null).ToArray();
+    }
+
+    public async Task<string[]> SetMembersAsync(string key, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        // TODO (WARNING): WaitAsync(ct) provides "observe and abandon" cancellation, not true abort.
+        // If ct fires after the Redis command has been sent, WaitAsync throws OperationCanceledException
+        // and discards the Task, but StackExchange.Redis continues the in-flight read on its multiplexer
+        // thread until completion. The result is silently discarded and the connection is not freed early.
+        // This is the correct pattern for a driver that has no native cancellation support — do not
+        // replace WaitAsync with a custom abort mechanism, as none exists for this driver.
+        var members = await _db.SetMembersAsync(key).WaitAsync(ct);
         return members.Select(m => (string)m!).Where(m => m is not null).ToArray();
     }
 

@@ -68,8 +68,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     [Fact]
     public async Task RejectJobAsync_Consolidation_IncrementsRejectedCounterWithBusyTag()
     {
-        // Characterization test: pins rejection telemetry behavior on the consolidation handler path.
-        // HandleAssignConsolidationJobAsync was extracted to ConsolidationJobHandler — call it there.
+        // Characterization test: pins rejection telemetry behavior on the consolidation executor path.
+        // HandleAssignConsolidationJobAsync was extracted to ConsolidationJobExecutor — call it there.
         var (listener, measurements) = CreateMeterListener();
         using (listener)
         {
@@ -100,8 +100,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     [Fact]
     public async Task HandleAssignConsolidationJobAsync_IncrementsReceivedCounter()
     {
-        // Characterization test: pins received counter behavior on the consolidation handler path.
-        // HandleAssignConsolidationJobAsync was extracted to ConsolidationJobHandler — call it there.
+        // Characterization test: pins received counter behavior on the consolidation executor path.
+        // HandleAssignConsolidationJobAsync was extracted to ConsolidationJobExecutor — call it there.
         // TODO [WARNING]: Same idle-agent background task concern as HandleAssignJobAsync_IncrementsReceivedCounter —
         // the dispatched Task.Run is not awaited, leaving uncontrolled work during teardown.
         // Consider using a busy agent to keep the test scope narrow.
@@ -172,7 +172,7 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             PipelineConfiguration = new PipelineConfiguration()
         };
 
-        // HandleAssignConsolidationJobAsync was extracted to ConsolidationJobHandler — call it there.
+        // HandleAssignConsolidationJobAsync was extracted to ConsolidationJobExecutor — call it there.
         var consolidationHandler = GetConsolidationJobHandler(service);
         await (Task)GetMethod(consolidationHandler, "HandleAssignConsolidationJobAsync")
             .Invoke(consolidationHandler, [message])!;
@@ -302,8 +302,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             new PipelineConfiguration(), Mock.Of<IQualityGateValidator>(), logger,
             AgentIdentity: new AgentId("test")));
 
-        var chatHandler = TestAgentWorkerServiceFactory.CreateChatJobHandler(lifecycle, slotManager, mockOrchestrator.Object, lifetime, logger);
-        var consolidationHandler = new ConsolidationJobHandler(lifecycle, slotManager, throwingConsolidation.Object, logger);
+        var chatHandler = TestAgentWorkerServiceFactory.CreateChatJobExecutor(lifecycle, slotManager, mockOrchestrator.Object, lifetime, logger);
+        var consolidationHandler = new ConsolidationJobExecutor(lifecycle, slotManager, throwingConsolidation.Object, logger);
 
         var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
             lifecycle, slotManager,
@@ -427,7 +427,7 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     // reverted back to sequential code.
     //
     // The companion source-scan test (SourceCode_RunChatTaskAsync_ReleaseChatSlotIsInsideFinallyBlock)
-    // was removed in the test-suite audit: it asserted on the raw text of ChatJobHandler.cs and, by
+    // was removed in the test-suite audit: it asserted on the raw text of ChatJobExecutor.cs and, by
     // its own admission, passed whenever a `finally` keyword appeared anywhere before the first
     // ReleaseChatSlot() substring — it did not verify lexical enclosure. Issue #1857 therefore has
     // NO effective regression guard today.
@@ -644,28 +644,28 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         ?? throw new InvalidOperationException($"Method '{name}' not found");
 
     /// <summary>
-    /// Gets a public method on a handler class by name. Used for ChatJobHandler and
-    /// ConsolidationJobHandler methods that moved from private on AgentWorkerService
-    /// to public on the extracted handler class.
+    /// Gets a public method on an executor class by name. Used for ChatJobExecutor and
+    /// ConsolidationJobExecutor methods that moved from private on AgentWorkerService
+    /// to public on the extracted executor class.
     /// </summary>
     private static MethodInfo GetMethod(object obj, string name) =>
         obj.GetType().GetMethod(name, BindingFlags.Public | BindingFlags.Instance)
         ?? throw new InvalidOperationException($"Method '{name}' not found on {obj.GetType().Name}");
 
-    private static ChatJobHandler GetChatJobHandler(AgentWorkerService service)
+    private static ChatJobExecutor GetChatJobHandler(AgentWorkerService service)
     {
         var field = typeof(AgentWorkerService).GetField("_chatJobHandler",
             BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException("Field '_chatJobHandler' not found");
-        return (ChatJobHandler)field.GetValue(service)!;
+        return (ChatJobExecutor)field.GetValue(service)!;
     }
 
-    private static ConsolidationJobHandler GetConsolidationJobHandler(AgentWorkerService service)
+    private static ConsolidationJobExecutor GetConsolidationJobHandler(AgentWorkerService service)
     {
         var field = typeof(AgentWorkerService).GetField("_consolidationJobHandler",
             BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException("Field '_consolidationJobHandler' not found");
-        return (ConsolidationJobHandler)field.GetValue(service)!;
+        return (ConsolidationJobExecutor)field.GetValue(service)!;
     }
 
     private static void SetPrivateField(object obj, string name, object? value)

@@ -97,6 +97,158 @@ public class QualityGateExecutorCiPollingTests
             run.BranchName!, "sha-head-abc", It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
+    /// <summary>
+    /// Acceptance criterion (issue #2798): after the fix, the combined poll-plus-infra-retry session
+    /// is bounded by a single ExternalCiTimeout window.
+    ///
+    /// Scenario: initial poll → Cancelled → branch moved → re-poll → infrastructure failure →
+    /// infra-retry starts and blocks in WaitForCompletionAsync → ExternalCiTimeout fires →
+    /// AppendExternalCiIfNeededAsync returns a "timed out" gate result WITHOUT waiting for a second
+    /// full ExternalCiTimeout.
+    ///
+    /// Before the fix, ExecuteInfraRetryAsync was passed the raw outer `ct` (never cancelled), so
+    /// its WaitForCompletionAsync would block indefinitely past ExternalCiTimeout.
+    /// After the fix, it receives `pollCt` (linked to timeoutCts), so the timeout fires and the
+    /// OCE propagates through ExecuteInfraRetryAsync → PollAndHandleInfraRetryAsync →
+    /// AppendExternalCiIfNeededAsync's catch (OperationCanceledException) when (!ct.IsCancellationRequested),
+    /// which converts it to a failing "timed out" gate result.
+    /// </summary>
+    [Fact]
+    public async Task AppendExternalCi_WhenInfraRetryRunsAfterBranchMovedPolls_IsBoundedBySingleExternalCiTimeout()
+    {
+        var run = CreateRun();
+
+        // ── SHA sequence ─────────────────────────────────────────────────────
+        // Call 1: after CommitAndPushAsync (initial push) → "sha-original"
+        // Call 2: inside branch-moved loop after Cancelled → "sha-moved" (different, triggers re-poll)
+        // Call 3+: any subsequent reads (infra-retry's own SHA read after its push)
+        // TODO [WARNING] (#2798 DotNetSpecialist): SetupSequence registers exactly 3 return values.
+        // If ExecuteInfraRetryAsync calls TryReadHeadShaAsync more than once (e.g. future retry
+        // logic), the sequence exhausts and Moq returns null by default — silently changing test
+        // behaviour without a failure. Add a catch-all Setup after the sequence to return
+        // "sha-infra-retry" for any call beyond the third, making the fallback explicit.
+        _mockRepoProvider.SetupSequence(r => r.GetHeadCommitShaAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("sha-original")
+            .ReturnsAsync("sha-moved")
+            .ReturnsAsync("sha-infra-retry");
+
+        // ── GetRunStatusAsync — CRITICAL: must return non-Pending with jobs ──
+        // WaitForCiRunsToAppearAsync loops on GetRunStatusAsync until non-Pending.
+        // If this returns Pending, WaitForCompletionAsync is never reached and the test is vacuous.
+        // Keep the class-level default (Running with one job) — it already satisfies this requirement.
+        // TODO [WARNING] (#2798 TestQualityReviewer): This test implicitly relies on the class-level
+        // SetupDefaultMocks() returning Running for GetRunStatusAsync. If that default is changed
+        // (e.g. to Pending), WaitForCiRunsToAppearAsync will time out after CiNotStartedTimeout
+        // (50 ms) and the infra-retry path is never reached — causing a misleading Times.AtLeast(2)
+        // failure. Consider explicitly setting up GetRunStatusAsync in this test to remove the
+        // implicit dependency and make the setup self-documenting.
+
+        // ── Infrastructure-classified failure — CRITICAL ──────────────────────
+        // CiFailureClassifier.Classify only returns Infrastructure when LogContent matches known
+        // infra-error strings. A generic Failed status returns Unknown and the while loop is a no-op.
+        var infraFailureStatus = new PipelineRunStatus
+        {
+            State = PipelineRunState.Failed,
+            Jobs = new List<PipelineJobResult>
+            {
+                new() { Name = "build", State = PipelineRunState.Failed, LogContent = "lost communication with the server" }
+            }
+        };
+
+        // ── TaskCompletionSource gate for the infra-retry WaitForCompletionAsync call ──
+        // The TCS never completes — WaitForCompletionAsync blocks until pollCt fires.
+        var infraRetryBlocker = new TaskCompletionSource<PipelineRunStatus>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // WaitForCompletionAsync dispatch by call count:
+        //   Call 1 (initial poll)      → Cancelled (triggers branch-moved loop)
+        //   Call 2 (branch-moved poll) → infrastructure failure (triggers infra-retry loop)
+        //   Call 3 (infra-retry poll)  → blocks via TCS.WaitAsync(token) until pollCt fires
+        var waitCallCount = 0;
+        _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string _, string? _, TimeSpan _, CancellationToken token) =>
+            {
+                var callIndex = Interlocked.Increment(ref waitCallCount);
+                return callIndex switch
+                {
+                    1 => new PipelineRunStatus { State = PipelineRunState.Cancelled, Jobs = new List<PipelineJobResult>() },
+                    2 => infraFailureStatus,
+                    _ => await infraRetryBlocker.Task.WaitAsync(token)
+                };
+            });
+
+        // ── CommitAllAsync: empty-commit overload used by ExecuteInfraRetryAsync ──
+        _mockRepoProvider.Setup(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                true, It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
+
+        // ── Context with short ExternalCiTimeout so timeoutCts fires quickly ──
+        // CiCancelledMoveMaxRetries = 1 → branch-moved loop fires once.
+        // MaxInfrastructureRetries = 1 → infra-retry while loop fires at least once.
+        // Outer ct = CancellationToken.None → only pollCt fires, not the pipeline CT.
+        // TODO [WARNING] (#2798 Correctness/TestQualityReviewer): ExternalCiTimeout = 500 ms is
+        // marginal. On a slow/loaded CI host, timeoutCts may fire before all three
+        // WaitForCompletionAsync calls complete, causing a green result via an earlier-circuit OCE
+        // path (e.g. from WaitForCiRunsToAppearAsync) rather than from the infra-retry blocker —
+        // making the Times.AtLeast(2) verify potentially fail non-deterministically. Consider
+        // increasing ExternalCiTimeout to at least 5 seconds (and reducing CiNotStartedTimeout to
+        // 1 ms) to ensure the infra-retry WaitForCompletionAsync call is always reached before the
+        // budget expires. Also consider strengthening the Verify to Times.Exactly(3) to pin that
+        // the timeout fires specifically during the third (infra-retry) call.
+        var context = new QualityGateContext
+        {
+            Run = run,
+            Config = new PipelineConfiguration
+            {
+                AgentTimeout = TimeSpan.FromMinutes(10),
+                MaxRetries = 0,
+                MaxInfrastructureRetries = 1,
+                CiCancelledMoveMaxRetries = 1,
+                ExternalCiTimeout = TimeSpan.FromMilliseconds(500),
+                ExternalCiPollInterval = TimeSpan.FromMilliseconds(10),
+                CiNotStartedTimeout = TimeSpan.FromMilliseconds(50),
+                CiNotStartedMaxRetries = 0,
+                StallPollInterval = TimeSpan.FromMilliseconds(50),
+                StallWarningInterval = TimeSpan.FromHours(1)
+            },
+            AgentProvider = new Mock<IAgentProvider>().Object,
+            IssueOps = _mockIssueOps.Object,
+            Callbacks = _mockCallbacks.Object,
+            RepoProvider = _mockRepoProvider.Object,
+            PipelineProvider = _mockPipelineProvider.Object,
+            QualityGateConfigs = new List<QualityGateConfiguration>()
+        };
+
+        // ── Execute ──────────────────────────────────────────────────────────
+        // Outer ct = CancellationToken.None — the pipeline CT is NOT cancelled.
+        // After the fix, pollCt fires after ExternalCiTimeout (500 ms) and the OCE propagates
+        // to AppendExternalCiIfNeededAsync's catch (OCE) when (!ct.IsCancellationRequested) handler.
+        var result = await _executor.AppendExternalCiIfNeededAsync(
+            context, PassingReport, allowEmptyCommit: false, CancellationToken.None);
+
+        // ── Assert ───────────────────────────────────────────────────────────
+        result.ExternalCi.Should().NotBeNull(
+            "infra-retry timeout OCE must be caught by AppendExternalCiIfNeededAsync and converted to a gate result");
+        result.ExternalCi!.Passed.Should().BeFalse(
+            "external CI gate must fail when ExternalCiTimeout fires during infra-retry");
+        result.ExternalCi.Details.Should().Contain("timed out",
+            "Details must identify ExternalCiTimeout as the cause (BuildCiTimeoutGateResult path)");
+
+        // WaitForCompletionAsync was called at least twice (initial poll + branch-moved re-poll)
+        // before reaching the infra-retry, confirming the full sequence exercised ExecuteInfraRetryAsync.
+        // TODO [WARNING] (#2798 TestQualityReviewer): Times.AtLeast(2) is too weak — it passes even
+        // if the infra-retry loop ran multiple times or the infra-retry call was never reached (if
+        // 2 calls happened before it). Consider Times.Exactly(3) with a descriptive message
+        // ("initial poll, branch-moved re-poll, infra-retry block") to precisely pin that the
+        // timeout fires during the third call only.
+        _mockPipelineProvider.Verify(p => p.WaitForCompletionAsync(
+            run.BranchName!, It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+            Times.AtLeast(2),
+            "at minimum the initial poll and branch-moved re-poll must have run before the infra-retry block");
+    }
+
     [Fact]
     public async Task AppendExternalCi_WhenShaReadFails_PassesNullToPoller()
     {

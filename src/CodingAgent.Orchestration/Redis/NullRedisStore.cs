@@ -18,11 +18,13 @@ internal sealed class NullRedisStore : IRedisStore
     public Task<bool> ExpireAsync(string key, TimeSpan expiry) => Task.FromResult(false);
     public Task<bool> ExpireAtAsync(string key, DateTimeOffset expiry) => Task.FromResult(false);
     public Task<HashEntry[]> HashGetAllAsync(string key) => Task.FromResult(Array.Empty<HashEntry>());
+    public Task<HashEntry[]> HashGetAllAsync(string key, CancellationToken ct) => Task.FromResult(Array.Empty<HashEntry>());
     public Task HashSetAsync(string key, HashEntry[] fields) => Task.CompletedTask;
     public Task<bool> HashSetFieldAsync(string key, string field, string value) => Task.FromResult(false);
     public Task<long> SetAddAsync(string key, string value) => Task.FromResult(0L);
     public Task<long> SetRemoveAsync(string key, string value) => Task.FromResult(0L);
     public Task<string[]> SetMembersAsync(string key) => Task.FromResult(Array.Empty<string>());
+    public Task<string[]> SetMembersAsync(string key, CancellationToken ct) => Task.FromResult(Array.Empty<string>());
     public Task<long> SetCardinalityAsync(string key) => Task.FromResult(0L);
     public Task<long> ListRightPushAsync(string key, string[] values) => Task.FromResult(0L);
     public Task ListTrimAsync(string key, long start, long stop) => Task.CompletedTask;
