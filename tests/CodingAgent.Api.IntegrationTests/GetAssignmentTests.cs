@@ -1115,6 +1115,78 @@ public sealed class GetAssignmentTests
             "no secrets should be injected when the project's Secrets dictionary is empty");
     }
 
+    // ── Payload deserialization characterization (Issue #2776) ────────────────────
+    // Guard tests documenting the behavioral changes introduced by centralizing
+    // deserialization behind WorkItemPayload.TryDeserialize with PipelineJsonOptions.Lenient.
+
+    [Fact]
+    public async Task GetAssignment_PascalCasePayload_Returns200()
+    {
+        // ARRANGE: seed a work item with a hand-crafted PascalCase payload (old-schema, ProviderConfigs != null).
+        // With PipelineJsonOptions.Default (case-sensitive), this payload would deserialize to null
+        // → GetAssignment returned 404. With PipelineJsonOptions.Lenient it must return 200.
+        // This test is a RED→GREEN characterization: it must fail before the fix and pass after.
+        var dbName = $"GetAssignment-PascalCase-{Guid.NewGuid():N}";
+        var dbFactory = CreateDbFactory(dbName);
+
+        const string pascalCasePayload = """
+            {
+                "IssueIdentifier": "owner/repo#42",
+                "IssueProviderConfigId": "prov-1",
+                "RepoProviderConfigId": "repo-1",
+                "InitiatedBy": "legacy-test",
+                "TaskType": "Implementation",
+                "AgentSelector": "dotnet",
+                "TimeoutSeconds": 3600,
+                "ProviderConfigs": [
+                    {
+                        "Id": "repo-1",
+                        "Kind": "Repository",
+                        "DisplayName": "Test Repo",
+                        "ProviderType": "GitHub"
+                    }
+                ],
+                "QualityGateConfigs": [],
+                "ReviewerConfigs": [],
+                "McpServers": [],
+                "PipelineConfiguration": {}
+            }
+            """;
+
+        var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, pascalCasePayload);
+
+        // ACT
+        var result = await WorkItemAgentEndpoints.GetAssignment(
+            id, dbFactory, CreateNullProjectStore(), null);
+
+        // ASSERT: must return 200 (Lenient options parse PascalCase successfully)
+        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
+        okResult.Should().NotBeNull(
+            "a PascalCase payload must be deserialized successfully with Lenient options and return 200");
+        okResult!.Value!.InitiatedBy.Should().Be("legacy-test");
+    }
+
+    [Fact]
+    public async Task GetAssignment_MalformedPayload_Returns404()
+    {
+        // ARRANGE: seed a work item with a malformed (corrupt) payload string.
+        // Before the fix: JsonSerializer.Deserialize with Default options would throw JsonException → 500.
+        // After the fix: TryDeserialize catches the exception → returns false → GetAssignment returns 404.
+        var dbName = $"GetAssignment-Malformed-{Guid.NewGuid():N}";
+        var dbFactory = CreateDbFactory(dbName);
+
+        var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, "{garbage-json");
+
+        // ACT
+        var result = await WorkItemAgentEndpoints.GetAssignment(
+            id, dbFactory, CreateNullProjectStore(), null);
+
+        // ASSERT: 404 (not a 500)
+        var notFoundResult = result as Microsoft.AspNetCore.Http.HttpResults.NotFound;
+        notFoundResult.Should().NotBeNull(
+            "a malformed payload must return 404, not throw a JsonException (500)");
+    }
+
     // ── Infrastructure: PipelineDbContext in-memory subclass ──────────────────────
 
     private sealed class TestableDbContext : PipelineDbContext

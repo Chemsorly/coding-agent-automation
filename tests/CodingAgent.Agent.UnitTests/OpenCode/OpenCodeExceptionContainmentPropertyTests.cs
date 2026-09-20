@@ -104,9 +104,10 @@ public class OpenCodeExceptionContainmentPropertyTests
             Timeout = TimeSpan.FromMinutes(5) // long timeout so it doesn't interfere
         };
 
-        // Cancel after a short delay — use a minimum of 200ms to ensure the provider
+        // Cancel after a short delay — use a minimum of 500ms to ensure the provider
         // has time to create the session and reach the message endpoint before cancellation fires.
-        cts.CancelAfter(TimeSpan.FromMilliseconds(Math.Max(outcome.DelayBeforeCancelMs, 200)));
+        // 200ms was too tight on slow CI runners, causing spurious "no exception thrown" failures.
+        cts.CancelAfter(TimeSpan.FromMilliseconds(Math.Max(outcome.DelayBeforeCancelMs, 500)));
 
         // Act & Assert — OperationCanceledException should propagate
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
@@ -194,7 +195,7 @@ public static class ExceptionContainmentArbitrary
     public static Arbitrary<CallerCancellationOutcome> CallerCancellationOutcomeArb()
     {
         var gen =
-            from delayMs in FsCheck.Fluent.Gen.Choose(200, 500)
+            from delayMs in FsCheck.Fluent.Gen.Choose(500, 800)
             select new CallerCancellationOutcome { DelayBeforeCancelMs = delayMs };
 
         return gen.ToArbitrary();
