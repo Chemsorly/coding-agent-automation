@@ -1,5 +1,4 @@
 using System.Security.Claims;
-using System.Text.Json;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Infrastructure.Persistence.Services;
@@ -168,9 +167,11 @@ public static class WorkItemAgentEndpoints
         if (item.Payload is null)
             return TypedResults.NotFound();
 
-        var request = JsonSerializer.Deserialize<JobDistributionRequest>(item.Payload, PipelineJsonOptions.Default);
-        if (request is null)
+        if (!WorkItemPayload.TryDeserialize(item.Payload, out var requestNullable))
             return TypedResults.NotFound();
+
+        // TryDeserialize returned true, so requestNullable is guaranteed non-null here.
+        var request = requestNullable!;
 
         // ── Backward-compatibility: detect payload schema ─────────────────
         // Old schema: PayloadSchemaVersion == null → serve from frozen snapshot.

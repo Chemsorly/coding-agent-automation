@@ -1064,10 +1064,9 @@ public static class WorkItemDispatchEndpoints
             var providerConfigIdValue = item.IssueProviderConfigId;
             if (isReview && item.Payload is not null)
             {
-                var payload = JsonSerializer.Deserialize<JobDistributionRequest>(
-                    item.Payload, PipelineJsonOptions.Default);
-                if (!string.IsNullOrEmpty(payload?.RepoProviderConfigId))
-                    providerConfigIdValue = payload.RepoProviderConfigId;
+                if (WorkItemPayload.TryDeserialize(item.Payload, out var payloadReq)
+                    && !string.IsNullOrEmpty(payloadReq?.RepoProviderConfigId))
+                    providerConfigIdValue = payloadReq.RepoProviderConfigId;
             }
 
             await labelSwapService.SwapLabelWithRetryAsync(
