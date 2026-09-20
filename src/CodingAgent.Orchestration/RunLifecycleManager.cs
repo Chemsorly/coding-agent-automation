@@ -151,9 +151,9 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
                 : terminalStatus switch
                 {
                     WorkItemStatus.Succeeded => AgentLabels.Done,
-                    WorkItemStatus.Failed    => AgentLabels.Error,
+                    WorkItemStatus.Failed => AgentLabels.Error,
                     WorkItemStatus.Cancelled => AgentLabels.Cancelled,
-                    _                        => null
+                    _ => null
                 };
         }
 
