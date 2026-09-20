@@ -809,28 +809,28 @@ public class AgentWorkerServiceTests : IDisposable
             mockLogger.Object);
     }
 
-    private static (ChatJobHandler chatHandler, ConsolidationJobHandler consolidationHandler)
+    private static (ChatJobExecutor chatHandler, ConsolidationJobExecutor consolidationHandler)
         CreateHandlersForLifecycle(AgentConnectionLifecycle lifecycle, AgentJobSlotManager slotManager, Serilog.ILogger logger)
     {
-        var chatHandler = TestAgentWorkerServiceFactory.CreateChatJobHandler(lifecycle, slotManager, logger: logger);
-        var consolidationHandler = TestAgentWorkerServiceFactory.CreateConsolidationJobHandler(lifecycle, slotManager, logger: logger);
+        var chatHandler = TestAgentWorkerServiceFactory.CreateChatJobExecutor(lifecycle, slotManager, logger: logger);
+        var consolidationHandler = TestAgentWorkerServiceFactory.CreateConsolidationJobExecutor(lifecycle, slotManager, logger: logger);
         return (chatHandler, consolidationHandler);
     }
 
-    private static ChatJobHandler GetChatJobHandler(AgentWorkerService service)
+    private static ChatJobExecutor GetChatJobHandler(AgentWorkerService service)
     {
         var field = typeof(AgentWorkerService).GetField("_chatJobHandler",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
             ?? throw new InvalidOperationException("Field '_chatJobHandler' not found");
-        return (ChatJobHandler)field.GetValue(service)!;
+        return (ChatJobExecutor)field.GetValue(service)!;
     }
 
-    private static ConsolidationJobHandler GetConsolidationJobHandler(AgentWorkerService service)
+    private static ConsolidationJobExecutor GetConsolidationJobHandler(AgentWorkerService service)
     {
         var field = typeof(AgentWorkerService).GetField("_consolidationJobHandler",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
             ?? throw new InvalidOperationException("Field '_consolidationJobHandler' not found");
-        return (ConsolidationJobHandler)field.GetValue(service)!;
+        return (ConsolidationJobExecutor)field.GetValue(service)!;
     }
 
     private static AgentWorkerService CreateService(TimeSpan? chatGracePeriod = null)

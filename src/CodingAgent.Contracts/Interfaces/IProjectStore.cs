@@ -30,7 +30,7 @@ public interface IProjectStore
     Task DeleteTemplateAsync(string projectId, TemplateId templateId, CancellationToken ct);
 
     /// <summary>Move a template from one project to another. Updates TemplateIds on both projects.</summary>
-    Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, TemplateId templateId, CancellationToken ct);
+    Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, TemplateId templateId, CancellationToken ct);
 
     /// <summary>
     /// Returns <c>true</c> if at least one <see cref="PipelineJobTemplate"/> with <c>Enabled = true</c>
