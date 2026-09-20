@@ -226,24 +226,25 @@ public partial class QualityGateExecutor
         // triggering GitHub's cancel-in-progress concurrency rule), re-enter CI polling on the new
         // HEAD SHA rather than treating the cancellation as a gate failure that consumes a retry slot.
         var branchMovedRetries = 0;
+        var lastPolledSha = pollSha;  // tracks the SHA from the previous iteration for the branch-moved guard
         while (ciStatus.State == PipelineRunState.Cancelled
                && run.WorkspacePath != null
                && branchMovedRetries < config.CiCancelledMoveMaxRetries)
         {
             var currentHead = await TryReadHeadShaAsync(context, "could not read HEAD after Cancelled", pollCt);
 
-            if (currentHead == null || currentHead == pollSha)
+            if (currentHead == null || currentHead == lastPolledSha)
                 break;  // HEAD unchanged — genuine pre-emption or unreadable HEAD, fall through to infra-retry path
 
             branchMovedRetries++;
             _logger.Information(
                 "Pipeline {RunId} CI cancelled because branch moved ({OldSha} → {NewSha}), re-polling on new HEAD (attempt {N}/{Max})",
-                run.RunId, pollSha, currentHead, branchMovedRetries, config.CiCancelledMoveMaxRetries);
+                run.RunId, lastPolledSha, currentHead, branchMovedRetries, config.CiCancelledMoveMaxRetries);
             callbacks.EmitOutputLine(
                 $"⏳ CI superseded by new commit on branch — re-polling on updated HEAD (attempt {branchMovedRetries}/{config.CiCancelledMoveMaxRetries})...");
 
-            pollSha = currentHead;
-            ciStatus = await PollCiWithNotStartedRetryAsync(context, pollSha, config, callbacks, pollCt);
+            lastPolledSha = currentHead;
+            ciStatus = await PollCiWithNotStartedRetryAsync(context, currentHead, config, callbacks, pollCt);
 
             // Conflict restart propagates from branch-moved re-poll too
             if (ciStatus.State == PipelineRunState.ConflictRestart)
@@ -252,7 +253,7 @@ public partial class QualityGateExecutor
             ciPassed = ciStatus.State == PipelineRunState.Passed;
         }
         // TODO [WARNING]: The two exit conditions from the branch-moved loop are handled identically:
-        // (a) HEAD unchanged (currentHead == pollSha) → genuine pre-emption, infra-retry path correct.
+        // (a) HEAD unchanged (currentHead == lastPolledSha) → genuine pre-emption, infra-retry path correct.
         // (b) branchMovedRetries >= CiCancelledMoveMaxRetries → retries exhausted, branch kept moving.
         // Both fall through to the same infra-retry section below. For case (b), CiFailureClassifier.Classify
         // on a Cancelled status with no failed jobs returns Unknown (not Infrastructure), so the infra-retry
@@ -260,11 +261,6 @@ public partial class QualityGateExecutor
         // invisible to future readers and any change that causes case (b) to classify as Infrastructure would
         // re-introduce the retry storm. Consider adding an explicit log/comment when exiting due to exhausted
         // retries, or an early break-label to make the two paths distinguishable.
-        //
-        // TODO [WARNING]: The local `pollSha` variable is mutated inside the loop (pollSha = currentHead)
-        // but is not read after the loop exits — ExecuteInfraRetryAsync reads a fresh SHA after its own push.
-        // The mutation is harmless but misleading; a reader might expect pollSha to feed into the infra-retry
-        // path. This is a code clarity issue, not a correctness defect.
 
         // Write logs for the final ciStatus only — moved here from immediately after the initial poll
         // to avoid writing misleading Cancelled-state log files for discarded intermediate polls.

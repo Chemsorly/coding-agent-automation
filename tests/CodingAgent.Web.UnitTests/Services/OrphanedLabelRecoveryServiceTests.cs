@@ -430,6 +430,30 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             .Returns(Task.CompletedTask)
             .Callback(() => swapCalled.TrySetResult());
 
+        // Track when the full sweep (both passes) has completed by counting
+        // GetProviderConfigsWithSecretsAsync calls. Pass 1 and Pass 2 each call it once,
+        // so the 2nd call signals that the entire sweep is done.
+        var bothPassesCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var providerConfigCallCount = 0;
+        _mockConfigClient
+            .Setup(s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new()
+                {
+                    Id = "provider-1",
+                    Kind = ProviderKind.Issue,
+                    DisplayName = "Provider provider-1",
+                    ProviderType = "GitHub",
+                    Settings = new Dictionary<string, string>()
+                }
+            })
+            .Callback(() =>
+            {
+                if (Interlocked.Increment(ref providerConfigCallCount) >= 2)
+                    bothPassesCompleted.TrySetResult();
+            });
+
         // Act
         using var service = CreateService();
         await service.StartAsync(_cts.Token);
@@ -438,6 +462,13 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         completed.Should().BeSameAs(swapCalled.Task,
             "SwapLabelAsync should have been called — if this timed out, the sweep either " +
             "never ran or the issue was incorrectly skipped by one of the defense checks");
+
+        // Wait for Pass 2 to finish before asserting the call count. Pass 1 fires SwapLabelAsync
+        // (the signal above), but Pass 2 runs afterward. Asserting immediately after Pass 1 is a
+        // race — the second GetProviderConfigsWithSecretsAsync call may not have occurred yet.
+        var bothCompleted = await Task.WhenAny(bothPassesCompleted.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+        bothCompleted.Should().BeSameAs(bothPassesCompleted.Task,
+            "Both sweep passes should have completed within the timeout");
 
         // Assert: provider config was loaded twice (once for Pass 1, once for Pass 2) but NOT
         // four times (which would happen without deduplication of the two templates sharing provider-1).
