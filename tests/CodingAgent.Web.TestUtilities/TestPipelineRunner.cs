@@ -489,7 +489,12 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
             {
                 lifecycle.EmitOutputLine($"✅ Pipeline completed in {(int)duration.TotalMinutes}m {duration.Seconds}s");
                 // Workspace cleanup on success (match production)
-                historyService.TryDeleteWorkspace(run.WorkspacePath, run.RunId, config?.WorkspaceBaseDirectory ?? "");
+                // TODO [WARNING]: This ternary only guards null, not empty string. If run.WorkspacePath is "",
+                // the implicit string→WorkspacePath conversion throws ArgumentException (ThrowIfNullOrEmpty),
+                // whereas the prior string? signature would have silently passed "" to WorkspaceDeletionGuard
+                // (which skips via IsNullOrEmpty). Fix: use string.IsNullOrEmpty(run.WorkspacePath) in the
+                // condition to fully preserve the prior semantics.
+                historyService.TryDeleteWorkspace(run.WorkspacePath is null ? (WorkspacePath?)null : run.WorkspacePath, run.RunId, config?.WorkspaceBaseDirectory ?? "");
             }
             else
                 lifecycle.EmitOutputLine($"âŒ Pipeline failed: {run.FailureReason}");

@@ -56,9 +56,9 @@ public class QualityGateValidator : IQualityGateValidator
 
     /// <inheritdoc />
     public virtual async Task<QualityGateReport> ValidateAsync(
-        string workspacePath, IReadOnlyList<QualityGateConfiguration> qualityGateConfigs, CancellationToken ct, string? baseBranch = null)
+        WorkspacePath workspacePath, IReadOnlyList<QualityGateConfiguration> qualityGateConfigs, CancellationToken ct, string? baseBranch = null)
     {
-        ArgumentNullException.ThrowIfNull(workspacePath);
+        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value, nameof(workspacePath));
         ArgumentNullException.ThrowIfNull(qualityGateConfigs);
 
         // Clean up any leftover TestResults from previous quality gate iterations

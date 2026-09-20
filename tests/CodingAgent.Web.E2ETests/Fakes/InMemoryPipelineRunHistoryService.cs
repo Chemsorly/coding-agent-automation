@@ -63,7 +63,7 @@ public sealed class InMemoryPipelineRunHistoryService : IPipelineRunHistoryServi
         });
     }
 
-    public void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory) { }
+    public void TryDeleteWorkspace(WorkspacePath? workspacePath, string runId, string workspaceBaseDirectory) { }
     public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null) { }
     public Task AddRunSummaryAsync(PipelineRunSummary summary, CancellationToken ct = default)
     {
