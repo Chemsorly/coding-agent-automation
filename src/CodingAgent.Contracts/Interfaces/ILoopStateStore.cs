@@ -6,8 +6,8 @@ namespace CodingAgent.Pipeline.Interfaces;
 /// </summary>
 public interface ILoopStateStore
 {
-    /// <summary>Reads persisted loop state. Returns null if no state exists.</summary>
-    Task<LoopState?> ReadAsync(CancellationToken ct);
+    /// <summary>Loads persisted loop state. Returns null if no state exists.</summary>
+    Task<LoopState?> LoadAsync(CancellationToken ct);
 
     /// <summary>Persists loop state (overwrites any existing state).</summary>
     Task WriteAsync(LoopState state, CancellationToken ct);
