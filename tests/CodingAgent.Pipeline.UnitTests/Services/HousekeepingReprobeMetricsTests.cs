@@ -73,8 +73,8 @@ public class HousekeepingReprobeMetricsTests
         => svc.ExecuteAsync(repo.Object, RepoId, issues.Object, IssueProviderId,
             prs, limit, false, 60, 25, 0, CancellationToken.None);
 
-    private static (System.Diagnostics.Metrics.MeterListener Listener,
-                    System.Collections.Concurrent.ConcurrentBag<(string Name, long Value, KeyValuePair<string, object?>[] Tags)> Measurements)
+    private (System.Diagnostics.Metrics.MeterListener Listener,
+             System.Collections.Concurrent.ConcurrentBag<(string Name, long Value, KeyValuePair<string, object?>[] Tags)> Measurements)
         CreateMeterListener()
     {
         var measurements = new System.Collections.Concurrent.ConcurrentBag<(string, long, KeyValuePair<string, object?>[])>();
@@ -85,7 +85,15 @@ public class HousekeepingReprobeMetricsTests
                 l.EnableMeasurementEvents(instrument);
         };
         listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
-            measurements.Add((instrument.Name, value, tags.ToArray())));
+        {
+            // Filter to this class's own emissions by repo_provider_id to prevent parallel test
+            // contamination: HousekeepingServiceTests runs concurrently and emits on the same
+            // static Meter with a different RepoId ("rp-1"). Without the filter, assertions
+            // like ContainSingle() would see 2 entries instead of 1.
+            var tagsArr = tags.ToArray();
+            if (tagsArr.Any(t => t.Key == "repo_provider_id" && Equals(t.Value, RepoId)))
+                measurements.Add((instrument.Name, value, tagsArr));
+        });
         listener.Start();
         return (listener, measurements);
     }

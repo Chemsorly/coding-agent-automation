@@ -2006,15 +2006,18 @@ public class HousekeepingServiceTests
     /// Multiple Unknown PRs in the same cycle: a SINGLE delay fires once for the entire batch,
     /// then all Unknown PRs are re-probed in sequence. This verifies that the re-probe pass is
     /// not serialised with individual per-PR delays (which would multiply latency).
-    /// The "single delay" invariant is covered by HousekeepingReprobeMetricsTests which asserts
-    /// HousekeepingReprobeTriggered fires exactly once regardless of how many Unknown PRs exist.
+    /// The "single delay" invariant is locked by counting ReprobeDelayFunc calls — exactly 1
+    /// regardless of how many Unknown PRs exist. A per-PR delay refactor would fail this test.
     /// </summary>
     [Fact]
     public async Task ExecuteAsync_MultipleUnknownPrs_SingleDelayThenAllReprobed()
     {
         var (svc, provider, issues, _) = Create();
-
         svc.MergeabilityReprobeDelay = TimeSpan.Zero;
+
+        // Count how many times the batch delay fires
+        var delayCallCount = 0;
+        svc.ReprobeDelayFunc = (ts, ct) => { delayCallCount++; return Task.Delay(ts, ct); };
 
         // Both PRs return Unknown first, then Behind
         foreach (var prNum in new[] { 1, 2 })
@@ -2028,6 +2031,10 @@ public class HousekeepingServiceTests
         }
 
         await ExecAsync(svc, provider, issues, [MakePr(1), MakePr(2)], limit: 2);
+
+        // Single delay — the whole batch, not once per PR
+        delayCallCount.Should().Be(1,
+            "ReprobeDelayFunc must fire exactly once per batch; a per-PR delay would fire 2 times here");
 
         // Both PRs re-probed exactly once each
         provider.Verify(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()),

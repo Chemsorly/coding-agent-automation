@@ -129,6 +129,17 @@ public sealed class HousekeepingService : IHousekeepingService
     /// </summary>
     internal TimeSpan MergeabilityReprobeDelay { get; set; } = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// Wraps <see cref="Task.Delay(TimeSpan, CancellationToken)"/> so tests can count
+    /// how many times the batch delay fires. In production this is the real <c>Task.Delay</c>.
+    /// In tests, replace with a lambda that also increments a counter:
+    /// <c>svc.ReprobeDelayFunc = (ts, ct) => { delayCount++; return Task.Delay(ts, ct); }</c>
+    /// This is the only seam that can distinguish a single batch delay from a per-PR delay loop,
+    /// since <c>MergeabilityReprobeDelay = TimeSpan.Zero</c> makes all calls take zero wall time.
+    /// </summary>
+    internal Func<TimeSpan, CancellationToken, Task> ReprobeDelayFunc { get; set; } =
+        (delay, ct) => Task.Delay(delay, ct);
+
     public HousekeepingService(IOrchestratorRunService runService, ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(runService);
@@ -229,7 +240,7 @@ public sealed class HousekeepingService : IHousekeepingService
 
             PipelineTelemetry.HousekeepingReprobeTriggered.Add(1, repoTag);
 
-            await Task.Delay(MergeabilityReprobeDelay, ct);
+            await ReprobeDelayFunc(MergeabilityReprobeDelay, ct);
 
             foreach (var prNumber in unknownAfterFirstProbe.Select(pr => pr.Number))
             {
