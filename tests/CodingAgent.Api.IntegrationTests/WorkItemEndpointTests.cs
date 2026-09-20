@@ -1444,6 +1444,105 @@ public sealed class WorkItemEndpointTests
     // would silently receive weight 0. At minimum test null or empty → PriorityWeight=0 to lock in
     // the intended fallback behavior.
 
+    // ── TimeoutSeconds clamping (issue #2745) ─────────────────────────────────
+
+    /// <summary>
+    /// AC (issue #2745): POST /api/work-items with TimeoutSeconds = 0 must store
+    /// <c>PipelineConstants.DefaultAgentTimeout</c> (1800s) rather than zero.
+    /// A zero stored value causes ReconciliationLoop to immediately force-fail Running items.
+    /// </summary>
+    [Fact]
+    public async Task CreateWorkItem_WithZeroTimeoutSeconds_StoresDefaultTimeoutSeconds()
+    {
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier($"issue-timeout-zero-{Guid.NewGuid():N}"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            TimeoutSeconds = 0
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/work-items", request, PipelineJsonOptions.Default);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var id = await response.Content.ReadFromJsonAsync<Guid>(PipelineJsonOptions.Default);
+
+        // TODO [WARNING]: synchronous `using` wrapping an async operation — PipelineDbContext implements
+        // IAsyncDisposable and should be disposed asynchronously. Change to `await using var db = _factory.CreateDbContext();`
+        // to avoid a potential ObjectDisposedException if the context is disposed while FindAsync is in-flight.
+        // (DotNetSpecialist review [WARNING])
+        using var db = _factory.CreateDbContext();
+        var entity = await db.WorkItems.FindAsync(id);
+        entity!.TimeoutSeconds.Should().Be(
+            (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
+            "a zero TimeoutSeconds must be clamped to DefaultAgentTimeout (1800s) at the insert path");
+    }
+
+    /// <summary>
+    /// AC (issue #2745): POST /api/work-items with a negative TimeoutSeconds must store
+    /// <c>PipelineConstants.DefaultAgentTimeout</c> (1800s) rather than the negative value.
+    /// </summary>
+    [Fact]
+    public async Task CreateWorkItem_WithNegativeTimeoutSeconds_StoresDefaultTimeoutSeconds()
+    {
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier($"issue-timeout-neg-{Guid.NewGuid():N}"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            TimeoutSeconds = -1
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/work-items", request, PipelineJsonOptions.Default);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var id = await response.Content.ReadFromJsonAsync<Guid>(PipelineJsonOptions.Default);
+
+        // TODO [WARNING]: synchronous `using` wrapping an async operation — IAsyncDisposable mismatch,
+        // same as the sibling test above. Change to `await using var db = _factory.CreateDbContext();`.
+        // (DotNetSpecialist review [WARNING])
+        using var db = _factory.CreateDbContext();
+        var entity = await db.WorkItems.FindAsync(id);
+        entity!.TimeoutSeconds.Should().Be(
+            (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
+            "a negative TimeoutSeconds must be clamped to DefaultAgentTimeout (1800s) at the insert path");
+    }
+
+    /// <summary>
+    /// Regression guard (issue #2745): POST /api/work-items with a positive TimeoutSeconds must
+    /// store exactly the provided value — the clamp must not alter positive values.
+    /// </summary>
+    [Fact]
+    public async Task CreateWorkItem_WithPositiveTimeoutSeconds_StoresAsProvided()
+    {
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier($"issue-timeout-pos-{Guid.NewGuid():N}"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            TimeoutSeconds = 600
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/work-items", request, PipelineJsonOptions.Default);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var id = await response.Content.ReadFromJsonAsync<Guid>(PipelineJsonOptions.Default);
+
+        // TODO [WARNING]: synchronous `using` wrapping an async operation — IAsyncDisposable mismatch,
+        // same as the sibling tests above. Change to `await using var db = _factory.CreateDbContext();`.
+        // (DotNetSpecialist review [WARNING])
+        using var db = _factory.CreateDbContext();
+        var entity = await db.WorkItems.FindAsync(id);
+        entity!.TimeoutSeconds.Should().Be(600,
+            "a positive TimeoutSeconds must be stored exactly as provided — clamping must not alter it");
+    }
+
     /// <summary>
     /// AC: GET /api/work-items/pending returns high-weight item before low-weight item
     /// regardless of CreatedAt.

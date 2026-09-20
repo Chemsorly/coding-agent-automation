@@ -218,43 +218,89 @@ public sealed class ReconciliationLoopTests
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    /// <summary>
+    /// A Running work item with <c>TimeoutSeconds = 0</c> must be silently skipped by
+    /// <c>EnforceTimeoutsAsync</c> — it must never be force-failed, regardless of how long
+    /// it has been running.
+    /// <para>
+    /// Rationale: the insert-path guard (issue #2745) ensures new rows always have a positive
+    /// value. A zero value indicates a pre-migration or pre-guard row; the migration back-fills
+    /// existing rows to 1800s. The defensive <c>continue</c> guard closes the rolling-deploy
+    /// window: if the binary is updated before the migration runs, zero-valued rows must not be
+    /// immediately force-failed.
+    /// </para>
+    /// </summary>
     [Fact]
-    public async Task WhenTimeoutSecondsIsZero_FallsBackToGlobalDefault()
+    public async Task EnforceTimeouts_WhenTimeoutSecondsIsZero_SkipsItem()
     {
-        var jobName = JobNameFor(ItemId);
-        // TimeoutSeconds = 0 means field was not stored (pre-dates this feature).
-        // Fall back to PipelineConstants.DefaultAgentTimeout (30 min = 1800s).
-        // Item has been running for 1801s — must be timed out via fallback.
-        var globalDefaultSeconds = (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds;
-        var legacyItem = new ActiveWorkItemDto
+        // Item has been running far longer than any default timeout — the guard must still skip it.
+        var item = new ActiveWorkItemDto
         {
             Id = ItemId,
             Status = WorkItemStatus.Running,
-            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(globalDefaultSeconds + 1)),
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-7200),
             AgentSelector = "dotnet10,opencode",
             IssueIdentifier = "owner/repo#1",
-            TimeoutSeconds = 0, // legacy: field not stored
-            K8sJobName = jobName // stored at dispatch time — exercises the non-legacy fast path
+            TimeoutSeconds = 0, // zero sentinel — pre-migration or pre-guard row
+            K8sJobName = JobNameFor(ItemId)
         };
 
-        // TODO [WARNING]: The mock setup uses It.IsAny<int>() for the GetActiveAsync canary threshold.
-        // If EnforceTimeoutsAsync passes a wrong canary threshold, the mock still returns legacyItem
-        // and PostStatusAsync fires, making this test a false-green that masks the wrong argument.
-        // Add a Verify call (analogous to WhenExecutionAgeExceedsTimeout_TimesOutAndDeletesJob) to
-        // confirm GetActiveAsync was called with the correct canary threshold value (60s).
-        // See review finding: TestQualityReviewer WARNING — ReconciliationLoopTests.cs:~230
-        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([legacyItem]);
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // Must not be force-failed — guard must skip the item entirely.
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        // Confirm the query ran so the Times.Never assertions are not vacuously true.
+        _workItemClient.Verify(c => c.GetActiveAsync(
+            It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// A Running work item with a negative <c>TimeoutSeconds</c> must be silently skipped by
+    /// <c>EnforceTimeoutsAsync</c> — same guard as the zero case.
+    /// </summary>
+    [Fact]
+    public async Task EnforceTimeouts_WhenTimeoutSecondsIsNegative_SkipsItem()
+    {
+        var item = new ActiveWorkItemDto
+        {
+            Id = ItemId,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-7200),
+            AgentSelector = "dotnet10,opencode",
+            IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = -1, // negative — not a valid timeout value
+            K8sJobName = JobNameFor(ItemId)
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
 
         var loop = CreateLoop();
         await loop.EnforceTimeoutsAsync(CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
-            ItemId,
-            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
 
-        _k8sClient.Verify(c => c.DeleteJobAsync(jobName, _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
+        _workItemClient.Verify(c => c.GetActiveAsync(
+            It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     // ─── null DispatchedAt — timeout must not fire within grace window ────────
