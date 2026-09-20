@@ -814,14 +814,12 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
     }
 
     public async Task MoveTemplateAsync(
-        string sourceProjectId, string targetProjectId, TemplateId templateId, CancellationToken ct)
+        ProjectId sourceProjectId, ProjectId targetProjectId, TemplateId templateId, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(sourceProjectId);
-        ArgumentNullException.ThrowIfNull(targetProjectId);
         var templateIdValue = templateId.Value;
-        if (!Guid.TryParse(sourceProjectId, out var sourceGuid))
+        if (!Guid.TryParse(sourceProjectId.Value, out var sourceGuid))
             return;
-        if (!Guid.TryParse(targetProjectId, out var targetGuid))
+        if (!Guid.TryParse(targetProjectId.Value, out var targetGuid))
             return;
         if (!Guid.TryParse(templateIdValue, out var templateGuid))
             return;
