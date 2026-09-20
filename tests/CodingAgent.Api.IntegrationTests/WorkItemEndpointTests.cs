@@ -983,6 +983,15 @@ public sealed class WorkItemEndpointTests
 
     // ── LabelSwap ─────────────────────────────────────────────────────────────────
 
+    // TODO [WARNING]: PostLabelSwap is missing characterization tests for the WorkItemPayload.TryDeserialize
+    // branch introduced in Issue #2776. The existing test below seeds a non-Review (Dispatched/Implementation)
+    // work item, so isReview=false and the TryDeserialize branch is never entered. Add tests for:
+    //   1. Review-type work item with a PascalCase payload — verifies providerConfigIdValue resolves
+    //      to RepoProviderConfigId (the silent no-op regression this fix addressed).
+    //   2. Review-type work item with a malformed payload — verifies graceful fallback to IssueProviderConfigId
+    //      rather than an error (mirrors the malformed-payload tests added for the other three call sites).
+    // Without these tests, reverting PostLabelSwap back to PipelineJsonOptions.Default would not be caught.
+    // (Issue #2776)
     [Fact]
     public async Task PostLabelSwap_Returns200_WhenWorkItemExists()
     {
@@ -1921,5 +1930,190 @@ public sealed class WorkItemEndpointTests
         var fixtureReviews = items.Where(i => reviewIds.Contains(i.Id)).ToList();
         fixtureReviews.Should().OnlyContain(i => i.TaskType == WorkItemTaskType.Review,
             "items appearing in the window from our fixture must all be Review tier");
+    }
+
+    // ── Payload deserialization characterization (Issue #2776) ────────────────────
+    // These tests document and guard the behavior of the centralized WorkItemPayload.TryDeserialize
+    // helper, verifying that PipelineJsonOptions.Lenient (PropertyNameCaseInsensitive) is used
+    // consistently across all four deserialization call sites.
+
+    [Fact]
+    public async Task GetPendingWorkItems_WithPascalCasePayload_ExtractsDisplayFields()
+    {
+        // Arrange: seed a Pending work item whose Payload is PascalCase-serialized.
+        // This simulates a legacy payload written before camelCase was enforced.
+        // With PipelineJsonOptions.Default (case-sensitive) the payload would produce null
+        // display fields. With PipelineJsonOptions.Lenient it must be parsed correctly.
+        var workItemId = Guid.NewGuid();
+        using (var db = _factory.CreateDbContext())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = $"pascal-pending-{Guid.NewGuid():N}",
+                IssueProviderConfigId = "prov-pascal",
+                Status = WorkItemStatus.Pending,
+                // Hand-crafted PascalCase JSON — mimics a payload written by an older serializer.
+                Payload = """
+                    {
+                        "IssueIdentifier": "owner/repo#1",
+                        "IssueProviderConfigId": "prov-pascal",
+                        "RepoProviderConfigId": "repo-pascal",
+                        "InitiatedBy": "legacy-loop",
+                        "TaskType": "Implementation",
+                        "AgentSelector": "dotnet",
+                        "TimeoutSeconds": 3600,
+                        "IssueDetail": {
+                            "Identifier": "owner/repo#1",
+                            "Title": "PascalCase issue title",
+                            "Description": "",
+                            "Labels": []
+                        }
+                    }
+                    """,
+                AgentSelector = "dotnet",
+                TimeoutSeconds = 3600,
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            db.SaveChanges();
+        }
+
+        var response = await _client.GetAsync("/api/work-items/pending?maxResults=500");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var items = await response.Content.ReadFromJsonAsync<List<PendingWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+
+        var dto = items!.FirstOrDefault(i => i.Id == workItemId);
+        dto.Should().NotBeNull("the seeded PascalCase work item must appear in /pending");
+        dto!.IssueTitle.Should().Be("PascalCase issue title",
+            "IssueTitle must be extracted from PascalCase payload via Lenient deserialization");
+        dto.InitiatedBy.Should().Be("legacy-loop",
+            "InitiatedBy must be extracted from PascalCase payload via Lenient deserialization");
+    }
+
+    [Fact]
+    public async Task GetPendingWorkItems_WithMalformedPayload_ReturnsNullDisplayFields()
+    {
+        // Arrange: seed a Pending work item with a corrupted Payload.
+        // The endpoint must return 200 with null display fields — not a 500.
+        var workItemId = Guid.NewGuid();
+        using (var db = _factory.CreateDbContext())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = $"malformed-pending-{Guid.NewGuid():N}",
+                IssueProviderConfigId = "prov-corrupt",
+                Status = WorkItemStatus.Pending,
+                Payload = "{not-valid-json",
+                AgentSelector = "dotnet",
+                TimeoutSeconds = 3600,
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            db.SaveChanges();
+        }
+
+        var response = await _client.GetAsync("/api/work-items/pending?maxResults=500");
+        response.StatusCode.Should().Be(HttpStatusCode.OK,
+            "a malformed payload must not cause a 500 — the row must appear with null display fields");
+        var items = await response.Content.ReadFromJsonAsync<List<PendingWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+
+        var dto = items!.FirstOrDefault(i => i.Id == workItemId);
+        dto.Should().NotBeNull("the malformed-payload work item must still appear in /pending");
+        dto!.IssueTitle.Should().BeNull("IssueTitle must be null when payload is malformed");
+        dto.InitiatedBy.Should().BeNull("InitiatedBy must be null when payload is malformed");
+    }
+
+    [Fact]
+    public async Task GetActiveWorkItems_WithPascalCasePayload_ExtractsDisplayFields()
+    {
+        // Arrange: seed an active (Running) work item with a PascalCase payload.
+        // Closes the pre-existing TODO comment about missing PascalCase coverage for GetActiveWorkItems.
+        var workItemId = Guid.NewGuid();
+        using (var db = _factory.CreateDbContext())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = $"pascal-active-{Guid.NewGuid():N}",
+                IssueProviderConfigId = "prov-pascal",
+                Status = WorkItemStatus.Running,
+                Payload = """
+                    {
+                        "IssueIdentifier": "owner/repo#2",
+                        "IssueProviderConfigId": "prov-pascal",
+                        "RepoProviderConfigId": "repo-pascal",
+                        "InitiatedBy": "legacy-loop-active",
+                        "TaskType": "Implementation",
+                        "AgentSelector": "dotnet",
+                        "TimeoutSeconds": 3600,
+                        "IssueDetail": {
+                            "Identifier": "owner/repo#2",
+                            "Title": "PascalCase active title",
+                            "Description": "",
+                            "Labels": []
+                        }
+                    }
+                    """,
+                AgentSelector = "dotnet",
+                TimeoutSeconds = 3600,
+                CreatedAt = DateTimeOffset.UtcNow.AddSeconds(-300),
+                DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-300)
+            });
+            db.SaveChanges();
+        }
+
+        var response = await _client.GetAsync("/api/work-items/active?olderThanSeconds=0");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var items = await response.Content.ReadFromJsonAsync<List<ActiveWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+
+        var dto = items!.FirstOrDefault(i => i.Id == workItemId);
+        dto.Should().NotBeNull("the PascalCase active work item must appear in /active");
+        dto!.IssueTitle.Should().Be("PascalCase active title",
+            "IssueTitle must be extracted from PascalCase payload via Lenient deserialization");
+        dto.InitiatedBy.Should().Be("legacy-loop-active",
+            "InitiatedBy must be extracted from PascalCase payload via Lenient deserialization");
+    }
+
+    [Fact]
+    public async Task GetActiveWorkItems_WithMalformedPayload_ReturnsNullDisplayFields()
+    {
+        // Arrange: seed a Running work item with a corrupted Payload.
+        // Closes the pre-existing TODO [WARNING] comment in this file about the JsonException
+        // branch in GetActiveWorkItems being untested.
+        var workItemId = Guid.NewGuid();
+        using (var db = _factory.CreateDbContext())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = $"malformed-active-{Guid.NewGuid():N}",
+                IssueProviderConfigId = "prov-corrupt",
+                Status = WorkItemStatus.Running,
+                Payload = "{not-valid-json",
+                AgentSelector = "dotnet",
+                TimeoutSeconds = 3600,
+                CreatedAt = DateTimeOffset.UtcNow.AddSeconds(-300),
+                DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-300)
+            });
+            db.SaveChanges();
+        }
+
+        var response = await _client.GetAsync("/api/work-items/active?olderThanSeconds=0");
+        response.StatusCode.Should().Be(HttpStatusCode.OK,
+            "a malformed payload must not cause a 500 — the row must appear with null display fields");
+        var items = await response.Content.ReadFromJsonAsync<List<ActiveWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+
+        var dto = items!.FirstOrDefault(i => i.Id == workItemId);
+        dto.Should().NotBeNull("the malformed-payload active work item must still appear in /active");
+        dto!.IssueTitle.Should().BeNull("IssueTitle must be null when payload is malformed");
+        dto.InitiatedBy.Should().BeNull("InitiatedBy must be null when payload is malformed");
     }
 }
