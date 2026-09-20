@@ -102,7 +102,7 @@ public class KubernetesWorkDistributorTests
         var workItemId = Guid.NewGuid();
         _mockApiClient
             .Setup(c => c.PostStatusAsync(workItemId, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var result = await _distributor.CancelJobAsync(workItemId.ToString(), CancellationToken.None);
 

@@ -352,7 +352,7 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             .ReturnsAsync([item]);
         _sweepClientMock
             .Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var svc = CreateService(_sweepClientMock.Object);
         var issueEligibility = EligibilityMap("ip-1", "99");
@@ -402,7 +402,7 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             .ReturnsAsync([item]);
         _sweepClientMock
             .Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var svc = CreateService(_sweepClientMock.Object);
         // Issue map: ip-1 has issues; PR map: ip-1 has only PR "999" (not "101")
@@ -478,7 +478,7 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             .ReturnsAsync([implItem, reviewItem]);
         _sweepClientMock
             .Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var svc = CreateService(_sweepClientMock.Object);
         var issueEligibility = EligibilityMap("ip-1", "99");  // "42" not present → impl cancelled
@@ -596,7 +596,7 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             .ReturnsAsync([item]);
         _sweepClientMock
             .Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var svc = CreateService(_sweepClientMock.Object);
         // Issue map: "42" IS present (would keep an Implementation item if it read prEligibility)
@@ -694,7 +694,7 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             {
                 callCount++;
                 if (callCount == 1) throw new InvalidOperationException("unexpected failure");
-                return Task.CompletedTask;
+                return Task.FromResult(true);
             });
 
         var svc = CreateService(_sweepClientMock.Object);
@@ -772,7 +772,7 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             .ReturnsAsync([eligible, ineligible]);
         _sweepClientMock
             .Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var svc = CreateService(_sweepClientMock.Object);
         // "42" is eligible; "99" is not

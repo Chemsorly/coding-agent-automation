@@ -656,35 +656,35 @@ public sealed class ReconciliationLoop
         var succeeded = false;
         try
         {
-            await _workItemClient.PostStatusAsync(workItemId, new WorkItemStatusUpdate
+            var transitioned = await _workItemClient.PostStatusAsync(workItemId, new WorkItemStatusUpdate
             {
                 Status = status,
                 FailureReason = failureReason,
                 ErrorMessage = errorMessage
             }, ct);
 
-            // Record terminal metrics
-            var workItemStatus = status == JobPhaseSucceeded ? WorkItemStatus.Succeeded : WorkItemStatus.Failed;
-            var failureReasonEnum = failureReason == "AgentError" ? (FailureReason?)FailureReason.AgentError : null;
-            var dispatchedAt = job.Status?.StartTime is not null
-                ? new DateTimeOffset(job.Status.StartTime.Value, TimeSpan.Zero)
-                : (DateTimeOffset?)null;
-            var completedAt = job.Status?.CompletionTime is not null
-                ? new DateTimeOffset(job.Status.CompletionTime.Value, TimeSpan.Zero)
-                : DateTimeOffset.UtcNow;
-            var duration = dispatchedAt.HasValue ? completedAt - dispatchedAt.Value : (TimeSpan?)null;
-            var agentId = job.Metadata?.Name;
-            // TODO: Spurious terminal metric double-count — since the PostStatus endpoint now returns
-            // HTTP 200 for late terminal callbacks on already-terminal items (issue #2461 fix),
-            // PostStatusAsync no longer throws an exception for Cancelled→Failed cases. This means
-            // execution reaches LogTerminalStatus unconditionally and emits a Failed metric for an item
-            // that was already counted as Cancelled when it was originally cancelled. To fix, PostStatus
-            // should return a distinguishing response (e.g. HTTP 204 No Content or a custom header) for
-            // the idempotent-success path so that HandleJobCompletedAsync can skip LogTerminalStatus on
-            // late callbacks. Alternatively, the PostStatus response body could carry a flag indicating
-            // whether a real transition occurred.
-            WorkDistributionTelemetry.LogTerminalStatus(workItemId, workItemStatus, duration, agentId, failureReasonEnum);
+            if (transitioned)
+            {
+                // Record terminal metrics — only when a real state transition occurred.
+                // Skip for idempotent no-ops (already-terminal items, e.g. Cancelled→Failed late
+                // callback) to avoid double-counting. PostStatus returns HTTP 204 No Content for
+                // no-ops and HTTP 200 for real transitions; PipelineApiWorkItemClient maps these
+                // to false/true respectively. (Issue #2802)
+                var workItemStatus = status == JobPhaseSucceeded ? WorkItemStatus.Succeeded : WorkItemStatus.Failed;
+                var failureReasonEnum = failureReason == "AgentError" ? (FailureReason?)FailureReason.AgentError : null;
+                var dispatchedAt = job.Status?.StartTime is not null
+                    ? new DateTimeOffset(job.Status.StartTime.Value, TimeSpan.Zero)
+                    : (DateTimeOffset?)null;
+                var completedAt = job.Status?.CompletionTime is not null
+                    ? new DateTimeOffset(job.Status.CompletionTime.Value, TimeSpan.Zero)
+                    : DateTimeOffset.UtcNow;
+                var duration = dispatchedAt.HasValue ? completedAt - dispatchedAt.Value : (TimeSpan?)null;
+                var agentId = job.Metadata?.Name;
+                WorkDistributionTelemetry.LogTerminalStatus(workItemId, workItemStatus, duration, agentId, failureReasonEnum);
+            }
 
+            // Log and mark as succeeded for BOTH transitioned and no-op paths: both represent
+            // "this item is handled, don't retry" and neither is a transient error.
             _log.Information("WorkItem {Id} marked {Status} from K8s Job {Job}", workItemId, status, job.Metadata?.Name);
             succeeded = true;
         }
