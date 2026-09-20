@@ -51,8 +51,8 @@ public sealed class AgentHubFacade : IAgentHubFacade
     // ── Registry operations ─────────────────────────────────────────────
 
     /// <inheritdoc />
-    public AgentEntry Register(AgentRegistrationMessage message, string connectionId)
-        => _registry.Register(message, connectionId);
+    public AgentEntry Register(AgentRegistrationMessage message, string connectionId, bool preserveExistingConnectionId = false)
+        => _registry.Register(message, connectionId, preserveExistingConnectionId);
 
     /// <inheritdoc />
     public bool Deregister(AgentId agentId)

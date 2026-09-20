@@ -530,14 +530,18 @@ public sealed class ApiBackedServicesTests
     // ─────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task HarnessSuggestionStore_GetAsync_DelegatesToClient()
+    public async Task HarnessSuggestionStore_LoadAsync_DelegatesToClient()
     {
+        // TODO: This test is tautological — the mock returns null and the assertion checks for null,
+        // so a broken implementation (e.g. `return null;` bypassing the client) would still pass.
+        // Fix by setting up the mock to return a non-null sentinel value and asserting the same
+        // instance is returned, making a missing delegation call produce an actual failure.
         var mockClient = new Mock<CodingAgent.Api.Client.IPipelineApiHarnessSuggestionClient>();
         mockClient.Setup(c => c.GetAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync((HarnessSuggestions?)null);
 
         var store = new ApiBackedHarnessSuggestionStore(mockClient.Object);
-        var result = await store.GetAsync(CancellationToken.None);
+        var result = await store.LoadAsync(CancellationToken.None);
 
         result.Should().BeNull();
     }

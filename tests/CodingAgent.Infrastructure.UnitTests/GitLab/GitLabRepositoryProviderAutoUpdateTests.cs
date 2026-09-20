@@ -104,21 +104,41 @@ public class GitLabRepositoryProviderAutoUpdateTests
             "HasConflicts=true must return Conflicted regardless of DetailedMergeStatus");
     }
 
-    // ── IsPullRequestBehindBaseAsync — Blocked (transient states) ────────────
+    // ── IsPullRequestBehindBaseAsync — Unknown (lazy-computation states) ──────
 
+    /// <summary>
+    /// Checking and Unchecked are GitLab's equivalent of GitHub's "unknown" state — they
+    /// mean mergeability hasn't been computed yet, not that CI is actively running.
+    /// They must map to Unknown so HousekeepingService includes them in the re-probe pass
+    /// rather than holding the in-flight concurrency slot indefinitely (which Blocked does).
+    /// See: https://gitlab.com/gitlab-org/gitlab/-/issues/386661
+    /// </summary>
     [Theory]
     [InlineData(DetailedMergeStatus.Checking)]
     [InlineData(DetailedMergeStatus.Unchecked)]
+    public async Task IsPullRequestBehindBaseAsync_LazyComputationStates_ReturnsUnknown(
+        DetailedMergeStatus status)
+    {
+        var provider = CreateProviderWithMr(status);
+        var result = await provider.Provider.IsPullRequestBehindBaseAsync(1, CancellationToken.None);
+        result.Should().Be(PrMergeabilityStatus.Unknown,
+            $"DetailedMergeStatus.{status} means mergeability not computed yet — must return Unknown " +
+            "so HousekeepingService re-probes it, not Blocked which permanently holds the slot");
+    }
+
+    // ── IsPullRequestBehindBaseAsync — Blocked (CI/approval wait) ────────────
+
+    [Theory]
     [InlineData(DetailedMergeStatus.NotApproved)]
     [InlineData(DetailedMergeStatus.CiStillRunning)]
     [InlineData(DetailedMergeStatus.Preparing)]
-    public async Task IsPullRequestBehindBaseAsync_TransientStates_ReturnsBlocked(
+    public async Task IsPullRequestBehindBaseAsync_CiApprovalWaitStates_ReturnsBlocked(
         DetailedMergeStatus status)
     {
         var provider = CreateProviderWithMr(status);
         var result = await provider.Provider.IsPullRequestBehindBaseAsync(1, CancellationToken.None);
         result.Should().Be(PrMergeabilityStatus.Blocked,
-            $"DetailedMergeStatus.{status} is transient — slot must stay in-flight");
+            $"DetailedMergeStatus.{status} is an active CI/approval wait — slot must stay in-flight");
     }
 
     // ── UpdatePullRequestBranchAsync ──────────────────────────────────────────
