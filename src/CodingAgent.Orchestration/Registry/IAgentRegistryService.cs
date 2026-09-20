@@ -15,7 +15,15 @@ public interface IAgentRegistryService
     /// <summary>
     /// Registers an agent or updates an existing entry on reconnection.
     /// </summary>
-    AgentEntry Register(AgentRegistrationMessage message, string connectionId);
+    /// <param name="message">Registration message from the connecting agent.</param>
+    /// <param name="connectionId">The new SignalR connection ID.</param>
+    /// <param name="preserveExistingConnectionId">
+    /// When <c>true</c>, the previous connection ID is kept in <c>_connectionIndex</c> alongside
+    /// the new one. Use this for mid-run kiro-cli sub-process reconnects where the pipeline is
+    /// still active on the old connection and must not lose its authorization context.
+    /// Defaults to <c>false</c> (old connection evicted — normal re-registration behaviour).
+    /// </param>
+    AgentEntry Register(AgentRegistrationMessage message, string connectionId, bool preserveExistingConnectionId = false);
 
     /// <summary>
     /// Removes an agent from the registry entirely.

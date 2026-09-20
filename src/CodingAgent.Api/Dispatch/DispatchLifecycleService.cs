@@ -243,7 +243,6 @@ internal sealed class DispatchLifecycleService : IDisposable
             WorkDistributionTelemetry.RecordDispatchLatency(workItem.DispatchedAt!.Value, workItem.OriginalEnqueuedAt, workItem.CreatedAt, item.AgentSelector);
 
             // Track concurrency
-            // TODO: Use effectiveSelector (from eligibility checker's profile fallback resolution) instead of item.AgentSelector.
             concurrencyBySelector[item.AgentSelector ?? ""] =
                 concurrencyBySelector.GetValueOrDefault(item.AgentSelector ?? "", 0) + 1;
 
