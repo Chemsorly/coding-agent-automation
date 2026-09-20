@@ -11,6 +11,35 @@ using System.Net;
 
 namespace CodingAgent.JobController.Reconciliation;
 
+// ─── Discriminated result type for execution-age classification ──────────────
+
+/// <summary>
+/// Result of <see cref="ReconciliationLoop.ResolveExecutionAge"/>.
+/// Each case maps to a distinct outcome for the timeout-enforcement loop.
+/// </summary>
+internal abstract record ExecutionAgeResult;
+
+/// <summary>
+/// The work item's DispatchedAt is null and CreatedAt is still within the
+/// grace window — timeout enforcement is deferred silently.
+/// </summary>
+internal sealed record WithinGrace : ExecutionAgeResult;
+
+/// <summary>
+/// The computed execution age is suspiciously low (INV-001 canary trigger).
+/// Enforcement is skipped for this cycle. The canary counter and log warning
+/// have already been emitted by <see cref="ReconciliationLoop.ResolveExecutionAge"/>.
+/// </summary>
+internal sealed record CanaryViolation : ExecutionAgeResult;
+
+/// <summary>
+/// The execution age has cleared all guard conditions and the item should be
+/// evaluated for timeout enforcement.
+/// </summary>
+internal sealed record Enforceable(double AgeSeconds) : ExecutionAgeResult;
+
+// ─── ReconciliationLoop ───────────────────────────────────────────────────────
+
 /// <summary>
 /// Core reconciliation logic for the Job Controller.
 /// Called periodically by <see cref="ReconciliationService"/> to keep K8s Job state and
@@ -179,71 +208,17 @@ public sealed class ReconciliationLoop
             // EnforceDispatchedTimeoutAsync for recovery.
             if (item.TimeoutSeconds <= 0) continue;
 
-            var effectiveTimeoutSeconds = item.TimeoutSeconds;
+            var ageResult = ResolveExecutionAge(item);
+            if (ageResult is WithinGrace or CanaryViolation) continue;
 
-            // Compute execution age from DispatchedAt.
-            // If DispatchedAt is null (e.g. a write failure on the claim path), use the grace-window
-            // path below — see the else branch for details.
-            double executionAgeSeconds;
-            if (item.DispatchedAt.HasValue)
-            {
-                executionAgeSeconds = (DateTimeOffset.UtcNow - item.DispatchedAt.Value).TotalSeconds;
-            }
-            else
-            {
-                // DispatchedAt is null (e.g. a write failure on the claim path).
-                // Use CreatedAt as a fallback timeout anchor after a configurable grace window.
-                // Items within the grace window are silently skipped (continue) WITHOUT recording
-                // metrics or incrementing the canary counter — the canary metric signals INV-001
-                // (wrong timestamp anchor bugs), not expected grace-window deferrals. Firing it
-                // here would pollute the signal and mask real bugs.
-                // Items beyond the grace window are escalated: CreatedAt becomes the age anchor
-                // and a Warning is emitted so operators can identify stuck items.
-                var createdAgeSeconds = item.CreatedAt.HasValue
-                    ? (DateTimeOffset.UtcNow - item.CreatedAt.Value).TotalSeconds
-                    // TODO [WARNING]: null CreatedAt silently defers enforcement indefinitely — same
-                    // class of bug as the original null DispatchedAt issue. The 0.0 fallback causes
-                    // the grace-window check below to always fire and the item is permanently skipped
-                    // with no log or metric. In production, CreatedAt should always be non-null
-                    // (WorkItemEntity.CreatedAt is a non-null column), but if a backfill is missed or
-                    // the DTO is constructed without the field the item becomes permanently stuck.
-                    // At minimum emit a Log.Warning here so operators can detect the condition.
-                    // (Correctness review [WARNING])
-                    : 0.0; // null CreatedAt (pre-dates this field in test code) → treat as just created
-
-                // TODO [WARNING]: strict less-than (<) means an item with createdAgeSeconds exactly
-                // equal to NullDispatchedAtGraceWindowSeconds is skipped for another full cycle.
-                // The requirement states "older than the grace window is force-failed", so the
-                // boundary condition (age == graceWindow) should proceed to enforcement. Because
-                // createdAgeSeconds is a double, exact equality is extremely rare in practice, but
-                // semantically the condition should be <= to match the stated requirement boundary.
-                // (Correctness review [WARNING])
-                if (createdAgeSeconds < _options.NullDispatchedAtGraceWindowSeconds)
-                {
-                    // Within grace window — skip without recording any metrics.
-                    continue;
-                }
-
-                // Grace window expired — use CreatedAt as fallback timeout anchor.
-                _log.Warning(
-                    "WorkItem {Id} has null DispatchedAt and CreatedAt is {Age:F0}s old (>{Grace}s grace window) — using CreatedAt as timeout anchor",
-                    item.Id, createdAgeSeconds, _options.NullDispatchedAtGraceWindowSeconds);
-                executionAgeSeconds = createdAgeSeconds;
-            }
-
-            _timeoutExecutionAge.Record(executionAgeSeconds,
-                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
-
-            // Canary guard: if age is suspiciously low the timeout anchor is wrong (INV-001).
-            // Skip enforcement for this sweep — the item will be re-evaluated next cycle.
-            if (executionAgeSeconds < TimeoutCanaryMinAgeSeconds)
-            {
-                _log.Warning("WorkItem {Id} timeout canary violation: execution age {AgeSeconds:F1}s < {MinAge}s — skipping enforcement",
-                    item.Id, executionAgeSeconds, TimeoutCanaryMinAgeSeconds);
-                _timeoutCanaryViolations.Add(1,
-                    new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
-                continue;
-            }
+            // TODO [WARNING]: Hard cast to (Enforceable) is safe today (only three subtypes exist),
+            // but ExecutionAgeResult is an internal abstract record with no compile-time exhaustiveness
+            // guarantee. If a fourth subtype is added anywhere in this file, the cast silently becomes
+            // an InvalidCastException at runtime. Replace with a pattern-match guard
+            //   if (ageResult is not Enforceable enforceable) continue;
+            // or a switch expression so exhaustiveness is load-bearing rather than implicit.
+            // (Correctness review [WARNING] / DotNetSpecialist review [WARNING])
+            var enforceable = (Enforceable)ageResult;
 
             // Not timed out yet — skip.
             // TODO: The strict-less-than guard means executionAgeSeconds == effectiveTimeoutSeconds
@@ -253,69 +228,21 @@ public sealed class ReconciliationLoop
             // exactly that boundary — the item is immediately enforced on the first cycle it is
             // returned by the query. This is a gap in the canary design that was not present when
             // the global timeout was always >> 60s. (DotNetSpecialist review [WARNING])
-            if (executionAgeSeconds < effectiveTimeoutSeconds)
-                continue;
+            if (enforceable.AgeSeconds < item.TimeoutSeconds) continue;
 
             _log.Warning("WorkItem {Id} timed out (status={Status}, job={K8sJobName}, issue={IssueIdentifier}) after {Seconds}s — marking Failed",
-                item.Id, item.Status, item.K8sJobName ?? "none", item.IssueIdentifier ?? "unknown", effectiveTimeoutSeconds);
+                item.Id, item.Status, item.K8sJobName ?? "none", item.IssueIdentifier ?? "unknown", item.TimeoutSeconds);
 
             try
             {
                 await _workItemClient.PostStatusAsync(item.Id, new WorkItemStatusUpdate
                 {
                     Status = nameof(WorkItemStatus.Failed),
-                    ErrorMessage = $"Agent timeout after {effectiveTimeoutSeconds}s",
+                    ErrorMessage = $"Agent timeout after {item.TimeoutSeconds}s",
                     FailureReason = "Timeout"
                 }, ct);
 
-                // Resolve the K8s Job name to delete.
-                // When K8sJobName is persisted, use it directly — the API's DispatchLifecycleService
-                // uses "caa-{first8hex}" (ForBrain) while the old job-controller path used
-                // "caa-agent-{first11hex}" (ForWorkItem, removed in #2322). Using the stored name
-                // avoids recomputing the wrong format.
-                //
-                // When K8sJobName is null (legacy WorkItems created before the field was persisted),
-                // resolve the actual running Job via label selector "caa/work-item-id={id}" — the same
-                // approach CleanupOrphansAsync uses. If no Job is found (already cleaned up by
-                // CleanupOrphansAsync or never started), skip deletion rather than guessing the name.
-                string? jobName;
-                if (item.K8sJobName is not null)
-                {
-                    jobName = item.K8sJobName;
-                }
-                else
-                {
-                    V1JobList labelJobs;
-                    try
-                    {
-                        labelJobs = await _k8sClient.ListJobsAsync(
-                            _options.Namespace,
-                            $"caa/work-item-id={item.Id}",
-                            ct);
-                    }
-                    catch (Exception labelEx)
-                    {
-                        _log.Warning(labelEx, "Failed to resolve K8s Job name via label selector for WorkItem {Id} — skipping deletion", item.Id);
-                        labelJobs = new V1JobList { Items = [] };
-                    }
-
-                    // V1JobList.Items can be null when the K8s API returns an empty result
-                    // without the "items" field in the JSON body (the KubernetesClient deserialiser
-                    // leaves Items null rather than an empty list in that case). Use
-                    // (labelJobs.Items ?? []).FirstOrDefault() here to avoid a NullReferenceException
-                    // on a successful call that returns null Items. The catch above only guards the
-                    // exception path; a null Items on a successful response bypasses it entirely.
-                    var resolved = (labelJobs.Items ?? []).FirstOrDefault();
-                    if (resolved?.Metadata?.Name is null)
-                    {
-                        _log.Warning("WorkItem {Id} timed out but no K8s Job found via label selector caa/work-item-id={WorkItemId} — job already deleted or never started", item.Id, item.Id);
-                        jobName = null;
-                    }
-                    else
-                    {
-                        jobName = resolved.Metadata.Name;
-                    }
-                }
+                var jobName = await ResolveJobNameAsync(item, ct);
 
                 // TODO: agentId is null when no K8s Job was found via the label-selector path
                 // (jobName == null). Before this fix, the ForWorkItem fallback always produced a
@@ -331,6 +258,12 @@ public sealed class ReconciliationLoop
                     new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
 
                 if (jobName is not null)
+                    // TODO [WARNING]: This if-statement is at depth 3 (foreach → try → if), exceeding
+                    // the acceptance criterion of no more than two levels of control flow within the
+                    // loop body. To reduce depth, extract the try-block contents into a private method
+                    // (e.g. ApplyTimeoutAsync(item, ct)) so the loop body consists of flat guard
+                    // statements followed by a single await at depth 1.
+                    // (Correctness review [WARNING])
                     await SafeDeleteJobAsync(jobName, ct);
             }
             catch (Exception ex)
@@ -523,6 +456,146 @@ public sealed class ReconciliationLoop
     }
 
     // ─── Private helpers ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Computes the execution age for <paramref name="item"/> and classifies it as
+    /// <see cref="WithinGrace"/>, <see cref="CanaryViolation"/>, or <see cref="Enforceable"/>.
+    /// <para>
+    /// <b>Side effects (intentional):</b> this method records
+    /// <c>_timeoutExecutionAge</c> (histogram) and, on a canary violation,
+    /// <c>_timeoutCanaryViolations</c> (counter). These side effects are deliberately
+    /// placed here — not at the call site — to preserve the invariant that the
+    /// grace-window skip path records <em>no</em> metrics (an item silently deferred
+    /// within the grace window must not pollute the INV-001 canary signal).
+    /// Do NOT move the metric calls to the caller.
+    /// </para>
+    /// </summary>
+    private ExecutionAgeResult ResolveExecutionAge(ActiveWorkItemDto item)
+    {
+        double executionAgeSeconds;
+
+        if (item.DispatchedAt.HasValue)
+        {
+            executionAgeSeconds = (DateTimeOffset.UtcNow - item.DispatchedAt.Value).TotalSeconds;
+        }
+        else
+        {
+            // DispatchedAt is null (e.g. a write failure on the claim path).
+            // Use CreatedAt as a fallback timeout anchor after a configurable grace window.
+            // Items within the grace window are silently skipped (return WithinGrace) WITHOUT
+            // recording metrics or incrementing the canary counter — the canary metric signals
+            // INV-001 (wrong timestamp anchor bugs), not expected grace-window deferrals. Firing
+            // it here would pollute the signal and mask real bugs.
+            // Items beyond the grace window are escalated: CreatedAt becomes the age anchor
+            // and a Warning is emitted so operators can identify stuck items.
+            var createdAgeSeconds = item.CreatedAt.HasValue
+                ? (DateTimeOffset.UtcNow - item.CreatedAt.Value).TotalSeconds
+                // TODO [WARNING]: null CreatedAt silently defers enforcement indefinitely — same
+                // class of bug as the original null DispatchedAt issue. The 0.0 fallback causes
+                // the grace-window check below to always fire and the item is permanently skipped
+                // with no log or metric. In production, CreatedAt should always be non-null
+                // (WorkItemEntity.CreatedAt is a non-null column), but if a backfill is missed or
+                // the DTO is constructed without the field the item becomes permanently stuck.
+                // At minimum emit a Log.Warning here so operators can detect the condition.
+                // (Correctness review [WARNING])
+                : 0.0; // null CreatedAt (pre-dates this field in test code) → treat as just created
+
+            // TODO [WARNING]: strict less-than (<) means an item with createdAgeSeconds exactly
+            // equal to NullDispatchedAtGraceWindowSeconds is skipped for another full cycle.
+            // The requirement states "older than the grace window is force-failed", so the
+            // boundary condition (age == graceWindow) should proceed to enforcement. Because
+            // createdAgeSeconds is a double, exact equality is extremely rare in practice, but
+            // semantically the condition should be <= to match the stated requirement boundary.
+            // (Correctness review [WARNING])
+            if (createdAgeSeconds < _options.NullDispatchedAtGraceWindowSeconds)
+            {
+                // Within grace window — skip without recording any metrics.
+                return new WithinGrace();
+            }
+
+            // Grace window expired — use CreatedAt as fallback timeout anchor.
+            _log.Warning(
+                "WorkItem {Id} has null DispatchedAt and CreatedAt is {Age:F0}s old (>{Grace}s grace window) — using CreatedAt as timeout anchor",
+                item.Id, createdAgeSeconds, _options.NullDispatchedAtGraceWindowSeconds);
+            executionAgeSeconds = createdAgeSeconds;
+        }
+
+        _timeoutExecutionAge.Record(executionAgeSeconds,
+            new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+
+        // Canary guard: if age is suspiciously low the timeout anchor is wrong (INV-001).
+        // Skip enforcement for this sweep — the item will be re-evaluated next cycle.
+        if (executionAgeSeconds < TimeoutCanaryMinAgeSeconds)
+        {
+            _log.Warning("WorkItem {Id} timeout canary violation: execution age {AgeSeconds:F1}s < {MinAge}s — skipping enforcement",
+                item.Id, executionAgeSeconds, TimeoutCanaryMinAgeSeconds);
+            _timeoutCanaryViolations.Add(1,
+                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+            return new CanaryViolation();
+        }
+
+        return new Enforceable(executionAgeSeconds);
+    }
+
+    /// <summary>
+    /// Resolves the K8s Job name for a work item that is being timed out.
+    /// <para>
+    /// When <see cref="ActiveWorkItemDto.K8sJobName"/> is stored, it is returned directly.
+    /// When it is <c>null</c> (legacy work items created before the field was persisted),
+    /// the Job is resolved by querying the label selector <c>caa/work-item-id={item.Id}</c>.
+    /// If no Job is found, returns <c>null</c> — the caller must skip deletion.
+    /// </para>
+    /// </summary>
+    private async Task<string?> ResolveJobNameAsync(ActiveWorkItemDto item, CancellationToken ct)
+    {
+        // Fast path: stored name is known — use it directly.
+        // The API's DispatchLifecycleService uses "caa-{first8hex}" (ForBrain) while the old
+        // job-controller path used "caa-agent-{first11hex}" (ForWorkItem, removed in #2322).
+        // Using the stored name avoids recomputing the wrong format.
+        if (item.K8sJobName is not null)
+            return item.K8sJobName;
+
+        // Legacy path: K8sJobName was not persisted at dispatch time.
+        // Resolve the actual running Job via label selector — the same approach CleanupOrphansAsync
+        // uses. If no Job is found (already cleaned up or never started), return null to skip deletion.
+        V1JobList labelJobs;
+        try
+        {
+            labelJobs = await _k8sClient.ListJobsAsync(
+                _options.Namespace,
+                $"caa/work-item-id={item.Id}",
+                ct);
+        }
+        catch (Exception labelEx)
+        {
+            _log.Warning(labelEx, "Failed to resolve K8s Job name via label selector for WorkItem {Id} — skipping deletion", item.Id);
+            labelJobs = new V1JobList { Items = [] };
+        }
+
+        // V1JobList.Items can be null when the K8s API returns an empty result
+        // without the "items" field in the JSON body (the KubernetesClient deserialiser
+        // leaves Items null rather than an empty list in that case). Use
+        // (labelJobs.Items ?? []).FirstOrDefault() here to avoid a NullReferenceException
+        // on a successful call that returns null Items. The catch above only guards the
+        // exception path; a null Items on a successful response bypasses it entirely.
+        var resolved = (labelJobs.Items ?? []).FirstOrDefault();
+        if (resolved?.Metadata?.Name is null)
+        {
+            // TODO [WARNING]: item.Id is passed twice — once for {Id} and once for {WorkItemId}.
+            // Both bind to the same Guid value, producing a redundant structured-log property.
+            // Either remove the second positional argument and embed the value inline in the
+            // format string as a literal (e.g. "...caa/work-item-id={item.Id:D}..."), or replace
+            // {WorkItemId} with a distinct property that adds information (e.g. the label-selector
+            // string used). This carry-forward from the original inline code is harmless at runtime
+            // but pollutes structured-log sinks that index by property name.
+            // (Correctness review [WARNING])
+            _log.Warning("WorkItem {Id} timed out but no K8s Job found via label selector caa/work-item-id={WorkItemId} — job already deleted or never started",
+                item.Id, item.Id);
+            return null;
+        }
+
+        return resolved.Metadata.Name;
+    }
 
     private async Task HandleJobAsync(V1Job job, CancellationToken ct)
     {
