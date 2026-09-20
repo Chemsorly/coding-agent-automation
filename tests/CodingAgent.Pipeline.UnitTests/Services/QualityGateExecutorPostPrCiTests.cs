@@ -1099,3 +1099,357 @@ public class QualityGateExecutorPostPrCiTelemetryTests : IDisposable
         }
     };
 }
+
+/// <summary>
+/// Verifies that WaitForPostPrCiAsync does NOT emit pipeline.step.duration or pipeline.step.count
+/// when the outer CancellationToken is genuinely cancelled during the CI wait.
+/// Regression tests for issue #2794: the outer finally block was unconditionally recording metrics
+/// even on genuine pipeline cancellation, producing near-zero duration outliers that distort
+/// p50/p99 histogram aggregations for long CI waits.
+/// Also verifies that quality_gate.retries only increments after a fix-agent attempt actually runs.
+/// </summary>
+public class QualityGateExecutorWaitForPostPrCiCancellationTelemetryTests : IDisposable
+{
+    private readonly TestMeterFactory _meterFactory = new();
+    private readonly MetricCollector<double> _stepDurationCollector;
+    private readonly MetricCollector<long> _stepCountCollector;
+    private readonly MetricCollector<long> _retriesCollector;
+
+    private readonly Mock<IQualityGateValidator> _mockValidator = new();
+    private readonly Mock<IAgentProvider> _mockAgent = new();
+    private readonly Mock<IPipelineCallbacks> _mockCallbacks = new();
+    private readonly Mock<IAgentIssueOperations> _mockIssueOps = new();
+    private readonly Mock<IRepositoryProvider> _mockRepoProvider = new();
+    private readonly Mock<IPipelineProvider> _mockPipelineProvider = new();
+    private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
+    private readonly Mock<Serilog.ILogger> _mockLogger = new();
+    private readonly PipelineRun _run;
+    private readonly QualityGateExecutor _executor;
+
+    public QualityGateExecutorWaitForPostPrCiCancellationTelemetryTests()
+    {
+        _stepDurationCollector = new MetricCollector<double>(_meterFactory, PipelineTelemetry.SourceName, "pipeline.step.duration");
+        _stepCountCollector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "pipeline.step.count");
+        _retriesCollector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "quality_gate.retries");
+
+        _run = new PipelineRun
+        {
+            RunId = "cancellation-telemetry-test-2794",
+            IssueIdentifier = "2794",
+            IssueTitle = "Cancellation telemetry guard test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            WorkspacePath = Path.Combine(Path.GetTempPath(), $"qg-cancel-telem-{Guid.NewGuid():N}"),
+            BranchName = "feature/auto-2794-test"
+        };
+
+        _executor = new QualityGateExecutor(
+            _mockValidator.Object,
+            new PullRequestOrchestrator(_mockLogger.Object),
+            new CiLogWriter(_mockLogger.Object),
+            new FeedbackService(_mockLogger.Object),
+            _mockLogger.Object,
+            _mockHistoryService.Object,
+            _meterFactory);
+
+        SetupDefaultMocks();
+    }
+
+    public void Dispose()
+    {
+        _stepDurationCollector.Dispose();
+        _stepCountCollector.Dispose();
+        _retriesCollector.Dispose();
+        _meterFactory.Dispose();
+    }
+
+    // ── Bug 1: Cancellation guard on WaitForPostPrCiAsync telemetry ──────────
+
+    /// <summary>
+    /// Regression test for issue #2794, Bug 1:
+    /// When the outer CancellationToken is cancelled during a CI wait, the outer finally block in
+    /// WaitForPostPrCiAsync must NOT record a pipeline.step.duration measurement.
+    /// Before the fix, the finally block fired unconditionally on genuine cancellation, emitting a
+    /// near-zero elapsed time that distorts p50/p99 histogram aggregations for long CI waits.
+    /// </summary>
+    [Fact]
+    public async Task WhenCancellationRequestedDuringCiWait_StepDurationNotRecorded()
+    {
+        // Arrange: route through WaitForPostPrCiAsync via skipCiIfNoChanges path.
+        // First CommitAllAsync succeeds; second throws "No changes" → skipCiIfNoChanges fires →
+        // FinalizePullRequest is called → WaitForPostPrCiAsync runs.
+        SetupValidatorAlwaysPasses();
+        SetupNoChangesToCommit();
+
+        using var cts = new CancellationTokenSource();
+
+        // WaitForCompletionAsync blocks until the token is cancelled, then re-throws —
+        // simulating a genuine pipeline-level cancellation during a long CI wait.
+        // TODO [WARNING]: GetRunStatusAsync is also called by WaitForCiRunsToAppearAsync (which runs
+        // before WaitForCompletionAsync). If cts.Cancel() fires while the pipeline is still inside
+        // WaitForCiRunsToAppearAsync, the OCE propagates from there rather than from WaitForCompletionAsync
+        // and the blocking WaitOne mock is never reached — causing a vacuously-passing assertion
+        // (the guard is never exercised). A SemaphoreSlim/TaskCompletionSource that signals when
+        // WaitCompletionAsync's lambda actually starts executing would remove this race entirely.
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [new() { Name = "build", State = PipelineRunState.Running }] });
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Returns<string, string?, TimeSpan, CancellationToken>((_, _, _, ct) =>
+            {
+                // TODO [WARNING]: ct.WaitHandle.WaitOne() blocks a ThreadPool thread for the full
+                // duration until cancellation arrives. Under parallel xUnit execution, many blocked
+                // threads can exhaust the ThreadPool minimum, stalling the Task.Delay(50) continuation
+                // that issues cts.Cancel() — a potential deadlock. Replace with an async-safe pattern:
+                // await Task.Delay(Timeout.Infinite, ct) inside an async lambda, or use a
+                // TaskCompletionSource whose result is set externally, to avoid occupying a thread.
+                ct.WaitHandle.WaitOne(); // block until genuinely cancelled
+                ct.ThrowIfCancellationRequested();
+                return Task.FromResult<PipelineRunStatus>(null!);
+            });
+
+        // Act: start pipeline, allow it to enter WaitForCompletionAsync, then cancel.
+        var task = _executor.ProceedToQualityGatesAsync(BuildContext(), cts.Token);
+        // TODO [WARNING]: Task.Delay(50) is a timing race. If the host is slow or the async state
+        // machine has not yet suspended in WaitForCompletionAsync when cts.Cancel() fires, the OCE
+        // is caught upstream (e.g. in RunQualityGateValidationAsync or WaitForCiRunsToAppearAsync)
+        // and WaitForPostPrCiAsync's finally block never runs. The assertion then passes vacuously —
+        // not because the cancellation guard is correct, but because the guarded code was never reached.
+        // Fix: replace Task.Delay(50) with a TaskCompletionSource that the WaitForCompletionAsync
+        // mock sets when it enters the blocking wait, then await that TCS before calling cts.Cancel().
+        await Task.Delay(50); // give the task time to reach WaitForCompletionAsync
+        cts.Cancel();
+        await task; // ProceedToQualityGatesAsync catches OCE and returns normally (Cancelled state)
+
+        // Assert: no pipeline.step.duration measurement was recorded.
+        // _stepDuration.Record is only called in WaitForPostPrCiAsync's outermost finally, so
+        // BeEmpty() is unambiguous — no other call site emits on this instrument in this scenario.
+        _stepDurationCollector.GetMeasurementSnapshot().Should().BeEmpty(
+            "cancellation during CI wait must not record a partial step duration (issue #2794)");
+    }
+
+    /// <summary>
+    /// Regression test for issue #2794, Bug 1 (step count variant):
+    /// When the outer CancellationToken is cancelled during a CI wait, the outer finally block in
+    /// WaitForPostPrCiAsync must NOT increment pipeline.step.count.
+    /// </summary>
+    [Fact]
+    public async Task WhenCancellationRequestedDuringCiWait_StepCountNotIncremented()
+    {
+        // Arrange: identical to WhenCancellationRequestedDuringCiWait_StepDurationNotRecorded.
+        SetupValidatorAlwaysPasses();
+        SetupNoChangesToCommit();
+
+        using var cts = new CancellationTokenSource();
+
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [new() { Name = "build", State = PipelineRunState.Running }] });
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Returns<string, string?, TimeSpan, CancellationToken>((_, _, _, ct) =>
+            {
+                // TODO [WARNING]: Same thread-pool starvation risk as StepDurationNotRecorded —
+                // ct.WaitHandle.WaitOne() blocks a ThreadPool thread. Replace with an async-safe
+                // pattern (e.g. await Task.Delay(Timeout.Infinite, ct)) to avoid potential deadlock
+                // under parallel test execution with an exhausted ThreadPool.
+                ct.WaitHandle.WaitOne();
+                ct.ThrowIfCancellationRequested();
+                return Task.FromResult<PipelineRunStatus>(null!);
+            });
+
+        var task = _executor.ProceedToQualityGatesAsync(BuildContext(), cts.Token);
+        // TODO [WARNING]: Same Task.Delay(50) timing race as StepDurationNotRecorded — if cts.Cancel()
+        // fires before the pipeline enters WaitForCompletionAsync (or even before WaitForCiRunsToAppearAsync
+        // completes), this assertion passes vacuously. Use a TaskCompletionSource synchronisation point
+        // inside the WaitForCompletionAsync mock to guarantee the pipeline has reached the blocking wait.
+        await Task.Delay(50);
+        cts.Cancel();
+        await task;
+
+        // Assert: pipeline.step.count must not be incremented on genuine cancellation.
+        _stepCountCollector.GetMeasurementSnapshot().Should().BeEmpty(
+            "cancellation during CI wait must not increment the step count (issue #2794)");
+    }
+
+    // ── Bug 2: Retry counter must increment only after agent actually runs ───
+
+    /// <summary>
+    /// Regression test for issue #2794, Bug 2:
+    /// quality_gate.retries must NOT be incremented for transient-wait iterations where the loop
+    /// exits via shouldBreak (consecutive transient cap) without the fix agent producing a real attempt.
+    /// Before the fix, the counter fired at the top of the loop before RunFixAgentIterationAsync was
+    /// called — meaning 10 consecutive ProviderRateLimit responses produced 10 counter increments
+    /// even though no fix was ever attempted.
+    /// After the fix, the counter fires only after shouldContinue=false and shouldBreak=false,
+    /// i.e. only when a real fix-agent attempt was executed and quality gates are about to run.
+    /// </summary>
+    [Fact]
+    public async Task RunRetryLoop_CounterIncrements_OnlyAfterAgentRuns_NotOnTransientBreak()
+    {
+        // Arrange: validator always fails (loop is entered); agent always returns ProviderRateLimit.
+        // maxRetries is set high so the standard budget never expires — only the 10-iteration
+        // consecutive transient cap breaks the loop. All iterations hit shouldContinue=true or
+        // shouldBreak=true; none reach the new counter location.
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .ReturnsAsync(new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = false, Details = "Build error" },
+                Tests = new GateResult { GateName = "Tests", Passed = false, Details = "2 tests failed" }
+            });
+
+        _mockAgent.Setup(a => a.ExecuteAsync(
+                It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 1,
+                OutputLines = ["HTTP 429: rate limited"],
+                ErrorCategory = AgentErrorCategory.ProviderRateLimit
+            });
+
+        var config = new PipelineConfiguration
+        {
+            AgentTimeout = TimeSpan.FromMinutes(10),
+            MaxRetries = 100, // high — standard budget must not expire; only transient cap fires
+            StallPollInterval = TimeSpan.FromMilliseconds(50),
+            StallWarningInterval = TimeSpan.FromHours(1),
+            TransientRetryDelay = TimeSpan.Zero // eliminate delay so the test runs fast
+        };
+
+        // Act
+        await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
+
+        // Assert: quality_gate.retries has ZERO measurements.
+        // Under the buggy code the counter fired 10 times (once per transient iteration at the top
+        // of the loop). After the fix, all 10 iterations hit shouldContinue/shouldBreak before
+        // reaching the counter, so it fires 0 times.
+        // Positive evidence that the loop ran: the retry agent was called 10 times (the transient cap),
+        // plus 1 feedback call = 11 total. If the loop somehow didn't run, both the retries collector
+        // AND the agent call count would be 0, making this a vacuous assertion.
+        // TODO [WARNING]: Times.Exactly(11) hard-codes MaxConsecutiveTransientRetries (10) + 1 feedback
+        // call. If MaxConsecutiveTransientRetries changes, this silently diverges. Consider deriving
+        // expectedCalls from QualityGateExecutor.MaxConsecutiveTransientRetries + 1 (if accessible) so
+        // the relationship is explicit and the test fails loudly rather than with a wrong count.
+        // Also note: FeedbackTimeoutSeconds defaults to FeedbackConstraints.FailureFeedbackTimeoutSeconds
+        // (60 s), which is intentionally not overridden here — the feedback call must not time out
+        // before the mock can record it. If the default is ever changed to 0 or negative, the count
+        // would drop to 10 and Times.Exactly(11) would fail unexpectedly.
+        _mockAgent.Verify(
+            a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Exactly(11),
+            "10 transient retry calls + 1 feedback call = 11 total (confirms the loop ran)");
+        _retriesCollector.GetMeasurementSnapshot().Should().BeEmpty(
+            "quality_gate.retries must not increment for transient-only iterations that never execute a real fix attempt (issue #2794)");
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+
+    private void SetupDefaultMocks()
+    {
+        _mockRepoProvider.Setup(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
+        _mockRepoProvider.Setup(r => r.PushBranchAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("sha-cancel-telem-abc");
+
+        _mockCallbacks.Setup(c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.RemoveAllAgentLabels(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.CreateDraftPrIfNotExists(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRun>()))
+            .Returns(Task.CompletedTask);
+
+        _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
+
+        _mockAgent.Setup(a => a.GetHealthStatus())
+            .Returns(new AgentHealthStatus { IsExecuting = false });
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = ["done"],
+                Usage = new TokenUsage { InputTokens = 10, OutputTokens = 5 }
+            });
+    }
+
+    private void SetupValidatorAlwaysPasses()
+    {
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .ReturnsAsync(new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "ok" },
+                Tests = new GateResult { GateName = "Tests", Passed = true, Details = "ok" }
+            });
+    }
+
+    /// <summary>
+    /// Routes through WaitForPostPrCiAsync via the skipCiIfNoChanges path:
+    /// first CommitAllAsync succeeds (branch has work), second throws "No changes to commit"
+    /// (cleanup pass) — the same pattern used in QualityGateExecutorPostPrCiTelemetryTests.
+    /// </summary>
+    private void SetupNoChangesToCommit()
+    {
+        _mockRepoProvider.SetupSequence(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>)
+            .ThrowsAsync(new InvalidOperationException("No changes to commit"));
+    }
+
+    private QualityGateContext BuildContext(PipelineConfiguration? config = null) => new()
+    {
+        Run = _run,
+        Config = config ?? new PipelineConfiguration
+        {
+            AgentTimeout = TimeSpan.FromMinutes(10),
+            MaxRetries = 0,
+            MaxInfrastructureRetries = 0,
+            ExternalCiTimeout = TimeSpan.FromMinutes(5),
+            CiNotStartedTimeout = TimeSpan.FromMilliseconds(50),
+            ExternalCiPollInterval = TimeSpan.FromMilliseconds(50),
+            StallPollInterval = TimeSpan.FromMilliseconds(50),
+            StallWarningInterval = TimeSpan.FromHours(1)
+        },
+        AgentProvider = _mockAgent.Object,
+        IssueOps = _mockIssueOps.Object,
+        Callbacks = _mockCallbacks.Object,
+        RepoProvider = _mockRepoProvider.Object,
+        PipelineProvider = _mockPipelineProvider.Object,
+        QualityGateConfigs = new[]
+        {
+            new QualityGateConfiguration
+            {
+                DisplayName = "Test QGC",
+                CompilationCommand = "dotnet",
+                CompilationArguments = new[] { "build" },
+                TestCommand = "dotnet",
+                TestArguments = new[] { "test" }
+            }
+        },
+        Issue = new IssueDetail
+        {
+            Identifier = "2794",
+            Title = "Cancellation telemetry guard test",
+            Description = "Test description",
+            Labels = new[] { "bug" }
+        }
+    };
+}

@@ -244,15 +244,19 @@ public partial class QualityGateExecutor
         finally
         {
             waitSw.Stop();
-            var stepTags = PipelineTelemetry.BuildStepTags("WaitForPostPrCi", run.RunType, run.ProjectId, run.ProjectName);
-            // TODO: This finally block fires on genuine OperationCanceledException (ct.IsCancellationRequested).
-            // The inner catch (OperationCanceledException) { throw; } re-throws and the outer finally still
-            // executes, recording a partial elapsed time as a complete WaitForPostPrCi observation and
-            // incrementing the step count. For long CI waits (potentially hours) a cancellation mid-poll
-            // produces an unrealistically short sample that will distort p50/p99 histogram aggregations.
-            // Consider guarding with: if (!ct.IsCancellationRequested) { ... Record/Add ... }
-            _stepDuration.Record(waitSw.Elapsed.TotalSeconds, stepTags);
-            _stepCount.Add(1, stepTags);
+            // Guard against genuine pipeline cancellation: the inner catch (OperationCanceledException) { throw; }
+            // re-throws and this outer finally still executes. Recording a near-zero elapsed time from a
+            // multi-hour CI wait that was cancelled mid-poll would produce an extreme outlier that distorts
+            // p50/p99 histogram aggregations. Inner CI-timeout cancellations do NOT set ct.IsCancellationRequested,
+            // so those observations are still recorded correctly.
+            // NOTE: The inner finally (run.InfrastructureRetryCount += priorInfraRetryCount) is intentionally
+            // not guarded — it must run even on cancellation to keep run.InfrastructureRetryCount consistent.
+            if (!ct.IsCancellationRequested)
+            {
+                var stepTags = PipelineTelemetry.BuildStepTags("WaitForPostPrCi", run.RunType, run.ProjectId, run.ProjectName);
+                _stepDuration.Record(waitSw.Elapsed.TotalSeconds, stepTags);
+                _stepCount.Add(1, stepTags);
+            }
         }
 
         return new QualityGateReport
@@ -399,18 +403,6 @@ public partial class QualityGateExecutor
         while (!report.AllPassed && run.RetryCount < config.MaxRetries)
         {
             run.RetryCount++;
-            // NOTE: Consider using BuildTags (run_type + project_id + project_name) for dimensional consistency with duration metrics.
-            // NOTE [WARNING]: The per-outcome dimension tag (transient/auth_abort/session_restart/retry) was
-            // removed when this counter was moved to the top of the loop. Dashboards or alerts keyed on
-            // outcome=transient or outcome=auth_abort will silently receive zero counts. The replacement
-            // uses only RunTypeTag. Restore BuildRetryTags with an outcome dimension or add a separate
-            // counter per outcome branch to preserve metric dimensionality.
-            // See review finding: Correctness WARNING — QualityGateExecutor.RetryLoop.cs:368-375
-            // NOTE [WARNING]: This counter is now incremented before the agent runs. If the loop exits
-            // immediately after (e.g. shouldBreak set by the switch then the break fires),
-            // the counter is incremented for an attempt that was not executed. Minor double-count risk.
-            // See review finding: Correctness WARNING — QualityGateExecutor.RetryLoop.cs:368
-            _qualityGateRetries.Add(1, PipelineTelemetry.RunTypeTag(run.RunType));
             var errorSummary = BuildQualityGateErrorSummary(report);
             run.RetryErrors.Enqueue(errorSummary);
 
@@ -456,6 +448,20 @@ public partial class QualityGateExecutor
 
             if (shouldContinue) continue;
             if (shouldBreak) break;
+
+            // Record the retry counter only here — after confirming that RunFixAgentIterationAsync
+            // produced a real fix attempt (shouldContinue=false, shouldBreak=false). Transient-wait
+            // iterations and auth-abort exits do not reach this point, so the counter accurately counts
+            // "a fix-agent attempt was executed and quality gates are about to run".
+            // NOTE: Consider using BuildTags (run_type + project_id + project_name) for dimensional
+            // consistency with duration metrics.
+            // NOTE [WARNING]: The per-outcome dimension tag (transient/auth_abort/session_restart/retry) was
+            // removed when this counter was moved to the top of the loop in a prior refactor. Dashboards or
+            // alerts keyed on outcome=transient or outcome=auth_abort will silently receive zero counts. The
+            // replacement uses only RunTypeTag. Restore BuildRetryTags with an outcome dimension or add a
+            // separate counter per outcome branch to preserve metric dimensionality.
+            // See review finding: Correctness WARNING — QualityGateExecutor.RetryLoop.cs:368-375
+            _qualityGateRetries.Add(1, PipelineTelemetry.RunTypeTag(run.RunType));
 
             callbacks.TransitionTo(PipelineStep.RunningQualityGates);
             report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, ct);
