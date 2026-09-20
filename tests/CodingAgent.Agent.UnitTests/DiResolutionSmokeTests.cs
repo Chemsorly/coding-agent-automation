@@ -3,7 +3,6 @@ using CodingAgent.Infrastructure;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
-using CodingAgent.Pipeline.Services;
 using KiroCliLib.Configuration;
 using KiroCliLib.Core;
 using Microsoft.Extensions.DependencyInjection;
@@ -80,7 +79,6 @@ public class DiResolutionSmokeTests
         services.AddSingleton<IHubConnectionManager>(sp => sp.GetRequiredService<IHubConnectionManagerFactory>().Create());
 
         // ── Pipeline executor ──
-        services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));
         services.AddSingleton<IPipelineExecutor>(sp => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
             sp.GetRequiredService<IKiroCliOrchestrator>(),
             sp.GetRequiredService<IHttpClientFactory>(),
@@ -88,7 +86,6 @@ public class DiResolutionSmokeTests
             sp.GetRequiredService<IQualityGateValidator>(),
             Log.Logger,
             sp.GetRequiredService<IBrainUpdateService>(),
-            OpenIssueContextWriter: sp.GetRequiredService<IOpenIssueContextWriter>(),
             AgentIdentity: sp.GetRequiredService<AgentId>())));
 
         // ── Consolidation executor ──
@@ -317,7 +314,6 @@ public class DiResolutionSmokeTests
         services.AddSingleton<IHubConnectionManager>(sp => sp.GetRequiredService<IHubConnectionManagerFactory>().Create());
 
         // ── Pipeline executor ──
-        services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));
         services.AddSingleton<IPipelineExecutor>(sp => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
             sp.GetRequiredService<IKiroCliOrchestrator>(),
             sp.GetRequiredService<IHttpClientFactory>(),
@@ -325,7 +321,6 @@ public class DiResolutionSmokeTests
             sp.GetRequiredService<IQualityGateValidator>(),
             Log.Logger,
             sp.GetRequiredService<IBrainUpdateService>(),
-            OpenIssueContextWriter: sp.GetRequiredService<IOpenIssueContextWriter>(),
             AgentIdentity: sp.GetRequiredService<AgentId>())));
 
         // ── Consolidation executor ──
@@ -357,7 +352,7 @@ public class DiResolutionSmokeTests
         services.AddSingleton(sp => new AgentWorkerService(new AgentWorkerServiceDependencies(
             sp.GetRequiredService<AgentConnectionLifecycle>(),
             sp.GetRequiredService<AgentJobSlotManager>(),
-            new ChatJobHandler(new ChatJobHandlerDependencies(
+            new ChatJobExecutor(new ChatJobExecutorDependencies(
                 sp.GetRequiredService<AgentConnectionLifecycle>(),
                 sp.GetRequiredService<AgentJobSlotManager>(),
                 sp.GetRequiredService<IKiroCliOrchestrator>(),
@@ -367,7 +362,7 @@ public class DiResolutionSmokeTests
                 IsOpenCodeProvider: false,
                 IsChatMode: false,
                 Logger: Log.Logger)),
-            new ConsolidationJobHandler(
+            new ConsolidationJobExecutor(
                 sp.GetRequiredService<AgentConnectionLifecycle>(),
                 sp.GetRequiredService<AgentJobSlotManager>(),
                 sp.GetRequiredService<IConsolidationExecutor>(),

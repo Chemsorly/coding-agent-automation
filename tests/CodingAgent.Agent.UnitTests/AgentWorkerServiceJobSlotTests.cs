@@ -240,11 +240,11 @@ public class AgentWorkerServiceJobSlotTests
         return (AgentJobSlotManager)field.GetValue(service)!;
     }
 
-    private static ConsolidationJobHandler GetConsolidationJobHandler(AgentWorkerService service)
+    private static ConsolidationJobExecutor GetConsolidationJobHandler(AgentWorkerService service)
     {
         var field = typeof(AgentWorkerService).GetField("_consolidationJobHandler",
             BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException("Field '_consolidationJobHandler' not found");
-        return (ConsolidationJobHandler)field.GetValue(service)!;
+        return (ConsolidationJobExecutor)field.GetValue(service)!;
     }
 }

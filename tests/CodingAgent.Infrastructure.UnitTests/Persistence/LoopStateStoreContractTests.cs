@@ -23,19 +23,19 @@ public abstract class LoopStateStoreContractTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    // ── ReadAsync ────────────────────────────────────────────────────────
+    // ── LoadAsync ────────────────────────────────────────────────────────
 
     [Fact]
     public async Task Read_EmptyStore_ReturnsNull()
     {
         var store = CreateStore();
 
-        var state = await store.ReadAsync(CancellationToken.None);
+        var state = await store.LoadAsync(CancellationToken.None);
 
         state.Should().BeNull();
     }
 
-    // ── WriteAsync + ReadAsync roundtrip ─────────────────────────────────
+    // ── WriteAsync + LoadAsync roundtrip ─────────────────────────────────
 
     [Fact]
     public async Task Write_ThenRead_ReturnsPersistedState()
@@ -49,7 +49,7 @@ public abstract class LoopStateStoreContractTests : IDisposable
         };
 
         await store.WriteAsync(state, CancellationToken.None);
-        var loaded = await store.ReadAsync(CancellationToken.None);
+        var loaded = await store.LoadAsync(CancellationToken.None);
 
         loaded.Should().NotBeNull();
         loaded!.IsActive.Should().BeTrue();
@@ -65,7 +65,7 @@ public abstract class LoopStateStoreContractTests : IDisposable
         await store.WriteAsync(new LoopState { IsActive = true, StartedAt = DateTimeOffset.UtcNow }, CancellationToken.None);
         await store.WriteAsync(new LoopState { IsActive = false, StoppedAt = DateTimeOffset.UtcNow }, CancellationToken.None);
 
-        var loaded = await store.ReadAsync(CancellationToken.None);
+        var loaded = await store.LoadAsync(CancellationToken.None);
         loaded.Should().NotBeNull();
         loaded!.IsActive.Should().BeFalse();
         loaded.StoppedAt.Should().NotBeNull();
@@ -86,7 +86,7 @@ public abstract class LoopStateStoreContractTests : IDisposable
         };
 
         await store.WriteAsync(state, CancellationToken.None);
-        var loaded = await store.ReadAsync(CancellationToken.None);
+        var loaded = await store.LoadAsync(CancellationToken.None);
 
         loaded.Should().NotBeNull();
         loaded!.IsActive.Should().BeFalse();
@@ -104,7 +104,7 @@ public abstract class LoopStateStoreContractTests : IDisposable
 
         await store.DeleteAsync(CancellationToken.None);
 
-        var loaded = await store.ReadAsync(CancellationToken.None);
+        var loaded = await store.LoadAsync(CancellationToken.None);
         loaded.Should().BeNull();
     }
 
@@ -128,7 +128,7 @@ public abstract class LoopStateStoreContractTests : IDisposable
         var newState = new LoopState { IsActive = false, StoppedAt = DateTimeOffset.UtcNow };
         await store.WriteAsync(newState, CancellationToken.None);
 
-        var loaded = await store.ReadAsync(CancellationToken.None);
+        var loaded = await store.LoadAsync(CancellationToken.None);
         loaded.Should().NotBeNull();
         loaded!.IsActive.Should().BeFalse();
     }

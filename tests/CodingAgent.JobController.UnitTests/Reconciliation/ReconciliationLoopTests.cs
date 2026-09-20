@@ -1079,6 +1079,118 @@ public sealed class ReconciliationLoopTests
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "DispatchTimeout"),
             It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    // ─── Characterisation tests: grace-window boundary and null-CreatedAt (Issue #2774) ──
+
+    /// <summary>
+    /// Characterisation test (Issue #2774 prerequisite, Gap 1):
+    /// A null-DispatchedAt item with CreatedAt aged exactly equal to
+    /// NullDispatchedAtGraceWindowSeconds must NOT be skipped — the strict less-than
+    /// condition (<c>&lt;</c>, not <c>&lt;=</c>) means equality proceeds to enforcement.
+    /// The item is old enough to clear the canary guard (graceWindowSeconds=3600 &gt;&gt; 60s).
+    /// </summary>
+    [Fact]
+    public async Task EnforceTimeouts_NullDispatchedAt_CreatedAtExactlyAtGraceBoundary_ProceedsToEnforcement()
+    {
+        // graceWindowSeconds == NullDispatchedAtGraceWindowSeconds (default 3600s).
+        // Using the options value directly so the test stays self-consistent if the default changes.
+        var graceWindowSeconds = _options.NullDispatchedAtGraceWindowSeconds;
+        var item = new ActiveWorkItemDto
+        {
+            Id = ItemId,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = null,
+            // Exactly at the boundary — createdAgeSeconds == graceWindowSeconds, not strictly less.
+            // TODO [WARNING]: DateTimeOffset.UtcNow is sampled here at construction time. By the time
+            // ResolveExecutionAge re-samples UtcNow, wall-clock drift ensures createdAgeSeconds is
+            // strictly GREATER than graceWindowSeconds, so this test never exercises the exact
+            // boundary it documents. It only verifies the already-covered "beyond grace window" path
+            // and would pass vacuously if the < were changed to <=. To reliably pin the exact
+            // boundary, inject a clock abstraction (Func<DateTimeOffset> or IClock) so both
+            // samples return the same instant.
+            // (TestQualityReviewer [WARNING])
+            CreatedAt = DateTimeOffset.UtcNow.AddSeconds(-graceWindowSeconds),
+            AgentSelector = "dotnet10,opencode",
+            IssueIdentifier = "owner/repo#1",
+            K8sJobName = "caa-boundary-test",
+            TimeoutSeconds = (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+        _workItemClient.Setup(c => c.PostStatusAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // Anti-vacuity guard: confirm the query ran and the item was seen by the loop.
+        _workItemClient.Verify(c => c.GetActiveAsync(
+            It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        // createdAgeSeconds == graceWindowSeconds → condition (age < grace) is false → NOT skipped.
+        // The item proceeds to enforcement (PostStatusAsync must be called).
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
+            It.IsAny<CancellationToken>()), Times.Once);
+        // TODO [WARNING]: This test does not assert that no canary violation counter was emitted.
+        // If a future refactor inadvertently routes the grace-fallback path through the canary check
+        // before returning Enforceable, a spurious canary increment would go undetected. Add a
+        //   canaryCollector.GetMeasurementSnapshot().Should().BeEmpty()
+        // assertion here (mirroring the approach in ReconciliationLoopMetricTests) to lock down
+        // this invariant.
+        // (TestQualityReviewer [WARNING])
+    }
+
+    /// <summary>
+    /// Characterisation test (Issue #2774 prerequisite, Gap 2):
+    /// A work item with both DispatchedAt and CreatedAt null is permanently deferred —
+    /// the null-CreatedAt fallback sets createdAgeSeconds = 0.0, which is always less
+    /// than any positive grace window, so the item is never enforced.
+    /// </summary>
+    // TODO [WARNING]: This test characterises a KNOWN BUG — null CreatedAt causes permanent
+    // deferral with no log or metric, making the item invisible to operators. The inline
+    // TODO [WARNING] in ResolveExecutionAge describes the fix (emit a Log.Warning and consider
+    // proceeding to enforcement). If that bug is fixed, this test will fail and must be updated
+    // to assert the corrected behaviour. Do NOT treat a pass here as validation of correct
+    // behaviour — it validates the current broken behaviour.
+    // (TestQualityReviewer [WARNING])
+    [Fact]
+    public async Task EnforceTimeouts_NullDispatchedAt_NullCreatedAt_IsAlwaysSkipped()
+    {
+        var item = new ActiveWorkItemDto
+        {
+            Id = ItemId,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = null,
+            CreatedAt = null, // null CreatedAt → age falls back to 0.0 → always within grace window
+            AgentSelector = "dotnet10,opencode",
+            IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // Anti-vacuity guard: confirm the query ran and the loop processed the item.
+        // Without this, a mock that returns empty from GetActiveAsync would cause
+        // Times.Never to pass vacuously, making the test a false green.
+        _workItemClient.Verify(c => c.GetActiveAsync(
+            It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        // Item must be permanently deferred — 0.0 < graceWindowSeconds → WithinGrace → no enforcement.
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 }
 
 // ─── Error / exception paths ──────────────────────────────────────────────────
@@ -2851,5 +2963,105 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
         // would pass. Add an unfiltered delta assertion to catch double-emission bugs:
         // var totalFailedCountAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
         // (totalFailedCountAfter - totalFailedCountBefore).Should().Be(1, "pipeline.jobs.failed must be emitted exactly once");
+    }
+
+    // ─── Characterisation tests: canary-threshold overlap and null-CreatedAt metrics (Issue #2774) ──
+
+    /// <summary>
+    /// Characterisation test (Issue #2774 prerequisite, Gap 3):
+    /// At TimeoutSeconds == 60 (the canary minimum), the canary guard
+    /// (executionAgeSeconds &lt; 60) and the enforcement guard (executionAgeSeconds &lt; 60)
+    /// share the same threshold. An item dispatched exactly 60s ago clears the canary guard
+    /// (60 is not &lt; 60) and is immediately enforced. No canary counter must be incremented.
+    /// </summary>
+    [Fact]
+    public async Task EnforceTimeouts_WhenTimeoutIs60s_AndAgeIs60s_EnforcesWithoutCanary()
+    {
+        var id = Guid.NewGuid();
+        const int itemTimeoutSeconds = 60; // == TimeoutCanaryMinAgeSeconds
+        var item = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-itemTimeoutSeconds), // age == 60s
+            AgentSelector = "test",
+            IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = itemTimeoutSeconds,
+            K8sJobName = "caa-canary-boundary"
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+        _workItemClient.Setup(c => c.PostStatusAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        using var canaryCollector = new MetricCollector<long>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_canary_violations");
+        using var ageCollector = new MetricCollector<double>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_execution_age_seconds");
+
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // Anti-vacuity: confirm the query ran.
+        _workItemClient.Verify(c => c.GetActiveAsync(
+            It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        // Enforcement must proceed — age (60s) is not strictly less than timeout (60s).
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // Canary counter must NOT be incremented — age (60s) is not strictly less than 60.
+        canaryCollector.GetMeasurementSnapshot().Should().BeEmpty(
+            "timeout_canary_violations must not be incremented when execution age == TimeoutCanaryMinAgeSeconds (60s)");
+
+        // Execution age histogram must have been recorded (≈ 60s).
+        ageCollector.GetMeasurementSnapshot().Should().Contain(
+            m => m.Value >= 55.0 && m.Value <= 65.0 && m.Tags.Contains(new KeyValuePair<string, object?>("agent_selector", "test")),
+            "timeout_execution_age_seconds must record ≈ 60s for an item dispatched 60s ago");
+    }
+
+    /// <summary>
+    /// Characterisation test (Issue #2774 prerequisite, Gap 4):
+    /// A work item with both DispatchedAt and CreatedAt null must record no metrics —
+    /// the grace-window return fires before _timeoutExecutionAge.Record and before the
+    /// canary counter, so neither instrument must be touched.
+    /// </summary>
+    [Fact]
+    public async Task EnforceTimeouts_NullDispatchedAt_NullCreatedAt_RecordsNoMetrics()
+    {
+        var id = Guid.NewGuid();
+        var item = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = null,
+            CreatedAt = null, // null CreatedAt → age = 0.0 → always within grace window
+            AgentSelector = "test",
+            IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+
+        using var canaryCollector = new MetricCollector<long>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_canary_violations");
+        using var ageCollector = new MetricCollector<double>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_execution_age_seconds");
+
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // Anti-vacuity guard: confirm the query ran and the loop processed the item.
+        _workItemClient.Verify(c => c.GetActiveAsync(
+            It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        // No metrics must be recorded — the WithinGrace return fires before Record or Add.
+        canaryCollector.GetMeasurementSnapshot().Should().BeEmpty(
+            "timeout_canary_violations must not be incremented when null-DispatchedAt + null-CreatedAt item is within grace window");
+        ageCollector.GetMeasurementSnapshot().Should().BeEmpty(
+            "timeout_execution_age_seconds must not be recorded when null-DispatchedAt + null-CreatedAt item is within grace window");
     }
 }

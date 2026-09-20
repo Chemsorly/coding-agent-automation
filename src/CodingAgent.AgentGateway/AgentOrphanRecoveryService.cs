@@ -133,16 +133,22 @@ public sealed class AgentOrphanRecoveryService(
             // UpdateAgentFieldAsync is called AFTER TransitionStatus and outside the lock:
             // the async continuation must not escape the lock scope and potentially
             // overwrite the Busy status already written to Redis by TransitionStatus.
-            // TODO: [WARNING] The returned Task is discarded (fire-and-forget). If the async
-            // operation faults, the exception is silently swallowed and will not propagate to
-            // any caller. Consider making RestoreConsolidationTracking async Task and awaiting
-            // this call, or attaching a fault-logging continuation:
-            // .ContinueWith(t => _logger.Error(t.Exception, "..."), TaskContinuationOptions.OnlyOnFaulted).
             // TODO: [WARNING] CancellationToken is not threaded through to UpdateAgentFieldAsync.
             // RecoverOrphanedStateAsync does not accept a CancellationToken, so this is a structural
             // limitation at the call site. If cancellation support is added to the enclosing method,
             // propagate the token here.
-            _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, activeJob.RunId);
+            // TODO: [WARNING] t.Exception is guaranteed non-null inside an OnlyOnFaulted continuation;
+            // the null-conditional operator (?.) is misleading here. Prefer t.Exception!.Flatten()
+            // to make the non-null contract explicit. Same pattern applies at all six ContinueWith
+            // sites in this file (RestorePipelineRun, LinkAgentToExistingRun, DetectAndRestoreOrphans ×2,
+            // HandleCrashRecovery). See DotNetSpecialist review finding for issue #2779.
+            _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, activeJob.RunId)
+                .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
+                        "RestoreConsolidationTracking: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
+                        agentId, ActiveJobIdField),
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted,
+                    TaskScheduler.Default);
         }
 
         _changeNotifier.NotifyChange();
@@ -182,16 +188,19 @@ public sealed class AgentOrphanRecoveryService(
             // UpdateAgentFieldAsync is called AFTER TransitionStatus and outside the lock:
             // the async continuation must not escape the lock scope and potentially
             // overwrite the Busy status already written to Redis by TransitionStatus.
-            // TODO: [WARNING] The returned Task is discarded (fire-and-forget). If the async
-            // operation faults, the exception is silently swallowed and will not propagate to
-            // any caller. Consider making RestorePipelineRun async Task and awaiting this call,
-            // or attaching a fault-logging continuation:
-            // .ContinueWith(t => _logger.Error(t.Exception, "..."), TaskContinuationOptions.OnlyOnFaulted).
             // TODO: [WARNING] CancellationToken is not threaded through to UpdateAgentFieldAsync.
             // RecoverOrphanedStateAsync does not accept a CancellationToken, so this is a structural
             // limitation at the call site. If cancellation support is added to the enclosing method,
             // propagate the token here.
-            _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, activeJob.RunId);
+            _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, activeJob.RunId)
+                // TODO: [WARNING] t.Exception is guaranteed non-null inside an OnlyOnFaulted continuation;
+                // the ?. operator is misleading. Prefer t.Exception!.Flatten(). See #2779.
+                .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
+                        "RestorePipelineRun: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
+                        agentId, ActiveJobIdField),
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted,
+                    TaskScheduler.Default);
         }
 
         _logger.Information(
@@ -301,7 +310,15 @@ public sealed class AgentOrphanRecoveryService(
                 if (trackedEntry.ActiveJobId is null)
                 {
                     trackedEntry.ActiveJobId = activeJob.RunId;
-                    _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, activeJob.RunId);
+                    _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, activeJob.RunId)
+                        // TODO: [WARNING] t.Exception is guaranteed non-null inside OnlyOnFaulted;
+                        // ?. is misleading. Prefer t.Exception!.Flatten(). See #2779.
+                        .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
+                                "LinkAgentToExistingRun: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
+                                agentId, ActiveJobIdField),
+                            CancellationToken.None,
+                            TaskContinuationOptions.OnlyOnFaulted,
+                            TaskScheduler.Default);
                     // Transition to Busy only when we actually wrote the ActiveJobId.
                     // The decision is captured inside the lock so a concurrent disconnect handler
                     // that clears ActiveJobId after lock release cannot cause a spurious Busy
@@ -373,8 +390,23 @@ public sealed class AgentOrphanRecoveryService(
                     // for the full non-atomic read-then-write WARNING. (Correctness WARNING, issue #2616)
                     _facade.SetLocalAgentSnapshotField(agentId, ActiveJobIdField, mostRecent.RunId);
                     _facade.SetLocalAgentSnapshotField(agentId, "orphanRestoredAt", now.ToString("O"));
-                    _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, mostRecent.RunId);
-                    _ = _facade.UpdateAgentFieldAsync(agentId, "orphanRestoredAt", now.ToString("O"));
+                    _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, mostRecent.RunId)
+                        // TODO: [WARNING] t.Exception is guaranteed non-null inside OnlyOnFaulted;
+                        // ?. is misleading. Prefer t.Exception!.Flatten(). See #2779.
+                        .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
+                                "DetectAndRestoreOrphans: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
+                                agentId, ActiveJobIdField),
+                            CancellationToken.None,
+                            TaskContinuationOptions.OnlyOnFaulted,
+                            TaskScheduler.Default);
+                    _ = _facade.UpdateAgentFieldAsync(agentId, "orphanRestoredAt", now.ToString("O"))
+                        // TODO: [WARNING] same as above — t.Exception!.Flatten() preferred. See #2779.
+                        .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
+                                "DetectAndRestoreOrphans: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
+                                agentId, "orphanRestoredAt"),
+                            CancellationToken.None,
+                            TaskContinuationOptions.OnlyOnFaulted,
+                            TaskScheduler.Default);
                     // The decision to call TransitionStatus is captured inside the lock.
                     // This prevents a concurrent disconnect handler from clearing ActiveJobId
                     // between lock release and the TransitionStatus call.
@@ -438,7 +470,15 @@ public sealed class AgentOrphanRecoveryService(
                 // the field cannot produce a null read after the non-null guard below.
                 existingJobId = entry.ActiveJobId;
                 entry.OrphanRestoredAt = DateTimeOffset.UtcNow;
-                _ = _facade.UpdateAgentFieldAsync(agentId, "orphanRestoredAt", DateTimeOffset.UtcNow.ToString("O"));
+                _ = _facade.UpdateAgentFieldAsync(agentId, "orphanRestoredAt", DateTimeOffset.UtcNow.ToString("O"))
+                    // TODO: [WARNING] t.Exception is guaranteed non-null inside OnlyOnFaulted;
+                    // ?. is misleading. Prefer t.Exception!.Flatten(). See #2779.
+                    .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
+                            "HandleCrashRecovery: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
+                            agentId, "orphanRestoredAt"),
+                        CancellationToken.None,
+                        TaskContinuationOptions.OnlyOnFaulted,
+                        TaskScheduler.Default);
             }
 
             // Re-materialize the run hash so subsequent [RequiresActiveJob] hub calls can find

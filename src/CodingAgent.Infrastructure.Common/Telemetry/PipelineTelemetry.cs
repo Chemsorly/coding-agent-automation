@@ -15,6 +15,18 @@ public static class PipelineTelemetry
 {
     public const string SourceName = "CodingAgent.Pipeline";
 
+    // UCUM-style unit annotation constants shared across counter definitions.
+    // Defined here to avoid S1192 (repeated string literals) and to make unit
+    // semantics explicit at the call site.
+    private const string UnitUpdate    = "{update}";
+    private const string UnitFailure   = "{failure}";
+    private const string UnitItem      = "{item}";
+    private const string UnitSync      = "{sync}";
+    private const string UnitRetry     = "{retry}";
+    private const string UnitJob       = "{job}";
+    private const string UnitEvent     = "{event}";
+    private const string UnitReprobe   = "{reprobe}";
+
     public static readonly ActivitySource ActivitySource = new(SourceName);
     public static readonly Meter Meter = new(SourceName);
 
@@ -47,7 +59,7 @@ public static class PipelineTelemetry
         "agent.cost.usd", "USD", "LLM cost in USD");
 
     public static readonly Counter<long> QualityGateRetries = Meter.CreateCounter<long>(
-        "quality_gate.retries", "{retry}", "Quality gate retry attempts");
+        "quality_gate.retries", UnitRetry, "Quality gate retry attempts");
     public static readonly Histogram<double> QualityGateDuration = Meter.CreateHistogram<double>(
         "quality_gate.duration", "s", "Total time in quality gate phase");
     public static readonly Counter<long> QualityGateEvaluations = Meter.CreateCounter<long>(
@@ -93,23 +105,23 @@ public static class PipelineTelemetry
         });
 
     public static readonly Counter<long> ConsolidationJobsExpired = Meter.CreateCounter<long>(
-        "consolidation.jobs.expired", "{job}", "Consolidation jobs expired from queue");
+        "consolidation.jobs.expired", UnitJob, "Consolidation jobs expired from queue");
 
     public static readonly Counter<long> ConsolidationDispatchPermanentFailures = Meter.CreateCounter<long>(
-        "consolidation.dispatch.permanent_failures", "{failure}",
+        "consolidation.dispatch.permanent_failures", UnitFailure,
         "Consolidation dispatch permanent failures (e.g. no job template for selector). Tagged by run.type.");
 
     // Brain metrics
     public static readonly Counter<long> BrainSyncsCompleted = Meter.CreateCounter<long>(
-        "brain.syncs.completed", "{sync}", "Successful brain pre-run sync operations");
+        "brain.syncs.completed", UnitSync, "Successful brain pre-run sync operations");
     public static readonly Counter<long> BrainUpdatesCommitted = Meter.CreateCounter<long>(
         "brain.updates.committed", "{commit}", "Brain post-run commits pushed");
     public static readonly Counter<long> BrainUpdatesEmpty = Meter.CreateCounter<long>(
-        "brain.updates.empty", "{sync}", "Runs where agent produced no brain changes");
+        "brain.updates.empty", UnitSync, "Runs where agent produced no brain changes");
     public static readonly Counter<long> BrainFilesWritten = Meter.CreateCounter<long>(
         "brain.files.written", "{file}", "Total brain files committed across all runs");
     public static readonly Counter<long> BrainSyncSkipped = Meter.CreateCounter<long>(
-        "brain.sync.skipped", "{sync}", "Runs where post-run brain sync was skipped (tagged by reason)");
+        "brain.sync.skipped", UnitSync, "Runs where post-run brain sync was skipped (tagged by reason)");
     public static readonly Histogram<double> BrainSyncDuration = Meter.CreateHistogram<double>(
         "brain.sync.duration", "s", "Duration of brain sync operations",
         advice: new InstrumentAdvice<double>
@@ -117,11 +129,11 @@ public static class PipelineTelemetry
             HistogramBucketBoundaries = [1, 2, 5, 10, 20, 30, 60, 120, 300]
         });
     public static readonly Counter<long> BrainPushRetries = Meter.CreateCounter<long>(
-        "brain.push.retries", "{retry}", "Brain repo push retry attempts on non-fast-forward conflict");
+        "brain.push.retries", UnitRetry, "Brain repo push retry attempts on non-fast-forward conflict");
 
     // Token vending metrics
     public static readonly Counter<long> TokenVendingFailures = Meter.CreateCounter<long>(
-        "token_vending.failures", "{failure}", "Token vending failures");
+        "token_vending.failures", UnitFailure, "Token vending failures");
     public static readonly Histogram<double> TokenVendingDuration = Meter.CreateHistogram<double>(
         "token_vending.duration", "s", "Duration of token vending operations");
 
@@ -133,27 +145,48 @@ public static class PipelineTelemetry
     public static readonly Counter<long> LoopDispatchDecisions = Meter.CreateCounter<long>(
         "pipeline.loop.dispatch_decisions", "{decision}", "Dispatch decisions made by the loop");
     public static readonly Counter<long> LoopBackoffEvents = Meter.CreateCounter<long>(
-        "pipeline.loop.backoff_events", "{event}", "Backoff escalations due to poll failures");
+        "pipeline.loop.backoff_events", UnitEvent, "Backoff escalations due to poll failures");
     public static readonly Counter<long> LoopCircuitBreakerTrips = Meter.CreateCounter<long>(
         "pipeline.loop.circuit_breaker_trips", "{trip}", "Circuit breaker trip events");
 
     // Housekeeping metrics
     public static readonly Counter<long> HousekeepingTriggered = Meter.CreateCounter<long>(
-        "pipeline.housekeeping.triggered", "{update}", "Server-side branch updates triggered");
+        "pipeline.housekeeping.triggered", UnitUpdate, "Server-side branch updates triggered");
     public static readonly Counter<long> HousekeepingSucceeded = Meter.CreateCounter<long>(
-        "pipeline.housekeeping.succeeded", "{update}", "Server-side branch updates completed successfully");
+        "pipeline.housekeeping.succeeded", UnitUpdate, "Server-side branch updates completed successfully");
     public static readonly Counter<long> HousekeepingFailed = Meter.CreateCounter<long>(
-        "pipeline.housekeeping.failed", "{update}", "Server-side branch updates that threw an exception");
+        "pipeline.housekeeping.failed", UnitUpdate, "Server-side branch updates that threw an exception");
     public static readonly Counter<long> HousekeepingSkipped = Meter.CreateCounter<long>(
-        "pipeline.housekeeping.skipped", "{update}", "PRs skipped during candidate selection (not behind, null, draft, active rework, in-flight)");
+        "pipeline.housekeeping.skipped", UnitUpdate, "PRs skipped during candidate selection (not behind, null, draft, active rework, in-flight)");
     public static readonly Counter<long> HousekeepingEvicted = Meter.CreateCounter<long>(
-        "pipeline.housekeeping.evicted", "{update}", "In-flight entries removed (CI resolved or PR merged/label removed)");
+        "pipeline.housekeeping.evicted", UnitUpdate, "In-flight entries removed (CI resolved or PR merged/label removed)");
     public static readonly Counter<long> HousekeepingConflictReworkTriggered = Meter.CreateCounter<long>(
         "pipeline.housekeeping.conflict_rework_triggered", "{rework}",
         "Issues re-queued for rework due to PR merge conflict");
     public static readonly Counter<long> HousekeepingBranchDeleted = Meter.CreateCounter<long>(
         "pipeline.housekeeping.branch_deleted", "{branch}",
         "Stale agent branches deleted (no open PR, inactive issue label)");
+
+    /// <summary>
+    /// Counts re-probe batches fired for PRs whose first mergeability probe returned
+    /// <c>unknown</c>. Tagged by <c>repo_provider_id</c>. Each increment represents one
+    /// <c>Task.Delay</c> + re-probe pass (i.e. one cycle had at least one Unknown PR).
+    /// Pair with <see cref="HousekeepingReprobeResolved"/> to measure how often re-probing
+    /// actually resolves the state vs stays Unknown.
+    /// </summary>
+    public static readonly Counter<long> HousekeepingReprobeTriggered = Meter.CreateCounter<long>(
+        "pipeline.housekeeping.reprobe_triggered", UnitReprobe,
+        "Re-probe passes fired for PRs whose first mergeability probe returned Unknown (GitHub/GitLab lazy-compute workaround)");
+
+    /// <summary>
+    /// Counts individual PRs that resolved to a non-Unknown state on the re-probe pass.
+    /// Tagged by <c>repo_provider_id</c> and <c>resolved_state</c> (behind | clean | dirty | blocked).
+    /// A high ratio of <see cref="HousekeepingReprobeResolved"/> / <see cref="HousekeepingReprobeTriggered"/>
+    /// indicates the re-probe is effective. A low ratio may indicate persistent API latency (GitHub or GitLab).
+    /// </summary>
+    public static readonly Counter<long> HousekeepingReprobeResolved = Meter.CreateCounter<long>(
+        "pipeline.housekeeping.reprobe_resolved", UnitReprobe,
+        "PRs that resolved to a non-Unknown mergeability state on re-probe (tagged by resolved_state)");
 
     // Label swap metrics
     // TODO: The unit string "{exhaustion}" is inconsistent with the "{item}", "{retry}", "{failure}", "{event}"
@@ -168,23 +201,23 @@ public static class PipelineTelemetry
 
     // Queue sweep metrics
     public static readonly Counter<long> QueueSweepCancelled = Meter.CreateCounter<long>(
-        "pipeline.queue_sweep.cancelled", "{item}", "WorkItems cancelled as stale by the queue sweep");
+        "pipeline.queue_sweep.cancelled", UnitItem, "WorkItems cancelled as stale by the queue sweep");
     public static readonly Counter<long> QueueSweepSkipped = Meter.CreateCounter<long>(
-        "pipeline.queue_sweep.skipped", "{item}", "WorkItems skipped by the queue sweep (fail-open: provider not polled, rate-limited, wrong TaskType)");
+        "pipeline.queue_sweep.skipped", UnitItem, "WorkItems skipped by the queue sweep (fail-open: provider not polled, rate-limited, wrong TaskType)");
     public static readonly Counter<long> QueueSweepFailed = Meter.CreateCounter<long>(
-        "pipeline.queue_sweep.failed", "{item}", "PostStatusAsync unexpected failures during queue sweep (expected races like already-terminal are not counted)");
+        "pipeline.queue_sweep.failed", UnitItem, "PostStatusAsync unexpected failures during queue sweep (expected races like already-terminal are not counted)");
 
     // Agent worker metrics
     public static readonly Counter<long> AgentJobsReceived = Meter.CreateCounter<long>(
-        "agent.jobs.received", "{job}", "Jobs received by agent workers");
+        "agent.jobs.received", UnitJob, "Jobs received by agent workers");
     public static readonly Counter<long> AgentJobsRejected = Meter.CreateCounter<long>(
-        "agent.jobs.rejected", "{job}", "Jobs rejected by agent workers");
+        "agent.jobs.rejected", UnitJob, "Jobs rejected by agent workers");
     public static readonly Counter<long> AgentHeartbeatFailures = Meter.CreateCounter<long>(
-        "agent.heartbeat.failures", "{failure}", "Agent heartbeat failures");
+        "agent.heartbeat.failures", UnitFailure, "Agent heartbeat failures");
     public static readonly Counter<long> AgentReconnections = Meter.CreateCounter<long>(
         "agent.reconnections", "{reconnection}", "Agent reconnection events");
     public static readonly Counter<long> AgentSignalRFailures = Meter.CreateCounter<long>(
-        "agent.signalr.failures", "{failure}", "Failed or dropped SignalR messages from agent");
+        "agent.signalr.failures", UnitFailure, "Failed or dropped SignalR messages from agent");
 
     /// <summary>
     /// Hub-auth rejection counter tagged by <c>reason</c> (closed set).
