@@ -1945,7 +1945,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = AgentStepPipelineBuilder.BuildDecompositionAnalysisStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
+        var steps = AgentStepPipelineBuilder.BuildDecompositionAnalysisStepPipeline(job, proxy, repoConfig);
 
         steps.Should().Contain(s => s.GetType() == typeof(WriteMcpConfigStep));
     }
@@ -1958,7 +1958,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = AgentStepPipelineBuilder.BuildDecompositionAnalysisStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
+        var steps = AgentStepPipelineBuilder.BuildDecompositionAnalysisStepPipeline(job, proxy, repoConfig);
 
         var mcpIndex = steps.ToList().FindIndex(s => s is WriteMcpConfigStep);
         var steeringIndex = steps.ToList().FindIndex(s => s is WriteSteeringStep);
@@ -1977,7 +1977,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = AgentStepPipelineBuilder.BuildDecompositionStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
+        var steps = AgentStepPipelineBuilder.BuildDecompositionStepPipeline(job, proxy, repoConfig);
 
         steps.Should().Contain(s => s.GetType() == typeof(WriteMcpConfigStep));
     }
@@ -1990,7 +1990,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = AgentStepPipelineBuilder.BuildDecompositionStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
+        var steps = AgentStepPipelineBuilder.BuildDecompositionStepPipeline(job, proxy, repoConfig);
 
         var mcpIndex = steps.ToList().FindIndex(s => s is WriteMcpConfigStep);
         var steeringIndex = steps.ToList().FindIndex(s => s is WriteSteeringStep);

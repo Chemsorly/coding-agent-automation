@@ -17,6 +17,5 @@ public sealed record LocalPipelineExecutorDependencies(
     Serilog.ILogger Logger,
     IBrainUpdateService? BrainUpdateService = null,
     IPipelineRunHistoryService? HistoryService = null,
-    IOpenIssueContextWriter? OpenIssueContextWriter = null,
     AgentId? AgentIdentity = null,
     IPipelineReporterFactory? ReporterFactory = null);
