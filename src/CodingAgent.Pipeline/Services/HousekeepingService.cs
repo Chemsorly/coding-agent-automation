@@ -231,18 +231,18 @@ public sealed class HousekeepingService : IHousekeepingService
 
             await Task.Delay(MergeabilityReprobeDelay, ct);
 
-            foreach (var pr in unknownAfterFirstProbe)
+            foreach (var prNumber in unknownAfterFirstProbe.Select(pr => pr.Number))
             {
                 try
                 {
-                    var resolved = await repoProvider.IsPullRequestBehindBaseAsync(pr.Number, ct);
-                    mergeabilityMap[pr.Number] = resolved;
+                    var resolved = await repoProvider.IsPullRequestBehindBaseAsync(prNumber, ct);
+                    mergeabilityMap[prNumber] = resolved;
 
                     if (resolved != PrMergeabilityStatus.Unknown)
                     {
                         _logger.Debug(
                             "HousekeepingService: PR #{PrNumber} re-probe resolved to {Status} in repo {RepoId}",
-                            pr.Number, resolved, repoProviderId);
+                            prNumber, resolved, repoProviderId);
                         var resolvedLabel = resolved switch
                         {
                             PrMergeabilityStatus.Behind     => "behind",
@@ -258,14 +258,14 @@ public sealed class HousekeepingService : IHousekeepingService
                     {
                         _logger.Debug(
                             "HousekeepingService: PR #{PrNumber} re-probe still Unknown in repo {RepoId} — skipping this cycle (conservative fallback)",
-                            pr.Number, repoProviderId);
+                            prNumber, repoProviderId);
                     }
                 }
                 catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
                     _logger.Warning(ex,
                         "HousekeepingService: re-probe failed for PR #{PrNumber} in repo {RepoId} — keeping Unknown (conservative fallback)",
-                        pr.Number, repoProviderId);
+                        prNumber, repoProviderId);
                     // keep Unknown — already set from first pass
                 }
             }
