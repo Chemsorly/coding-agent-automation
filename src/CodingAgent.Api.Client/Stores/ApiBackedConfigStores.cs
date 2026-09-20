@@ -48,7 +48,7 @@ public sealed class ApiPipelineConfigStore : IPipelineConfigStore
 
     // Deliberately outside the lock: two concurrent callers may both fetch. That double-fetch
     // window is cheaper than holding a lock across network I/O.
-    // TODO: LoadCachedAsync is duplicated verbatim in ApiProjectStore and ApiConfigurationStore.
+    // NOTE: LoadCachedAsync is duplicated verbatim in ApiProjectStore and ApiConfigurationStore.
     // TtlCache<T> was promoted to internal to enable sharing, but the orchestration helper still
     // closes over each class's own _cacheLock and CacheTtlSeconds, making a shared static non-trivial.
     // Consider extracting a shared helper (e.g. a CachingHelper static class) if a third copy appears.
@@ -64,7 +64,7 @@ public sealed class ApiPipelineConfigStore : IPipelineConfigStore
 
         var fresh = await fetch(ct);
 
-        // TODO: CacheTtlSeconds is a public mutable property read here outside any lock. On x86/x64
+        // NOTE: CacheTtlSeconds is a public mutable property read here outside any lock. On x86/x64
         // a torn read of an aligned int cannot occur, but this is formally undefined under the C#
         // memory model without volatile/Interlocked. If CacheTtlSeconds is ever written from a
         // concurrent thread (e.g. a settings-reload path), the observed TTL could be stale.
@@ -259,7 +259,7 @@ public sealed class ApiProjectStore : IProjectStore
 
     // Deliberately outside the lock: two concurrent callers may both fetch. That double-fetch
     // window is cheaper than holding a lock across network I/O.
-    // TODO: LoadCachedAsync is duplicated verbatim in ApiPipelineConfigStore and ApiConfigurationStore.
+    // NOTE: LoadCachedAsync is duplicated verbatim in ApiPipelineConfigStore and ApiConfigurationStore.
     // TtlCache<T> was promoted to internal to enable sharing, but the orchestration helper still
     // closes over each class's own _cacheLock and CacheTtlSeconds, making a shared static non-trivial.
     // Consider extracting a shared helper (e.g. a CachingHelper static class) if a third copy appears.
@@ -275,7 +275,7 @@ public sealed class ApiProjectStore : IProjectStore
 
         var fresh = await fetch(ct);
 
-        // TODO: CacheTtlSeconds is a public mutable property read here outside any lock. On x86/x64
+        // NOTE: CacheTtlSeconds is a public mutable property read here outside any lock. On x86/x64
         // a torn read of an aligned int cannot occur, but this is formally undefined under the C#
         // memory model without volatile/Interlocked. If CacheTtlSeconds is ever written from a
         // concurrent thread (e.g. a settings-reload path), the observed TTL could be stale.
