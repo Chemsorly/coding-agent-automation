@@ -121,7 +121,6 @@ try
         sp.GetRequiredService<IHubConnectionManagerFactory>().Create());
 
     // ── Pipeline executor ──
-    builder.Services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));
     builder.Services.AddSingleton<IPipelineReporterFactory>(sp => new PipelineReporterFactory(Log.Logger));
     builder.Services.AddSingleton<IPipelineExecutor>(sp => new LocalPipelineExecutor(
         new LocalPipelineExecutorDependencies(
@@ -131,7 +130,6 @@ try
             sp.GetRequiredService<IQualityGateValidator>(),
             Log.Logger,
             sp.GetRequiredService<IBrainUpdateService>(),
-            OpenIssueContextWriter: sp.GetRequiredService<IOpenIssueContextWriter>(),
             AgentIdentity: sp.GetRequiredService<AgentId>(),
             ReporterFactory: sp.GetRequiredService<IPipelineReporterFactory>())));
 

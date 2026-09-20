@@ -13,6 +13,13 @@ public partial class QualityGateExecutor
     /// <summary>Prefix used for the post-PR CI gate result Details and UI messages.</summary>
     private const string PostPrCiPrefix = "Post-PR CI";
 
+    // Outcome tag values for the quality_gate.retries counter.
+    // These match the per-branch semantics of RunFixAgentIterationAsync.
+    private const string OutcomeTransient = "transient";
+    private const string OutcomeAuthAbort = "auth_abort";
+    private const string OutcomeSessionRestart = "session_restart";
+    private const string OutcomeRetry = "retry";
+
     /// <summary>
     /// Runs quality gate validation with retry logic and PR creation.
     /// </summary>
@@ -399,18 +406,6 @@ public partial class QualityGateExecutor
         while (!report.AllPassed && run.RetryCount < config.MaxRetries)
         {
             run.RetryCount++;
-            // NOTE: Consider using BuildTags (run_type + project_id + project_name) for dimensional consistency with duration metrics.
-            // NOTE [WARNING]: The per-outcome dimension tag (transient/auth_abort/session_restart/retry) was
-            // removed when this counter was moved to the top of the loop. Dashboards or alerts keyed on
-            // outcome=transient or outcome=auth_abort will silently receive zero counts. The replacement
-            // uses only RunTypeTag. Restore BuildRetryTags with an outcome dimension or add a separate
-            // counter per outcome branch to preserve metric dimensionality.
-            // See review finding: Correctness WARNING — QualityGateExecutor.RetryLoop.cs:368-375
-            // NOTE [WARNING]: This counter is now incremented before the agent runs. If the loop exits
-            // immediately after (e.g. shouldBreak set by the switch then the break fires),
-            // the counter is incremented for an attempt that was not executed. Minor double-count risk.
-            // See review finding: Correctness WARNING — QualityGateExecutor.RetryLoop.cs:368
-            _qualityGateRetries.Add(1, PipelineTelemetry.RunTypeTag(run.RunType));
             var errorSummary = BuildQualityGateErrorSummary(report);
             run.RetryErrors.Enqueue(errorSummary);
 
@@ -510,13 +505,13 @@ public partial class QualityGateExecutor
                 callbacks, ct,
                 resumeSessionId: run.CodegenSessionId);
 
-            // Intentional asymmetry: PipelineTelemetry and RetryErrors (incremented above) are NOT
-            // rolled back — rolling back a monotonic counter is non-idiomatic in OpenTelemetry, and the
-            // RetryErrors entry (from the prior QG failure) is harmless noise. Only RetryCount matters
-            // for loop exit logic, so that is the only value corrected.
+            // Intentional asymmetry: RetryErrors (incremented above) is NOT rolled back —
+            // the RetryErrors entry (from the prior QG failure) is harmless noise. Only
+            // RetryCount matters for loop exit logic, so that is the only value corrected.
             switch (ClassifyRetryOutcome(agentResult))
             {
                 case RetryOutcome.TransientWait:
+                    _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeTransient));
                     run.RetryCount = Math.Max(0, run.RetryCount - 1);
                     consecutiveTransientRetries++;
                     if (consecutiveTransientRetries >= MaxConsecutiveTransientRetries)
@@ -537,12 +532,14 @@ public partial class QualityGateExecutor
                     return (ShouldBreak: false, ShouldContinue: true, consecutiveTransientRetries);
 
                 case RetryOutcome.AbortAuth:
+                    _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeAuthAbort));
                     _logger.Error(
                         "Pipeline {RunId} retry {RetryCount}: permanent auth failure, aborting retry loop",
                         run.RunId, run.RetryCount);
                     return (ShouldBreak: true, ShouldContinue: false, consecutiveTransientRetries);
 
                 case RetryOutcome.RestartSession:
+                    _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeSessionRestart));
                     _logger.Warning(
                         "Pipeline {RunId} retry {RetryCount}: agent returned empty response (0 tokens), " +
                         "clearing session affinity for next attempt",
@@ -551,6 +548,7 @@ public partial class QualityGateExecutor
                     return (ShouldBreak: false, ShouldContinue: true, consecutiveTransientRetries);
 
                 default: // RetryOutcome.Retry
+                    _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeRetry));
                     consecutiveTransientRetries = 0;
                     if (agentResult != null)
                         await _prOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);
@@ -560,16 +558,27 @@ public partial class QualityGateExecutor
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            // NOTE: [WARNING] This catch depends on the contract that ExecuteAgentAndRecordAsync
-            // absorbs all non-cancellation agent exceptions and returns null. If that contract
-            // is ever broken, an exception could be silently consumed here and the transient
-            // counter would not increment.
+            // NOTE: This catch block is a defensive guard. In the current implementation,
+            // ExecuteAgentAndRecordAsync absorbs all non-cancellation exceptions and returns null,
+            // so exceptions cannot propagate to here from the agent call. If that contract is ever
+            // broken, or if code is added between the agent call and the switch in the future,
+            // this catch provides a safety net.
+            //
+            // The outcome is classified as OutcomeTransient because: (a) ExecuteAgentAndRecordAsync
+            // returning null (the absorbed-exception path) maps to ClassifyRetryOutcome(null) →
+            // RetryOutcome.TransientWait → OutcomeTransient; this catch must be consistent with
+            // that contract so dashboards see the same dimension regardless of whether the exception
+            // is absorbed upstream or propagates here.
+            //
+            // TODO: If ExecuteAgentAndRecordAsync's exception-absorption contract changes, revisit
+            // whether ShouldBreak/ShouldContinue semantics here still match TransientWait.
             _logger.Warning(ex, "Pipeline {RunId} retry fix agent call failed", run.RunId);
             run.ChatHistory.Enqueue(new ChatEntry
             {
                 Role = ChatRole.System,
                 Content = $"Agent error during retry fix: {ex.Message}"
             });
+            _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeTransient));
             return (ShouldBreak: false, ShouldContinue: false, consecutiveTransientRetries);
         }
     }
