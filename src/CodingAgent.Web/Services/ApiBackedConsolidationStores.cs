@@ -44,7 +44,7 @@ public sealed class ApiBackedHarnessSuggestionStore : IHarnessSuggestionStore
         _client = client;
     }
 
-    public Task<HarnessSuggestions?> GetAsync(CancellationToken ct)
+    public Task<HarnessSuggestions?> LoadAsync(CancellationToken ct)
         => _client.GetAsync(ct);
 
     public Task SaveAsync(HarnessSuggestions suggestions, CancellationToken ct)

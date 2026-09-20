@@ -90,6 +90,34 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
         if (agent is not null)
         {
+            // Guard for mid-run kiro-cli sub-process reconnect (issue #2758):
+            // When RegisterAgent takes the mid-run branch (skips ForceDisconnect), it calls
+            // Register with preserveExistingConnectionId=true, which keeps conn-A in _connectionIndex
+            // alongside the new conn-B. When conn-A later closes, GetByConnectionId(conn-A) returns
+            // the agent entry — but that entry's ConnectionId is already conn-B (the new primary
+            // connection). Calling TransitionStatus(Disconnected) here would incorrectly mark the
+            // still-live agent as Disconnected, triggering spurious orphan recovery and potentially
+            // allowing re-dispatch of a running job.
+            // Safe because both implementations guarantee agent.ConnectionId == conn-B after
+            // Register(conn-B) completes: DistributedAgentRegistryService overwrites _localSnapshot
+            // with the conn-B entry; AgentRegistryService mutates existing.ConnectionId = conn-B.
+            if (agent.ConnectionId != Context.ConnectionId)
+            {
+                _logger.Information(
+                    "Agent {AgentId} stale connection {StaleConn} closed (active connection: {ActiveConn}) — skipping status transition",
+                    agent.AgentId, Context.ConnectionId, agent.ConnectionId);
+                // The stale _connectionIndex[conn-A] entry is left in place; it will be superseded
+                // (made unreachable) once the agent is deregistered at run completion, because
+                // GetAgentRaw will return null for the evicted agentId.
+                // TODO (WARNING, issue #2758): "_connectionIndex[conn-A] made unreachable" means
+                // GetByConnectionId returns null (no auth bypass), but the dictionary *key* itself is
+                // never removed — neither here nor in DeregisterAsync (which only removes conn-B,
+                // the current primary). This is an O(N) leak under sustained mid-run reconnects.
+                // Fix: call _connectionIndex.TryRemove(Context.ConnectionId, out _) here before
+                // returning so stale keys are reclaimed at connection close time.
+                return base.OnDisconnectedAsync(exception);
+            }
+
             // TODO: Verify that AgentEntry.Labels is IReadOnlyList<string> or another immutable/thread-safe
             // collection type. If it is a mutable List<T>, concurrent writes (e.g., from a registry update
             // on another thread) could cause InvalidOperationException during this iteration.

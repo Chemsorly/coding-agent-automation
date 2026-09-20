@@ -7,22 +7,22 @@ using Microsoft.AspNetCore.SignalR.Client;
 namespace CodingAgent.Agent;
 
 /// <summary>
-/// Handles consolidation job assignments and their lifecycle.
+/// Executes consolidation job assignments and their lifecycle.
 /// Extracted from <see cref="AgentWorkerService"/> to make consolidation logic independently testable.
 /// </summary>
 /// <remarks>
 /// Receives job assignments via <see cref="AgentConnectionLifecycle"/> events wired in
 /// <see cref="AgentWorkerService"/>. Uses <see cref="AgentJobSlotManager"/> for single-slot
-/// concurrency control shared with pipeline and chat job handlers.
+/// concurrency control shared with pipeline and chat job executors.
 /// </remarks>
-public sealed class ConsolidationJobHandler
+public sealed class ConsolidationJobExecutor
 {
     private readonly AgentConnectionLifecycle _connectionLifecycle;
     private readonly AgentJobSlotManager _slotManager;
     private readonly IConsolidationExecutor _consolidationExecutor;
     private readonly Serilog.ILogger _logger;
 
-    public ConsolidationJobHandler(
+    public ConsolidationJobExecutor(
         AgentConnectionLifecycle connectionLifecycle,
         AgentJobSlotManager slotManager,
         IConsolidationExecutor consolidationExecutor,

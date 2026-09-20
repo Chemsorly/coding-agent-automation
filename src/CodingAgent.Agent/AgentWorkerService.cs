@@ -16,8 +16,8 @@ namespace CodingAgent.Agent;
 /// Background service that coordinates the agent lifecycle by composing
 /// <see cref="AgentConnectionLifecycle"/> (connection management, heartbeat, reconnection),
 /// <see cref="AgentJobSlotManager"/> (slot acquisition, concurrency control),
-/// <see cref="ChatJobHandler"/> (chat session and model-fetch handling), and
-/// <see cref="ConsolidationJobHandler"/> (consolidation job handling).
+/// <see cref="ChatJobExecutor"/> (chat session and model-fetch handling), and
+/// <see cref="ConsolidationJobExecutor"/> (consolidation job handling).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -50,8 +50,8 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
     // must remain as fields so tests can access the handler instances via reflection to verify
     // handler behavior in integration with the service's slot manager and lifecycle.
 #pragma warning disable S1450
-    private readonly ChatJobHandler _chatJobHandler;
-    private readonly ConsolidationJobHandler _consolidationJobHandler;
+    private readonly ChatJobExecutor _chatJobHandler;
+    private readonly ConsolidationJobExecutor _consolidationJobHandler;
 #pragma warning restore S1450
     private readonly IPipelineExecutor _executor;
     private readonly IJobCompletionReporter _completionReporter;
