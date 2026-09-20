@@ -16,8 +16,7 @@ public sealed class ApiPipelineConfigStore : IPipelineConfigStore
 {
     private readonly IPipelineApiConfigClient _client;
     private readonly Lock _cacheLock = new();
-    private PipelineConfiguration? _cached;
-    private DateTime _cacheExpiry = DateTime.MinValue;
+    private readonly TtlCache<PipelineConfiguration> _cache = new();
     public int CacheTtlSeconds { get; set; } = 60;
 
     public ApiPipelineConfigStore(IPipelineApiConfigClient client) => _client = client;
@@ -25,46 +24,54 @@ public sealed class ApiPipelineConfigStore : IPipelineConfigStore
     /// <summary>Drops the cached configuration so the next load goes to the API.</summary>
     public void InvalidateCaches()
     {
-        lock (_cacheLock)
-        {
-            _cached = null;
-            _cacheExpiry = DateTime.MinValue;
-        }
+        lock (_cacheLock) { _cache.Clear(); }
     }
 
-    public async Task<PipelineConfiguration> LoadPipelineConfigAsync(CancellationToken ct)
-    {
-        lock (_cacheLock)
-        {
-            if (_cached is not null && DateTime.UtcNow <= _cacheExpiry)
-                return _cached;
-        }
-        var fresh = await _client.GetPipelineConfigAsync(ct);
-        lock (_cacheLock)
-        {
-            _cached = fresh;
-            _cacheExpiry = DateTime.UtcNow.AddSeconds(CacheTtlSeconds);
-        }
-        return fresh;
-    }
+    public Task<PipelineConfiguration> LoadPipelineConfigAsync(CancellationToken ct)
+        => LoadCachedAsync(_cache, _client.GetPipelineConfigAsync, ct);
 
     public async Task SavePipelineConfigAsync(PipelineConfiguration config, CancellationToken ct)
     {
         await _client.SavePipelineConfigAsync(config, ct);
-        lock (_cacheLock)
-        {
-            _cached = config;
-            _cacheExpiry = DateTime.UtcNow.AddSeconds(CacheTtlSeconds);
-        }
+        // Populate (not just invalidate) so the next read within the TTL window uses the
+        // value we just saved rather than fetching it back from the API.
+        lock (_cacheLock) { _cache.Set(config, CacheTtlSeconds); }
     }
 
     public async Task UpdatePipelineConfigAsync(Func<PipelineConfiguration, PipelineConfiguration> transform, CancellationToken ct)
     {
         await _client.UpdatePipelineConfigAsync(transform, ct);
+        // Clear is the correct equivalent of the previous `_cached = null`: TtlCache.TryGet
+        // gates on _value is not null first, so a null value causes a miss regardless of _expiry.
+        lock (_cacheLock) { _cache.Clear(); }
+    }
+
+    // Deliberately outside the lock: two concurrent callers may both fetch. That double-fetch
+    // window is cheaper than holding a lock across network I/O.
+    // TODO: LoadCachedAsync is duplicated verbatim in ApiProjectStore and ApiConfigurationStore.
+    // TtlCache<T> was promoted to internal to enable sharing, but the orchestration helper still
+    // closes over each class's own _cacheLock and CacheTtlSeconds, making a shared static non-trivial.
+    // Consider extracting a shared helper (e.g. a CachingHelper static class) if a third copy appears.
+    private async Task<T> LoadCachedAsync<T>(
+        TtlCache<T> cache,
+        Func<CancellationToken, Task<T>> fetch,
+        CancellationToken ct) where T : class
+    {
         lock (_cacheLock)
         {
-            _cached = null; // invalidate cache so next read fetches fresh
+            if (cache.TryGet(out var hit)) return hit!;
         }
+
+        var fresh = await fetch(ct);
+
+        // TODO: CacheTtlSeconds is a public mutable property read here outside any lock. On x86/x64
+        // a torn read of an aligned int cannot occur, but this is formally undefined under the C#
+        // memory model without volatile/Interlocked. If CacheTtlSeconds is ever written from a
+        // concurrent thread (e.g. a settings-reload path), the observed TTL could be stale.
+        // Consider making CacheTtlSeconds volatile or using Interlocked.CompareExchange if
+        // concurrent writes become a real scenario.
+        lock (_cacheLock) { cache.Set(fresh, CacheTtlSeconds); }
+        return fresh;
     }
 }
 
@@ -185,10 +192,8 @@ public sealed class ApiProjectStore : IProjectStore
 {
     private readonly IPipelineApiConfigClient _client;
     private readonly Lock _cacheLock = new();
-    private IReadOnlyList<PipelineProject>? _cachedProjects;
-    private DateTime _projectsExpiry = DateTime.MinValue;
-    private IReadOnlyList<PipelineJobTemplate>? _cachedTemplates;
-    private DateTime _templatesExpiry = DateTime.MinValue;
+    private readonly TtlCache<IReadOnlyList<PipelineProject>> _projectsCache = new();
+    private readonly TtlCache<IReadOnlyList<PipelineJobTemplate>> _templatesCache = new();
     public int CacheTtlSeconds { get; set; } = 60;
 
     public ApiProjectStore(IPipelineApiConfigClient client) => _client = client;
@@ -198,28 +203,13 @@ public sealed class ApiProjectStore : IProjectStore
     {
         lock (_cacheLock)
         {
-            _cachedProjects = null;
-            _projectsExpiry = DateTime.MinValue;
-            _cachedTemplates = null;
-            _templatesExpiry = DateTime.MinValue;
+            _projectsCache.Clear();
+            _templatesCache.Clear();
         }
     }
 
-    public async Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct)
-    {
-        lock (_cacheLock)
-        {
-            if (_cachedProjects is not null && DateTime.UtcNow <= _projectsExpiry)
-                return _cachedProjects;
-        }
-        var fresh = await _client.GetProjectsAsync(ct);
-        lock (_cacheLock)
-        {
-            _cachedProjects = fresh;
-            _projectsExpiry = DateTime.UtcNow.AddSeconds(CacheTtlSeconds);
-        }
-        return fresh;
-    }
+    public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct)
+        => LoadCachedAsync(_projectsCache, _client.GetProjectsAsync, ct);
 
     public async Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct)
         => await _client.GetProjectByIdAsync(id, ct);
@@ -227,56 +217,31 @@ public sealed class ApiProjectStore : IProjectStore
     public async Task SaveProjectAsync(PipelineProject project, CancellationToken ct)
     {
         await _client.SaveProjectAsync(project, ct);
-        lock (_cacheLock)
-        {
-            _cachedProjects = null;
-        }
+        lock (_cacheLock) { _projectsCache.Clear(); }
     }
 
     public async Task DeleteProjectAsync(string id, CancellationToken ct)
     {
         await _client.DeleteProjectAsync(id, ct);
-        lock (_cacheLock)
-        {
-            _cachedProjects = null;
-        }
+        lock (_cacheLock) { _projectsCache.Clear(); }
     }
 
     public async Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct)
         => await _client.GetTemplatesForProjectAsync(projectId, ct);
 
-    public async Task<IReadOnlyList<PipelineJobTemplate>> LoadAllTemplatesAsync(CancellationToken ct)
-    {
-        lock (_cacheLock)
-        {
-            if (_cachedTemplates is not null && DateTime.UtcNow <= _templatesExpiry)
-                return _cachedTemplates;
-        }
-        var fresh = await _client.GetAllTemplatesAsync(ct);
-        lock (_cacheLock)
-        {
-            _cachedTemplates = fresh;
-            _templatesExpiry = DateTime.UtcNow.AddSeconds(CacheTtlSeconds);
-        }
-        return fresh;
-    }
+    public Task<IReadOnlyList<PipelineJobTemplate>> LoadAllTemplatesAsync(CancellationToken ct)
+        => LoadCachedAsync(_templatesCache, _client.GetAllTemplatesAsync, ct);
 
     public async Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct)
     {
         await _client.SaveTemplateAsync(projectId, template, ct);
-        lock (_cacheLock)
-        {
-            _cachedTemplates = null;
-        }
+        lock (_cacheLock) { _templatesCache.Clear(); }
     }
 
     public async Task DeleteTemplateAsync(string projectId, TemplateId templateId, CancellationToken ct)
     {
         await _client.DeleteTemplateAsync(projectId, templateId.ToString(), ct);
-        lock (_cacheLock)
-        {
-            _cachedTemplates = null;
-        }
+        lock (_cacheLock) { _templatesCache.Clear(); }
     }
 
     public async Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, TemplateId templateId, CancellationToken ct)
@@ -284,13 +249,41 @@ public sealed class ApiProjectStore : IProjectStore
         await _client.MoveTemplateAsync(sourceProjectId, targetProjectId, templateId.ToString(), ct);
         lock (_cacheLock)
         {
-            _cachedTemplates = null;
-            _cachedProjects = null;
+            _templatesCache.Clear();
+            _projectsCache.Clear();
         }
     }
 
     public async Task<bool> HasEnabledTemplatesAsync(CancellationToken ct)
         => await _client.HasEnabledTemplatesAsync(ct);
+
+    // Deliberately outside the lock: two concurrent callers may both fetch. That double-fetch
+    // window is cheaper than holding a lock across network I/O.
+    // TODO: LoadCachedAsync is duplicated verbatim in ApiPipelineConfigStore and ApiConfigurationStore.
+    // TtlCache<T> was promoted to internal to enable sharing, but the orchestration helper still
+    // closes over each class's own _cacheLock and CacheTtlSeconds, making a shared static non-trivial.
+    // Consider extracting a shared helper (e.g. a CachingHelper static class) if a third copy appears.
+    private async Task<T> LoadCachedAsync<T>(
+        TtlCache<T> cache,
+        Func<CancellationToken, Task<T>> fetch,
+        CancellationToken ct) where T : class
+    {
+        lock (_cacheLock)
+        {
+            if (cache.TryGet(out var hit)) return hit!;
+        }
+
+        var fresh = await fetch(ct);
+
+        // TODO: CacheTtlSeconds is a public mutable property read here outside any lock. On x86/x64
+        // a torn read of an aligned int cannot occur, but this is formally undefined under the C#
+        // memory model without volatile/Interlocked. If CacheTtlSeconds is ever written from a
+        // concurrent thread (e.g. a settings-reload path), the observed TTL could be stale.
+        // Consider making CacheTtlSeconds volatile or using Interlocked.CompareExchange if
+        // concurrent writes become a real scenario.
+        lock (_cacheLock) { cache.Set(fresh, CacheTtlSeconds); }
+        return fresh;
+    }
 }
 
 /// <summary>
@@ -463,32 +456,37 @@ public sealed class ApiConfigurationStore : IConfigurationStore
         await write;
         lock (_cacheLock) cache.Clear();
     }
+}
 
-    /// <summary>
-    /// A single TTL-cached value. Callers hold the shared lock around every member; the lock is
-    /// released across the awaited fetch.
-    /// </summary>
-    private sealed class TtlCache<T> where T : class
+/// <summary>
+/// A single TTL-cached value shared by <see cref="ApiPipelineConfigStore"/>,
+/// <see cref="ApiProjectStore"/>, and <see cref="ApiConfigurationStore"/>.
+///
+/// Not thread-safe on its own — callers must hold a shared lock around every member call
+/// (<see cref="TryGet"/>, <see cref="Set"/>, <see cref="Clear"/>). The lock is released
+/// across any awaited fetch so it is never held across network I/O.
+/// </summary>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "Internal cache helper — covered by integration tests.")]
+internal sealed class TtlCache<T> where T : class
+{
+    private T? _value;
+    private DateTime _expiry = DateTime.MinValue;
+
+    public bool TryGet(out T? value)
     {
-        private T? _value;
-        private DateTime _expiry = DateTime.MinValue;
+        value = _value is not null && DateTime.UtcNow <= _expiry ? _value : null;
+        return value is not null;
+    }
 
-        public bool TryGet(out T? value)
-        {
-            value = _value is not null && DateTime.UtcNow <= _expiry ? _value : null;
-            return value is not null;
-        }
+    public void Set(T value, int ttlSeconds)
+    {
+        _value = value;
+        _expiry = DateTime.UtcNow.AddSeconds(ttlSeconds);
+    }
 
-        public void Set(T value, int ttlSeconds)
-        {
-            _value = value;
-            _expiry = DateTime.UtcNow.AddSeconds(ttlSeconds);
-        }
-
-        public void Clear()
-        {
-            _value = null;
-            _expiry = DateTime.MinValue;
-        }
+    public void Clear()
+    {
+        _value = null;
+        _expiry = DateTime.MinValue;
     }
 }
