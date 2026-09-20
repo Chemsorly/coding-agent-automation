@@ -46,14 +46,16 @@ public sealed class ReconciliationLoop
     /// status for jobs still present within the K8s retention window (default 600s).
     /// Cleared on leadership acquisition via <see cref="OnLeadershipAcquired"/>.
     /// </summary>
-    // TODO: _reconciledTerminalIds is a plain HashSet<Guid> with no thread-safety guarantees.
-    // In the current design ReconcileOnceAsync is only invoked once per OnPollCycleAsync (via
-    // Task.WhenAll with no parallel ReconcileOnceAsync calls), and OnLeadershipAcquired is called
-    // between leadership terms — so no concurrent access occurs in production. However,
-    // OnLeadershipAcquired is public and tests call ReconcileOnceAsync directly; any external
-    // caller that invokes these concurrently would cause undefined behaviour on HashSet.
-    // Consider replacing with a ConcurrentDictionary<Guid, byte> or adding a lock if the public
-    // surface of OnLeadershipAcquired is ever called from a different thread than ReconcileOnceAsync.
+    // NOTE: _reconciledTerminalIds is a plain HashSet<Guid> with no thread-safety guarantees.
+    // This is safe under the confirmed single-threaded invariant: ReconcileOnceAsync (the only
+    // method that calls Contains and Add on this set) is invoked exactly once per OnPollCycleAsync
+    // cycle — never in parallel with itself. OnLeadershipAcquired (which calls Clear) is invoked
+    // only between leadership terms from RunLeadershipTermAsync, never concurrently with an
+    // in-flight ReconcileOnceAsync. The other three tasks in the Task.WhenAll
+    // (EnforceTimeoutsAsync, EnforceDispatchedTimeoutAsync, CleanupOrphansAsync) do not access
+    // this field at all. If either OnLeadershipAcquired or ReconcileOnceAsync is ever called
+    // from a different thread while the other is in flight, replace HashSet with
+    // ConcurrentDictionary<Guid, byte> or guard all accesses with a lock.
     private readonly HashSet<Guid> _reconciledTerminalIds = new();
     private readonly Histogram<double> _timeoutExecutionAge;
     private readonly Counter<long> _timeoutCanaryViolations;
