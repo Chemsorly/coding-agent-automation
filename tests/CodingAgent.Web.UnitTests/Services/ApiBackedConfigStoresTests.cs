@@ -203,9 +203,88 @@ public sealed class ApiBackedConfigStoresTests
             "an update must invalidate the cached configuration");
     }
 
+    [Fact]
+    public async Task ApiPipelineConfigStore_ZeroTtl_AlwaysRefetches()
+    {
+        // CacheTtlSeconds = 0 means TtlCache.Set stores _expiry = UtcNow. On any subsequent
+        // TryGet call (even microseconds later) UtcNow > _expiry, so the cache always misses.
+        // This exercises the expiry-driven refetch path without needing time injection.
+        // NOTE: Potential clock-resolution flakiness on Windows CI (~15.6 ms tick). If both the
+        // Set call and the subsequent TryGet resolve to the same quantized tick, the inclusive
+        // DateTime.UtcNow <= _expiry comparison becomes true → cache hit → Times.Once instead of
+        // Times.Exactly(2). This pattern is replicated from the pre-existing
+        // ApiProviderConfigStore_ZeroTtl_AlwaysRefetches test. Fix by injecting a time abstraction
+        // (e.g. TimeProvider) so tests can advance the clock deterministically.
+        var client = new Mock<IPipelineApiConfigClient>();
+        client.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        var store = new ApiPipelineConfigStore(client.Object) { CacheTtlSeconds = 0 };
+
+        await store.LoadPipelineConfigAsync(CancellationToken.None);
+        await store.LoadPipelineConfigAsync(CancellationToken.None);
+
+        client.Verify(
+            c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()),
+            Times.Exactly(2),
+            "a zero TTL must disable caching so every load fetches from the API");
+    }
+
+    [Fact]
+    public async Task ApiProjectStore_ZeroTtl_AlwaysRefetchesProjects()
+    {
+        // NOTE: Same clock-resolution flakiness risk as ApiPipelineConfigStore_ZeroTtl_AlwaysRefetches.
+        // On Windows CI with ~15.6 ms tick granularity, both DateTime.UtcNow calls (in Set and TryGet)
+        // may land on the same tick, causing a spurious cache hit and Times.Once instead of Times.Exactly(2).
+        // Fix by injecting a time abstraction (e.g. TimeProvider) so tests can advance the clock deterministically.
+        var client = new Mock<IPipelineApiConfigClient>();
+        client.Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineProject>());
+        var store = new ApiProjectStore(client.Object) { CacheTtlSeconds = 0 };
+
+        await store.LoadProjectsAsync(CancellationToken.None);
+        await store.LoadProjectsAsync(CancellationToken.None);
+
+        client.Verify(
+            c => c.GetProjectsAsync(It.IsAny<CancellationToken>()),
+            Times.Exactly(2),
+            "a zero TTL must disable caching so every projects load fetches from the API");
+    }
+
+    [Fact]
+    public async Task ApiProjectStore_ZeroTtl_AlwaysRefetchesTemplates()
+    {
+        // NOTE: Same clock-resolution flakiness risk as ApiPipelineConfigStore_ZeroTtl_AlwaysRefetches.
+        // On Windows CI with ~15.6 ms tick granularity, both DateTime.UtcNow calls (in Set and TryGet)
+        // may land on the same tick, causing a spurious cache hit and Times.Once instead of Times.Exactly(2).
+        // Fix by injecting a time abstraction (e.g. TimeProvider) so tests can advance the clock deterministically.
+        var client = new Mock<IPipelineApiConfigClient>();
+        client.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
+        var store = new ApiProjectStore(client.Object) { CacheTtlSeconds = 0 };
+
+        await store.LoadAllTemplatesAsync(CancellationToken.None);
+        await store.LoadAllTemplatesAsync(CancellationToken.None);
+
+        client.Verify(
+            c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()),
+            Times.Exactly(2),
+            "a zero TTL must disable caching so every templates load fetches from the API");
+    }
+
     /// <summary>
     /// Builds the composite store the way DI does: over the same three narrow stores, so the
     /// caches under test are the ones production shares rather than private copies.
+    /// NOTE: ApiProjectStore is missing cache-hit characterization tests. There is no test asserting
+    /// that a second LoadProjectsAsync or LoadAllTemplatesAsync call within a non-zero TTL window
+    /// hits the API exactly once. The migration could silently break cache-hit behaviour (e.g. if
+    /// LoadCachedAsync was wired to the wrong TtlCache field) and no existing test would catch it.
+    /// Add: ApiProjectStore_CachesProjectsWithinTtl and ApiProjectStore_CachesTemplatesWithinTtl.
+    /// NOTE: ApiProjectStore is missing invalidate-on-write characterization tests. The issue
+    /// prerequisites explicitly require "invalidate-on-write" tests before migrating. There are no
+    /// tests asserting that SaveProjectAsync, DeleteProjectAsync, SaveTemplateAsync,
+    /// DeleteTemplateAsync, or MoveTemplateAsync clears the relevant TtlCache. A regression in any
+    /// of those lock (_cacheLock) { _projectsCache.Clear(); } lines would go undetected.
+    /// Add: ApiProjectStore_SaveProject_InvalidatesProjectsCache, etc.
     /// </summary>
     private static ApiConfigurationStore CreateCompositeStore(IPipelineApiConfigClient client, int ttlSeconds)
         => new(
