@@ -41,6 +41,22 @@ public sealed class DistributedAgentRegistryServiceTests
     }
 
     [Fact]
+    public void Register_AgentIdAndConnectionId_AreNotTransposed()
+    {
+        // Characterization test: guards against silent transposition of the consecutive string
+        // parameters agentId and connectionId in WriteRegistrationAsync. Using the AgentId value
+        // type on the first parameter makes such a swap a compile error rather than a silent bug.
+        _sut.Register(Msg("agent-x"), "conn-y");
+
+        var hash = _store.GetHash("agent:agent-x");
+        hash.Should().NotBeNull();
+        hash!["agentId"].Should().Be("agent-x",
+            "agentId field must store the agent identifier, not the connectionId");
+        hash["connectionId"].Should().Be("conn-y",
+            "connectionId field must store the connection identifier, not the agentId");
+    }
+
+    [Fact]
     public void Register_ReRegistration_RestoresIdleWhenNoActiveJob()
     {
         _sut.Register(Msg("agent-1"), "conn-1");

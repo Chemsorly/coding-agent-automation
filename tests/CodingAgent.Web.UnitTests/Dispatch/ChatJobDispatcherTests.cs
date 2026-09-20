@@ -1711,4 +1711,131 @@ public class ChatJobDispatcherTests
     {
         public void Emit(Serilog.Events.LogEvent logEvent) => events.Add(logEvent);
     }
+
+    // ─── WatcherEntry field routing characterization tests ───────────────────
+    // These tests verify that the identity/selector fields are routed to the correct
+    // WatcherEntry slots. They guard against silent transposition of same-typed string
+    // parameters — the bug that WatcherIdentity was introduced to prevent.
+
+    [Fact]
+    public async Task DispatchChatPodAsync_WatcherEntry_NormalizedSelectorStoredCorrectly()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        string? capturedAgentId = null;
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                capturedAgentId = "agent-selector-field";
+                RegisterChatAgent(registry, capturedAgentId, dispatchId);
+            })
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        var fields = dispatcher.TryGetWatcherFields(capturedAgentId!);
+        fields.Should().NotBeNull();
+        // NormalizedSelector must be the normalized label form, not a PVC name or any other string.
+        // TODO (WARNING): The expected value "dotnet,kiro" is the sorted/normalized form of TestSelector
+        // ("kiro,dotnet") as produced by JobTemplateStore.NormalizeLabels. If TestSelector ever changes
+        // (e.g. a third label is added), this hardcoded expected value must be updated accordingly.
+        // Linking this assertion to TestSelector via NormalizeLabels would make the relationship explicit
+        // and prevent future confusion if the selector changes.
+        fields!.Value.NormalizedSelector.Should().Be("dotnet,kiro",
+            "NormalizedSelector must be the normalized selector string, not transposed with ClaimedPvc");
+    }
+
+    [Fact]
+    public async Task DispatchChatPodAsync_WatcherEntry_ClaimedPvcStoredCorrectly()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        string? capturedAgentId = null;
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                capturedAgentId = "agent-pvc-field";
+                RegisterChatAgent(registry, capturedAgentId, dispatchId);
+            })
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        var fields = dispatcher.TryGetWatcherFields(capturedAgentId!);
+        fields.Should().NotBeNull();
+        // ClaimedPvc must be the PVC name, not the selector string.
+        // TODO (WARNING): This assertion hardcodes "pvc-0" which is the first entry in
+        // KiroPvcPool = ["pvc-0", "pvc-1"] from CreateOptions(). It also relies on the dispatcher
+        // selecting a PVC from the pool because null is passed as the explicit PVC argument — the
+        // PVC is allocated automatically based on active jobs from the ListJobsAsync mock.
+        // If CreateOptions() reorders the pool, or if a future test leaves an active job claiming
+        // "pvc-0", this test will fail with a misleading error unrelated to field transposition.
+        // Consider using a single-entry pool with a uniquely named PVC to make the assertion
+        // unambiguous, or capturing the PVC from the created Job's labels as other tests do.
+        fields!.Value.ClaimedPvc.Should().Be("pvc-0",
+            "ClaimedPvc must be the first available PVC, not transposed with NormalizedSelector");
+    }
+
+    [Fact]
+    public async Task DispatchChatPodAsync_WatcherEntry_AgentIdStoredCorrectly()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        string? capturedAgentId = null;
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                capturedAgentId = "agent-id-field";
+                RegisterChatAgent(registry, capturedAgentId, dispatchId);
+            })
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        var fields = dispatcher.TryGetWatcherFields(capturedAgentId!);
+        fields.Should().NotBeNull();
+        fields!.Value.AgentId.Should().Be("agent-id-field",
+            "AgentId must match the registered agent id, not be transposed with another field");
+    }
+
+    [Fact]
+    public async Task DispatchChatPodAsync_WatcherEntry_JobNameStoredCorrectly()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        string? capturedJobName = null;
+        string? capturedAgentId = null;
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                capturedJobName = j.Metadata.Name;
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                // In production agentId == jobName (AGENT_ID is a field ref to metadata.name).
+                capturedAgentId = capturedJobName;
+                RegisterChatAgent(registry, capturedAgentId!, dispatchId);
+            })
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        var fields = dispatcher.TryGetWatcherFields(capturedAgentId!);
+        fields.Should().NotBeNull();
+        fields!.Value.JobName.Should().Be(capturedJobName,
+            "JobName must match the K8s Job name used for K8s API operations");
+    }
 }
