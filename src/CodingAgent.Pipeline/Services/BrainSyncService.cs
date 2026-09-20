@@ -62,7 +62,7 @@ public sealed class BrainSyncService : IBrainSyncService
         ArgumentNullException.ThrowIfNull(workspacePath);
         onOutputLine?.Invoke("🧠 Syncing brain repository...");
         var brainSw = System.Diagnostics.Stopwatch.StartNew();
-        var brainPath = Path.Combine(workspacePath, ".brain");
+        var brainPath = Path.Combine(workspacePath, AgentWorkspacePaths.BrainDirectory);
 
         if (Directory.Exists(brainPath))
         {
@@ -82,7 +82,7 @@ public sealed class BrainSyncService : IBrainSyncService
         var gitignoreContent = File.Exists(gitignorePath)
             ? await File.ReadAllTextAsync(gitignorePath, ct)
             : "";
-        var updatedGitignore = IBrainUpdateService.EnsureGitignoreEntry(gitignoreContent, ".brain/");
+        var updatedGitignore = IBrainUpdateService.EnsureGitignoreEntry(gitignoreContent, AgentWorkspacePaths.BrainDirectory + "/");
         if (updatedGitignore != gitignoreContent)
         {
             await File.WriteAllTextAsync(gitignorePath, updatedGitignore, ct);
@@ -112,7 +112,7 @@ public sealed class BrainSyncService : IBrainSyncService
     {
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(brainProvider);
-        var brainPath = Path.Combine(run.WorkspacePath!, ".brain");
+        var brainPath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.BrainDirectory);
         await brainProvider.PullAsync(brainPath, ct);
         _logger.Information("Pipeline {RunId} brain repo pulled before write phase", run.RunId);
     }
@@ -127,7 +127,7 @@ public sealed class BrainSyncService : IBrainSyncService
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(brainProvider);
         var brainSw = System.Diagnostics.Stopwatch.StartNew();
-        var brainPath = Path.Combine(run.WorkspacePath!, ".brain");
+        var brainPath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.BrainDirectory);
         var changedFiles = await _brainUpdateService.DetectChangesAsync(brainPath, ct);
 
         if (changedFiles.Count > 0)
