@@ -7,14 +7,12 @@ namespace CodingAgent.Web;
 public static partial class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers pipeline lifecycle services: issue context writer, run history,
+    /// Registers pipeline lifecycle services: run history,
     /// lifecycle service, and brain sync.
     /// IPipelineRunHistoryService is registered by AddWorkDistribution (Postgres-backed).
     /// </summary>
     private static void RegisterPipelineLifecycle(IServiceCollection services)
     {
-        services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));
-
         // IPipelineRunHistoryService is not registered here — it is registered by AddWorkDistribution
         // via WorkDistributionRegistration.RegisterConsolidationServices → PostgresPipelineRunHistoryService.
         // If AddWorkDistribution is ever removed or conditionalized, GetRequiredService below will fail at runtime.

@@ -475,3 +475,210 @@ public sealed class AgentTokenRefreshServiceAdditionalTests
             .WithMessage("*no supported authentication method*");
     }
 }
+
+// ── Retry loop tests (Issue #2759) ────────────────────────────────────────────
+
+/// <summary>
+/// Tests for the server-side retry in <see cref="AgentTokenRefreshService.ResolveTargetConfigAsync"/>.
+/// Verifies that a transient null return from <see cref="IAgentHubFacade.GetProviderConfigByIdAsync"/>
+/// is retried once before throwing <see cref="HubException"/>.
+/// Covers both <see cref="ProviderKind.Repository"/> (repo branch) and <see cref="ProviderKind.Brain"/> (brain branch).
+/// </summary>
+public sealed class AgentTokenRefreshServiceRetryTests
+{
+    private readonly Mock<IAgentHubFacade> _mockFacade = new();
+    private readonly Mock<ITokenVendingService> _mockTokenVending = new();
+    private readonly Mock<ILogger> _mockLogger = new();
+
+    private AgentTokenRefreshService CreateService() =>
+        new(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object);
+
+    private static PipelineRun MakeRun(string repoConfigId = "repo-retry", string? brainConfigId = null) => new()
+    {
+        RunId = "job-retry",
+        IssueIdentifier = "org/repo#1",
+        IssueTitle = "Test",
+        IssueProviderConfigId = "issue-1",
+        RepoProviderConfigId = repoConfigId,
+        BrainProviderConfigId = brainConfigId
+    };
+
+    // ── Repo kind: succeeds on second attempt ─────────────────────────────────
+
+    // TODO [WARNING]: this test cannot verify that Task.Delay(500ms) is actually awaited between
+    // attempts — it only asserts call count and the final result. A regression that removes the
+    // delay (making retries instantaneous) would pass undetected. Consider injecting a time
+    // abstraction or using a fake clock if the retry delay becomes a reliability concern.
+    [Fact]
+    public async Task RefreshToken_RepoKind_TransientNullOnFirstAttempt_SucceedsOnSecondAttempt()
+    {
+        // Arrange: first call returns null (transient miss), second returns a valid config
+        var validConfig = new ProviderConfig
+        {
+            Id = "repo-retry",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
+                [ProviderSettingKeys.ClientId] = "client-1",
+                [ProviderSettingKeys.InstallationId] = "12345"
+            }
+        };
+
+        _mockFacade.Setup(f => f.GetRun("job-retry")).Returns(MakeRun());
+        _mockFacade
+            .SetupSequence(f => f.GetProviderConfigByIdAsync("repo-retry", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderConfig?)null)  // first attempt — transient miss
+            .ReturnsAsync(validConfig);            // second attempt — succeeds
+
+        var expectedExpiry = DateTimeOffset.UtcNow.AddHours(1);
+        _mockTokenVending
+            .Setup(t => t.GenerateAgentTokenAsync(validConfig, It.IsAny<CancellationToken>(), false))
+            .ReturnsAsync(("ghs_retry_token", expectedExpiry));
+
+        var service = CreateService();
+
+        // Act
+        var result = await service.RefreshTokenAsync("job-retry", ProviderKind.Repository, CancellationToken.None);
+
+        // Assert: token returned successfully despite the first null
+        result.Token.Should().Be("ghs_retry_token");
+        result.ExpiresAt.Should().Be(expectedExpiry);
+
+        // GetProviderConfigByIdAsync must have been called exactly twice (attempt 0 → null, attempt 1 → config)
+        _mockFacade.Verify(
+            f => f.GetProviderConfigByIdAsync("repo-retry", ProviderKind.Repository, It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+    }
+
+    // ── Repo kind: throws after all retries exhausted ─────────────────────────
+
+    [Fact]
+    public async Task RefreshToken_RepoKind_AllAttemptsReturnNull_ThrowsHubExceptionAfterTwoAttempts()
+    {
+        // Arrange: both attempts return null — config is genuinely missing
+        _mockFacade.Setup(f => f.GetRun("job-retry")).Returns(MakeRun());
+        _mockFacade
+            .Setup(f => f.GetProviderConfigByIdAsync("repo-retry", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderConfig?)null);
+
+        var service = CreateService();
+
+        // Act
+        var act = () => service.RefreshTokenAsync("job-retry", ProviderKind.Repository, CancellationToken.None);
+
+        // Assert: HubException is thrown after retries are exhausted
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*Provider config not found*");
+
+        // GetProviderConfigByIdAsync must have been called exactly twice (two attempts, both null)
+        _mockFacade.Verify(
+            f => f.GetProviderConfigByIdAsync("repo-retry", ProviderKind.Repository, It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+
+        // Warning log must include the config ID as the first positional argument (acceptance criterion).
+        // We match on argument values rather than the template string to avoid fragility against
+        // template renames — the important invariant is that repoProviderConfigId is logged, not
+        // the exact placeholder name used in the template.
+        _mockLogger.Verify(
+            l => l.Warning(
+                It.IsAny<string>(),                        // message template (not asserted — implementation detail)
+                It.Is<string>(id => id == "repo-retry"),  // repoProviderConfigId must be the first positional arg
+                It.IsAny<string>(),                        // jobId
+                It.IsAny<ProviderKind>()),                 // providerKind
+            Times.Once);
+    }
+
+    // ── Brain kind: succeeds on second attempt ────────────────────────────────
+
+    // TODO [WARNING]: same as the repo-kind counterpart — Task.Delay(500ms) between attempts
+    // cannot be verified here; only call count and final result are asserted.
+    [Fact]
+    public async Task RefreshToken_BrainKind_TransientNullOnFirstAttempt_SucceedsOnSecondAttempt()
+    {
+        // Arrange: first call returns null (transient miss), second returns a valid brain config
+        var validBrainConfig = new ProviderConfig
+        {
+            Id = "brain-retry",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Brain",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
+                [ProviderSettingKeys.ClientId] = "client-brain",
+                [ProviderSettingKeys.InstallationId] = "99999"
+            }
+        };
+
+        _mockFacade.Setup(f => f.GetRun("job-retry")).Returns(MakeRun(brainConfigId: "brain-retry"));
+        _mockFacade
+            .SetupSequence(f => f.GetProviderConfigByIdAsync("brain-retry", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderConfig?)null)     // first attempt — transient miss
+            .ReturnsAsync(validBrainConfig);          // second attempt — succeeds
+
+        var expectedExpiry = DateTimeOffset.UtcNow.AddHours(1);
+        _mockTokenVending
+            .Setup(t => t.GenerateAgentTokenAsync(validBrainConfig, It.IsAny<CancellationToken>(), false))
+            .ReturnsAsync(("ghs_brain_retry_token", expectedExpiry));
+
+        var service = CreateService();
+
+        // Act
+        var result = await service.RefreshTokenAsync("job-retry", ProviderKind.Brain, CancellationToken.None);
+
+        // Assert: token returned successfully despite the first null
+        result.Token.Should().Be("ghs_brain_retry_token");
+        result.ExpiresAt.Should().Be(expectedExpiry);
+
+        // GetProviderConfigByIdAsync must have been called exactly twice (attempt 0 → null, attempt 1 → config)
+        _mockFacade.Verify(
+            f => f.GetProviderConfigByIdAsync("brain-retry", ProviderKind.Repository, It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+    }
+
+    // ── Brain kind: throws after all retries exhausted ────────────────────────
+
+    [Fact]
+    public async Task RefreshToken_BrainKind_AllAttemptsReturnNull_ThrowsHubExceptionAfterTwoAttempts()
+    {
+        // Arrange: both attempts return null — brain config is genuinely missing
+        _mockFacade.Setup(f => f.GetRun("job-retry")).Returns(MakeRun(brainConfigId: "brain-retry"));
+        _mockFacade
+            .Setup(f => f.GetProviderConfigByIdAsync("brain-retry", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderConfig?)null);
+
+        var service = CreateService();
+
+        // Act
+        var act = () => service.RefreshTokenAsync("job-retry", ProviderKind.Brain, CancellationToken.None);
+
+        // Assert: HubException is thrown after retries are exhausted
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*brain-retry*");
+
+        // GetProviderConfigByIdAsync must have been called exactly twice (two attempts, both null)
+        _mockFacade.Verify(
+            f => f.GetProviderConfigByIdAsync("brain-retry", ProviderKind.Repository, It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+
+        // Warning log must include the brain config ID (acceptance criterion).
+        // The brain branch logs (jobId, brainProviderConfigId) — brainProviderConfigId is the second
+        // positional arg in the current template. We verify the config ID value appears somewhere in
+        // the logger call rather than asserting positional order, since the template is acknowledged
+        // as inconsistent with the repo branch (TODO in production code to align argument order).
+        // TODO [WARNING]: the brain warning template logs {JobId} first and {BrainConfigId} second,
+        // which is the inverse of the repo branch ({ConfigId} first, {JobId} second). If structured
+        // log consumers extract ConfigId by position, the brain path will bind it to the job GUID.
+        // Align the brain template with the repo pattern when the TODO in AgentTokenRefreshService
+        // is resolved: "Provider config {ConfigId} not found for job {JobId} (kind: {ProviderKind})".
+        _mockLogger.Verify(
+            l => l.Warning(
+                It.IsAny<string>(),                              // message template
+                It.IsAny<string>(),                              // first positional arg (jobId in brain template)
+                It.Is<string>(id => id == "brain-retry")),       // brainProviderConfigId (second positional arg)
+            Times.Once);
+    }
+}

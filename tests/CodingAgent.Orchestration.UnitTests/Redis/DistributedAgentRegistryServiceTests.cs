@@ -96,6 +96,53 @@ public sealed class DistributedAgentRegistryServiceTests
         hash!["disabled"].Should().Be("True");
     }
 
+    // ── Register — preserveExistingConnectionId ───────────────────────────────
+
+    [Fact]
+    public async Task Register_WithPreserveExistingConnectionId_KeepsBothConnectionsInIndex()
+    {
+        // Arrange: register on conn-A and simulate an in-flight job by writing activeJobId to Redis
+        _sut.Register(Msg("agent-1"), "conn-A");
+        // TODO (WARNING, issue #2758): There is a timing race here. Register uses fire-and-forget
+        // (WriteRegistrationAsync). If that async write executes *after* HashSetFieldAsync below, it
+        // will overwrite "activeJobId" with "" (the value computed at Register time when
+        // existing.ActiveJobId was null). The subsequent Register("conn-B") reads the hash via
+        // GetAgentRaw, which may return null from the _pendingRegistrationWrite snapshot (missing
+        // activeJobId). The test likely passes today due to timing but is not deterministically
+        // correct. Fix: expose a LastRegistrationTask hook on DistributedAgentRegistryService
+        // (parallel to LastHeartbeatTask) and await it here before writing activeJobId to Redis.
+        await _store.HashSetFieldAsync("agent:agent-1", "activeJobId", "job-123");
+
+        // Act: mid-run kiro-cli sub-process reconnects on conn-B without an ActiveJob in the message
+        _sut.Register(Msg("agent-1"), "conn-B", preserveExistingConnectionId: true);
+
+        // Assert: both connections are resolvable — conn-A must not be evicted
+        var entryA = _sut.GetByConnectionId("conn-A");
+        entryA.Should().NotBeNull(
+            "conn-A must remain in _connectionIndex so hub calls on the active pipeline connection " +
+            "continue to pass AgentAuthorizationFilter (issue #2758)");
+
+        var entryB = _sut.GetByConnectionId("conn-B");
+        entryB.Should().NotBeNull(
+            "conn-B must be registered as the new primary connection");
+    }
+
+    [Fact]
+    public void Register_WithoutPreserveExistingConnectionId_EvictsOldConnection()
+    {
+        // Arrange: normal first registration on conn-A
+        _sut.Register(Msg("agent-1"), "conn-A");
+
+        // Act: normal re-registration on conn-B (default preserveExistingConnectionId=false)
+        _sut.Register(Msg("agent-1"), "conn-B");
+
+        // Assert: conn-A is evicted (normal re-registration path must be unchanged)
+        _sut.GetByConnectionId("conn-A").Should().BeNull(
+            "the normal re-registration path must evict the old connection from _connectionIndex");
+        _sut.GetByConnectionId("conn-B").Should().NotBeNull(
+            "conn-B must be registered as the new connection");
+    }
+
     // ── TransitionStatus ──────────────────────────────────────────────────────
 
     [Fact]

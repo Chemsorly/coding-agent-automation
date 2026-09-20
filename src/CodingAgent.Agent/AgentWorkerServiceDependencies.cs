@@ -9,8 +9,8 @@ namespace CodingAgent.Agent;
 public sealed record AgentWorkerServiceDependencies(
     AgentConnectionLifecycle ConnectionLifecycle,
     AgentJobSlotManager SlotManager,
-    ChatJobHandler ChatHandler,
-    ConsolidationJobHandler ConsolidationHandler,
+    ChatJobExecutor ChatHandler,
+    ConsolidationJobExecutor ConsolidationHandler,
     IPipelineExecutor Executor,
     IJobCompletionReporter CompletionReporter,
     Serilog.ILogger Logger);

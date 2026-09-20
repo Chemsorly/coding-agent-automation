@@ -1,4 +1,3 @@
-using System.Text.Json;
 using CodingAgent.Api.Dispatch;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Services;
@@ -92,22 +91,10 @@ public static class WorkItemQueryEndpoints
         // Phase 2: in-memory deserialization to extract display fields from Payload.
         // Uses PipelineJsonOptions.Lenient (PropertyNameCaseInsensitive=true) for robustness against
         // payloads written by older serializer configs or with PascalCase keys.
-        // A malformed payload produces null display fields rather than a 500 — same defensive pattern
-        // used in GetAssignment and PostLabelSwap.
+        // A malformed payload produces null display fields rather than a 500.
         var items = raw.Select(w =>
         {
-            JobDistributionRequest? req = null;
-            if (w.Payload is not null)
-            {
-                try
-                {
-                    req = JsonSerializer.Deserialize<JobDistributionRequest>(w.Payload, PipelineJsonOptions.Lenient);
-                }
-                catch (JsonException)
-                {
-                    // Corrupt or legacy payload — fall back to null display fields for this row.
-                }
-            }
+            WorkItemPayload.TryDeserialize(w.Payload, out var req);
             return new PendingWorkItemDto
             {
                 Id = w.Id,
@@ -195,21 +182,9 @@ public static class WorkItemQueryEndpoints
         // produces null display fields rather than a 500.
         var dtos = items.Select(w =>
         {
-            string? issueTitle = null;
-            string? initiatedBy = null;
-            if (w.Payload is not null)
-            {
-                try
-                {
-                    var req = JsonSerializer.Deserialize<JobDistributionRequest>(w.Payload, PipelineJsonOptions.Lenient);
-                    issueTitle = req?.IssueDetail?.Title;
-                    initiatedBy = req?.InitiatedBy;
-                }
-                catch (JsonException)
-                {
-                    // Corrupt or legacy payload — leave display fields null.
-                }
-            }
+            WorkItemPayload.TryDeserialize(w.Payload, out var req);
+            var issueTitle = req?.IssueDetail?.Title;
+            var initiatedBy = req?.InitiatedBy;
             return new ActiveWorkItemDto
             {
                 Id = w.Id,
