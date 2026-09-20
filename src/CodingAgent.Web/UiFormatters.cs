@@ -1,4 +1,3 @@
-using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 
@@ -35,14 +34,6 @@ public static class UiFormatters
         _ => ""
     };
 
-    public static string GetStatusColorClass(AgentStatus status) => status switch
-    {
-        AgentStatus.Idle => "text-success",
-        AgentStatus.Busy => "text-warning",
-        AgentStatus.Disconnected => "text-danger",
-        _ => ""
-    };
-
     public static string FormatRunType(PipelineRunType runType) => runType switch
     {
         PipelineRunType.Review => "PR Review",
@@ -50,30 +41,6 @@ public static class UiFormatters
         PipelineRunType.Decomposition => "Decomposition",
         PipelineRunType.Consolidation => "Consolidation",
         _ => "Implementation"
-    };
-
-    public static string FormatConsolidationRunType(ConsolidationRunType type) => type switch
-    {
-        ConsolidationRunType.BrainConsolidation => "Brain Consolidation",
-        ConsolidationRunType.RefactoringDetection => "Refactoring Detection",
-        ConsolidationRunType.HarnessSuggestions => "Harness Suggestions",
-        _ => type.ToString()
-    };
-
-    public static string FormatConsolidationRunTypeShort(ConsolidationRunType type) => type switch
-    {
-        ConsolidationRunType.BrainConsolidation => "Brain",
-        ConsolidationRunType.RefactoringDetection => "Refactor",
-        ConsolidationRunType.HarnessSuggestions => "Harness",
-        _ => type.ToString()
-    };
-
-    public static string GetConsolidationTypeIconName(ConsolidationRunType type) => type switch
-    {
-        ConsolidationRunType.BrainConsolidation => "brain",
-        ConsolidationRunType.RefactoringDetection => "refresh-cw",
-        ConsolidationRunType.HarnessSuggestions => "sparkles",
-        _ => "clipboard-list"
     };
 
     public static string FormatDuration(DateTime startedAt, DateTime? completedAt)
