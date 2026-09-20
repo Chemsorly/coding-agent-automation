@@ -183,7 +183,7 @@ public class DbModeStoreWiringTests : IClassFixture<DbModeWebApplicationFactory>
         };
 
         await store.SaveAsync(suggestions, CancellationToken.None);
-        var loaded = await store.GetAsync(CancellationToken.None);
+        var loaded = await store.LoadAsync(CancellationToken.None);
 
         loaded.Should().NotBeNull("mock client must return the saved suggestions");
         loaded!.Suggestions.Should().HaveCount(1);
