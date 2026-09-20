@@ -55,7 +55,7 @@ public class IConsolidationExecutorTests
         act.Should().Throw<ArgumentNullException>().WithParameterName("consolidationExecutor");
     }
 
-    // ── ConsolidationJobHandler depends on interface ─────────────────────
+    // ── ConsolidationJobExecutor depends on interface ─────────────────────
 
 
     // ── Interface definition ─────────────────────────────────────────────

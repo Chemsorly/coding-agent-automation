@@ -9,12 +9,12 @@ using Moq;
 namespace CodingAgent.Agent.UnitTests;
 
 /// <summary>
-/// Unit tests for <see cref="ChatJobHandler"/>.
+/// Unit tests for <see cref="ChatJobExecutor"/>.
 /// Verifies chat session handling, cancel behavior, model fetching, and completion reporting
 /// without requiring full <see cref="AgentWorkerServiceDependencies"/> construction.
 /// </summary>
 [Collection("EnvironmentVariables")]
-public class ChatJobHandlerTests : IDisposable
+public class ChatJobExecutorTests : IDisposable
 {
     public void Dispose()
     {
@@ -31,7 +31,7 @@ public class ChatJobHandlerTests : IDisposable
 
     // ── Setup helpers ─────────────────────────────────────────────────────
 
-    private static (ChatJobHandler Handler, AgentJobSlotManager SlotManager, AgentConnectionLifecycle Lifecycle)
+    private static (ChatJobExecutor Handler, AgentJobSlotManager SlotManager, AgentConnectionLifecycle Lifecycle)
         CreateHandler(
             KiroCliLib.Core.IKiroCliOrchestrator? orchestrator = null,
             IHostApplicationLifetime? hostLifetime = null,
@@ -53,7 +53,7 @@ public class ChatJobHandlerTests : IDisposable
         var lifecycle = new AgentConnectionLifecycle(hm, hmFactory, signalRReporter, slotManager,
             new AgentId("test-chat"), lifetime, mockLogger);
 
-        var handler = new ChatJobHandler(new ChatJobHandlerDependencies(
+        var handler = new ChatJobExecutor(new ChatJobExecutorDependencies(
             lifecycle, slotManager, mockOrchestrator,
             Mock.Of<System.Net.Http.IHttpClientFactory>(),
             lifetime,

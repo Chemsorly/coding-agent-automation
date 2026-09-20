@@ -22,13 +22,13 @@ public class ParameterObjectTests
     [Fact]
     public void AgentWorkerServiceDependencies_AllRequiredPropertiesAssigned()
     {
-        // AgentConnectionLifecycle, AgentJobSlotManager, ChatJobHandler, ConsolidationJobHandler
+        // AgentConnectionLifecycle, AgentJobSlotManager, ChatJobExecutor, ConsolidationJobExecutor
         // are sealed — use null! for the dependency object tests (we test that the record stores
         // values, not that the classes are functional)
         AgentConnectionLifecycle connectionLifecycle = null!;
         AgentJobSlotManager slotManager = null!;
-        ChatJobHandler chatHandler = null!;
-        ConsolidationJobHandler consolidationHandler = null!;
+        ChatJobExecutor chatHandler = null!;
+        ConsolidationJobExecutor consolidationHandler = null!;
         var executor = Mock.Of<IPipelineExecutor>();
         var completionReporter = Mock.Of<IJobCompletionReporter>();
         var logger = Mock.Of<Serilog.ILogger>();

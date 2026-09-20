@@ -425,7 +425,7 @@ public class ChatJobDispatcherTests
 
         var envVars = createdJob!.Spec.Template.Spec.Containers[0].Env;
         envVars.Should().Contain(e => e.Name == "AGENT_PROVIDER_TYPE" && e.Value == "kiro",
-            "chat pod must know its provider type so ChatJobHandler picks the right execution path");
+            "chat pod must know its provider type so ChatJobExecutor picks the right execution path");
     }
 
     [Fact]

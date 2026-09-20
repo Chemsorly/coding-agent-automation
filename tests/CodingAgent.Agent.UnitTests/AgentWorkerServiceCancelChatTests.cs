@@ -384,5 +384,5 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
         return (T?)field.GetValue(obj);
     }
 
-    private static ChatJobHandler GetChatJobHandler(ChatJobHandler chatJobHandler) => chatJobHandler;
+    private static ChatJobExecutor GetChatJobHandler(ChatJobExecutor chatJobHandler) => chatJobHandler;
 }
