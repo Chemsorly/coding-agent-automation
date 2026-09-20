@@ -209,7 +209,7 @@ public sealed class ApiBackedConfigStoresTests
         // CacheTtlSeconds = 0 means TtlCache.Set stores _expiry = UtcNow. On any subsequent
         // TryGet call (even microseconds later) UtcNow > _expiry, so the cache always misses.
         // This exercises the expiry-driven refetch path without needing time injection.
-        // TODO: Potential clock-resolution flakiness on Windows CI (~15.6 ms tick). If both the
+        // NOTE: Potential clock-resolution flakiness on Windows CI (~15.6 ms tick). If both the
         // Set call and the subsequent TryGet resolve to the same quantized tick, the inclusive
         // DateTime.UtcNow <= _expiry comparison becomes true → cache hit → Times.Once instead of
         // Times.Exactly(2). This pattern is replicated from the pre-existing
@@ -232,7 +232,7 @@ public sealed class ApiBackedConfigStoresTests
     [Fact]
     public async Task ApiProjectStore_ZeroTtl_AlwaysRefetchesProjects()
     {
-        // TODO: Same clock-resolution flakiness risk as ApiPipelineConfigStore_ZeroTtl_AlwaysRefetches.
+        // NOTE: Same clock-resolution flakiness risk as ApiPipelineConfigStore_ZeroTtl_AlwaysRefetches.
         // On Windows CI with ~15.6 ms tick granularity, both DateTime.UtcNow calls (in Set and TryGet)
         // may land on the same tick, causing a spurious cache hit and Times.Once instead of Times.Exactly(2).
         // Fix by injecting a time abstraction (e.g. TimeProvider) so tests can advance the clock deterministically.
@@ -253,7 +253,7 @@ public sealed class ApiBackedConfigStoresTests
     [Fact]
     public async Task ApiProjectStore_ZeroTtl_AlwaysRefetchesTemplates()
     {
-        // TODO: Same clock-resolution flakiness risk as ApiPipelineConfigStore_ZeroTtl_AlwaysRefetches.
+        // NOTE: Same clock-resolution flakiness risk as ApiPipelineConfigStore_ZeroTtl_AlwaysRefetches.
         // On Windows CI with ~15.6 ms tick granularity, both DateTime.UtcNow calls (in Set and TryGet)
         // may land on the same tick, causing a spurious cache hit and Times.Once instead of Times.Exactly(2).
         // Fix by injecting a time abstraction (e.g. TimeProvider) so tests can advance the clock deterministically.
@@ -274,12 +274,12 @@ public sealed class ApiBackedConfigStoresTests
     /// <summary>
     /// Builds the composite store the way DI does: over the same three narrow stores, so the
     /// caches under test are the ones production shares rather than private copies.
-    /// TODO: ApiProjectStore is missing cache-hit characterization tests. There is no test asserting
+    /// NOTE: ApiProjectStore is missing cache-hit characterization tests. There is no test asserting
     /// that a second LoadProjectsAsync or LoadAllTemplatesAsync call within a non-zero TTL window
     /// hits the API exactly once. The migration could silently break cache-hit behaviour (e.g. if
     /// LoadCachedAsync was wired to the wrong TtlCache field) and no existing test would catch it.
     /// Add: ApiProjectStore_CachesProjectsWithinTtl and ApiProjectStore_CachesTemplatesWithinTtl.
-    /// TODO: ApiProjectStore is missing invalidate-on-write characterization tests. The issue
+    /// NOTE: ApiProjectStore is missing invalidate-on-write characterization tests. The issue
     /// prerequisites explicitly require "invalidate-on-write" tests before migrating. There are no
     /// tests asserting that SaveProjectAsync, DeleteProjectAsync, SaveTemplateAsync,
     /// DeleteTemplateAsync, or MoveTemplateAsync clears the relevant TtlCache. A regression in any
