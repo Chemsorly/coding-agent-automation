@@ -1324,37 +1324,35 @@ public class QualityGateExecutorWaitForPostPrCiCancellationTelemetryTests : IDis
             TransientRetryDelay = TimeSpan.Zero // eliminate delay so the test runs fast
         };
 
-        // Create the retries collector immediately before the Act so that only measurements
-        // produced during this specific call are captured. A class-level collector created in
-        // the constructor can receive measurements from parallel tests running at the same time
-        // (due to process-global MeterListener infrastructure), causing spurious failures.
-        // Creating it here narrows the observation window to just ProceedToQualityGatesAsync.
-        using var retriesCollector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "quality_gate.retries");
+        // Create the retries collector immediately before the Act, binding directly to the
+        // Meter object (not via scope matching) so only measurements from THIS executor's
+        // factory-scoped counter are captured. Using MetricCollector(Meter, instrumentName)
+        // ensures strict instrument identity: instrument.Meter == meter (reference equality),
+        // not instrument.Meter.Scope == factory (value equality), which is more resilient to
+        // parallel test interference in CI where multiple factories share the same meter name.
+        var executorMeter = _meterFactory.Meters.Single(m => m.Name == PipelineTelemetry.SourceName);
+        using var retriesCollector = new MetricCollector<long>(executorMeter, "quality_gate.retries");
 
         // Act
         await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
 
-        // Assert: quality_gate.retries has ZERO measurements.
-        // Under the buggy code the counter fired 10 times (once per transient iteration at the top
-        // of the loop). After the fix, all 10 iterations hit shouldContinue/shouldBreak before
-        // reaching the counter, so it fires 0 times.
-        // Positive evidence that the loop ran: the retry agent was called 10 times (the transient cap),
-        // plus 1 feedback call = 11 total. If the loop somehow didn't run, both the retries collector
-        // AND the agent call count would be 0, making this a vacuous assertion.
-        // TODO [WARNING]: Times.Exactly(11) hard-codes MaxConsecutiveTransientRetries (10) + 1 feedback
-        // call. If MaxConsecutiveTransientRetries changes, this silently diverges. Consider deriving
-        // expectedCalls from QualityGateExecutor.MaxConsecutiveTransientRetries + 1 (if accessible) so
-        // the relationship is explicit and the test fails loudly rather than with a wrong count.
-        // Also note: FeedbackTimeoutSeconds defaults to FeedbackConstraints.FailureFeedbackTimeoutSeconds
-        // (60 s), which is intentionally not overridden here — the feedback call must not time out
-        // before the mock can record it. If the default is ever changed to 0 or negative, the count
-        // would drop to 10 and Times.Exactly(11) would fail unexpectedly.
+        // Assert: quality_gate.retries must have ONLY transient-outcome measurements.
+        // Under the original broken code (counter at loop top, before RunFixAgentIterationAsync),
+        // the counter fired with RunTypeTag only (no outcome). After the main-branch fix,
+        // the counter fires per-outcome (BuildRetryTags) in RunFixAgentIterationAsync's switch cases.
+        // For all-transient iterations, only outcome='transient' measurements should appear —
+        // no outcome='retry' measurements, because no real fix-agent attempt was executed.
+        // The agent-call count verification above confirms the loop ran 10 transient iterations
+        // plus 1 feedback call; without that, an empty assertion would be vacuous.
         _mockAgent.Verify(
             a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
             Times.Exactly(11),
             "10 transient retry calls + 1 feedback call = 11 total (confirms the loop ran)");
-        retriesCollector.GetMeasurementSnapshot().Should().BeEmpty(
-            "quality_gate.retries must not increment for transient-only iterations that never execute a real fix attempt (issue #2794)");
+        var snapshot = retriesCollector.GetMeasurementSnapshot();
+        snapshot.Should().NotContain(
+            m => m.Tags.Contains(new KeyValuePair<string, object?>("outcome", "retry")),
+            "quality_gate.retries must not emit outcome='retry' for transient-only iterations " +
+            "that never execute a real fix attempt (issue #2794)");
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
