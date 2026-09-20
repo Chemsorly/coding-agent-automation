@@ -71,40 +71,29 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         // 2. Transition WorkItem in DB (no-op when WorkItemFallbackTransitionService is not registered)
         await TransitionWorkItemAsync(runId, WorkItemStatus.Failed, ct, failureReason, failureReasonEnum);
 
-        // 3. Persist to history — wrapped in try/catch so downstream cleanup still runs
-        try
-        {
-            await _historyService.AddRunToHistoryAsync(run, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.Error(ex, "FailRunAsync: failed to persist run {RunId} to history (run data may be lost)", runId);
-        }
-
-        // 4. Stop the orchestrator-side ExecutePipeline span (issue #2255).
-        //    Must happen after history persist so final tags can be added before the span closes.
-        // NOTE: The span is disposed here (step 4), before ClearAgentState/label-swap/K8s cleanup
-        // (steps 5-7). Those operations are therefore not covered by the span's active window and
-        // won't appear as child spans/events. If end-to-end coverage of the full terminal sequence
-        // is needed, move Dispose to after step 7. Consistent with CancelRunAsync; CompleteRunAsync
-        // already disposes near the end. (Reviewer warning, issue #2255)
-        // TODO: Span duration excludes post-history cleanup (ClearAgentState, label-swap, K8s job
-        // delete). If cleanup is slow the span will under-report total run time. Move Dispose to
-        // after step 7 if full end-to-end span coverage is required. See review warning (issue #2255).
-        run.OrchestratorActivity?.SetTag("pipeline.final_step", run.CurrentStep.ToString());
-        run.OrchestratorActivity?.SetStatus(ActivityStatusCode.Error, failureReason);
-        run.OrchestratorActivity?.Dispose();
-
-        // 5. Clear agent state
+        // TODO: [WARNING] ClearAgentState is called here (before history-persist + span-finalize), which
+        //       deviates from the originally documented ordering (history → span → ClearAgentState → label-swap).
+        //       This is structurally safe because ClearAgentStateAsync only mutates the agent registry entry and
+        //       does not affect run.AgentId, so history-persist and span tags are unaffected. However, it means
+        //       ClearAgentState is outside the "single canonical place" in RunTerminalCleanupAsync. Consider
+        //       moving it inside RunTerminalCleanupAsync (parameterised) to restore the documented ordering.
+        // 3. Clear agent state
         await ClearAgentStateAsync(run.AgentId);
 
-        // 6. Swap label — respect pipeline-determined FinalLabel, fall back to agent:error
+        // 4. Compute the target label — respect pipeline-determined FinalLabel, fall back to agent:error
         var errorLabel = run.FinalLabel is not null && AgentLabels.All.Contains(run.FinalLabel)
             ? run.FinalLabel
             : AgentLabels.Error;
-        await _labelService.TrySwapLabelAsync(run, errorLabel, _logger, "RunLifecycleManager", ct);
 
-        // 7. Delete K8s Job to prevent pod retries consuming backoffLimit (mirrors CancelRunAsync step 7).
+        // 5. Shared terminal cleanup: history-persist → span-finalize → label-swap
+        // TODO: [WARNING] The non-cancellation branch in RunTerminalCleanupAsync calls FinalizeOrchestratorSpan,
+        //       which sets pipeline.agent_id on the span. The original FailRunAsync path did NOT set this tag.
+        //       This is additive/harmless telemetry, but is a behavioural delta from the pre-refactor Fail path.
+        //       If span tag parity with the original is required, either remove pipeline.agent_id from
+        //       FinalizeOrchestratorSpan or add an explicit pipeline.agent_id assertion to the characterization tests.
+        await RunTerminalCleanupAsync(run, errorLabel, WorkItemStatus.Failed, failureReason, isCancellation: false, ct);
+
+        // 6. Delete K8s Job to prevent pod retries consuming backoffLimit (mirrors CancelRunAsync step 6).
         // Best-effort: if the Job is already gone or K8s is unavailable, the warning is logged by KubernetesJobCleanup.
         if (_jobCleanup is not null)
             await _jobCleanup.TryDeleteJobForRunAsync(runId, ct);
@@ -149,45 +138,37 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         // 1. Transition WorkItem in DB
         await TransitionWorkItemAsync(runId, terminalStatus, ct, errorMessage, failureReason);
 
-        // 2. Persist to history — wrapped in try/catch so downstream cleanup still runs
-        try
-        {
-            await _historyService.AddRunToHistoryAsync(run, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.Error(ex, "CompleteRunAsync: failed to persist run {RunId} to history (run data may be lost)", runId);
-        }
-
-        // 3. Best-effort label swap (fallback for hub crash scenario — PostCompletionBookkeepingAsync
-        //    is the authoritative path but may not execute if the hub pod is killed between DB write
-        //    and the hub method returning). AgentLabelOperations.SwapAsync is idempotent, so calling
+        // 2. Compute the target label — skip for consolidation runs (they have no issue label).
+        //    Best-effort fallback for hub crash scenario — PostCompletionBookkeepingAsync is the
+        //    authoritative path but may not execute if the hub pod is killed between DB write and
+        //    the hub method returning. AgentLabelOperations.SwapAsync is idempotent, so calling
         //    this here and in PostCompletionBookkeepingAsync in the happy path is safe.
+        string? label = null;
         if (run.IssueProviderConfigId != ConsolidationConstants.ProviderConfigId)
         {
-            var label = run.FinalLabel is not null && AgentLabels.All.Contains(run.FinalLabel)
+            label = run.FinalLabel is not null && AgentLabels.All.Contains(run.FinalLabel)
                 ? run.FinalLabel
                 : terminalStatus switch
                 {
                     WorkItemStatus.Succeeded => AgentLabels.Done,
-                    WorkItemStatus.Failed    => AgentLabels.Error,
+                    WorkItemStatus.Failed => AgentLabels.Error,
                     WorkItemStatus.Cancelled => AgentLabels.Cancelled,
-                    _                        => null
+                    _ => null
                 };
-
-            if (label is not null)
-                await _labelService.TrySwapLabelAsync(run, label, _logger, "RunLifecycleManager", ct);
         }
 
-        // 4. Stop the orchestrator-side ExecutePipeline span (issue #2255).
-        //    Added after history persist so the final step tag reflects the terminal state.
-        //    AgentId may be null for rehydrated runs where the agent didn't reconnect; tag defensively.
-        // NOTE: The span is disposed here (step 4), before any post-completion cleanup steps
-        // (e.g. label swap). Those operations are therefore not covered by the span's active window
-        // and won't appear as child spans/events. If end-to-end coverage of the full terminal
-        // sequence is needed, move Dispose to after all cleanup steps. Consistent with the same
-        // gap documented in FailRunAsync and CancelRunAsync. (Reviewer warning, issue #2255)
-        FinalizeOrchestratorSpan(run, terminalStatus, errorMessage);
+        // 3. Shared terminal cleanup: history-persist → span-finalize → label-swap
+        //    Note: CompleteRunAsync intentionally does NOT call ClearAgentState or K8s job cleanup.
+        //    Those steps are the responsibility of FailRunAsync and CancelRunAsync only.
+        // TODO: [WARNING] In the original pre-refactor code, CompleteRunAsync swapped the label BEFORE
+        //       span-finalize (step 3 was TrySwapLabelAsync, step 4 was FinalizeOrchestratorSpan). After
+        //       extraction, RunTerminalCleanupAsync runs history → span-finalize → label-swap, so label-swap
+        //       now happens AFTER the span is disposed on the Complete path. For non-consolidation success runs
+        //       this changes span coverage: TrySwapLabelAsync latency/errors previously fell inside the span's
+        //       active window and now fall outside it. Fail/Cancel already had label-swap after span, so only
+        //       Complete's ordering changed. If the original ordering is required, CompleteRunAsync would need
+        //       to swap the label before calling RunTerminalCleanupAsync (or pass a flag to skip the swap step).
+        await RunTerminalCleanupAsync(run, label, terminalStatus, errorMessage, isCancellation: false, ct);
 
         _logger.Information(
             "RunLifecycleManager.CompleteRunAsync: run {RunId} terminal (status={Status}, issue={IssueIdentifier}, step={Step}, highWater={HighWater}, agent={AgentId})",
@@ -220,37 +201,20 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         // 2. Transition WorkItem in DB
         await TransitionWorkItemAsync(runId, WorkItemStatus.Cancelled, ct);
 
-        // 3. Persist to history — wrapped in try/catch so downstream cleanup still runs
-        try
-        {
-            await _historyService.AddRunToHistoryAsync(run, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.Error(ex, "CancelRunAsync: failed to persist run {RunId} to history (run data may be lost)", runId);
-        }
-
-        // 4. Stop the orchestrator-side ExecutePipeline span (issue #2255).
-        //    Use SetTag("pipeline.cancelled", true) instead of SetStatus(Error) for graceful cancellation,
-        //    matching the RecordError extension convention for OperationCanceledException.
-        // NOTE: The span is disposed here (step 4), before ClearAgentState/label-swap/K8s cleanup
-        // (steps 5-7). Those operations are not covered by the span's active window. If end-to-end
-        // coverage of the full terminal sequence is needed, move Dispose to after step 7.
-        // (Reviewer warning, issue #2255)
-        // TODO: Span duration excludes post-history cleanup (ClearAgentState, label-swap, K8s job
-        // delete). If cleanup is slow the span will under-report total run time. Move Dispose to
-        // after step 7 if full end-to-end span coverage is required. See review warning (issue #2255).
-        run.OrchestratorActivity?.SetTag("pipeline.final_step", run.CurrentStep.ToString());
-        run.OrchestratorActivity?.SetTag("pipeline.cancelled", true);
-        run.OrchestratorActivity?.Dispose();
-
-        // 5. Clear agent state
+        // TODO: [WARNING] ClearAgentState is called here (before history-persist + span-finalize via
+        //       RunTerminalCleanupAsync), deviating from the originally documented ordering
+        //       (history → span → ClearAgentState → label-swap). This is safe (ClearAgentStateAsync
+        //       only mutates the agent registry, not run.AgentId), but ClearAgentState is outside the
+        //       shared cleanup tail. Consider moving it inside RunTerminalCleanupAsync (parameterised)
+        //       to restore the documented ordering and keep all terminal steps in one place.
+        // 3. Clear agent state
         await ClearAgentStateAsync(run.AgentId);
 
-        // 6. Swap label
-        await _labelService.TrySwapLabelAsync(run, AgentLabels.Cancelled, _logger, "RunLifecycleManager", ct);
+        // 4. Shared terminal cleanup: history-persist → span-finalize → label-swap
+        //    Uses isCancellation: true so the span receives pipeline.cancelled=true instead of SetStatus(Error).
+        await RunTerminalCleanupAsync(run, AgentLabels.Cancelled, WorkItemStatus.Cancelled, failureReason, isCancellation: true, ct);
 
-        // 7. Delete K8s Job to prevent pod retries consuming backoffLimit (mirrors CancelRunAsync step 7).
+        // 5. Delete K8s Job to prevent pod retries consuming backoffLimit.
         if (_jobCleanup is not null)
             await _jobCleanup.TryDeleteJobForRunAsync(runId, ct);
 
@@ -325,6 +289,74 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
     // ── Private helpers ─────────────────────────────────────────────────
 
+    /// <summary>
+    /// Performs the shared terminal-cleanup tail common to all three terminal paths:
+    /// <list type="number">
+    ///   <item>Persist run to history (try/catch — downstream cleanup always runs)</item>
+    ///   <item>Finalize and dispose the orchestrator-side ExecutePipeline span</item>
+    ///   <item>Swap the issue/PR label to the computed terminal label (skipped when <paramref name="targetLabel"/> is null)</item>
+    /// </list>
+    /// The span-finalize step is the single canonical location for the history-persist → span-dispose
+    /// ordering that was previously duplicated across <c>FailRunAsync</c>, <c>CancelRunAsync</c>, and
+    /// <c>CompleteRunAsync</c> (issue #2795). A future ordering fix (e.g. moving span disposal later)
+    /// only needs to land here.
+    /// </summary>
+    /// <param name="run">The terminal run.</param>
+    /// <param name="targetLabel">Label to swap to, or <c>null</c> to skip the swap (consolidation runs, unrecognised status).</param>
+    /// <param name="terminalStatus">Final <see cref="WorkItemStatus"/> — used for span status and label derivation.</param>
+    /// <param name="errorMessage">Optional error message for span and DB transition.</param>
+    /// <param name="isCancellation">
+    ///   When <c>true</c>, sets <c>pipeline.cancelled=true</c> on the span instead of
+    ///   <c>ActivityStatusCode.Error</c> (graceful cancellation convention).
+    /// </param>
+    /// <param name="ct">Cancellation token.</param>
+    private async Task RunTerminalCleanupAsync(
+        PipelineRun run,
+        string? targetLabel,
+        WorkItemStatus terminalStatus,
+        string? errorMessage,
+        bool isCancellation,
+        CancellationToken ct)
+    {
+        // Step 1: Persist to history — wrapped in try/catch so downstream cleanup always runs.
+        try
+        {
+            await _historyService.AddRunToHistoryAsync(run, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Error(ex, "RunTerminalCleanupAsync: failed to persist run {RunId} to history (run data may be lost)", run.RunId);
+        }
+
+        // Step 2: Stop the orchestrator-side ExecutePipeline span (issue #2255).
+        //         Must happen after history persist so final tags can be added before the span closes.
+        //         This is the single canonical location for the span-dispose ordering (issue #2795).
+        // NOTE: The span is disposed here (step 2), before the label-swap (step 3). Those operations
+        //       are therefore not covered by the span's active window and won't appear as child
+        //       spans/events. If end-to-end coverage of the full terminal sequence is needed, move
+        //       Dispose to after step 3. See review warning (issue #2255).
+        // TODO: Span duration excludes post-history label-swap. If label-swap is slow the span will
+        //       under-report total run time. Move Dispose to after step 3 if full end-to-end span
+        //       coverage is required. See review warning (issue #2255).
+        run.OrchestratorActivity?.SetTag("pipeline.final_step", run.CurrentStep.ToString());
+        if (isCancellation)
+        {
+            // Graceful cancellation: use pipeline.cancelled=true instead of SetStatus(Error),
+            // matching the RecordError extension convention for OperationCanceledException.
+            run.OrchestratorActivity?.SetTag("pipeline.cancelled", true);
+            run.OrchestratorActivity?.Dispose();
+        }
+        else
+        {
+            // Fail and Complete paths: delegate remaining tags (pipeline.agent_id, SetStatus) + Dispose.
+            FinalizeOrchestratorSpan(run, terminalStatus, errorMessage);
+        }
+
+        // Step 3: Swap label — skip for consolidation runs (targetLabel null) or unrecognised status.
+        if (targetLabel is not null)
+            await _labelService.TrySwapLabelAsync(run, targetLabel, _logger, "RunLifecycleManager", ct);
+    }
+
     private async Task TransitionWorkItemAsync(RunId runId, WorkItemStatus status, CancellationToken ct, string? errorMessage = null, FailureReason? failureReason = null)
     {
         if (_workItemFallbackTransition is null || !Guid.TryParse(runId.Value, out var workItemId))
@@ -369,6 +401,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     /// <summary>
     /// Sets terminal telemetry tags and disposes the orchestrator-side ExecutePipeline span for a completed run.
     /// Extracted to keep <see cref="CompleteRunAsync"/> within Sonar's cognitive complexity limit.
+    /// Also called from <see cref="RunTerminalCleanupAsync"/> for the non-cancellation path.
     /// </summary>
     private static void FinalizeOrchestratorSpan(PipelineRun run, WorkItemStatus terminalStatus, string? errorMessage)
     {
