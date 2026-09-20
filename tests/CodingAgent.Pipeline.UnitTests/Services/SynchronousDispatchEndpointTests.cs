@@ -536,7 +536,7 @@ public sealed class SynchronousDispatchEndpointTests
         var request = MakeRequest() with { TimeoutSeconds = 0 };
 
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
+            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
             "dispatch must succeed so we can verify the stored TimeoutSeconds");
@@ -569,7 +569,7 @@ public sealed class SynchronousDispatchEndpointTests
         var request = MakeRequest() with { TimeoutSeconds = -1 };
 
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, CancellationToken.None);
+            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
             "dispatch must succeed so we can verify the stored TimeoutSeconds");

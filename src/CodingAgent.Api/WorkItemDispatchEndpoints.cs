@@ -101,12 +101,12 @@ public static class WorkItemDispatchEndpoints
             Status = WorkItemStatus.Pending,
             Payload = payloadJson,
             AgentSelector = request.AgentSelector ?? "",
-            // TODO: Add a positive-value guard here: if request.TimeoutSeconds <= 0, substitute
-            // (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds. This prevents a legacy or
-            // misconfigured caller from storing a zero (the DB column default) and relying on the
-            // dispatch-path fallback in BuildJobContext. See review finding [WARNING] — zero sentinel
-            // ambiguity in ReconciliationLoop and DispatchLoop.
-            TimeoutSeconds = request.TimeoutSeconds,
+            // Clamp zero/negative TimeoutSeconds to DefaultAgentTimeout (issue #2745).
+            // A zero stored value causes ReconciliationLoop to immediately force-fail Running items
+            // because the elapsed time always exceeds the zero timeout.
+            TimeoutSeconds = request.TimeoutSeconds > 0
+                ? request.TimeoutSeconds
+                : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
             ProjectId = request.ProjectId,
             CreatedAt = DateTimeOffset.UtcNow,
             PriorityWeight = InitiatedByConstants.IsManual(request.InitiatedBy) ? 100 : 0,

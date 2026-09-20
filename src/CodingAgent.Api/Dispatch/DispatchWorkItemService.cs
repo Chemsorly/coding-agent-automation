@@ -145,6 +145,25 @@ internal sealed class DispatchWorkItemService
         bool isKiroAgent,
         string callerName)
     {
+        // TODO [WARNING]: `callerName` is embedded into a Serilog structured-log message via a
+        // positional hole ({CallerName}). All current call sites pass hardcoded string literals so
+        // there is no immediate injection risk. However, the parameter is typed as plain `string`
+        // with no validation — a future call site that passes user-controlled input would embed it
+        // verbatim in log output. Serilog's structured API prevents format-string injection, but
+        // CRLF characters could smuggle extra log lines into text sinks. Fix: restrict to an enum
+        // or validate/truncate to alphanumeric-only at the entry point.
+
+        // TODO [WARNING]: `sanitizedSelector` is embedded into the Conflict response body
+        // ($"Concurrency limit reached for selector '{sanitizedSelector}' ..."). The parameter
+        // name implies CRLF-stripping has already been applied by the caller (via
+        // LogSanitizer.SanitizeForLog), and both current call sites do apply sanitization before
+        // passing it. The contract is implicit — this method accepts a plain `string` with no
+        // enforcement that sanitization was performed. A future caller passing a raw, unsanitized
+        // selector sourced from user input would reflect that input into the HTTP response body,
+        // enabling response-splitting (raw HTTP/1.1) or stored XSS if the body is rendered
+        // unescaped in a frontend. Fix: add an internal debug-mode assertion or rename to
+        // a sanitized-string wrapper type to make the contract explicit.
+
         // Concurrency gate — delegates to DispatchStateBuilder.IsAtConcurrencyLimit
         // which already handles maxConcurrent <= 0 as "no limit".
         if (DispatchStateBuilder.IsAtConcurrencyLimit(normalizedSelector, concurrencyBySelector, template.MaxConcurrent))
@@ -210,7 +229,12 @@ internal sealed class DispatchWorkItemService
             DispatchedAt = dispatchedAt,
             Payload = payloadJson,
             AgentSelector = JobTemplateStore.NormalizeLabels(request.AgentSelector ?? ""),
-            TimeoutSeconds = request.TimeoutSeconds,
+            // Clamp zero/negative TimeoutSeconds to DefaultAgentTimeout (issue #2745).
+            // A zero stored value causes ReconciliationLoop to immediately force-fail Running items
+            // because the elapsed time always exceeds the zero timeout.
+            TimeoutSeconds = request.TimeoutSeconds > 0
+                ? request.TimeoutSeconds
+                : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
             ProjectId = request.ProjectId,
             CreatedAt = DateTimeOffset.UtcNow,
             PriorityWeight = InitiatedByConstants.IsManual(request.InitiatedBy) ? 100 : 0,
