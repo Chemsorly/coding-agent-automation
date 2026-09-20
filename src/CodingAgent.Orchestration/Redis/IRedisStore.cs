@@ -30,6 +30,9 @@ public interface IRedisStore
     /// <summary>HGETALL key.</summary>
     Task<HashEntry[]> HashGetAllAsync(string key);
 
+    /// <summary>HGETALL key — with cancellation support.</summary>
+    Task<HashEntry[]> HashGetAllAsync(string key, CancellationToken ct);
+
     /// <summary>HMSET key field value [field value ...].</summary>
     Task HashSetAsync(string key, HashEntry[] fields);
 
@@ -44,6 +47,9 @@ public interface IRedisStore
 
     /// <summary>SMEMBERS key — returns all members of the set.</summary>
     Task<string[]> SetMembersAsync(string key);
+
+    /// <summary>SMEMBERS key — returns all members of the set, with cancellation support.</summary>
+    Task<string[]> SetMembersAsync(string key, CancellationToken ct);
 
     /// <summary>SCARD key — returns set cardinality.</summary>
     Task<long> SetCardinalityAsync(string key);

@@ -218,11 +218,11 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
         response.EnsureSuccessStatusCode();
     }
 
-    public async Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, string templateId, CancellationToken ct = default)
+    public async Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, string templateId, CancellationToken ct = default)
     {
         var response = await _http.PostAsJsonAsync(
             "/api/config/templates/move",
-            new { SourceProjectId = sourceProjectId, TargetProjectId = targetProjectId, TemplateId = templateId },
+            new { SourceProjectId = sourceProjectId.Value, TargetProjectId = targetProjectId.Value, TemplateId = templateId },
             PipelineJsonOptions.Default,
             ct);
         response.EnsureSuccessStatusCode();

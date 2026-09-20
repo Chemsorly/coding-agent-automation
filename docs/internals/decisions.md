@@ -1839,7 +1839,8 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 **Rationale:** The old names were actively misleading — both modes use SignalR and both run in Kubernetes. The essential difference is:
 
 - **Work-item mode** (one-shot batch): pod owns a durable `WorkItem` row; must drive it to a terminal status; uses `AgentConnectionManager`, `WorkItemAgentService`, and `IJobCompletionReporter`.
-- **Chat mode** (long-lived interactive): pod owns no durable row; product is streamed output; uses `AgentConnectionLifecycle`, `AgentWorkerService`, `ChatJobHandler`, and `CriticalMessageBuffer`.
+- **Chat mode** (long-lived interactive): pod owns no durable row; product is streamed output; uses `AgentConnectionLifecycle`, `AgentWorkerService`, `ChatJobExecutor`, and `CriticalMessageBuffer`.
+<!-- TODO [WARNING]: `ChatJobHandler` was renamed to `ChatJobExecutor` in issue #2783. Updated above to match. If any other stale references to `ChatJobHandler` or `ConsolidationJobHandler` exist in docs, update them similarly. -->
 
 **The split is deliberate and should not be re-unified.** Registration overlap between the two files is 0% — not one registration line is shared. Three of ~10 slots fill the same abstraction with a genuinely different implementation (e.g., `IJobCompletionReporter` vs `SignalRCompletionReporter`). Merging them behind an `if` would be strictly worse.
 
