@@ -1299,4 +1299,243 @@ public sealed class AgentOrphanRecoveryServiceTests
         entry.ActiveJobId.Should().Be("drain-assigned",
             "drain-assigned job must not be overwritten");
     }
+
+    // ── Fault-logging: faulted UpdateAgentFieldAsync is observed ─────────────────
+    // TODO: [WARNING] All five tests below use a TCS-backed Callback to synchronise with the
+    // ContinueWith continuation. If the _logger.Warning mock setup does not match the actual
+    // overload dispatched by Serilog (e.g. params object[] instead of the typed generic overload),
+    // the Callback is never invoked and the test hangs for 30 s before timing out — rather than
+    // failing with a clear assertion message. Consider a fallback assertion independent of the TCS
+    // to surface this failure sooner. See TestQualityReviewer findings for issue #2779.
+    //
+    // TODO: [WARNING] All five tests assert Times.AtLeastOnce on _logger.Warning, which passes even
+    // if a different Warning call (unrelated to UpdateAgentFieldAsync faults) fires first. For
+    // DetectAndRestoreOrphans in particular, the orphan-count Warning at ~L431 shares the same
+    // overload signature and would satisfy the assertion even if the ContinueWith continuation never
+    // fired. A more precise assertion (e.g. verifying the logged exception is the specific
+    // InvalidOperationException from the faulted task) would lock in the requirement more tightly.
+    // See TestQualityReviewer findings for issue #2779.
+
+    [Fact]
+    public async Task RestoreConsolidationTracking_FaultedUpdateAgentFieldAsync_LogsWarning()
+    {
+        // Arrange: UpdateAgentFieldAsync faults — the ContinueWith continuation must log a Warning.
+        // TCS synchronizes the test thread with the ThreadPool-scheduled continuation:
+        // ContinueWith(TaskScheduler.Default) is always async even for already-faulted tasks.
+        var warningFired = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var agentId = MakeAgentId();
+        var activeJob = MakeActiveJob("run-consol-fault",
+            providerConfigId: ConsolidationConstants.ProviderConfigId);
+        var message = MessageWithJob(job: activeJob);
+        var entry = MakeEntry();
+
+        _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>() as IReadOnlyList<PipelineRunSummary>);
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        // The field write faults — this is the call whose fault must be logged.
+        _facade.Setup(f => f.UpdateAgentFieldAsync(agentId, "activeJobId", It.IsAny<string?>()))
+            .Returns(Task.FromException(new InvalidOperationException("Redis down")));
+
+        // Wire the Callback before the act so the TCS is signalled as soon as the continuation fires.
+        // Serilog Warning<AgentId, string>(Exception?, string, AgentId, string) — use concrete types.
+        _logger
+            .Setup(l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()))
+            .Callback(() => warningFired.TrySetResult(true));
+
+        // Act
+        await _sut.RecoverOrphanedStateAsync(message, agentId);
+
+        // Block until the ThreadPool continuation fires (30 s safety-net).
+        await warningFired.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        // Assert: Warning logged with exception and field context; no exception propagated.
+        _logger.Verify(
+            l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()),
+            Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task RestorePipelineRun_FaultedUpdateAgentFieldAsync_LogsWarning()
+    {
+        // Arrange: UpdateAgentFieldAsync faults on the RestorePipelineRun path.
+        var warningFired = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var agentId = MakeAgentId();
+        var activeJob = MakeActiveJob("run-pipeline-fault"); // non-consolidation provider
+        var message = MessageWithJob(job: activeJob);
+        var entry = MakeEntry();
+
+        _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>() as IReadOnlyList<PipelineRunSummary>);
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _facade.Setup(f => f.UpdateAgentFieldAsync(agentId, "activeJobId", It.IsAny<string?>()))
+            .Returns(Task.FromException(new InvalidOperationException("Redis down")));
+
+        _logger
+            .Setup(l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()))
+            .Callback(() => warningFired.TrySetResult(true));
+
+        await _sut.RecoverOrphanedStateAsync(message, agentId);
+        await warningFired.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        _logger.Verify(
+            l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()),
+            Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task LinkAgentToExistingRun_FaultedUpdateAgentFieldAsync_LogsWarning()
+    {
+        // Arrange: UpdateAgentFieldAsync faults inside the lock(trackedEntry.SyncRoot) in
+        // LinkAgentToExistingRun. The ContinueWith continuation is still queued to the
+        // ThreadPool asynchronously (after the lock releases), never inline.
+        var warningFired = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var agentId = MakeAgentId();
+        var activeJob = MakeActiveJob("run-link-fault");
+        var message = MessageWithJob(job: activeJob);
+
+        // Run exists but is not yet linked (AgentId = null) — triggers the ActiveJobId is null branch.
+        var existingRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-link-fault",
+            IssueIdentifier = "GH-42",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "github-repo",
+            AgentId = null,
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "test",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+        var entry = MakeEntry();
+
+        _facade.Setup(f => f.GetRun(new JobId("run-link-fault"))).Returns(existingRun);
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _facade.Setup(f => f.UpdateAgentFieldAsync(agentId, "activeJobId", It.IsAny<string?>()))
+            .Returns(Task.FromException(new InvalidOperationException("Redis down")));
+
+        _logger
+            .Setup(l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()))
+            .Callback(() => warningFired.TrySetResult(true));
+
+        await _sut.RecoverOrphanedStateAsync(message, agentId);
+        await warningFired.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        _logger.Verify(
+            l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()),
+            Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task DetectAndRestoreOrphans_FaultedUpdateAgentFieldAsync_LogsWarning()
+    {
+        // Arrange: both UpdateAgentFieldAsync calls inside the lock fault.
+        // Both are inside lock(entry.SyncRoot) — continuations run after lock release.
+        // TCS fires on first Warning; Times.AtLeastOnce accepts one or two.
+        var warningFired = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var agentId = MakeAgentId();
+        var entry = MakeEntry();
+        var orphan = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-orphan-fault",
+            IssueIdentifier = "GH-42",
+            IssueTitle = "Orphan",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
+        // Both field writes fault — either continuation satisfies the TCS.
+        _facade.Setup(f => f.UpdateAgentFieldAsync(agentId, It.IsAny<string>(), It.IsAny<string?>()))
+            .Returns(Task.FromException(new InvalidOperationException("Redis down")));
+        // GetRun returns null so AddRun is called (hash absent path).
+        _facade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "run-orphan-fault"))).Returns((PipelineRun?)null);
+
+        _logger
+            .Setup(l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()))
+            .Callback(() => warningFired.TrySetResult(true));
+
+        await _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId);
+        await warningFired.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        _logger.Verify(
+            l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()),
+            Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task HandleCrashRecovery_FaultedUpdateAgentFieldAsync_LogsWarning()
+    {
+        // Arrange: UpdateAgentFieldAsync faults inside the lock in HandleCrashRecovery.
+        // Entry has ActiveJobId set + OrphanRestoredAt null → crash recovery path.
+        var warningFired = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var agentId = MakeAgentId();
+        var entry = MakeEntry();
+        entry.ActiveJobId = "crash-job-1";
+        entry.OrphanRestoredAt = null;
+
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _facade.Setup(f => f.UpdateAgentFieldAsync(agentId, "orphanRestoredAt", It.IsAny<string?>()))
+            .Returns(Task.FromException(new InvalidOperationException("Redis down")));
+        // GetRun returns null — hash gone, AddRun not called.
+        _facade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "crash-job-1"))).Returns((PipelineRun?)null);
+
+        _logger
+            .Setup(l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()))
+            .Callback(() => warningFired.TrySetResult(true));
+
+        // message.ActiveJob = null → triggers HandleCrashRecovery.
+        await _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId);
+        await warningFired.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        _logger.Verify(
+            l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.IsAny<AgentId>(),
+                It.IsAny<string>()),
+            Times.AtLeastOnce);
+    }
 }

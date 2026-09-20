@@ -69,8 +69,8 @@ public interface IAgentIssueOperations
 
     /// <summary>
     /// Lists closed issues with optional label filtering and date cutoff.
-    /// Used by <see cref="IOpenIssueContextWriter"/> to include recently-closed sibling issues
-    /// in epic decomposition runs.
+    /// Used by <see cref="CodingAgent.Pipeline.Services.Steps.WriteOpenIssueContextStep"/> to include
+    /// recently-closed sibling issues in epic decomposition runs.
     /// </summary>
     // TODO: Default implementation throws NotSupportedException. Consider returning an empty
     // PagedResult instead (matching IIssueProvider pattern) for resilience with providers

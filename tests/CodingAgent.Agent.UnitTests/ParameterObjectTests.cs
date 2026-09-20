@@ -137,7 +137,6 @@ public class ParameterObjectTests
 
         deps.BrainUpdateService.Should().BeNull();
         deps.HistoryService.Should().BeNull();
-        deps.OpenIssueContextWriter.Should().BeNull();
         deps.AgentIdentity.Should().BeNull();
         deps.ReporterFactory.Should().BeNull();
     }

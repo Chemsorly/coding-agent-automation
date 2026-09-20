@@ -65,12 +65,19 @@ public sealed partial class AgentHub
         // (run ownership, pod identity from hostname, or a dedicated replacement flag) would make
         // this distinction explicit and verifiable rather than relying on an implicit contract.
         var existingEntry = _facade.GetByAgentId(message.AgentId);
+        var preserveExistingConnectionId = false;
         if (existingEntry is not null && existingEntry.ConnectionId != Context.ConnectionId
             && existingEntry.Status != AgentStatus.Disconnected)
         {
             if (message.ActiveJob is null && existingEntry.ActiveJobId is not null)
             {
                 // Mid-run kiro-cli reconnect: preserve the active pipeline connection.
+                // Setting preserveExistingConnectionId=true keeps the old connection ID in
+                // _connectionIndex so AgentAuthorizationFilter continues to resolve hub calls
+                // arriving on that connection (e.g. RequestGetIssue called by OrchestratorProxy).
+                // Without this, the registry silently evicts conn-A and all subsequent hub calls
+                // on that connection are rejected as "reconnect-race" at Debug level — producing
+                // zero Warning/Error logs while the run fails (issue #2758).
                 // TODO: [WARNING] After skipping ForceDisconnect, _facade.Register below replaces
                 // the registry entry with the new connection ID (conn-new). The old connection
                 // (conn-old) remains live and is still used by the running pipeline's
@@ -83,6 +90,7 @@ public sealed partial class AgentHub
                 _logger.Warning(
                     "RegisterAgent: agent {AgentId} reconnected without ActiveJob while job {JobId} is in flight — skipping ForceDisconnect to preserve pipeline connection",
                     message.AgentId, existingEntry.ActiveJobId);
+                preserveExistingConnectionId = true;
             }
             else
             {
@@ -100,7 +108,7 @@ public sealed partial class AgentHub
             }
         }
 
-        _facade.Register(message, Context.ConnectionId);
+        _facade.Register(message, Context.ConnectionId, preserveExistingConnectionId);
 
         var serviceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "unknown";
         _logger.Information(

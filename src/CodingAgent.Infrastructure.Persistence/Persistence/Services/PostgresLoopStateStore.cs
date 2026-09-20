@@ -20,7 +20,7 @@ public sealed class PostgresLoopStateStore : ILoopStateStore
         _dbFactory = dbFactory;
     }
 
-    public async Task<LoopState?> ReadAsync(CancellationToken ct)
+    public async Task<LoopState?> LoadAsync(CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
         var entity = await db.KeyValueStore.AsNoTracking()

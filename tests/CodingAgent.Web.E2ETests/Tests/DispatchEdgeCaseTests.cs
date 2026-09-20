@@ -178,10 +178,10 @@ public sealed class DispatchEdgeCaseTests : E2ETestBase
         await Page.ClickAsync("[data-testid='browse-issues-btn']");
 
         // Wait for the error to appear
-        await Page.WaitForSelectorAsync(".settings-status.status-error", new() { Timeout = 10_000 });
+        await Page.WaitForSelectorAsync(".agent-toast-stack .settings-status.status-error", new() { Timeout = 10_000 });
 
         // Assert: error message is shown
-        var errorVisible = await Page.Locator(".settings-status.status-error").CountAsync();
+        var errorVisible = await Page.Locator(".agent-toast-stack .settings-status.status-error").CountAsync();
         Assert.True(errorVisible > 0, "Expected an error message when issue provider fails");
     }
 }

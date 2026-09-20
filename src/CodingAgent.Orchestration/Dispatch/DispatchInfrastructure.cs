@@ -226,8 +226,9 @@ public class DispatchInfrastructure
     // ── Issue Context Building (inlined from IssueContextBuilder) ─────────────────
 
     /// <summary>
-    /// Pre-fetches issue details, comments, and detects existing analysis with basic staleness signals
-    /// (gate_rejection, gate_wont_do). Returns <c>null</c> if the issue provider config is not found.
+    /// Pre-fetches issue details, comments, and detects existing analysis with staleness signals
+    /// (gate_rejection, gate_wont_do, agent_error_since). Returns <c>null</c> if the issue
+    /// provider config is not found.
     /// </summary>
     internal async Task<IssueContextResult?> BuildIssueContextAsync(
         IssueIdentifier issueIdentifier,
@@ -281,15 +282,36 @@ public class DispatchInfrastructure
             Url = issueDetail.Url
         };
 
-        // Detect existing analysis and rework state from comments.
-        // Detects gate_rejection and gate_wont_do signals.
+        var (existingAnalysis, forceRefreshAnalysis, stalenessSignal) =
+            await DetectAnalysisStalenessAsync(issueComments, issueIdentifier, issueProviderId, ct);
+
+        return new IssueContextResult(
+            issueDetail, parsedIssue, issueComments,
+            existingAnalysis, forceRefreshAnalysis, stalenessSignal, 0);
+    }
+
+    /// <summary>
+    /// Detects whether an existing analysis is stale by inspecting gate-rejection / gate-wont-do
+    /// signals from comments and (if a work-item client is available) agent-error history.
+    /// Mirrors <see cref="CheckCommitCountStalenessAsync"/> which was also extracted to reduce
+    /// cognitive complexity (S3776).
+    /// </summary>
+    internal async Task<(string? ExistingAnalysis, bool ForceRefresh, string? StalenessSignal)>
+        DetectAnalysisStalenessAsync(
+            IReadOnlyList<IssueComment> issueComments,
+            IssueIdentifier issueIdentifier,
+            ProviderConfigId issueProviderId,
+            CancellationToken ct)
+    {
         string? existingAnalysis = null;
         bool forceRefreshAnalysis = false;
         string? stalenessSignal = null;
+
         var analysisComment = issueComments
             .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
             .OrderByDescending(c => c.CreatedAt)
             .FirstOrDefault();
+
         if (analysisComment is not null)
         {
             existingAnalysis = analysisComment.Body;
@@ -312,6 +334,8 @@ public class DispatchInfrastructure
             // Note: checked after the if/else-if chain so forceRefreshAnalysis is guaranteed false here.
         }
 
+        // analysisComment is not null (not existingAnalysis is not null) — preserves the intent
+        // that GetStalenessAsync is only called when a source analysis comment actually exists.
         if (!forceRefreshAnalysis && _workItemClient is not null && analysisComment is not null)
         {
             try
@@ -333,9 +357,7 @@ public class DispatchInfrastructure
             }
         }
 
-        return new IssueContextResult(
-            issueDetail, parsedIssue, issueComments,
-            existingAnalysis, forceRefreshAnalysis, stalenessSignal, 0);
+        return (existingAnalysis, forceRefreshAnalysis, stalenessSignal);
     }
 
     /// <summary>
