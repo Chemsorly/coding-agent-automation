@@ -46,33 +46,8 @@ public sealed class ApiPipelineConfigStore : IPipelineConfigStore
         lock (_cacheLock) { _cache.Clear(); }
     }
 
-    // Deliberately outside the lock: two concurrent callers may both fetch. That double-fetch
-    // window is cheaper than holding a lock across network I/O.
-    // NOTE: LoadCachedAsync is duplicated verbatim in ApiProjectStore and ApiConfigurationStore.
-    // TtlCache<T> was promoted to internal to enable sharing, but the orchestration helper still
-    // closes over each class's own _cacheLock and CacheTtlSeconds, making a shared static non-trivial.
-    // Consider extracting a shared helper (e.g. a CachingHelper static class) if a third copy appears.
-    private async Task<T> LoadCachedAsync<T>(
-        TtlCache<T> cache,
-        Func<CancellationToken, Task<T>> fetch,
-        CancellationToken ct) where T : class
-    {
-        lock (_cacheLock)
-        {
-            if (cache.TryGet(out var hit)) return hit!;
-        }
-
-        var fresh = await fetch(ct);
-
-        // NOTE: CacheTtlSeconds is a public mutable property read here outside any lock. On x86/x64
-        // a torn read of an aligned int cannot occur, but this is formally undefined under the C#
-        // memory model without volatile/Interlocked. If CacheTtlSeconds is ever written from a
-        // concurrent thread (e.g. a settings-reload path), the observed TTL could be stale.
-        // Consider making CacheTtlSeconds volatile or using Interlocked.CompareExchange if
-        // concurrent writes become a real scenario.
-        lock (_cacheLock) { cache.Set(fresh, CacheTtlSeconds); }
-        return fresh;
-    }
+    private Task<T> LoadCachedAsync<T>(TtlCache<T> cache, Func<CancellationToken, Task<T>> fetch, CancellationToken ct)
+        where T : class => cache.LoadAsync(_cacheLock, () => CacheTtlSeconds, fetch, ct);
 }
 
 /// <summary>
@@ -257,33 +232,8 @@ public sealed class ApiProjectStore : IProjectStore
     public async Task<bool> HasEnabledTemplatesAsync(CancellationToken ct)
         => await _client.HasEnabledTemplatesAsync(ct);
 
-    // Deliberately outside the lock: two concurrent callers may both fetch. That double-fetch
-    // window is cheaper than holding a lock across network I/O.
-    // NOTE: LoadCachedAsync is duplicated verbatim in ApiPipelineConfigStore and ApiConfigurationStore.
-    // TtlCache<T> was promoted to internal to enable sharing, but the orchestration helper still
-    // closes over each class's own _cacheLock and CacheTtlSeconds, making a shared static non-trivial.
-    // Consider extracting a shared helper (e.g. a CachingHelper static class) if a third copy appears.
-    private async Task<T> LoadCachedAsync<T>(
-        TtlCache<T> cache,
-        Func<CancellationToken, Task<T>> fetch,
-        CancellationToken ct) where T : class
-    {
-        lock (_cacheLock)
-        {
-            if (cache.TryGet(out var hit)) return hit!;
-        }
-
-        var fresh = await fetch(ct);
-
-        // NOTE: CacheTtlSeconds is a public mutable property read here outside any lock. On x86/x64
-        // a torn read of an aligned int cannot occur, but this is formally undefined under the C#
-        // memory model without volatile/Interlocked. If CacheTtlSeconds is ever written from a
-        // concurrent thread (e.g. a settings-reload path), the observed TTL could be stale.
-        // Consider making CacheTtlSeconds volatile or using Interlocked.CompareExchange if
-        // concurrent writes become a real scenario.
-        lock (_cacheLock) { cache.Set(fresh, CacheTtlSeconds); }
-        return fresh;
-    }
+    private Task<T> LoadCachedAsync<T>(TtlCache<T> cache, Func<CancellationToken, Task<T>> fetch, CancellationToken ct)
+        where T : class => cache.LoadAsync(_cacheLock, () => CacheTtlSeconds, fetch, ct);
 }
 
 /// <summary>
@@ -433,23 +383,8 @@ public sealed class ApiConfigurationStore : IConfigurationStore
 
     // ── Cache plumbing ───────────────────────────────────────────────────
 
-    private async Task<T> LoadCachedAsync<T>(
-        TtlCache<T> cache,
-        Func<CancellationToken, Task<T>> fetch,
-        CancellationToken ct) where T : class
-    {
-        lock (_cacheLock)
-        {
-            if (cache.TryGet(out var hit)) return hit!;
-        }
-
-        // Deliberately outside the lock: two concurrent callers may both fetch. That double-fetch
-        // window is cheaper than holding a lock across network I/O.
-        var fresh = await fetch(ct);
-
-        lock (_cacheLock) cache.Set(fresh, CacheTtlSeconds);
-        return fresh;
-    }
+    private Task<T> LoadCachedAsync<T>(TtlCache<T> cache, Func<CancellationToken, Task<T>> fetch, CancellationToken ct)
+        where T : class => cache.LoadAsync(_cacheLock, () => CacheTtlSeconds, fetch, ct);
 
     private async Task WriteThenInvalidateAsync<T>(Task write, TtlCache<T> cache) where T : class
     {
@@ -488,5 +423,31 @@ internal sealed class TtlCache<T> where T : class
     {
         _value = null;
         _expiry = DateTime.MinValue;
+    }
+
+    /// <summary>
+    /// Returns the cached value if fresh, otherwise calls <paramref name="fetch"/>, caches the
+    /// result, and returns it.
+    /// Deliberately releases the lock across the async fetch: two concurrent callers may both
+    /// reach the API (double-fetch window), which is cheaper than holding the lock across I/O.
+    /// CacheTtlSeconds is read outside the lock via the <paramref name="getTtl"/> delegate; on
+    /// x86/x64 a torn read of an aligned int cannot occur, but this is formally undefined under
+    /// the C# memory model without volatile/Interlocked — acceptable for a best-effort TTL.
+    /// </summary>
+    public async Task<T> LoadAsync(
+        Lock cacheLock,
+        Func<int> getTtl,
+        Func<CancellationToken, Task<T>> fetch,
+        CancellationToken ct)
+    {
+        lock (cacheLock)
+        {
+            if (TryGet(out var hit)) return hit!;
+        }
+
+        var fresh = await fetch(ct);
+
+        lock (cacheLock) { Set(fresh, getTtl()); }
+        return fresh;
     }
 }
