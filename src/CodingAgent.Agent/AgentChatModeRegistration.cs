@@ -16,7 +16,7 @@ namespace CodingAgent.Agent;
 /// Reached when the agent pod is started without <c>--work-item-id</c> (chat mode).
 /// Registers <see cref="AgentWorkerService"/> and the full SignalR hub connection stack
 /// (<see cref="AgentConnectionLifecycle"/>, <see cref="AgentJobSlotManager"/>,
-/// <see cref="ChatJobHandler"/>, <see cref="ConsolidationJobHandler"/>,
+/// <see cref="ChatJobExecutor"/>, <see cref="ConsolidationJobExecutor"/>,
 /// <see cref="SignalRCompletionReporter"/>, <see cref="CriticalMessageBuffer"/>)
 /// so the pod can serve interactive chat sessions and consolidation jobs.
 /// </summary>
@@ -65,14 +65,14 @@ internal static class AgentChatModeRegistration
             sp.GetRequiredService<IHostApplicationLifetime>(),
             logger,
             sp.GetRequiredService<AgentRuntimeOptions>()));
-        services.AddSingleton<ChatJobHandler>(sp =>
+        services.AddSingleton<ChatJobExecutor>(sp =>
         {
             var agentId = sp.GetRequiredService<AgentId>().Value;
             var runtimeOpts = sp.GetRequiredService<AgentRuntimeOptions>();
             var isOpenCodeProvider = runtimeOpts.AgentProviderType
                 .Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase);
             var isChatMode = runtimeOpts.IsChatMode;
-            return new ChatJobHandler(new ChatJobHandlerDependencies(
+            return new ChatJobExecutor(new ChatJobExecutorDependencies(
                 sp.GetRequiredService<AgentConnectionLifecycle>(),
                 sp.GetRequiredService<AgentJobSlotManager>(),
                 sp.GetRequiredService<IKiroCliOrchestrator>(),
@@ -87,7 +87,7 @@ internal static class AgentChatModeRegistration
                         // as singletons this is safe today, but the pattern is inconsistent with the outer scope
                         // (which captures the resolved instances via the outer `sp`). If either registration were
                         // changed to scoped, the delegate would silently capture a different instance than
-                        // ChatJobHandler's own _connectionLifecycle field. Prefer capturing the singleton
+                        // ChatJobExecutor's own _connectionLifecycle field. Prefer capturing the singleton
                         // instances from the outer factory scope rather than re-resolving on each call.
                         var lifecycle = sp.GetRequiredService<AgentConnectionLifecycle>();
                         var lifetime = sp.GetRequiredService<IHostApplicationLifetime>();
@@ -96,14 +96,14 @@ internal static class AgentChatModeRegistration
                     }
                     catch (Exception ex)
                     {
-                        logger.Warning(ex, "Failed to send AgentReady signal from ChatJobHandler");
+                        logger.Warning(ex, "Failed to send AgentReady signal from ChatJobExecutor");
                     }
                 },
                 IsOpenCodeProvider: isOpenCodeProvider,
                 IsChatMode: isChatMode,
                 Logger: logger));
         });
-        services.AddSingleton<ConsolidationJobHandler>(sp => new ConsolidationJobHandler(
+        services.AddSingleton<ConsolidationJobExecutor>(sp => new ConsolidationJobExecutor(
             sp.GetRequiredService<AgentConnectionLifecycle>(),
             sp.GetRequiredService<AgentJobSlotManager>(),
             sp.GetRequiredService<IConsolidationExecutor>(),
@@ -111,8 +111,8 @@ internal static class AgentChatModeRegistration
         services.AddSingleton(sp => new AgentWorkerService(new AgentWorkerServiceDependencies(
             sp.GetRequiredService<AgentConnectionLifecycle>(),
             sp.GetRequiredService<AgentJobSlotManager>(),
-            sp.GetRequiredService<ChatJobHandler>(),
-            sp.GetRequiredService<ConsolidationJobHandler>(),
+            sp.GetRequiredService<ChatJobExecutor>(),
+            sp.GetRequiredService<ConsolidationJobExecutor>(),
             sp.GetRequiredService<IPipelineExecutor>(),
             sp.GetRequiredService<IJobCompletionReporter>(),
             logger)));

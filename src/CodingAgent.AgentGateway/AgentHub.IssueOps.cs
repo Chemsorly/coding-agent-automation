@@ -310,7 +310,7 @@ public sealed partial class AgentHub
 
             var meta = await _facade.GetWorkItemIssueMetadataAsync(new JobId(jobId), CancellationToken.None);
             // TODO: [WARNING] CancellationToken.None is passed here for the same reason as the
-            // LoadProviderConfigsAsync call below — the method signature does not currently accept
+            // GetProviderConfigByIdAsync call below — the method signature does not currently accept
             // a cancellation token. If a SignalR connection is aborted while this DB query is in
             // flight, it cannot be cancelled and will run to completion. When the method signature
             // is updated to accept and propagate a token (see the existing TODO below), this call
@@ -327,12 +327,15 @@ public sealed partial class AgentHub
         }
 
         // TODO: Thread the caller-supplied CancellationToken (or a SignalR connection-lifetime token)
-        // through LoadProviderConfigsAsync instead of CancellationToken.None. The ct parameter is
+        // through GetProviderConfigByIdAsync instead of CancellationToken.None. The ct parameter is
         // forwarded to the provider operation delegate but the config-loading step that precedes it
         // cannot currently be cancelled, giving callers a false impression that the full call chain
         // is cancellable. Requires updating the method signature to accept and propagate ct here.
-        var issueConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
-        var issueConfig = issueConfigs.TryGetProviderConfig(issueProviderConfigId);
+        // NOTE: ConsolidationConstants.ProviderConfigId is a non-GUID sentinel; PostgresConfigurationStore
+        // has a !Guid.TryParse guard that silently returns null for such values. Consolidation runs
+        // do not reach issue-ops methods so this is safe in practice.
+        var issueConfig = await _facade.GetProviderConfigByIdAsync(
+            issueProviderConfigId, ProviderKind.Issue, CancellationToken.None);
         if (issueConfig is null)
         {
             _logger.Warning(

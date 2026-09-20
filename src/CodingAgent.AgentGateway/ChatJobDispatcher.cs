@@ -65,6 +65,20 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     private readonly ConcurrentDictionary<string, WatcherEntry> _activeWatchers = new();
     private readonly CancellationTokenSource _shutdownCts = new();
 
+    /// <summary>
+    /// Groups the co-travelling identity and selector fields that flow from
+    /// <see cref="PollForAgentConnectionAsync"/> into <see cref="RegisterWatcher"/> and
+    /// ultimately into <see cref="WatcherEntry"/>. Using a record prevents silent positional
+    /// transposition of the four same-typed strings (agentId, jobName, normalizedSelector,
+    /// claimedPvc) whose ordering differed between <see cref="RegisterWatcher"/> and the
+    /// <see cref="WatcherEntry"/> constructor.
+    /// </summary>
+    private sealed record WatcherIdentity(
+        AgentId AgentId,
+        string JobName,
+        string NormalizedSelector,
+        string? ClaimedPvc);
+
     private sealed class WatcherEntry
     {
         public Task WatcherTask = Task.CompletedTask; // assigned after construction; see RegisterWatcher
@@ -91,13 +105,12 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         // in-flight idle-kill that already called TrySendCancelChatAsync.
         public int CancelSent;
 
-        public WatcherEntry(string agentId, string jobName, string normalizedSelector, string? claimedPvc,
-            DateTimeOffset startedAt, CancellationTokenSource watcherCts)
+        public WatcherEntry(WatcherIdentity identity, DateTimeOffset startedAt, CancellationTokenSource watcherCts)
         {
-            AgentId = agentId;
-            JobName = jobName;
-            NormalizedSelector = normalizedSelector;
-            ClaimedPvc = claimedPvc;
+            AgentId = identity.AgentId.Value;
+            JobName = identity.JobName;
+            NormalizedSelector = identity.NormalizedSelector;
+            ClaimedPvc = identity.ClaimedPvc;
             StartedAt = startedAt;
             WatcherCts = watcherCts;
             LastClientHeartbeatTicks = startedAt.UtcTicks;
@@ -297,7 +310,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                             connected.AgentId, jobName);
                     }
 
-                    RegisterWatcher(connected.AgentId.Value, jobName, claimedPvc, normalized);
+                    RegisterWatcher(new WatcherIdentity(connected.AgentId, jobName, normalized, claimedPvc));
 
                     var tag = new KeyValuePair<string, object?>(TagAgentSelector, selectorLabelValue);
                     ChatTelemetry.DispatchLatency.Record(elapsed, tag);
@@ -346,14 +359,14 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     // ─── Watcher registration ─────────────────────────────────────────────────
 
-    private void RegisterWatcher(string agentId, string jobName, string? claimedPvc, string selector)
+    private void RegisterWatcher(WatcherIdentity identity)
     {
         // Create a linked CTS so this watcher stops when _shutdownCts is cancelled.
         // Stored in the entry so CleanupSession can dispose it — preventing the resource leak
         // that would occur if only the token (not the CTS) were captured.
         var watcherCts = CancellationTokenSource.CreateLinkedTokenSource(_shutdownCts.Token);
 
-        var entry = new WatcherEntry(agentId, jobName, selector, claimedPvc, DateTimeOffset.UtcNow, watcherCts);
+        var entry = new WatcherEntry(identity, DateTimeOffset.UtcNow, watcherCts);
 
         // Key by agentId (not jobName) so TerminateChatSessionAsync can look up by the value
         // returned from DispatchChatPodAsync. In production agentId == jobName (AGENT_ID is set
@@ -364,18 +377,18 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         // an entry that is already present. If we stored after Task.Run, a fast-completing watcher
         // could TryRemove a missing key and then the dictionary write below would re-insert a stale
         // entry, causing HasActiveSession to return true after the session has ended.
-        _activeWatchers[agentId] = entry;
+        _activeWatchers[identity.AgentId.Value] = entry;
 
         entry.WatcherTask = Task.Run(
-            () => WatchJobUntilTerminalAsync(jobName, entry, watcherCts.Token),
+            () => WatchJobUntilTerminalAsync(identity.JobName, entry, watcherCts.Token),
             CancellationToken.None);
 
-        var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, selector.Replace(',', '_'));
+        var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, identity.NormalizedSelector.Replace(',', '_'));
         ChatTelemetry.SessionsActive.Add(1, selectorTag);
-        if (claimedPvc is not null)
+        if (identity.ClaimedPvc is not null)
             ChatTelemetry.PvcUtilization.Add(1, new KeyValuePair<string, object?>("pool", "kiro"));
 
-        _logger.Information("ChatJobDispatcher: watcher registered jobName={JobName}", jobName);
+        _logger.Information("ChatJobDispatcher: watcher registered jobName={JobName}", identity.JobName);
     }
 
     // ─── Circuit-based keepalive ───────────────────────────────────────────────
@@ -962,6 +975,19 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     /// </summary>
     internal Task? TryGetWatcherTask(string agentId)
         => _activeWatchers.TryGetValue(agentId, out var entry) ? entry.WatcherTask : null;
+
+    /// <summary>
+    /// Returns the identity fields of the active watcher entry for the given agentId, or null
+    /// if no entry is present. Returns a value tuple to avoid exposing the private
+    /// <see cref="WatcherEntry"/> type to test projects.
+    /// </summary>
+    internal (string AgentId, string JobName, string NormalizedSelector, string? ClaimedPvc)?
+        TryGetWatcherFields(string agentId)
+    {
+        if (!_activeWatchers.TryGetValue(agentId, out var entry))
+            return null;
+        return (entry.AgentId, entry.JobName, entry.NormalizedSelector, entry.ClaimedPvc);
+    }
 
     [System.Text.RegularExpressions.GeneratedRegex(@"^[a-zA-Z0-9._\-]{1,63}$")]
     private static partial System.Text.RegularExpressions.Regex K8sLabelValuePattern();

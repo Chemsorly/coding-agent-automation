@@ -1068,12 +1068,11 @@ public static class WorkItemDispatchEndpoints
             // it from there. Passing the issue config id would make the repo lookup miss and the
             // swap silently no-op, which is why review PRs never got the in-progress marker.
             var providerConfigIdValue = item.IssueProviderConfigId;
-            if (isReview && item.Payload is not null)
+            if (isReview && item.Payload is not null
+                && WorkItemPayload.TryDeserialize(item.Payload, out var payloadReq)
+                && !string.IsNullOrEmpty(payloadReq?.RepoProviderConfigId))
             {
-                var payload = JsonSerializer.Deserialize<JobDistributionRequest>(
-                    item.Payload, PipelineJsonOptions.Default);
-                if (!string.IsNullOrEmpty(payload?.RepoProviderConfigId))
-                    providerConfigIdValue = payload.RepoProviderConfigId;
+                providerConfigIdValue = payloadReq.RepoProviderConfigId;
             }
 
             await labelSwapService.SwapLabelWithRetryAsync(

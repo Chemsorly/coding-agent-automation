@@ -4,10 +4,10 @@ using Microsoft.Extensions.Hosting;
 namespace CodingAgent.Agent;
 
 /// <summary>
-/// Groups the core dependencies of <see cref="ChatJobHandler"/> to reduce
+/// Groups the core dependencies of <see cref="ChatJobExecutor"/> to reduce
 /// constructor parameter count (S107). All members are required.
 /// </summary>
-public sealed record ChatJobHandlerDependencies(
+public sealed record ChatJobExecutorDependencies(
     AgentConnectionLifecycle ConnectionLifecycle,
     AgentJobSlotManager SlotManager,
     IKiroCliOrchestrator Orchestrator,

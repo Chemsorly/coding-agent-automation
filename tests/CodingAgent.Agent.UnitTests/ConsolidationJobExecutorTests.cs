@@ -9,15 +9,15 @@ using Moq;
 namespace CodingAgent.Agent.UnitTests;
 
 /// <summary>
-/// Unit tests for <see cref="ConsolidationJobHandler"/>.
+/// Unit tests for <see cref="ConsolidationJobExecutor"/>.
 /// Verifies consolidation job assignment, rejection, execution, failure reporting,
 /// and slot management without requiring full <see cref="AgentWorkerServiceDependencies"/> construction.
 /// </summary>
-public class ConsolidationJobHandlerTests
+public class ConsolidationJobExecutorTests
 {
     // ── Setup helpers ─────────────────────────────────────────────────────
 
-    private static (ConsolidationJobHandler Handler, AgentJobSlotManager SlotManager, AgentConnectionLifecycle Lifecycle)
+    private static (ConsolidationJobExecutor Handler, AgentJobSlotManager SlotManager, AgentConnectionLifecycle Lifecycle)
         CreateHandler(IConsolidationExecutor? consolidationExecutor = null, Serilog.ILogger? logger = null)
     {
         var mockLogger = logger ?? new Mock<Serilog.ILogger>().Object;
@@ -32,7 +32,7 @@ public class ConsolidationJobHandlerTests
             new AgentId("test-consol"), lifetime, mockLogger);
 
         var executor = consolidationExecutor ?? new Mock<IConsolidationExecutor>().Object;
-        var handler = new ConsolidationJobHandler(lifecycle, slotManager, executor, mockLogger);
+        var handler = new ConsolidationJobExecutor(lifecycle, slotManager, executor, mockLogger);
         return (handler, slotManager, lifecycle);
     }
 
@@ -178,7 +178,7 @@ public class ConsolidationJobHandlerTests
     /// <summary>
     /// Structural regression guard for issue #2103.
     /// Verifies that the null-forgiving operator on JobCancellationToken has been replaced by a
-    /// defensive null check matching the ChatJobHandler pattern.
+    /// defensive null check matching the ChatJobExecutor pattern.
     ///
     /// A behavioral test through HandleAssignConsolidationJobAsync cannot force the null-token
     /// path: TryAcquireJobSlot creates a fresh CTS synchronously, and JobCancellationToken is
@@ -191,11 +191,11 @@ public class ConsolidationJobHandlerTests
     {
         var sourceDir = GetSourceDirectory();
         var source = File.ReadAllText(
-            Path.Combine(sourceDir, "src", "CodingAgent.Agent", "ConsolidationJobHandler.cs"));
+            Path.Combine(sourceDir, "src", "CodingAgent.Agent", "ConsolidationJobExecutor.cs"));
 
         // Extract the HandleAssignConsolidationJobAsync method body
         var methodStart = source.IndexOf("public async Task HandleAssignConsolidationJobAsync(", StringComparison.Ordinal);
-        methodStart.Should().BeGreaterThan(0, "HandleAssignConsolidationJobAsync must exist in ConsolidationJobHandler.cs");
+        methodStart.Should().BeGreaterThan(0, "HandleAssignConsolidationJobAsync must exist in ConsolidationJobExecutor.cs");
 
         // Find the end of the method (the next public/internal/private/protected method or end of class)
         // TODO: [WARNING] Method-boundary detection only covers "public" and "internal" visibility modifiers.
@@ -214,10 +214,10 @@ public class ConsolidationJobHandlerTests
             "JobCancellationToken!",
             "the null-forgiving operator on JobCancellationToken must be replaced by a defensive null check (issue #2103)");
 
-        // The defensive pattern from ChatJobHandler must be present
+        // The defensive pattern from ChatJobExecutor must be present
         methodBody.Should().Contain(
             "JobCancellationToken is not { }",
-            "HandleAssignConsolidationJobAsync must use the defensive null-check pattern matching ChatJobHandler");
+            "HandleAssignConsolidationJobAsync must use the defensive null-check pattern matching ChatJobExecutor");
 
         // ReleaseJobSlotAndSignalReadyAsync must be called on the null path
         // TODO: [WARNING] This assertion is satisfied by the string appearing anywhere in the extracted text,
