@@ -1,5 +1,4 @@
 using CodingAgent.Infrastructure;
-using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Services.Steps;
@@ -82,18 +81,16 @@ internal static class AgentStepPipelineBuilder
     /// <summary>
     /// Builds the step pipeline for DecompositionAnalysis (Phase 1).
     /// Sequence: Clone → CloneProjectRepos → WriteMcpConfig → WriteSteering → RunEnvironmentSetup → SyncBrain → DownloadIssueImages → WriteProjectContext → WriteOpenIssueContext → DecompositionAnalysis → PostDecompositionPlan.
-    /// IOpenIssueContextWriter is injected into the WriteOpenIssueContextStep via constructor.
     /// </summary>
     internal static IReadOnlyList<IPipelineStep> BuildDecompositionAnalysisStepPipeline(
         JobAssignmentMessage job,
-        IOpenIssueContextWriter openIssueContextWriter,
         OrchestratorProxy proxy,
         ProviderConfig repoConfig)
     {
         var steps = BuildFullPrefix(job, proxy, repoConfig, includeProjectClone: true);
         steps.AddRange([
             new WriteProjectContextStep(),
-            new WriteOpenIssueContextStep(openIssueContextWriter),
+            new WriteOpenIssueContextStep(),
             new DecompositionAnalysisStep(),
             new PostDecompositionPlanStep()
         ]);
@@ -109,14 +106,13 @@ internal static class AgentStepPipelineBuilder
     /// </summary>
     internal static IReadOnlyList<IPipelineStep> BuildDecompositionStepPipeline(
         JobAssignmentMessage job,
-        IOpenIssueContextWriter openIssueContextWriter,
         OrchestratorProxy proxy,
         ProviderConfig repoConfig)
     {
         var steps = BuildFullPrefix(job, proxy, repoConfig, includeProjectClone: true);
         steps.AddRange([
             new WriteProjectContextStep(),
-            new WriteOpenIssueContextStep(openIssueContextWriter),
+            new WriteOpenIssueContextStep(),
             new DecompositionStep(),
             new CreateSubIssuesStep(),
             new PostDecompositionSummaryStep()
