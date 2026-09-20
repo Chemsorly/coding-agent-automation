@@ -15,7 +15,7 @@ namespace CodingAgent.Agent.OpenCode;
 /// Implements IAgentProvider for pipeline integration and IOpenCodeDiffProvider for
 /// diff retrieval. Does not spawn processes — uses IHttpClientFactory named client.
 /// </summary>
-public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvider
+public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvider
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger _logger;
@@ -96,13 +96,6 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             SessionStatusMessage = _sessionStatusMessage,
             AllSessionsSummary = _allSessionsSummary
         };
-    }
-
-    public Task EnsureSessionAsync(WorkspacePath workspacePath, CancellationToken ct)
-    {
-        // No-op: sessions are now created per-ExecuteAsync call based on the workspace path.
-        // The opencode server manages session lifecycle internally.
-        return Task.CompletedTask;
     }
 
     public async Task<AgentResult> ExecuteAsync(AgentRequest request, CancellationToken ct, Action<string>? onOutputLine = null)
@@ -213,20 +206,6 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         _sessionStatusMessage = null;
         _allSessionsSummary = null;
         LastOutputTime = DateTime.UtcNow; // Reset so stall monitor measures from this call's start
-    }
-
-    /// <summary>
-    /// Tears down the SSE reader by waiting briefly for late-arriving events,
-    /// then cancelling and awaiting the reader task.
-    /// </summary>
-    private static async Task TearDownSseAsync(CancellationTokenSource sseCts, Task sseTask)
-    {
-        // Allow a brief window for late-arriving SSE events (e.g., final
-        // message.part.updated) to be processed before tearing down the stream.
-        try { await Task.Delay(500, CancellationToken.None); } catch { }
-        await sseCts.CancelAsync();
-        try { await sseTask.ConfigureAwait(false); } catch { /* expected cancellation */ }
-        sseCts.Dispose();
     }
 
     /// <summary>
@@ -512,52 +491,6 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         return ValueTask.CompletedTask;
     }
 
-    // ── IOpenCodeDiffProvider ───────────────────────────────────────────
-
-    public async Task<IReadOnlyList<FileChangeSummary>> GetSessionDiffAsync(CancellationToken ct)
-    {
-        var sessionId = _lastKnownSessionId;
-        if (sessionId is null)
-            return Array.Empty<FileChangeSummary>();
-
-        try
-        {
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
-
-            using var client = CreateDirectoryClient();
-            var response = await client.GetAsync($"/session/{sessionId}/diff", timeoutCts.Token);
-            response.EnsureSuccessStatusCode();
-
-            var diffs = await response.Content.ReadFromJsonAsync<FileDiff[]>(OpenCodeJson.JsonOptions, timeoutCts.Token);
-            if (diffs is null || diffs.Length == 0)
-                return Array.Empty<FileChangeSummary>();
-
-            var results = new List<FileChangeSummary>(diffs.Length);
-            foreach (var fileDiff in diffs)
-            {
-                var status = MapDiffStatus(fileDiff.Status);
-                results.Add(new FileChangeSummary(status, fileDiff.Path, fileDiff.LinesAdded, fileDiff.LinesDeleted));
-            }
-
-            return results;
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to retrieve diff for session {SessionId}", sessionId);
-            return Array.Empty<FileChangeSummary>();
-        }
-    }
-
-    private static string MapDiffStatus(string? status)
-    {
-        if (string.Equals(status, "added", StringComparison.OrdinalIgnoreCase))
-            return "Added";
-        if (string.Equals(status, "deleted", StringComparison.OrdinalIgnoreCase))
-            return "Deleted";
-        return "Modified";
-    }
-
     // ── Internal helpers ────────────────────────────────────────────────
 
     /// <summary>
@@ -581,73 +514,6 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         return client;
     }
 
-    private async Task<string?> ResolveSessionIdAsync(AgentRequest request, CancellationToken ct)
-    {
-        // ResumeSessionId takes precedence (explicit session targeting, e.g., adversarial review refinement)
-        if (!string.IsNullOrEmpty(request.ResumeSessionId))
-        {
-            return request.ResumeSessionId;
-        }
-
-        var workspacePath = Path.GetFullPath(request.WorkspacePath);
-
-        // UseResume=true within the same workspace → reuse the cached session for that workspace
-        if (request.UseResume && _sessionByWorkspace.TryGetValue(workspacePath, out var cachedSessionId))
-        {
-            _logger.Debug("Reusing cached session {SessionId} for workspace {WorkspacePath}",
-                cachedSessionId, workspacePath);
-            return cachedSessionId;
-        }
-
-        // Create a fresh session for this workspace (UseResume=false, or no cached session yet)
-        var sessionId = await CreateIsolatedSessionAsync(request.WorkspacePath, ct);
-        if (sessionId is not null)
-        {
-            // Cache the session for this workspace so future UseResume=true calls reuse it
-            _sessionByWorkspace[workspacePath] = sessionId;
-            _lastKnownSessionId = sessionId;
-        }
-        return sessionId;
-    }
-
-    /// <summary>
-    /// Creates a new session and returns the ID without writing to shared instance fields.
-    /// Used for isolated (non-resume) calls to enable safe parallel execution.
-    /// </summary>
-    private async Task<string?> CreateIsolatedSessionAsync(string workspacePath, CancellationToken ct)
-    {
-        try
-        {
-            var absolutePath = Path.GetFullPath(workspacePath);
-            var title = Path.GetFileName(absolutePath) ?? absolutePath;
-
-            using var client = CreateDirectoryClientForPath(absolutePath);
-            var request = new CreateSessionRequest { Title = title, Path = absolutePath };
-
-            var response = await client.PostAsJsonAsync("/session", request, OpenCodeJson.JsonOptions, ct);
-            response.EnsureSuccessStatusCode();
-
-            var result = await response.Content.ReadFromJsonAsync<CreateSessionResponse>(OpenCodeJson.JsonOptions, ct);
-            if (result is not null)
-            {
-                _logger.Debug("Created isolated session {SessionId} for workspace {WorkspacePath}",
-                    result.Id, absolutePath);
-                return result.Id;
-            }
-
-            return null;
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw; // Real cancellation — propagate
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to create isolated session for workspace {WorkspacePath}", workspacePath);
-            return null;
-        }
-    }
-
     private async Task AbortBestEffortAsync(string sessionId, string? workspacePath = null)
     {
         try
@@ -661,81 +527,6 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         {
             _logger.Warning(ex, "Best-effort abort failed for session {SessionId}", sessionId);
         }
-    }
-
-    /// <summary>
-    /// Background loop that polls GET /session/status every 10s and caches a human-readable
-    /// summary of all session statuses (including child/subagent sessions). This provides
-    /// observability into subagent retries that don't surface on the parent session's SSE stream.
-    /// </summary>
-    private async Task PollAllSessionStatusesAsync(CancellationToken ct)
-    {
-        // Small initial delay to let the session start
-        try { await Task.Delay(2000, ct); } catch (OperationCanceledException) { return; }
-
-        while (!ct.IsCancellationRequested)
-        {
-            try
-            {
-                await TryRefreshAllSessionStatusSummaryAsync(ct);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                break;
-            }
-#pragma warning disable S108 // Intentional: diagnostic polling is best-effort; failures must not affect agent execution.
-            catch
-            {
-                // Intentional: diagnostic polling is best-effort; failures must not affect agent execution.
-            }
-#pragma warning restore S108
-
-            try { await Task.Delay(10_000, ct); } catch (OperationCanceledException) { break; }
-        }
-    }
-
-    private async Task TryRefreshAllSessionStatusSummaryAsync(CancellationToken ct)
-    {
-        // GET /session/status returns all sessions globally — no directory header needed.
-        using var client = CreateDirectoryClient();
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
-
-        var response = await client.GetAsync("/session/status", timeoutCts.Token);
-        if (!response.IsSuccessStatusCode) return;
-
-        var json = await response.Content.ReadAsStringAsync(timeoutCts.Token);
-        var statuses = JsonSerializer.Deserialize<Dictionary<string, SseSessionStatus>>(json, OpenCodeJson.JsonOptions);
-
-        _allSessionsSummary = statuses is { Count: > 0 }
-            ? BuildSessionStatusSummary(statuses)
-            : null;
-    }
-
-    private static string BuildSessionStatusSummary(Dictionary<string, SseSessionStatus> statuses)
-    {
-        var retryCount = 0; var busyCount = 0; var idleCount = 0;
-        foreach (var (_, status) in statuses)
-        {
-            if (string.Equals(status.Type, "retry", StringComparison.OrdinalIgnoreCase)) retryCount++;
-            else if (string.Equals(status.Type, "busy", StringComparison.OrdinalIgnoreCase)) busyCount++;
-            else idleCount++;
-        }
-
-        var parts = new List<string> { $"{statuses.Count} total" };
-        if (retryCount > 0) parts.Add($"{retryCount} retrying");
-        if (busyCount > 0) parts.Add($"{busyCount} busy");
-        if (idleCount > 0) parts.Add($"{idleCount} idle");
-
-        var retryDetails = statuses
-            .Where(kv => string.Equals(kv.Value.Type, "retry", StringComparison.OrdinalIgnoreCase))
-            .Take(3)
-            .Select(kv => $"attempt {kv.Value.Attempt}: {kv.Value.Message ?? "unknown"}")
-            .ToList();
-        if (retryDetails.Count > 0)
-            parts.Add($"detail: {string.Join("; ", retryDetails)}");
-
-        return string.Join(", ", parts);
     }
 
     /// <summary>
@@ -806,246 +597,6 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         {
             _logger.Debug(ex, "Failed to capture token delta for session {SessionId}", sessionId);
             return (null, null);
-        }
-    }
-
-    /// <summary>
-    /// Connects to the SSE stream (GET /event) and processes events for the given session.
-    /// Routes events to the onOutputLine callback and auto-approves permission requests.
-    /// Logs a warning on unexpected disconnect; does not reconnect.
-    /// </summary>
-    internal async Task ConnectAndProcessSseAsync(string sessionId, Action<string>? onOutputLine, CancellationToken ct,
-        string? workspacePath = null, Action<bool>? onSseEmitted = null)
-    {
-        using var client = workspacePath is not null
-            ? CreateDirectoryClientForPath(workspacePath)
-            : CreateDirectoryClient();
-
-        try
-        {
-            // 5-second connection timeout — only applies to establishing the connection
-            using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            connectCts.CancelAfter(TimeSpan.FromSeconds(5));
-
-            _logger.Debug("GET /event (SSE stream for session {SessionId})", sessionId);
-
-            using var request = new HttpRequestMessage(HttpMethod.Get, "/event");
-            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, connectCts.Token);
-            response.EnsureSuccessStatusCode();
-
-            using var stream = await response.Content.ReadAsStreamAsync(ct);
-            using var reader = new StreamReader(stream);
-
-            // After connection is established, use the original cancellation token (not the 5s timeout)
-            while (!ct.IsCancellationRequested)
-            {
-                var line = await reader.ReadLineAsync(ct);
-                if (line is null)
-                    break; // stream closed by server
-
-                var sseEvent = TryParseSseLine(line);
-                if (sseEvent is null || sseEvent.SessionId != sessionId)
-                    continue;
-
-                await ProcessSseEventAsync(sseEvent, sessionId, onOutputLine, onSseEmitted, workspacePath, ct);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Expected on completion or caller cancellation — just return
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "SSE stream disconnected unexpectedly");
-        }
-    }
-
-    /// <summary>
-    /// Parses a raw SSE stream line into an <see cref="SseEvent"/>. Returns null if the line
-    /// is not a data line, is empty, or cannot be deserialized.
-    /// </summary>
-    private static SseEvent? TryParseSseLine(string line)
-    {
-        if (!line.StartsWith("data:", StringComparison.Ordinal))
-            return null;
-        var json = line["data:".Length..].Trim();
-        if (string.IsNullOrEmpty(json)) return null;
-        try
-        {
-            return JsonSerializer.Deserialize<SseEvent>(json, OpenCodeJson.JsonOptions);
-        }
-        catch (JsonException)
-        {
-            return null; // Malformed SSE data line — skip
-        }
-    }
-
-    /// <summary>
-    /// Routes a single SSE event to the appropriate handler based on its type.
-    /// Updates LastOutputTime only for events that represent meaningful agent progress.
-    /// </summary>
-    private async Task ProcessSseEventAsync(
-        SseEvent sseEvent,
-        string sessionId,
-        Action<string>? onOutputLine,
-        Action<bool>? onSseEmitted,
-        string? workspacePath,
-        CancellationToken ct)
-    {
-        switch (sseEvent.Type)
-        {
-            case "message.part.updated":
-                LastOutputTime = DateTime.UtcNow;
-                onSseEmitted?.Invoke(true);
-                onOutputLine?.Invoke(StripAnsiEscapes($"[assistant] {sseEvent.Part?.Text}"));
-                break;
-
-            case "tool.execute.before":
-                LastOutputTime = DateTime.UtcNow;
-                onOutputLine?.Invoke(StripAnsiEscapes($"[tool_call] {sseEvent.ToolName} {sseEvent.ToolArgs}"));
-                break;
-
-            case "tool.execute.after":
-                LastOutputTime = DateTime.UtcNow;
-                onOutputLine?.Invoke(StripAnsiEscapes($"[tool_result] {sseEvent.ToolResult}"));
-                break;
-
-            case "permission.updated":
-                LastOutputTime = DateTime.UtcNow;
-                await AutoApprovePermissionAsync(sessionId, sseEvent.PermissionId, ct, workspacePath);
-                break;
-
-            case "session.idle":
-                // Signal completion — informational only, sync message response is primary
-                _sessionStatus = "idle";
-                _sessionStatusMessage = null;
-                break;
-
-            case "session.status":
-                HandleSessionStatusEvent(sseEvent, sessionId, onOutputLine);
-                break;
-
-            default:
-                // Discard metadata events (session.updated, session.diff, message.updated, etc.)
-                break;
-        }
-    }
-
-    /// <summary>
-    /// Handles session.status SSE events by updating session status fields and
-    /// logging/emitting retry details when the provider indicates a retry.
-    /// </summary>
-    private void HandleSessionStatusEvent(SseEvent sseEvent, string sessionId, Action<string>? onOutputLine)
-    {
-        if (sseEvent.Status is null)
-            return;
-
-        _sessionStatus = sseEvent.Status.Type;
-        if (string.Equals(sseEvent.Status.Type, "retry", StringComparison.OrdinalIgnoreCase))
-        {
-            var retryMsg = sseEvent.Status.Message ?? "unknown error";
-            var provider = sseEvent.Status.Action?.Provider;
-            _sessionStatusMessage = provider is not null
-                ? $"[{provider}] attempt {sseEvent.Status.Attempt}: {retryMsg}"
-                : $"attempt {sseEvent.Status.Attempt}: {retryMsg}";
-            _logger.Warning("Session {SessionId} retry status: {Message}", sessionId, _sessionStatusMessage);
-            onOutputLine?.Invoke(StripAnsiEscapes($"[session.status] retry — {_sessionStatusMessage}"));
-        }
-        else
-        {
-            _sessionStatusMessage = null;
-        }
-    }
-
-    /// <summary>
-    /// Auto-approves a permission request by calling POST /session/:id/permissions/:permissionId.
-    /// Best-effort — logs warning on failure without rethrowing.
-    /// </summary>
-    private async Task AutoApprovePermissionAsync(string sessionId, string? permissionId, CancellationToken ct, string? workspacePath = null)
-    {
-        if (string.IsNullOrEmpty(permissionId))
-            return;
-
-        try
-        {
-            _logger.Debug("POST /session/{SessionId}/permissions/{PermissionId} (auto-approve)", sessionId, permissionId);
-            using var client = workspacePath is not null
-                ? CreateDirectoryClientForPath(workspacePath)
-                : CreateDirectoryClient();
-            var body = new PermissionResponse { Response = "allow", Remember = true };
-            await client.PostAsJsonAsync($"/session/{sessionId}/permissions/{permissionId}", body, OpenCodeJson.JsonOptions, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to auto-approve permission {PermissionId} for session {SessionId}", permissionId, sessionId);
-        }
-    }
-
-    /// <summary>
-    /// Environment variable keys that MUST NOT be passed to MCP server child processes.
-    /// </summary>
-    private static readonly HashSet<string> ExcludedEnvKeys = new(StringComparer.OrdinalIgnoreCase)
-    {
-        AgentDefaults.EnvOpenCodeServerPassword,
-        AgentDefaults.EnvAnthropicApiKey,
-        AgentDefaults.EnvOpenAiApiKey,
-        AgentDefaults.EnvOpenRouterApiKey
-    };
-
-    internal async Task RegisterMcpServersAsync(IReadOnlyList<McpServerConfig> servers, CancellationToken ct)
-    {
-        var enabledServers = servers.Where(s => !s.Disabled).ToList();
-
-        foreach (var server in enabledServers)
-        {
-            try
-            {
-                object config;
-
-                if (string.Equals(server.Type, "http", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(server.Type, "sse", StringComparison.OrdinalIgnoreCase))
-                {
-                    // TODO: Headers passed to the OpenCode API are not filtered through an equivalent of
-                    // ExcludedEnvKeys. The stdio path explicitly strips sensitive keys (Anthropic, OpenAI,
-                    // OpenRouter API keys, OpenCode server password) before forwarding env vars. The HTTP
-                    // header path has no such guard — a user who sets e.g. Authorization=Bearer <ANTHROPIC_API_KEY>
-                    // will have that value forwarded verbatim to the external HTTP MCP server. Consider applying
-                    // a header-key filter analogous to ExcludedEnvKeys to prevent accidental credential leakage.
-                    config = new McpHttpConfig
-                    {
-                        Url = server.Url ?? string.Empty,
-                        Headers = server.Headers.Count > 0 ? server.Headers : null
-                    };
-                }
-                else
-                {
-                    // stdio (default)
-                    var filteredEnv = server.Env
-                        .Where(kvp => !ExcludedEnvKeys.Contains(kvp.Key))
-                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-
-                    config = new McpStdioConfig
-                    {
-                        Command = server.Command ?? string.Empty,
-                        Args = server.Args,
-                        Env = filteredEnv
-                    };
-                }
-
-                var request = new RegisterMcpRequest
-                {
-                    Name = server.Name,
-                    Config = config
-                };
-
-                using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
-                var response = await client.PostAsJsonAsync("/mcp", request, OpenCodeJson.JsonOptions, ct);
-                response.EnsureSuccessStatusCode();
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.Warning(ex, "Failed to register MCP server {ServerName}", server.Name);
-            }
         }
     }
 
