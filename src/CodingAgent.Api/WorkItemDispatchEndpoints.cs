@@ -610,9 +610,6 @@ public static class WorkItemDispatchEndpoints
         // invariant across replicas.
         var pvcPool = lifecycle.GetPvcPool();
         var pvcResult = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, pvcPool, ct);
-        // TODO [WARNING]: `availablePvcs` is a dead variable — `pvcResult` is passed directly to
-        // `dispatchService.ApplyGates` below; this local is never read again after the refactor.
-        // Remove it once the dead-variable compiler warning (CS0219) is addressed.
         var availablePvcs = pvcResult.AvailablePvcs;
 
         // Concurrency gate + PVC gate via shared helper.
