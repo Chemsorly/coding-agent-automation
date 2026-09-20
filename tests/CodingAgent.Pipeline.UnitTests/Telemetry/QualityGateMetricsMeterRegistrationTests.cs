@@ -20,6 +20,15 @@ namespace CodingAgent.Pipeline.UnitTests;
 /// 2. Renaming <see cref="PipelineTelemetry.SourceName"/> without updating the agent Program.cs.
 /// 3. Accidentally creating new quality gate instruments on a different meter.
 /// </summary>
+/// <remarks>
+/// Uses a process-global <see cref="MeterListener"/> to verify instruments are on the correct
+/// static <see cref="PipelineTelemetry"/> meter. Serialized with the "Metrics" collection to
+/// prevent cross-test interference: this listener calls <c>EnableMeasurementEvents</c> on ALL
+/// instruments in the process, including factory-scoped ones from other test classes. Running
+/// in parallel can cause measurements from these tests to bleed into other tests' collectors
+/// and vice versa.
+/// </remarks>
+[Collection("Metrics")]
 public sealed class QualityGateMetricsMeterRegistrationTests : IDisposable
 {
     private readonly MeterListener _listener = new();

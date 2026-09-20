@@ -1108,12 +1108,19 @@ public class QualityGateExecutorPostPrCiTelemetryTests : IDisposable
 /// p50/p99 histogram aggregations for long CI waits.
 /// Also verifies that quality_gate.retries only increments after a fix-agent attempt actually runs.
 /// </summary>
+// Serialized with the Metrics collection to prevent cross-test MeterListener interference.
+// QualityGateMetricsMeterRegistrationTests installs a process-global MeterListener that enables
+// measurement events on ALL instruments (including factory-scoped ones from this class). Running
+// in parallel can cause the factory-scoped _retriesCollector to capture measurements from the
+// global PipelineTelemetry.QualityGateRetries counter recorded by concurrent tests, producing
+// false positives. This [Collection] attribute ensures these tests are serialized with other
+// metrics tests that use global MeterListeners.
+[Collection("Metrics")]
 public class QualityGateExecutorWaitForPostPrCiCancellationTelemetryTests : IDisposable
 {
     private readonly TestMeterFactory _meterFactory = new();
     private readonly MetricCollector<double> _stepDurationCollector;
     private readonly MetricCollector<long> _stepCountCollector;
-    private readonly MetricCollector<long> _retriesCollector;
 
     private readonly Mock<IQualityGateValidator> _mockValidator = new();
     private readonly Mock<IAgentProvider> _mockAgent = new();
@@ -1130,7 +1137,6 @@ public class QualityGateExecutorWaitForPostPrCiCancellationTelemetryTests : IDis
     {
         _stepDurationCollector = new MetricCollector<double>(_meterFactory, PipelineTelemetry.SourceName, "pipeline.step.duration");
         _stepCountCollector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "pipeline.step.count");
-        _retriesCollector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "quality_gate.retries");
 
         _run = new PipelineRun
         {
@@ -1159,7 +1165,6 @@ public class QualityGateExecutorWaitForPostPrCiCancellationTelemetryTests : IDis
     {
         _stepDurationCollector.Dispose();
         _stepCountCollector.Dispose();
-        _retriesCollector.Dispose();
         _meterFactory.Dispose();
     }
 
@@ -1319,6 +1324,13 @@ public class QualityGateExecutorWaitForPostPrCiCancellationTelemetryTests : IDis
             TransientRetryDelay = TimeSpan.Zero // eliminate delay so the test runs fast
         };
 
+        // Create the retries collector immediately before the Act so that only measurements
+        // produced during this specific call are captured. A class-level collector created in
+        // the constructor can receive measurements from parallel tests running at the same time
+        // (due to process-global MeterListener infrastructure), causing spurious failures.
+        // Creating it here narrows the observation window to just ProceedToQualityGatesAsync.
+        using var retriesCollector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "quality_gate.retries");
+
         // Act
         await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
 
@@ -1341,7 +1353,7 @@ public class QualityGateExecutorWaitForPostPrCiCancellationTelemetryTests : IDis
             a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
             Times.Exactly(11),
             "10 transient retry calls + 1 feedback call = 11 total (confirms the loop ran)");
-        _retriesCollector.GetMeasurementSnapshot().Should().BeEmpty(
+        retriesCollector.GetMeasurementSnapshot().Should().BeEmpty(
             "quality_gate.retries must not increment for transient-only iterations that never execute a real fix attempt (issue #2794)");
     }
 
