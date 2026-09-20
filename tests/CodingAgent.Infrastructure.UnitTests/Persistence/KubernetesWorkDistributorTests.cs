@@ -233,17 +233,17 @@ public class KubernetesWorkDistributorTests
         string issueId,
         string providerId,
         WorkItemTaskType taskType = WorkItemTaskType.Implementation) => new()
-    {
-        IssueIdentifier = issueId,
-        IssueProviderConfigId = providerId,
-        RepoProviderConfigId = "repo-provider-1",
-        InitiatedBy = "pipeline-loop",
-        TaskType = taskType,
-        AgentSelector = "kiro,linux",
-        TimeoutSeconds = 1800,
-        ProjectId = new Guid("11110000-0000-0000-0000-000000000001"),
-        RunType = PipelineRunType.Implementation
-    };
+        {
+            IssueIdentifier = issueId,
+            IssueProviderConfigId = providerId,
+            RepoProviderConfigId = "repo-provider-1",
+            InitiatedBy = "pipeline-loop",
+            TaskType = taskType,
+            AgentSelector = "kiro,linux",
+            TimeoutSeconds = 1800,
+            ProjectId = new Guid("11110000-0000-0000-0000-000000000001"),
+            RunType = PipelineRunType.Implementation
+        };
 }
 
 
