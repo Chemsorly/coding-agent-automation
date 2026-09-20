@@ -197,7 +197,7 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
             .ReturnsAsync(new List<ProviderConfig>());
         _mockStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockStore.Setup(s => s.MoveTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.MoveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<ProjectId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
     }
 
@@ -309,7 +309,7 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
         cut.Find(".template-add-row .btn-save").Click();
 
         // Verify MoveTemplateAsync was called with source=pB, target=pA, templateId=t3
-        _mockStore.Verify(s => s.MoveTemplateAsync("pB", "pA", "t3", It.IsAny<CancellationToken>()), Times.Once);
+        _mockStore.Verify(s => s.MoveTemplateAsync(new ProjectId("pB"), new ProjectId("pA"), "t3", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // TODO: This test verifies implementation details (that internal load methods are called Times.AtLeast(2))
@@ -382,7 +382,7 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
         cut.Find(".template-add-row .btn-save").Click();
 
         // MoveTemplateAsync should NOT be called
-        _mockStore.Verify(s => s.MoveTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockStore.Verify(s => s.MoveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<ProjectId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
 
         // Error status should be shown
         Assert.NotNull(statusMessage);
@@ -448,8 +448,8 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
             .ReturnsAsync(templates);
 
         CancellationToken capturedToken = CancellationToken.None;
-        _mockStore.Setup(s => s.MoveTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, string, CancellationToken>((_, _, _, ct) => capturedToken = ct)
+        _mockStore.Setup(s => s.MoveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<ProjectId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<ProjectId, ProjectId, string, CancellationToken>((_, _, _, ct) => capturedToken = ct)
             .Returns(Task.CompletedTask);
 
         var cut = Render<ProjectDetailSection>(p => p
@@ -487,7 +487,7 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
             .ReturnsAsync(new[] { projectA, projectB });
         _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
-        _mockStore.Setup(s => s.MoveTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.MoveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<ProjectId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new OperationCanceledException());
 
         (string Message, bool IsError)? statusMessage = null;

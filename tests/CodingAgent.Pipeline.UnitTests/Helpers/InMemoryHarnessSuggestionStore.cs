@@ -16,7 +16,7 @@ public sealed class InMemoryHarnessSuggestionStore : IHarnessSuggestionStore
 {
     private HarnessSuggestions? _stored;
 
-    public Task<HarnessSuggestions?> GetAsync(CancellationToken ct)
+    public Task<HarnessSuggestions?> LoadAsync(CancellationToken ct)
         => Task.FromResult(_stored);
 
     public Task SaveAsync(HarnessSuggestions suggestions, CancellationToken ct)

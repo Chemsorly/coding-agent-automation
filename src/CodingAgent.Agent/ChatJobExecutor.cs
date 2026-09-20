@@ -11,15 +11,15 @@ using Microsoft.Extensions.Hosting;
 namespace CodingAgent.Agent;
 
 /// <summary>
-/// Handles chat session jobs, model-fetch requests, and related lifecycle concerns.
+/// Executes chat session jobs, model-fetch requests, and related lifecycle concerns.
 /// Extracted from <see cref="AgentWorkerService"/> to make chat logic independently testable.
 /// </summary>
 /// <remarks>
 /// Receives job assignments via <see cref="AgentConnectionLifecycle"/> events wired in
 /// <see cref="AgentWorkerService"/>. Uses <see cref="AgentJobSlotManager"/> for single-slot
-/// concurrency control shared with pipeline and consolidation job handlers.
+/// concurrency control shared with pipeline and consolidation job executors.
 /// </remarks>
-public sealed class ChatJobHandler
+public sealed class ChatJobExecutor
 {
     private readonly AgentConnectionLifecycle _connectionLifecycle;
     private readonly AgentJobSlotManager _slotManager;
@@ -32,7 +32,7 @@ public sealed class ChatJobHandler
     private readonly TimeSpan _chatTaskCompletionGracePeriod;
     private readonly Serilog.ILogger _logger;
 
-    public ChatJobHandler(ChatJobHandlerDependencies deps)
+    public ChatJobExecutor(ChatJobExecutorDependencies deps)
     {
         ArgumentNullException.ThrowIfNull(deps);
         ArgumentNullException.ThrowIfNull(deps.ConnectionLifecycle);

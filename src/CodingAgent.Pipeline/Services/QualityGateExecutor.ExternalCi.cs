@@ -92,13 +92,7 @@ public partial class QualityGateExecutor
                 run.CurrentStep = PipelineStep.ConflictRestart;
                 callbacks.EmitOutputLine("🔄 PR conflicted with main — re-queuing as agent:next for rework...");
                 callbacks.TransitionTo(PipelineStep.ConflictRestart);
-                // TODO [WARNING] (#2359 DotNetSpecialist): run.MarkCompleted() is not called here,
-                // unlike other terminal exits (e.g. Cancelled in ProceedToQualityGatesAsync and
-                // draft-PR/completed paths in PullRequestFinalizationService).
-                // run.CompletedAtOffset therefore stays null until BuildCompletionPayload defaults
-                // it to DateTimeOffset.UtcNow. Consumers that read run.CompletedAtOffset directly
-                // between this return and payload build will observe null for a terminal-like run.
-                // Fix: call run.MarkCompleted() here for consistency with other terminal paths.
+                run.MarkCompleted();
                 return new QualityGateReport
                 {
                     Compilation = report.Compilation,

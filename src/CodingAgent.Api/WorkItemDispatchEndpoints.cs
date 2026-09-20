@@ -101,12 +101,13 @@ public static class WorkItemDispatchEndpoints
             Status = WorkItemStatus.Pending,
             Payload = payloadJson,
             AgentSelector = request.AgentSelector ?? "",
-            // TODO: Add a positive-value guard here: if request.TimeoutSeconds <= 0, substitute
-            // (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds. This prevents a legacy or
-            // misconfigured caller from storing a zero (the DB column default) and relying on the
-            // dispatch-path fallback in BuildJobContext. See review finding [WARNING] — zero sentinel
-            // ambiguity in ReconciliationLoop and DispatchLoop.
-            TimeoutSeconds = request.TimeoutSeconds,
+            // Clamp TimeoutSeconds to a positive value. A zero or negative value from a legacy
+            // or misconfigured caller would be stored verbatim and cause ReconciliationLoop to
+            // immediately force-fail any Running item (effectiveTimeoutSeconds=0 makes
+            // executionAge >= 0 trivially true). Substitute DefaultAgentTimeout (1800s) instead.
+            TimeoutSeconds = request.TimeoutSeconds > 0
+                ? request.TimeoutSeconds
+                : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
             ProjectId = request.ProjectId,
             CreatedAt = DateTimeOffset.UtcNow,
             PriorityWeight = InitiatedByConstants.IsManual(request.InitiatedBy) ? 100 : 0,
@@ -395,20 +396,30 @@ public static class WorkItemDispatchEndpoints
         WorkDistributionTelemetry.UpdateCredentialPoolMetrics(pvcResult.AvailablePvcs.Count, pvcResult.ClaimedCount);
 
         // Template gate — try direct resolve first, then profile-based fallback.
-        // TODO [WARNING]: Mixed agentSelector (raw) vs normalizedSelector usage below is intentional —
-        // the profile lookup uses the raw selector to match MatchLabels, while template store uses the
-        // normalized form. If the profile fallback resolves a template, projection.AgentSelector will be
-        // normalizedSelector (the raw item selector, normalized) rather than the template's canonical
-        // labels (e.g. "dotnet" vs "dotnet,kiro"). This causes the concurrency map key to differ from
-        // keys stored for items dispatched via the direct-resolve path, potentially under-counting
-        // active items in the concurrency gate on the profile-fallback path. See also the concurrency
-        // tracking mismatch note on projection.AgentSelector below.
+        // The profile lookup uses the raw selector to match MatchLabels, while the template store
+        // uses the normalized form. When the profile fallback resolves a template, effectiveSelector
+        // is updated to the canonical profile labels (e.g. "dotnet,kiro"). Both the concurrency gate
+        // and the projection's AgentSelector are derived from effectiveSelector so that the key used
+        // to read and increment concurrencyBySelector is always the same canonical value.
+        var effectiveSelector = normalizedSelector;   // default: direct-resolve path
         var template = templateStore.Resolve(normalizedSelector);
         if (template is null)
         {
-            var (fallbackTemplate, _) = await templateResolver.ResolveTemplateViaProfileAsync(
+            var (fallbackTemplate, resolvedSelector) = await templateResolver.ResolveTemplateViaProfileAsync(
                 agentSelector, "DispatchPendingWorkItem", ct);
             template = fallbackTemplate;
+            if (resolvedSelector is not null)
+            {
+                // TODO [WARNING]: resolvedSelector is built with string.Join(",", profile.MatchLabels.OrderBy(...))
+                // which sorts ordinally but does NOT trim whitespace from individual labels. NormalizeLabels
+                // also sorts ordinally but additionally trims each label. If any MatchLabels entry contains
+                // leading/trailing whitespace (e.g. " kiro"), resolvedSelector will be " kiro,dotnet" rather
+                // than "dotnet,kiro", and effectiveSelector will not match the NormalizeLabels-produced key
+                // in concurrencyBySelector — causing under-counting even after this fix. To fully close the
+                // gap, pass resolvedSelector through NormalizeLabels here, or normalize MatchLabels output in
+                // DispatchTemplateResolver before returning it.
+                effectiveSelector = resolvedSelector;
+            }
         }
 
         if (template is null)
@@ -418,9 +429,9 @@ public static class WorkItemDispatchEndpoints
         }
 
         // Concurrency gate.
-        if (DispatchStateBuilder.IsAtConcurrencyLimit(normalizedSelector, concurrencyBySelector, template.MaxConcurrent))
+        if (DispatchStateBuilder.IsAtConcurrencyLimit(effectiveSelector, concurrencyBySelector, template.MaxConcurrent))
         {
-            var currentCount = concurrencyBySelector.GetValueOrDefault(normalizedSelector, 0);
+            var currentCount = concurrencyBySelector.GetValueOrDefault(effectiveSelector, 0);
             Log.Information("DispatchPendingWorkItem: concurrency limit reached for selector {Selector} ({Current}/{Max}) — returning 409",
                 sanitizedSelector, currentCount, template.MaxConcurrent);
             return TypedResults.Conflict($"Concurrency limit reached for selector '{sanitizedSelector}' ({currentCount}/{template.MaxConcurrent}).");
@@ -436,18 +447,14 @@ public static class WorkItemDispatchEndpoints
         }
 
         // Build the projection for ExecuteDispatchLifecycleAsync.
-        // TODO [WARNING]: When the profile fallback resolves the template, projection.AgentSelector is
-        // set to normalizedSelector (e.g. "dotnet"), not to the template's canonical labels (e.g. "dotnet,kiro").
-        // FinalizeDispatchAsync will increment concurrencyBySelector["dotnet"] rather than ["dotnet,kiro"].
-        // Active items stored with selector "kiro,dotnet" are counted under a different normalized key
-        // ("dotnet,kiro"), so IsAtConcurrencyLimit may under-count on the profile-fallback path and
-        // allow over-dispatch when maxConcurrent is tight. The same gap exists in FinalizeDispatchAsync
-        // (see its // TODO: Use effectiveSelector comment). Fix both together when the effectiveSelector
-        // propagation is resolved.
+        // AgentSelector is set to effectiveSelector — the canonical form derived from either the
+        // direct-resolve path (normalizedSelector) or the profile-fallback path (resolvedSelector).
+        // FinalizeDispatchAsync increments concurrencyBySelector[item.AgentSelector], so using
+        // effectiveSelector here ensures the increment and the gate check use the same key.
         var projection = new PendingWorkItemProjection
         {
             Id = id,
-            AgentSelector = normalizedSelector,
+            AgentSelector = effectiveSelector,
             CreatedAt = quickCheck.CreatedAt,
             TimeoutSeconds = quickCheck.TimeoutSeconds,
             TaskType = quickCheck.TaskType,
@@ -659,7 +666,12 @@ public static class WorkItemDispatchEndpoints
             DispatchedAt = DateTimeOffset.UtcNow,
             Payload = payloadJson,
             AgentSelector = JobTemplateStore.NormalizeLabels(request.AgentSelector ?? ""),
-            TimeoutSeconds = request.TimeoutSeconds,
+            // Clamp TimeoutSeconds to a positive value — same guard as CreateWorkItem.
+            // A zero or negative value would cause ReconciliationLoop to immediately force-fail
+            // any Running item once the EnforceTimeoutsAsync migration guard is removed.
+            TimeoutSeconds = request.TimeoutSeconds > 0
+                ? request.TimeoutSeconds
+                : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
             ProjectId = request.ProjectId,
             CreatedAt = DateTimeOffset.UtcNow,
             PriorityWeight = InitiatedByConstants.IsManual(request.InitiatedBy) ? 100 : 0,
@@ -1056,12 +1068,11 @@ public static class WorkItemDispatchEndpoints
             // it from there. Passing the issue config id would make the repo lookup miss and the
             // swap silently no-op, which is why review PRs never got the in-progress marker.
             var providerConfigIdValue = item.IssueProviderConfigId;
-            if (isReview && item.Payload is not null)
+            if (isReview && item.Payload is not null
+                && WorkItemPayload.TryDeserialize(item.Payload, out var payloadReq)
+                && !string.IsNullOrEmpty(payloadReq?.RepoProviderConfigId))
             {
-                var payload = JsonSerializer.Deserialize<JobDistributionRequest>(
-                    item.Payload, PipelineJsonOptions.Default);
-                if (!string.IsNullOrEmpty(payload?.RepoProviderConfigId))
-                    providerConfigIdValue = payload.RepoProviderConfigId;
+                providerConfigIdValue = payloadReq.RepoProviderConfigId;
             }
 
             await labelSwapService.SwapLabelWithRetryAsync(

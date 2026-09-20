@@ -22,9 +22,17 @@ public sealed record ActiveWorkItemDto
     /// <c>PipelineConfiguration.AgentTimeout</c> (with per-project override applied).
     /// Used by <c>ReconciliationLoop.EnforceTimeoutsAsync</c> to enforce the correct timeout
     /// per work item rather than a single global threshold.
-    /// Zero means the value was not recorded (pre-dates this field); callers should fall back
-    /// to <c>PipelineConstants.DefaultAgentTimeout</c>.
+    /// Post-migration #2405 and post-insertion-guard (issue #2745), all new rows have a positive
+    /// value. Rows with TimeoutSeconds ≤ 0 are silently skipped by
+    /// <c>ReconciliationLoop.EnforceTimeoutsAsync</c> rather than force-failed.
     /// </summary>
+    // TODO [WARNING]: The doc comment above does not describe the recovery path for skipped items.
+    // Items with TimeoutSeconds <= 0 are permanently exempt from session-timeout enforcement;
+    // they rely on orphan cleanup (K8s job TTL / orphan-detection pass) and
+    // EnforceDispatchedTimeoutAsync for eventual recovery. Callers constructing an ActiveWorkItemDto
+    // with TimeoutSeconds = 0 intentionally should be aware these items will never be force-failed
+    // by the timeout path. Consider expanding the XML doc to document this recovery behaviour.
+    // (Correctness review [WARNING])
     public int TimeoutSeconds { get; init; }
 
     /// <summary>
