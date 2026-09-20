@@ -2,7 +2,6 @@
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
-using CodingAgent.Pipeline.Telemetry;
 using Moq;
 using Polly.Timeout;
 using Serilog;
@@ -2007,8 +2006,8 @@ public class HousekeepingServiceTests
     /// Multiple Unknown PRs in the same cycle: a SINGLE delay fires once for the entire batch,
     /// then all Unknown PRs are re-probed in sequence. This verifies that the re-probe pass is
     /// not serialised with individual per-PR delays (which would multiply latency).
-    /// The "single delay" invariant is pinned by asserting HousekeepingReprobeTriggered fires
-    /// exactly once — one counter increment per batch, not per PR.
+    /// The "single delay" invariant is covered by HousekeepingReprobeMetricsTests which asserts
+    /// HousekeepingReprobeTriggered fires exactly once regardless of how many Unknown PRs exist.
     /// </summary>
     [Fact]
     public async Task ExecuteAsync_MultipleUnknownPrs_SingleDelayThenAllReprobed()
@@ -2028,26 +2027,7 @@ public class HousekeepingServiceTests
                     .Returns(Task.CompletedTask);
         }
 
-        // Capture HousekeepingReprobeTriggered counter to verify single-batch behaviour
-        using var listener = new System.Diagnostics.Metrics.MeterListener();
-        var triggeredCount = 0;
-        listener.InstrumentPublished = (instrument, l) =>
-        {
-            if (instrument.Meter.Name == PipelineTelemetry.SourceName
-                && instrument.Name == "pipeline.housekeeping.reprobe_triggered")
-                l.EnableMeasurementEvents(instrument);
-        };
-        listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
-            System.Threading.Interlocked.Increment(ref triggeredCount));
-        listener.Start();
-
         await ExecAsync(svc, provider, issues, [MakePr(1), MakePr(2)], limit: 2);
-
-        listener.Dispose();
-
-        // Single delay / single counter increment — the whole batch, not once per PR
-        triggeredCount.Should().Be(1,
-            "HousekeepingReprobeTriggered must fire once per batch (single delay), not once per Unknown PR");
 
         // Both PRs re-probed exactly once each
         provider.Verify(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()),
