@@ -38,10 +38,12 @@ internal static class WorkItemPayload
     /// (<c>TimeoutSeconds</c> is <c>int</c>). If a <c>TimeSpan</c> property is ever added to this
     /// record, <c>Lenient</c> must be updated accordingly.
     /// </para>
-    // TODO [WARNING]: The constraint that JobDistributionRequest must not have TimeSpan fields is
-    // enforced only by this comment. If a TimeSpan property is ever added to that record, Lenient
-    // will silently misparse it at runtime (TimeSpanJsonConverter is absent from Lenient). Update
-    // PipelineJsonOptions.Lenient to include TimeSpanJsonConverter if that happens. (Issue #2776)
+    /// <para>
+    /// <b>Warning — latent TimeSpan risk:</b> This constraint is enforced only by documentation.
+    /// If a <c>TimeSpan</c> property is ever added to <see cref="JobDistributionRequest"/>, Lenient
+    /// will silently misparse it at runtime because <c>TimeSpanJsonConverter</c> is absent from
+    /// <see cref="PipelineJsonOptions.Lenient"/>. Update <c>Lenient</c> accordingly. (Issue #2776)
+    /// </para>
     /// </remarks>
     /// <param name="payload">The raw JSON string from <c>WorkItems.Payload</c>. May be <c>null</c>.</param>
     /// <param name="req">
