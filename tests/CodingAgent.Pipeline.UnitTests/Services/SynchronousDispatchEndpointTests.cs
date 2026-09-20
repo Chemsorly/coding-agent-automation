@@ -1750,7 +1750,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
         // Act: dispatch the first item
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
         // Assert: dispatch succeeded
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
@@ -1845,7 +1845,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
         // Assert: concurrency limit must be respected using the canonical selector "dotnet,kiro"
         // Current (broken) code: checks normalizedSelector="dotnet" → count=0 → gate passes → returns 200

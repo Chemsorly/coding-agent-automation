@@ -197,6 +197,11 @@ public sealed class DispatchWorkItemServiceTests
     [Fact]
     public void ApplyGates_AllGatesPass_ReturnsNull()
     {
+        // TODO [WARNING]: This test uses maxConcurrent=5 with count=1, which is far from the
+        // boundary. An off-by-one error in DispatchStateBuilder.IsAtConcurrencyLimit (using >
+        // instead of >=) would not be caught here. Add a complementary test that uses
+        // maxConcurrent=2 with count=1 (exactly one below the limit) and asserts null is returned,
+        // to constrain the comparison operator and catch off-by-one regressions at the boundary.
         var svc = CreateService(maxConcurrent: 5);
         var template = ResolveTemplate(CreateTemplateStore(maxConcurrent: 5));
         var normalizedSelector = JobTemplateStore.NormalizeLabels("kiro,dotnet");

@@ -392,20 +392,18 @@ public static class WorkItemDispatchEndpoints
         WorkDistributionTelemetry.UpdateCredentialPoolMetrics(pvcResult.AvailablePvcs.Count, pvcResult.ClaimedCount);
 
         // Template gate — try direct resolve first, then profile-based fallback.
-        // TODO [WARNING]: Mixed agentSelector (raw) vs normalizedSelector usage below is intentional —
-        // the profile lookup uses the raw selector to match MatchLabels, while template store uses the
-        // normalized form. If the profile fallback resolves a template, projection.AgentSelector will be
-        // normalizedSelector (the raw item selector, normalized) rather than the template's canonical
-        // labels (e.g. "dotnet" vs "dotnet,kiro"). This causes the concurrency map key to differ from
-        // keys stored for items dispatched via the direct-resolve path, potentially under-counting
-        // active items in the concurrency gate on the profile-fallback path. See also the concurrency
-        // tracking mismatch note on projection.AgentSelector below.
+        // When the profile fallback is used, capture the effective (canonical) selector so the
+        // concurrency gate checks the correct key. Previously the gate used normalizedSelector
+        // ("dotnet") while active items were stored under the canonical key ("dotnet,kiro"),
+        // causing the gate to under-count and allow over-dispatch on the fallback path.
         var template = templateStore.Resolve(normalizedSelector);
+        string? resolvedSelector = null;
         if (template is null)
         {
-            var (fallbackTemplate, _) = await templateResolver.ResolveTemplateViaProfileAsync(
+            var (fallbackTemplate, fallbackSelector) = await templateResolver.ResolveTemplateViaProfileAsync(
                 agentSelector, "DispatchPendingWorkItem", ct);
             template = fallbackTemplate;
+            resolvedSelector = fallbackSelector;
         }
 
         if (template is null)
@@ -414,12 +412,21 @@ public static class WorkItemDispatchEndpoints
             return TypedResults.Conflict($"No job template for agent selector: {sanitizedSelector}");
         }
 
+        // Use the canonical selector for the concurrency gate: if the profile fallback resolved the
+        // template, the canonical key (e.g. "dotnet,kiro") is what's stored in the concurrency map
+        // for items dispatched via the normal path. Using the partial normalizedSelector ("dotnet")
+        // would miss those entries and silently allow over-dispatch.
+        var effectiveSelector = resolvedSelector is not null
+            ? JobTemplateStore.NormalizeLabels(resolvedSelector)
+            : normalizedSelector;
+        var sanitizedEffectiveSelector = CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(effectiveSelector);
+
         // Concurrency gate + PVC gate via shared helper.
         // UpdateCredentialPoolMetrics is emitted just above, before this call, as required —
         // it must stay outside ApplyGates (DispatchPendingWorkItem-only metric).
         var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
         var gateResult = dispatchService.ApplyGates(
-            normalizedSelector, sanitizedSelector, concurrencyBySelector,
+            effectiveSelector, sanitizedEffectiveSelector, concurrencyBySelector,
             pvcResult, template, isKiroAgent, "DispatchPendingWorkItem");
         if (gateResult is not null)
         {
