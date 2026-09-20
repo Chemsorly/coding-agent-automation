@@ -32,10 +32,10 @@ public abstract class HarnessSuggestionStoreContractTests
     };
 
     [Fact]
-    public async Task GetAsync_WhenNothingSaved_ReturnsNull()
+    public async Task LoadAsync_WhenNothingSaved_ReturnsNull()
     {
         var store = CreateStore();
-        var result = await store.GetAsync(CancellationToken.None);
+        var result = await store.LoadAsync(CancellationToken.None);
         result.Should().BeNull();
     }
 
@@ -46,7 +46,7 @@ public abstract class HarnessSuggestionStoreContractTests
         var original = CreateSampleSuggestions();
 
         await store.SaveAsync(original, CancellationToken.None);
-        var loaded = await store.GetAsync(CancellationToken.None);
+        var loaded = await store.LoadAsync(CancellationToken.None);
 
         loaded.Should().NotBeNull();
         loaded!.GeneratedAtUtc.Should().Be(original.GeneratedAtUtc);
@@ -81,7 +81,7 @@ public abstract class HarnessSuggestionStoreContractTests
         };
         await store.SaveAsync(second, CancellationToken.None);
 
-        var loaded = await store.GetAsync(CancellationToken.None);
+        var loaded = await store.LoadAsync(CancellationToken.None);
         loaded.Should().NotBeNull();
         loaded!.BasedOnRunCount.Should().Be(50);
         loaded.SuccessRate.Should().Be(0.92m);
