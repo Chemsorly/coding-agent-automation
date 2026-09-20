@@ -164,13 +164,13 @@ public static class PipelineTelemetry
     /// </summary>
     public static readonly Counter<long> HousekeepingReprobeTriggered = Meter.CreateCounter<long>(
         "pipeline.housekeeping.reprobe_triggered", "{reprobe}",
-        "Re-probe passes fired for PRs whose first mergeability probe returned Unknown (GitHub lazy-compute workaround)");
+        "Re-probe passes fired for PRs whose first mergeability probe returned Unknown (GitHub/GitLab lazy-compute workaround)");
 
     /// <summary>
     /// Counts individual PRs that resolved to a non-Unknown state on the re-probe pass.
     /// Tagged by <c>repo_provider_id</c> and <c>resolved_state</c> (behind | clean | dirty | blocked).
     /// A high ratio of <see cref="HousekeepingReprobeResolved"/> / <see cref="HousekeepingReprobeTriggered"/>
-    /// indicates the re-probe is effective. A low ratio may indicate persistent GitHub API latency.
+    /// indicates the re-probe is effective. A low ratio may indicate persistent API latency (GitHub or GitLab).
     /// </summary>
     public static readonly Counter<long> HousekeepingReprobeResolved = Meter.CreateCounter<long>(
         "pipeline.housekeeping.reprobe_resolved", "{reprobe}",

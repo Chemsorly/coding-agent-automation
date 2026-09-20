@@ -120,10 +120,11 @@ public sealed class HousekeepingService : IHousekeepingService
 
     /// <summary>
     /// Delay inserted between the initial mergeability probe and the re-probe for PRs that
-    /// returned <see cref="PrMergeabilityStatus.Unknown"/>. GitHub computes mergeability
-    /// lazily on-demand: the first <c>GET /pulls/{n}</c> call triggers the background job
-    /// and returns <c>unknown</c> immediately; the second call (a few seconds later) picks up
-    /// the resolved state. Default: 5 seconds. Overridable in tests (set to
+    /// returned <see cref="PrMergeabilityStatus.Unknown"/>. GitHub and GitLab compute mergeability
+    /// lazily on-demand: the first API call triggers a background job and returns an unresolved
+    /// state immediately; the second call (a few seconds later) picks up the resolved state.
+    /// Applies to GitHub's <c>unknown</c> and GitLab's <c>checking</c>/<c>unchecked</c> states.
+    /// Default: 5 seconds. Overridable in tests (set to
     /// <see cref="TimeSpan.Zero"/> to avoid real delays in unit tests).
     /// </summary>
     internal TimeSpan MergeabilityReprobeDelay { get; set; } = TimeSpan.FromSeconds(5);
@@ -242,7 +243,15 @@ public sealed class HousekeepingService : IHousekeepingService
                         _logger.Debug(
                             "HousekeepingService: PR #{PrNumber} re-probe resolved to {Status} in repo {RepoId}",
                             pr.Number, resolved, repoProviderId);
-                        var resolvedTag = new KeyValuePair<string, object?>("resolved_state", resolved.ToString().ToLowerInvariant());
+                        var resolvedLabel = resolved switch
+                        {
+                            PrMergeabilityStatus.Behind     => "behind",
+                            PrMergeabilityStatus.UpToDate   => "up_to_date",
+                            PrMergeabilityStatus.Conflicted => "conflicted",
+                            PrMergeabilityStatus.Blocked    => "blocked",
+                            _                               => "unknown",
+                        };
+                        var resolvedTag = new KeyValuePair<string, object?>("resolved_state", resolvedLabel);
                         PipelineTelemetry.HousekeepingReprobeResolved.Add(1, repoTag, resolvedTag);
                     }
                     else
