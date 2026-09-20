@@ -67,8 +67,8 @@ public sealed class AgentHubIssueProxyTests
         mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
 
         _mockFacade
-            .Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { config });
+            .Setup(f => f.GetProviderConfigByIdAsync(configId, ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
         _mockFacade.Setup(f => f.CreateIssueProvider(config)).Returns(mockProvider.Object);
 
         return (config, mockProvider);
@@ -152,8 +152,6 @@ public sealed class AgentHubIssueProxyTests
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetWorkItemIssueMetadataAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(((string, string)?)null);
-        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>());
 
         var hub = CreateHub();
         var act = () => hub.RequestCreateIssue("job-1", "title", "body", new[] { "label" });
@@ -220,8 +218,6 @@ public sealed class AgentHubIssueProxyTests
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetWorkItemIssueMetadataAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(((string, string)?)null);
-        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>());
 
         var hub = CreateHub();
         var act = () => hub.RequestListOpenIssues("job-1", 1, 25, null);
@@ -473,15 +469,21 @@ public sealed class AgentHubIssueProxyTests
             RepoProviderConfigId = "repo-cfg-1"
         };
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
-        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>()); // no matching config
+        _mockFacade
+            .Setup(f => f.GetProviderConfigByIdAsync("missing-config", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderConfig?)null);
 
         var hub = CreateHub();
         var act = () => hub.RequestGetIssue("job-1", "42");
         await act.Should().ThrowAsync<HubException>().WithMessage("*missing-config*not found*");
+        // TODO: [WARNING] Add a Verify call here to confirm GetProviderConfigByIdAsync was actually
+        // invoked with the config ID from the run (IssueProviderConfigId = "missing-config"). Without it,
+        // if the production code stopped calling GetProviderConfigByIdAsync or passed a different ID,
+        // Moq would silently return null (its default for reference types) and the test would still pass
+        // for the wrong reason. Add:
+        //   _mockFacade.Verify(f => f.GetProviderConfigByIdAsync("missing-config", ProviderKind.Issue,
+        //       It.IsAny<CancellationToken>()), Times.Once);
     }
-
-    // ── RequestCreateIssueForProvider — project scope checks ─────────────
 
     [Fact]
     public async Task RequestCreateIssueForProvider_ProviderInProjectTemplates_Succeeds()
@@ -639,8 +641,6 @@ public sealed class AgentHubIssueProxyTests
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetWorkItemIssueMetadataAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(((string, string)?)null);
-        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>());
 
         var hub = CreateHub();
         var act = () => hub.RequestGetIssue("job-1", "42");
@@ -686,8 +686,9 @@ public sealed class AgentHubIssueProxyTests
             RepoProviderConfigId = "repo-cfg-1"
         };
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
-        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>()); // no matching config
+        _mockFacade
+            .Setup(f => f.GetProviderConfigByIdAsync("missing-config", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderConfig?)null); // no matching config
 
         var hub = CreateHub();
         var act = () => hub.RequestGetIssue("job-1", "42");
@@ -702,11 +703,14 @@ public sealed class AgentHubIssueProxyTests
                 It.Is<string>(s => s == "missing-config"),
                 It.Is<string>(s => s == "job-1")),
             Times.Once);
+        // TODO: [WARNING] Add a Verify call here to confirm GetProviderConfigByIdAsync was actually
+        // invoked with the config ID from the run (IssueProviderConfigId = "missing-config"). Without it,
+        // if the production code stopped calling GetProviderConfigByIdAsync or passed a different ID,
+        // Moq would silently return null (its default for reference types) and the test would still pass
+        // for the wrong reason. Add:
+        //   _mockFacade.Verify(f => f.GetProviderConfigByIdAsync("missing-config", ProviderKind.Issue,
+        //       It.IsAny<CancellationToken>()), Times.Once);
     }
-
-    /// <summary>
-    /// AC1: Same as the run-not-found case above, verified via a different calling method
-    /// (RequestListOpenIssues) to guard all callers of ResolveIssueProviderForRunAsync.
     /// </summary>
     [Fact]
     public async Task RequestListOpenIssues_RunNotFound_LogsWarningBeforeThrowingHubException()
@@ -714,8 +718,6 @@ public sealed class AgentHubIssueProxyTests
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetWorkItemIssueMetadataAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(((string, string)?)null);
-        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>());
 
         var hub = CreateHub();
         var act = () => hub.RequestListOpenIssues("job-1", 1, 25, null);

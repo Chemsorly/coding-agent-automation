@@ -92,13 +92,7 @@ public partial class QualityGateExecutor
                 run.CurrentStep = PipelineStep.ConflictRestart;
                 callbacks.EmitOutputLine("🔄 PR conflicted with main — re-queuing as agent:next for rework...");
                 callbacks.TransitionTo(PipelineStep.ConflictRestart);
-                // TODO [WARNING] (#2359 DotNetSpecialist): run.MarkCompleted() is not called here,
-                // unlike other terminal exits (e.g. Cancelled in ProceedToQualityGatesAsync and
-                // draft-PR/completed paths in PullRequestFinalizationService).
-                // run.CompletedAtOffset therefore stays null until BuildCompletionPayload defaults
-                // it to DateTimeOffset.UtcNow. Consumers that read run.CompletedAtOffset directly
-                // between this return and payload build will observe null for a terminal-like run.
-                // Fix: call run.MarkCompleted() here for consistency with other terminal paths.
+                run.MarkCompleted();
                 return new QualityGateReport
                 {
                     Compilation = report.Compilation,
@@ -274,15 +268,11 @@ public partial class QualityGateExecutor
                    && classification == CiFailureClassifier.CiFailureCategory.Infrastructure
                    && run.InfrastructureRetryCount < config.MaxInfrastructureRetries)
             {
-                // TODO [WARNING]: ExecuteInfraRetryAsync is invoked with the original outer `ct`, not `pollCt`.
-                // This means infra-retry polling runs outside the ExternalCiTimeout budget established by
-                // `timeoutCts` above. If branch-moved re-polls consume most of the ExternalCiTimeout window,
-                // a subsequent infra-retry can add a full additional ExternalCiTimeout duration, violating the
-                // single-window guarantee documented in the property summary for CiCancelledMoveMaxRetries.
-                // To fix: pass `pollCt` instead of `ct` to ExecuteInfraRetryAsync, or restructure so both
-                // code paths share the same linked token.
+                // Pass `pollCt` (the linked, ExternalCiTimeout-budgeted token) so that infra-retry
+                // polling is bounded by the same single-window budget as the initial poll and any
+                // branch-moved re-polls. Fixes #2798.
                 (ciPassed, ciStatus, ciLogPaths) = await ExecuteInfraRetryAsync(
-                    context, config, callbacks, ct);
+                    context, config, callbacks, pollCt);
 
                 if (!ciPassed)
                     classification = CiFailureClassifier.Classify(ciStatus);
@@ -296,6 +286,12 @@ public partial class QualityGateExecutor
     /// Performs one infrastructure-failure retry: increments the counter, logs, creates an empty
     /// commit, re-pushes, and polls CI again. Returns (ciPassed, newStatus, ciLogPaths).
     /// </summary>
+    // TODO [WARNING] (#2798 DotNetSpecialist): The `ct` parameter must be the timeout-budgeted token
+    // (e.g. `pollCt` from PollAndHandleInfraRetryAsync) to keep the combined poll-plus-infra-retry
+    // session within a single ExternalCiTimeout window. CommitAllAsync, PushBranchAsync, and
+    // TryReadHeadShaAsync all consume `ct` directly, so an unbudgeted token would leave those
+    // pre-poll operations outside the timeout window. The method signature gives no indication of
+    // this requirement — consider renaming the parameter to `budgetedCt` or adding a contract check.
     private async Task<(bool ciPassed, PipelineRunStatus ciStatus, IReadOnlyDictionary<long, string>? ciLogPaths)> ExecuteInfraRetryAsync(
         QualityGateContext context,
         PipelineConfiguration config,
