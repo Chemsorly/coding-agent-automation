@@ -80,9 +80,16 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
                     "Brain sync cannot be performed.");
             }
 
-            var brainConfig = await _facade.GetProviderConfigByIdAsync(brainProviderConfigId, ProviderKind.Repository, ct);
+            ProviderConfig? brainConfig = null;
+            for (var attempt = 0; attempt <= 1 && brainConfig is null; attempt++)
+            {
+                if (attempt > 0) await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
+                brainConfig = await _facade.GetProviderConfigByIdAsync(brainProviderConfigId, ProviderKind.Repository, ct);
+            }
             if (brainConfig is null)
             {
+                // TODO: align warning template with repo-branch pattern — use {ConfigId} as the first positional arg
+                // and include ProviderKind for consistency: "Provider config {ConfigId} not found for job {JobId} (kind: {ProviderKind})"
                 _logger.Warning("Brain token refresh for job {JobId}: config {BrainConfigId} not found in store",
                     jobId, brainProviderConfigId);
                 throw new HubException($"Brain provider config '{brainProviderConfigId}' not found for job {jobId}");
@@ -91,10 +98,16 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
         }
         else
         {
-            var repoConfig = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId!, ProviderKind.Repository, ct);
+            ProviderConfig? repoConfig = null;
+            for (var attempt = 0; attempt <= 1 && repoConfig is null; attempt++)
+            {
+                if (attempt > 0) await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
+                repoConfig = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId!, ProviderKind.Repository, ct);
+            }
             if (repoConfig is null)
             {
-                _logger.Warning("Provider config not found for job {JobId} (kind: {ProviderKind})", jobId, providerKind);
+                _logger.Warning("Provider config {ConfigId} not found for job {JobId} (kind: {ProviderKind})",
+                    repoProviderConfigId, jobId, providerKind);
                 throw new HubException($"Provider config not found for job {jobId} (kind: {providerKind})");
             }
             return repoConfig;
