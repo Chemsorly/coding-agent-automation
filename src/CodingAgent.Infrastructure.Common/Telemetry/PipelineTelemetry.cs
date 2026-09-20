@@ -155,6 +155,27 @@ public static class PipelineTelemetry
         "pipeline.housekeeping.branch_deleted", "{branch}",
         "Stale agent branches deleted (no open PR, inactive issue label)");
 
+    /// <summary>
+    /// Counts re-probe batches fired for PRs whose first mergeability probe returned
+    /// <c>unknown</c>. Tagged by <c>repo_provider_id</c>. Each increment represents one
+    /// <c>Task.Delay</c> + re-probe pass (i.e. one cycle had at least one Unknown PR).
+    /// Pair with <see cref="HousekeepingReprobeResolved"/> to measure how often re-probing
+    /// actually resolves the state vs stays Unknown.
+    /// </summary>
+    public static readonly Counter<long> HousekeepingReprobeTriggered = Meter.CreateCounter<long>(
+        "pipeline.housekeeping.reprobe_triggered", "{reprobe}",
+        "Re-probe passes fired for PRs whose first mergeability probe returned Unknown (GitHub lazy-compute workaround)");
+
+    /// <summary>
+    /// Counts individual PRs that resolved to a non-Unknown state on the re-probe pass.
+    /// Tagged by <c>repo_provider_id</c> and <c>resolved_state</c> (behind | clean | dirty | blocked).
+    /// A high ratio of <see cref="HousekeepingReprobeResolved"/> / <see cref="HousekeepingReprobeTriggered"/>
+    /// indicates the re-probe is effective. A low ratio may indicate persistent GitHub API latency.
+    /// </summary>
+    public static readonly Counter<long> HousekeepingReprobeResolved = Meter.CreateCounter<long>(
+        "pipeline.housekeeping.reprobe_resolved", "{reprobe}",
+        "PRs that resolved to a non-Unknown mergeability state on re-probe (tagged by resolved_state)");
+
     // Label swap metrics
     // TODO: The unit string "{exhaustion}" is inconsistent with the "{item}", "{retry}", "{failure}", "{event}"
     // convention used by every other counter in this file. UCUM annotation strings are free-form so this is not

@@ -167,14 +167,29 @@ public sealed class HousekeepingService : IHousekeepingService
         var repoTag = new KeyValuePair<string, object?>("repo_provider_id", repoProviderId);
 
         // ── Step 1: Build mergeability map — one call per PR, with re-probe for Unknown ──
-        // GitHub computes mergeable_state lazily on-demand: the first GET /pulls/{n} call
-        // triggers a background job and returns "unknown" immediately. The second call
-        // (after a short delay) returns the resolved state. We re-probe all Unknown PRs
-        // once within the same cycle to avoid skipping Behind PRs that simply haven't
-        // had their mergeability computed yet. This matches the pattern used by automerge
-        // tooling (e.g. automerge-action) and is the documented workaround for this GitHub
-        // API behaviour. If the re-probe also returns Unknown, the conservative fallback
-        // (skip the PR this cycle) is preserved unchanged.
+        // GitHub's mergeable_state is computed lazily, on-demand. The first
+        // GET /repos/{owner}/{repo}/pulls/{number} call schedules a background job and
+        // returns "unknown" immediately. A subsequent call (a few seconds later) returns
+        // the resolved state: "behind", "clean", "dirty", "blocked", etc.
+        //
+        // Crucially, every push to the base branch invalidates the cached mergeability for
+        // ALL open PRs simultaneously. In a high-velocity repo with multiple merges per day,
+        // this means most PRs are perpetually "unknown" — the next merge arrives before the
+        // background job resolves the previous batch.
+        //
+        // Workaround (matches pattern used by automerge-action and other automerge tooling):
+        //   1. First probe: call GET /pulls/{n} for each PR → triggers background recompute.
+        //   2. Collect Unknown results.
+        //   3. Wait MergeabilityReprobeDelay (default 5 s) once for the entire batch.
+        //   4. Re-probe only the Unknown PRs → pick up resolved state.
+        //
+        // Conservative fallback is preserved: a PR that is still Unknown after re-probe is
+        // treated the same as before (skipped this cycle, kept in-flight if already there).
+        //
+        // References:
+        //   - https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request (mergeable_state)
+        //   - https://stackoverflow.com/a/30620973 (GitHub staff confirming lazy computation)
+        //   - https://github.com/mergerine/github-mergerine/issues/9 (probe-trigger pattern)
         var mergeabilityMap = new Dictionary<int, PrMergeabilityStatus>(agentDonePrs.Count);
         var unknownAfterFirstProbe = new List<PullRequestSummary>();
 
@@ -207,8 +222,11 @@ public sealed class HousekeepingService : IHousekeepingService
         if (unknownAfterFirstProbe.Count > 0)
         {
             _logger.Debug(
-                "HousekeepingService: {Count} PR(s) returned Unknown on first probe in repo {RepoId} — waiting {DelayMs}ms then re-probing",
+                "HousekeepingService: {Count} PR(s) returned Unknown on first probe in repo {RepoId} — " +
+                "waiting {DelayMs}ms then re-probing (GitHub lazy mergeability workaround)",
                 unknownAfterFirstProbe.Count, repoProviderId, (int)MergeabilityReprobeDelay.TotalMilliseconds);
+
+            PipelineTelemetry.HousekeepingReprobeTriggered.Add(1, repoTag);
 
             await Task.Delay(MergeabilityReprobeDelay, ct);
 
@@ -216,7 +234,23 @@ public sealed class HousekeepingService : IHousekeepingService
             {
                 try
                 {
-                    mergeabilityMap[pr.Number] = await repoProvider.IsPullRequestBehindBaseAsync(pr.Number, ct);
+                    var resolved = await repoProvider.IsPullRequestBehindBaseAsync(pr.Number, ct);
+                    mergeabilityMap[pr.Number] = resolved;
+
+                    if (resolved != PrMergeabilityStatus.Unknown)
+                    {
+                        _logger.Debug(
+                            "HousekeepingService: PR #{PrNumber} re-probe resolved to {Status} in repo {RepoId}",
+                            pr.Number, resolved, repoProviderId);
+                        var resolvedTag = new KeyValuePair<string, object?>("resolved_state", resolved.ToString().ToLowerInvariant());
+                        PipelineTelemetry.HousekeepingReprobeResolved.Add(1, repoTag, resolvedTag);
+                    }
+                    else
+                    {
+                        _logger.Debug(
+                            "HousekeepingService: PR #{PrNumber} re-probe still Unknown in repo {RepoId} — skipping this cycle (conservative fallback)",
+                            pr.Number, repoProviderId);
+                    }
                 }
                 catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
