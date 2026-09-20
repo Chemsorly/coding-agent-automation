@@ -27,7 +27,7 @@ public sealed class AgentRegistryService : IAgentRegistryService
     /// the <c>ConnectionId</c> and resets status to <see cref="AgentStatus.Idle"/> if
     /// the agent was <see cref="AgentStatus.Disconnected"/>.
     /// </summary>
-    public AgentEntry Register(AgentRegistrationMessage message, string connectionId)
+    public AgentEntry Register(AgentRegistrationMessage message, string connectionId, bool preserveExistingConnectionId = false)
     {
         ArgumentNullException.ThrowIfNull(message);
         ArgumentNullException.ThrowIfNull(connectionId);
@@ -71,8 +71,11 @@ public sealed class AgentRegistryService : IAgentRegistryService
             {
                 lock (existing.SyncRoot)
                 {
-                    // Remove old connectionId from index before updating
-                    _connectionIndex.TryRemove(existing.ConnectionId, out AgentEntry? _);
+                    // Remove old connectionId from index before updating — unless the caller has
+                    // asked us to keep it (mid-run kiro-cli sub-process reconnect: the pipeline is
+                    // still active on the old connection and must not lose its auth context).
+                    if (!preserveExistingConnectionId)
+                        _connectionIndex.TryRemove(existing.ConnectionId, out AgentEntry? _);
 
                     // Note: Labels are intentionally not refreshed on re-registration.
                     // The stored array is immutable (defensive copy from add-factory), so this
@@ -137,6 +140,14 @@ public sealed class AgentRegistryService : IAgentRegistryService
 
         if (_agents.TryRemove(agentId.Value, out var removed))
         {
+            // TODO (WARNING, issue #2758): When Register was called with preserveExistingConnectionId=true
+            // (mid-run kiro-cli reconnect), _connectionIndex retains both conn-A and conn-B.
+            // Deregister only removes removed.ConnectionId (conn-B, the primary set by
+            // existing.ConnectionId = connectionId at registration time); the stale conn-A key is
+            // never removed. Functionally benign — GetByConnectionId("conn-A") returns null once
+            // the entry is gone from _agents — but _connectionIndex retains the orphaned key
+            // indefinitely. Consider removing the original connection ID during deregister or
+            // cleaning it up in OnDisconnectedAsync when the stale connection closes.
             _connectionIndex.TryRemove(removed.ConnectionId, out AgentEntry? _);
             _logger.Information("Agent {AgentId} deregistered", agentId);
             return true;

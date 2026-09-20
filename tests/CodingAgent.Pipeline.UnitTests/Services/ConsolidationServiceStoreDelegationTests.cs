@@ -180,14 +180,14 @@ public sealed class ConsolidationServiceStoreDelegationTests
             SuccessRate = 0.7m,
             Suggestions = new List<HarnessSuggestion>()
         };
-        _mockHarnessStore.Setup(s => s.GetAsync(It.IsAny<CancellationToken>()))
+        _mockHarnessStore.Setup(s => s.LoadAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(expected);
 
         var sut = CreateSut();
         var result = await sut.GetHarnessSuggestionsAsync(CancellationToken.None);
 
         result.Should().BeSameAs(expected);
-        _mockHarnessStore.Verify(s => s.GetAsync(It.IsAny<CancellationToken>()), Times.Once);
+        _mockHarnessStore.Verify(s => s.LoadAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

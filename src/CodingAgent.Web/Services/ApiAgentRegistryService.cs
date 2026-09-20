@@ -153,7 +153,7 @@ public sealed class ApiAgentRegistryService : IAgentRegistryService
     /// requires a non-null <see cref="AgentEntry"/> — nothing is retained, and the next
     /// <see cref="RefreshAsync"/> rebuilds the snapshot from the API regardless.
     /// </remarks>
-    public AgentEntry Register(AgentRegistrationMessage message, string connectionId)
+    public AgentEntry Register(AgentRegistrationMessage message, string connectionId, bool preserveExistingConnectionId = false)
     {
         ArgumentNullException.ThrowIfNull(message);
         ArgumentNullException.ThrowIfNull(connectionId);
