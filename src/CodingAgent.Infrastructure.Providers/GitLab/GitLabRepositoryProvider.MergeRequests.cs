@@ -59,9 +59,28 @@ public partial class GitLabRepositoryProvider
             return PrMergeabilityStatus.UpToDate;
         if (status == DetailedMergeStatus.NotOpen)
             return PrMergeabilityStatus.UpToDate;
+
+        // Checking and Unchecked mean "mergeability not computed yet" — GitLab's equivalent
+        // of GitHub's "unknown" state. Like GitHub, GitLab computes merge status lazily:
+        // a GET /projects/:id/merge_requests/:iid call schedules the check asynchronously
+        // and returns "checking" or "unchecked" immediately. A second call a few seconds later
+        // returns the resolved state. On larger projects this can take longer and return
+        // "checking" persistently (GitLab issue #386661).
+        //
+        // These states must map to Unknown (not Blocked) so HousekeepingService includes
+        // them in the re-probe pass after MergeabilityReprobeDelay. Mapping them to Blocked
+        // would incorrectly occupy the in-flight concurrency slot for what is a transient
+        // computation state, starving Behind PRs indefinitely.
+        //
+        // Reference: https://docs.gitlab.com/ee/api/merge_requests.html#merge-status
+        //            https://gitlab.com/gitlab-org/gitlab/-/issues/386661
         if (status == DetailedMergeStatus.Checking
-            || status == DetailedMergeStatus.Unchecked
-            || status == DetailedMergeStatus.NotApproved
+            || status == DetailedMergeStatus.Unchecked)
+            return PrMergeabilityStatus.Unknown;
+
+        // Legitimate CI/approval wait states — actual work in progress, not lazy computation.
+        // Keep the in-flight slot held while these are active.
+        if (status == DetailedMergeStatus.NotApproved
             || status == DetailedMergeStatus.CiStillRunning
             || status == DetailedMergeStatus.Preparing)
             return PrMergeabilityStatus.Blocked;

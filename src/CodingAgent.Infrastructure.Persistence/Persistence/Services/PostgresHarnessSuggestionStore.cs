@@ -21,7 +21,7 @@ public sealed class PostgresHarnessSuggestionStore : IHarnessSuggestionStore
         _dbFactory = dbFactory;
     }
 
-    public async Task<HarnessSuggestions?> GetAsync(CancellationToken ct)
+    public async Task<HarnessSuggestions?> LoadAsync(CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
         var entity = await db.KeyValueStore.AsNoTracking()

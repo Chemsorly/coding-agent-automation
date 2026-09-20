@@ -29,7 +29,7 @@ public interface IAgentHubFacade
     /// <summary>
     /// Registers an agent or updates an existing entry on reconnection.
     /// </summary>
-    AgentEntry Register(AgentRegistrationMessage message, string connectionId);
+    AgentEntry Register(AgentRegistrationMessage message, string connectionId, bool preserveExistingConnectionId = false);
 
     /// <summary>
     /// Removes an agent from the registry entirely.
