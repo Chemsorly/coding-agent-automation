@@ -11,6 +11,12 @@ namespace CodingAgent.Pipeline.Services;
 /// Accepts <see cref="IAgentIssueOperations"/> (proxied through orchestrator) rather than
 /// IIssueProvider directly, keeping the agent credential-free.
 /// </summary>
+// TODO [WARNING]: This class duplicates nearly the entire body of WriteOpenIssueContextStep's static
+// helpers (CollectIssueIdentifiersAsync, CollectClosedIssueIdentifiersAsync, WriteIssueFilesAsync,
+// FormatIssueMarkdown, EscapeYamlString, budget allocation). Two parallel implementations can diverge
+// silently — for example, a fix to the path-traversal issue in WriteIssueFilesAsync (see the TODO there)
+// will not automatically apply here. Consider deleting the static helpers from WriteOpenIssueContextStep
+// and routing its production path through this class to have a single authoritative implementation.
 public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
 {
     private readonly ILogger _logger;
@@ -130,6 +136,11 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
             try
             {
                 var detail = await issueOps.GetIssueAsync(identifier, ct);
+                // TODO [WARNING]: Path traversal via unvalidated issue identifier. The identifier originates
+                // from the external API (ListOpenIssuesAsync / ListClosedIssuesAsync) and is used directly
+                // in Path.Combine. An identifier containing directory separators (e.g. "../../etc/passwd")
+                // allows writes outside outputDir. Mitigate by sanitising with Path.GetFileName(identifier)
+                // or by checking that the resolved path starts with outputDir before writing.
                 var filePath = Path.Combine(outputDir, $"{identifier}.md");
                 var content = FormatIssueMarkdown(detail, isClosed);
 
@@ -243,6 +254,11 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
     /// When <paramref name="isClosed"/> is true, includes a <c>status: closed</c> field
     /// to distinguish closed issues from open ones.
     /// </summary>
+    // TODO [WARNING]: FormatIssueMarkdown (and EscapeYamlString) on this class have no dedicated tests.
+    // All existing FormatIssueMarkdown tests target WriteOpenIssueContextStep.FormatIssueMarkdown. If
+    // the two copies diverge, the regression will be silent. Add an OpenIssueContextWriterTests.cs that
+    // exercises YAML front-matter format, the status:closed field, YAML escaping, and the description
+    // append — or consolidate to a single implementation (see class-level duplication TODO).
     internal static string FormatIssueMarkdown(IssueDetail detail, bool isClosed = false)
     {
         var sb = new StringBuilder();
@@ -264,6 +280,10 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
         sb.AppendLine("]");
         sb.AppendLine("---");
         sb.AppendLine();
+        // TODO [WARNING]: detail.Description is written verbatim with no size cap. A very large description
+        // (e.g. hundreds of MB from an attacker-controlled or misconfigured issue tracker) will be written
+        // entirely to disk, potentially exhausting available space on the agent host. Consider applying a
+        // maximum length (e.g. truncate at 1 MB) before appending.
         sb.Append(detail.Description);
 
         return sb.ToString();

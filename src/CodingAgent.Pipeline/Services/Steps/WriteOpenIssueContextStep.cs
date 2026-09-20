@@ -1,4 +1,5 @@
 using System.Text;
+using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Serilog;
 
@@ -7,11 +8,44 @@ namespace CodingAgent.Pipeline.Services.Steps;
 /// <summary>
 /// Downloads open issues and writes them as markdown context files to the workspace
 /// for agent deduplication. Accesses <see cref="CodingAgent.Pipeline.Interfaces.IAgentIssueOperations"/>
-/// directly via <c>context.IssueOps</c> — no constructor injection required.
+/// directly via <c>context.IssueOps</c> — no constructor injection required for default usage.
 /// For decomposition runs, also includes recently-closed sibling issues.
 /// </summary>
+/// <remarks>
+/// <para>
+/// Can be constructed in two ways:
+/// <list type="bullet">
+/// <item><description>No-arg constructor — uses the built-in static logic (default for agent pipelines).</description></item>
+/// <item><description>Constructor accepting <see cref="IOpenIssueContextWriter"/> — delegates all writing
+/// to the provided writer; useful for unit testing via mock injection.</description></item>
+/// </list>
+/// </para>
+/// </remarks>
 public sealed class WriteOpenIssueContextStep : IPipelineStep
 {
+    private readonly IOpenIssueContextWriter? _writer;
+
+    /// <summary>
+    /// Initializes a <see cref="WriteOpenIssueContextStep"/> that uses the built-in static
+    /// issue-writing logic. This is the production path used by the agent pipeline builder.
+    /// </summary>
+    public WriteOpenIssueContextStep()
+    {
+        _writer = null;
+    }
+
+    /// <summary>
+    /// Initializes a <see cref="WriteOpenIssueContextStep"/> that delegates all issue writing
+    /// to the supplied <paramref name="writer"/>. This overload exists to support unit testing
+    /// without hitting the file system.
+    /// </summary>
+    /// <param name="writer">The <see cref="IOpenIssueContextWriter"/> to delegate to.</param>
+    public WriteOpenIssueContextStep(IOpenIssueContextWriter writer)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        _writer = writer;
+    }
+
     public string StepName => "WriteOpenIssueContext";
 
     /// <summary>
@@ -26,9 +60,25 @@ public sealed class WriteOpenIssueContextStep : IPipelineStep
         var maxIssues = context.Config.MaxOpenIssuesForContext;
         var includeClosedSiblings = IsEpicScopedRun(context.Run.RunType);
 
-        var count = await WriteOpenIssueContextAsync(
-            context.IssueOps, context.Run.WorkspacePath!, maxIssues, includeClosedSiblings,
-            context.Logger, ct);
+        int count;
+
+        if (_writer is not null)
+        {
+            // Delegate to the injected writer (used in tests)
+            count = await _writer.WriteOpenIssueContextAsync(
+                context.IssueOps,
+                context.Run.WorkspacePath!,
+                maxIssues,
+                includeClosedSiblings,
+                ct);
+        }
+        else
+        {
+            // Use built-in static logic (production path)
+            count = await WriteOpenIssueContextAsync(
+                context.IssueOps, context.Run.WorkspacePath!, maxIssues, includeClosedSiblings,
+                context.Logger, ct);
+        }
 
         context.Run.OpenIssuesDownloaded = count;
         context.Logger.Information("Wrote {Count} issue context files (includeClosedSiblings={IncludeClosed})",
@@ -44,18 +94,19 @@ public sealed class WriteOpenIssueContextStep : IPipelineStep
         runType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition;
 
     private static async Task<int> WriteOpenIssueContextAsync(
-        Interfaces.IAgentIssueOperations issueOps,
+        IAgentIssueOperations issueOps,
+        // TODO [WARNING]: Incomplete WorkspacePath migration — this production path still takes a raw string.
+        // The acceptance criterion requires implementations to accept WorkspacePath; only the injected-writer
+        // path (used in tests via IOpenIssueContextWriter) is migrated. Additionally, the guard here uses
+        // ArgumentNullException.ThrowIfNull rather than ArgumentException.ThrowIfNullOrEmpty(value, name)
+        // as adopted on the migrated surfaces. Consolidate by deleting this static helper and routing the
+        // production path through OpenIssueContextWriter (which is fully migrated) instead.
         string workspacePath,
         int maxIssues,
         bool includeClosedSiblings,
         ILogger logger,
         CancellationToken ct)
     {
-        // TODO: The null guard on issueOps is inside this private helper rather than on the public
-        // ExecuteAsync method. The public method has no explicit guard on context.IssueOps, unlike
-        // the old constructor which had ArgumentNullException.ThrowIfNull(writer). Consider adding
-        // an explicit guard in ExecuteAsync (e.g., ArgumentNullException.ThrowIfNull(context.IssueOps))
-        // to produce a clear exception at the public contract boundary.
         ArgumentNullException.ThrowIfNull(issueOps);
         ArgumentNullException.ThrowIfNull(workspacePath);
 
@@ -127,7 +178,7 @@ public sealed class WriteOpenIssueContextStep : IPipelineStep
     }
 
     private static async Task<int> WriteIssueFilesAsync(
-        Interfaces.IAgentIssueOperations issueOps,
+        IAgentIssueOperations issueOps,
         List<string> identifiers,
         string outputDir,
         bool isClosed,
@@ -170,7 +221,7 @@ public sealed class WriteOpenIssueContextStep : IPipelineStep
     }
 
     private static async Task<List<string>> CollectIssueIdentifiersAsync(
-        Interfaces.IAgentIssueOperations issueOps, int maxIssues, ILogger logger, CancellationToken ct)
+        IAgentIssueOperations issueOps, int maxIssues, ILogger logger, CancellationToken ct)
     {
         var identifiers = new List<string>();
         var page = 1;
@@ -213,7 +264,7 @@ public sealed class WriteOpenIssueContextStep : IPipelineStep
     }
 
     private static async Task<List<string>> CollectClosedIssueIdentifiersAsync(
-        Interfaces.IAgentIssueOperations issueOps, int maxIssues, ILogger logger, CancellationToken ct)
+        IAgentIssueOperations issueOps, int maxIssues, ILogger logger, CancellationToken ct)
     {
         var identifiers = new List<string>();
         var page = 1;

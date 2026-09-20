@@ -70,6 +70,13 @@ public class WriteOpenIssueContextStepTests
 
     // ── ExecuteAsync ──────────────────────────────────────────────────────
 
+    // TODO [WARNING]: All tests below inject a mock IOpenIssueContextWriter and exercise only the
+    // injected-writer path. The production pipeline constructs WriteOpenIssueContextStep() with the
+    // no-arg constructor (which uses the private static WriteOpenIssueContextAsync helper). That path
+    // is not covered here — a regression in the static helper (e.g. it silently returns 0) would not
+    // be caught by these tests. Consider adding a test with new WriteOpenIssueContextStep() using a
+    // real or fake IssueOps to verify the no-arg production path end-to-end.
+
     [Fact]
     public async Task ExecuteAsync_ImplementationRun_CallsWriterWithoutClosedSiblings()
     {
@@ -106,6 +113,9 @@ public class WriteOpenIssueContextStepTests
             It.IsAny<IAgentIssueOperations>(), It.IsAny<WorkspacePath>(), It.IsAny<int>(),
             true, // includeClosedSiblings = true for DecompositionAnalysis
             It.IsAny<CancellationToken>()), Times.Once);
+        // TODO [WARNING]: context.Run.OpenIssuesDownloaded is not asserted here. A regression that
+        // zeroed the count on decomposition paths would not be caught. Add:
+        // context.Run.OpenIssuesDownloaded.Should().Be(3);
     }
 
     [Fact]
@@ -125,6 +135,9 @@ public class WriteOpenIssueContextStepTests
         _writer.Verify(w => w.WriteOpenIssueContextAsync(
             It.IsAny<IAgentIssueOperations>(), It.IsAny<WorkspacePath>(), It.IsAny<int>(),
             true, It.IsAny<CancellationToken>()), Times.Once);
+        // TODO [WARNING]: context.Run.OpenIssuesDownloaded is not asserted here. A regression that
+        // zeroed the count on decomposition paths would not be caught. Add:
+        // context.Run.OpenIssuesDownloaded.Should().Be(5);
     }
 
     [Fact]

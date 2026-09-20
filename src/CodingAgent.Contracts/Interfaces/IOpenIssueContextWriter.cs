@@ -36,6 +36,14 @@ public interface IOpenIssueContextWriter
     /// <param name="includeClosedSiblings">Whether to include recently-closed issues (epic runs).</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Number of issues successfully written.</returns>
+    // TODO [WARNING]: The default interface implementation below silently drops includeClosedSiblings
+    // by delegating to the 4-param overload (which always uses includeClosedSiblings: false). Any future
+    // implementor that only overrides the 4-param overload will silently produce no closed sibling issues
+    // for epic/decomposition runs with no compile-time or runtime indication. The preferred design is to
+    // make the 5-param overload the primary method (no default) and give the 4-param overload the default
+    // that delegates to 5-param with includeClosedSiblings: false. Currently safe because OpenIssueContextWriter
+    // overrides both overloads and the production pipeline uses WriteOpenIssueContextStep's static path —
+    // but this is a contract trap for future implementors.
     Task<int> WriteOpenIssueContextAsync(
         IAgentIssueOperations issueOps,
         WorkspacePath workspacePath,
