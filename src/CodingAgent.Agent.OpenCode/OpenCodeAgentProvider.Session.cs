@@ -85,10 +85,13 @@ public sealed partial class OpenCodeAgentProvider
     /// summary of all session statuses (including child/subagent sessions). This provides
     /// observability into subagent retries that don't surface on the parent session's SSE stream.
     /// </summary>
-    private async Task PollAllSessionStatusesAsync(CancellationToken ct)
+    private Task PollAllSessionStatusesAsync(CancellationToken ct) =>
+        PollAllSessionStatusesAsync(ct, initialDelayMs: 2000);
+
+    private async Task PollAllSessionStatusesAsync(CancellationToken ct, int initialDelayMs)
     {
         // Small initial delay to let the session start
-        try { await Task.Delay(2000, ct); } catch (OperationCanceledException) { return; }
+        try { await Task.Delay(initialDelayMs, ct); } catch (OperationCanceledException) { return; }
 
         while (!ct.IsCancellationRequested)
         {
@@ -110,6 +113,19 @@ public sealed partial class OpenCodeAgentProvider
             try { await Task.Delay(10_000, ct); } catch (OperationCanceledException) { break; }
         }
     }
+
+    // Test seams — accessible to CodingAgent.Agent.UnitTests via InternalsVisibleTo
+
+    /// <summary>Exposes TryRefreshAllSessionStatusSummaryAsync for unit testing.</summary>
+    internal Task TryRefreshAllSessionStatusSummaryAsyncForTest(CancellationToken ct) =>
+        TryRefreshAllSessionStatusSummaryAsync(ct);
+
+    /// <summary>Exposes PollAllSessionStatusesAsync for unit testing with a configurable initial delay.</summary>
+    internal Task PollAllSessionStatusesAsyncForTest(CancellationToken ct, int initialDelayMs = 2000) =>
+        PollAllSessionStatusesAsync(ct, initialDelayMs);
+
+    /// <summary>Exposes _allSessionsSummary for unit testing.</summary>
+    internal string? AllSessionsSummaryForTest => _allSessionsSummary;
 
     private async Task TryRefreshAllSessionStatusSummaryAsync(CancellationToken ct)
     {
