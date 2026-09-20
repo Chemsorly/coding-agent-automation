@@ -278,13 +278,13 @@ public class AgentCodingValidationBannerTests : BunitContext
     {
         // Find the selector followed immediately by " {" or "{"
         var searchKey = selector + " {";
-        var altKey    = selector + "{";
+        var altKey = selector + "{";
 
         var idx = css.IndexOf(searchKey, StringComparison.Ordinal);
         if (idx < 0) idx = css.IndexOf(altKey, StringComparison.Ordinal);
         if (idx < 0) return null;
 
-        var braceOpen  = css.IndexOf('{', idx);
+        var braceOpen = css.IndexOf('{', idx);
         var braceClose = css.IndexOf('}', braceOpen);
         if (braceOpen < 0 || braceClose < 0) return null;
 
