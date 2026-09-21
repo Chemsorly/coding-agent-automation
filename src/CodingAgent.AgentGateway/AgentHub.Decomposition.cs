@@ -92,10 +92,8 @@ public sealed partial class AgentHub
         }
         catch (Exception ex)
         {
-            _logger.Error(ex,
-                "RequestListOpenIssues failed for job {JobId} (page={Page}, pageSize={PageSize}) — agent will receive HubException",
-                jobId.Value, page, pageSize);
-            throw;
+            throw new HubException(
+                $"RequestListOpenIssues failed for job {jobId.Value} (page={page}, pageSize={pageSize}): {ex.Message}", ex);
         }
     }
 
@@ -114,10 +112,8 @@ public sealed partial class AgentHub
         }
         catch (Exception ex)
         {
-            _logger.Error(ex,
-                "RequestListClosedIssues failed for job {JobId} (page={Page}, pageSize={PageSize}) — agent will receive HubException",
-                jobId.Value, page, pageSize);
-            throw;
+            throw new HubException(
+                $"RequestListClosedIssues failed for job {jobId.Value} (page={page}, pageSize={pageSize}): {ex.Message}", ex);
         }
     }
 
@@ -158,10 +154,8 @@ public sealed partial class AgentHub
             // ExecuteWithIssueProviderAsync already logs provider-level exceptions at Error; this
             // catch captures HubExceptions thrown by ResolveIssueProviderForRunAsync (missing run,
             // missing provider config) that escape the inner try/catch.
-            _logger.Error(ex,
-                "RequestGetIssue failed for job {JobId}, identifier {Identifier} — agent will receive HubException",
-                jobId.Value, SanitizeForLog(identifier));
-            throw;
+            throw new HubException(
+                $"RequestGetIssue failed for job {jobId.Value}, identifier '{SanitizeForLog(identifier)}': {ex.Message}", ex);
         }
     }
 
@@ -181,10 +175,8 @@ public sealed partial class AgentHub
         }
         catch (Exception ex)
         {
-            _logger.Error(ex,
-                "RequestListComments failed for job {JobId}, identifier {Identifier} — agent will receive HubException",
-                jobId.Value, SanitizeForLog(identifier));
-            throw;
+            throw new HubException(
+                $"RequestListComments failed for job {jobId.Value}, identifier '{SanitizeForLog(identifier)}': {ex.Message}", ex);
         }
     }
 

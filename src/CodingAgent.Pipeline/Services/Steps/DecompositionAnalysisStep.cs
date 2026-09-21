@@ -57,9 +57,7 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
         // as a WriteEpicContextAsync failure so the run uses FailureReason.InfrastructureFailure
         // rather than the generic "Agent did not produce" message. Only applies to epic-scoped
         // runs (DecompositionAnalysis / Decomposition) — other run types don't download context.
-        if (!epicContextFailed
-            && run.OpenIssuesDownloaded == 0
-            && run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+        if (!epicContextFailed && IsOpenIssueContextDegraded(run))
         {
             epicContextFailed = true;
             logger.Warning(
@@ -189,6 +187,14 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
         context.Callbacks.EmitOutputLine("✅ Decomposition analysis complete");
         return StepResult.Continue;
     }
+
+    /// <summary>
+    /// Returns true when the WriteOpenIssueContext step wrote 0 files for an epic-scoped run,
+    /// indicating that all RequestGetIssue calls silently failed — treat as context unavailable.
+    /// </summary>
+    private static bool IsOpenIssueContextDegraded(PipelineRun run) =>
+        run.OpenIssuesDownloaded == 0
+        && run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition;
 
     /// <summary>
     /// Writes the epic issue body and all comments to .agent/issue-context.md.

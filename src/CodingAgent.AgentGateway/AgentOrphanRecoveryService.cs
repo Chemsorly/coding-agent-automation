@@ -569,7 +569,7 @@ public sealed class AgentOrphanRecoveryService(
             IssueTitle = string.Empty,
             IssueProviderConfigId = issueMetadata.Value.IssueProviderConfigId,
             RepoProviderConfigId = repoProviderConfigId,
-            BrainProviderConfigId = providerIds?.BrainProviderConfigId,
+            BrainProviderConfigId = providerIds!.Value.BrainProviderConfigId,
             InitiatedBy = "recovery",
             AgentId = new AgentId(agentId),
         });
