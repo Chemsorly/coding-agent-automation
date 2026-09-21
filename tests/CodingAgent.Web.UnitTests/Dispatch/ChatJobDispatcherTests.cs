@@ -1361,7 +1361,10 @@ public class ChatJobDispatcherTests
             .ReturnsAsync(new V1Job { Status = new V1JobStatus { Conditions = [] } });
 
         var options = CreateOptions(connectTimeoutSeconds: 5, gracePeriod: 1);
-        options.ChatIdleTimeoutSeconds = 2; // 2s idle timeout — short for test speed
+        // Use a 10s idle timeout — well above the 3s WaitForWatcherAsync observation window.
+        // With a 2s timeout the single heartbeat written at dispatch would expire during the
+        // observation window and trigger idle-kill, making the test a false negative.
+        options.ChatIdleTimeoutSeconds = 10;
 
         var fakeRedis = new CodingAgent.Web.TestUtilities.FakeRedisStore();
 
