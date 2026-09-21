@@ -174,7 +174,7 @@ public static class TestOrchestrationFactory
             _runs.Add(summary);
             return Task.CompletedTask;
         }
-        public void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory) { }
+        public void TryDeleteWorkspace(WorkspacePath? workspacePath, string runId, string workspaceBaseDirectory) { }
         public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null) { }
     }
 }
