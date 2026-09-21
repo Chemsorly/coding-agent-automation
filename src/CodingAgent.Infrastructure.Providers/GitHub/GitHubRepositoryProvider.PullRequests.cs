@@ -1,4 +1,5 @@
 using Octokit;
+using CodingAgent.Infrastructure.Git;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -163,18 +164,27 @@ public partial class GitHubRepositoryProvider
                     client => client.PullRequest.Review.GetAll(Owner, Repo, item.Number),
                     "GetAgentPullRequests.Reviews", ct);
 
-                var allComments = reviewComments
-                    .Where(c => !CommentMarkers.IsPipelineGeneratedComment(c.Body))
+                var allComments = SharedPrOperations.FinalizeReviewComments(
+                    reviewComments
                     .Select(c => new Pipeline.Models.PullRequestReviewComment
                     {
                         Id = c.Id.ToString(),
+                        // TODO [WARNING]: c.Body is the raw Octokit PullRequestReviewComment.Body,
+                        // which can be null for certain approval reviews. The null-coalescing guard
+                        // here (Body = c.Body ?? string.Empty) is already present, so this arm is
+                        // safe. However, note that the reviews concat arm below assigns r.Body
+                        // directly (without ?? string.Empty). Although that arm is guarded upstream
+                        // by .Where(r => !string.IsNullOrWhiteSpace(r.Body)), if Body is somehow
+                        // null at that point, CommentMarkers.IsPipelineGeneratedComment inside
+                        // FinalizeReviewComments would receive null. Verify CommentMarkers.cs
+                        // null-guards its parameter, or add ?? string.Empty to r.Body in the
+                        // reviews projection below.
                         Body = c.Body ?? string.Empty,
                         Author = c.User?.Login ?? string.Empty,
                         CreatedAt = c.CreatedAt.UtcDateTime,
                         Path = c.Path
                     })
                     .Concat(conversationComments
-                        .Where(c => !CommentMarkers.IsPipelineGeneratedComment(c.Body))
                         .Select(c => new Pipeline.Models.PullRequestReviewComment
                         {
                             Id = c.Id.ToString(),
@@ -183,8 +193,18 @@ public partial class GitHubRepositoryProvider
                             CreatedAt = c.CreatedAt.UtcDateTime,
                             Path = null
                         }))
+                    // TODO [WARNING]: The pre-refactoring code also had
+                    // !string.IsNullOrWhiteSpace(r.Body) in a .Where() guard before projecting
+                    // reviews, which meant reviews with null/whitespace bodies were excluded before
+                    // reaching FinalizeReviewComments. The current code keeps the guard but feeds
+                    // r.Body (possibly null) directly into PullRequestReviewComment.Body. A review
+                    // with a non-whitespace pipeline-generated body is still filtered by
+                    // FinalizeReviewComments; an approval review with no body is still dropped by
+                    // the .Where() guard below. The behaviour is equivalent for current inputs, but
+                    // if Body is ever null here r.Body assignment would set Body = null rather than
+                    // string.Empty. Consider adding ?? string.Empty for defensive consistency.
                     .Concat(reviews
-                        .Where(r => !string.IsNullOrWhiteSpace(r.Body) && !CommentMarkers.IsPipelineGeneratedComment(r.Body))
+                        .Where(r => !string.IsNullOrWhiteSpace(r.Body))
                         .Select(r => new Pipeline.Models.PullRequestReviewComment
                         {
                             Id = r.Id.ToString(),
@@ -192,10 +212,7 @@ public partial class GitHubRepositoryProvider
                             Author = r.User?.Login ?? string.Empty,
                             CreatedAt = r.SubmittedAt.UtcDateTime,
                             Path = null
-                        }))
-                    .OrderBy(c => c.CreatedAt)
-                    .Take(50)
-                    .ToList();
+                        })));
 
                 return new LinkedPullRequest
                 {
@@ -324,9 +341,7 @@ public partial class GitHubRepositoryProvider
     public async Task<PagedResult<PullRequestSummary>> ListOpenPullRequestsAsync(
         int page, int pageSize, IReadOnlyList<string>? labels, CancellationToken ct)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
-        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, 100);
+        SharedPrOperations.ValidatePaginationArgs(page, pageSize);
 
         // GitHub's PR list API doesn't support label filtering directly.
         // Use the Issues API (PRs are issues on GitHub) with label filtering,
@@ -424,13 +439,7 @@ public partial class GitHubRepositoryProvider
             });
         }
 
-        return new PagedResult<PullRequestSummary>
-        {
-            Items = items.AsReadOnly(),
-            Page = page,
-            PageSize = pageSize,
-            HasMore = hasMore
-        };
+        return SharedPrOperations.BuildPagedResult(items, page, pageSize, hasMore);
     }
 
     /// <inheritdoc />
@@ -552,8 +561,13 @@ public partial class GitHubRepositoryProvider
                 Author = author,
                 CreatedAt = c.CreatedAt.UtcDateTime,
                 Body = c.Body ?? string.Empty,
-                IsBot = c.User?.Type == AccountType.Bot || author.EndsWith("[bot]", StringComparison.OrdinalIgnoreCase),
-                IsAuthor = string.Equals(author, prAuthor, StringComparison.OrdinalIgnoreCase),
+                // TODO [WARNING]: IsBotAuthor only checks the [bot] suffix. The original code also
+                // checked c.User?.Type == AccountType.Bot, which covers GitHub App accounts whose
+                // login does not follow the [bot]-suffix convention. Those accounts now return
+                // IsBot = false. If AccountType.Bot detection is required here, add:
+                //   IsBot = c.User?.Type == AccountType.Bot || SharedPrOperations.IsBotAuthor(author)
+                IsBot = SharedPrOperations.IsBotAuthor(author),
+                IsAuthor = SharedPrOperations.IsCommentAuthor(author, prAuthor),
                 FilePath = null,
                 Line = null,
                 IsResolved = null
@@ -574,8 +588,10 @@ public partial class GitHubRepositoryProvider
                 Author = author,
                 CreatedAt = c.CreatedAt.UtcDateTime,
                 Body = c.Body ?? string.Empty,
-                IsBot = c.User?.Type == AccountType.Bot || author.EndsWith("[bot]", StringComparison.OrdinalIgnoreCase),
-                IsAuthor = string.Equals(author, prAuthor, StringComparison.OrdinalIgnoreCase),
+                // TODO [WARNING]: IsBotAuthor only checks the [bot] suffix. The original code also
+                // checked c.User?.Type == AccountType.Bot. See the same comment on issueComments above.
+                IsBot = SharedPrOperations.IsBotAuthor(author),
+                IsAuthor = SharedPrOperations.IsCommentAuthor(author, prAuthor),
                 FilePath = c.Path,
                 Line = c.OriginalPosition,
                 IsResolved = null // GitHub review comments don't have individual resolution status via Octokit
@@ -598,15 +614,17 @@ public partial class GitHubRepositoryProvider
                 Author = author,
                 CreatedAt = r.SubmittedAt.UtcDateTime,
                 Body = r.Body,
-                IsBot = r.User?.Type == AccountType.Bot || author.EndsWith("[bot]", StringComparison.OrdinalIgnoreCase),
-                IsAuthor = string.Equals(author, prAuthor, StringComparison.OrdinalIgnoreCase),
+                // TODO [WARNING]: IsBotAuthor only checks the [bot] suffix. The original code also
+                // checked r.User?.Type == AccountType.Bot. See the same comment on issueComments above.
+                IsBot = SharedPrOperations.IsBotAuthor(author),
+                IsAuthor = SharedPrOperations.IsCommentAuthor(author, prAuthor),
                 FilePath = null,
                 Line = null,
                 IsResolved = null
             });
         }
 
-        return results.OrderBy(c => c.CreatedAt).ToList().AsReadOnly();
+        return SharedPrOperations.FinalizeConversationComments(results);
     }
 
     // ── DTOs for raw IConnection.Get<T> calls ────────────────────────────────

@@ -1,4 +1,5 @@
 using Octokit;
+using CodingAgent.Infrastructure.Git;
 using CodingAgent.Pipeline.CodeReview.Models;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -122,10 +123,9 @@ public partial class GitHubRepositoryProvider
             "Found {Count} previous review(s) to dismiss on PR #{PrNumber}",
             matchingReviews.Count, prNumber);
 
-        // Dismiss each matching review. Log warning and continue on individual failures.
-        foreach (var review in matchingReviews)
-        {
-            try
+        await SharedPrOperations.RunDismissLoopAsync(
+            matchingReviews,
+            async (review, token) =>
             {
                 await ExecuteWithResilienceAsync(
                     async client =>
@@ -137,16 +137,12 @@ public partial class GitHubRepositoryProvider
                         await client.Connection.Put<object>(url, payload);
                         return true;
                     },
-                    $"DismissPreviousReview.Dismiss({review.Id})", ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                Log.Warning(
-                    ex,
-                    "Failed to dismiss review {ReviewId} on PR #{PrNumber}. Continuing with remaining reviews.",
-                    review.Id, prNumber);
-            }
-        }
+                    $"DismissPreviousReview.Dismiss({review.Id})", token);
+            },
+            review => review.Id.ToString(),
+            "review",
+            prNumber,
+            ct);
     }
 
     /// <summary>
