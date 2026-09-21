@@ -14,6 +14,11 @@ public static class LabelServiceExtensions
     /// Best-effort label swap: catches all exceptions except <see cref="OperationCanceledException"/>,
     /// logs a warning, and continues. Use for non-fatal label operations where failure should not
     /// interrupt the calling workflow.
+    /// <para>
+    /// When <see cref="LabelSwapContext.SwallowCancellation"/> is <c>true</c>, catches
+    /// <see cref="OperationCanceledException"/> as well — use when the WorkItem is already committed
+    /// to the database and the label swap is a best-effort cosmetic correction.
+    /// </para>
     /// </summary>
     public static async Task TrySwapLabelAsync(
         this ILabelService labelService,
@@ -23,7 +28,7 @@ public static class LabelServiceExtensions
         {
             await labelService.SwapLabelAsync(ctx.ProviderConfigId, ctx.Identifier, ctx.NewLabel, ctx.TargetKind, ctx.Ct);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException || ctx.SwallowCancellation)
         {
             ctx.Logger.Warning(ex, "{Context}: label swap to {Label} failed for {Identifier} (non-fatal)",
                 ctx.Context, ctx.NewLabel, ctx.Identifier);
@@ -77,4 +82,13 @@ public sealed record LabelSwapContext(
     LabelTargetKind TargetKind,
     ILogger Logger,
     string Context,
-    CancellationToken Ct);
+    CancellationToken Ct)
+{
+    /// <summary>
+    /// When <c>true</c>, <see cref="OperationCanceledException"/> is also swallowed (logged as Warning).
+    /// Use on paths where the WorkItem is already committed to the database and the label swap is a
+    /// best-effort cosmetic correction — there is nothing safe to revert on cancellation.
+    /// Defaults to <c>false</c> (OCE propagates, preserving normal cancellation semantics).
+    /// </summary>
+    public bool SwallowCancellation { get; init; } = false;
+}
