@@ -1,5 +1,5 @@
-using System.Text.Json;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Persistence;
 using Serilog;
 
 namespace CodingAgent.Pipeline.Services;
@@ -13,28 +13,13 @@ internal static class AcceptanceCriteriaParser
     public static async Task<AcceptanceCriteriaReport?> ParseAsync(string workspacePath, ILogger logger, CancellationToken ct)
     {
         var filePath = Path.Combine(workspacePath, AgentWorkspacePaths.AcceptanceCriteriaFilePath);
-        if (!File.Exists(filePath))
-        {
-            logger.Debug("Acceptance criteria file not found at {FilePath}", filePath);
+
+        var report = await JsonFileReader.TryReadJsonFileAsync<AcceptanceCriteriaReport>(
+            filePath, PipelineJsonOptions.Lenient, logger, ct);
+
+        if (report is null || report.Criteria is null)
             return null;
-        }
 
-        try
-        {
-            var json = await File.ReadAllTextAsync(filePath, ct);
-            if (string.IsNullOrWhiteSpace(json))
-                return null;
-
-            var report = JsonSerializer.Deserialize<AcceptanceCriteriaReport>(json, PipelineJsonOptions.Lenient);
-            if (report is null || report.Criteria is null)
-                return null;
-
-            return report;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.Warning(ex, "Failed to parse acceptance criteria file at {FilePath}", filePath);
-            return null;
-        }
+        return report;
     }
 }
