@@ -156,13 +156,13 @@ public class VerifyBaselineStepTests
         var qgc = CreateQgc();
         var context = BuildContext(preResolvedQgcs: [qgc]);
 
-        _validator.Setup(v => v.ValidateAsync("/tmp/workspace", It.Is<IReadOnlyList<QualityGateConfiguration>>(l => l.Count == 1 && l[0] == qgc), It.IsAny<CancellationToken>()))
+        _validator.Setup(v => v.ValidateAsync((WorkspacePath)"/tmp/workspace", It.Is<IReadOnlyList<QualityGateConfiguration>>(l => l.Count == 1 && l[0] == qgc), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreatePassingReport());
 
         var step = new VerifyBaselineStep();
         await step.ExecuteAsync(context, CancellationToken.None);
 
-        _validator.Verify(v => v.ValidateAsync("/tmp/workspace", It.Is<IReadOnlyList<QualityGateConfiguration>>(l => l[0] == qgc), It.IsAny<CancellationToken>()), Times.Once);
+        _validator.Verify(v => v.ValidateAsync((WorkspacePath)"/tmp/workspace", It.Is<IReadOnlyList<QualityGateConfiguration>>(l => l[0] == qgc), It.IsAny<CancellationToken>()), Times.Once);
         _configStore.Verify(c => c.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
