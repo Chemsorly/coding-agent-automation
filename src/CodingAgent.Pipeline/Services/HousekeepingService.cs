@@ -179,29 +179,84 @@ public sealed class HousekeepingService : IHousekeepingService
         var repoTag = new KeyValuePair<string, object?>("repo_provider_id", repoProviderId);
 
         // ── Step 1: Build mergeability map — one call per PR, with re-probe for Unknown ──
-        // GitHub's mergeable_state is computed lazily, on-demand. The first
-        // GET /repos/{owner}/{repo}/pulls/{number} call schedules a background job and
-        // returns "unknown" immediately. A subsequent call (a few seconds later) returns
-        // the resolved state: "behind", "clean", "dirty", "blocked", etc.
-        //
-        // Crucially, every push to the base branch invalidates the cached mergeability for
-        // ALL open PRs simultaneously. In a high-velocity repo with multiple merges per day,
-        // this means most PRs are perpetually "unknown" — the next merge arrives before the
-        // background job resolves the previous batch.
-        //
-        // Workaround (matches pattern used by automerge-action and other automerge tooling):
-        //   1. First probe: call GET /pulls/{n} for each PR → triggers background recompute.
-        //   2. Collect Unknown results.
-        //   3. Wait MergeabilityReprobeDelay (default 5 s) once for the entire batch.
-        //   4. Re-probe only the Unknown PRs → pick up resolved state.
-        //
-        // Conservative fallback is preserved: a PR that is still Unknown after re-probe is
-        // treated the same as before (skipped this cycle, kept in-flight if already there).
-        //
-        // References:
-        //   - https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request (mergeable_state)
-        //   - https://stackoverflow.com/a/30620973 (GitHub staff confirming lazy computation)
-        //   - https://github.com/mergerine/github-mergerine/issues/9 (probe-trigger pattern)
+        var mergeabilityMap = await BuildMergeabilityMapAsync(repoProvider, repoProviderId, agentDonePrs, repoTag, ct);
+
+        // ── Step 2: Get or create in-flight set ──────────────────────────────
+        // TODO: Step 2 was not extracted into a named private method (unlike Steps 1, 3–7).
+        // The two statements below are trivial state-initialisation whose results are shared
+        // between Steps 3 and 6b, making extraction awkward (would need out-parameters or a
+        // tuple return). If strict compliance with "each step is a distinct private method" is
+        // required, extract as e.g. InitializeInFlightState(repoProviderId, out var evictedThisCycle).
+        var inFlight = _inFlight.GetOrAdd(repoProviderId, _ => new HashSet<int>());
+
+        // Tracks PR numbers that were max-age evicted in Step 3 during this cycle.
+        // Step 6b checks this set before re-admitting Behind PRs to prevent an evicted PR
+        // from immediately re-acquiring the slot it was just freed from in the same call.
+        // Allocated fresh on every ExecuteAsync call — no cross-cycle state.
+        var evictedThisCycle = new HashSet<int>();
+
+        // ── Step 3: Evict resolved in-flight entries ──────────────────────────
+        var currentPrNumbers = new HashSet<int>(agentDonePrs.Select(p => p.Number));
+        EvictInFlightSlots(inFlight, evictedThisCycle, currentPrNumbers, mergeabilityMap,
+            repoProviderId, repoTag, UtcNow(), maxSlotAgeMinutes);
+
+        // ── Step 4: Get active run branches (for rework exclusion) ───────────
+        var (activeRunBranches, activeRunBranchesUnavailable) = await FetchActiveRunBranchesAsync(ct);
+
+        // ── Step 5: Order candidates — auto-merge first, then by cooldown, random within each tier
+        var sorted = OrderCandidates(agentDonePrs, repoProviderId, triggerCooldown);
+
+        // ── Step 6a: Handle Conflicted PRs — swap linked issue to agent:next ─
+        await TriggerConflictReworkAsync(sorted, mergeabilityMap, activeRunBranches,
+            activeRunBranchesUnavailable, repoProvider, issueProvider, issueProviderId, repoTag, ct);
+
+        // ── Step 6b: Select and trigger eligible branch updates ───────────────
+        await SelectAndTriggerBranchUpdatesAsync(sorted, inFlight, evictedThisCycle, mergeabilityMap,
+            activeRunBranches, activeRunBranchesUnavailable, repoProvider, repoProviderId, repoTag, limit, triggerCooldown, ct);
+
+        // ── Step 7: Stale branch cleanup ──────────────────────────────────────
+        await RunStaleBranchCleanupIfDueAsync(repoProvider, issueProvider, agentDonePrs,
+            repoProviderId, repoTag, branchCleanupEnabled, cleanupIntervalMinutes, ct);
+    }
+
+    // ── Step 1 ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Probes each PR's mergeability status and re-probes any that returned
+    /// <see cref="PrMergeabilityStatus.Unknown"/> after a short batch delay.
+    /// </summary>
+    /// <remarks>
+    /// GitHub's mergeable_state is computed lazily, on-demand. The first
+    /// GET /repos/{owner}/{repo}/pulls/{number} call schedules a background job and
+    /// returns "unknown" immediately. A subsequent call (a few seconds later) returns
+    /// the resolved state: "behind", "clean", "dirty", "blocked", etc.
+    ///
+    /// Crucially, every push to the base branch invalidates the cached mergeability for
+    /// ALL open PRs simultaneously. In a high-velocity repo with multiple merges per day,
+    /// this means most PRs are perpetually "unknown" — the next merge arrives before the
+    /// background job resolves the previous batch.
+    ///
+    /// Workaround (matches pattern used by automerge-action and other automerge tooling):
+    ///   1. First probe: call GET /pulls/{n} for each PR → triggers background recompute.
+    ///   2. Collect Unknown results.
+    ///   3. Wait <see cref="MergeabilityReprobeDelay"/> (default 5 s) once for the entire batch.
+    ///   4. Re-probe only the Unknown PRs → pick up resolved state.
+    ///
+    /// Conservative fallback is preserved: a PR that is still Unknown after re-probe is
+    /// treated the same as before (skipped this cycle, kept in-flight if already there).
+    ///
+    /// References:
+    ///   - https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request (mergeable_state)
+    ///   - https://stackoverflow.com/a/30620973 (GitHub staff confirming lazy computation)
+    ///   - https://github.com/mergerine/github-mergerine/issues/9 (probe-trigger pattern)
+    /// </remarks>
+    private async Task<Dictionary<int, PrMergeabilityStatus>> BuildMergeabilityMapAsync(
+        IRepositoryProvider repoProvider,
+        string repoProviderId,
+        IReadOnlyList<PullRequestSummary> agentDonePrs,
+        KeyValuePair<string, object?> repoTag,
+        CancellationToken ct)
+    {
         var mergeabilityMap = new Dictionary<int, PrMergeabilityStatus>(agentDonePrs.Count);
         var unknownAfterFirstProbe = new List<PullRequestSummary>();
 
@@ -282,18 +337,33 @@ public sealed class HousekeepingService : IHousekeepingService
             }
         }
 
-        // ── Step 2: Get or create in-flight set ──────────────────────────────
-        var inFlight = _inFlight.GetOrAdd(repoProviderId, _ => new HashSet<int>());
+        return mergeabilityMap;
+    }
 
-        // Tracks PR numbers that were max-age evicted in Step 3 during this cycle.
-        // Step 6b checks this set before re-admitting Behind PRs to prevent an evicted PR
-        // from immediately re-acquiring the slot it was just freed from in the same call.
-        // Allocated fresh on every ExecuteAsync call — no cross-cycle state.
-        var evictedThisCycle = new HashSet<int>();
+    // ── Step 3 ────────────────────────────────────────────────────────────────
 
-        // ── Step 3: Evict resolved in-flight entries ──────────────────────────
-        var currentPrNumbers = new HashSet<int>(agentDonePrs.Select(p => p.Number));
-        var now3 = UtcNow();
+    /// <summary>
+    /// Removes in-flight entries that are no longer valid: PRs absent from the current list
+    /// (merged/closed), PRs whose mergeability resolved to a non-blocking state, and PRs that
+    /// have held the slot longer than <paramref name="maxSlotAgeMinutes"/>.
+    /// </summary>
+    /// <remarks>
+    /// Mutates <paramref name="inFlight"/> and <paramref name="evictedThisCycle"/> in-place.
+    /// Also removes entries from the <c>_inFlightAt</c> instance field (all eviction paths)
+    /// and from <c>_lastTriggeredAt</c> (PR-absent path only).
+    /// </remarks>
+    private void EvictInFlightSlots(
+        HashSet<int> inFlight,
+        HashSet<int> evictedThisCycle,
+        HashSet<int> currentPrNumbers,
+        // TODO: mergeabilityMap should be IReadOnlyDictionary<int, PrMergeabilityStatus> —
+        // this method only reads the map. See matching TODO in TriggerConflictReworkAsync.
+        Dictionary<int, PrMergeabilityStatus> mergeabilityMap,
+        string repoProviderId,
+        KeyValuePair<string, object?> repoTag,
+        DateTimeOffset now,
+        int maxSlotAgeMinutes)
+    {
         foreach (var prNumber in inFlight.ToList())
         {
             if (!currentPrNumbers.Contains(prNumber))
@@ -313,7 +383,7 @@ public sealed class HousekeepingService : IHousekeepingService
                 // maxSlotAgeMinutes=0 disables time-based eviction (preserves previous behaviour).
                 var slotAge = maxSlotAgeMinutes > 0
                     && _inFlightAt.TryGetValue((repoProviderId, prNumber), out var acquiredAt)
-                    ? (now3 - acquiredAt).TotalMinutes
+                    ? (now - acquiredAt).TotalMinutes
                     : 0.0;
 
                 if (maxSlotAgeMinutes > 0 && slotAge >= maxSlotAgeMinutes)
@@ -334,13 +404,22 @@ public sealed class HousekeepingService : IHousekeepingService
                 }
             }
         }
+    }
 
-        // ── Step 4: Get active run branches (for rework exclusion) ───────────
-        HashSet<string> activeRunBranches;
-        bool activeRunBranchesUnavailable = false;
+    // ── Step 4 ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Fetches the set of branch names currently occupied by active pipeline runs.
+    /// Returns <c>(branches, unavailable: false)</c> on success, or
+    /// <c>(empty, unavailable: true)</c> on failure so callers can apply the conservative
+    /// skip-all fallback.
+    /// </summary>
+    private async Task<(HashSet<string> Branches, bool Unavailable)> FetchActiveRunBranchesAsync(CancellationToken ct)
+    {
         try
         {
-            activeRunBranches = await _runService.GetActiveRunBranchesAsync(ct);
+            var branches = await _runService.GetActiveRunBranchesAsync(ct);
+            return (branches, false);
         }
         catch (Exception ex)
         {
@@ -355,29 +434,67 @@ public sealed class HousekeepingService : IHousekeepingService
             // and reach this catch block rather than being silently swallowed as empty lists.
             _logger.Warning(ex,
                 "HousekeepingService: failed to get active runs for branch exclusion; skipping all branch updates AND conflict rework this cycle (conservative fallback)");
-            activeRunBranches = [];
-            activeRunBranchesUnavailable = true;
+            return ([], true);
         }
+    }
 
-        // ── Step 5: Order candidates — auto-merge first, then by cooldown, random within each tier
-        // Tier 0: auto-merge enabled + cooldown expired  → update urgently (human approved merge)
-        // Tier 1: no auto-merge + cooldown expired        → update when slot is free
-        // Tier 2: cooldown active (any)                   → deprioritised, recently triggered
-        // Random within each tier prevents starvation among peers.
-        var now5 = UtcNow();
-        var sorted = agentDonePrs
+    // ── Step 5 ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Sorts <paramref name="agentDonePrs"/> into three priority tiers, with random ordering
+    /// within each tier to prevent starvation.
+    /// </summary>
+    /// <remarks>
+    /// Tier 0: auto-merge enabled + cooldown expired  → update urgently (human approved merge)<br/>
+    /// Tier 1: no auto-merge + cooldown expired        → update when slot is free<br/>
+    /// Tier 2: cooldown active (any)                   → deprioritised, recently triggered
+    /// </remarks>
+    private List<PullRequestSummary> OrderCandidates(
+        IReadOnlyList<PullRequestSummary> agentDonePrs,
+        string repoProviderId,
+        TimeSpan triggerCooldown)
+    {
+        var now = UtcNow();
+        return agentDonePrs
             .OrderBy(pr =>
             {
                 var lastTriggered = _lastTriggeredAt.GetValueOrDefault((repoProviderId, pr.Number), DateTimeOffset.MinValue);
-                var cooledDown = (now5 - lastTriggered) >= triggerCooldown;
+                var cooledDown = (now - lastTriggered) >= triggerCooldown;
                 if (!cooledDown) return 2;   // recently triggered — back of queue
                 if (pr.HasAutoMerge) return 0;   // auto-merge + cooled — front
                 return 1;                        // no auto-merge + cooled — middle
             })
             .ThenBy(_ => Random.Shared.Next())
             .ToList();
+    }
 
-        // ── Step 6a: Handle Conflicted PRs — swap linked issue to agent:next ─
+    // ── Step 6a ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// For each conflicted PR in <paramref name="sorted"/>, swaps the linked issue's label
+    /// to <c>agent:next</c> to trigger a rework dispatch run — unless the PR's branch has an
+    /// active run or active-run data was unavailable.
+    /// </summary>
+    private async Task TriggerConflictReworkAsync(
+        IReadOnlyList<PullRequestSummary> sorted,
+        // TODO: mergeabilityMap should be IReadOnlyDictionary<int, PrMergeabilityStatus> — this
+        // method only reads the map (via indexer). The concrete Dictionary<> type unnecessarily
+        // exposes a mutable interface. Same applies to SelectAndTriggerBranchUpdatesAsync and
+        // EvictInFlightSlots. Change all three when the call-site return type of
+        // BuildMergeabilityMapAsync is widened or an explicit cast is added.
+        Dictionary<int, PrMergeabilityStatus> mergeabilityMap,
+        // TODO: activeRunBranches should be IReadOnlySet<string> — this method only calls
+        // Contains() and never mutates the set. As declared, a future edit could accidentally
+        // call .Add()/.Remove() on the shared set and silently corrupt it across Steps 6a and 6b
+        // in the same cycle. Same applies to SelectAndTriggerBranchUpdatesAsync.
+        HashSet<string> activeRunBranches,
+        bool activeRunBranchesUnavailable,
+        IRepositoryProvider repoProvider,
+        IIssueProvider issueProvider,
+        string issueProviderId,
+        KeyValuePair<string, object?> repoTag,
+        CancellationToken ct)
+    {
         foreach (var pr in sorted)
         {
             if (mergeabilityMap[pr.Number] != PrMergeabilityStatus.Conflicted)
@@ -398,8 +515,47 @@ public sealed class HousekeepingService : IHousekeepingService
 
             await TriggerReworkAsync(repoProvider, issueProvider, issueProviderId, pr, repoTag, ct);
         }
+    }
 
-        // ── Step 6b: Select and trigger eligible branch updates ───────────────
+    // ── Step 6b ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Iterates the sorted candidate list and triggers server-side branch updates for eligible
+    /// Behind PRs, up to <paramref name="limit"/> concurrent in-flight slots.
+    /// </summary>
+    /// <remarks>
+    /// Skip guards (in evaluation order):
+    /// <list type="number">
+    ///   <item>Concurrency limit reached — break</item>
+    ///   <item>Draft PR — skip</item>
+    ///   <item>Active-run data unavailable — skip (conservative fallback)</item>
+    ///   <item>Branch has an active run — skip</item>
+    ///   <item>PR was max-age evicted this cycle — skip (prevent same-cycle re-admission)</item>
+    ///   <item>Already in-flight — skip</item>
+    ///   <item>Not Behind — skip</item>
+    ///   <item>Within trigger cooldown — skip</item>
+    /// </list>
+    /// Mutates <paramref name="inFlight"/>, <c>_inFlightAt</c>, and <c>_lastTriggeredAt</c>
+    /// in-place for each PR that passes all guards.
+    /// </remarks>
+    private async Task SelectAndTriggerBranchUpdatesAsync(
+        IReadOnlyList<PullRequestSummary> sorted,
+        HashSet<int> inFlight,
+        HashSet<int> evictedThisCycle,
+        // TODO: mergeabilityMap should be IReadOnlyDictionary<int, PrMergeabilityStatus> —
+        // this method only reads the map. See matching TODO in TriggerConflictReworkAsync.
+        Dictionary<int, PrMergeabilityStatus> mergeabilityMap,
+        // TODO: activeRunBranches should be IReadOnlySet<string> — this method only calls
+        // Contains() and never mutates the set. See matching TODO in TriggerConflictReworkAsync.
+        HashSet<string> activeRunBranches,
+        bool activeRunBranchesUnavailable,
+        IRepositoryProvider repoProvider,
+        string repoProviderId,
+        KeyValuePair<string, object?> repoTag,
+        int limit,
+        TimeSpan triggerCooldown,
+        CancellationToken ct)
+    {
         foreach (var pr in sorted)
         {
             if (inFlight.Count >= limit)
@@ -459,6 +615,12 @@ public sealed class HousekeepingService : IHousekeepingService
             // Cooldown guard: skip if this PR was triggered too recently.
             // This prevents a PR whose CI hasn't finished yet (Blocked→clean→behind
             // fast-cycle) from immediately re-occupying the slot and starving others.
+            // TODO: UtcNow() is called inside the foreach loop on every iteration rather than
+            // once at entry. If FireAndForget introduces any delay (e.g. in integration tests
+            // where it awaits the real task), the clock can advance between iterations and
+            // produce inconsistent now6b values within the same logical cycle. Capture
+            // UtcNow() once at method entry (consistent with EvictInFlightSlots and
+            // OrderCandidates) and pass the captured value down to the cooldown check.
             var now6b = UtcNow();
             var lastTriggered = _lastTriggeredAt.GetValueOrDefault((repoProviderId, pr.Number), DateTimeOffset.MinValue);
             if ((now6b - lastTriggered) < triggerCooldown)
@@ -476,21 +638,39 @@ public sealed class HousekeepingService : IHousekeepingService
             PipelineTelemetry.HousekeepingTriggered.Add(1, repoTag);
             await FireAndForget(UpdateAsync(repoProvider, repoProviderId, pr.Number, repoTag));
         }
+    }
 
-        // ── Step 7: Stale branch cleanup ──────────────────────────────────────
-        if (branchCleanupEnabled)
+    // ── Step 7 ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Runs stale-branch cleanup if <paramref name="branchCleanupEnabled"/> is true and
+    /// the cleanup interval has elapsed since the last pass for this repository.
+    /// </summary>
+    private async Task RunStaleBranchCleanupIfDueAsync(
+        IRepositoryProvider repoProvider,
+        IIssueProvider issueProvider,
+        IReadOnlyList<PullRequestSummary> agentDonePrs,
+        string repoProviderId,
+        KeyValuePair<string, object?> repoTag,
+        bool branchCleanupEnabled,
+        int cleanupIntervalMinutes,
+        CancellationToken ct)
+    {
+        if (!branchCleanupEnabled)
+            return;
+
+        var now = UtcNow();
+        var lastCleanup = _lastCleanupAt.GetValueOrDefault(repoProviderId, DateTimeOffset.MinValue);
+        var intervalElapsed = (now - lastCleanup).TotalMinutes >= cleanupIntervalMinutes;
+
+        if (intervalElapsed)
         {
-            var now = UtcNow();
-            var lastCleanup = _lastCleanupAt.GetValueOrDefault(repoProviderId, DateTimeOffset.MinValue);
-            var intervalElapsed = (now - lastCleanup).TotalMinutes >= cleanupIntervalMinutes;
-
-            if (intervalElapsed)
-            {
-                _lastCleanupAt[repoProviderId] = now;
-                await RunBranchCleanupAsync(repoProvider, issueProvider, agentDonePrs, repoTag, ct);
-            }
+            _lastCleanupAt[repoProviderId] = now;
+            await RunBranchCleanupAsync(repoProvider, issueProvider, agentDonePrs, repoTag, ct);
         }
     }
+
+    // ── Existing private helpers (unchanged) ──────────────────────────────────
 
     /// <summary>
     /// Lists all agent branches, skips those with an open PR or an active issue label,
