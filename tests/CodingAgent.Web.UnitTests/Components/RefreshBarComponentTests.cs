@@ -451,15 +451,22 @@ public class RefreshBarComponentTests : BunitContext
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
         Assert.NotNull(intervalField);
 
-        intervalField.GetValue(instance).Should().Be(30,
-            "the stored interval (30s) must be restored on first render");
+        // OnAfterRenderAsync awaits localStorageGet then calls RestartTimer a second time.
+        // The second RestartTimer temporarily nulls _timerCts (cancel+dispose) before re-creating it,
+        // so asserting immediately after Render() is a race. WaitForAssertion polls until the
+        // full async lifecycle completes.
+        cut.WaitForAssertion(() =>
+        {
+            intervalField.GetValue(instance).Should().Be(30,
+                "the stored interval (30s) must be restored on first render");
 
-        // Timer must also be running
-        var timerCtsField = type.GetField("_timerCts",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        Assert.NotNull(timerCtsField);
-        timerCtsField.GetValue(instance).Should().NotBeNull(
-            "timer must be running after the interval is restored");
+            // Timer must also be running
+            var timerCtsField = type.GetField("_timerCts",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            Assert.NotNull(timerCtsField);
+            timerCtsField.GetValue(instance).Should().NotBeNull(
+                "timer must be running after the interval is restored");
+        }, timeout: TimeSpan.FromSeconds(3));
     }
 
     /// <summary>
