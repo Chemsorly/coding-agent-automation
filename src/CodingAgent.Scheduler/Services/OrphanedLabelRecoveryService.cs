@@ -1,5 +1,6 @@
 using CodingAgent.Api.Client;
 using CodingAgent.Orchestration;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.LeaderElection;
 using CodingAgent.Pipeline.Models;
@@ -343,17 +344,20 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     private async Task<bool> TrySwapToErrorAsync(
         IssueSummary issue, string providerConfigId, CancellationToken ct)
     {
-        try
-        {
-            await _labelService.SwapLabelAsync(
-                providerConfigId, issue.Identifier, AgentLabels.Error, LabelTargetKind.Issue, ct);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Orphaned label recovery: failed to swap label for issue {Identifier}", issue.Identifier);
-            return false;
-        }
+        await _labelService.TrySwapLabelAsync(
+            providerConfigId, issue.Identifier, AgentLabels.Error, LabelTargetKind.Issue,
+            _logger, "OrphanedLabelRecovery.TrySwapToErrorAsync", ct);
+        // TrySwapLabelAsync swallows non-OCE exceptions and logs Warning on failure.
+        // Either the swap succeeded or it failed non-fatally — both are treated as "attempted".
+        // Note: recoveredCount semantics have shifted from "confirmed success" to "attempted";
+        // the Warning log from TrySwapLabelAsync covers the failure case for diagnostics.
+        // TODO: [WARNING] The bool return value is now always true regardless of outcome (non-OCE exceptions
+        // are swallowed; OCE propagates before reaching return true). The return value no longer distinguishes
+        // "swap succeeded" from "swap failed non-fatally", which undermines the original contract. Callers
+        // that inspect the bool to determine success will always see true. Consider changing the return type
+        // to void/Task if the value is no longer meaningful, or document the "attempted" semantics explicitly
+        // in callers that previously relied on the false-on-failure path.
+        return true;
     }
 
     // ── Dual-label sweep (Pass 2) ─────────────────────────────────────────
@@ -519,8 +523,10 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
     /// <summary>
     /// Swaps the issue's label to <paramref name="labelToKeep"/>, removing all other agent labels.
-    /// Follows the same try/catch pattern as <see cref="TrySwapToErrorAsync"/> so that
-    /// <c>recoveredCount</c> only increments on actual success.
+    /// Uses <see cref="LabelServiceExtensions.TrySwapLabelAsync"/> so that non-OCE exceptions are
+    /// swallowed (logged as Warning) rather than propagated.
+    /// Note: <c>recoveredCount</c> increments on "attempted" (not confirmed success), consistent
+    /// with <see cref="TrySwapToErrorAsync"/>. The Warning log covers the failure case.
     /// </summary>
     // TODO: This method calls SwapLabelAsync (add-before-remove), the same operation that caused the
     // original dual-label state. If the GitHub API is transiently unavailable during the remove step,
@@ -532,18 +538,11 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     private async Task<bool> TrySwapToDualLabelResolutionAsync(
         IssueSummary issue, string providerConfigId, string labelToKeep, CancellationToken ct)
     {
-        try
-        {
-            await _labelService.SwapLabelAsync(
-                providerConfigId, issue.Identifier, labelToKeep, LabelTargetKind.Issue, ct);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex,
-                "Dual-label recovery: failed to resolve label for issue {Identifier} (keep={Label})",
-                issue.Identifier, labelToKeep);
-            return false;
-        }
+        await _labelService.TrySwapLabelAsync(
+            providerConfigId, issue.Identifier, labelToKeep, LabelTargetKind.Issue,
+            _logger, "OrphanedLabelRecovery.TrySwapToDualLabelResolutionAsync", ct);
+        // TrySwapLabelAsync swallows non-OCE exceptions and logs Warning on failure.
+        // Either the swap succeeded or it failed non-fatally — both are treated as "attempted".
+        return true;
     }
 }

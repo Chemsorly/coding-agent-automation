@@ -557,6 +557,10 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     }
 
     /// <inheritdoc />
+    // TODO: [WARNING] The async/await wrapper here adds an unnecessary state machine allocation on every call.
+    // The private overload already returns a Task directly (no async state machine). Replace with:
+    //   public Task ConfirmDistributionLabelAsync(JobDistributionRequest request, CancellationToken ct)
+    //       => ConfirmDistributionLabelAsync(request, ct, swallowCancellation: false);
     public async Task ConfirmDistributionLabelAsync(JobDistributionRequest request, CancellationToken ct)
         => await ConfirmDistributionLabelAsync(request, ct, swallowCancellation: false);
 
@@ -565,7 +569,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     /// Use on the Pending-enqueue path where the WorkItem is already committed to the DB —
     /// the best-effort reasoning applies fully (there is nothing safe to revert).
     /// </param>
-    private async Task ConfirmDistributionLabelAsync(
+    private Task ConfirmDistributionLabelAsync(
         JobDistributionRequest request, CancellationToken ct, bool swallowCancellation)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -576,46 +580,30 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         // agent is actively working. Note: IRunLifecycleManager.AgentAcceptedRunAsync also
         // performs this swap (best-effort) in a concurrent dispatch path, so this call
         // is a safety net / idempotent confirmation.
-        try
+        _logger.Information(
+            "Orchestration: confirming distribution — swapping label to agent:in-progress for issue {IssueIdentifier}",
+            request.IssueIdentifier);
+
+        return _infra.LabelService.TrySwapLabelAsync(new LabelSwapContext(
+            request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.InProgress,
+            LabelTargetKind.Issue, _logger,
+            "DispatchOrchestrationService.ConfirmDistributionLabelAsync", ct)
         {
-            _logger.Information(
-                "Orchestration: confirming distribution — swapping label to agent:in-progress for issue {IssueIdentifier}",
-                request.IssueIdentifier);
-            await _infra.LabelService.SwapLabelAsync(
-                request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.InProgress, ct);
-        }
-        catch (OperationCanceledException) when (swallowCancellation)
-        {
-            // Queued path: WorkItem already committed — swallow OCE so the item is not
-            // stranded by a cancellation that arrives after the DB write.
-            _logger.Warning(
-                "Orchestration: label swap to agent:in-progress cancelled for issue {IssueIdentifier} " +
-                "(WorkItem already Pending — label will be wrong until next cycle)",
-                request.IssueIdentifier);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.Warning(ex,
-                "Orchestration: failed to swap label to agent:in-progress for issue {IssueIdentifier} (non-fatal — agent already has the job)",
-                request.IssueIdentifier);
-        }
+            SwallowCancellation = swallowCancellation
+        });
     }
 
-    public async Task RevertFailedDistributionAsync(JobDistributionRequest request, CancellationToken ct)
+    public Task RevertFailedDistributionAsync(JobDistributionRequest request, CancellationToken ct)
     {
-        try
-        {
-            // Revert label from agent:in-progress back to agent:next
-            _logger.Warning("Reverting failed distribution for issue {IssueIdentifier}: swapping label back to agent:next",
-                request.IssueIdentifier);
-            await _infra.LabelService.SwapLabelAsync(
-                request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.Next, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Failed to revert label for issue {IssueIdentifier} after distribution failure",
-                request.IssueIdentifier);
-        }
+        // Revert label from agent:in-progress back to agent:next (best-effort).
+        // Note: OCE propagates (swallowCancellation defaults false) — if the dispatch token is
+        // cancelled the revert should stop, not silently succeed.
+        _logger.Warning("Reverting failed distribution for issue {IssueIdentifier}: swapping label back to agent:next",
+            request.IssueIdentifier);
+        return _infra.LabelService.TrySwapLabelAsync(
+            request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.Next,
+            LabelTargetKind.Issue, _logger,
+            "DispatchOrchestrationService.RevertFailedDistributionAsync", ct);
         // Note: in-memory run cleanup is no longer done here. The run is owned by the API's
         // IOrchestratorRunService; the API will remove it when the WorkItem transitions to a
         // terminal state via POST /api/work-items/{id}/status (Req 1a.1 Option A).

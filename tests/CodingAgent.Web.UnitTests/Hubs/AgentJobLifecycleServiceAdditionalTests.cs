@@ -243,12 +243,25 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
         _facade.Setup(f => f.GetRun("job-1")).Returns(run);
         _facade.Setup(f => f.GetWorkItemRetryCountAsync("job-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(3);
+        _facade.Setup(f => f.TransitionWorkItemAsync(It.IsAny<JobId>(), WorkItemStatus.Failed,
+            It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync(true);
+        _labelService
+            .Setup(l => l.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+                It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
         var svc = CreateService();
 
         await svc.HandleJobRejectedAsync(new JobId("job-1"), null, "crash", CancellationToken.None);
 
-        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Once);
+        _labelService.Verify(l => l.SwapLabelAsync(
+            It.Is<ProviderConfigId>(p => p.Value == run.IssueProviderConfigId),
+            It.Is<IssueIdentifier>(i => i.Value == run.IssueIdentifier.Value),
+            AgentLabels.Error,
+            LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -258,8 +271,13 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
         _facade.Setup(f => f.GetRun("job-1")).Returns(run);
         _facade.Setup(f => f.GetWorkItemRetryCountAsync("job-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(3);
-        _issueOps
-            .Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _facade.Setup(f => f.TransitionWorkItemAsync(It.IsAny<JobId>(), WorkItemStatus.Failed,
+            It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync(true);
+        _labelService
+            .Setup(l => l.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+                It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("rate limit"));
 
         var svc = CreateService();

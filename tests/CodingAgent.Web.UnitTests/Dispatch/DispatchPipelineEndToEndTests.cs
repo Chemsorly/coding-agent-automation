@@ -334,7 +334,8 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
         // After prepare: no label swap happened
         _mockLabelService.Verify(
-            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress,
+                It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
         // Distribute (K8s queues as Pending)
@@ -345,7 +346,8 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         await orchestration.ConfirmDistributionLabelAsync(request!, CancellationToken.None);
 
         _mockLabelService.Verify(
-            l => l.SwapLabelAsync("issue-1", "org/repo#42", AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            l => l.SwapLabelAsync("issue-1", "org/repo#42", AgentLabels.InProgress,
+                LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
