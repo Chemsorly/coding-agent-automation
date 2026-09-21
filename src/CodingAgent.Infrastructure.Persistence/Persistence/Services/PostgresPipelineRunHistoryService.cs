@@ -167,8 +167,8 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     }
 
     /// <inheritdoc />
-    public void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory)
-        => WorkspaceDeletionGuard.TryDelete(workspacePath, runId, workspaceBaseDirectory, _logger);
+    public void TryDeleteWorkspace(WorkspacePath? workspacePath, string runId, string workspaceBaseDirectory)
+        => WorkspaceDeletionGuard.TryDelete(workspacePath?.Value, runId, workspaceBaseDirectory, _logger);
 
     /// <inheritdoc />
     public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null)

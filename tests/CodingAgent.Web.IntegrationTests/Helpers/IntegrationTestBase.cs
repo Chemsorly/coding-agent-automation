@@ -92,7 +92,7 @@ public class IntegrationTestBase : IDisposable
         MockAgentProvider.Setup(p => p.PipelineInjectedPaths)
             .Returns(new List<string> { ".kiro" });
 
-        MockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+        MockValidator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },

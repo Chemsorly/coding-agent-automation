@@ -161,11 +161,11 @@ public class QualityGateExecutorRetryTests
         var callCount = 0;
 
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<string?>()))
-            .Returns((string _, IReadOnlyList<QualityGateConfiguration> _, CancellationToken _, string? _) =>
+            .Returns((WorkspacePath _, IReadOnlyList<QualityGateConfiguration> _, CancellationToken _, string? _) =>
             {
                 callCount++;
                 if (callCount >= 2)
@@ -185,11 +185,11 @@ public class QualityGateExecutorRetryTests
         var callCount = 0;
 
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<string?>()))
-            .Returns((string _, IReadOnlyList<QualityGateConfiguration> _, CancellationToken _, string? _) =>
+            .Returns((WorkspacePath _, IReadOnlyList<QualityGateConfiguration> _, CancellationToken _, string? _) =>
             {
                 callCount++;
                 if (callCount >= 2)
@@ -213,7 +213,7 @@ public class QualityGateExecutorRetryTests
         string? capturedPrompt = null;
 
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<string?>()))
@@ -249,7 +249,7 @@ public class QualityGateExecutorRetryTests
         string? capturedPrompt = null;
 
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<string?>()))
@@ -285,7 +285,7 @@ public class QualityGateExecutorRetryTests
     {
         var config = CreateConfig(maxRetries: 3);
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<string?>()))
@@ -303,7 +303,7 @@ public class QualityGateExecutorRetryTests
     {
         var config = CreateConfig(maxRetries: 3);
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<string?>()))
@@ -802,7 +802,7 @@ public class QualityGateExecutorRetryTests
     private void SetupValidatorAlwaysFails()
     {
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<string?>()))
@@ -928,7 +928,7 @@ public class QualityGateExecutorFailureCategoryTests
     {
         // Arrange: validator always fails, so the initial retry loop exhausts and calls FinalizeDraftPrAsync directly
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<string?>()))
@@ -965,7 +965,7 @@ public class QualityGateExecutorFailureCategoryTests
         // may no longer be the one that routes into the cleanup function. Replace with SetupSequence or
         // a flag-based state machine to make the first-call-passes/rest-fail contract explicit.
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<string?>()))
