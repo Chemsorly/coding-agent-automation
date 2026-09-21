@@ -112,11 +112,6 @@ public sealed class ReconciliationLoop
         _k8sClient = k8sClient;
         _options = options;
         _log = (logger ?? Serilog.Log.Logger).ForContext<ReconciliationLoop>();
-        // TODO: If a pre-enriched logger is supplied (one already returned by ForContext<T>()),
-        // calling ForContext<ReconciliationLoop>() on it stacks enrichment contexts. In
-        // production the logger parameter is always null so this is harmless, but callers that
-        // pass an already-contextualised logger would accumulate source-context properties.
-        // (Review finding: .NET specialist [WARNING])
 
         if (workDistMeterFactory is not null)
         {
@@ -223,7 +218,7 @@ public sealed class ReconciliationLoop
             var enforceable = (Enforceable)ageResult;
 
             // Not timed out yet — skip.
-            // TODO: The strict-less-than guard means executionAgeSeconds == effectiveTimeoutSeconds
+            // TODO: [WARNING] The strict-less-than guard means executionAgeSeconds == effectiveTimeoutSeconds
             // is considered timed out (not skipped). At TimeoutSeconds == 60 (the canary minimum),
             // the canary guard (executionAgeSeconds < 60) and this guard (executionAgeSeconds < 60)
             // use the same threshold, so the canary invariant provides no protection for items at
@@ -246,7 +241,7 @@ public sealed class ReconciliationLoop
 
                 var jobName = await ResolveJobNameAsync(item, ct);
 
-                // TODO: agentId is null when no K8s Job was found via the label-selector path
+                // TODO: [WARNING] agentId is null when no K8s Job was found via the label-selector path
                 // (jobName == null). Before this fix, the ForWorkItem fallback always produced a
                 // non-null string here. Confirm that WorkDistributionTelemetry.LogTerminalStatus (and
                 // any downstream telemetry sink) tolerates a null agentId without throwing or silently
@@ -260,12 +255,6 @@ public sealed class ReconciliationLoop
                     new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
 
                 if (jobName is not null)
-                    // TODO [WARNING]: This if-statement is at depth 3 (foreach → try → if), exceeding
-                    // the acceptance criterion of no more than two levels of control flow within the
-                    // loop body. To reduce depth, extract the try-block contents into a private method
-                    // (e.g. ApplyTimeoutAsync(item, ct)) so the loop body consists of flat guard
-                    // statements followed by a single await at depth 1.
-                    // (Correctness review [WARNING])
                     await SafeDeleteJobAsync(jobName, ct);
             }
             catch (Exception ex)
@@ -583,14 +572,6 @@ public sealed class ReconciliationLoop
         var resolved = (labelJobs.Items ?? []).FirstOrDefault();
         if (resolved?.Metadata?.Name is null)
         {
-            // TODO [WARNING]: item.Id is passed twice — once for {Id} and once for {WorkItemId}.
-            // Both bind to the same Guid value, producing a redundant structured-log property.
-            // Either remove the second positional argument and embed the value inline in the
-            // format string as a literal (e.g. "...caa/work-item-id={item.Id:D}..."), or replace
-            // {WorkItemId} with a distinct property that adds information (e.g. the label-selector
-            // string used). This carry-forward from the original inline code is harmless at runtime
-            // but pollutes structured-log sinks that index by property name.
-            // (Correctness review [WARNING])
             _log.Warning("WorkItem {Id} timed out but no K8s Job found via label selector caa/work-item-id={WorkItemId} — job already deleted or never started",
                 item.Id, item.Id);
             return null;
@@ -622,11 +603,6 @@ public sealed class ReconciliationLoop
                     _reconciledTerminalIds.Add(workItemId.Value);
                 break;
                 // Active/Unknown/Pending — no action needed
-                // TODO: If a JobPhaseCancelled case is ever added, remember to also add the workItemId
-                // to _reconciledTerminalIds on success — the guard comment says "Succeeded, Failed,
-                // Cancelled" but the current switch only covers Succeeded and Failed. Omitting it for
-                // a future Cancelled case would allow duplicate PostStatusAsync calls within the K8s
-                // job retention window.
         }
     }
 
@@ -643,10 +619,6 @@ public sealed class ReconciliationLoop
     /// on the next cycle is correct for those cases).
     /// </para>
     /// </summary>
-    // TODO: The dual semantics of `false` (transient error → retry vs. 400 → already cached)
-    // are confusing. Consider splitting into a tri-state result (Success / RejectedCached /
-    // TransientError) to make the contract explicit and prevent future regressions where a
-    // caller misreads the return value. (Review finding: correctness [WARNING])
     private async Task<bool> HandleJobCompletedAsync(
         Guid workItemId,
         V1Job job,
@@ -752,17 +724,6 @@ public sealed class ReconciliationLoop
         // a running work item as failed and cancel the live K8s Job (data-corruption under the
         // default backoffLimit >= 1). This guard matches the equivalent counter-fallback check
         // that was previously in DispatchLoopHelpers.IsJobTerminal (deleted in issue #2323).
-        // TODO [WARNING]: DispatchLoopHelpers.IsJobTerminal was deleted in #2323. The stale
-        // cross-reference to it above has been updated to a past-tense note. The counter-fallback
-        // logic in this method and the deleted IsJobTerminal were aligned at deletion time, but
-        // the condition-path branches differed subtly: GetJobPhase issues two separate
-        // conditions.Any(...) calls (one for "Complete", one for "Failed"), while IsJobTerminal
-        // combined both into a single conditions.Any(c => (c.Type == "Complete" || c.Type ==
-        // "Failed") && c.Status == "True"). The observable difference is short-circuit order when
-        // both condition types are simultaneously True — a state Kubernetes does not produce in
-        // normal operation, so this is not a data-corruption risk. If a future dispatch helper
-        // with similar terminal-detection logic is introduced, ensure it has its own unit tests
-        // rather than relying on this method as a reference.
         if (job.Status?.Failed > 0 && (job.Status?.Active ?? 0) == 0) return JobPhaseFailed;
         return "Active";
     }

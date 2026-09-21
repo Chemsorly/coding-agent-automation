@@ -218,12 +218,6 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
             old = _cancellationTokenSource;
             _cancellationTokenSource = newCts;
         }
-        // TODO: [WARNING] old?.Dispose() is called outside the lock, so a concurrent CancelPipelineAsync that read
-        // the same 'old' reference under its own lock scope can race on the dispose of that replaced CTS. This risks
-        // a double-dispose of the *old* CTS (not the active one being cancelled), which CancellationTokenSource.Dispose
-        // tolerates silently. The _cancelLock comment states it serialises CreateLinkedCancellationToken — that claim
-        // is only partially true: the field swap is serialised, but the subsequent dispose of the old CTS is not.
-        // To fully serialise, move old?.Dispose() inside the lock, or accept the pre-existing benign double-dispose risk.
         old?.Dispose();
         return newCts.Token;
     }
