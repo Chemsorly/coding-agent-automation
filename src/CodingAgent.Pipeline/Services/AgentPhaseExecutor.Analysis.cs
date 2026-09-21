@@ -438,6 +438,12 @@ public partial class AgentPhaseExecutor
     private async Task<AnalysisAssessment> ReadAssessmentAsync(PipelineRun run, CancellationToken ct)
     {
         var assessmentPath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.AnalysisAssessmentFilePath);
+        // NOTE: This method intentionally does NOT use JsonFileReader.TryReadJsonFileAsync.
+        // The shared helper returns null on any error condition, but ReadAssessmentAsync must
+        // throw AnalysisIncompleteException so the pipeline can surface actionable failure
+        // messages (missing file, deserialized-to-null, missing recommendation field, malformed JSON,
+        // I/O failure) with run-scoped context. Replacing this with the null-returning helper would
+        // silently swallow errors that the pipeline depends on for retry/failure routing.
         if (!File.Exists(assessmentPath))
         {
             _logger.Warning("Pipeline {RunId} analysis-assessment.json not found at {Path}", run.RunId, assessmentPath);
