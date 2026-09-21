@@ -477,7 +477,9 @@ public sealed class PullRequestFinalizationService
 
     /// <summary>
     /// Collects structured feedback from the agent about the run.
-    /// On failure, creates a fallback feedback record via feedbackService.
+    /// Delegates to <see cref="FeedbackService.CollectFeedbackCoreAsync"/> for the shared
+    /// collect-parse-fallback sequence. Pipeline-level cancellation propagates; timeouts and
+    /// non-OCE exceptions produce a fallback record via <see cref="FeedbackService.CreateFallbackFeedback"/>.
     /// Emits <c>pipeline.step.duration{step_name="FeedbackCollection"}</c> unconditionally (including on failure).
     /// </summary>
     public async Task CollectFeedbackAsync(
@@ -493,27 +495,28 @@ public sealed class PullRequestFinalizationService
         try
         {
             var elapsed = DateTimeOffset.UtcNow - run.StartedAtOffset;
-            var (harnessCategories, issueCategories) = await feedbackService.LoadPreviousCategoriesAsync(historyService, ct).ConfigureAwait(false);
-
-            var feedbackPrompt = FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
-                run, elapsed, harnessCategories, issueCategories);
-
-            var feedbackResult = await agentProvider.ExecuteAsync(
-                new AgentRequest
-                {
-                    Prompt = feedbackPrompt,
-                    WorkspacePath = run.WorkspacePath!,
-                    Timeout = TimeSpan.FromSeconds(config.FeedbackTimeoutSeconds),
-                    UseResume = true
-                },
+            await feedbackService.CollectFeedbackCoreAsync(
+                run,
+                agentProvider,
+                historyService,
+                cats => FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
+                    run, elapsed, cats.HarnessCategories, cats.IssueCategories),
+                FeedbackOutcome.Success,
+                config.FeedbackTimeoutSeconds,
                 ct,
-                line => emitOutputLine(line));
-
-            var responseText = string.Join("\n", feedbackResult.OutputLines);
-            run.Feedback = feedbackService.ParseFeedbackFromResponse(responseText, FeedbackOutcome.Success, DateTime.UtcNow);
+                emitOutputLine);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            // CollectFeedbackCoreAsync absorbs non-OCE exceptions internally (producing a fallback),
+            // so this outer catch is a safety guard for exceptions raised outside the agent call
+            // (e.g., from the elapsed computation). Pipeline-level OCE propagates.
+            // TODO: The comment previously mentioned "prompt building" as a possible throw site,
+            // but prompt building now happens inside CollectFeedbackCoreAsync. The only code that
+            // can realistically throw here is the elapsed DateTimeOffset subtraction (which cannot
+            // throw in practice). This outer catch is therefore effectively dead code for non-OCE
+            // exceptions, but is retained as a safety net in case future callers add code between
+            // the elapsed computation and the CollectFeedbackCoreAsync call.
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.AddException(ex);
             _logger.Warning(ex, "Pipeline {RunId} feedback collection failed, using fallback", run.RunId);
