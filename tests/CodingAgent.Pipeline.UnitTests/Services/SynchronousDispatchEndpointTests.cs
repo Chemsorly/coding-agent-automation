@@ -1881,6 +1881,13 @@ public sealed class DispatchPendingWorkItemEndpointTests
     /// before the PVC gate). The <c>PvcPoolExhaustions</c> counter must NOT be incremented because
     /// the rejection is a concurrency rejection, not a PVC exhaustion.
     /// </summary>
+    // TODO [WARNING]: This test covers the Kiro-agent combined scenario only. The prior bug was
+    // specifically gated on `isKiroAgent && pvcResult.AvailablePvcs.Count == 0`, so a non-Kiro
+    // agent in the same concurrency-limit + empty-"PVC pool" situation would not have triggered
+    // the old over-counting. The production fix (`gateResult is StatusCodeHttpResult { StatusCode: 503 }`)
+    // is correct regardless of agent type, but there is no test asserting that a non-Kiro agent
+    // with a combined concurrency+PVC rejection also does not increment PvcPoolExhaustions.
+    // This is a missing-coverage gap rather than a regression risk for the current fix.
     [Fact]
     public async Task DispatchPendingWorkItem_ConcurrencyLimitReachedAndPvcPoolEmpty_Returns409_AndDoesNotIncrementPvcPoolExhaustions()
     {

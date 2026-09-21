@@ -49,6 +49,14 @@ public class AgentStallMonitorTests
     /// 200ms provides a sufficient buffer even on loaded CI runners where the
     /// thread scheduler may not dispatch the Task.Run thread within 10ms.
     /// </summary>
+    // TODO [WARNING]: This is a time-dependent helper — a fixed 200ms sleep does not eliminate the
+    // race; it only widens the window. On a sufficiently loaded CI runner the Task.Run background
+    // loop may not have scheduled within 200ms, causing DetectsSilence and the stall-metrics test
+    // to fail non-deterministically. Additionally, for DetectsSilence the fake time is advanced by
+    // 2 minutes in a single call, which may only fire the first Delay continuation synchronously
+    // and leave the second poll iteration unscheduled before WaitForChatHistoryAsync is called —
+    // depending on FakeTimeProvider's Advance implementation. A signal-based approach (e.g. a
+    // TaskCompletionSource set when the loop enters its first Delay) would be fully deterministic.
     private static async Task YieldToMonitorAsync() => await Task.Delay(200);
 
     // ── DetectsProcessDeath ────────────────────────────────────────────────────
