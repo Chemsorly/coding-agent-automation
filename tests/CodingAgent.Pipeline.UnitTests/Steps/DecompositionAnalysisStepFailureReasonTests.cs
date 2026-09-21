@@ -220,9 +220,10 @@ public class DecompositionAnalysisStepFailureReasonTests : IDisposable
     }
 
     /// <summary>
-    /// AC3 (issue #2601) regression guard: When WriteEpicContextAsync succeeds but the agent
-    /// does not produce a plan file, the failure reason must use the original generic message —
-    /// NOT the context-unavailable message.
+    /// AC3 (issue #2601) regression guard: When WriteEpicContextAsync succeeds AND issues were
+    /// successfully downloaded (OpenIssuesDownloaded > 0) but the agent does not produce a plan
+    /// file, the failure reason must use the original generic message — NOT the context-unavailable
+    /// message.
     /// </summary>
     [Fact]
     public async Task ExecuteAsync_WhenEpicContextSucceeds_PlanMissing_FailureReasonMentionsAgentDidNotProduce()
@@ -244,6 +245,10 @@ public class DecompositionAnalysisStepFailureReasonTests : IDisposable
         SetupAgentSuccessNoPlanFile();
 
         var run = CreateRun();
+        // Signal that open-issue context was fully downloaded — this distinguishes "epic write
+        // succeeded, agent just produced no output" from the degraded WriteOpenIssueContext path
+        // (OpenIssuesDownloaded == 0 would trigger epicContextFailed for decomposition runs).
+        run.OpenIssuesDownloaded = 5;
         var context = BuildContext(run);
         var step = new DecompositionAnalysisStep();
 

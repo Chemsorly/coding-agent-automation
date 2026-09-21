@@ -805,4 +805,83 @@ public sealed class AgentHubIssueProxyTests
             Times.Once,
             "GetWorkItemIssueMetadataAsync must be attempted before throwing");
     }
+
+    // ── Outer Error logging — RequestListOpenIssues / Closed / Comments ──
+
+    [Fact]
+    public async Task RequestListOpenIssues_ProviderThrows_LogsErrorBeforeRethrow()
+    {
+        // Arrange: provider resolves successfully but throws during list call.
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        var (_, mockProvider) = SetupIssueProvider();
+        mockProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("upstream 503"));
+
+        var hub = CreateHub();
+        var act = () => hub.RequestListOpenIssues("job-1", 1, 25, null);
+
+        // Assert: HubException wraps the provider error
+        await act.Should().ThrowAsync<HubException>().WithMessage("*list open issues*");
+
+        // Assert: outer Error log fires (so the server-side cause is visible in Grafana)
+        _mockLogger.Verify(
+            l => l.Error(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("RequestListOpenIssues") && s.Contains("{JobId}")),
+                It.Is<string>(s => s == "job-1"),
+                It.IsAny<int>(),
+                It.IsAny<int>()),
+            Times.Once,
+            "RequestListOpenIssues must log at Error before rethrowing so the failure is visible in Grafana");
+    }
+
+    [Fact]
+    public async Task RequestListClosedIssues_ProviderThrows_LogsErrorBeforeRethrow()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        var (_, mockProvider) = SetupIssueProvider();
+        mockProvider.Setup(p => p.ListClosedIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("upstream 503"));
+
+        var hub = CreateHub();
+        var act = () => hub.RequestListClosedIssues("job-1", 1, 25, null, null);
+
+        await act.Should().ThrowAsync<HubException>().WithMessage("*list closed issues*");
+
+        _mockLogger.Verify(
+            l => l.Error(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("RequestListClosedIssues") && s.Contains("{JobId}")),
+                It.Is<string>(s => s == "job-1"),
+                It.IsAny<int>(),
+                It.IsAny<int>()),
+            Times.Once,
+            "RequestListClosedIssues must log at Error before rethrowing");
+    }
+
+    [Fact]
+    public async Task RequestListComments_ProviderThrows_LogsErrorBeforeRethrow()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        var (_, mockProvider) = SetupIssueProvider();
+        mockProvider.Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("upstream 503"));
+
+        var hub = CreateHub();
+        var act = () => hub.RequestListComments("job-1", "42");
+
+        await act.Should().ThrowAsync<HubException>().WithMessage("*list comments*");
+
+        _mockLogger.Verify(
+            l => l.Error(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("RequestListComments") && s.Contains("{JobId}")),
+                It.Is<string>(s => s == "job-1"),
+                It.IsAny<object>()),
+            Times.Once,
+            "RequestListComments must log at Error before rethrowing");
+    }
 }

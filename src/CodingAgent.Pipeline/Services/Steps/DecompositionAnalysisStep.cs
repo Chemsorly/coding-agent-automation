@@ -40,12 +40,6 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
         context.Callbacks.EmitOutputLine("🔍 Starting decomposition analysis...");
 
         // 2. Write epic issue body + comments to .agent/issue-context.md
-        // TODO: epicContextFailed only tracks failure of WriteEpicContextAsync (the single epic issue fetch).
-        // If WriteOpenIssueContext silently writes 0 files due to hub errors (AC2 scenario) but
-        // WriteEpicContextAsync succeeds, this flag remains false and the failure reason will use the generic
-        // "Agent did not produce" message rather than "context was unavailable" — even though the agent was
-        // deprived of all deduplication context. Consider also capturing the open-issue context degradation
-        // signal (e.g. writtenCount == 0 && totalIdentifiers > 0) in this flag or a separate one.
         var epicContextFailed = false;
         try
         {
@@ -56,6 +50,23 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
             epicContextFailed = true;
             logger.Warning(ex, "Failed to write epic context for run {RunId}, continuing without it", run.RunId);
             context.Callbacks.EmitOutputLine("⚠️ Failed to write epic context — continuing without it");
+        }
+
+        // Capture WriteOpenIssueContext degradation: if the prior step tried to fetch issues
+        // but wrote 0 files (hub errors silently swallowed per-identifier), treat it the same
+        // as a WriteEpicContextAsync failure so the run uses FailureReason.InfrastructureFailure
+        // rather than the generic "Agent did not produce" message. Only applies to epic-scoped
+        // runs (DecompositionAnalysis / Decomposition) — other run types don't download context.
+        if (!epicContextFailed
+            && run.OpenIssuesDownloaded == 0
+            && run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+        {
+            epicContextFailed = true;
+            logger.Warning(
+                "WriteOpenIssueContext wrote 0 files for run {RunId} (RunType={RunType}) — " +
+                "treating as context unavailable; all RequestGetIssue calls likely failed",
+                run.RunId, run.RunType);
+            context.Callbacks.EmitOutputLine("⚠️ Issue context unavailable — open-issue context could not be downloaded");
         }
 
         // 3. Build analysis prompt
