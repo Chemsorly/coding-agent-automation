@@ -155,7 +155,7 @@ public class QualityGateExecutorRetryDecisionTests
 
         // Control-flow decision: ShouldBreak was taken after 10 consecutive transient responses.
         // 10 retry-loop agent calls + 1 failure-feedback call = 11 total.
-        // TODO [WARNING]: Times.Exactly(11) ties the assertion to infrastructure assumptions: 10
+        // NOTE: Times.Exactly(11) ties the assertion to infrastructure assumptions: 10
         // comes from MaxConsecutiveTransientRetries (a private const) and 1 from the failure-
         // feedback call path in CollectFailureFeedbackAsync. If either changes, this assertion
         // silently becomes wrong. A more resilient alternative would assert separately that the
@@ -210,7 +210,7 @@ public class QualityGateExecutorRetryDecisionTests
 
         // Control-flow decision: ShouldBreak was taken immediately — only 1 retry-loop agent
         // call was made (plus 1 failure-feedback call = 2 total), not 3.
-        // TODO [WARNING]: It.Is<AgentRequest>(r => r.Prompt.Contains("Quality gates failed"))
+        // NOTE: It.Is<AgentRequest>(r => r.Prompt.Contains("Quality gates failed"))
         // filters the verification to only calls whose prompt contains that substring. If the
         // retry prompt template changes, this filter could silently match zero calls, causing
         // Times.Once to pass trivially even if no retry call was made. Consider removing the
@@ -285,7 +285,7 @@ public class QualityGateExecutorRetryDecisionTests
 
         // Control-flow decision: ShouldContinue was taken on the first call, so the loop
         // made at least two retry-loop agent calls (not zero or one).
-        // TODO [WARNING]: BeGreaterThanOrEqualTo(2) is a weak lower-bound assertion. A tighter
+        // NOTE: BeGreaterThanOrEqualTo(2) is a weak lower-bound assertion. A tighter
         // assertion (e.g., callCount.Should().Be(3) for 1 dead-session call + 1 normal retry
         // call + 1 failure-feedback call) would more precisely validate that ShouldContinue
         // was taken exactly once. The current assertion would also pass if the loop made 5 or
@@ -293,7 +293,7 @@ public class QualityGateExecutorRetryDecisionTests
         callCount.Should().BeGreaterThanOrEqualTo(2,
             "ShouldContinue must have been returned for the dead-session call, causing a second agent call");
 
-        // TODO [WARNING]: This test does not assert that _run.CodegenSessionId was cleared to null
+        // NOTE: This test does not assert that _run.CodegenSessionId was cleared to null
         // after the RestartSession iteration. HandleSessionRestartAsync sets run.CodegenSessionId = null
         // as its primary side effect, but that mutation is not verified here. Adding
         // _run.CodegenSessionId.Should().BeNull() would directly validate the handler's state mutation.
@@ -348,7 +348,7 @@ public class QualityGateExecutorRetryDecisionTests
 
         // Control-flow decision: ShouldContinue was false — QG validation ran after the agent call.
         // At minimum: 1 initial QG call + 1 post-fix QG call = 2 calls.
-        // TODO [WARNING]: BeGreaterThanOrEqualTo(2) is a weak assertion. Since maxRetries: 1 and
+        // NOTE: BeGreaterThanOrEqualTo(2) is a weak assertion. Since maxRetries: 1 and
         // the agent always returns a normal result, the exact expected count is deterministic:
         // 1 initial QG call + 1 post-fix QG call = exactly 2. Asserting .Be(2) would catch
         // regressions where the loop runs extra iterations.

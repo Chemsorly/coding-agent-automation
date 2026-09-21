@@ -526,10 +526,10 @@ public partial class QualityGateExecutor
             var outcome = ClassifyRetryOutcome(agentResult);
             var decision = outcome switch
             {
-                RetryOutcome.TransientWait  => await HandleTransientAsync(run, config, consecutiveTransientRetries, ct),
-                RetryOutcome.AbortAuth      => await HandleAuthAbortAsync(run),
+                RetryOutcome.TransientWait => await HandleTransientAsync(run, config, consecutiveTransientRetries, ct),
+                RetryOutcome.AbortAuth => await HandleAuthAbortAsync(run),
                 RetryOutcome.RestartSession => await HandleSessionRestartAsync(run),
-                _                           => await HandleDefaultRetryAsync(run, agentResult, context.RepoProvider)
+                _ => await HandleDefaultRetryAsync(run, agentResult, context.RepoProvider)
             };
             run.RetryCount += decision.RetryCountDelta;
             return decision;
