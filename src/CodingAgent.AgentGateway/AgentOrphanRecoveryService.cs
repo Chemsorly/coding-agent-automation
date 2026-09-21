@@ -48,7 +48,7 @@ public sealed class AgentOrphanRecoveryService(
         }
         else if (entry is { ActiveJobId: not null })
         {
-            HandleCrashRecovery(message, agentId, entry);
+            await HandleCrashRecoveryAsync(message, agentId, entry);
         }
     }
 
@@ -454,7 +454,7 @@ public sealed class AgentOrphanRecoveryService(
         }
     }
 
-    private void HandleCrashRecovery(AgentRegistrationMessage message, AgentId agentId, AgentEntry entry)
+    private async Task HandleCrashRecoveryAsync(AgentRegistrationMessage message, AgentId agentId, AgentEntry entry)
     {
         // Crash recovery detection: agent registered without an active job but the
         // registry already restored ActiveJobId (from its own prior state in the update factory).
@@ -474,42 +474,52 @@ public sealed class AgentOrphanRecoveryService(
                     // TODO: [WARNING] t.Exception is guaranteed non-null inside OnlyOnFaulted;
                     // ?. is misleading. Prefer t.Exception!.Flatten(). See #2779.
                     .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
-                            "HandleCrashRecovery: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
+                            "HandleCrashRecoveryAsync: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
                             agentId, "orphanRestoredAt"),
                         CancellationToken.None,
                         TaskContinuationOptions.OnlyOnFaulted,
                         TaskScheduler.Default);
             }
 
-            // Re-materialize the run hash so subsequent [RequiresActiveJob] hub calls can find
-            // the run via GetRun. entry.ActiveJobId was restored from prior registry state and
-            // the hash may have expired since. Read the run first; if the hash still exists,
-            // AddRun refreshes it without a TTL (HSET + SADD, both idempotent).
-            // If the hash is already gone, nothing can be done — ReconciliationService will
-            // time out the run as it would for any unresponsive agent.
-            // TODO: [WARNING] When GetRun returns null (hash already expired), this path sets
-            // entry.OrphanRestoredAt and proceeds without re-materializing the run. Every
-            // subsequent [RequiresActiveJob] hub call (including RequestGetIssue) will still fail
-            // with "No active run found" — the same bug the issue describes. At this point
-            // the run data is unrecoverable from Redis; a DB fallback (loading the WorkItem from
-            // Postgres to reconstruct a minimal PipelineRun) would be required to fully address
-            // this case (Option B from the issue's suggested approaches).
             if (existingJobId is not null)
             {
                 var run = _facade.GetRun(existingJobId);
                 if (run is not null)
+                {
+                    // Hash still live — refresh it to prevent imminent TTL expiry.
                     _facade.AddRun(run);
+                }
+                else
+                {
+                    // Option B: Redis hash has expired. Reconstruct a minimal PipelineRun from
+                    // the WorkItem record so [RequiresActiveJob] hub calls (e.g. RequestGetIssue)
+                    // succeed rather than failing with "No active run or work item found".
+                    // The restored run carries only the fields recoverable from the DB — enough
+                    // for ResolveIssueProviderForRunAsync and [RequiresActiveJob] auth to pass.
+                    // ReconciliationService will still time out the run if the agent does not resume.
+                    var restoredRun = await TryReconstructRunFromDbAsync(existingJobId, agentId.Value);
+                    if (restoredRun is not null)
+                    {
+                        _facade.AddRun(restoredRun);
+                        _logger.Warning(
+                            "HandleCrashRecoveryAsync: Redis hash expired for run {RunId} (agent {AgentId}) — " +
+                            "reconstructed minimal PipelineRun from WorkItem DB record; hub calls will succeed but run metadata is partial",
+                            existingJobId, agentId);
+                    }
+                    else
+                    {
+                        _logger.Warning(
+                            "HandleCrashRecoveryAsync: Redis hash expired for run {RunId} (agent {AgentId}) and WorkItem not found in DB — " +
+                            "hub calls requiring GetRun will fail; ReconciliationService will time out the run",
+                            existingJobId, agentId);
+                    }
+                }
             }
 
-            // TODO: [WARNING] The log interpolation below uses entry.ActiveJobId, which is read
-            // outside lock(entry.SyncRoot). existingJobId was captured inside the lock and should
-            // be used here instead to avoid a benign TOCTOU: a concurrent disconnect handler
-            // could clear entry.ActiveJobId to null between the lock release and this log statement,
-            // causing the log to print null when existingJobId is non-null.
             _logger.Warning(
                 "Agent {AgentId} re-registered without active job but orchestrator has {JobId} assigned (crash recovery). " +
                 "ReconciliationService will time out the run if agent does not resume.",
-                agentId, entry.ActiveJobId);
+                agentId, existingJobId);
         }
         else
         {
@@ -517,5 +527,51 @@ public sealed class AgentOrphanRecoveryService(
                 "Agent {AgentId} registered with active job {ActiveJobId} (status={Status})",
                 agentId, entry.ActiveJobId, entry.Status);
         }
+    }
+
+    /// <summary>
+    /// Attempts to reconstruct a minimal <see cref="PipelineRun"/> from the WorkItem DB record
+    /// when the Redis hash has expired. Returns null if the WorkItem cannot be found or lacks
+    /// the minimum required fields (IssueIdentifier, IssueProviderConfigId, RepoProviderConfigId).
+    /// The reconstructed run carries only fields recoverable from the DB — enough for
+    /// <see cref="ResolveIssueProviderForRunAsync"/> and [RequiresActiveJob] auth to pass.
+    /// </summary>
+    private async Task<PipelineRun?> TryReconstructRunFromDbAsync(string runId, string agentId)
+    {
+        if (!Guid.TryParse(runId, out _))
+        {
+            _logger.Warning(
+                "TryReconstructRunFromDbAsync: runId '{RunId}' is not a valid GUID — cannot query WorkItem",
+                runId);
+            return null;
+        }
+
+        var jobId = new JobId(runId);
+
+        var issueMetadata = await _facade.GetWorkItemIssueMetadataAsync(jobId, CancellationToken.None);
+        if (issueMetadata is null)
+            return null;
+
+        var providerIds = await _facade.GetWorkItemProviderConfigIdsAsync(jobId, CancellationToken.None);
+        var repoProviderConfigId = providerIds?.RepoProviderConfigId;
+        if (string.IsNullOrEmpty(repoProviderConfigId))
+        {
+            _logger.Warning(
+                "TryReconstructRunFromDbAsync: WorkItem {RunId} has no RepoProviderConfigId in Payload — cannot reconstruct PipelineRun",
+                runId);
+            return null;
+        }
+
+        return PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = runId,
+            IssueIdentifier = issueMetadata.Value.IssueIdentifier,
+            IssueTitle = string.Empty,
+            IssueProviderConfigId = issueMetadata.Value.IssueProviderConfigId,
+            RepoProviderConfigId = repoProviderConfigId,
+            BrainProviderConfigId = providerIds!.Value.BrainProviderConfigId,
+            InitiatedBy = "recovery",
+            AgentId = new AgentId(agentId),
+        });
     }
 }

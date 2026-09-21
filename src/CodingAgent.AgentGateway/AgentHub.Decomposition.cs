@@ -83,10 +83,18 @@ public sealed partial class AgentHub
     /// Called by the agent's <c>OrchestratorProxy.ListOpenIssuesAsync</c>.
     /// </summary>
     [RequiresActiveJob]
-    public Task<PagedResult<IssueSummary>> RequestListOpenIssues(JobId jobId, int page, int pageSize, IReadOnlyList<string>? labels)
+    public async Task<PagedResult<IssueSummary>> RequestListOpenIssues(JobId jobId, int page, int pageSize, IReadOnlyList<string>? labels)
     {
-        return ExecuteWithIssueProviderAsync<PagedResult<IssueSummary>>(jobId.Value, "list open issues",
-            (provider, ct) => provider.ListOpenIssuesAsync(page, pageSize, labels, ct));
+        try
+        {
+            return await ExecuteWithIssueProviderAsync<PagedResult<IssueSummary>>(jobId.Value, "list open issues",
+                (provider, ct) => provider.ListOpenIssuesAsync(page, pageSize, labels, ct));
+        }
+        catch (Exception ex)
+        {
+            throw new HubException(
+                $"RequestListOpenIssues failed for job {jobId.Value} (page={page}, pageSize={pageSize}): {ex.Message}", ex);
+        }
     }
 
     /// <summary>
@@ -95,10 +103,18 @@ public sealed partial class AgentHub
     /// to include recently-closed sibling issues in agent context.
     /// </summary>
     [RequiresActiveJob]
-    public Task<PagedResult<IssueSummary>> RequestListClosedIssues(JobId jobId, int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since)
+    public async Task<PagedResult<IssueSummary>> RequestListClosedIssues(JobId jobId, int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since)
     {
-        return ExecuteWithIssueProviderAsync<PagedResult<IssueSummary>>(jobId.Value, "list closed issues",
-            (provider, ct) => provider.ListClosedIssuesAsync(page, pageSize, labels, since, ct));
+        try
+        {
+            return await ExecuteWithIssueProviderAsync<PagedResult<IssueSummary>>(jobId.Value, "list closed issues",
+                (provider, ct) => provider.ListClosedIssuesAsync(page, pageSize, labels, since, ct));
+        }
+        catch (Exception ex)
+        {
+            throw new HubException(
+                $"RequestListClosedIssues failed for job {jobId.Value} (page={page}, pageSize={pageSize}): {ex.Message}", ex);
+        }
     }
 
     /// <summary>
@@ -138,10 +154,8 @@ public sealed partial class AgentHub
             // ExecuteWithIssueProviderAsync already logs provider-level exceptions at Error; this
             // catch captures HubExceptions thrown by ResolveIssueProviderForRunAsync (missing run,
             // missing provider config) that escape the inner try/catch.
-            _logger.Error(ex,
-                "RequestGetIssue failed for job {JobId}, identifier {Identifier} — agent will receive HubException",
-                jobId.Value, SanitizeForLog(identifier));
-            throw;
+            throw new HubException(
+                $"RequestGetIssue failed for job {jobId.Value}, identifier '{SanitizeForLog(identifier)}': {ex.Message}", ex);
         }
     }
 
@@ -150,12 +164,20 @@ public sealed partial class AgentHub
     /// Called by the agent's <c>OrchestratorProxy.ListCommentsAsync</c>.
     /// </summary>
     [RequiresActiveJob]
-    public Task<IReadOnlyList<IssueComment>> RequestListComments(JobId jobId, string identifier)
+    public async Task<IReadOnlyList<IssueComment>> RequestListComments(JobId jobId, string identifier)
     {
         ArgumentNullException.ThrowIfNull(identifier);
 
-        return ExecuteWithIssueProviderAsync<IReadOnlyList<IssueComment>>(jobId.Value, $"list comments for issue '{identifier}'",
-            (provider, ct) => provider.ListCommentsAsync(identifier, ct));
+        try
+        {
+            return await ExecuteWithIssueProviderAsync<IReadOnlyList<IssueComment>>(jobId.Value, $"list comments for issue '{identifier}'",
+                (provider, ct) => provider.ListCommentsAsync(identifier, ct));
+        }
+        catch (Exception ex)
+        {
+            throw new HubException(
+                $"RequestListComments failed for job {jobId.Value}, identifier '{SanitizeForLog(identifier)}': {ex.Message}", ex);
+        }
     }
 
     /// <summary>
