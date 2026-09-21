@@ -391,6 +391,23 @@ public class QualityGateExecutorConflictRestartAppendTests
                 It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "CreatePullRequest must not be called for ConflictRestart");
+
+        // ConflictRestart is a terminal exit — run.MarkCompleted() must be called so that
+        // CompletedAtOffset is set at termination time, not deferred to BuildCompletionPayload.
+        // TODO [WARNING] (TestQualityReviewer): This assertion is weaker than the sibling Cancelled-path
+        // pattern in QualityGateCancellationLabelTests.cs:137-138, which captures a `beforeTest` timestamp
+        // and asserts `.BeOnOrAfter(beforeTest)`. Consider adding a boundary check:
+        //   var before = DateTimeOffset.UtcNow; // captured before the Act
+        //   run.CompletedAtOffset!.Value.Should().BeOnOrAfter(before);
+        // This would catch a regression where MarkCompleted() is replaced with a direct assignment
+        // to a past timestamp (e.g. DateTimeOffset.MinValue), which .NotBeNull() would not catch.
+        // TODO [WARNING] (TestQualityReviewer): MarkCompleted() sets both CompletedAtOffset and the legacy
+        // CompletedAt property (see PipelineRun.Lifecycle.cs:11-13). The sibling Cancelled-path test
+        // (QualityGateCancellationLabelTests.cs:137) asserts on run.CompletedAt for consistency.
+        // Consider also asserting run.CompletedAt here to match that pattern and guard against a
+        // partial-write regression if MarkCompleted() is ever refactored.
+        run.CompletedAtOffset.Should().NotBeNull(
+            "ConflictRestart is a terminal exit and must set CompletedAtOffset via run.MarkCompleted()");
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
@@ -495,7 +512,7 @@ public class QualityGateExecutorConflictRestartRetryLoopTests
         //          .ReturnsAsync(InLoopPassingReport);
         var validatorCallCount = 0;
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<string?>()))

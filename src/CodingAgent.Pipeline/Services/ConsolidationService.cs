@@ -367,7 +367,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     /// <inheritdoc />
     public async Task<HarnessSuggestions?> GetHarnessSuggestionsAsync(CancellationToken ct)
     {
-        try { return await _harnessSuggestionStore.GetAsync(ct); }
+        try { return await _harnessSuggestionStore.LoadAsync(ct); }
         catch (Exception ex) { _logger.Warning(ex, "Failed to read harness suggestions"); return null; }
     }
 

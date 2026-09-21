@@ -54,12 +54,12 @@ public sealed class BrainSyncService : IBrainSyncService
     /// ensures .gitignore entry, and counts knowledge files.
     /// </summary>
     public async Task SyncPreRunAsync(
-        PipelineRun run, IRepositoryProvider brainProvider, string workspacePath,
+        PipelineRun run, IRepositoryProvider brainProvider, WorkspacePath workspacePath,
         CancellationToken ct, Action<string>? onOutputLine = null)
     {
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(brainProvider);
-        ArgumentNullException.ThrowIfNull(workspacePath);
+        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value, nameof(workspacePath));
         onOutputLine?.Invoke("🧠 Syncing brain repository...");
         var brainSw = System.Diagnostics.Stopwatch.StartNew();
         var brainPath = Path.Combine(workspacePath, AgentWorkspacePaths.BrainDirectory);

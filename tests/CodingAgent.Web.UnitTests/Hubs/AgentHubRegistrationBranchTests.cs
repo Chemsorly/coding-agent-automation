@@ -709,7 +709,7 @@ public sealed class AgentHubRegistrationBranchTests
         var newEntry = CreateEntry("agent-1", "conn-new");
 
         _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "agent-1"))).Returns(existingEntry);
-        _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-new")).Returns(newEntry);
+        _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-new", true)).Returns(newEntry);
         _orphanRecoveryService
             .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
             .Returns(Task.CompletedTask);
@@ -727,9 +727,10 @@ public sealed class AgentHubRegistrationBranchTests
         // ForceDisconnect must NOT be called — the pipeline connection must be preserved
         mockOldClientProxy.Verify(p => p.ForceDisconnect(), Times.Never,
             "mid-run reconnect without ActiveJob must not ForceDisconnect the existing pipeline connection");
-        // Registration must still complete
-        _facade.Verify(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-new"), Times.Once,
-            "registration must complete even when ForceDisconnect is skipped");
+        // Registration must still complete with preserveExistingConnectionId=true so conn-old stays
+        // in _connectionIndex for AgentAuthorizationFilter lookups during the in-flight job.
+        _facade.Verify(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-new", true), Times.Once,
+            "registration must complete with preserveExistingConnectionId=true to preserve the pipeline connection");
     }
 
     [Fact]

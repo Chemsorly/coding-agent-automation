@@ -17,8 +17,8 @@ namespace CodingAgent.Web.UnitTests;
 /// </summary>
 public class DispatchOrchestrationServiceTests
 {
-    private readonly Mock<IAgentProfileStore>   _mockAgentProfileStore  = new();
-    private readonly Mock<IConfigurationStore>  _mockProviderConfigStore = new();
+    private readonly Mock<IAgentProfileStore> _mockAgentProfileStore = new();
+    private readonly Mock<IConfigurationStore> _mockProviderConfigStore = new();
     private readonly Mock<IPipelineConfigStore> _mockPipelineConfigStore = new();
     private readonly Mock<IProviderFactory> _mockProviderFactory = new();
     private readonly Mock<ILabelService> _mockLabelService = new();
@@ -1759,6 +1759,226 @@ public class DispatchOrchestrationServiceTests
         // TODO [WARNING] resolved: assert both Name and Command to verify passthrough is unmodified.
         result.McpServers![0].Name.Should().Be("context7");
         result.McpServers![0].Command.Should().Be("uvx", "passthrough must preserve all profile-sourced field values, not just the name");
+    }
+
+    // ── BuildLocalRun characterization tests ──────────────────────────────────
+    // These tests lock in the field values produced by each RunType arm of BuildLocalRun.
+    // They must pass against existing code before any refactoring is applied.
+    // The RunType assertions are load-bearing: CreateImplementation and CreateReview have no
+    // RunType guard (unlike CreateDecomposition), so a wrong factory/RunType pairing would
+    // produce a silently mistyped run that only these assertions will catch.
+
+    [Fact]
+    public async Task BuildLocalRun_ReviewRunType_SetsCreatedRunFieldsCorrectly()
+    {
+        // Characterization test: Review arm must set RunType=Review and propagate all shared fields.
+        SetupStandardMocks();
+        var service = CreateService();
+
+        var result = await service.PrepareAsync(
+            new OrchestratorPreparationRequest(
+                IssueIdentifier: "issue-42",
+                IssueProviderId: "issue-1",
+                RepoProviderId: "repo-1",
+                BrainProviderId: "brain-42",
+                PipelineProviderId: null,
+                InitiatedBy: "loop",
+                RequiredLabels: ["dotnet"],
+                Project: TestProject,
+                RunType: PipelineRunType.Review),
+            CancellationToken.None);
+
+        result.Should().NotBeNull();
+        var run = result!.CreatedRun;
+        run.RunType.Should().Be(PipelineRunType.Review,
+            "Review arm must set RunType=Review on the created run");
+        run.IssueIdentifier.Value.Should().Be("issue-42");
+        run.IssueProviderConfigId.Should().Be("issue-1");
+        run.RepoProviderConfigId.Should().Be("repo-1");
+        run.InitiatedBy.Should().Be("loop");
+        run.AgentProviderConfigId.Should().Be("agent-config-1",
+            "AgentProviderConfigId comes from the resolved profile, not the request");
+        run.BrainProviderConfigId.Should().Be("brain-42",
+            "BrainProviderConfigId is load-bearing — AgentHubFacade reads it back for token refresh");
+    }
+
+    [Fact]
+    public async Task BuildLocalRun_DecompositionRunType_SetsCreatedRunFieldsCorrectly()
+    {
+        // Characterization test: Decomposition arm must set RunType=Decomposition and propagate all shared fields.
+        // TODO: The SetupStandardMocks() call below already configures CreateIssueProvider; the
+        // subsequent override replaces it (last Moq Setup wins). This creates implicit coupling:
+        // if SetupStandardMocks is ever changed to no longer configure CreateIssueProvider, the
+        // override becomes a no-op and the test may silently break. Consider removing the
+        // SetupStandardMocks() call and configuring all mocks explicitly here instead.
+        SetupStandardMocks();
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync("issue-42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "issue-42",
+                Title = "Test Issue",
+                Description = "## Requirements\nDo the thing",
+                Labels = ["agent:next"]
+            });
+        mockIssueProvider
+            .Setup(p => p.ListCommentsAsync("issue-42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<IssueComment>());
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var service = CreateService();
+
+        var result = await service.PrepareAsync(
+            new OrchestratorPreparationRequest(
+                IssueIdentifier: "issue-42",
+                IssueProviderId: "issue-1",
+                RepoProviderId: "repo-1",
+                BrainProviderId: "brain-42",
+                PipelineProviderId: null,
+                InitiatedBy: "loop",
+                RequiredLabels: ["dotnet"],
+                Project: TestProject,
+                RunType: PipelineRunType.Decomposition),
+            CancellationToken.None);
+
+        result.Should().NotBeNull();
+        var run = result!.CreatedRun;
+        run.RunType.Should().Be(PipelineRunType.Decomposition,
+            "Decomposition arm must set RunType=Decomposition on the created run");
+        run.IssueIdentifier.Value.Should().Be("issue-42");
+        run.IssueProviderConfigId.Should().Be("issue-1");
+        run.RepoProviderConfigId.Should().Be("repo-1");
+        run.InitiatedBy.Should().Be("loop");
+        run.AgentProviderConfigId.Should().Be("agent-config-1");
+        run.BrainProviderConfigId.Should().Be("brain-42");
+    }
+
+    [Fact]
+    public async Task BuildLocalRun_DecompositionAnalysisRunType_SetsCreatedRunFieldsCorrectly()
+    {
+        // Characterization test: DecompositionAnalysis arm must set RunType=DecompositionAnalysis and propagate all shared fields.
+        // TODO: The SetupStandardMocks() call below already configures CreateIssueProvider; the
+        // subsequent override replaces it (last Moq Setup wins). This creates implicit coupling:
+        // if SetupStandardMocks is ever changed to no longer configure CreateIssueProvider, the
+        // override becomes a no-op and the test may silently break. Consider removing the
+        // SetupStandardMocks() call and configuring all mocks explicitly here instead.
+        SetupStandardMocks();
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync("issue-42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "issue-42",
+                Title = "Test Issue",
+                Description = "## Requirements\nDo the thing",
+                Labels = ["agent:next"]
+            });
+        mockIssueProvider
+            .Setup(p => p.ListCommentsAsync("issue-42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<IssueComment>());
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var service = CreateService();
+
+        var result = await service.PrepareAsync(
+            new OrchestratorPreparationRequest(
+                IssueIdentifier: "issue-42",
+                IssueProviderId: "issue-1",
+                RepoProviderId: "repo-1",
+                BrainProviderId: "brain-42",
+                PipelineProviderId: null,
+                InitiatedBy: "loop",
+                RequiredLabels: ["dotnet"],
+                Project: TestProject,
+                RunType: PipelineRunType.DecompositionAnalysis),
+            CancellationToken.None);
+
+        result.Should().NotBeNull();
+        var run = result!.CreatedRun;
+        run.RunType.Should().Be(PipelineRunType.DecompositionAnalysis,
+            "DecompositionAnalysis arm must set RunType=DecompositionAnalysis on the created run");
+        run.IssueIdentifier.Value.Should().Be("issue-42");
+        run.IssueProviderConfigId.Should().Be("issue-1");
+        run.RepoProviderConfigId.Should().Be("repo-1");
+        run.InitiatedBy.Should().Be("loop");
+        run.AgentProviderConfigId.Should().Be("agent-config-1");
+        run.BrainProviderConfigId.Should().Be("brain-42");
+    }
+
+    [Fact]
+    public async Task BuildLocalRun_ImplementationRunType_SetsCreatedRunFieldsCorrectly()
+    {
+        // Characterization test: Implementation (default) arm must set RunType=Implementation and propagate all shared fields.
+        SetupStandardMocks();
+        var service = CreateService();
+
+        var result = await service.PrepareAsync(
+            new OrchestratorPreparationRequest(
+                IssueIdentifier: "issue-42",
+                IssueProviderId: "issue-1",
+                RepoProviderId: "repo-1",
+                BrainProviderId: "brain-42",
+                PipelineProviderId: null,
+                InitiatedBy: "loop",
+                RequiredLabels: ["dotnet"],
+                Project: TestProject,
+                RunType: PipelineRunType.Implementation),
+            CancellationToken.None);
+
+        result.Should().NotBeNull();
+        var run = result!.CreatedRun;
+        // TODO: This RunType assertion is near-tautological. PipelineRunType.Implementation is the
+        // zero-value of the enum (= 0) and also the default of PipelineRunCreationParams.RunType,
+        // so the assertion passes even if Build() accidentally omits RunType entirely. A stronger
+        // guard would be a separate test that passes a non-zero RunType that falls through the _ =>
+        // arm (e.g. a future enum value) and asserts it is remapped to Implementation, which would
+        // fail if Build() stopped hardcoding PipelineRunType.Implementation.
+        run.RunType.Should().Be(PipelineRunType.Implementation,
+            "Implementation (default) arm must set RunType=Implementation on the created run");
+        run.IssueIdentifier.Value.Should().Be("issue-42");
+        run.IssueProviderConfigId.Should().Be("issue-1");
+        run.RepoProviderConfigId.Should().Be("repo-1");
+        run.InitiatedBy.Should().Be("loop");
+        run.AgentProviderConfigId.Should().Be("agent-config-1");
+        run.BrainProviderConfigId.Should().Be("brain-42");
+    }
+
+    [Fact]
+    public async Task BuildLocalRun_WithBrainProviderSet_PropagatesItToCreatedRun()
+    {
+        // Characterization test: BrainProviderConfigId is load-bearing — AgentHubFacade reads it
+        // back out of the WorkItem payload to answer RequestTokenRefresh(ProviderKind.Brain).
+        // Verifies that a non-null BrainProviderId flows through BuildLocalRun to CreatedRun.
+        // TODO: This test is largely redundant with BuildLocalRun_ImplementationRunType_SetsCreatedRunFieldsCorrectly,
+        // which already asserts BrainProviderConfigId with a different literal. The only additional
+        // value here is using "brain-provider-99" vs "brain-42", guarding against a hardcoded
+        // value regression. Consider folding this unique assertion into the Implementation test
+        // and removing this test to reduce duplication.
+        SetupStandardMocks();
+        var service = CreateService();
+
+        var result = await service.PrepareAsync(
+            new OrchestratorPreparationRequest(
+                IssueIdentifier: "issue-42",
+                IssueProviderId: "issue-1",
+                RepoProviderId: "repo-1",
+                BrainProviderId: "brain-provider-99",
+                PipelineProviderId: null,
+                InitiatedBy: "loop",
+                RequiredLabels: ["dotnet"],
+                Project: TestProject),
+            CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.CreatedRun.BrainProviderConfigId.Should().Be("brain-provider-99",
+            "BrainProviderConfigId must be propagated from request.BrainProviderId through BuildLocalRun to CreatedRun");
     }
 }
 
