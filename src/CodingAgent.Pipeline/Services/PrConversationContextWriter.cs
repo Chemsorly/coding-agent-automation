@@ -27,7 +27,7 @@ public static class PrConversationContextWriter
 
             var comments = await context.RepoProvider.ListPullRequestCommentsAsync(prNumber, prAuthor, ct);
 
-            var contextDir = Path.Combine(context.Run.WorkspacePath!, ".agent");
+            var contextDir = Path.Combine(context.Run.WorkspacePath!, AgentWorkspacePaths.MetadataDirectory);
             Directory.CreateDirectory(contextDir);
 
             var content = PrConversationContextFormatter.Format(comments);
