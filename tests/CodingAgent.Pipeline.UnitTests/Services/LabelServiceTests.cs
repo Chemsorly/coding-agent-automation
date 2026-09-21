@@ -12,6 +12,15 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// Covers: SwapLabelAsync (Issue/PR/Unknown/not-found config), SwapLabelStrictAsync (throws on failure),
 /// EnsureAgentLabelsAsync (Issue/PR/not-found/exception), constructor guards.
 /// </summary>
+// TODO [WARNING]: The Issue #2746 migration (string? → ProviderConfigId parameters in SwapLabelAsync,
+// SwapLabelStrictAsync, SwapIssueLabelAsync, SwapPrLabelAsync) has no dedicated characterization tests
+// covering: (a) that providerConfigId.Value is correctly forwarded to GetProviderConfigByIdAsync —
+// i.e., a ProviderConfigId("my-id") results in GetProviderConfigByIdAsync("my-id", ...) being called;
+// (b) that passing default(ProviderConfigId) (Value = null) propagates through without a clear early
+// validation error (the missing guard is documented by TODO in SwapLabelAsync and SwapLabelStrictAsync);
+// (c) that the two formerly-adjacent string parameters in SwapIssueLabelAsync/SwapPrLabelAsync cannot
+// be silently transposed at call sites. Add targeted tests for these behaviors to lock in the migration
+// contract and prevent regressions. (TestQualityReviewer)
 public sealed class LabelServiceTests
 {
     private readonly Mock<IProviderConfigStore> _configStore = new();
