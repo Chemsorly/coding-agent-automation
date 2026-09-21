@@ -454,12 +454,13 @@ public partial class QualityGateExecutor
             callbacks.NotifyChange();
 
             // Run the fix agent and classify the result; extracted to reduce cognitive complexity.
-            var (shouldBreak, shouldContinue, updatedTransientCount) = await RunFixAgentIterationAsync(
+            // RetryDecision carries the control-flow intent and updated counters.
+            var decision = await RunFixAgentIterationAsync(
                 context, fixPrompt, retryAgentDescription, pendingAttemptNum, consecutiveTransientRetries, ct);
-            consecutiveTransientRetries = updatedTransientCount;
+            consecutiveTransientRetries = decision.ConsecutiveTransientRetries;
 
-            if (shouldContinue) continue;
-            if (shouldBreak) break;
+            if (decision.ShouldContinue) continue;
+            if (decision.ShouldBreak) break;
 
             callbacks.TransitionTo(PipelineStep.RunningQualityGates);
             report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, ct);
@@ -474,13 +475,14 @@ public partial class QualityGateExecutor
     }
 
     /// <summary>
-    /// Executes one fix-agent invocation inside the retry loop and classifies the result.
-    /// Returns <c>(shouldBreak: true, shouldContinue: false)</c> to exit the loop,
-    /// <c>(false, shouldContinue: true)</c> to continue to the next iteration without running
-    /// quality gates, or <c>(false, false)</c> to proceed with quality gate validation.
-    /// Extracted from <see cref="RunRetryLoopAsync"/> to reduce cognitive complexity.
+    /// Executes one fix-agent invocation inside the retry loop, classifies the result, and
+    /// dispatches to the appropriate named handler. Returns a <see cref="RetryDecision"/>
+    /// carrying the control-flow intent (<see cref="RetryDecision.ShouldBreak"/> /
+    /// <see cref="RetryDecision.ShouldContinue"/>), the updated consecutive-transient counter,
+    /// and the retry-count delta to apply. Extracted from <see cref="RunRetryLoopAsync"/> to
+    /// reduce cognitive complexity.
     /// </summary>
-    private async Task<(bool ShouldBreak, bool ShouldContinue, int ConsecutiveTransientRetries)> RunFixAgentIterationAsync(
+    private async Task<RetryDecision> RunFixAgentIterationAsync(
         QualityGateContext context,
         string fixPrompt,
         string retryAgentDescription,
@@ -518,76 +520,19 @@ public partial class QualityGateExecutor
             // Intentional asymmetry: RetryErrors (incremented above) is NOT rolled back —
             // the RetryErrors entry (from the prior QG failure) is harmless noise. Only
             // RetryCount matters for loop exit logic, so that is the only value that must be
-            // accurate.  run.RetryCount is incremented here — on the Retry (default) outcome
-            // only — so that it reflects the number of real fix-agent attempts that completed,
-            // not the number of loop iterations entered.
-            switch (ClassifyRetryOutcome(agentResult))
+            // accurate.  run.RetryCount is mutated once here — after the handler returns —
+            // via decision.RetryCountDelta, so that all four outcome paths share a single
+            // mutation site rather than incrementing independently.
+            var outcome = ClassifyRetryOutcome(agentResult);
+            var decision = outcome switch
             {
-                case RetryOutcome.TransientWait:
-                    _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeTransient));
-                    // No increment: transient iterations don't consume a retry-budget slot.
-                    consecutiveTransientRetries++;
-                    if (consecutiveTransientRetries >= MaxConsecutiveTransientRetries)
-                    {
-                        _logger.Warning(
-                            "Pipeline {RunId} retry {RetryCount}: reached consecutive transient error cap " +
-                            "({Cap} consecutive transient responses), breaking retry loop",
-                            run.RunId, run.RetryCount, MaxConsecutiveTransientRetries);
-                        return (ShouldBreak: true, ShouldContinue: false, consecutiveTransientRetries);
-                    }
-                    _logger.Warning(
-                        "Pipeline {RunId} retry {RetryCount}: transient agent result, " +
-                        "not consuming retry budget, waiting before next attempt " +
-                        "({Consecutive}/{Cap} consecutive transient retries)",
-                        run.RunId, run.RetryCount,
-                        consecutiveTransientRetries, MaxConsecutiveTransientRetries);
-                    await Task.Delay(config.TransientRetryDelay, ct);
-                    return (ShouldBreak: false, ShouldContinue: true, consecutiveTransientRetries);
-
-                case RetryOutcome.AbortAuth:
-                    _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeAuthAbort));
-                    // TODO [WARNING]: Incrementing run.RetryCount here on AbortAuth is semantically
-                    // inconsistent with the stated design intent ("only increment after a real fix-agent
-                    // attempt runs"). Auth failures are permanent errors that immediately break the loop —
-                    // they are not genuine fix attempts that consumed a retry-budget slot. If run.RetryCount
-                    // is inspected after the loop (e.g., to cap draft PR descriptions or display attempt
-                    // counts), AbortAuth artificially inflates the counter by 1. Consider NOT incrementing
-                    // here (matching the TransientWait / RestartSession treatment) or documenting that
-                    // AbortAuth is intentionally counted as a consumed slot.
-                    // See review finding: Correctness WARNING — QualityGateExecutor.RetryLoop.cs:549
-                    run.RetryCount++;
-                    _logger.Error(
-                        "Pipeline {RunId} retry {RetryCount}: permanent auth failure, aborting retry loop",
-                        run.RunId, run.RetryCount);
-                    return (ShouldBreak: true, ShouldContinue: false, consecutiveTransientRetries);
-
-                case RetryOutcome.RestartSession:
-                    _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeSessionRestart));
-                    // TODO [WARNING]: RestartSession does not increment run.RetryCount and has no
-                    // cap analogous to MaxConsecutiveTransientRetries. The outer while loop exits only
-                    // when run.RetryCount >= config.MaxRetries; if the fix agent repeatedly returns
-                    // zero tokens (triggering RestartSession on every iteration), run.RetryCount never
-                    // advances and the loop runs indefinitely (until cancellation). Before this refactor,
-                    // the top-of-loop run.RetryCount++ ensured every RestartSession iteration still
-                    // consumed a retry-budget slot. Add a consecutive RestartSession cap (similar to
-                    // MaxConsecutiveTransientRetries) or increment run.RetryCount here.
-                    // See review finding: DotNetSpecialist WARNING — QualityGateExecutor.RetryLoop.cs:556
-                    _logger.Warning(
-                        "Pipeline {RunId} retry {RetryCount}: agent returned empty response (0 tokens), " +
-                        "clearing session affinity for next attempt",
-                        run.RunId, run.RetryCount);
-                    run.CodegenSessionId = null;
-                    return (ShouldBreak: false, ShouldContinue: true, consecutiveTransientRetries);
-
-                default: // RetryOutcome.Retry
-                    _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeRetry));
-                    // Increment only here: the fix agent actually ran and produced code changes.
-                    run.RetryCount++;
-                    consecutiveTransientRetries = 0;
-                    if (agentResult != null)
-                        await _prOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);
-                    return (ShouldBreak: false, ShouldContinue: false, consecutiveTransientRetries);
-            }
+                RetryOutcome.TransientWait  => await HandleTransientAsync(run, config, consecutiveTransientRetries, ct),
+                RetryOutcome.AbortAuth      => await HandleAuthAbortAsync(run),
+                RetryOutcome.RestartSession => await HandleSessionRestartAsync(run),
+                _                           => await HandleDefaultRetryAsync(run, agentResult, context.RepoProvider, ct)
+            };
+            run.RetryCount += decision.RetryCountDelta;
+            return decision;
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -604,6 +549,11 @@ public partial class QualityGateExecutor
             // that contract so dashboards see the same dimension regardless of whether the exception
             // is absorbed upstream or propagates here.
             //
+            // IMPORTANT: This catch block must NOT delegate to HandleTransientAsync. HandleTransientAsync
+            // returns ShouldContinue: true (skip QG validation), but the catch path must return
+            // ShouldContinue: false (proceed to QG validation). The telemetry call and asymmetric
+            // ConsecutiveTransientRetries treatment (no increment in the catch path) are intentional.
+            //
             // TODO: If ExecuteAgentAndRecordAsync's exception-absorption contract changes, revisit
             // whether ShouldBreak/ShouldContinue semantics here still match TransientWait.
             _logger.Warning(ex, "Pipeline {RunId} retry fix agent call failed", run.RunId);
@@ -613,8 +563,147 @@ public partial class QualityGateExecutor
                 Content = $"Agent error during retry fix: {ex.Message}"
             });
             _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeTransient));
-            return (ShouldBreak: false, ShouldContinue: false, consecutiveTransientRetries);
+            return new RetryDecision(
+                ShouldBreak: false,
+                ShouldContinue: false,
+                ConsecutiveTransientRetries: consecutiveTransientRetries,
+                RetryCountDelta: 0);
         }
+    }
+
+    /// <summary>
+    /// Handles a <see cref="RetryOutcome.TransientWait"/> iteration. Increments the consecutive
+    /// transient counter and either breaks the loop (cap reached) or delays and continues.
+    /// Does not consume a retry-budget slot (<c>RetryCountDelta: 0</c>).
+    /// </summary>
+    private async Task<RetryDecision> HandleTransientAsync(
+        PipelineRun run,
+        PipelineConfiguration config,
+        int consecutiveTransientRetries,
+        CancellationToken ct)
+    {
+        _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeTransient));
+        consecutiveTransientRetries++;
+
+        if (consecutiveTransientRetries >= MaxConsecutiveTransientRetries)
+        {
+            _logger.Warning(
+                "Pipeline {RunId} retry {RetryCount}: reached consecutive transient error cap " +
+                "({Cap} consecutive transient responses), breaking retry loop",
+                run.RunId, run.RetryCount, MaxConsecutiveTransientRetries);
+            return new RetryDecision(
+                ShouldBreak: true,
+                ShouldContinue: false,
+                ConsecutiveTransientRetries: consecutiveTransientRetries,
+                RetryCountDelta: 0);
+        }
+
+        _logger.Warning(
+            "Pipeline {RunId} retry {RetryCount}: transient agent result, " +
+            "not consuming retry budget, waiting before next attempt " +
+            "({Consecutive}/{Cap} consecutive transient retries)",
+            run.RunId, run.RetryCount,
+            consecutiveTransientRetries, MaxConsecutiveTransientRetries);
+        await Task.Delay(config.TransientRetryDelay, ct);
+        return new RetryDecision(
+            ShouldBreak: false,
+            ShouldContinue: true,
+            ConsecutiveTransientRetries: consecutiveTransientRetries,
+            RetryCountDelta: 0);
+    }
+
+    /// <summary>
+    /// Handles a <see cref="RetryOutcome.AbortAuth"/> iteration. Breaks the loop immediately.
+    /// Carries <c>RetryCountDelta: 1</c> to preserve the current behavior of incrementing
+    /// <c>run.RetryCount</c> on auth failures.
+    /// </summary>
+    /// <remarks>
+    /// TODO [WARNING]: Incrementing run.RetryCount here on AbortAuth is semantically inconsistent
+    /// with the stated design intent ("only increment after a real fix-agent attempt runs"). Auth
+    /// failures are permanent errors that immediately break the loop — they are not genuine fix
+    /// attempts that consumed a retry-budget slot. If run.RetryCount is inspected after the loop
+    /// (e.g., to cap draft PR descriptions or display attempt counts), AbortAuth artificially
+    /// inflates the counter by 1. Consider changing RetryCountDelta to 0 (matching the
+    /// TransientWait / RestartSession treatment) in a separate issue.
+    /// See review finding: Correctness WARNING — QualityGateExecutor.RetryLoop.cs:549
+    /// </remarks>
+    private Task<RetryDecision> HandleAuthAbortAsync(PipelineRun run)
+    {
+        _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeAuthAbort));
+        _logger.Error(
+            "Pipeline {RunId} retry {RetryCount}: permanent auth failure, aborting retry loop",
+            run.RunId, run.RetryCount);
+        return Task.FromResult(new RetryDecision(
+            ShouldBreak: true,
+            ShouldContinue: false,
+            // TODO [WARNING]: ConsecutiveTransientRetries is reset to 0 here rather than passed
+            // through unchanged. Since ShouldBreak: true causes the loop to exit immediately,
+            // the value is never read again in the current code (the caller assigns it to its
+            // loop variable, then immediately breaks). However, the behavior-neutral choice
+            // matching the original code is to return the accumulated value unchanged. If a
+            // future caller inspects the counter after a break (e.g., for telemetry or error
+            // reporting), it will silently see 0 instead of the real count.
+            // See review findings: Correctness WARNING and DotNetSpecialist WARNING.
+            ConsecutiveTransientRetries: 0,
+            RetryCountDelta: 1));
+    }
+
+    /// <summary>
+    /// Handles a <see cref="RetryOutcome.RestartSession"/> iteration. Clears
+    /// <c>run.CodegenSessionId</c> and continues the loop without running QG validation.
+    /// Does not consume a retry-budget slot (<c>RetryCountDelta: 0</c>).
+    /// </summary>
+    /// <remarks>
+    /// TODO [WARNING]: RestartSession does not increment run.RetryCount and has no cap analogous
+    /// to MaxConsecutiveTransientRetries. If the fix agent repeatedly returns zero tokens, the
+    /// outer while loop never advances run.RetryCount and runs indefinitely (until cancellation).
+    /// Add a consecutive RestartSession cap or increment run.RetryCount here to bound the loop.
+    /// See review finding: DotNetSpecialist WARNING — QualityGateExecutor.RetryLoop.cs:556
+    /// </remarks>
+    private Task<RetryDecision> HandleSessionRestartAsync(PipelineRun run)
+    {
+        _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeSessionRestart));
+        _logger.Warning(
+            "Pipeline {RunId} retry {RetryCount}: agent returned empty response (0 tokens), " +
+            "clearing session affinity for next attempt",
+            run.RunId, run.RetryCount);
+        run.CodegenSessionId = null;
+        return Task.FromResult(new RetryDecision(
+            ShouldBreak: false,
+            ShouldContinue: true,
+            // TODO [WARNING]: ConsecutiveTransientRetries is reset to 0 here, but the original
+            // code returned the counter unchanged on the RestartSession path. This means that
+            // interleaved TransientWait / RestartSession sequences can never accumulate enough
+            // consecutive transient responses to fire MaxConsecutiveTransientRetries: after each
+            // TransientWait increments the counter, the next RestartSession silently resets it to
+            // 0, preventing the cap from ever being reached. Concrete scenario: alternating
+            // RestartSession / TransientWait indefinitely keeps the counter at 0 or 1 and the
+            // loop runs until CancellationToken fires. Consider passing the accumulated value
+            // through unchanged, or document the reset as intentional.
+            // See review findings: Correctness WARNING and DotNetSpecialist WARNING.
+            ConsecutiveTransientRetries: 0,
+            RetryCountDelta: 0));
+    }
+
+    /// <summary>
+    /// Handles the default <see cref="RetryOutcome.Retry"/> iteration. The fix agent produced
+    /// real code changes — proceed to QG validation and consume a retry-budget slot
+    /// (<c>RetryCountDelta: 1</c>). Resets the consecutive-transient counter to 0.
+    /// </summary>
+    private async Task<RetryDecision> HandleDefaultRetryAsync(
+        PipelineRun run,
+        AgentResult? agentResult,
+        IRepositoryProvider repoProvider,
+        CancellationToken ct)
+    {
+        _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeRetry));
+        if (agentResult != null)
+            await _prOrchestrator.UpdateFileChangeStatsAsync(run, repoProvider);
+        return new RetryDecision(
+            ShouldBreak: false,
+            ShouldContinue: false,
+            ConsecutiveTransientRetries: 0,
+            RetryCountDelta: 1);
     }
 
     /// <summary>
