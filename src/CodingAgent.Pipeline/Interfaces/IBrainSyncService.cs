@@ -12,7 +12,7 @@ public interface IBrainSyncService
     /// Clones or pulls the brain repository into the workspace .brain/ directory.
     /// </summary>
     Task SyncPreRunAsync(
-        PipelineRun run, IRepositoryProvider brainProvider, string workspacePath,
+        PipelineRun run, IRepositoryProvider brainProvider, WorkspacePath workspacePath,
         CancellationToken ct, Action<string>? onOutputLine = null);
 
     /// <summary>

@@ -56,9 +56,9 @@ public class QualityGateValidator : IQualityGateValidator
 
     /// <inheritdoc />
     public virtual async Task<QualityGateReport> ValidateAsync(
-        string workspacePath, IReadOnlyList<QualityGateConfiguration> qualityGateConfigs, CancellationToken ct, string? baseBranch = null)
+        WorkspacePath workspacePath, IReadOnlyList<QualityGateConfiguration> qualityGateConfigs, CancellationToken ct, string? baseBranch = null)
     {
-        ArgumentNullException.ThrowIfNull(workspacePath);
+        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value, nameof(workspacePath));
         ArgumentNullException.ThrowIfNull(qualityGateConfigs);
 
         // Clean up any leftover TestResults from previous quality gate iterations
@@ -105,6 +105,12 @@ public class QualityGateValidator : IQualityGateValidator
     /// Runs compilation, tests, and coverage for a single QGC.
     /// Returns the result record and whether processing should stop (i.e., a gate failed).
     /// </summary>
+    // TODO [WARNING]: WorkspacePath is implicitly converted to string when passed into RunSingleQgcAsync
+    // and all further private helpers (RunQgcCompilationAsync, RunQgcTestsAsync, etc.). The WorkspacePath
+    // value type is accepted at the public surface (ValidateAsync) but not carried through the call chain,
+    // so the validated-absolute-path invariant is lost at the first private boundary. Consider propagating
+    // WorkspacePath through the private helpers or at minimum documenting that the implicit conversion is
+    // intentional and safe here.
     private async Task<(QgcExecutionResult Result, bool ShouldStop)> RunSingleQgcAsync(
         string workspacePath, QualityGateConfiguration qgc, CancellationToken ct)
     {

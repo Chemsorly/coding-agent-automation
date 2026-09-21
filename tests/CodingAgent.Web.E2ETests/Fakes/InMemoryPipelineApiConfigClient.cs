@@ -111,7 +111,7 @@ public sealed class InMemoryPipelineApiConfigClient : IPipelineApiConfigClient
     public Task DeleteTemplateAsync(string projectId, string templateId, CancellationToken ct = default)
         => _store.DeleteTemplateAsync(projectId, new TemplateId(templateId), ct);
 
-    public Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, string templateId, CancellationToken ct = default)
+    public Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, string templateId, CancellationToken ct = default)
         => _store.MoveTemplateAsync(sourceProjectId, targetProjectId, new TemplateId(templateId), ct);
 
     // ── Key-value ────────────────────────────────────────────────────────

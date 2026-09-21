@@ -303,7 +303,7 @@ public sealed class ApiBackedConfigStoresAdditionalTests
 
         await store.MoveTemplateAsync("src", "dst", new TemplateId("tmpl-1"), CancellationToken.None);
 
-        client.Verify(c => c.MoveTemplateAsync("src", "dst", "tmpl-1", It.IsAny<CancellationToken>()), Times.Once);
+        client.Verify(c => c.MoveTemplateAsync(new ProjectId("src"), new ProjectId("dst"), "tmpl-1", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ── ApiProjectStore mutations ─────────────────────────────────────────────
@@ -368,8 +368,14 @@ public sealed class ApiBackedConfigStoresAdditionalTests
 
         await store.MoveTemplateAsync("src", "dst", new TemplateId("tmpl-1"), CancellationToken.None);
 
-        client.Verify(c => c.MoveTemplateAsync("src", "dst", "tmpl-1",
+        client.Verify(c => c.MoveTemplateAsync(new ProjectId("src"), new ProjectId("dst"), "tmpl-1",
             It.IsAny<CancellationToken>()), Times.Once);
+        // TODO: [WARNING] This test only verifies the client is called once — it does NOT assert that the
+        // cache is invalidated for both source and target projects, despite the test name claiming it does.
+        // If the cache-invalidation branch in ApiProjectStore.MoveTemplateAsync were deleted, this test
+        // would still pass. Add assertions that load the cached projects before the move, call MoveTemplateAsync,
+        // then call GetProjectsAsync again and verify the client was called a second time (cache miss) for
+        // both source and target project IDs.
     }
 
     [Fact]

@@ -10,16 +10,16 @@ namespace CodingAgent.Agent.UnitTests;
 /// <summary>
 /// Shared factory for creating <see cref="AgentWorkerService"/> instances in tests.
 /// Encapsulates the construction of <see cref="AgentConnectionLifecycle"/>,
-/// <see cref="AgentJobSlotManager"/>, <see cref="ChatJobHandler"/>,
-/// <see cref="ConsolidationJobHandler"/>, and the coordinator service.
+/// <see cref="AgentJobSlotManager"/>, <see cref="ChatJobExecutor"/>,
+/// <see cref="ConsolidationJobExecutor"/>, and the coordinator service.
 /// </summary>
 internal static class TestAgentWorkerServiceFactory
 {
     /// <summary>
     /// Creates an <see cref="AgentWorkerService"/> with default mocks suitable for unit tests.
-    /// Returns the service along with its slot manager, connection lifecycle, and chat handler for test manipulation.
+    /// Returns the service along with its slot manager, connection lifecycle, and chat executor for test manipulation.
     /// </summary>
-    public static (AgentWorkerService Service, AgentJobSlotManager SlotManager, AgentConnectionLifecycle Lifecycle, ChatJobHandler ChatHandler)
+    public static (AgentWorkerService Service, AgentJobSlotManager SlotManager, AgentConnectionLifecycle Lifecycle, ChatJobExecutor ChatHandler)
         CreateWithComponents(
             IHostApplicationLifetime? hostLifetime = null,
             IJobCompletionReporter? completionReporter = null,
@@ -50,14 +50,14 @@ internal static class TestAgentWorkerServiceFactory
             new AgentId("test-agent"),
             lifetime, mockLogger);
 
-        var chatHandler = CreateChatJobHandler(
+        var chatHandler = CreateChatJobExecutor(
             lifecycle, slotManager, mockOrchestrator, lifetime, mockLogger,
             isOpenCodeProvider: (Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType) ?? "")
                 .Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase),
             isChatMode: string.Equals(
                 Environment.GetEnvironmentVariable(AgentDefaults.EnvChatMode), "true", StringComparison.OrdinalIgnoreCase),
             chatGracePeriod: chatGracePeriod);
-        var consolidationHandler = CreateConsolidationJobHandler(lifecycle, slotManager, mockOrchestrator, mockLogger);
+        var consolidationHandler = CreateConsolidationJobExecutor(lifecycle, slotManager, mockOrchestrator, mockLogger);
 
         var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
             lifecycle, slotManager,
@@ -85,9 +85,9 @@ internal static class TestAgentWorkerServiceFactory
     }
 
     /// <summary>
-    /// Creates a standalone <see cref="ChatJobHandler"/> for direct unit testing.
+    /// Creates a standalone <see cref="ChatJobExecutor"/> for direct unit testing.
     /// </summary>
-    public static ChatJobHandler CreateChatJobHandler(
+    public static ChatJobExecutor CreateChatJobExecutor(
         AgentConnectionLifecycle connectionLifecycle,
         AgentJobSlotManager slotManager,
         KiroCliLib.Core.IKiroCliOrchestrator? orchestrator = null,
@@ -101,7 +101,7 @@ internal static class TestAgentWorkerServiceFactory
         var mockLogger = logger ?? new Mock<Serilog.ILogger>().Object;
         var mockOrchestrator = orchestrator ?? new Mock<KiroCliLib.Core.IKiroCliOrchestrator>().Object;
         var lifetime = hostLifetime ?? Mock.Of<IHostApplicationLifetime>();
-        return new ChatJobHandler(new ChatJobHandlerDependencies(
+        return new ChatJobExecutor(new ChatJobExecutorDependencies(
             connectionLifecycle,
             slotManager,
             mockOrchestrator,
@@ -120,9 +120,9 @@ internal static class TestAgentWorkerServiceFactory
     }
 
     /// <summary>
-    /// Creates a standalone <see cref="ConsolidationJobHandler"/> for direct unit testing.
+    /// Creates a standalone <see cref="ConsolidationJobExecutor"/> for direct unit testing.
     /// </summary>
-    public static ConsolidationJobHandler CreateConsolidationJobHandler(
+    public static ConsolidationJobExecutor CreateConsolidationJobExecutor(
         AgentConnectionLifecycle connectionLifecycle,
         AgentJobSlotManager slotManager,
         KiroCliLib.Core.IKiroCliOrchestrator? orchestrator = null,
@@ -130,7 +130,7 @@ internal static class TestAgentWorkerServiceFactory
     {
         var mockLogger = logger ?? new Mock<Serilog.ILogger>().Object;
         var mockOrchestrator = orchestrator ?? new Mock<KiroCliLib.Core.IKiroCliOrchestrator>().Object;
-        return new ConsolidationJobHandler(
+        return new ConsolidationJobExecutor(
             connectionLifecycle,
             slotManager,
             CreateMockConsolidationExecutor(mockOrchestrator),

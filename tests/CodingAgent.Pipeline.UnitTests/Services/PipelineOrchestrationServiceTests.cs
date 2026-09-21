@@ -43,9 +43,14 @@ public class PipelineOrchestrationServiceTests : IDisposable
         mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(() => runHistory.AsReadOnly());
         mockHistoryService.Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask).Callback<PipelineRun, CancellationToken>((run, _) => runHistory.Add(run.ToSummary()));
-        mockHistoryService.Setup(h => h.TryDeleteWorkspace(It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>()))
-            .Callback<string?, string, string>((path, _, _) =>
+        mockHistoryService.Setup(h => h.TryDeleteWorkspace(It.IsAny<WorkspacePath?>(), It.IsAny<string>(), It.IsAny<string>()))
+            .Callback<WorkspacePath?, string, string>((path, _, _) =>
             {
+                // TODO [WARNING]: WorkspacePath has an implicit WorkspacePath→string conversion, so
+                // Directory.Exists(path) resolves via that operator. If the conversion were broken, this
+                // callback would silently fail to delete. No assertion verifies that cleanup actually
+                // occurred after a successful run. Consider adding a Verify call that TryDeleteWorkspace
+                // was invoked with the expected path, or asserting the directory no longer exists.
                 if (path != null && Directory.Exists(path))
                     Directory.Delete(path, true);
             });
@@ -135,7 +140,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockAgentProvider.Setup(p => p.GetLatestSessionIdAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
 
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
@@ -423,7 +428,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), MaxRetries = 1 });
 
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
@@ -765,7 +770,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = workspaceBase, MaxRetries = 0 });
 
-            _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+            _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new QualityGateReport
                 {
                     Compilation = new GateResult { GateName = "Compilation", Passed = false, Details = "Build failed" },
@@ -1437,7 +1442,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public async Task StartPipeline_QualityGateFailure_SwapsToErrorLabel()
     {
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Validation error"));
 
         try
@@ -1606,7 +1611,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             .Returns(new AgentHealthStatus { IsExecuting = false });
 
         // Quality gate validator: all pass
-        mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        mockValidator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
@@ -1637,9 +1642,14 @@ public class PipelineOrchestrationServiceTests : IDisposable
         mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(() => runHistory.AsReadOnly());
         mockHistoryService.Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask).Callback<PipelineRun, CancellationToken>((run, _) => runHistory.Add(run.ToSummary()));
-        mockHistoryService.Setup(h => h.TryDeleteWorkspace(It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>()))
-            .Callback<string?, string, string>((path, _, _) =>
+        mockHistoryService.Setup(h => h.TryDeleteWorkspace(It.IsAny<WorkspacePath?>(), It.IsAny<string>(), It.IsAny<string>()))
+            .Callback<WorkspacePath?, string, string>((path, _, _) =>
             {
+                // TODO [WARNING]: WorkspacePath has an implicit WorkspacePath→string conversion, so
+                // Directory.Exists(path) resolves via that operator. If the conversion were broken, this
+                // callback would silently fail to delete. No assertion verifies that cleanup actually
+                // occurred after a successful run. Consider adding a Verify call that TryDeleteWorkspace
+                // was invoked with the expected path, or asserting the directory no longer exists.
                 if (path != null && Directory.Exists(path))
                     Directory.Delete(path, true);
             });
@@ -1989,7 +1999,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     public async Task PipelineEvents_QualityGateRetry_EmitsRetryMessage()
     {
         var callCount = 0;
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
             {
                 callCount++;
@@ -2560,7 +2570,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         };
 
         // Override validator to throw IOException("Disk full")
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new IOException("Disk full"));
 
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -2663,7 +2673,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         // Block the validator with a TaskCompletionSource so the pipeline stays in RunningQualityGates
         var validatorTcs = new TaskCompletionSource<QualityGateReport>();
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .Returns(validatorTcs.Task);
 
         // Start the pipeline (analysis writes files and succeeds, code gen succeeds, then blocks at quality gates)
@@ -2707,7 +2717,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     {
         // Quality gates fail on first call, pass on second
         var callCount = 0;
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
             {
                 var idx = Interlocked.Increment(ref callCount);
@@ -2942,7 +2952,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     public async Task StartPipeline_FinalQualityGateFail_ReEntersRetryLoop()
     {
         var callCount = 0;
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
             {
                 callCount++;
@@ -2982,7 +2992,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     public async Task StartPipeline_FinalQualityGateFail_RetriesExhausted_CreatesDraftPr()
     {
         var callCount = 0;
-        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
             {
                 callCount++;

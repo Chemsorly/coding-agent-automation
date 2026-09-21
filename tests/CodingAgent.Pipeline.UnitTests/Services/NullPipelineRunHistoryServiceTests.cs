@@ -121,7 +121,7 @@ public class NullPipelineRunHistoryServiceTests
             Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
         };
         mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(passingReport);

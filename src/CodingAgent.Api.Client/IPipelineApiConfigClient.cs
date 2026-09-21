@@ -70,7 +70,7 @@ public interface IPipelineApiConfigClient
     Task<IReadOnlyList<PipelineJobTemplate>> GetTemplatesForProjectAsync(string projectId, CancellationToken ct = default);
     Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct = default);
     Task DeleteTemplateAsync(string projectId, string templateId, CancellationToken ct = default);
-    Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, string templateId, CancellationToken ct = default);
+    Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, string templateId, CancellationToken ct = default);
 
     // Key-value store
     Task<string?> GetKeyValueAsync(string key, CancellationToken ct = default);
