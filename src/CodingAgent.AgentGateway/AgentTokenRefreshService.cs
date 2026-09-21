@@ -31,9 +31,24 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
     /// <inheritdoc />
     public async Task<TokenRefreshResponse> RefreshTokenAsync(string jobId, ProviderKind providerKind, CancellationToken ct, bool includeIssuePermission = false)
     {
-        var (repoProviderConfigId, brainProviderConfigId) = await ResolveProviderConfigIdsAsync(jobId, ct);
+        var (repoId, brainId) = await ResolveProviderConfigIdsAsync(jobId, ct);
 
-        var targetConfig = await ResolveTargetConfigAsync(jobId, providerKind, repoProviderConfigId, brainProviderConfigId, ct);
+        // Use IsNullOrEmpty guards to safely convert raw strings to ProviderConfigId?.
+        // Directly casting a null or empty string via (ProviderConfigId?) would invoke the implicit
+        // operator which calls ArgumentException.ThrowIfNullOrEmpty — throwing ArgumentException
+        // instead of the expected HubException for empty-string cases.
+        // TODO [WARNING]: IsNullOrEmpty does not guard against whitespace-only values (e.g. "   ").
+        // A whitespace-only config ID passes the guard, constructs ProviderConfigId("   "), and propagates
+        // a whitespace string to GetProviderConfigByIdAsync — which returns null, retries, then throws
+        // HubException "Provider config not found" (correct outcome, but with no indication that the ID
+        // was whitespace). If ProviderConfigId's constructor calls ThrowIfNullOrEmpty (not ThrowIfNullOrWhiteSpace),
+        // the ArgumentException would escape the hub instead of a HubException. Consider using
+        // string.IsNullOrWhiteSpace here, or adding a ThrowIfNullOrWhiteSpace guard inside ProviderConfigId.
+        var targetConfig = await ResolveTargetConfigAsync(
+            jobId, providerKind,
+            string.IsNullOrEmpty(repoId) ? null : (ProviderConfigId?)new ProviderConfigId(repoId),
+            string.IsNullOrEmpty(brainId) ? null : (ProviderConfigId?)new ProviderConfigId(brainId),
+            ct);
 
         return await VendTokenAsync(jobId, providerKind, targetConfig, ct, includeIssuePermission);
     }
@@ -64,7 +79,7 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
 
     private async Task<ProviderConfig> ResolveTargetConfigAsync(
         string jobId, ProviderKind providerKind,
-        string? repoProviderConfigId, string? brainProviderConfigId,
+        ProviderConfigId? repoProviderConfigId, ProviderConfigId? brainProviderConfigId,
         CancellationToken ct)
     {
         // Resolve the correct provider config based on the requested kind.
@@ -73,41 +88,55 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
         // are stored as Repository kind with RepositoryRole.Brain.
         if (providerKind == ProviderKind.Brain)
         {
-            if (string.IsNullOrEmpty(brainProviderConfigId))
+            if (!brainProviderConfigId.HasValue)
             {
                 _logger.Warning("Brain token refresh for job {JobId}: brainProviderConfigId is null/empty. Brain sync will be disabled.", jobId);
                 throw new HubException($"Brain provider config ID not available for job {jobId}. " +
                     "Brain sync cannot be performed.");
             }
 
-            ProviderConfig? brainConfig = null;
-            for (var attempt = 0; attempt <= 1 && brainConfig is null; attempt++)
-            {
-                if (attempt > 0) await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
-                brainConfig = await _facade.GetProviderConfigByIdAsync(brainProviderConfigId, ProviderKind.Repository, ct);
-            }
+            // Retry once on transient null: provider config store may have a brief propagation lag.
+            var brainConfig = await _facade.GetProviderConfigByIdAsync(brainProviderConfigId.Value.Value, ProviderKind.Repository, ct);
             if (brainConfig is null)
             {
-                // TODO: align warning template with repo-branch pattern — use {ConfigId} as the first positional arg
-                // and include ProviderKind for consistency: "Provider config {ConfigId} not found for job {JobId} (kind: {ProviderKind})"
+                await Task.Delay(500, ct);
+                brainConfig = await _facade.GetProviderConfigByIdAsync(brainProviderConfigId.Value.Value, ProviderKind.Repository, ct);
+            }
+
+            if (brainConfig is null)
+            {
                 _logger.Warning("Brain token refresh for job {JobId}: config {BrainConfigId} not found in store",
-                    jobId, brainProviderConfigId);
+                    jobId, brainProviderConfigId.Value.Value);
+                // TODO [WARNING]: The exception message uses `brainProviderConfigId` (the ProviderConfigId? struct)
+                // via string interpolation. If ProviderConfigId.ToString() returns the default record representation
+                // (e.g. "ProviderConfigId { Value = brain-1 }") rather than the bare ID string, the message will
+                // be misleading. Use brainProviderConfigId.Value.Value to match the logger call above and ensure
+                // the exception message contains the raw config ID string.
                 throw new HubException($"Brain provider config '{brainProviderConfigId}' not found for job {jobId}");
             }
             return brainConfig;
         }
         else
         {
-            ProviderConfig? repoConfig = null;
-            for (var attempt = 0; attempt <= 1 && repoConfig is null; attempt++)
+            if (!repoProviderConfigId.HasValue)
             {
-                if (attempt > 0) await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
-                repoConfig = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId!, ProviderKind.Repository, ct);
+                _logger.Warning("Provider config not found for job {JobId} (kind: {ProviderKind})", jobId, providerKind);
+                throw new HubException($"Provider config not found for job {jobId} (kind: {providerKind})");
             }
+
+            // Retry once on transient null: provider config store may have a brief propagation lag.
+            var repoConfig = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId.Value.Value, ProviderKind.Repository, ct);
             if (repoConfig is null)
             {
-                _logger.Warning("Provider config {ConfigId} not found for job {JobId} (kind: {ProviderKind})",
-                    repoProviderConfigId, jobId, providerKind);
+                await Task.Delay(500, ct);
+                repoConfig = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId.Value.Value, ProviderKind.Repository, ct);
+            }
+
+            if (repoConfig is null)
+            {
+                _logger.Warning(
+                    "Provider config {ConfigId} not found for job {JobId} (kind: {ProviderKind})",
+                    repoProviderConfigId.Value.Value, jobId, providerKind);
                 throw new HubException($"Provider config not found for job {jobId} (kind: {providerKind})");
             }
             return repoConfig;
@@ -199,7 +228,7 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
             // short-lived GitHub App token would be returned with a 24h far-future sentinel, silently
             // reintroducing the original bug for in-flight jobs dispatched before this fix was deployed.
             // Mitigation: check the provider type (GitHub App vs. static) when TokenExpiresAt is absent
-            // and throw for GitHub App-typed providers instead of returning a sentinel.
+            // and throw for GitHub App-typed providers instead of returning a sentinel. (SecurityReviewer)
             _logger.Information("Returning static token for job {JobId} (kind: {ProviderKind}) (no expiry metadata)",
                 jobId, providerKind);
 

@@ -94,7 +94,7 @@ public class DecompositionCapPropertyTests
             Labels = input.Labels
         };
 
-        var result = WriteOpenIssueContextStep.FormatIssueMarkdown(detail);
+        var result = OpenIssueContextWriter.FormatIssueMarkdown(detail);
 
         // Verify YAML front-matter structure
         var lines = result.Split('\n');
