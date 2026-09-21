@@ -155,7 +155,7 @@ public class PipelineRetryPropertyTests
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockValidator = new Mock<IQualityGateValidator>();
         var callIndex = 0;
-        mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        mockValidator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
             {
                 var idx = Interlocked.Increment(ref callIndex) - 1;
