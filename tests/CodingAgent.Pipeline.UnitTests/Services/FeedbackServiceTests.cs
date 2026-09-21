@@ -344,20 +344,20 @@ public class FeedbackServiceTests
 
     private static PipelineRunSummary CreateSummaryWithCategories(
         DateTimeOffset startedAt, string harnessCategory, string issueCategory) => new()
-    {
-        RunId = $"run-{Guid.NewGuid():N}",
-        IssueIdentifier = "org/repo#1",
-        IssueTitle = "Test Issue",
-        FinalStep = PipelineStep.Completed,
-        StartedAtOffset = startedAt,
-        Feedback = new RunFeedback
         {
-            Outcome = FeedbackOutcome.Success,
-            CollectedAtUtc = DateTime.UtcNow,
-            Harness = new HarnessFeedback { Category = harnessCategory },
-            Issue = new IssueFeedback { Category = issueCategory }
-        }
-    };
+            RunId = $"run-{Guid.NewGuid():N}",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test Issue",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = startedAt,
+            Feedback = new RunFeedback
+            {
+                Outcome = FeedbackOutcome.Success,
+                CollectedAtUtc = DateTime.UtcNow,
+                Harness = new HarnessFeedback { Category = harnessCategory },
+                Issue = new IssueFeedback { Category = issueCategory }
+            }
+        };
 
     #endregion
 
@@ -407,6 +407,181 @@ public class FeedbackServiceTests
         result.Harness.Suggestions.Should().HaveCount(1);
         result.Harness.Suggestions[0].Length.Should().Be(FeedbackConstraints.MaxStringLength);
     }
+
+    #endregion
+
+    #region CollectFeedbackCoreAsync — cancellation characterization tests (AC3)
+
+    // NOTE: These tests mock IAgentProvider to throw OperationCanceledException directly.
+    // Real agent providers (KiroCliAgentProvider, OpenCodeAgentProvider) use TimeoutHelper
+    // internally and return AgentResult on timeout rather than throwing. These mocks test
+    // the OCE-catch branches of CollectFeedbackCoreAsync in isolation.
+
+    [Fact]
+    public async Task CollectFeedbackCoreAsync_TimeoutCancellation_ProducesFallback()
+    {
+        // Validates: AC3 — "feedback-collection timeout produces a fallback feedback"
+        // Setup: outer ct is not cancelled, so ct.IsCancellationRequested == false.
+        // The mock agent throws OCE directly (simulating the timeout-OCE branch in isolation).
+        // TODO: This test verifies the OCE-catch branch in isolation (mock throws OCE with a
+        // non-cancelled outer ct) but does not exercise the actual timer-expiry path where the
+        // linked timeoutCts fires after feedbackTimeoutSeconds elapses. A provider that returns
+        // normally but very slowly would not be caught by this test. Consider adding a separate
+        // integration-style test using a real delay and a short feedbackTimeoutSeconds to verify
+        // the timeout-CTS-fires path end-to-end when test execution speed permits.
+        var run = BuildMinimalRun();
+        var agentProvider = new Mock<IAgentProvider>();
+        agentProvider
+            .Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new OperationCanceledException("feedback timed out"));
+
+        await _sut.CollectFeedbackCoreAsync(
+            run,
+            agentProvider.Object,
+            historyService: null,
+            promptFactory: _ => "test prompt",
+            outcome: FeedbackOutcome.Failure,
+            feedbackTimeoutSeconds: 30,
+            ct: CancellationToken.None,
+            emitOutputLine: _ => { });
+
+        // Must set fallback feedback, not propagate
+        run.Feedback.Should().NotBeNull();
+        run.Feedback!.Outcome.Should().Be(FeedbackOutcome.Failure);
+        run.Feedback.Harness.StuckReason.Should().Be("Feedback collection timed out");
+    }
+
+    [Fact]
+    public async Task CollectFeedbackCoreAsync_PipelineCancellation_RethrowsOperationCanceledException()
+    {
+        // Validates: AC3 — "caller-initiated cancellation re-throws OperationCanceledException"
+        // Setup: ct is cancelled, so ct.IsCancellationRequested == true.
+        // TODO: ct is pre-cancelled before the SUT is invoked, whereas in production cancellation
+        // is requested mid-flight (during ExecuteAsync). The test does not exercise the scenario
+        // where LoadPreviousCategoriesAsync completes but cancellation is requested during the
+        // subsequent agent call. The observable outcome (OCE propagates, run.Feedback is null) is
+        // identical in both scenarios, but the representational gap could mislead future maintainers
+        // who change the cancellation guard logic. Consider a supplementary test that cancels the
+        // token after LoadPreviousCategoriesAsync returns but before ExecuteAsync completes.
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        var run = BuildMinimalRun();
+        var agentProvider = new Mock<IAgentProvider>();
+        agentProvider
+            .Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new OperationCanceledException("pipeline cancelled"));
+
+        var act = async () => await _sut.CollectFeedbackCoreAsync(
+            run,
+            agentProvider.Object,
+            historyService: null,
+            promptFactory: _ => "test prompt",
+            outcome: FeedbackOutcome.Failure,
+            feedbackTimeoutSeconds: 30,
+            ct: cts.Token,
+            emitOutputLine: _ => { });
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        // run.Feedback must remain null — fallback is not set on pipeline cancellation
+        run.Feedback.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task CollectFeedbackCoreAsync_GenericException_ProducesFallbackWithMessage()
+    {
+        var run = BuildMinimalRun();
+        const string errorMessage = "something crashed unexpectedly";
+        var agentProvider = new Mock<IAgentProvider>();
+        agentProvider
+            .Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new InvalidOperationException(errorMessage));
+
+        await _sut.CollectFeedbackCoreAsync(
+            run,
+            agentProvider.Object,
+            historyService: null,
+            promptFactory: _ => "test prompt",
+            outcome: FeedbackOutcome.Success,
+            feedbackTimeoutSeconds: 30,
+            ct: CancellationToken.None,
+            emitOutputLine: _ => { });
+
+        run.Feedback.Should().NotBeNull();
+        run.Feedback!.Outcome.Should().Be(FeedbackOutcome.Success);
+        run.Feedback.Harness.StuckReason.Should().Contain(errorMessage);
+        run.Feedback.Harness.StuckReason.Should().Contain("Feedback collection failed");
+    }
+
+    [Fact]
+    public async Task CollectFeedbackCoreAsync_Success_ParsesFeedbackAndSetsRunFeedback()
+    {
+        var run = BuildMinimalRun();
+        const string feedbackJson = """
+            ```json
+            {"harness":{"category":"compilation failure","stuckReason":"missing dep"}}
+            ```
+            """;
+        var agentProvider = new Mock<IAgentProvider>();
+        agentProvider
+            .Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [feedbackJson] });
+
+        await _sut.CollectFeedbackCoreAsync(
+            run,
+            agentProvider.Object,
+            historyService: null,
+            promptFactory: _ => "test prompt",
+            outcome: FeedbackOutcome.Failure,
+            feedbackTimeoutSeconds: 30,
+            ct: CancellationToken.None,
+            emitOutputLine: _ => { });
+
+        run.Feedback.Should().NotBeNull();
+        run.Feedback!.Outcome.Should().Be(FeedbackOutcome.Failure);
+        run.Feedback.Harness.Category.Should().Be("compilation failure");
+        run.Feedback.Harness.StuckReason.Should().Be("missing dep");
+    }
+
+    [Fact]
+    public async Task CollectFeedbackCoreAsync_WithNullHistoryService_DoesNotThrow()
+    {
+        // TODO: The mock returns an empty OutputLines array, so ParseFeedbackFromResponse receives
+        // an empty string and silently falls through to CreateFallbackFeedback. The assertion
+        // run.Feedback.Should().NotBeNull() passes for both a successfully-parsed feedback and a
+        // silently-created fallback — it does not distinguish the two outcomes. If the intent is
+        // to verify graceful handling of a null history service on the happy path, provide non-empty
+        // OutputLines with valid feedback JSON and assert on run.Feedback.Outcome or
+        // run.Feedback.Harness.Category to confirm the parse path was reached, not just fallback.
+        var run = BuildMinimalRun();
+        var agentProvider = new Mock<IAgentProvider>();
+        agentProvider
+            .Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        var act = async () => await _sut.CollectFeedbackCoreAsync(
+            run,
+            agentProvider.Object,
+            historyService: null,
+            promptFactory: _ => "prompt",
+            outcome: FeedbackOutcome.Success,
+            feedbackTimeoutSeconds: 30,
+            ct: CancellationToken.None,
+            emitOutputLine: _ => { });
+
+        await act.Should().NotThrowAsync();
+        run.Feedback.Should().NotBeNull();
+    }
+
+    private static PipelineRun BuildMinimalRun() => new()
+    {
+        RunId = "collect-core-test",
+        IssueIdentifier = "org/repo#1",
+        IssueTitle = "Test Issue",
+        IssueProviderConfigId = "ip-1",
+        RepoProviderConfigId = "rp-1",
+        WorkspacePath = "/tmp/workspace"
+    };
 
     #endregion
 }
