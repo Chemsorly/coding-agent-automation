@@ -344,20 +344,20 @@ public class FeedbackServiceTests
 
     private static PipelineRunSummary CreateSummaryWithCategories(
         DateTimeOffset startedAt, string harnessCategory, string issueCategory) => new()
-    {
-        RunId = $"run-{Guid.NewGuid():N}",
-        IssueIdentifier = "org/repo#1",
-        IssueTitle = "Test Issue",
-        FinalStep = PipelineStep.Completed,
-        StartedAtOffset = startedAt,
-        Feedback = new RunFeedback
         {
-            Outcome = FeedbackOutcome.Success,
-            CollectedAtUtc = DateTime.UtcNow,
-            Harness = new HarnessFeedback { Category = harnessCategory },
-            Issue = new IssueFeedback { Category = issueCategory }
-        }
-    };
+            RunId = $"run-{Guid.NewGuid():N}",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test Issue",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = startedAt,
+            Feedback = new RunFeedback
+            {
+                Outcome = FeedbackOutcome.Success,
+                CollectedAtUtc = DateTime.UtcNow,
+                Harness = new HarnessFeedback { Category = harnessCategory },
+                Issue = new IssueFeedback { Category = issueCategory }
+            }
+        };
 
     #endregion
 

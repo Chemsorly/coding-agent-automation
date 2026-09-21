@@ -99,7 +99,10 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
-                Items = new List<IssueSummary>(), Page = 1, PageSize = 50, HasMore = false
+                Items = new List<IssueSummary>(),
+                Page = 1,
+                PageSize = 50,
+                HasMore = false
             });
         _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
             .Returns(_mockIssueProvider.Object);
@@ -246,7 +249,10 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
                 pollCalled = true;
                 return new PagedResult<IssueSummary>
                 {
-                    Items = new List<IssueSummary>(), Page = 1, PageSize = 50, HasMore = false
+                    Items = new List<IssueSummary>(),
+                    Page = 1,
+                    PageSize = 50,
+                    HasMore = false
                 };
             });
 
@@ -305,7 +311,10 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
                 pollCalled = true;
                 return new PagedResult<IssueSummary>
                 {
-                    Items = new List<IssueSummary>(), Page = 1, PageSize = 50, HasMore = false
+                    Items = new List<IssueSummary>(),
+                    Page = 1,
+                    PageSize = 50,
+                    HasMore = false
                 };
             });
 
@@ -361,7 +370,10 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
                 pollCalled = true;
                 return new PagedResult<IssueSummary>
                 {
-                    Items = new List<IssueSummary>(), Page = 1, PageSize = 50, HasMore = false
+                    Items = new List<IssueSummary>(),
+                    Page = 1,
+                    PageSize = 50,
+                    HasMore = false
                 };
             });
 
@@ -425,7 +437,10 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
                 }
                 return new PagedResult<IssueSummary>
                 {
-                    Items = new List<IssueSummary>(), Page = 1, PageSize = 50, HasMore = false
+                    Items = new List<IssueSummary>(),
+                    Page = 1,
+                    PageSize = 50,
+                    HasMore = false
                 };
             });
 
@@ -535,7 +550,10 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
                     secondCycleDone.TrySetResult();
                 return new PagedResult<IssueSummary>
                 {
-                    Items = new List<IssueSummary>(), Page = 1, PageSize = 50, HasMore = false
+                    Items = new List<IssueSummary>(),
+                    Page = 1,
+                    PageSize = 50,
+                    HasMore = false
                 };
             });
 
