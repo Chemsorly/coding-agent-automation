@@ -1153,32 +1153,102 @@ public sealed class AgentOrphanRecoveryServiceTests
             "AddRun must be called to re-materialize the run hash when it still exists");
     }
 
-    // ── HandleCrashRecovery: hash gone → AddRun NOT called ────────────────────────
+    // ── HandleCrashRecoveryAsync: DB fallback when hash expired ─────────────────
 
     [Fact]
-    public async Task NoActiveJob_RegistryHasActiveJobId_CrashRecovery_NoOpIfHashGone()
+    public async Task NoActiveJob_RegistryHasActiveJobId_CrashRecovery_ReconstructsRunFromDbWhenHashGone()
     {
-        // When the crash recovery path fires but GetRun returns null (hash already expired),
-        // AddRun must NOT be called — nothing can be done, ReconciliationService handles timeout.
-        const string agentId = "agent-crash-hashgone";
-        const string existingJobId = "crash-run-gone";
+        // When GetRun returns null (hash expired) but the WorkItem exists in DB with valid
+        // IssueIdentifier, IssueProviderConfigId and RepoProviderConfigId, TryReconstructRunFromDbAsync
+        // must build a minimal PipelineRun and call AddRun so subsequent [RequiresActiveJob] calls succeed.
+        const string agentId = "agent-crash-reconstruct";
+        const string existingJobId = "00000000-0000-0000-0000-000000000001"; // valid GUID required
 
         var entry = CreateEntry(agentId);
         entry.ActiveJobId = existingJobId;
         entry.OrphanRestoredAt = null;
 
         _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
-        // GetRun returns null — hash has expired
         _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == existingJobId))).Returns((PipelineRun?)null);
+        _mockFacade
+            .Setup(f => f.GetWorkItemIssueMetadataAsync(It.Is<JobId>(j => j.Value == existingJobId), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("org/repo#42", "issue-cfg-1"));
+        _mockFacade
+            .Setup(f => f.GetWorkItemProviderConfigIdsAsync(existingJobId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("repo-cfg-1", "brain-cfg-1"));
 
         var message = CreateMessage(agentId, activeJob: null);
 
         await _service.RecoverOrphanedStateAsync(message, agentId);
 
-        entry.OrphanRestoredAt.Should().NotBeNull("OrphanRestoredAt must be set even when hash is gone");
-        _mockFacade.Verify(f => f.AddRun(It.IsAny<PipelineRun>()), Times.Never,
-            "AddRun must not be called when the run hash is already expired");
+        entry.OrphanRestoredAt.Should().NotBeNull();
+        _mockFacade.Verify(
+            f => f.AddRun(It.Is<PipelineRun>(r =>
+                r.RunId == existingJobId &&
+                r.IssueIdentifier == "org/repo#42" &&
+                r.IssueProviderConfigId == "issue-cfg-1")),
+            Times.Once,
+            "AddRun must be called with the DB-reconstructed PipelineRun when the Redis hash has expired");
     }
+
+    [Fact]
+    public async Task NoActiveJob_RegistryHasActiveJobId_CrashRecovery_SkipsReconstructionWhenWorkItemNotFound()
+    {
+        // When GetRun returns null AND GetWorkItemIssueMetadataAsync also returns null,
+        // AddRun must NOT be called — nothing recoverable from DB either.
+        const string agentId = "agent-crash-nodb";
+        const string existingJobId = "00000000-0000-0000-0000-000000000002";
+
+        var entry = CreateEntry(agentId);
+        entry.ActiveJobId = existingJobId;
+        entry.OrphanRestoredAt = null;
+
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == existingJobId))).Returns((PipelineRun?)null);
+        _mockFacade
+            .Setup(f => f.GetWorkItemIssueMetadataAsync(It.Is<JobId>(j => j.Value == existingJobId), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(((string, string)?)null);
+
+        var message = CreateMessage(agentId, activeJob: null);
+
+        await _service.RecoverOrphanedStateAsync(message, agentId);
+
+        entry.OrphanRestoredAt.Should().NotBeNull();
+        _mockFacade.Verify(f => f.AddRun(It.IsAny<PipelineRun>()), Times.Never,
+            "AddRun must not be called when the WorkItem is also absent from DB");
+    }
+
+    [Fact]
+    public async Task NoActiveJob_RegistryHasActiveJobId_CrashRecovery_SkipsReconstructionWhenNoRepoProviderConfig()
+    {
+        // When GetRun returns null, WorkItem exists, but RepoProviderConfigId is absent from Payload,
+        // reconstruction must be skipped — a run without RepoProviderConfigId is invalid.
+        const string agentId = "agent-crash-norepo";
+        const string existingJobId = "00000000-0000-0000-0000-000000000003";
+
+        var entry = CreateEntry(agentId);
+        entry.ActiveJobId = existingJobId;
+        entry.OrphanRestoredAt = null;
+
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == existingJobId))).Returns((PipelineRun?)null);
+        _mockFacade
+            .Setup(f => f.GetWorkItemIssueMetadataAsync(It.Is<JobId>(j => j.Value == existingJobId), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("org/repo#42", "issue-cfg-1"));
+        _mockFacade
+            .Setup(f => f.GetWorkItemProviderConfigIdsAsync(existingJobId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(((string? RepoProviderConfigId, string? BrainProviderConfigId)?)(null, null));
+
+        var message = CreateMessage(agentId, activeJob: null);
+
+        await _service.RecoverOrphanedStateAsync(message, agentId);
+
+        entry.OrphanRestoredAt.Should().NotBeNull();
+        _mockFacade.Verify(f => f.AddRun(It.IsAny<PipelineRun>()), Times.Never,
+            "AddRun must not be called when RepoProviderConfigId cannot be recovered from DB Payload");
+    }
+
+    // ── HandleCrashRecovery: hash gone → AddRun NOT called ────────────────────────
 
     // ── DetectAndRestoreOrphans: SetLocalAgentSnapshotField called (issue #2616) ─
 

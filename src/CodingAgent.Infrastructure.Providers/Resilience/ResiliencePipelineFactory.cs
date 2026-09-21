@@ -233,7 +233,14 @@ public static class ResiliencePipelineFactory
                         // "No active run or work item found" is thrown by ResolveIssueProviderForRunAsync
                         // when no in-memory run exists and the DB WorkItem is also absent (cross-replica miss).
                         // This is a transient failure: a brief retry allows the run state to propagate.
-                        ex.Message.Contains("No active run or work item found", StringComparison.OrdinalIgnoreCase)),
+                        ex.Message.Contains("No active run or work item found", StringComparison.OrdinalIgnoreCase) ||
+                        // "Failed to {operationName} for job {jobId}" is thrown by ExecuteWithIssueProviderAsync
+                        // when the IIssueProvider itself throws (e.g. GitHub API transient 5xx, rate-limit,
+                        // or stale token). The provider already retries internally via CreateGitHubApiPipeline,
+                        // but a second retry tier here gives the system a chance to recover when the provider's
+                        // own retry budget is exhausted due to a brief upstream blip. The outer 2-minute timeout
+                        // caps total retry time so this does not delay the agent indefinitely.
+                        ex.Message.StartsWith("Failed to ", StringComparison.OrdinalIgnoreCase)),
                 OnRetry = args =>
                 {
                     RecordRetryEvent(args, logger, "SignalR", DefaultMaxRetryAttempts);
