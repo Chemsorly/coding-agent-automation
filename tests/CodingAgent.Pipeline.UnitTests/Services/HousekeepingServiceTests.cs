@@ -2048,5 +2048,59 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()),
             Times.Once, "PR #2 resolved to Behind — must be updated");
     }
+
+    // ── TriggerConflictReworkAsync — agent:error as valid rework target ───────
+
+    // TODO: Acceptance criterion #3 requires each extracted step method to have at least one
+    // unit test that exercises it in isolation with a positive-outcome assertion. Only one new
+    // test was added in this changeset (below). The remaining extracted methods rely entirely on
+    // pre-existing characterisation tests that go via the full ExecuteAsync coordinator:
+    //   - BuildMergeabilityMapAsync: covered by ExecuteAsync_Behind_TriggersUpdate etc.
+    //   - EvictInFlightSlots: covered by ExecuteAsync_InFlightPrNotInList_Evicted etc.
+    //   - FetchActiveRunBranchesAsync: covered by ExecuteAsync_GetActiveRunsThrows_* etc.
+    //   - OrderCandidates: covered by auto-merge ordering tests (full pipeline path).
+    //   - SelectAndTriggerBranchUpdatesAsync: covered by ExecuteAsync_Behind_TriggersUpdate etc.
+    //   - RunStaleBranchCleanupIfDueAsync: covered by ExecuteAsync_BranchCleanupEnabled_* etc.
+    // If the criterion's intent is "add a new test per extracted method in this changeset,"
+    // five of six extracted methods are uncovered by this diff. Consider adding dedicated
+    // tests (e.g. OrderCandidates tier ordering with a frozen clock and limit=1, EvictInFlightSlots
+    // direct mutation assertions) to document the isolation intent for each extracted method.
+
+    /// <summary>
+    /// Regression guard for the agent:error-as-rework-target invariant.
+    /// A conflicted PR whose linked issue carries <c>agent:error</c> MUST be re-queued for
+    /// rework. <c>agent:error</c> is an explicit human signal that the issue needs another
+    /// attempt — it is intentionally excluded from <c>TerminalReworkBlockers</c>.
+    /// This test exercises <c>TriggerConflictReworkAsync</c> in isolation: no active runs,
+    /// one conflicted PR, one linked issue with <c>agent:error</c>.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_ConflictedPr_IssueWithAgentError_SwapsToAgentNext()
+    {
+        var (svc, provider, issues, _) = Create();
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
+        provider.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<string>)["42"]);
+        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(MakeIssue("42", AgentLabels.Error));
+        issues.Setup(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .Returns(Task.CompletedTask);
+        issues.Setup(i => i.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .Returns(Task.CompletedTask);
+
+        await ExecAsync(svc, provider, issues, [MakePr(1)]);
+
+        issues.Verify(i => i.AddLabelAsync(
+            It.Is<IssueIdentifier>(id => id.Value == "42"),
+            AgentLabels.Next,
+            It.IsAny<CancellationToken>()), Times.Once,
+            "agent:error is a valid rework target — open conflicted PR requires another run regardless of the issue label");
+        issues.Verify(i => i.RemoveLabelAsync(
+            It.Is<IssueIdentifier>(id => id.Value == "42"),
+            AgentLabels.Error,
+            It.IsAny<CancellationToken>()), Times.Once,
+            "agent:error must be removed as part of the rework swap");
+    }
 }
 
