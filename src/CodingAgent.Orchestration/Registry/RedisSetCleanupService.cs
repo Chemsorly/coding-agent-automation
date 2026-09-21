@@ -98,7 +98,7 @@ public abstract class RedisSetCleanupService : BackgroundService
             return;
         }
 
-        var members = await _store.SetMembersAsync(ScanSetKey);
+        var members = await _store.SetMembersAsync(ScanSetKey, ct);
         var removed = 0;
 
         foreach (var memberId in members)

@@ -695,10 +695,10 @@ public sealed class AgentHubIssueProxyTests
 
         await act.Should().ThrowAsync<HubException>().WithMessage("*missing-config*");
 
-        // Warning(string messageTemplate, T0 propertyValue0, T1 propertyValue1) —
+        // Error(string messageTemplate, T0 propertyValue0, T1 propertyValue1) —
         // "... {IssueProviderConfigId} ... {JobId}" with string configId, string jobId
         _mockLogger.Verify(
-            l => l.Warning(
+            l => l.Error(
                 It.Is<string>(s => s.Contains("{IssueProviderConfigId}") && s.Contains("{JobId}")),
                 It.Is<string>(s => s == "missing-config"),
                 It.Is<string>(s => s == "job-1")),

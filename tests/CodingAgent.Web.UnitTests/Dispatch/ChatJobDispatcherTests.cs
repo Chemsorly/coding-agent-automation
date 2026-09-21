@@ -1430,6 +1430,8 @@ public class ChatJobDispatcherTests
                 // See review finding: TestQualityReviewer WARNING @ line 1371.
                 registryMock.Setup(r => r.GetByAgentId(capturedAgentId))
                     .Throws(new InvalidOperationException("simulated registry fault for watcher fault test"));
+                registryMock.Setup(r => r.GetByAgentIdAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+                    .ThrowsAsync(new InvalidOperationException("simulated registry fault for watcher fault test"));
                 // Deregister is a no-op (never reached because GetByAgentId throws first)
                 registryMock.Setup(r => r.Deregister(It.IsAny<AgentId>())).Returns(false);
             })

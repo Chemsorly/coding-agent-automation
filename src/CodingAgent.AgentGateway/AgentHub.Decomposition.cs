@@ -107,7 +107,7 @@ public sealed partial class AgentHub
     /// Logs a warning when the requested identifier differs from the run's own issue (audit trail for 1G-006).
     /// </summary>
     [RequiresActiveJob]
-    public Task<IssueDetail> RequestGetIssue(JobId jobId, string identifier)
+    public async Task<IssueDetail> RequestGetIssue(JobId jobId, string identifier)
     {
         ArgumentNullException.ThrowIfNull(identifier);
 
@@ -125,8 +125,24 @@ public sealed partial class AgentHub
                 run.AgentId, SanitizeForLog(identifier), SanitizeForLog(run.IssueIdentifier), jobId.Value);
         }
 
-        return ExecuteWithIssueProviderAsync<IssueDetail>(jobId.Value, $"get issue '{identifier}'",
-            (provider, ct) => provider.GetIssueAsync(identifier, ct));
+        try
+        {
+            return await ExecuteWithIssueProviderAsync<IssueDetail>(jobId.Value, $"get issue '{identifier}'",
+                (provider, ct) => provider.GetIssueAsync(identifier, ct));
+        }
+        catch (Exception ex)
+        {
+            // Log at Error so the server-side cause of "Failed to invoke 'RequestGetIssue'"
+            // HubExceptions on the agent is always visible in Grafana — previously only Warning-level
+            // logs were emitted from ResolveIssueProviderForRunAsync, which were easy to miss.
+            // ExecuteWithIssueProviderAsync already logs provider-level exceptions at Error; this
+            // catch captures HubExceptions thrown by ResolveIssueProviderForRunAsync (missing run,
+            // missing provider config) that escape the inner try/catch.
+            _logger.Error(ex,
+                "RequestGetIssue failed for job {JobId}, identifier {Identifier} — agent will receive HubException",
+                jobId.Value, SanitizeForLog(identifier));
+            throw;
+        }
     }
 
     /// <summary>
