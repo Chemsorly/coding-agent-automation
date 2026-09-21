@@ -314,12 +314,18 @@ public sealed class PullRequestFinalizationService
 
             run.AccumulateTokenUsage(result, phase: "pr_description");
 
-            // TODO: TOCTOU race — File.Exists followed by File.ReadAllTextAsync means the file could be deleted
-            // between the two calls, causing FileNotFoundException to be caught by the outer handler with a
-            // misleading log message. Prefer attempting File.ReadAllTextAsync directly and catching
-            // FileNotFoundException explicitly to make the "file absent" intent distinct from unexpected failures.
             var filePath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.PrDescriptionFilePath);
-            if (!File.Exists(filePath))
+            string rawDescription;
+            try
+            {
+                rawDescription = await File.ReadAllTextAsync(filePath, ct);
+            }
+            // TODO: DirectoryNotFoundException (thrown when the .agent/ parent directory is absent) is a sibling
+            // of FileNotFoundException under IOException — not a subclass — so it is NOT caught here and falls
+            // through to the outer "generation failed" handler, producing a misleading log message. To preserve
+            // the prior File.Exists semantics (missing directory → fallback path), also catch
+            // DirectoryNotFoundException and route it into the same fallback block.
+            catch (FileNotFoundException)
             {
                 _logger.Warning("Pipeline {RunId} PR description file not found at {Path}, using OutputLines fallback",
                     run.RunId, filePath);
@@ -327,9 +333,6 @@ public sealed class PullRequestFinalizationService
                 var fallbackText = StripBlockquotePrefix(string.Join("\n", result.OutputLines));
                 if (!string.IsNullOrWhiteSpace(fallbackText))
                 {
-                    // TODO: The file-present path has the same pattern, but neither checks ct.IsCancellationRequested
-                    // before the int.TryParse guard early-return. Consider adding ct.ThrowIfCancellationRequested()
-                    // before the async call for consistency with general cancellation patterns.
                     if (!int.TryParse(run.PullRequestNumber, out var prNumberFallback))
                     {
                         _logger.Warning("Pipeline {RunId} PR description fallback skipped — PullRequestNumber '{PrNumber}' is not a valid integer",
@@ -338,7 +341,7 @@ public sealed class PullRequestFinalizationService
                     }
                     // TODO: When run.PullRequestBody is null (no body set before description generation), ?? ""
                     // produces an empty string and the resulting body ends with a spurious "\n\n---\n\n" separator.
-                    // The file-present path at line ~371 has the same pattern. Consider omitting the separator
+                    // The file-present path has the same pattern. Consider omitting the separator
                     // entirely when currentBody is empty: newBody = string.IsNullOrWhiteSpace(currentBody)
                     //   ? fallbackText : $"{fallbackText}\n\n---\n\n{currentBody}".
                     var currentBodyFallback = run.PullRequestBody ?? "";
@@ -354,7 +357,6 @@ public sealed class PullRequestFinalizationService
                 return;
             }
 
-            var rawDescription = await File.ReadAllTextAsync(filePath, ct);
             var description = StripBlockquotePrefix(rawDescription);
             if (string.IsNullOrWhiteSpace(description))
             {
