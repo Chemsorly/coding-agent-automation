@@ -59,7 +59,7 @@ public class ProcessWrapper : IProcessWrapper
         // quotes, newlines, backticks, and JSON that cause exit code 2 (argument parse error).
         // Use a unique filename per invocation to prevent race conditions when multiple
         // processes run concurrently (parallel review agents in the same workspace).
-        var agentDir = Path.Combine(workspaceDirectory, ".agent");
+        var agentDir = Path.Combine(workspaceDirectory, KiroCliWorkspacePaths.MetadataDirectory);
         Directory.CreateDirectory(agentDir);
         var promptId = Guid.NewGuid().ToString("N")[..8];
         var promptFile = Path.Combine(agentDir, $"prompt-input-{promptId}.md");
@@ -70,7 +70,7 @@ public class ProcessWrapper : IProcessWrapper
 
         // The @path syntax expands file contents inline before sending (per Kiro docs).
         // Use explicit relative path (@./path) to avoid prompt name collision.
-        var inlinePrompt = $"@.agent/prompt-input-{promptId}.md";
+        var inlinePrompt = $"@{KiroCliWorkspacePaths.MetadataDirectory}/prompt-input-{promptId}.md";
         var resumeFlag = resumeSessionId is not null
             ? $"--resume-id {resumeSessionId}"
             : useResume ? "--resume" : null;

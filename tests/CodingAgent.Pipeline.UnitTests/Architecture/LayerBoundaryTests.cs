@@ -89,6 +89,30 @@ public partial class LayerBoundaryTests
         Assert.Contains("CodingAgent.Contracts", pipelineRefs);
     }
 
+    // Issue #2852: AgentWorkspacePaths was moved from CodingAgent.Pipeline to CodingAgent.Contracts
+    // (namespace-preserving move — the type still uses namespace CodingAgent.Pipeline, so existing
+    // callers need no using-directive changes). This test verifies the move succeeded: the type must
+    // be resolvable from the Contracts assembly and must NOT be present in the Pipeline assembly.
+    // TODO: [WARNING] This test verifies the assembly location of AgentWorkspacePaths but does NOT
+    // enforce that no hardcoded ".agent" or ".brain" string literals exist outside AgentWorkspacePaths
+    // itself. The acceptance criteria require zero such literals (verified by grep), but there is no
+    // automated test preventing a future contributor from re-introducing a literal. Consider adding a
+    // source-scanning test (similar to NoSource_ReintroducesLegacyMonolithNamespacePrefix above) that
+    // walks src/**/*.cs and asserts no ".agent" or ".brain" raw string literals appear outside
+    // AgentWorkspacePaths.cs and KiroCliWorkspacePaths.cs (the two authorised definition sites).
+    [Fact]
+    public void AgentWorkspacePaths_LivesInContractsAssembly_NotPipelineAssembly()
+    {
+        // The type keeps its CodingAgent.Pipeline namespace even though it lives in Contracts.
+        const string typeName = "CodingAgent.Pipeline.AgentWorkspacePaths";
+
+        var inContracts = ContractsAssembly.GetType(typeName);
+        Assert.NotNull(inContracts);
+
+        var inPipeline = PipelineAssembly.GetType(typeName);
+        Assert.Null(inPipeline);
+    }
+
     // Infrastructure.Common is below Pipeline in the graph — Pipeline references it, never the reverse.
     [Fact]
     public void InfrastructureCommon_ShouldNot_ReferencePipelineAssembly()

@@ -1,6 +1,16 @@
 using MessagePack;
 using static CodingAgent.Pipeline.Models.PipelineConfigurationDefaults;
 
+// AgentWorkspacePaths lives in the CodingAgent.Pipeline namespace (namespace-preserving move, Spec 048).
+// It is physically in CodingAgent.Contracts (this assembly) but uses a different namespace sub-path.
+// TODO: This using directive resolves a same-assembly type (AgentWorkspacePaths is in namespace
+// CodingAgent.Pipeline but physically lives here in CodingAgent.Contracts). It is functionally correct
+// but semantically misleading — readers may expect a cross-assembly import. If AgentWorkspacePaths is
+// ever moved to namespace CodingAgent.Pipeline.Models (its natural Contracts home), this using becomes
+// redundant and should be removed. Callers that imported AgentWorkspacePaths via CodingAgent.Pipeline
+// would need their using directives audited at that point.
+using CodingAgent.Pipeline;
+
 namespace CodingAgent.Pipeline.Models;
 
 [MessagePackObject]
@@ -291,7 +301,7 @@ public sealed record PipelineConfiguration
 
     [Key(10)]
     [ProjectOverridable(Order = 26)]
-    public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { ".agent", ".brain" };
+    public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { AgentWorkspacePaths.MetadataDirectory, AgentWorkspacePaths.BrainDirectory };
 
     /// <summary>
     /// Agent-provider-specific paths that are ALWAYS unstaged before commit, regardless of

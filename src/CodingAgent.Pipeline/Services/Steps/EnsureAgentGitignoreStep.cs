@@ -22,7 +22,14 @@ public sealed class EnsureAgentGitignoreStep : IPipelineStep
             ? await File.ReadAllTextAsync(gitignorePath, ct)
             : "";
 
-        var updated = IBrainUpdateService.EnsureGitignoreEntry(content, ".agent/");
+        // TODO: [WARNING] The trailing "/" is appended here at the call site rather than being a
+        // named constant in AgentWorkspacePaths (e.g. a MetadataDirectoryPattern = ".agent/" const).
+        // All other derived paths in AgentWorkspacePaths are compile-time constants; this concatenation
+        // is a runtime heap allocation on every call and leaves the trailing-slash convention
+        // undocumented in the constants class. If additional callers need the gitignore form of the
+        // path, consider adding a dedicated const string MetadataDirectoryGitignoreEntry = ".agent/"
+        // to AgentWorkspacePaths rather than repeating the `+ "/"` pattern at each call site.
+        var updated = IBrainUpdateService.EnsureGitignoreEntry(content, AgentWorkspacePaths.MetadataDirectory + "/");
         if (updated != content)
         {
             await File.WriteAllTextAsync(gitignorePath, updated, ct);

@@ -1,8 +1,21 @@
+// TODO: [WARNING] This file lives in CodingAgent.Contracts assembly but intentionally retains the
+// CodingAgent.Pipeline namespace (namespace-preserving move, Issue #2852) so all existing callers
+// that import `using CodingAgent.Pipeline;` continue to resolve AgentWorkspacePaths without any
+// using-directive changes. The issue requirement stated "All callers currently importing from
+// CodingAgent.Pipeline must have their using statements updated" — the namespace-preserving approach
+// is a deliberate deviation. The practical risk: future developers may add more CodingAgent.Pipeline-
+// namespaced types to CodingAgent.Contracts, deepening the split-namespace situation. If this becomes
+// a maintenance problem, move the namespace to CodingAgent.Contracts (or CodingAgent.Pipeline.Models)
+// and audit all callers' using directives at that point.
 namespace CodingAgent.Pipeline;
 
 /// <summary>
 /// Centralized constants for workspace-relative paths used by the pipeline
 /// to store agent metadata, analysis output, and quality gate results.
+///
+/// Namespace-preserving move (Spec 048): this file lives in CodingAgent.Contracts assembly
+/// but keeps the CodingAgent.Pipeline namespace so all existing callers that import
+/// `using CodingAgent.Pipeline;` continue to resolve this class without any using changes.
 /// </summary>
 public static class AgentWorkspacePaths
 {
