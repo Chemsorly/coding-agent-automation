@@ -136,9 +136,7 @@ internal class CodeReviewOrchestrator
                         run.RunId, i + 1, agentsRun.Count);
                     context.Callbacks.EmitOutputLine(
                         $"⚠️ Code review iteration {i + 1}: all review agents failed — no findings produced");
-                    // TODO: [WARNING] NotifyChange() is not called here, unlike every other early-exit path in this
-                    // method. The UI state change triggered by EmitOutputLine above may not be flushed to connected
-                    // clients in the all-crash scenario. Add context.Callbacks.NotifyChange() before return.
+                    context.Callbacks.NotifyChange();
                     return;
                 }
 
