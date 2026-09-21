@@ -44,7 +44,7 @@ public sealed class ApiBackedWorkItemFallbackTransitionServiceTests
     {
         _client
             .Setup(c => c.PostStatusAsync(WorkItemId, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var sut = CreateSut();
         var result = await sut.TryFallbackChainAsync(WorkItemId, WorkItemStatus.Failed, "error", null, CancellationToken.None);
@@ -57,7 +57,7 @@ public sealed class ApiBackedWorkItemFallbackTransitionServiceTests
     {
         _client
             .Setup(c => c.PostStatusAsync(WorkItemId, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var sut = CreateSut();
         await sut.TryFallbackChainAsync(WorkItemId, WorkItemStatus.Succeeded, null, null, CancellationToken.None);
@@ -75,7 +75,7 @@ public sealed class ApiBackedWorkItemFallbackTransitionServiceTests
         _client
             .Setup(c => c.PostStatusAsync(WorkItemId, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .Callback<Guid, WorkItemStatusUpdate, CancellationToken>((_, u, _) => captured = u)
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var sut = CreateSut();
         await sut.TryFallbackChainAsync(WorkItemId, WorkItemStatus.Failed, "something exploded", FailureReason.AgentError, CancellationToken.None);
@@ -92,7 +92,7 @@ public sealed class ApiBackedWorkItemFallbackTransitionServiceTests
         _client
             .Setup(c => c.PostStatusAsync(WorkItemId, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .Callback<Guid, WorkItemStatusUpdate, CancellationToken>((_, u, _) => captured = u)
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var sut = CreateSut();
         await sut.TryFallbackChainAsync(WorkItemId, WorkItemStatus.Cancelled, null, null, CancellationToken.None);
@@ -191,7 +191,7 @@ public sealed class ApiBackedWorkItemFallbackTransitionServiceTests
         _client
             .Setup(c => c.PostStatusAsync(WorkItemId, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .Callback<Guid, WorkItemStatusUpdate, CancellationToken>((_, u, _) => captured = u)
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var sut = CreateSut();
         await sut.TryFallbackChainAsync(WorkItemId, status, null, null, CancellationToken.None);
