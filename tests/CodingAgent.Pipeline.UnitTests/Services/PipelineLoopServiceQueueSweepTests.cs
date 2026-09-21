@@ -70,19 +70,19 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
 
         _loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
         {
-            Orchestration         = runCreator,
-            ProviderFactory       = _mockFactory.Object,
-            PipelineConfigStore   = _mockStore.Object,
-            ProviderConfigStore   = _mockStore.Object,
-            ProjectStore          = _mockStore.Object,
-            Logger                = _mockLogger.Object,
-            WorkDistributor       = null,
+            Orchestration = runCreator,
+            ProviderFactory = _mockFactory.Object,
+            PipelineConfigStore = _mockStore.Object,
+            ProviderConfigStore = _mockStore.Object,
+            ProjectStore = _mockStore.Object,
+            Logger = _mockLogger.Object,
+            WorkDistributor = null,
             DispatchOrchestration = new NullDispatchOrchestrationService(),
-            DependencyChecker     = null,
-            HousekeepingService   = null,
-            LeaderElection        = null,
-            WorkItemClient        = sweepClient,
-            MeterFactory          = _meterFactory
+            DependencyChecker = null,
+            HousekeepingService = null,
+            LeaderElection = null,
+            WorkItemClient = sweepClient,
+            MeterFactory = _meterFactory
         });
         return _loopService;
     }
@@ -143,7 +143,11 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         // Template polled but not present in issueQueues at all (e.g. never got to polling)
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true
         };
 
         var result = PipelineLoopService.BuildEligibilityMap(
@@ -164,7 +168,11 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         // set, so Pending WorkItems for this provider WILL be cancelled.
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true
         };
         var issueQueues = new Dictionary<string, List<IssueSummary>>
         {
@@ -192,7 +200,11 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
     {
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true
         };
         var issueQueues = new Dictionary<string, List<IssueSummary>>
         {
@@ -247,7 +259,11 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         // Template does not appear in prQueues (ReviewEnabled = false, or PR poll threw)
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true
         };
 
         var result = PipelineLoopService.BuildPrEligibilityMap(
@@ -264,7 +280,11 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
     {
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true
         };
         var prQueues = new Dictionary<string, List<PullRequestSummary>>
         {
@@ -298,7 +318,11 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         // the ConsecutiveFailures > before branch rather than the RateLimitResetAt branch).
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true
         };
         // Simulate what PollPrQueueAsync produces on failure: the key is absent.
         var prQueues = new Dictionary<string, List<PullRequestSummary>>();  // "t-1" absent — poll threw
@@ -317,7 +341,11 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
     {
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true
         };
         var prQueues = new Dictionary<string, List<PullRequestSummary>>
         {
@@ -352,7 +380,7 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             .ReturnsAsync([item]);
         _sweepClientMock
             .Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var svc = CreateService(_sweepClientMock.Object);
         var issueEligibility = EligibilityMap("ip-1", "99");
@@ -402,7 +430,7 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             .ReturnsAsync([item]);
         _sweepClientMock
             .Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var svc = CreateService(_sweepClientMock.Object);
         // Issue map: ip-1 has issues; PR map: ip-1 has only PR "999" (not "101")
@@ -478,7 +506,7 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             .ReturnsAsync([implItem, reviewItem]);
         _sweepClientMock
             .Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var svc = CreateService(_sweepClientMock.Object);
         var issueEligibility = EligibilityMap("ip-1", "99");  // "42" not present → impl cancelled
@@ -596,7 +624,7 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             .ReturnsAsync([item]);
         _sweepClientMock
             .Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var svc = CreateService(_sweepClientMock.Object);
         // Issue map: "42" IS present (would keep an Implementation item if it read prEligibility)
@@ -694,7 +722,7 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             {
                 callCount++;
                 if (callCount == 1) throw new InvalidOperationException("unexpected failure");
-                return Task.CompletedTask;
+                return Task.FromResult(true);
             });
 
         var svc = CreateService(_sweepClientMock.Object);
@@ -772,7 +800,7 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             .ReturnsAsync([eligible, ineligible]);
         _sweepClientMock
             .Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var svc = CreateService(_sweepClientMock.Object);
         // "42" is eligible; "99" is not
@@ -834,7 +862,11 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         // cancellation of all pending WorkItems for that provider.
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true
         };
         var issueQueues = new Dictionary<string, List<IssueSummary>>
         {
@@ -868,7 +900,11 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         // (fail-open), preventing cancellation of all pending WorkItems due to a transient failure.
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true
         };
         var issueQueues = new Dictionary<string, List<IssueSummary>>
         {
@@ -898,7 +934,11 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         // The provider SHOULD be included so stale WorkItems are correctly cancelled.
         var template = new PipelineJobTemplate
         {
-            Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true
+            Id = "t-1",
+            Name = "T",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            Enabled = true
         };
         var issueQueues = new Dictionary<string, List<IssueSummary>>
         {

@@ -207,7 +207,7 @@ public sealed class KubernetesWorkDistributorTests
     {
         var id = Guid.NewGuid();
         _client.Setup(c => c.PostStatusAsync(id, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var result = await _sut.CancelJobAsync(new JobId(id.ToString()), CancellationToken.None);
 
