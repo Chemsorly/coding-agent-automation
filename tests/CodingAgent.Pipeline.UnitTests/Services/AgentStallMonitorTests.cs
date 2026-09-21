@@ -141,8 +141,11 @@ public class AgentStallMonitorTests
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
             _run, config, "Stuck agent", null, _mockLogger.Object, CancellationToken.None);
 
-        // Wait for KillAsync to be invoked before completing the agent task
-        await killCalled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // Wait for KillAsync to be invoked before completing the agent task.
+        // 30s budget: the monitor fires after 100ms AgentTimeout on a 50ms poll — well within
+        // 30s even under CI load. The previous 5s budget caused spurious TimeoutException on
+        // overloaded runners (pre-existing flaky test, not related to async/CT changes).
+        await killCalled.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
