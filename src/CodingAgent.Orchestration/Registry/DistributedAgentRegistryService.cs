@@ -495,7 +495,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // WriteRegistrationAsync write lands in Redis. Apply the same fallback here when
         // the async interface conversion (issue #2135) is done — the snapshot fallback
         // applies equally to the async version.
-        var hash = await _store.HashGetAllAsync(AgentKey(agentId.Value));
+        var hash = await _store.HashGetAllAsync(AgentKey(agentId.Value), ct);
         return hash.Length == 0 ? null : HashToEntry(hash);
     }
 
@@ -529,16 +529,12 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     /// <inheritdoc />
     public async Task<IReadOnlyList<AgentEntry>> GetIdleAgentsAsync(CancellationToken ct = default)
     {
-        // TODO (WARNING): CancellationToken `ct` is accepted but not forwarded to SetMembersAsync
-        // or HashGetAllAsync. If the caller cancels (e.g. HTTP request aborted, shutdown), Redis
-        // I/O will not honour the cancellation and the method will not return until all round-trips
-        // complete. Pass `ct` to each store call once IRedisStore supports cancellation tokens.
-        var members = await _store.SetMembersAsync(AgentsIdleKey);
+        var members = await _store.SetMembersAsync(AgentsIdleKey, ct);
         if (members.Length == 0) return Array.Empty<AgentEntry>();
 
         // Fire all HGETALL before awaiting any — StackExchange.Redis queues them into a single
         // pipeline flush, reducing N sequential round-trips to approximately 1.
-        var tasks = members.Select(id => _store.HashGetAllAsync(AgentKey(id))).ToArray();
+        var tasks = members.Select(id => _store.HashGetAllAsync(AgentKey(id), ct)).ToArray();
         var results = await Task.WhenAll(tasks);
 
         var list = new List<AgentEntry>(results.Length);
@@ -596,11 +592,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     /// <inheritdoc />
     public async Task<IReadOnlyList<AgentEntry>> GetAllAgentsAsync(CancellationToken ct = default)
     {
-        // TODO (WARNING): CancellationToken `ct` is accepted but not forwarded to SetMembersAsync
-        // or HashGetAllAsync. If the caller cancels (e.g. HTTP request aborted, shutdown), Redis
-        // I/O will not honour the cancellation and the method will not return until all round-trips
-        // complete. Pass `ct` to each store call once IRedisStore supports cancellation tokens.
-        var members = await _store.SetMembersAsync(AgentsAllKey);
+        var members = await _store.SetMembersAsync(AgentsAllKey, ct);
         if (members.Length == 0)
         {
             // Wrap under lock for the same reason as the main path: a concurrent Register
@@ -624,7 +616,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         }
 
         // Fire all HGETALL before awaiting any — single pipeline flush.
-        var tasks = members.Select(id => _store.HashGetAllAsync(AgentKey(id))).ToArray();
+        var tasks = members.Select(id => _store.HashGetAllAsync(AgentKey(id), ct)).ToArray();
         var results = await Task.WhenAll(tasks);
 
         var list = new List<AgentEntry>(results.Length);

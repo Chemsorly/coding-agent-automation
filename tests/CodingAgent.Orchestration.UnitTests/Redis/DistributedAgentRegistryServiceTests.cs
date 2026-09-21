@@ -204,6 +204,94 @@ public sealed class DistributedAgentRegistryServiceTests
         _store.GetSet("agents:all").Should().NotContain("agent-ghost");
     }
 
+    // ── CancellationToken forwarding ──────────────────────────────────────────
+
+    // TODO (WARNING): All five tests below use a pre-cancelled token, which means cancellation is
+    // observed at the very first awaited store call (SetMembersAsync). None of them exercise
+    // mid-flight cancellation — i.e. the scenario where SetMembersAsync completes successfully
+    // but ct fires before or during the pipelined Task.WhenAll over HashGetAllAsync calls.
+    // A regression that drops ct from the HashGetAllAsync batch (members.Select(id => ...HashGetAllAsync(id, ct)))
+    // but keeps it on SetMembersAsync would not be caught by these tests. Consider adding a
+    // FakeRedisStore variant that allows SetMembersAsync to complete but cancels before HashGetAllAsync returns.
+
+    [Fact]
+    public async Task GetIdleAgentsAsync_ThrowsOperationCanceled_WhenTokenAlreadyCanceled()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = async () => await _sut.GetIdleAgentsAsync(cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task GetAllAgentsAsync_ThrowsOperationCanceled_WhenTokenAlreadyCanceled()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = async () => await _sut.GetAllAgentsAsync(cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task GetByAgentIdAsync_ThrowsOperationCanceled_WhenTokenAlreadyCanceled()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = async () => await _sut.GetByAgentIdAsync(new AgentId("agent-1"), cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task GetIdleAgentsAsync_ThrowsOperationCanceled_WhenTokenCanceledBeforeHGetAll()
+    {
+        // TODO (WARNING): Despite the name, this test does NOT verify cancellation landing at
+        // HashGetAllAsync. Because the token is pre-cancelled, FakeRedisStore.SetMembersAsync(key, ct)
+        // throws OperationCanceledException synchronously and the test never reaches the HashGetAllAsync
+        // phase. The test is therefore semantically identical to GetIdleAgentsAsync_ThrowsOperationCanceled_WhenTokenAlreadyCanceled.
+        // To genuinely exercise the HashGetAllAsync cancellation path, a store that allows SetMembersAsync
+        // to complete but cancels before HashGetAllAsync returns is needed.
+
+        // Register agents so SetMembersAsync returns members — cancellation must fire on
+        // the subsequent HashGetAllAsync calls, not before SetMembersAsync.
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Register(Msg("agent-2"), "conn-2");
+
+        // Pre-cancel the token: FakeRedisStore.SetMembersAsync(key, ct) checks ct before
+        // returning, so cancellation is observed at the first awaited store call.
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = async () => await _sut.GetIdleAgentsAsync(cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task GetAllAgentsAsync_ThrowsOperationCanceled_WhenTokenCanceledBeforeHGetAll()
+    {
+        // TODO (WARNING): Same limitation as GetIdleAgentsAsync_ThrowsOperationCanceled_WhenTokenCanceledBeforeHGetAll —
+        // the pre-cancelled token is observed at SetMembersAsync (the first awaited call), so the test
+        // does not distinguish between ct forwarded to SetMembersAsync and ct forwarded to the pipelined
+        // HashGetAllAsync batch. A regression dropping ct from the HashGetAllAsync calls would not be caught.
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Register(Msg("agent-2"), "conn-2");
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = async () => await _sut.GetAllAgentsAsync(cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
     // ── GetIdleAgents / GetIdleAgentsAsync ────────────────────────────────────
 
     [Fact]
@@ -913,10 +1001,12 @@ internal sealed class HashSetBlockingFakeRedisStore : IRedisStore
     public Task<bool> ExpireAsync(string key, TimeSpan expiry) => _inner.ExpireAsync(key, expiry);
     public Task<bool> ExpireAtAsync(string key, DateTimeOffset expiry) => _inner.ExpireAtAsync(key, expiry);
     public Task<StackExchange.Redis.HashEntry[]> HashGetAllAsync(string key) => _inner.HashGetAllAsync(key);
+    public Task<StackExchange.Redis.HashEntry[]> HashGetAllAsync(string key, CancellationToken ct) => _inner.HashGetAllAsync(key, ct);
     public Task HashSetAsync(string key, StackExchange.Redis.HashEntry[] fields) => _inner.HashSetAsync(key, fields);
     public Task<long> SetAddAsync(string key, string value) => _inner.SetAddAsync(key, value);
     public Task<long> SetRemoveAsync(string key, string value) => _inner.SetRemoveAsync(key, value);
     public Task<string[]> SetMembersAsync(string key) => _inner.SetMembersAsync(key);
+    public Task<string[]> SetMembersAsync(string key, CancellationToken ct) => _inner.SetMembersAsync(key, ct);
     public Task<long> SetCardinalityAsync(string key) => _inner.SetCardinalityAsync(key);
     public Task<long> ListRightPushAsync(string key, string[] values) => _inner.ListRightPushAsync(key, values);
     public Task ListTrimAsync(string key, long start, long stop) => _inner.ListTrimAsync(key, start, stop);

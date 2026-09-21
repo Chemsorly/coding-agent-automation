@@ -192,8 +192,8 @@ public sealed class AgentHubIssueOpsTests
         // Set up provider configs so ResolveIssueProviderForRunAsync succeeds
         var providerConfig = new ProviderConfig { Id = issueProviderConfigId, Kind = ProviderKind.Issue, DisplayName = "Test", ProviderType = "GitHub" };
         _mockFacade
-            .Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { providerConfig });
+            .Setup(f => f.GetProviderConfigByIdAsync(issueProviderConfigId, ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(providerConfig);
 
         // Create a mock issue provider that tracks label operations.
         // AddLabelAsync has a default interface implementation, but Moq can intercept
