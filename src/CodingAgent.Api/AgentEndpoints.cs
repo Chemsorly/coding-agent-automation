@@ -145,7 +145,7 @@ public static class AgentEndpoints
         IAgentRegistryService registry,
         IHubContext<AgentHub, IAgentHubClient> hub)
     {
-        var entry = registry.GetByAgentId(agentId);
+        var entry = await registry.GetByAgentIdAsync(agentId, CancellationToken.None);
         if (entry is null)
             return TypedResults.NotFound($"Agent '{agentId}' not found.");
 

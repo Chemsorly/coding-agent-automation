@@ -30,7 +30,7 @@ public sealed class AgentRegistryCleanupServiceTests
     {
         // Arrange: one member in agents:all, its agent:{id} key does NOT exist
         const string staleId = "agent-stale-001";
-        _store.Setup(s => s.SetMembersAsync("agents:all")).ReturnsAsync([staleId]);
+        _store.Setup(s => s.SetMembersAsync("agents:all", It.IsAny<CancellationToken>())).ReturnsAsync([staleId]);
         _store.Setup(s => s.ExistsAsync($"agent:{staleId}")).ReturnsAsync(false);
         _store.Setup(s => s.SetRemoveAsync("agents:all", staleId)).ReturnsAsync(1L);
         _store.Setup(s => s.SetRemoveAsync("agents:idle", staleId)).ReturnsAsync(1L);
@@ -52,7 +52,7 @@ public sealed class AgentRegistryCleanupServiceTests
     {
         // Arrange: member exists AND its agent:{id} key also exists
         const string activeId = "agent-active-001";
-        _store.Setup(s => s.SetMembersAsync("agents:all")).ReturnsAsync([activeId]);
+        _store.Setup(s => s.SetMembersAsync("agents:all", It.IsAny<CancellationToken>())).ReturnsAsync([activeId]);
         _store.Setup(s => s.ExistsAsync($"agent:{activeId}")).ReturnsAsync(true);
 
         var svc = CreateService();
@@ -69,7 +69,7 @@ public sealed class AgentRegistryCleanupServiceTests
         // Arrange: two members — one stale, one active
         const string staleId = "agent-stale-002";
         const string activeId = "agent-active-002";
-        _store.Setup(s => s.SetMembersAsync("agents:all")).ReturnsAsync([staleId, activeId]);
+        _store.Setup(s => s.SetMembersAsync("agents:all", It.IsAny<CancellationToken>())).ReturnsAsync([staleId, activeId]);
         _store.Setup(s => s.ExistsAsync($"agent:{staleId}")).ReturnsAsync(false);
         _store.Setup(s => s.ExistsAsync($"agent:{activeId}")).ReturnsAsync(true);
         _store.Setup(s => s.SetRemoveAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(1L);
@@ -87,7 +87,7 @@ public sealed class AgentRegistryCleanupServiceTests
     [Fact]
     public async Task SweepAsync_EmptySet_NoRemovalCalls()
     {
-        _store.Setup(s => s.SetMembersAsync("agents:all")).ReturnsAsync([]);
+        _store.Setup(s => s.SetMembersAsync("agents:all", It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         var svc = CreateService();
 
@@ -105,14 +105,14 @@ public sealed class AgentRegistryCleanupServiceTests
         var leaderElection = new Mock<ILeaderElectionService>();
         leaderElection.SetupGet(l => l.IsLeader).Returns(false);
 
-        _store.Setup(s => s.SetMembersAsync("agents:all")).ReturnsAsync(["agent-001"]);
+        _store.Setup(s => s.SetMembersAsync("agents:all", It.IsAny<CancellationToken>())).ReturnsAsync(["agent-001"]);
 
         var svc = CreateService(leaderElection.Object);
 
         await svc.SweepAsync(CancellationToken.None);
 
         // SMEMBERS must not even be called (leader gate fires before Redis reads)
-        _store.Verify(s => s.SetMembersAsync(It.IsAny<string>()), Times.Never,
+        _store.Verify(s => s.SetMembersAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
             "non-leader must skip sweep entirely — no Redis reads");
     }
 
@@ -123,27 +123,27 @@ public sealed class AgentRegistryCleanupServiceTests
         var leaderElection = new Mock<ILeaderElectionService>();
         leaderElection.SetupGet(l => l.IsLeader).Returns(true);
 
-        _store.Setup(s => s.SetMembersAsync("agents:all")).ReturnsAsync([]);
+        _store.Setup(s => s.SetMembersAsync("agents:all", It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         var svc = CreateService(leaderElection.Object);
 
         await svc.SweepAsync(CancellationToken.None);
 
         // SMEMBERS was called — sweep ran
-        _store.Verify(s => s.SetMembersAsync("agents:all"), Times.Once);
+        _store.Verify(s => s.SetMembersAsync("agents:all", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task SweepAsync_NullLeaderElection_AlwaysSweeps()
     {
         // Arrange: null leaderElection = single-replica / local dev mode — always sweeps
-        _store.Setup(s => s.SetMembersAsync("agents:all")).ReturnsAsync([]);
+        _store.Setup(s => s.SetMembersAsync("agents:all", It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         var svc = CreateService(leaderElection: null);
 
         await svc.SweepAsync(CancellationToken.None);
 
-        _store.Verify(s => s.SetMembersAsync("agents:all"), Times.Once,
+        _store.Verify(s => s.SetMembersAsync("agents:all", It.IsAny<CancellationToken>()), Times.Once,
             "null leader election service means always sweep");
     }
 
@@ -155,7 +155,7 @@ public sealed class AgentRegistryCleanupServiceTests
         // Arrange: two members; cancellation fired after first
         const string id1 = "agent-001";
         const string id2 = "agent-002";
-        _store.Setup(s => s.SetMembersAsync("agents:all")).ReturnsAsync([id1, id2]);
+        _store.Setup(s => s.SetMembersAsync("agents:all", It.IsAny<CancellationToken>())).ReturnsAsync([id1, id2]);
 
         // First member check triggers cancellation
         var cts = new CancellationTokenSource();
@@ -183,7 +183,7 @@ public sealed class AgentRegistryCleanupServiceTests
     public async Task ExecuteAsync_OnTick_CallsSweepAsync()
     {
         // Arrange: configure store so a sweep can complete
-        _store.Setup(s => s.SetMembersAsync("agents:all")).ReturnsAsync([]);
+        _store.Setup(s => s.SetMembersAsync("agents:all", It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         // Use a very short interval so the tick fires immediately in the test
         var svc = new AgentRegistryCleanupService(_store.Object, _logger.Object,
@@ -198,14 +198,14 @@ public sealed class AgentRegistryCleanupServiceTests
         var deadline = DateTime.UtcNow.AddSeconds(5);
         while (DateTime.UtcNow < deadline)
         {
-            try { _store.Verify(s => s.SetMembersAsync("agents:all"), Times.AtLeastOnce()); break; }
+            try { _store.Verify(s => s.SetMembersAsync("agents:all", It.IsAny<CancellationToken>()), Times.AtLeastOnce()); break; }
             catch (MockException) { await Task.Delay(20); }
         }
 
         cts.Cancel();
         await ((IHostedService)svc).StopAsync(CancellationToken.None);
 
-        _store.Verify(s => s.SetMembersAsync("agents:all"), Times.AtLeastOnce(),
+        _store.Verify(s => s.SetMembersAsync("agents:all", It.IsAny<CancellationToken>()), Times.AtLeastOnce(),
             "ExecuteAsync timer loop must call SweepAsync on each tick");
     }
 
@@ -214,7 +214,7 @@ public sealed class AgentRegistryCleanupServiceTests
     {
         // Arrange: first call throws, second returns empty — loop must continue
         var callCount = 0;
-        _store.Setup(s => s.SetMembersAsync("agents:all"))
+        _store.Setup(s => s.SetMembersAsync("agents:all", It.IsAny<CancellationToken>()))
             .Returns(() =>
             {
                 callCount++;
