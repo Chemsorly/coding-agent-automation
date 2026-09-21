@@ -136,8 +136,14 @@ public class IntegrationTestBase : IDisposable
             new ProviderConfig { Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Test Repo" },
             CancellationToken.None);
         await ConfigStore.SaveProviderConfigAsync(
-            new ProviderConfig { Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Test Agent",
-                Settings = new Dictionary<string, string> { [ProviderSettingKeys.Model] = "test-model" } },
+            new ProviderConfig
+            {
+                Id = "agent-1",
+                Kind = ProviderKind.Agent,
+                ProviderType = "KiroCli",
+                DisplayName = "Test Agent",
+                Settings = new Dictionary<string, string> { [ProviderSettingKeys.Model] = "test-model" }
+            },
             CancellationToken.None);
         await ConfigStore.SaveQualityGateConfigAsync(
             new QualityGateConfiguration { Id = "default", DisplayName = "Default", CompilationCommand = "dotnet", CompilationArguments = ["build"], TestCommand = "dotnet", TestArguments = ["test"], Enabled = true },
