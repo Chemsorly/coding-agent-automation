@@ -316,68 +316,36 @@ public partial class QualityGateExecutor
         QualityGateReport latestReport,
         CancellationToken ct)
     {
-        try
+        // TODO: The preamble output line is emitted unconditionally before CollectFeedbackCoreAsync is
+        // awaited. If CollectFeedbackCoreAsync re-throws OperationCanceledException (pipeline cancellation),
+        // the "📋 Collecting failure feedback..." line will already have been emitted. Previously this line
+        // was inside the try block, so pre-condition failures would not have emitted it. This is a minor
+        // cosmetic regression: the output line appears even when the operation is cancelled before it starts.
+        context.Callbacks.EmitOutputLine("📋 Collecting failure feedback...");
+
+        var issue = context.Issue ?? new IssueDetail
         {
-            context.Callbacks.EmitOutputLine("📋 Collecting failure feedback...");
+            Identifier = run.IssueIdentifier,
+            Title = run.IssueTitle,
+            Description = "(Issue description not available)",
+            Labels = []
+        };
 
-            // Load distinct categories from recent run summaries
-            var (harnessCategories, issueCategories) = await _feedbackService.LoadPreviousCategoriesAsync(_historyService, ct).ConfigureAwait(false);
+        await _feedbackService.CollectFeedbackCoreAsync(
+            run,
+            context.AgentProvider,
+            _historyService,
+            cats => FeedbackPromptBuilder.BuildFailureFeedbackPrompt(
+                run, issue, latestReport, cats.HarnessCategories, cats.IssueCategories),
+            FeedbackOutcome.Failure,
+            context.Config.FeedbackTimeoutSeconds,
+            ct,
+            line => context.Callbacks.EmitOutputLine(line));
 
-            // Build the issue detail for the prompt (use context issue or create a minimal one from run data)
-            var issue = context.Issue ?? new IssueDetail
-            {
-                Identifier = run.IssueIdentifier,
-                Title = run.IssueTitle,
-                Description = "(Issue description not available)",
-                Labels = []
-            };
-
-            // Build the failure feedback prompt
-            var feedbackPrompt = FeedbackPromptBuilder.BuildFailureFeedbackPrompt(
-                run, issue, latestReport, harnessCategories, issueCategories);
-
-            // Execute agent with UseResume = true and operator-configured timeout
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(context.Config.FeedbackTimeoutSeconds));
-
-            var agentResult = await context.AgentProvider.ExecuteAsync(
-                new AgentRequest
-                {
-                    Prompt = feedbackPrompt,
-                    WorkspacePath = run.WorkspacePath!,
-                    Timeout = TimeSpan.FromSeconds(context.Config.FeedbackTimeoutSeconds),
-                    UseResume = true
-                },
-                timeoutCts.Token,
-                line => context.Callbacks.EmitOutputLine(line));
-
-            // Parse the response
-            var responseText = string.Join("\n", agentResult.OutputLines);
-            var feedback = _feedbackService.ParseFeedbackFromResponse(responseText, FeedbackOutcome.Failure, DateTime.UtcNow);
-            run.Feedback = feedback;
-
+        // Log success after the call; run.Feedback is set by CollectFeedbackCoreAsync on the happy path.
+        if (run.Feedback is not null)
             _logger.Information("Pipeline {RunId} failure feedback collected successfully. Category: {Category}",
-                run.RunId, feedback.Harness.Category ?? "(none)");
-        }
-        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
-        {
-            // Timeout on the feedback call itself (not pipeline cancellation)
-            _logger.Warning(ex, "Pipeline {RunId} failure feedback collection timed out after {Timeout}s",
-                run.RunId, context.Config.FeedbackTimeoutSeconds);
-            run.Feedback = _feedbackService.CreateFallbackFeedback(
-                FeedbackOutcome.Failure, "Feedback collection timed out", DateTime.UtcNow);
-        }
-        catch (OperationCanceledException)
-        {
-            // Pipeline-level cancellation — re-throw to let the outer handler deal with it
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Pipeline {RunId} failure feedback collection failed", run.RunId);
-            run.Feedback = _feedbackService.CreateFallbackFeedback(
-                FeedbackOutcome.Failure, $"Feedback collection failed: {ex.Message}", DateTime.UtcNow);
-        }
+                run.RunId, run.Feedback.Harness.Category ?? "(none)");
     }
 
     /// <summary>
