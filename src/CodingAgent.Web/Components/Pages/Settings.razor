@@ -330,7 +330,7 @@
 
     public async ValueTask DisposeAsync()
     {
-        _toastCts?.Cancel();
+        if (_toastCts is not null) await _toastCts.CancelAsync();
         _toastCts?.Dispose();
         await _cts.CancelAsync();
         _cts.Dispose();

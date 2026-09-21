@@ -34,7 +34,8 @@ public class UndoSnackbarComponentTests : BunitContext
 
         await cut.InvokeAsync(() => component.Show("Test.", async () => { undoCalled = true; await Task.CompletedTask; }));
 
-        cut.Find(".undo-snackbar-btn").Click();
+        var btn = cut.Find(".undo-snackbar-btn");
+        await cut.InvokeAsync(() => btn.TriggerEventAsync("onclick", new Microsoft.AspNetCore.Components.Web.MouseEventArgs()));
 
         Assert.True(undoCalled);
         Assert.DoesNotContain("undo-snackbar", cut.Markup);

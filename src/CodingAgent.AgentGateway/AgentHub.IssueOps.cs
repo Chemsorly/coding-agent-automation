@@ -317,8 +317,9 @@ public sealed partial class AgentHub
             // site should be updated at the same time.
             if (meta is null)
             {
-                _logger.Warning(
-                    "ResolveIssueProviderForRunAsync: no active run or work item found for job {JobId}",
+                _logger.Error(
+                    "ResolveIssueProviderForRunAsync: no active run or work item found for job {JobId} — " +
+                    "RequestGetIssue will fail; possible cross-replica state miss or expired Redis entry",
                     jobId);
                 throw new HubException($"No active run or work item found for job {jobId}");
             }
@@ -338,8 +339,9 @@ public sealed partial class AgentHub
             issueProviderConfigId, ProviderKind.Issue, CancellationToken.None);
         if (issueConfig is null)
         {
-            _logger.Warning(
-                "ResolveIssueProviderForRunAsync: issue provider config {IssueProviderConfigId} not found for job {JobId}",
+            _logger.Error(
+                "ResolveIssueProviderForRunAsync: issue provider config {IssueProviderConfigId} not found for job {JobId} — " +
+                "RequestGetIssue will fail; provider config may have been deleted or the run payload is stale",
                 issueProviderConfigId, jobId);
             throw new HubException($"Issue provider config '{issueProviderConfigId}' not found for job {jobId}");
         }

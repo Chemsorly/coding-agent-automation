@@ -98,8 +98,8 @@ public sealed class CloneProjectRepositoriesStep : IPipelineStep
                 if (target is not null)
                     target.LocalPath = $"repos/{templateName}";
 
-                context.Logger.Information("Cloned additional repo '{TemplateName}' to repos/{TemplateName}",
-                    templateName, templateName);
+                context.Logger.Information("Cloned additional repo '{TemplateName}' to '{TargetPath}'",
+                    templateName, $"repos/{templateName}");
             }
             catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
             {
