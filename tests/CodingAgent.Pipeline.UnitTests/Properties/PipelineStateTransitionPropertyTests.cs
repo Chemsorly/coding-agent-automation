@@ -219,7 +219,7 @@ public class PipelineStateTransitionPropertyTests
 
         var mockValidator = new Mock<IQualityGateValidator>();
         var callIndex = 0;
-        mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        mockValidator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
             {
                 var idx = Interlocked.Increment(ref callIndex) - 1;
@@ -250,7 +250,7 @@ public class PipelineStateTransitionPropertyTests
             .ReturnsAsync(TestPipelineConfig.Default());
 
         var mockValidator = new Mock<IQualityGateValidator>();
-        mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        mockValidator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = allGatesPass, Details = allGatesPass ? "OK" : "Failed" },

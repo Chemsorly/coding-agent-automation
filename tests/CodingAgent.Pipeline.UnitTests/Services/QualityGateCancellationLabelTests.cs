@@ -77,7 +77,7 @@ public class QualityGateCancellationLabelTests
     {
         // Arrange: validator throws OperationCanceledException (simulating cancellation during quality gates)
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>()))
             .ThrowsAsync(new OperationCanceledException());
@@ -103,7 +103,7 @@ public class QualityGateCancellationLabelTests
     {
         // Arrange
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>()))
             .ThrowsAsync(new OperationCanceledException());
@@ -123,7 +123,7 @@ public class QualityGateCancellationLabelTests
         // Arrange
         var beforeTest = DateTime.UtcNow;
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>()))
             .ThrowsAsync(new OperationCanceledException());
@@ -145,11 +145,11 @@ public class QualityGateCancellationLabelTests
         using var orchestratorCts = new CancellationTokenSource();
 
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<string?>()))
-            .Returns(async (string _, IReadOnlyList<QualityGateConfiguration> _, CancellationToken ct, string? _) =>
+            .Returns(async (WorkspacePath _, IReadOnlyList<QualityGateConfiguration> _, CancellationToken ct, string? _) =>
             {
                 // Cancel while "validating"
                 await orchestratorCts.CancelAsync();
@@ -184,7 +184,7 @@ public class QualityGateCancellationLabelTests
         _run.CurrentStep = PipelineStep.Cancelled;
 
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>()))
             .ThrowsAsync(new OperationCanceledException());

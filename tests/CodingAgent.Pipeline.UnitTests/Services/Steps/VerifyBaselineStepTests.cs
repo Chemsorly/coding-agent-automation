@@ -106,7 +106,7 @@ public class VerifyBaselineStepTests
         var qgc = CreateQgc();
         var context = BuildContext(preResolvedQgcs: [qgc]);
 
-        _validator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreatePassingReport());
 
         var step = new VerifyBaselineStep();
@@ -123,7 +123,7 @@ public class VerifyBaselineStepTests
         var qgc = CreateQgc();
         var context = BuildContext(preResolvedQgcs: [qgc]);
 
-        _validator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreateFailingReport());
 
         var step = new VerifyBaselineStep();
@@ -140,7 +140,7 @@ public class VerifyBaselineStepTests
         var qgc = CreateQgc();
         var context = BuildContext(preResolvedQgcs: [qgc]);
 
-        _validator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("build tool not found"));
 
         var step = new VerifyBaselineStep();
@@ -156,13 +156,13 @@ public class VerifyBaselineStepTests
         var qgc = CreateQgc();
         var context = BuildContext(preResolvedQgcs: [qgc]);
 
-        _validator.Setup(v => v.ValidateAsync("/tmp/workspace", It.Is<IReadOnlyList<QualityGateConfiguration>>(l => l.Count == 1 && l[0] == qgc), It.IsAny<CancellationToken>()))
+        _validator.Setup(v => v.ValidateAsync((WorkspacePath)"/tmp/workspace", It.Is<IReadOnlyList<QualityGateConfiguration>>(l => l.Count == 1 && l[0] == qgc), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreatePassingReport());
 
         var step = new VerifyBaselineStep();
         await step.ExecuteAsync(context, CancellationToken.None);
 
-        _validator.Verify(v => v.ValidateAsync("/tmp/workspace", It.Is<IReadOnlyList<QualityGateConfiguration>>(l => l[0] == qgc), It.IsAny<CancellationToken>()), Times.Once);
+        _validator.Verify(v => v.ValidateAsync((WorkspacePath)"/tmp/workspace", It.Is<IReadOnlyList<QualityGateConfiguration>>(l => l[0] == qgc), It.IsAny<CancellationToken>()), Times.Once);
         _configStore.Verify(c => c.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -174,7 +174,7 @@ public class VerifyBaselineStepTests
 
         _configStore.Setup(c => c.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<QualityGateConfiguration> { qgc });
-        _validator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreatePassingReport());
 
         var step = new VerifyBaselineStep();
@@ -189,7 +189,7 @@ public class VerifyBaselineStepTests
         var qgc = CreateQgc();
         var context = BuildContext(preResolvedQgcs: [qgc]);
 
-        _validator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreatePassingReport());
 
         var step = new VerifyBaselineStep();
@@ -197,7 +197,7 @@ public class VerifyBaselineStepTests
 
         // ValidateAsync is called (local gates only) — external CI is never invoked
         // because VerifyBaselineStep calls IQualityGateValidator directly, not IQualityGateExecutor
-        _validator.Verify(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()), Times.Once);
+        _validator.Verify(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -205,7 +205,7 @@ public class VerifyBaselineStepTests
     {
         var context = BuildContext(preResolvedQgcs: [CreateQgc()]);
 
-        _validator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreatePassingReport());
 
         var step = new VerifyBaselineStep();
