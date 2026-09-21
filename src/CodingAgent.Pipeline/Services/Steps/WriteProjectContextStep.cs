@@ -18,7 +18,7 @@ public sealed class WriteProjectContextStep : IPipelineStep
             return StepResult.Continue;
 
         var workspacePath = context.Run.WorkspacePath!;
-        var agentDir = Path.Combine(workspacePath, ".agent");
+        var agentDir = Path.Combine(workspacePath, AgentWorkspacePaths.MetadataDirectory);
 
         var sb = new StringBuilder();
         sb.AppendLine("# Project Context");

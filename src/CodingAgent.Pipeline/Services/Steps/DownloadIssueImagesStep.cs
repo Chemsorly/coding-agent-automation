@@ -57,7 +57,7 @@ public sealed class DownloadIssueImagesStep : IPipelineStep
         {
             var token = await _tokenProvider(ct);
 
-            var targetDirectory = Path.Combine(context.Run.WorkspacePath!, ".agent", "images");
+            var targetDirectory = Path.Combine(context.Run.WorkspacePath!, AgentWorkspacePaths.MetadataDirectory, "images");
             Directory.CreateDirectory(targetDirectory);
 
             var gitlabApiUrl = _repoConfig.Settings.GetValueOrDefault("ApiUrl");
