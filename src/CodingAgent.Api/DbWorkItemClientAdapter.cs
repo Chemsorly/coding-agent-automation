@@ -55,7 +55,7 @@ internal sealed class DbWorkItemClientAdapter : IPipelineApiWorkItemClient
         => throw new NotSupportedException($"{nameof(DbWorkItemClientAdapter)} only supports {nameof(GetK8sJobNameAsync)}.");
 
     [ExcludeFromCodeCoverage(Justification = "Intentional NotSupportedException stub")]
-    public Task PostStatusAsync(Guid workItemId, WorkItemStatusUpdate request, CancellationToken ct = default)
+    public Task<bool> PostStatusAsync(Guid workItemId, WorkItemStatusUpdate request, CancellationToken ct = default)
         => throw new NotSupportedException($"{nameof(DbWorkItemClientAdapter)} only supports {nameof(GetK8sJobNameAsync)}.");
 
     [ExcludeFromCodeCoverage(Justification = "Intentional NotSupportedException stub")]

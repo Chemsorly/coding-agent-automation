@@ -541,16 +541,16 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         var response = await httpClient.PostAsJsonAsync(
             $"/api/work-items/{workItemId}/status", statusBody);
 
-        // Assert: accepted, not rejected. WorkItemTransitionService short-circuits
-        // `item.Status == target` as idempotent before it reaches IsValidTransition, so a repeat
-        // of a terminal post is a no-op that reports success.
+        // Assert: idempotent no-op returns 204 NoContent (not 200 OK). The endpoint returns 204
+        // when the item is already at a terminal status so the caller can distinguish a real
+        // transition (200) from a duplicate post (204) and suppress redundant metric emission.
         //
         // This test previously asserted 400. Status reporting is at-least-once — an agent that
         // crashes after posting will post again on restart — so answering an error for work that
         // already succeeded would push agents into spurious retry and error logging. What has to
         // hold is that the repeat changes nothing, which is the assertion below: the short-circuit
         // returns before the mutation, so the first (real) failure survives.
-        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.NoContent, response.StatusCode);
 
         // Assert: original error message preserved — the second post must not overwrite it
         await using var db = Fixture.DbContextFactory.CreateDbContext();
