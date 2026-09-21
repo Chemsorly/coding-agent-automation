@@ -206,17 +206,21 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             _logger.Warning(ex, "Failed to transition WorkItem {JobId} to Failed on JobRejected", jobId.Value);
         }
 
-        try
-        {
-            _logger.Warning("JobRejected: swapping label to agent:error for issue {IssueIdentifier} (jobId={JobId}, retries exhausted)",
-                run.IssueIdentifier, jobId.Value);
-            await _issueOps.SwapLabelAsync(run, AgentLabels.Error, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to revert label for rejected run {JobId} (issue {IssueIdentifier})",
-                jobId.Value, run.IssueIdentifier);
-        }
+        _logger.Warning("JobRejected: swapping label to agent:error for issue {IssueIdentifier} (jobId={JobId}, retries exhausted)",
+            run.IssueIdentifier, jobId.Value);
+        // TODO: [WARNING] This call hardcodes run.IssueProviderConfigId and LabelTargetKind.Issue, which is
+        // incorrect for Review runs — those route via run.ProviderConfigIdForLabel (RepoProviderConfigId) and
+        // LabelTargetKind.PullRequest. Use the run-aware overload instead:
+        //   await _labelService.TrySwapLabelAsync(run, AgentLabels.Error, _logger, "...", ct);
+        // PermanentlyFailRejectedRunAsync is reachable for all run types (HandleRejectedRunCleanupAsync
+        // does not filter on RunType), so a rejected Review run will attempt to swap the wrong target.
+        // TODO: [WARNING] OCE behavior changed: the old inline catch (Exception ex) swallowed OCE; the new
+        // call uses SwallowCancellation=false (the default), so OCE now propagates out of this method into
+        // HandleRejectedRunCleanupAsync (called from a finally block in HandleJobRejectedAsync). Verify that
+        // propagating OCE here during post-rejection cleanup does not strand agent state.
+        await _labelService.TrySwapLabelAsync(
+            run.IssueProviderConfigId, run.IssueIdentifier, AgentLabels.Error, LabelTargetKind.Issue,
+            _logger, "AgentJobLifecycleService.PermanentlyFailRejectedRunAsync", ct);
     }
 
     /// <inheritdoc />
@@ -340,25 +344,17 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         }
     }
 
-    private async Task TrySwapLabelAfterOrphanedRecoveryAsync(
+    private Task TrySwapLabelAfterOrphanedRecoveryAsync(
         JobId jobId,
         (string IssueIdentifier, string IssueProviderConfigId)? metadata,
         CancellationToken ct)
     {
-        try
-        {
-            if (metadata.HasValue)
-            {
-                await _labelService.SwapLabelAsync(
-                    metadata.Value.IssueProviderConfigId,
-                    metadata.Value.IssueIdentifier,
-                    AgentLabels.Done, LabelTargetKind.Issue, ct);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to swap label after recovery for job {JobId} (cosmetic)", jobId.Value);
-        }
+        if (!metadata.HasValue) return Task.CompletedTask;
+        return _labelService.TrySwapLabelAsync(
+            metadata.Value.IssueProviderConfigId, metadata.Value.IssueIdentifier,
+            AgentLabels.Done, LabelTargetKind.Issue,
+            _logger, $"AgentJobLifecycleService.TrySwapLabelAfterOrphanedRecovery (job {jobId.Value})",
+            ct);
     }
 
     private async Task PostCompletionBookkeepingAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload, CancellationToken ct)

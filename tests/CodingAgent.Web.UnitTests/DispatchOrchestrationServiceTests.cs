@@ -243,7 +243,8 @@ public class DispatchOrchestrationServiceTests
 
         // Label swap is deferred to ConfirmDistributionLabelAsync (#997)
         _mockLabelService.Verify(
-            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress,
+                It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -267,8 +268,72 @@ public class DispatchOrchestrationServiceTests
         await service.ConfirmDistributionLabelAsync(request, CancellationToken.None);
 
         _mockLabelService.Verify(
-            l => l.SwapLabelAsync("issue-1", "issue-42", AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            l => l.SwapLabelAsync("issue-1", "issue-42", AgentLabels.InProgress,
+                LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task ConfirmDistributionLabelAsync_LabelSwapThrows_IsSwallowed()
+    {
+        // Characterization test: non-OCE exceptions from SwapLabelAsync must not propagate.
+        // After migration to TrySwapLabelAsync this behaviour is enforced by the helper.
+        SetupStandardMocks();
+        _mockLabelService
+            .Setup(l => l.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+                It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Provider unreachable"));
+
+        var service = CreateService();
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "issue-42",
+            IssueProviderConfigId = "issue-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            TimeoutSeconds = 3600
+        };
+
+        // Must not throw — label swap failure is non-fatal
+        var act = () => service.ConfirmDistributionLabelAsync(request, CancellationToken.None);
+        await act.Should().NotThrowAsync();
+    }
+
+    // TODO: [WARNING] The swallowCancellation:true branch (Pending-enqueue path, DistributeAndFinalizeAsync)
+    // has no integration-level test in DispatchOrchestrationServiceTests. The only coverage for
+    // SwallowCancellation=true is in LabelServiceExtensionsTests (helper in isolation). A future refactor
+    // that drops or misroutes the swallowCancellation argument on the Pending path would not be caught here.
+    // Consider adding a test that exercises DistributeAndFinalizeAsync with a Pending-path OCE to lock in
+    // the swallowCancellation:true behavior at the DispatchOrchestrationService integration level.
+    [Fact]
+    public async Task ConfirmDistributionLabelAsync_OcePropagates_WhenCalledViaPublicInterface()
+    {
+        // Characterization test: OCE propagates from the public ConfirmDistributionLabelAsync
+        // (swallowCancellation:false path).
+        SetupStandardMocks();
+        _mockLabelService
+            .Setup(l => l.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+                It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var service = CreateService();
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "issue-42",
+            IssueProviderConfigId = "issue-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            TimeoutSeconds = 3600
+        };
+
+        var act = () => service.ConfirmDistributionLabelAsync(request, CancellationToken.None);
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
     [Fact]
@@ -2036,7 +2101,8 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
         await _service.RevertFailedDistributionAsync(request, CancellationToken.None);
 
         _mockLabelService.Verify(
-            s => s.SwapLabelAsync("ipc-1", "owner/repo#10", AgentLabels.Next, It.IsAny<CancellationToken>()),
+            s => s.SwapLabelAsync("ipc-1", "owner/repo#10", AgentLabels.Next,
+                LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -2062,7 +2128,8 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
 
         // Assert: label was reverted
         _mockLabelService.Verify(
-            s => s.SwapLabelAsync("ipc-2", "owner/repo#20", AgentLabels.Next, It.IsAny<CancellationToken>()),
+            s => s.SwapLabelAsync("ipc-2", "owner/repo#20", AgentLabels.Next,
+                LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
             Times.Once);
 
         // Assert: no run was ever registered in the local _runService (monolith is no longer authoritative)
@@ -2074,7 +2141,8 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
     public async Task RevertFailedDistribution_LabelSwapFailure_DoesNotThrow()
     {
         _mockLabelService
-            .Setup(s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(),
+                It.IsAny<string>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Provider unreachable"));
 
         var request = new JobDistributionRequest
@@ -2093,7 +2161,8 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
         exception.Should().BeNull();
 
         _mockLabelService.Verify(
-            s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(),
+                It.IsAny<string>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -2115,8 +2184,37 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
         await _service.RevertFailedDistributionAsync(request, CancellationToken.None);
 
         _mockLabelService.Verify(
-            s => s.SwapLabelAsync("ipc-nonexistent", "owner/repo#999", AgentLabels.Next, It.IsAny<CancellationToken>()),
+            s => s.SwapLabelAsync("ipc-nonexistent", "owner/repo#999", AgentLabels.Next,
+                LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task RevertFailedDistribution_OcePropagates_AfterMigration()
+    {
+        // Characterization test for the behaviour change introduced by migrating to TrySwapLabelAsync:
+        // the old catch (Exception ex) with no filter swallowed OCE; after migration with
+        // swallowCancellation:false, OCE propagates to the caller.
+        // This is the correct behaviour — if the dispatch token is cancelled, the revert should stop.
+        _mockLabelService
+            .Setup(s => s.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+                It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#40",
+            IssueProviderConfigId = "ipc-4",
+            RepoProviderConfigId = "rpc-4",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600
+        };
+
+        var act = () => _service.RevertFailedDistributionAsync(request, CancellationToken.None);
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 }
 
@@ -2183,7 +2281,8 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
 
         // Confirm label was swapped to agent:in-progress
         _mockLabelService.Verify(
-            s => s.SwapLabelAsync("ipc-1", "owner/repo#42", AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            s => s.SwapLabelAsync("ipc-1", "owner/repo#42", AgentLabels.InProgress,
+                LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -2204,7 +2303,8 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
 
         // Label should be reverted to agent:next
         _mockLabelService.Verify(
-            s => s.SwapLabelAsync("ipc-1", "owner/repo#42", AgentLabels.Next, It.IsAny<CancellationToken>()),
+            s => s.SwapLabelAsync("ipc-1", "owner/repo#42", AgentLabels.Next,
+                LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -2227,7 +2327,8 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
 
         // Label MUST NOT be swapped to agent:in-progress while the item only sits Pending in the queue.
         _mockLabelService.Verify(
-            s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress,
+                It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "a queued (Pending) issue must stay agent:next — the in-progress swap is deferred to actual dispatch");
     }

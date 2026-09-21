@@ -147,4 +147,51 @@ public class LabelServiceExtensionsTests
 
         await act.Should().ThrowAsync<TaskCanceledException>();
     }
+
+    [Fact]
+    public async Task TrySwapLabelAsync_SwallowCancellationTrue_SuppressesOce()
+    {
+        // When SwallowCancellation = true, OperationCanceledException must be caught and swallowed
+        // (not propagated). This covers the DispatchOrchestrationService.ConfirmDistributionLabelAsync
+        // swallowCancellation:true path, which is currently unreachable in production but must be
+        // modelled correctly in the shared helper per acceptance criteria.
+        _mockLabelService
+            .Setup(l => l.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+                It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var ctx = new LabelSwapContext(
+            new ProviderConfigId("provider-1"), "org/repo#42", AgentLabels.InProgress,
+            LabelTargetKind.Issue, _logger, "TestContext.SwallowCancellation", CancellationToken.None)
+        {
+            SwallowCancellation = true
+        };
+
+        // Must not throw — OCE is swallowed when SwallowCancellation = true
+        var act = () => _mockLabelService.Object.TrySwapLabelAsync(ctx);
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task TrySwapLabelAsync_SwallowCancellationFalse_PropagatesOce()
+    {
+        // Confirm the default (SwallowCancellation = false) still propagates OCE,
+        // even when the context is built explicitly with the property set to false.
+        _mockLabelService
+            .Setup(l => l.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+                It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var ctx = new LabelSwapContext(
+            new ProviderConfigId("provider-1"), "org/repo#42", AgentLabels.Error,
+            LabelTargetKind.Issue, _logger, "TestContext", CancellationToken.None)
+        {
+            SwallowCancellation = false
+        };
+
+        var act = () => _mockLabelService.Object.TrySwapLabelAsync(ctx);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
 }
