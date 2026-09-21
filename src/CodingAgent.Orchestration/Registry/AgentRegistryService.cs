@@ -34,11 +34,13 @@ public sealed class AgentRegistryService : IAgentRegistryService
 
         var now = DateTimeOffset.UtcNow;
 
-        // TODO: If AgentId.Value is null (e.g., from a malformed MessagePack payload producing default(AgentId)),
-        // AddOrUpdate will throw NullReferenceException instead of a descriptive ArgumentNullException.
-        // Once AgentId's primary constructor validates its input (see TODO in AgentId.cs), this will be safe
-        // by construction. Until then, consider adding ArgumentNullException.ThrowIfNull(message.AgentId.Value)
-        // here for a cleaner error message.
+        // Note: Any AgentId constructed via new AgentId(value) or the implicit string operator already
+        // rejects null and empty strings (ArgumentException.ThrowIfNullOrEmpty in both paths). A malformed
+        // MessagePack payload with a nil/empty token is rejected by AgentIdFormatter.Deserialize before
+        // reaching this method. The only unguarded path is default(AgentId) (C# struct zero-init,
+        // Value = null), which bypasses the constructor entirely. If callers can pass an uninitialized
+        // struct, consider adding ArgumentException.ThrowIfNullOrEmpty(message.AgentId.Value, nameof(message))
+        // above this line for a descriptive error instead of a NullReferenceException from AddOrUpdate.
         var entry = _agents.AddOrUpdate(
             message.AgentId.Value,
             // Add factory — brand new registration
