@@ -11,12 +11,10 @@ namespace CodingAgent.Pipeline.Services;
 /// Accepts <see cref="IAgentIssueOperations"/> (proxied through orchestrator) rather than
 /// IIssueProvider directly, keeping the agent credential-free.
 /// </summary>
-// TODO [WARNING]: This class duplicates nearly the entire body of WriteOpenIssueContextStep's static
-// helpers (CollectIssueIdentifiersAsync, CollectClosedIssueIdentifiersAsync, WriteIssueFilesAsync,
-// FormatIssueMarkdown, EscapeYamlString, budget allocation). Two parallel implementations can diverge
-// silently — for example, a fix to the path-traversal issue in WriteIssueFilesAsync (see the TODO there)
-// will not automatically apply here. Consider deleting the static helpers from WriteOpenIssueContextStep
-// and routing its production path through this class to have a single authoritative implementation.
+/// <remarks>
+/// This is the authoritative implementation used by both <c>WriteOpenIssueContextStep</c>
+/// (production pipeline) and <c>BrainSyncService</c>.
+/// </remarks>
 public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
 {
     private readonly ILogger _logger;
@@ -254,11 +252,6 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
     /// When <paramref name="isClosed"/> is true, includes a <c>status: closed</c> field
     /// to distinguish closed issues from open ones.
     /// </summary>
-    // TODO [WARNING]: FormatIssueMarkdown (and EscapeYamlString) on this class have no dedicated tests.
-    // All existing FormatIssueMarkdown tests target WriteOpenIssueContextStep.FormatIssueMarkdown. If
-    // the two copies diverge, the regression will be silent. Add an OpenIssueContextWriterTests.cs that
-    // exercises YAML front-matter format, the status:closed field, YAML escaping, and the description
-    // append — or consolidate to a single implementation (see class-level duplication TODO).
     internal static string FormatIssueMarkdown(IssueDetail detail, bool isClosed = false)
     {
         var sb = new StringBuilder();
