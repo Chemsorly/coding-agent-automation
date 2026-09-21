@@ -42,16 +42,16 @@ public class ChatJobDispatcherTests
         // terminal state otherwise wait out the full grace period. Tests that assert grace behaviour
         // pass an explicit value.
         int gracePeriod = 1) => new()
-    {
-        Namespace = TestNamespace,
-        KiroPvcPool = ["pvc-0", "pvc-1"],
-        OrchestratorUrl = "http://orchestrator:8080",
-        AgentApiKeySecretName = "caa-secret",
-        AgentServiceAccountName = "caa-agent",
-        ChatPodConnectTimeoutSeconds = connectTimeoutSeconds,
-        ChatJobMaxDurationSeconds = chatSessionMaxDuration,
-        ChatTerminationGracePeriodSeconds = gracePeriod
-    };
+        {
+            Namespace = TestNamespace,
+            KiroPvcPool = ["pvc-0", "pvc-1"],
+            OrchestratorUrl = "http://orchestrator:8080",
+            AgentApiKeySecretName = "caa-secret",
+            AgentServiceAccountName = "caa-agent",
+            ChatPodConnectTimeoutSeconds = connectTimeoutSeconds,
+            ChatJobMaxDurationSeconds = chatSessionMaxDuration,
+            ChatTerminationGracePeriodSeconds = gracePeriod
+        };
 
     private static AgentRegistryService CreateRegistry() =>
         new AgentRegistryService(Mock.Of<ILogger>());
