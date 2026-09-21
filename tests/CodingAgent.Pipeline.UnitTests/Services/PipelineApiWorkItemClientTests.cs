@@ -163,20 +163,37 @@ public sealed class PipelineApiWorkItemClientTests
     // ── PostStatusAsync ───────────────────────────────────────────────────
 
     [Fact]
-    public async Task PostStatusAsync_SendsPost()
+    public async Task PostStatusAsync_SendsPost_Returns200_ReturnsTrue()
     {
         var (client, handler) = Create();
-        handler.Respond = _ => Empty();
+        handler.Respond = _ => Empty(); // Empty() returns 200 by default
         var id = Guid.NewGuid();
 
-        await client.PostStatusAsync(id, new WorkItemStatusUpdate
+        var result = await client.PostStatusAsync(id, new WorkItemStatusUpdate
         {
             Status = "Running"
         });
 
+        result.Should().BeTrue("HTTP 200 means a real state transition occurred");
         handler.LastRequest!.Method.Should().Be(HttpMethod.Post);
         handler.LastRequest.RequestUri!.PathAndQuery
             .Should().Be($"/api/work-items/{id}/status");
+    }
+
+    [Fact]
+    public async Task PostStatusAsync_Returns204_ReturnsFalse()
+    {
+        // HTTP 204 No Content = idempotent no-op (already-terminal item) — issue #2802
+        var (client, handler) = Create();
+        handler.Respond = _ => Empty(HttpStatusCode.NoContent);
+        var id = Guid.NewGuid();
+
+        var result = await client.PostStatusAsync(id, new WorkItemStatusUpdate
+        {
+            Status = "Failed"
+        });
+
+        result.Should().BeFalse("HTTP 204 No Content signals an idempotent no-op (already-terminal item)");
     }
 
     // ── RequeueAsync ──────────────────────────────────────────────────────

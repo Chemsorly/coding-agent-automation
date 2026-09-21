@@ -874,7 +874,7 @@ public sealed class ApiBackedServicesTests
     {
         var client = new Mock<CodingAgent.Api.Client.IPipelineApiWorkItemClient>();
         client.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var svc = new ApiBackedWorkItemFallbackTransitionService(client.Object, Serilog.Log.Logger);
         var result = await svc.TryFallbackChainAsync(Guid.NewGuid(), WorkItemStatus.Failed, "error", null, CancellationToken.None);

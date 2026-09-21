@@ -68,14 +68,26 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         return await response.Content.ReadFromJsonAsync<JobAssignmentMessage>(PipelineJsonOptions.Default, ct);
     }
 
-    public async Task PostStatusAsync(Guid workItemId, WorkItemStatusUpdate request, CancellationToken ct = default)
+    public async Task<bool> PostStatusAsync(Guid workItemId, WorkItemStatusUpdate request, CancellationToken ct = default)
     {
         var response = await _http.PostAsJsonAsync(
             $"/api/work-items/{workItemId}/status",
             request,
             PipelineJsonOptions.Default,
             ct);
+        // HTTP 204 No Content = idempotent no-op (already-terminal item); signal to callers.
+        // NOTE: the 204 check is intentionally placed BEFORE EnsureSuccessStatusCode() so that
+        // 204 is excluded from EnsureSuccessStatusCode's success path and mapped to false. Do not
+        // reorder these two statements — any future non-204 2xx added here must be handled explicitly
+        // or it will fall through to EnsureSuccessStatusCode and be treated as a real transition (true).
+        // TODO: consider a defensive explicit check (e.g. else if (response.IsSuccessStatusCode) return true;
+        // with a throw on unrecognised 2xx) to make the contract explicit and prevent silent
+        // mis-classification if a proxy/gateway injects an unexpected 2xx. See review finding
+        // (DotNetSpecialist) for issue #2802.
+        if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
+            return false;
         response.EnsureSuccessStatusCode();
+        return true;
     }
 
     public async Task RequeueAsync(Guid workItemId, CancellationToken ct = default)
