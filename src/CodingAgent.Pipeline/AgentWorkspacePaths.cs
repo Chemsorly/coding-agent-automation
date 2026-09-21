@@ -176,6 +176,11 @@ public static class AgentWorkspacePaths
     /// </summary>
     public const string AcceptanceCriteriaFilePath = ".agent/acceptance-criteria.json";
 
+    /// <summary>
+    /// The brain repository directory inside target workspaces.
+    /// </summary>
+    public const string BrainDirectory = ".brain";
+
     /// <summary>Kiro CLI steering file for project-level content.</summary>
     public const string KiroSteeringProjectFilePath = ".kiro/steering/pipeline-project.md";
 
