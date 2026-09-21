@@ -26,9 +26,6 @@ public sealed class AgentOrphanRecoveryService(
     public async Task RecoverOrphanedStateAsync(AgentRegistrationMessage message, AgentId agentId)
     {
         ArgumentNullException.ThrowIfNull(message);
-        // TODO: Replace ArgumentNullException.ThrowIfNull(agentId.Value) with
-        // ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)) — ThrowIfNull on a struct
-        // field reports "Value" as the parameter name in exceptions rather than "agentId".
         ArgumentNullException.ThrowIfNull(agentId.Value);
 
         // Re-track active job from agent state (handles orchestrator restart scenario)
@@ -137,11 +134,6 @@ public sealed class AgentOrphanRecoveryService(
             // RecoverOrphanedStateAsync does not accept a CancellationToken, so this is a structural
             // limitation at the call site. If cancellation support is added to the enclosing method,
             // propagate the token here.
-            // TODO: [WARNING] t.Exception is guaranteed non-null inside an OnlyOnFaulted continuation;
-            // the null-conditional operator (?.) is misleading here. Prefer t.Exception!.Flatten()
-            // to make the non-null contract explicit. Same pattern applies at all six ContinueWith
-            // sites in this file (RestorePipelineRun, LinkAgentToExistingRun, DetectAndRestoreOrphans ×2,
-            // HandleCrashRecovery). See DotNetSpecialist review finding for issue #2779.
             _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, activeJob.RunId)
                 .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
                         "RestoreConsolidationTracking: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
@@ -193,8 +185,6 @@ public sealed class AgentOrphanRecoveryService(
             // limitation at the call site. If cancellation support is added to the enclosing method,
             // propagate the token here.
             _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, activeJob.RunId)
-                // TODO: [WARNING] t.Exception is guaranteed non-null inside an OnlyOnFaulted continuation;
-                // the ?. operator is misleading. Prefer t.Exception!.Flatten(). See #2779.
                 .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
                         "RestorePipelineRun: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
                         agentId, ActiveJobIdField),
@@ -273,12 +263,6 @@ public sealed class AgentOrphanRecoveryService(
             var previousAgentId = existingRun.AgentId;
             existingRun.AgentId = agentId.Value;
 
-            // TODO: [WARNING] Use !string.IsNullOrEmpty(previousAgentId) here instead of `is not null`
-            // to match RegisterAgent's first-pickup detection (which uses string.IsNullOrEmpty).
-            // If AgentId were ever an empty string, `is not null` would log a pod-replacement entry
-            // with PreviousAgentId="" while RegisterAgent would treat the same state as a first pickup.
-            // The normal dispatch path always sets AgentId=null, so the divergence is theoretical,
-            // but the two guards should use the same predicate for consistency.
             if (previousAgentId is not null)
             {
                 // Pod replacement: a different agent pod has taken over this run.
@@ -311,8 +295,6 @@ public sealed class AgentOrphanRecoveryService(
                 {
                     trackedEntry.ActiveJobId = activeJob.RunId;
                     _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, activeJob.RunId)
-                        // TODO: [WARNING] t.Exception is guaranteed non-null inside OnlyOnFaulted;
-                        // ?. is misleading. Prefer t.Exception!.Flatten(). See #2779.
                         .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
                                 "LinkAgentToExistingRun: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
                                 agentId, ActiveJobIdField),
@@ -391,8 +373,6 @@ public sealed class AgentOrphanRecoveryService(
                     _facade.SetLocalAgentSnapshotField(agentId, ActiveJobIdField, mostRecent.RunId);
                     _facade.SetLocalAgentSnapshotField(agentId, "orphanRestoredAt", now.ToString("O"));
                     _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, mostRecent.RunId)
-                        // TODO: [WARNING] t.Exception is guaranteed non-null inside OnlyOnFaulted;
-                        // ?. is misleading. Prefer t.Exception!.Flatten(). See #2779.
                         .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
                                 "DetectAndRestoreOrphans: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
                                 agentId, ActiveJobIdField),
@@ -400,7 +380,6 @@ public sealed class AgentOrphanRecoveryService(
                             TaskContinuationOptions.OnlyOnFaulted,
                             TaskScheduler.Default);
                     _ = _facade.UpdateAgentFieldAsync(agentId, "orphanRestoredAt", now.ToString("O"))
-                        // TODO: [WARNING] same as above — t.Exception!.Flatten() preferred. See #2779.
                         .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
                                 "DetectAndRestoreOrphans: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
                                 agentId, "orphanRestoredAt"),
@@ -428,12 +407,6 @@ public sealed class AgentOrphanRecoveryService(
                 // This call is OUTSIDE lock(entry.SyncRoot) — GetRun performs synchronous Redis I/O
                 // via .GetAwaiter().GetResult(); holding the entry lock across a network call is
                 // an anti-pattern. See HandleCrashRecovery for the established pattern.
-                // TODO: [WARNING] Narrow TOCTOU: hash absent at GetRun → AddRun fires → another
-                // replica wrote a live hash in between → AddRun overwrites those newer fields.
-                // This window is smaller than the original unconditional AddRun but is not
-                // eliminated. The issue explicitly accepts last-write-wins for this case; no
-                // further action is required unless stricter field-level HSETNX semantics are
-                // needed (see issue requirements for the suggested HSETNX approach).
                 var existingHash = _facade.GetRun(mostRecent.RunId);
                 if (existingHash is null)
                     _facade.AddRun(mostRecent);
@@ -471,8 +444,6 @@ public sealed class AgentOrphanRecoveryService(
                 existingJobId = entry.ActiveJobId;
                 entry.OrphanRestoredAt = DateTimeOffset.UtcNow;
                 _ = _facade.UpdateAgentFieldAsync(agentId, "orphanRestoredAt", DateTimeOffset.UtcNow.ToString("O"))
-                    // TODO: [WARNING] t.Exception is guaranteed non-null inside OnlyOnFaulted;
-                    // ?. is misleading. Prefer t.Exception!.Flatten(). See #2779.
                     .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
                             "HandleCrashRecoveryAsync: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
                             agentId, "orphanRestoredAt"),
