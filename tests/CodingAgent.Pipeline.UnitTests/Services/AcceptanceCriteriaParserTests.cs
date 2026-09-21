@@ -113,6 +113,19 @@ public class AcceptanceCriteriaParserTests : IDisposable
         result!.Criteria[0].Status.Should().Be(CriterionStatus.NotApplicable);
     }
 
+    [Fact]
+    public async Task ParseAsync_NullCriteriaProperty_ReturnsNull()
+    {
+        // JSON deserializes to a non-null AcceptanceCriteriaReport, but the Criteria property is null
+        // (absent from the JSON). The AcceptanceCriteriaParser.ParseAsync null-guard must catch this.
+        var json = """{"summary": "no criteria key present"}""";
+        await WriteJsonAsync(json);
+
+        var result = await AcceptanceCriteriaParser.ParseAsync(_workspacePath, _mockLogger.Object, CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
     private async Task WriteJsonAsync(string content)
     {
         var filePath = Path.Combine(_workspacePath, AgentWorkspacePaths.AcceptanceCriteriaFilePath);
