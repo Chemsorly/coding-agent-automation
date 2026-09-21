@@ -466,6 +466,130 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     // ─── Background watcher ───────────────────────────────────────────────────
 
+    /// <summary>
+    /// Tri-state result from <see cref="TryTriggerIdleKillAsync"/> that tells the watcher loop
+    /// which control-flow branch to take without embedding <c>return</c>/<c>continue</c>
+    /// inside the extracted helper.
+    /// </summary>
+    private enum IdleKillResult
+    {
+        /// <summary>The session is not yet idle — fall through to the normal job-status poll.</summary>
+        NotIdle,
+        /// <summary>Idle-kill was triggered (CAS succeeded, termination called, cleanup done) — caller must <c>return</c>.</summary>
+        KillTriggered,
+        /// <summary>CAS guard fired (another path already holds <c>Terminating=1</c>) — caller must <c>continue</c> to skip the job-status poll.</summary>
+        GuardFired
+    }
+
+    /// <summary>
+    /// Resolves the authoritative last-heartbeat timestamp for the session.
+    /// <para>
+    /// Returns <c>null</c> when Redis threw a transient fault — the caller must skip the idle-kill
+    /// check entirely for this cycle rather than falling back to local ticks, because local ticks
+    /// may be stale when keepalives are landing on a different replica.
+    /// </para>
+    /// <para>
+    /// Returns a <see cref="DateTimeOffset"/> in all other cases:
+    /// the Redis-stored timestamp when available, otherwise <c>entry.LastClientHeartbeatTicks</c>.
+    /// </para>
+    /// </summary>
+    private async Task<DateTimeOffset?> ResolveLastHeartbeatAsync(string jobName, WatcherEntry entry)
+    {
+        if (_redis is not null)
+        {
+            var (redisAvailable, redisHeartbeat) = await TryGetRedisHeartbeatAsync(jobName, entry);
+            if (!redisAvailable)
+            {
+                // Redis fault — return null to signal the caller to skip idle-kill for this cycle.
+                // The session is preserved until Redis recovers and the next check sees
+                // either a recent heartbeat (no kill) or a genuinely expired one (kill).
+                // TODO [WARNING]: The comment "Let OCE propagate so the outer catch handles CleanupSession"
+                // is misleading. This method never propagates OCE — TryGetRedisHeartbeatAsync catches all
+                // exceptions (including OCE) and returns (false, null), which is converted to this null
+                // return. The outer catch therefore never sees a Redis-originated OCE; it only sees OCE
+                // from the watcher's own CancellationToken. The comment was copied from the original inline
+                // code where it was also incorrect. The actual behavior (null → delay → continue) is right.
+                // Consider updating the XML doc summary to clarify the null-return-on-fault contract and
+                // removing this misleading inline comment. See review finding: DotNetSpecialist WARNING.
+                return null;
+            }
+            return redisHeartbeat ?? new DateTimeOffset(
+                Interlocked.Read(ref entry.LastClientHeartbeatTicks), TimeSpan.Zero);
+        }
+
+        return new DateTimeOffset(
+            Interlocked.Read(ref entry.LastClientHeartbeatTicks), TimeSpan.Zero);
+    }
+
+    /// <summary>
+    /// Evaluates whether the session has been idle long enough to terminate, and triggers
+    /// termination if so — guarded by a <see cref="Interlocked.CompareExchange"/> single-fire lock.
+    /// </summary>
+    /// <returns>
+    /// <see cref="IdleKillResult.NotIdle"/> — session is not yet idle; caller continues normally.<br/>
+    /// <see cref="IdleKillResult.KillTriggered"/> — termination was triggered; caller must <c>return</c>.<br/>
+    /// <see cref="IdleKillResult.GuardFired"/> — another path already holds <c>Terminating=1</c>;
+    /// a back-off delay has been performed inside this method; caller must <c>continue</c>.
+    /// </returns>
+    private async Task<IdleKillResult> TryTriggerIdleKillAsync(
+        string jobName, WatcherEntry entry, string selectorEncoded,
+        DateTimeOffset lastHeartbeat, TimeSpan idleTimeout, TimeSpan pollInterval,
+        CancellationToken ct)
+    {
+        var idleSince = DateTimeOffset.UtcNow - lastHeartbeat;
+        if (idleSince <= idleTimeout)
+            return IdleKillResult.NotIdle;
+
+        // Only fire idle-kill if TerminateChatSessionAsync hasn't already been called.
+        // Interlocked.CompareExchange: set Terminating from 0 → 1; if it was already 1,
+        // someone else is handling termination — back off and let the watcher drain.
+        if (Interlocked.CompareExchange(ref entry.Terminating, 1, 0) != 0)
+        {
+            _logger.Debug(
+                "ChatJobDispatcher: idle-kill skipped for {JobName} — termination already in progress",
+                jobName);
+            // Let the watcher loop continue; the in-flight termination will clean up.
+            // TODO [WARNING]: OCE from Task.Delay is intentionally swallowed here so that GuardFired
+            // returns to the caller, which then hits the while (!ct.IsCancellationRequested) check
+            // and exits the loop. This matches the original inline behavior (not a regression), but
+            // it means shutdown cancellation takes one extra while-condition evaluation rather than
+            // propagating through the outer catch. If ct-based cancellation ordering becomes important,
+            // consider re-throwing OCE here and letting the outer catch handle cleanup.
+            // See review finding: Correctness WARNING @ GuardFired path.
+            try { await Task.Delay(pollInterval, ct); } catch (OperationCanceledException) { }
+            return IdleKillResult.GuardFired;
+        }
+
+        _logger.Warning(
+            "ChatJobDispatcher: chat pod {JobName} idle for {IdleSeconds:F0}s (threshold={Threshold}s) — terminating",
+            jobName, idleSince.TotalSeconds, _options.ChatIdleTimeoutSeconds);
+        // Run termination asynchronously but wait for it to complete before exiting.
+        // TODO [WARNING]: CancellationToken.None is passed here intentionally to let termination
+        // complete even during host shutdown, but it breaks the cancellation chain: if the host
+        // shuts down while TerminateChatSessionAsync is in-flight, the shutdown token cannot abort
+        // the operation. The ct parameter is available in this method's signature and could be
+        // forwarded. The original inline code also used CancellationToken.None here (not a regression),
+        // but the extraction into a named helper with an explicit ct parameter makes the gap more
+        // visible. Consider forwarding ct and making TerminateChatSessionAsync cancellation-safe.
+        // See review finding: DotNetSpecialist WARNING.
+        await TerminateChatSessionAsync(new AgentId(entry.AgentId), CancellationToken.None);
+        // TerminateChatSessionAsync's force-delete path calls CleanupSession("force_deleted").
+        // The clean idle-kill path (watcher exits within grace period) does NOT call
+        // CleanupSession — it expects the watcher to exit via its own cancellation.
+        // Since we return unconditionally here, call CleanupSession with the correct
+        // outcome. CleanupSession is gated by Interlocked.CompareExchange(ref entry.Cleaned,
+        // 1, 0), so if force-delete already ran it, this is a safe no-op.
+        // TODO [WARNING]: The "shutdown" outcome tag here covers both the clean-exit path
+        // (watcher drained within grace, no force-delete) and the force-expired path (where
+        // this CleanupSession call is a CAS-gated no-op because force-delete already called
+        // CleanupSession("force_deleted")). The double-call pattern is safe but subtle;
+        // consider introducing an "idle_killed" outcome to distinguish idle termination
+        // from clean shutdown initiated by the user or orchestrator. See review finding:
+        // Correctness WARNING @ line 499.
+        CleanupSession(entry.AgentId, entry, selectorEncoded, "shutdown");
+        return IdleKillResult.KillTriggered;
+    }
+
     private async Task WatchJobUntilTerminalAsync(
         string jobName, WatcherEntry entry, CancellationToken ct)
     {
@@ -488,65 +612,17 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                 // When Redis throws (transient fault), skip the idle-kill check entirely for
                 // this cycle — preserving the session is safer than killing it based on stale
                 // local ticks that may reflect keepalives missed due to load-balancing.
-                DateTimeOffset lastHeartbeat;
-                if (_redis is not null)
+                var lastHeartbeat = await ResolveLastHeartbeatAsync(jobName, entry);
+                if (lastHeartbeat is null)
                 {
-                    var (redisAvailable, redisHeartbeat) = await TryGetRedisHeartbeatAsync(jobName, entry);
-                    if (!redisAvailable)
-                    {
-                        // Redis fault — skip idle-kill for this cycle and continue polling.
-                        // The session is preserved until Redis recovers and the next check sees
-                        // either a recent heartbeat (no kill) or a genuinely expired one (kill).
-                        // Let OCE propagate so the outer catch handles CleanupSession("shutdown") uniformly.
-                        await Task.Delay(pollInterval, ct);
-                        continue;
-                    }
-                    lastHeartbeat = redisHeartbeat ?? new DateTimeOffset(
-                        Interlocked.Read(ref entry.LastClientHeartbeatTicks), TimeSpan.Zero);
-                }
-                else
-                {
-                    lastHeartbeat = new DateTimeOffset(
-                        Interlocked.Read(ref entry.LastClientHeartbeatTicks), TimeSpan.Zero);
+                    await Task.Delay(pollInterval, ct);
+                    continue;
                 }
 
-                var idleSince = DateTimeOffset.UtcNow - lastHeartbeat;
-                if (idleSince > idleTimeout)
-                {
-                    // Only fire idle-kill if TerminateChatSessionAsync hasn't already been called.
-                    // Interlocked.CompareExchange: set Terminating from 0 → 1; if it was already 1,
-                    // someone else is handling termination — back off and let the watcher drain.
-                    if (Interlocked.CompareExchange(ref entry.Terminating, 1, 0) != 0)
-                    {
-                        _logger.Debug(
-                            "ChatJobDispatcher: idle-kill skipped for {JobName} — termination already in progress",
-                            jobName);
-                        // Let the watcher loop continue; the in-flight termination will clean up.
-                        try { await Task.Delay(pollInterval, ct); } catch (OperationCanceledException) { }
-                        continue;
-                    }
-
-                    _logger.Warning(
-                        "ChatJobDispatcher: chat pod {JobName} idle for {IdleSeconds:F0}s (threshold={Threshold}s) — terminating",
-                        jobName, idleSince.TotalSeconds, _options.ChatIdleTimeoutSeconds);
-                    // Run termination asynchronously but wait for it to complete before exiting.
-                    await TerminateChatSessionAsync(new AgentId(entry.AgentId), CancellationToken.None);
-                    // TerminateChatSessionAsync's force-delete path calls CleanupSession("force_deleted").
-                    // The clean idle-kill path (watcher exits within grace period) does NOT call
-                    // CleanupSession — it expects the watcher to exit via its own cancellation.
-                    // Since we return unconditionally here, call CleanupSession with the correct
-                    // outcome. CleanupSession is gated by Interlocked.CompareExchange(ref entry.Cleaned,
-                    // 1, 0), so if force-delete already ran it, this is a safe no-op.
-                    // TODO [WARNING]: The "shutdown" outcome tag here covers both the clean-exit path
-                    // (watcher drained within grace, no force-delete) and the force-expired path (where
-                    // this CleanupSession call is a CAS-gated no-op because force-delete already called
-                    // CleanupSession("force_deleted")). The double-call pattern is safe but subtle;
-                    // consider introducing an "idle_killed" outcome to distinguish idle termination
-                    // from clean shutdown initiated by the user or orchestrator. See review finding:
-                    // Correctness WARNING @ line 499.
-                    CleanupSession(entry.AgentId, entry, selectorEncoded, "shutdown");
-                    return;
-                }
+                var killResult = await TryTriggerIdleKillAsync(
+                    jobName, entry, selectorEncoded, lastHeartbeat.Value, idleTimeout, pollInterval, ct);
+                if (killResult == IdleKillResult.KillTriggered) return;
+                if (killResult == IdleKillResult.GuardFired) continue;
 
                 var (job, readError) = await TryReadJobAsync(jobName);
 
