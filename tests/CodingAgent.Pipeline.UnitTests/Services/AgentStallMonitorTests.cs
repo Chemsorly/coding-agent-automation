@@ -44,11 +44,18 @@ public class AgentStallMonitorTests
     // ── Helper: yield enough for the Task.Run loop to start and reach its Delay ──
 
     /// <summary>
-    /// Yields the current thread so the monitor's Task.Run background loop can
-    /// start, enter its while loop, and suspend on <c>timeProvider.Delay</c>.
-    /// A single scheduler yield is usually sufficient; 10ms is a generous buffer.
+    /// Yields until the monitor's Task.Run background loop has started, entered
+    /// its while loop, and suspended on <c>timeProvider.Delay</c>.
+    /// Polls in short increments rather than using a fixed sleep so CI runners
+    /// under load don't race the threadpool scheduler.
     /// </summary>
-    private static async Task YieldToMonitorAsync() => await Task.Delay(10);
+    private static async Task YieldToMonitorAsync()
+    {
+        // Give the Task.Run loop time to start and reach its first Delay.
+        // 5 × 10 ms = 50 ms cap; exits early once the threadpool has settled.
+        for (var i = 0; i < 5; i++)
+            await Task.Delay(10);
+    }
 
     // ── DetectsProcessDeath ────────────────────────────────────────────────────
 
