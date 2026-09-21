@@ -477,7 +477,7 @@ public static class WorkItemAgentEndpoints
                 // TerminalConflict result type so the endpoint can distinguish "wrong direction" from
                 // "already terminal" without a prior read. See review finding #2 (Correctness) for
                 // issue #2461.
-                return TypedResults.Ok();
+                return TypedResults.NoContent();
             }
             // null  → item not found; fall through so TransitionDetailedAsync returns NotFound.
             // Any non-terminal current status → fall through for normal processing.
@@ -539,9 +539,24 @@ public static class WorkItemAgentEndpoints
                 else
                     _ = emitTask;
             }
+
+            // Real state transition occurred — signal 200 OK to callers.
+            return TypedResults.Ok();
         }
 
-        return TypedResults.Ok();
+        // AlreadyAtTarget: idempotent no-op — return 204 No Content to signal that no real
+        // transition occurred. Callers (e.g. HandleJobCompletedAsync) use this to skip telemetry
+        // that would otherwise double-count terminal metrics (issue #2802).
+        // TODO: This 204 path is now reached for ALL no-op status posts (not only the
+        // Cancelled→Failed case targeted by issue #2802). For example, a Failed→Failed repeat-call
+        // bypasses the pre-read guard (which only guards Cancelled/Succeeded) and reaches
+        // AlreadyAtTarget here, also returning 204. This is functionally correct — the caller
+        // skipping LogTerminalStatus for a Failed→Failed no-op is the right behaviour — but note
+        // that the "204 means no-op" contract conflates two distinct semantics when seen from
+        // IPipelineApiWorkItemClient callers: a pre-read guard short-circuit vs. a post-transition
+        // AlreadyAtTarget result. Both map to false from PostStatusAsync. See review finding
+        // (DotNetSpecialist) for issue #2802.
+        return TypedResults.NoContent();
     }
 
     // ── Private helpers ───────────────────────────────────────────────────

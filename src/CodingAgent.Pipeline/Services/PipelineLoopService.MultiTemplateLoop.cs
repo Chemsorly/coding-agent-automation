@@ -435,6 +435,13 @@ public sealed partial class PipelineLoopService
 
             try
             {
+                // TODO: PostStatusAsync now returns Task<bool> (true=real transition, false=idempotent
+                // no-op / HTTP 204). The return value is discarded here, so _queueSweepCancelled
+                // increments for both real cancellations and idempotent no-ops (item was already
+                // Cancelled). This is analogous to the double-count bug fixed in HandleJobCompletedAsync
+                // (issue #2802). The impact is at most a cosmetic metric discrepancy since the item
+                // was already terminal. Fix: capture the bool and skip _queueSweepCancelled.Add(1)
+                // when false. See review finding (Correctness) for issue #2802.
                 await _workItemClient.PostStatusAsync(item.Id,
                     new WorkItemStatusUpdate
                     {

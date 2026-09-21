@@ -25,6 +25,10 @@ internal static class AgentStallMonitor
     /// <summary>
     /// Executes an agent request with background stall monitoring.
     /// </summary>
+    /// <param name="timeProvider">
+    /// Time source used for all clock reads and delays. Defaults to <see cref="TimeProvider.System"/>.
+    /// Pass a fake/controllable provider in tests to eliminate wall-clock dependency.
+    /// </param>
     public static async Task<AgentResult> ExecuteWithMonitoringAsync(
         IAgentProvider agentProvider,
         AgentRequest request,
@@ -35,10 +39,12 @@ internal static class AgentStallMonitor
         Serilog.ILogger logger,
         CancellationToken ct,
         Action<string>? onOutputLine = null,
-        StallMonitorMetrics? stallMetrics = null)
+        StallMonitorMetrics? stallMetrics = null,
+        TimeProvider? timeProvider = null)
     {
+        timeProvider ??= TimeProvider.System;
         using var stallCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var monitorTask = RunMonitorLoopAsync(agentProvider, run, config, phaseDescription, onChange, logger, stallCts.Token, stallMetrics);
+        var monitorTask = RunMonitorLoopAsync(agentProvider, run, config, phaseDescription, onChange, logger, stallCts.Token, stallMetrics, timeProvider);
 
         AgentResult result;
         try
@@ -58,6 +64,10 @@ internal static class AgentStallMonitor
     /// Monitors an arbitrary async agent call (e.g., <see cref="IAgentProvider.EnsureSessionAsync"/>)
     /// that does not return an <see cref="AgentResult"/>.
     /// </summary>
+    /// <param name="timeProvider">
+    /// Time source used for all clock reads and delays. Defaults to <see cref="TimeProvider.System"/>.
+    /// Pass a fake/controllable provider in tests to eliminate wall-clock dependency.
+    /// </param>
     public static async Task MonitorAsync(
         IAgentProvider agentProvider,
         Func<Task> agentCall,
@@ -67,10 +77,12 @@ internal static class AgentStallMonitor
         Action? onChange,
         Serilog.ILogger logger,
         CancellationToken ct,
-        StallMonitorMetrics? stallMetrics = null)
+        StallMonitorMetrics? stallMetrics = null,
+        TimeProvider? timeProvider = null)
     {
+        timeProvider ??= TimeProvider.System;
         using var stallCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var monitorTask = RunMonitorLoopAsync(agentProvider, run, config, phaseDescription, onChange, logger, stallCts.Token, stallMetrics);
+        var monitorTask = RunMonitorLoopAsync(agentProvider, run, config, phaseDescription, onChange, logger, stallCts.Token, stallMetrics, timeProvider);
 
         try
         {
@@ -91,7 +103,8 @@ internal static class AgentStallMonitor
         Action? onChange,
         Serilog.ILogger logger,
         CancellationToken stallToken,
-        StallMonitorMetrics? stallMetrics)
+        StallMonitorMetrics? stallMetrics,
+        TimeProvider timeProvider)
     {
         var killTimeout = config.AgentTimeout;
 
@@ -99,24 +112,24 @@ internal static class AgentStallMonitor
         {
             try
             {
-                var lastWarnTime = DateTime.UtcNow;
+                var lastWarnTime = timeProvider.GetUtcNow().UtcDateTime;
 
                 while (!stallToken.IsCancellationRequested)
                 {
-                    await Task.Delay(config.StallPollInterval, stallToken);
+                    await Task.Delay(config.StallPollInterval, timeProvider, stallToken);
 
                     if (!TryGetHealth(agentProvider, run, logger, out var health))
                         continue;
 
-                    if (HandleProcessDeath(health!, run, phaseDescription, onChange, logger, stallMetrics))
+                    if (HandleProcessDeath(health!, run, phaseDescription, onChange, logger, stallMetrics, timeProvider))
                         break;
 
-                    var silence = ComputeSilence(health!, run);
+                    var silence = ComputeSilence(health!, run, timeProvider);
 
-                    if (await HandleKillTimeoutAsync(silence, killTimeout, run, agentProvider, phaseDescription, onChange, logger, stallMetrics))
+                    if (await HandleKillTimeoutAsync(silence, killTimeout, run, agentProvider, phaseDescription, onChange, logger, stallMetrics, timeProvider))
                         break;
 
-                    HandleSilenceWarning(health!, silence, config, run, phaseDescription, onChange, logger, ref lastWarnTime, stallMetrics);
+                    HandleSilenceWarning(health!, silence, config, run, phaseDescription, onChange, logger, ref lastWarnTime, stallMetrics, timeProvider);
                 }
             }
             catch (OperationCanceledException) { }
@@ -152,12 +165,12 @@ internal static class AgentStallMonitor
     private static bool HandleProcessDeath(
         AgentHealthStatus health, PipelineRun run,
         string phaseDescription, Action? onChange, Serilog.ILogger logger,
-        StallMonitorMetrics? stallMetrics)
+        StallMonitorMetrics? stallMetrics, TimeProvider timeProvider)
     {
         if (health.IsProcessAlive == false)
         {
             var errorMsg = $"{phaseDescription} — agent process is no longer alive (PID {health.ProcessId}). " +
-                           $"Total elapsed: {(DateTimeOffset.UtcNow - run.StartedAtOffset):hh\\:mm\\:ss}.";
+                           $"Total elapsed: {(timeProvider.GetUtcNow() - run.StartedAtOffset):hh\\:mm\\:ss}.";
             logger.Error("Pipeline {RunId} {StallMessage}", run.RunId, errorMsg);
             run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = errorMsg });
             onChange?.Invoke();
@@ -172,10 +185,10 @@ internal static class AgentStallMonitor
     /// Computes the silence duration using <see cref="AgentHealthStatus.LastOutputTime"/>
     /// or the run start time as a fallback.
     /// </summary>
-    private static TimeSpan ComputeSilence(AgentHealthStatus health, PipelineRun run)
+    private static TimeSpan ComputeSilence(AgentHealthStatus health, PipelineRun run, TimeProvider timeProvider)
     {
         var referenceTime = health.LastOutputTime ?? run.StartedAtOffset.UtcDateTime;
-        return DateTime.UtcNow - referenceTime;
+        return timeProvider.GetUtcNow().UtcDateTime - referenceTime;
     }
 
     /// <summary>
@@ -186,7 +199,7 @@ internal static class AgentStallMonitor
         TimeSpan silence, TimeSpan killTimeout,
         PipelineRun run, IAgentProvider agentProvider,
         string phaseDescription, Action? onChange, Serilog.ILogger logger,
-        StallMonitorMetrics? stallMetrics)
+        StallMonitorMetrics? stallMetrics, TimeProvider timeProvider)
     {
         if (silence < killTimeout)
             return false;
@@ -214,13 +227,14 @@ internal static class AgentStallMonitor
         PipelineConfiguration config, PipelineRun run,
         string phaseDescription, Action? onChange,
         Serilog.ILogger logger, ref DateTime lastWarnTime,
-        StallMonitorMetrics? stallMetrics)
+        StallMonitorMetrics? stallMetrics, TimeProvider timeProvider)
     {
-        var timeSinceLastWarn = DateTime.UtcNow - lastWarnTime;
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        var timeSinceLastWarn = now - lastWarnTime;
         if (silence < config.StallWarningInterval || timeSinceLastWarn < config.StallWarningInterval)
             return;
 
-        var elapsed = DateTimeOffset.UtcNow - run.StartedAtOffset;
+        var elapsed = timeProvider.GetUtcNow() - run.StartedAtOffset;
         var statusDetail = health.SessionStatus is not null ? $" Session status: {health.SessionStatus}." : "";
         var statusMsg = health.SessionStatusMessage is not null ? $" Detail: {health.SessionStatusMessage}" : "";
         var sessionsSummary = health.AllSessionsSummary is not null ? $" Sessions: [{health.AllSessionsSummary}]" : "";
@@ -233,6 +247,6 @@ internal static class AgentStallMonitor
         onChange?.Invoke();
         stallMetrics?.Warnings.Add(1,
             new KeyValuePair<string, object?>("phase", PipelineTelemetry.NormalizeStallPhase(phaseDescription)));
-        lastWarnTime = DateTime.UtcNow;
+        lastWarnTime = now;
     }
 }

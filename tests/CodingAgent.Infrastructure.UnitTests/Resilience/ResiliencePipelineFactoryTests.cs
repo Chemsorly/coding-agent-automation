@@ -481,4 +481,77 @@ public class ResiliencePipelineFactoryTests
         mock.Setup(r => r.ApiInfo).Returns(apiInfo);
         return mock.Object;
     }
+
+    // ── SignalR pipeline — HubException retry predicates ─────────────────
+
+    [Theory]
+    [InlineData("Failed to get issue '42' for job abc-123: GitHub API 503")]
+    [InlineData("Failed to list open issues for job abc-123: connection reset")]
+    [InlineData("Failed to list closed issues for job abc-123: timeout")]
+    [InlineData("Failed to list comments for issue '42' for job abc-123: rate limit")]
+    [InlineData("Failed to create issue for job abc-123: upstream error")]
+    public async Task CreateSignalRPipeline_RetriesProviderLevelHubException(string hubExceptionMessage)
+    {
+        // Arrange: provider-level failures are wrapped as HubException("Failed to ...") by
+        // ExecuteWithIssueProviderAsync; they should be retried (transient upstream errors).
+        var pipeline = ResiliencePipelineFactory.CreateSignalRPipeline(
+            Log.Logger, TimeSpan.FromSeconds(10), outerTimeout: TimeSpan.FromSeconds(60),
+            retryDelay: TimeSpan.FromMilliseconds(1));
+        var callCount = 0;
+
+        // Act: fail twice, succeed on third
+        await pipeline.ExecuteAsync(async _ =>
+        {
+            callCount++;
+            if (callCount <= 2)
+                throw new Microsoft.AspNetCore.SignalR.HubException(hubExceptionMessage);
+            await Task.CompletedTask;
+        }, CancellationToken.None);
+
+        // Assert: retried and eventually succeeded
+        callCount.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task CreateSignalRPipeline_DoesNotRetryIssueProviderConfigNotFound()
+    {
+        // "Issue provider config ... not found" is a permanent failure (config deleted or stale payload)
+        // — not a transient error — so it should NOT be retried.
+        var pipeline = ResiliencePipelineFactory.CreateSignalRPipeline(
+            Log.Logger, TimeSpan.FromSeconds(10), outerTimeout: TimeSpan.FromSeconds(60),
+            retryDelay: TimeSpan.FromMilliseconds(1));
+        var callCount = 0;
+
+        var act = () => pipeline.ExecuteAsync(async _ =>
+        {
+            callCount++;
+            throw new Microsoft.AspNetCore.SignalR.HubException(
+                "Issue provider config 'abc-123' not found for job xyz-456");
+        }, CancellationToken.None).AsTask();
+
+        await act.Should().ThrowAsync<Microsoft.AspNetCore.SignalR.HubException>();
+        callCount.Should().Be(1, "permanent config-not-found errors must not be retried");
+    }
+
+    [Fact]
+    public async Task CreateSignalRPipeline_RetriesNoActiveRunHubException()
+    {
+        // "No active run or work item found" is already retried (cross-replica state miss) —
+        // verify it still works after the new predicates were added.
+        var pipeline = ResiliencePipelineFactory.CreateSignalRPipeline(
+            Log.Logger, TimeSpan.FromSeconds(10), outerTimeout: TimeSpan.FromSeconds(60),
+            retryDelay: TimeSpan.FromMilliseconds(1));
+        var callCount = 0;
+
+        await pipeline.ExecuteAsync(async _ =>
+        {
+            callCount++;
+            if (callCount <= 1)
+                throw new Microsoft.AspNetCore.SignalR.HubException(
+                    "No active run or work item found for job abc-123");
+            await Task.CompletedTask;
+        }, CancellationToken.None);
+
+        callCount.Should().Be(2);
+    }
 }
