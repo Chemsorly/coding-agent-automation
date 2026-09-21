@@ -84,7 +84,9 @@ public class AgentCodingPageTests
         _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
-                Identifier = "42", Title = "Test Issue", Description = "Test description",
+                Identifier = "42",
+                Title = "Test Issue",
+                Description = "Test description",
                 Labels = Array.Empty<string>()
             });
         _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
@@ -314,7 +316,10 @@ public class AgentCodingPageTests
         // Simulates OnIssueProviderChanged: create provider from factory, fetch issues
         var providerConfig = new ProviderConfig
         {
-            Id = "issue-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test"
+            Id = "issue-1",
+            Kind = ProviderKind.Issue,
+            ProviderType = "GitHub",
+            DisplayName = "Test"
         };
         var issueProvider = _mockFactory.Object.CreateIssueProvider(providerConfig);
         var result = await issueProvider.ListOpenIssuesAsync(1, 25, CancellationToken.None);
@@ -333,7 +338,10 @@ public class AgentCodingPageTests
 
         var providerConfig = new ProviderConfig
         {
-            Id = "issue-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test"
+            Id = "issue-1",
+            Kind = ProviderKind.Issue,
+            ProviderType = "GitHub",
+            DisplayName = "Test"
         };
         var issueProvider = _mockFactory.Object.CreateIssueProvider(providerConfig);
 
@@ -363,12 +371,17 @@ public class AgentCodingPageTests
                     new() { Identifier = "10", Title = "Ready", Labels = new[] { AgentLabels.Next } },
                     new() { Identifier = "11", Title = "Other", Labels = new[] { "bug" } }
                 },
-                Page = 1, PageSize = 25, HasMore = false
+                Page = 1,
+                PageSize = 25,
+                HasMore = false
             });
 
         var providerConfig = new ProviderConfig
         {
-            Id = "issue-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test"
+            Id = "issue-1",
+            Kind = ProviderKind.Issue,
+            ProviderType = "GitHub",
+            DisplayName = "Test"
         };
         var issueProvider = _mockFactory.Object.CreateIssueProvider(providerConfig);
         var result = await issueProvider.ListOpenIssuesAsync(1, 25, CancellationToken.None);
@@ -392,7 +405,10 @@ public class AgentCodingPageTests
         // When no issues have agent:next, no auto-filter is applied
         var providerConfig = new ProviderConfig
         {
-            Id = "issue-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test"
+            Id = "issue-1",
+            Kind = ProviderKind.Issue,
+            ProviderType = "GitHub",
+            DisplayName = "Test"
         };
         var issueProvider = _mockFactory.Object.CreateIssueProvider(providerConfig);
         var result = await issueProvider.ListOpenIssuesAsync(1, 25, CancellationToken.None);
