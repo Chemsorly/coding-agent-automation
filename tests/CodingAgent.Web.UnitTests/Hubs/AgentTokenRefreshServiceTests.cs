@@ -34,7 +34,10 @@ public sealed class AgentTokenRefreshServiceTests
     {
         var config = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
@@ -78,7 +81,10 @@ public sealed class AgentTokenRefreshServiceTests
     {
         var config = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitLab", DisplayName = "Repo",
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitLab",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.AccessToken] = "glpat-secret-token"
@@ -116,7 +122,10 @@ public sealed class AgentTokenRefreshServiceTests
     {
         var config = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.Token] = "pre-vended-token-123"
@@ -191,7 +200,10 @@ public sealed class AgentTokenRefreshServiceTests
     {
         var config = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string>() // No auth keys
         };
 
@@ -224,7 +236,10 @@ public sealed class AgentTokenRefreshServiceTests
     {
         var brainConfig = new ProviderConfig
         {
-            Id = "brain-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Brain",
+            Id = "brain-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Brain",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
@@ -291,13 +306,22 @@ public sealed class AgentTokenRefreshServiceTests
     [Fact]
     public async Task RefreshToken_K8sMode_ResolvesFromWorkItem()
     {
+        // TODO [WARNING]: This test covers only the K8s/WorkItem fallback with ProviderKind.Repository.
+        // The combined K8s-mode + ProviderKind.Brain path (repoId non-null, brainId null, Brain requested)
+        // is not exercised: in that case brainProviderConfigId.HasValue is false after the null→null
+        // conversion and the service should throw HubException. Add a separate test:
+        // RefreshToken_K8sFallback_BrainKind_NullBrainProviderConfigId_ThrowsHubException.
+        // (TestQualityReviewer)
         _mockFacade.Setup(f => f.GetRun("wi-k8s-1")).Returns((PipelineRun?)null);
         _mockFacade.Setup(f => f.GetWorkItemProviderConfigIdsAsync("wi-k8s-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(("repo-from-payload", "brain-from-payload"));
 
         var repoConfig = new ProviderConfig
         {
-            Id = "repo-from-payload", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Id = "repo-from-payload",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.PrivateKeyBase64] = "key",
@@ -337,7 +361,10 @@ public sealed class AgentTokenRefreshServiceTests
         // (TestQualityReviewer)
         var config = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
@@ -418,6 +445,12 @@ public sealed class AgentTokenRefreshServiceAdditionalTests
 
         var act = () => service.RefreshTokenAsync("wi-1", ProviderKind.Repository, CancellationToken.None);
 
+        // TODO [WARNING]: The assertion `*repoProviderConfigId*` is fragile after the ProviderConfigId
+        // type migration. The empty-string guard fires in ResolveProviderConfigIdsAsync (DB-fallback path)
+        // and throws with a message containing "repoProviderConfigId", but if that guard is moved or
+        // re-worded the test may silently pass via a different throw path (e.g. config-not-found). Pin
+        // the assertion to the specific diagnostic message from ResolveProviderConfigIdsAsync, e.g.:
+        // .WithMessage("*WorkItem*has no repoProviderConfigId*"). (TestQualityReviewer)
         await act.Should().ThrowAsync<HubException>()
             .WithMessage("*repoProviderConfigId*");
     }
@@ -429,7 +462,10 @@ public sealed class AgentTokenRefreshServiceAdditionalTests
     {
         var config = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitLab", DisplayName = "Repo",
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitLab",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.AccessToken] = "   " // whitespace only — treated as empty
@@ -456,7 +492,10 @@ public sealed class AgentTokenRefreshServiceAdditionalTests
     {
         var config = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.Token] = "  " // whitespace only
