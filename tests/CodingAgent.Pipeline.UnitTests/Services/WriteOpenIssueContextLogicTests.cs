@@ -513,7 +513,7 @@ public class WriteOpenIssueContextLogicTests : IDisposable
             Labels = new[] { "bug", "priority:high" }
         };
 
-        var markdown = WriteOpenIssueContextStep.FormatIssueMarkdown(detail);
+        var markdown = OpenIssueContextWriter.FormatIssueMarkdown(detail);
 
         markdown.Should().Contain("---");
         markdown.Should().Contain("identifier: \"99\"");
@@ -533,7 +533,7 @@ public class WriteOpenIssueContextLogicTests : IDisposable
             Labels = Array.Empty<string>()
         };
 
-        var markdown = WriteOpenIssueContextStep.FormatIssueMarkdown(detail);
+        var markdown = OpenIssueContextWriter.FormatIssueMarkdown(detail);
 
         markdown.Should().Contain("labels: []");
     }
@@ -549,7 +549,7 @@ public class WriteOpenIssueContextLogicTests : IDisposable
             Labels = new[] { "agent:done" }
         };
 
-        var markdown = WriteOpenIssueContextStep.FormatIssueMarkdown(detail, isClosed: true);
+        var markdown = OpenIssueContextWriter.FormatIssueMarkdown(detail, isClosed: true);
 
         markdown.Should().Contain("status: closed");
         markdown.Should().Contain("identifier: \"99\"");
@@ -567,7 +567,7 @@ public class WriteOpenIssueContextLogicTests : IDisposable
             Labels = new[] { "agent:next" }
         };
 
-        var markdown = WriteOpenIssueContextStep.FormatIssueMarkdown(detail, isClosed: false);
+        var markdown = OpenIssueContextWriter.FormatIssueMarkdown(detail, isClosed: false);
 
         markdown.Should().NotContain("status:");
     }

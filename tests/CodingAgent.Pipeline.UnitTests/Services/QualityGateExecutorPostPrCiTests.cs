@@ -294,7 +294,7 @@ public class QualityGateExecutorPostPrCiTests
     private void SetupValidatorAlwaysPasses()
     {
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<string?>()))
@@ -837,7 +837,7 @@ public class QualityGateExecutorEdgeCaseTests
     private void SetupValidatorAlwaysPasses()
     {
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .ReturnsAsync(new QualityGateReport
             {
@@ -971,7 +971,7 @@ public class QualityGateExecutorPostPrCiTelemetryTests : IDisposable
         // Arrange: local gates pass; cleanup commit throws "no changes" → skipCiIfNoChanges
         // path fires → FinalizePullRequest called → WaitForPostPrCiAsync runs
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .ReturnsAsync(new QualityGateReport
             {

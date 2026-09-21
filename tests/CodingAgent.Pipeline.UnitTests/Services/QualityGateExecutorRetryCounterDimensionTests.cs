@@ -352,7 +352,7 @@ public class QualityGateExecutorRetryCounterDimensionTests : IDisposable
     private void SetupValidatorAlwaysFails()
     {
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<string?>()))

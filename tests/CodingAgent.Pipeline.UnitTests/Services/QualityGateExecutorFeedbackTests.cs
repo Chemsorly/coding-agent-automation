@@ -312,7 +312,7 @@ public class QualityGateExecutorFeedbackTests
     private void SetupValidatorAlwaysFails()
     {
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(FailingReport);
@@ -390,7 +390,7 @@ public class QualityGateExecutorFeedbackTests
             Tests = null! // Simulates legacy MessagePack deserialization (bypasses 'required' constraint)
         };
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(nullTestsReport);
@@ -418,7 +418,7 @@ public class QualityGateExecutorFeedbackTests
             Tests = null! // Simulates legacy MessagePack deserialization (bypasses 'required' constraint)
         };
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(nullTestsReport);
@@ -454,7 +454,7 @@ public class QualityGateExecutorFeedbackTests
             Tests = null! // Simulates legacy MessagePack deserialization (bypasses 'required' constraint)
         };
         _mockValidator.Setup(v => v.ValidateAsync(
-                It.IsAny<string>(),
+                It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(nullTestsReport);
