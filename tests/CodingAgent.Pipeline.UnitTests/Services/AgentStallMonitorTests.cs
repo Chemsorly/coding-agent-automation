@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Microsoft.Extensions.Time.Testing;
 using Moq;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -11,6 +12,14 @@ namespace CodingAgent.Pipeline.UnitTests;
 
 /// <summary>
 /// Unit tests for <see cref="AgentStallMonitor"/>.
+///
+/// All timing-sensitive tests inject <see cref="FakeTimeProvider"/> so they are
+/// deterministic — no wall-clock waits, no CI flakiness.
+///
+/// Pattern: start the monitor, yield briefly with <c>await Task.Delay(small)</c>
+/// so the Task.Run loop reaches its first <c>timeProvider.Delay</c>, then call
+/// <c>fakeTime.Advance()</c> to unblock it.  The fake delay completes synchronously
+/// on the ThreadPool thread running the monitor loop.
 /// </summary>
 public class AgentStallMonitorTests
 {
@@ -32,13 +41,28 @@ public class AgentStallMonitorTests
         };
     }
 
+    // ── Helper: yield enough for the Task.Run loop to start and reach its Delay ──
+
+    /// <summary>
+    /// Yields the current thread so the monitor's Task.Run background loop can
+    /// start, enter its while loop, and suspend on <c>timeProvider.Delay</c>.
+    /// A single scheduler yield is usually sufficient; 10ms is a generous buffer.
+    /// </summary>
+    private static async Task YieldToMonitorAsync() => await Task.Delay(10);
+
+    // ── DetectsProcessDeath ────────────────────────────────────────────────────
+
     [Fact]
     public async Task DetectsProcessDeath_LogsErrorWithPhaseContext()
     {
+        var fakeTime = new FakeTimeProvider();
+
+        // Large intervals so the kill/warning paths never fire — only process death matters here
         var config = new PipelineConfiguration
         {
-            StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromHours(1)
+            StallPollInterval = TimeSpan.FromMinutes(1),
+            StallWarningInterval = TimeSpan.FromHours(1),
+            AgentTimeout = TimeSpan.FromHours(1)
         };
 
         _mockAgent.Setup(a => a.GetHealthStatus())
@@ -51,12 +75,15 @@ public class AgentStallMonitorTests
         var task = AgentStallMonitor.ExecuteWithMonitoringAsync(
             _mockAgent.Object,
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
-            _run, config, "Test phase", null, _mockLogger.Object, CancellationToken.None);
+            _run, config, "Test phase", null, _mockLogger.Object, CancellationToken.None,
+            timeProvider: fakeTime);
 
-        // Wait for the monitor to detect the dead process before completing the agent call
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (_run.ChatHistory.IsEmpty && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        // Let the monitor loop start and reach its first Delay
+        await YieldToMonitorAsync();
+        fakeTime.Advance(TimeSpan.FromMinutes(1)); // trigger one poll tick
+
+        // Wait for the monitor to enqueue the death message
+        await WaitForChatHistoryAsync(_run);
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
@@ -68,21 +95,27 @@ public class AgentStallMonitorTests
             c.Content.Contains("42"));
     }
 
+    // ── DetectsSilence ─────────────────────────────────────────────────────────
+
     [Fact]
     public async Task DetectsSilence_LogsWarningWithPhaseContext()
     {
+        var fakeTime = new FakeTimeProvider();
+
+        // LastOutputTime 3 minutes before fake "now" — already silent
         var config = new PipelineConfiguration
         {
-            StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromMilliseconds(50),
-            AgentTimeout = TimeSpan.FromMinutes(30)
+            StallPollInterval = TimeSpan.FromMinutes(1),
+            StallWarningInterval = TimeSpan.FromMinutes(2), // silence threshold: 2m
+            AgentTimeout = TimeSpan.FromHours(1)            // kill threshold way out
         };
 
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
                 IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
-                LastOutputTime = DateTime.UtcNow.AddMinutes(-3)
+                // Already 3 minutes silent relative to fake "now"
+                LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-3)
             });
 
         var tcs = new TaskCompletionSource<AgentResult>();
@@ -92,12 +125,15 @@ public class AgentStallMonitorTests
         var task = AgentStallMonitor.ExecuteWithMonitoringAsync(
             _mockAgent.Object,
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
-            _run, config, "Code review agent 'Correctness'", null, _mockLogger.Object, CancellationToken.None);
+            _run, config, "Code review agent 'Correctness'", null, _mockLogger.Object,
+            CancellationToken.None, timeProvider: fakeTime);
 
-        // Wait for the monitor to log the silence warning before completing the agent call
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (_run.ChatHistory.IsEmpty && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        // After one poll tick: silence=3m > StallWarningInterval=2m.
+        // lastWarnTime is initialised to fake-now, so timeSinceLastWarn = 1m after advancing.
+        // We need timeSinceLastWarn >= StallWarningInterval=2m, so advance 2m total.
+        await YieldToMonitorAsync();
+        fakeTime.Advance(TimeSpan.FromMinutes(2)); // poll tick + satisfies timeSinceLastWarn check
+        await WaitForChatHistoryAsync(_run);
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
@@ -108,30 +144,32 @@ public class AgentStallMonitorTests
             c.Content.Contains("no output for"));
     }
 
+    // ── KillsAfterHardTimeout ──────────────────────────────────────────────────
+
     [Fact]
     public async Task KillsAfterHardTimeout_CallsKillAsync()
     {
+        var fakeTime = new FakeTimeProvider();
+
         var config = new PipelineConfiguration
         {
-            StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromHours(1),
-            AgentTimeout = TimeSpan.FromMilliseconds(100)
+            StallPollInterval = TimeSpan.FromMinutes(1),
+            StallWarningInterval = TimeSpan.FromHours(1), // suppress warnings
+            AgentTimeout = TimeSpan.FromMinutes(5)        // kill after 5m silence
         };
 
+        // Agent has been silent for 10 minutes relative to fake "now" — already past kill threshold
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
                 IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
-                LastOutputTime = DateTime.UtcNow.AddMinutes(-5)
+                LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-10)
             });
 
         var tcs = new TaskCompletionSource<AgentResult>();
-        var killCalled = new TaskCompletionSource<bool>();
+        var killCalled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns(tcs.Task);
-        // Signal via killCalled so the test can wait until KillAsync has actually been invoked
-        // before completing the task — prevents the race where tcs.SetResult unblocks the agent
-        // before the monitor calls KillAsync (ChatHistory is enqueued just before KillAsync).
         _mockAgent.Setup(a => a.KillAsync())
             .Callback(() => killCalled.TrySetResult(true))
             .Returns(Task.CompletedTask);
@@ -139,13 +177,17 @@ public class AgentStallMonitorTests
         var task = AgentStallMonitor.ExecuteWithMonitoringAsync(
             _mockAgent.Object,
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
-            _run, config, "Stuck agent", null, _mockLogger.Object, CancellationToken.None);
+            _run, config, "Stuck agent", null, _mockLogger.Object, CancellationToken.None,
+            timeProvider: fakeTime);
 
-        // Wait for KillAsync to be invoked before completing the agent task.
-        // 30s budget: the monitor fires after 100ms AgentTimeout on a 50ms poll — well within
-        // 30s even under CI load. The previous 5s budget caused spurious TimeoutException on
-        // overloaded runners (pre-existing flaky test, not related to async/CT changes).
-        await killCalled.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        // Yield so the monitor loop starts and suspends on the first Delay(1m)
+        await YieldToMonitorAsync();
+
+        // Advance 1 minute → poll tick fires, silence = 10m+1m = 11m > AgentTimeout=5m → KillAsync called
+        fakeTime.Advance(TimeSpan.FromMinutes(1));
+
+        // KillAsync must be called promptly — no wall-clock dependency
+        await killCalled.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
@@ -156,17 +198,26 @@ public class AgentStallMonitorTests
             c.Content.Contains("Forcefully terminating agent process"));
     }
 
+    // ── CancelsCleanlyOnNormalCompletion ───────────────────────────────────────
+
     [Fact]
     public async Task CancelsCleanlyOnNormalCompletion()
     {
+        var fakeTime = new FakeTimeProvider();
+
         var config = new PipelineConfiguration
         {
-            StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromHours(1)
+            StallPollInterval = TimeSpan.FromMinutes(1),
+            StallWarningInterval = TimeSpan.FromHours(1),
+            AgentTimeout = TimeSpan.FromHours(1)
         };
 
         _mockAgent.Setup(a => a.GetHealthStatus())
-            .Returns(new AgentHealthStatus { IsExecuting = true, ProcessId = 1, IsProcessAlive = true, LastOutputTime = DateTime.UtcNow });
+            .Returns(new AgentHealthStatus
+            {
+                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
+                LastOutputTime = fakeTime.GetUtcNow().UtcDateTime
+            });
 
         _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
@@ -174,19 +225,25 @@ public class AgentStallMonitorTests
         var result = await AgentStallMonitor.ExecuteWithMonitoringAsync(
             _mockAgent.Object,
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
-            _run, config, "Fast agent", null, _mockLogger.Object, CancellationToken.None);
+            _run, config, "Fast agent", null, _mockLogger.Object, CancellationToken.None,
+            timeProvider: fakeTime);
 
         result.ExitCode.Should().Be(0);
         _mockAgent.Verify(a => a.KillAsync(), Times.Never);
     }
 
+    // ── MonitorAsync ───────────────────────────────────────────────────────────
+
     [Fact]
     public async Task MonitorAsync_WrapsVoidAgentCall()
     {
+        var fakeTime = new FakeTimeProvider();
+
         var config = new PipelineConfiguration
         {
-            StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromHours(1)
+            StallPollInterval = TimeSpan.FromMinutes(1),
+            StallWarningInterval = TimeSpan.FromHours(1),
+            AgentTimeout = TimeSpan.FromHours(1)
         };
 
         _mockAgent.Setup(a => a.GetHealthStatus())
@@ -200,12 +257,12 @@ public class AgentStallMonitorTests
         var task = AgentStallMonitor.MonitorAsync(
             _mockAgent.Object,
             () => _mockAgent.Object.EnsureSessionAsync("/ws", CancellationToken.None),
-            _run, config, "Session warm-up", null, _mockLogger.Object, CancellationToken.None);
+            _run, config, "Session warm-up", null, _mockLogger.Object, CancellationToken.None,
+            timeProvider: fakeTime);
 
-        // Wait for the monitor to detect the dead process before completing the agent call
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (_run.ChatHistory.IsEmpty && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await YieldToMonitorAsync();
+        fakeTime.Advance(TimeSpan.FromMinutes(1));
+        await WaitForChatHistoryAsync(_run);
 
         tcs.SetResult();
         await task;
@@ -217,9 +274,12 @@ public class AgentStallMonitorTests
             c.Content.Contains("agent process is no longer alive"));
     }
 
+    // ── Metrics counters ───────────────────────────────────────────────────────
+
     [Fact]
     public async Task HandleSilenceWarning_EmitsStallWarningsCounter()
     {
+        var fakeTime = new FakeTimeProvider();
         var factory = new TestMeterFactory();
         var meter = factory.Create(new System.Diagnostics.Metrics.MeterOptions(PipelineTelemetry.SourceName));
         var warningsCounter = meter.CreateCounter<long>("quality_gate.stall.warnings", "{warning}");
@@ -231,16 +291,16 @@ public class AgentStallMonitorTests
 
         var config = new PipelineConfiguration
         {
-            StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromMilliseconds(50),
-            AgentTimeout = TimeSpan.FromMinutes(30)
+            StallPollInterval = TimeSpan.FromMinutes(1),
+            StallWarningInterval = TimeSpan.FromMinutes(2),
+            AgentTimeout = TimeSpan.FromHours(1)
         };
 
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
                 IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
-                LastOutputTime = DateTime.UtcNow.AddMinutes(-3)
+                LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-3)
             });
 
         var tcs = new TaskCompletionSource<AgentResult>();
@@ -251,12 +311,11 @@ public class AgentStallMonitorTests
             _mockAgent.Object,
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
             _run, config, "Quality gate retry agent (attempt 1)", null, _mockLogger.Object,
-            CancellationToken.None, stallMetrics: stallMetrics);
+            CancellationToken.None, stallMetrics: stallMetrics, timeProvider: fakeTime);
 
-        // Wait for warning to fire
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (warningCollector.GetMeasurementSnapshot().Count == 0 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await YieldToMonitorAsync();
+        fakeTime.Advance(TimeSpan.FromMinutes(2));
+        await WaitForMetricAsync(warningCollector);
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
@@ -273,6 +332,7 @@ public class AgentStallMonitorTests
     [Fact]
     public async Task HandleKillTimeoutAsync_EmitsStallKillsCounter()
     {
+        var fakeTime = new FakeTimeProvider();
         var factory = new TestMeterFactory();
         var meter = factory.Create(new System.Diagnostics.Metrics.MeterOptions(PipelineTelemetry.SourceName));
         var warningsCounter = meter.CreateCounter<long>("quality_gate.stall.warnings", "{warning}");
@@ -284,16 +344,16 @@ public class AgentStallMonitorTests
 
         var config = new PipelineConfiguration
         {
-            StallPollInterval = TimeSpan.FromMilliseconds(50),
+            StallPollInterval = TimeSpan.FromMinutes(1),
             StallWarningInterval = TimeSpan.FromHours(1),
-            AgentTimeout = TimeSpan.FromMilliseconds(100)
+            AgentTimeout = TimeSpan.FromMinutes(5)
         };
 
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
                 IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
-                LastOutputTime = DateTime.UtcNow.AddMinutes(-5)
+                LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-10)
             });
 
         var tcs = new TaskCompletionSource<AgentResult>();
@@ -305,12 +365,11 @@ public class AgentStallMonitorTests
             _mockAgent.Object,
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
             _run, config, "Quality gate retry agent (attempt 2)", null, _mockLogger.Object,
-            CancellationToken.None, stallMetrics: stallMetrics);
+            CancellationToken.None, stallMetrics: stallMetrics, timeProvider: fakeTime);
 
-        // Wait for the kill to fire
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (killCollector.GetMeasurementSnapshot().Count == 0 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await YieldToMonitorAsync();
+        fakeTime.Advance(TimeSpan.FromMinutes(1));
+        await WaitForMetricAsync(killCollector);
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
@@ -327,6 +386,7 @@ public class AgentStallMonitorTests
     [Fact]
     public async Task HandleProcessDeath_EmitsStallProcessDeathsCounter()
     {
+        var fakeTime = new FakeTimeProvider();
         var factory = new TestMeterFactory();
         var meter = factory.Create(new System.Diagnostics.Metrics.MeterOptions(PipelineTelemetry.SourceName));
         var warningsCounter = meter.CreateCounter<long>("quality_gate.stall.warnings", "{warning}");
@@ -338,8 +398,9 @@ public class AgentStallMonitorTests
 
         var config = new PipelineConfiguration
         {
-            StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromHours(1)
+            StallPollInterval = TimeSpan.FromMinutes(1),
+            StallWarningInterval = TimeSpan.FromHours(1),
+            AgentTimeout = TimeSpan.FromHours(1)
         };
 
         _mockAgent.Setup(a => a.GetHealthStatus())
@@ -353,12 +414,11 @@ public class AgentStallMonitorTests
             _mockAgent.Object,
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
             _run, config, "Quality gate retry agent (attempt 3)", null, _mockLogger.Object,
-            CancellationToken.None, stallMetrics: stallMetrics);
+            CancellationToken.None, stallMetrics: stallMetrics, timeProvider: fakeTime);
 
-        // Wait for process death to be detected
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (deathCollector.GetMeasurementSnapshot().Count == 0 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await YieldToMonitorAsync();
+        fakeTime.Advance(TimeSpan.FromMinutes(1));
+        await WaitForMetricAsync(deathCollector);
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
@@ -370,5 +430,31 @@ public class AgentStallMonitorTests
             "phase tag should be normalized to qgc_retry_agent");
 
         factory.Dispose();
+    }
+
+    // ── Polling helpers ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Waits up to 5 seconds for the monitor to enqueue a ChatHistory entry.
+    /// The wait is cheap because the monitor fires immediately after <c>fakeTime.Advance</c>
+    /// unblocks its <c>Delay</c> — this loop typically exits on the first or second iteration.
+    /// The 5-second cap is not a performance target; it is a safety net against infinite hangs.
+    /// </summary>
+    private static async Task WaitForChatHistoryAsync(PipelineRun run)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (run.ChatHistory.IsEmpty && DateTime.UtcNow < deadline)
+            await Task.Delay(5);
+    }
+
+    /// <summary>
+    /// Waits up to 5 seconds for at least one measurement to appear in the collector.
+    /// </summary>
+    private static async Task WaitForMetricAsync<T>(MetricCollector<T> collector)
+        where T : struct
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (collector.GetMeasurementSnapshot().Count == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(5);
     }
 }
