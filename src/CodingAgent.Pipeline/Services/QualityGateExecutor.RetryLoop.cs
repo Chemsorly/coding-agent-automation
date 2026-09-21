@@ -251,15 +251,19 @@ public partial class QualityGateExecutor
         finally
         {
             waitSw.Stop();
-            var stepTags = PipelineTelemetry.BuildStepTags("WaitForPostPrCi", run.RunType, run.ProjectId, run.ProjectName);
-            // TODO: This finally block fires on genuine OperationCanceledException (ct.IsCancellationRequested).
-            // The inner catch (OperationCanceledException) { throw; } re-throws and the outer finally still
-            // executes, recording a partial elapsed time as a complete WaitForPostPrCi observation and
-            // incrementing the step count. For long CI waits (potentially hours) a cancellation mid-poll
-            // produces an unrealistically short sample that will distort p50/p99 histogram aggregations.
-            // Consider guarding with: if (!ct.IsCancellationRequested) { ... Record/Add ... }
-            _stepDuration.Record(waitSw.Elapsed.TotalSeconds, stepTags);
-            _stepCount.Add(1, stepTags);
+            // Guard against genuine pipeline cancellation (ct.IsCancellationRequested).
+            // When the outer ct is cancelled the inner catch(OperationCanceledException){ throw; }
+            // re-throws and this finally still runs.  Recording a partial elapsed time as a
+            // complete WaitForPostPrCi observation would distort p50/p99 histogram aggregations
+            // for long CI waits (potentially hours).  Only emit the sample when the wait
+            // completed — successfully or with a CI-level error — not when the pipeline itself
+            // was cancelled mid-poll.
+            if (!ct.IsCancellationRequested)
+            {
+                var stepTags = PipelineTelemetry.BuildStepTags("WaitForPostPrCi", run.RunType, run.ProjectId, run.ProjectName);
+                _stepDuration.Record(waitSw.Elapsed.TotalSeconds, stepTags);
+                _stepCount.Add(1, stepTags);
+            }
         }
 
         return new QualityGateReport
@@ -405,12 +409,17 @@ public partial class QualityGateExecutor
         // condition, or filtering stale entries before building the failure-feedback prompt.
         while (!report.AllPassed && run.RetryCount < config.MaxRetries)
         {
-            run.RetryCount++;
+            // Compute the pending attempt number for logging/prompts without modifying run.RetryCount
+            // yet.  run.RetryCount is only incremented inside RunFixAgentIterationAsync, on the
+            // RetryOutcome.Retry (default) branch, so that it reflects the number of real fix-agent
+            // attempts that actually ran rather than the number of loop iterations entered (which
+            // includes transient and session-restart iterations that do not consume a retry budget slot).
+            var pendingAttemptNum = run.RetryCount + 1;
             var errorSummary = BuildQualityGateErrorSummary(report);
             run.RetryErrors.Enqueue(errorSummary);
 
-            _logger.Information("Pipeline {RunId} quality gates failed, auto-retry {RetryCount}/{MaxRetries}", run.RunId, run.RetryCount, config.MaxRetries);
-            callbacks.EmitOutputLine($"🔄 Quality gates failed, retrying (attempt {run.RetryCount}/{config.MaxRetries})");
+            _logger.Information("Pipeline {RunId} quality gates failed, auto-retry {RetryCount}/{MaxRetries}", run.RunId, pendingAttemptNum, config.MaxRetries);
+            callbacks.EmitOutputLine($"🔄 Quality gates failed, retrying (attempt {pendingAttemptNum}/{config.MaxRetries})");
 
             // NOTE [WARNING]: Two independent guards are combined here via OR to handle both the
             // multi-QGC case (where BuildAggregateReport only propagates the first failing QGC's
@@ -428,7 +437,7 @@ public partial class QualityGateExecutor
             // (history section was noisy), document it; if accidental, switch to the priorRetryErrors
             // overload and pass run.RetryErrors.ToArray().
             // See review finding: DotNetSpecialist WARNING — QualityGateExecutor.RetryLoop.cs:457
-            var retryPromptSummary = BuildQualityGateRetryPrompt(report, run.RetryCount, config.MaxRetries,
+            var retryPromptSummary = BuildQualityGateRetryPrompt(report, pendingAttemptNum, config.MaxRetries,
                 hasQualityGateOutput: !(report.QgcResults.Any(r => r.Tests?.IsInfrastructureFailure == true)
                     || report.Tests?.IsInfrastructureFailure == true));
 
@@ -446,7 +455,7 @@ public partial class QualityGateExecutor
 
             // Run the fix agent and classify the result; extracted to reduce cognitive complexity.
             var (shouldBreak, shouldContinue, updatedTransientCount) = await RunFixAgentIterationAsync(
-                context, fixPrompt, retryAgentDescription, consecutiveTransientRetries, ct);
+                context, fixPrompt, retryAgentDescription, pendingAttemptNum, consecutiveTransientRetries, ct);
             consecutiveTransientRetries = updatedTransientCount;
 
             if (shouldContinue) continue;
@@ -475,6 +484,7 @@ public partial class QualityGateExecutor
         QualityGateContext context,
         string fixPrompt,
         string retryAgentDescription,
+        int pendingAttemptNum,
         int consecutiveTransientRetries,
         CancellationToken ct)
     {
@@ -491,7 +501,7 @@ public partial class QualityGateExecutor
                     Prompt = fixPrompt,
                     Run = run,
                     Config = config,
-                    Description = $"{retryAgentDescription} (attempt {run.RetryCount})",
+                    Description = $"{retryAgentDescription} (attempt {pendingAttemptNum})",
                     Logger = _logger,
                     Phase = null,
                     EnvironmentVariables = context.InjectedSecrets
@@ -507,12 +517,15 @@ public partial class QualityGateExecutor
 
             // Intentional asymmetry: RetryErrors (incremented above) is NOT rolled back —
             // the RetryErrors entry (from the prior QG failure) is harmless noise. Only
-            // RetryCount matters for loop exit logic, so that is the only value corrected.
+            // RetryCount matters for loop exit logic, so that is the only value that must be
+            // accurate.  run.RetryCount is incremented here — on the Retry (default) outcome
+            // only — so that it reflects the number of real fix-agent attempts that completed,
+            // not the number of loop iterations entered.
             switch (ClassifyRetryOutcome(agentResult))
             {
                 case RetryOutcome.TransientWait:
                     _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeTransient));
-                    run.RetryCount = Math.Max(0, run.RetryCount - 1);
+                    // No increment: transient iterations don't consume a retry-budget slot.
                     consecutiveTransientRetries++;
                     if (consecutiveTransientRetries >= MaxConsecutiveTransientRetries)
                     {
@@ -533,6 +546,16 @@ public partial class QualityGateExecutor
 
                 case RetryOutcome.AbortAuth:
                     _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeAuthAbort));
+                    // TODO [WARNING]: Incrementing run.RetryCount here on AbortAuth is semantically
+                    // inconsistent with the stated design intent ("only increment after a real fix-agent
+                    // attempt runs"). Auth failures are permanent errors that immediately break the loop —
+                    // they are not genuine fix attempts that consumed a retry-budget slot. If run.RetryCount
+                    // is inspected after the loop (e.g., to cap draft PR descriptions or display attempt
+                    // counts), AbortAuth artificially inflates the counter by 1. Consider NOT incrementing
+                    // here (matching the TransientWait / RestartSession treatment) or documenting that
+                    // AbortAuth is intentionally counted as a consumed slot.
+                    // See review finding: Correctness WARNING — QualityGateExecutor.RetryLoop.cs:549
+                    run.RetryCount++;
                     _logger.Error(
                         "Pipeline {RunId} retry {RetryCount}: permanent auth failure, aborting retry loop",
                         run.RunId, run.RetryCount);
@@ -540,6 +563,15 @@ public partial class QualityGateExecutor
 
                 case RetryOutcome.RestartSession:
                     _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeSessionRestart));
+                    // TODO [WARNING]: RestartSession does not increment run.RetryCount and has no
+                    // cap analogous to MaxConsecutiveTransientRetries. The outer while loop exits only
+                    // when run.RetryCount >= config.MaxRetries; if the fix agent repeatedly returns
+                    // zero tokens (triggering RestartSession on every iteration), run.RetryCount never
+                    // advances and the loop runs indefinitely (until cancellation). Before this refactor,
+                    // the top-of-loop run.RetryCount++ ensured every RestartSession iteration still
+                    // consumed a retry-budget slot. Add a consecutive RestartSession cap (similar to
+                    // MaxConsecutiveTransientRetries) or increment run.RetryCount here.
+                    // See review finding: DotNetSpecialist WARNING — QualityGateExecutor.RetryLoop.cs:556
                     _logger.Warning(
                         "Pipeline {RunId} retry {RetryCount}: agent returned empty response (0 tokens), " +
                         "clearing session affinity for next attempt",
@@ -549,6 +581,8 @@ public partial class QualityGateExecutor
 
                 default: // RetryOutcome.Retry
                     _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeRetry));
+                    // Increment only here: the fix agent actually ran and produced code changes.
+                    run.RetryCount++;
                     consecutiveTransientRetries = 0;
                     if (agentResult != null)
                         await _prOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);
