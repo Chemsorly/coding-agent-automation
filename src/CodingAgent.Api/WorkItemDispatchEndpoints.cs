@@ -101,10 +101,9 @@ public static class WorkItemDispatchEndpoints
             Status = WorkItemStatus.Pending,
             Payload = payloadJson,
             AgentSelector = request.AgentSelector ?? "",
-            // Clamp TimeoutSeconds to a positive value. A zero or negative value from a legacy
-            // or misconfigured caller would be stored verbatim and cause ReconciliationLoop to
-            // immediately force-fail any Running item (effectiveTimeoutSeconds=0 makes
-            // executionAge >= 0 trivially true). Substitute DefaultAgentTimeout (1800s) instead.
+            // Clamp zero/negative TimeoutSeconds to DefaultAgentTimeout (issue #2745).
+            // A zero stored value causes ReconciliationLoop to immediately force-fail Running items
+            // because the elapsed time always exceeds the zero timeout.
             TimeoutSeconds = request.TimeoutSeconds > 0
                 ? request.TimeoutSeconds
                 : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
@@ -143,7 +142,7 @@ public static class WorkItemDispatchEndpoints
 
             // Postgres 23505: partial unique index on (IssueIdentifier, IssueProviderConfigId)
             // for non-terminal statuses — a different run is already live for this issue.
-            return TypedResults.Conflict("A live work item already exists for this issue.");
+            return DispatchWorkItemService.HandleUniqueViolationFallback();
         }
 
         // Materialise in-memory PipelineRun in the API's IOrchestratorRunService so the UI
@@ -266,8 +265,13 @@ public static class WorkItemDispatchEndpoints
         JobTemplateStore templateStore,
         DispatchTemplateResolver templateResolver,
         IDistributedLockProvider lockProvider,
+        DispatchWorkItemService dispatchService,
         CancellationToken ct = default)
     {
+        // TODO [WARNING]: `dispatchService` has no ArgumentNullException.ThrowIfNull guard here,
+        // inconsistent with the guard on `request` in DispatchWorkItem and with the constructor
+        // guard in DispatchWorkItemService itself. A null value would produce a NullReferenceException
+        // at first use rather than a clear ArgumentNullException at the entry point.
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
         // Fast path: check status before acquiring the lock.
@@ -371,15 +375,7 @@ public static class WorkItemDispatchEndpoints
         // NOTE: do NOT use DispatchStateBuilder.BuildStateAsync here — it does NOT normalise
         // keys (uses raw x.Selector). Follow the DispatchWorkItem pattern (NormalizeLabels on
         // each key) so active items stored by any path are counted correctly.
-        var activeCounts = await db.WorkItems
-            .Where(w => w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
-            .GroupBy(w => w.AgentSelector)
-            .Select(g => new { Selector = g.Key, Count = g.Count() })
-            .ToListAsync(ct);
-        var concurrencyBySelector = activeCounts.ToDictionary(
-            x => JobTemplateStore.NormalizeLabels(x.Selector),
-            x => x.Count,
-            StringComparer.Ordinal);
+        var concurrencyBySelector = await dispatchService.BuildConcurrencySnapshotAsync(db, ct);
 
         // Query PVC availability.
         var pvcPool = lifecycle.GetPvcPool();
@@ -396,30 +392,18 @@ public static class WorkItemDispatchEndpoints
         WorkDistributionTelemetry.UpdateCredentialPoolMetrics(pvcResult.AvailablePvcs.Count, pvcResult.ClaimedCount);
 
         // Template gate — try direct resolve first, then profile-based fallback.
-        // The profile lookup uses the raw selector to match MatchLabels, while the template store
-        // uses the normalized form. When the profile fallback resolves a template, effectiveSelector
-        // is updated to the canonical profile labels (e.g. "dotnet,kiro"). Both the concurrency gate
-        // and the projection's AgentSelector are derived from effectiveSelector so that the key used
-        // to read and increment concurrencyBySelector is always the same canonical value.
-        var effectiveSelector = normalizedSelector;   // default: direct-resolve path
+        // When the profile fallback is used, capture the effective (canonical) selector so the
+        // concurrency gate checks the correct key. Previously the gate used normalizedSelector
+        // ("dotnet") while active items were stored under the canonical key ("dotnet,kiro"),
+        // causing the gate to under-count and allow over-dispatch on the fallback path.
         var template = templateStore.Resolve(normalizedSelector);
+        string? resolvedSelector = null;
         if (template is null)
         {
-            var (fallbackTemplate, resolvedSelector) = await templateResolver.ResolveTemplateViaProfileAsync(
+            var (fallbackTemplate, fallbackSelector) = await templateResolver.ResolveTemplateViaProfileAsync(
                 agentSelector, "DispatchPendingWorkItem", ct);
             template = fallbackTemplate;
-            if (resolvedSelector is not null)
-            {
-                // TODO [WARNING]: resolvedSelector is built with string.Join(",", profile.MatchLabels.OrderBy(...))
-                // which sorts ordinally but does NOT trim whitespace from individual labels. NormalizeLabels
-                // also sorts ordinally but additionally trims each label. If any MatchLabels entry contains
-                // leading/trailing whitespace (e.g. " kiro"), resolvedSelector will be " kiro,dotnet" rather
-                // than "dotnet,kiro", and effectiveSelector will not match the NormalizeLabels-produced key
-                // in concurrencyBySelector — causing under-counting even after this fix. To fully close the
-                // gap, pass resolvedSelector through NormalizeLabels here, or normalize MatchLabels output in
-                // DispatchTemplateResolver before returning it.
-                effectiveSelector = resolvedSelector;
-            }
+            resolvedSelector = fallbackSelector;
         }
 
         if (template is null)
@@ -428,33 +412,51 @@ public static class WorkItemDispatchEndpoints
             return TypedResults.Conflict($"No job template for agent selector: {sanitizedSelector}");
         }
 
-        // Concurrency gate.
-        if (DispatchStateBuilder.IsAtConcurrencyLimit(effectiveSelector, concurrencyBySelector, template.MaxConcurrent))
-        {
-            var currentCount = concurrencyBySelector.GetValueOrDefault(effectiveSelector, 0);
-            Log.Information("DispatchPendingWorkItem: concurrency limit reached for selector {Selector} ({Current}/{Max}) — returning 409",
-                sanitizedSelector, currentCount, template.MaxConcurrent);
-            return TypedResults.Conflict($"Concurrency limit reached for selector '{sanitizedSelector}' ({currentCount}/{template.MaxConcurrent}).");
-        }
+        // Use the canonical selector for the concurrency gate: if the profile fallback resolved the
+        // template, the canonical key (e.g. "dotnet,kiro") is what's stored in the concurrency map
+        // for items dispatched via the normal path. Using the partial normalizedSelector ("dotnet")
+        // would miss those entries and silently allow over-dispatch.
+        var effectiveSelector = resolvedSelector is not null
+            ? JobTemplateStore.NormalizeLabels(resolvedSelector)
+            : normalizedSelector;
+        var sanitizedEffectiveSelector = CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(effectiveSelector);
 
-        // PVC gate.
+        // Concurrency gate + PVC gate via shared helper.
+        // UpdateCredentialPoolMetrics is emitted just above, before this call, as required —
+        // it must stay outside ApplyGates (DispatchPendingWorkItem-only metric).
         var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
-        if (isKiroAgent && pvcResult.AvailablePvcs.Count == 0)
+        var gateResult = dispatchService.ApplyGates(
+            effectiveSelector, sanitizedEffectiveSelector, concurrencyBySelector,
+            pvcResult, template, isKiroAgent, "DispatchPendingWorkItem");
+        if (gateResult is not null)
         {
-            WorkDistributionTelemetry.PvcPoolExhaustions.Add(1);
-            Log.Information("DispatchPendingWorkItem: no PVC available for kiro agent selector {Selector} — returning 503", sanitizedSelector);
-            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+            // Emit the PVC exhaustion counter here (only on the 503/PVC-gate path) —
+            // this counter belongs exclusively to the DispatchPendingWorkItem path and must
+            // NOT be emitted by ApplyGates itself, as DispatchWorkItem does not count exhaustions.
+            // TODO [WARNING]: PvcPoolExhaustions is incorrectly incremented when the concurrency gate
+            // fires first (409) while the PVC pool is simultaneously empty. The predicate
+            // `isKiroAgent && pvcResult.AvailablePvcs.Count == 0` does not distinguish which gate
+            // fired; when both conditions hold, ApplyGates returns a Conflict (409), not a StatusCode
+            // (503), yet this counter still fires — misattributing the rejection as a PVC exhaustion.
+            // Fix: narrow to `if (gateResult is StatusCodeHttpResult { StatusCode: 503 })`.
+            if (isKiroAgent && pvcResult.AvailablePvcs.Count == 0)
+                WorkDistributionTelemetry.PvcPoolExhaustions.Add(1);
+            return gateResult;
         }
 
         // Build the projection for ExecuteDispatchLifecycleAsync.
-        // AgentSelector is set to effectiveSelector — the canonical form derived from either the
-        // direct-resolve path (normalizedSelector) or the profile-fallback path (resolvedSelector).
-        // FinalizeDispatchAsync increments concurrencyBySelector[item.AgentSelector], so using
-        // effectiveSelector here ensures the increment and the gate check use the same key.
+        // TODO [WARNING]: When the profile fallback resolves the template, projection.AgentSelector is
+        // set to normalizedSelector (e.g. "dotnet"), not to the template's canonical labels (e.g. "dotnet,kiro").
+        // FinalizeDispatchAsync will increment concurrencyBySelector["dotnet"] rather than ["dotnet,kiro"].
+        // Active items stored with selector "kiro,dotnet" are counted under a different normalized key
+        // ("dotnet,kiro"), so IsAtConcurrencyLimit may under-count on the profile-fallback path and
+        // allow over-dispatch when maxConcurrent is tight. The same gap exists in FinalizeDispatchAsync
+        // (see its // TODO: Use effectiveSelector comment). Fix both together when the effectiveSelector
+        // propagation is resolved.
         var projection = new PendingWorkItemProjection
         {
             Id = id,
-            AgentSelector = effectiveSelector,
+            AgentSelector = normalizedSelector,
             CreatedAt = quickCheck.CreatedAt,
             TimeoutSeconds = quickCheck.TimeoutSeconds,
             TaskType = quickCheck.TaskType,
@@ -569,9 +571,14 @@ public static class WorkItemDispatchEndpoints
         IOrchestratorRunService runService,
         DispatchLifecycleService lifecycle,
         JobTemplateStore templateStore,
+        DispatchWorkItemService dispatchService,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        // TODO [WARNING]: `dispatchService` has no ArgumentNullException.ThrowIfNull guard here,
+        // inconsistent with the guard on `request` above and with the constructor guard in
+        // DispatchWorkItemService itself. A null value would produce a NullReferenceException at
+        // first use rather than a clear ArgumentNullException at the entry point.
 
         // Template resolution: selector → JobTemplate
         var template = templateStore.Resolve(request.AgentSelector ?? "");
@@ -590,36 +597,9 @@ public static class WorkItemDispatchEndpoints
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
         // Build concurrency map (dispatched/running items by selector)
-        var activeCounts = await db.WorkItems
-            .Where(w => w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
-            .GroupBy(w => w.AgentSelector)
-            .Select(g => new { Selector = g.Key, Count = g.Count() })
-            .ToListAsync(ct);
-        // Normalise stored selectors before building the lookup key so that items written by
-        // any path (including the old DispatchLoop which may have normalised differently) are
-        // counted correctly. NormalizeLabels is idempotent — normalising an already-normalised
-        // key is a no-op.
-        var concurrencyBySelector = activeCounts.ToDictionary(
-            x => JobTemplateStore.NormalizeLabels(x.Selector),
-            x => x.Count,
-            StringComparer.Ordinal);
+        var concurrencyBySelector = await dispatchService.BuildConcurrencySnapshotAsync(db, ct);
 
-        // Concurrency gate
-        var maxConcurrent = template.MaxConcurrent;
-        if (maxConcurrent > 0)
-        {
-            var lookupKey = JobTemplateStore.NormalizeLabels(request.AgentSelector ?? "");
-            var currentCount = concurrencyBySelector.GetValueOrDefault(lookupKey, 0);
-            if (currentCount >= maxConcurrent)
-            {
-                var sanitizedReqSelector = CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(request.AgentSelector);
-                Log.Information("DispatchWorkItem: concurrency limit reached for selector {Selector} ({Current}/{Max}) — returning 409",
-                    sanitizedReqSelector, currentCount, maxConcurrent);
-                return TypedResults.Conflict($"Concurrency limit reached for selector '{sanitizedReqSelector}' ({currentCount}/{maxConcurrent}).");
-            }
-        }
-
-        // PVC gate: kiro agents require an available credential PVC
+        // Query PVC availability.
         // TODO [WARNING]: This PVC availability snapshot is taken OUTSIDE _pvcSelectLock. Two concurrent
         // requests can both observe availablePvcs.Count > 0, pass the gate, create their Dispatched rows,
         // and both enter ExecuteDispatchLifecycleAsync. SelectPvcAsync (inside the lock) dequeues from
@@ -639,12 +619,15 @@ public static class WorkItemDispatchEndpoints
         var pvcResult = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, pvcPool, ct);
         var availablePvcs = pvcResult.AvailablePvcs;
 
-        if (isKiroAgent && availablePvcs.Count == 0)
-        {
-            Log.Information("DispatchWorkItem: no PVC available for kiro agent selector {Selector} — returning 503",
-                CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(request.AgentSelector));
-            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
-        }
+        // Concurrency gate + PVC gate via shared helper.
+        // NOTE: No PvcPoolExhaustions counter here — that metric belongs exclusively to DispatchPendingWorkItem.
+        var normalizedReqSelector = JobTemplateStore.NormalizeLabels(request.AgentSelector ?? "");
+        var sanitizedReqSelector = CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(request.AgentSelector);
+        var gateResult = dispatchService.ApplyGates(
+            normalizedReqSelector, sanitizedReqSelector, concurrencyBySelector,
+            pvcResult, template, isKiroAgent, "DispatchWorkItem");
+        if (gateResult is not null)
+            return gateResult;
 
         // Capacity checks passed — create the WorkItem directly as Dispatched.
         // Issue #2322 requirement: no WorkItem is ever written as Pending on the live dispatch path.
@@ -656,28 +639,14 @@ public static class WorkItemDispatchEndpoints
         var minimalPayload = BuildMinimalPayload(request);
         var payloadJson = JsonSerializer.Serialize(minimalPayload, PipelineJsonOptions.Default);
 
-        var entity = new WorkItemEntity
-        {
-            Id = workItemId,
-            TaskType = request.TaskType,
-            IssueIdentifier = request.IssueIdentifier.Value,
-            IssueProviderConfigId = request.IssueProviderConfigId,
-            Status = WorkItemStatus.Dispatched,
-            DispatchedAt = DateTimeOffset.UtcNow,
-            Payload = payloadJson,
-            AgentSelector = JobTemplateStore.NormalizeLabels(request.AgentSelector ?? ""),
-            // Clamp TimeoutSeconds to a positive value — same guard as CreateWorkItem.
-            // A zero or negative value would cause ReconciliationLoop to immediately force-fail
-            // any Running item once the EnforceTimeoutsAsync migration guard is removed.
-            TimeoutSeconds = request.TimeoutSeconds > 0
-                ? request.TimeoutSeconds
-                : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
-            ProjectId = request.ProjectId,
-            CreatedAt = DateTimeOffset.UtcNow,
-            PriorityWeight = InitiatedByConstants.IsManual(request.InitiatedBy) ? 100 : 0,
-            TraceParent = request.TraceContext?.GetValueOrDefault("traceparent")
-                ?? PipelineTelemetry.FormatTraceParent(Activity.Current)
-        };
+        // Use the shared entity factory (parameterised by Status/DispatchedAt) to replace the
+        // near-identical construction that previously appeared in CreateWorkItem and here.
+        var entity = DispatchWorkItemService.CreateWorkItemEntity(
+            workItemId,
+            request,
+            WorkItemStatus.Dispatched,
+            DateTimeOffset.UtcNow,
+            payloadJson);
 
         try
         {
@@ -708,7 +677,9 @@ public static class WorkItemDispatchEndpoints
                     workItemId, existing.Status);
                 return TypedResults.Conflict($"Work item {workItemId} already exists in non-active state {existing.Status}.");
             }
-            return TypedResults.Conflict("A live work item already exists for this issue.");
+            // Shared fallback: partial unique index on (IssueIdentifier, IssueProviderConfigId) —
+            // a different run is already live for this issue.
+            return DispatchWorkItemService.HandleUniqueViolationFallback();
         }
 
         // Register PipelineRun so the UI can subscribe to hub events immediately.
@@ -1068,11 +1039,12 @@ public static class WorkItemDispatchEndpoints
             // it from there. Passing the issue config id would make the repo lookup miss and the
             // swap silently no-op, which is why review PRs never got the in-progress marker.
             var providerConfigIdValue = item.IssueProviderConfigId;
-            if (isReview && item.Payload is not null
-                && WorkItemPayload.TryDeserialize(item.Payload, out var payloadReq)
-                && !string.IsNullOrEmpty(payloadReq?.RepoProviderConfigId))
+            if (isReview && item.Payload is not null)
             {
-                providerConfigIdValue = payloadReq.RepoProviderConfigId;
+                var payload = JsonSerializer.Deserialize<JobDistributionRequest>(
+                    item.Payload, PipelineJsonOptions.Default);
+                if (!string.IsNullOrEmpty(payload?.RepoProviderConfigId))
+                    providerConfigIdValue = payload.RepoProviderConfigId;
             }
 
             await labelSwapService.SwapLabelWithRetryAsync(
