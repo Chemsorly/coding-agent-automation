@@ -17,7 +17,7 @@ public interface IPipelineApiWorkItemClient : IWorkItemSweepClient
     Task<IReadOnlyList<PendingWorkItemDto>> GetPendingAsync(int maxResults, string? projectId, CancellationToken ct = default);
     Task<WorkItemClaimResponse?> ClaimAsync(Guid workItemId, ClaimWorkItemRequest request, CancellationToken ct = default);
     Task<JobAssignmentMessage?> GetAssignmentAsync(Guid workItemId, CancellationToken ct = default);
-    new Task PostStatusAsync(Guid workItemId, WorkItemStatusUpdate request, CancellationToken ct = default);
+    new Task<bool> PostStatusAsync(Guid workItemId, WorkItemStatusUpdate request, CancellationToken ct = default);
     Task RequeueAsync(Guid workItemId, CancellationToken ct = default);
     Task<int> GetRetryCountAsync(Guid workItemId, CancellationToken ct = default);
     Task<WorkItemStalenessResult?> GetStalenessAsync(string issueIdentifier, string issueProviderConfigId, DateTimeOffset since, CancellationToken ct = default);

@@ -60,7 +60,7 @@ public class SessionIdSpanAttributeTests : IDisposable
         // Assert
         var activity = _activities.FirstOrDefault(a =>
             a.OperationName == "GenerateCode" &&
-            a.GetTagItem("pipeline.run_id") as string == run.RunId);
+            GetTagItemSafe(a, "pipeline.run_id") == run.RunId);
         activity.Should().NotBeNull();
         activity!.GetTagItem("pipeline.session_id").Should().Be(expectedSessionId);
     }
@@ -84,7 +84,7 @@ public class SessionIdSpanAttributeTests : IDisposable
         // Assert
         var activity = _activities.FirstOrDefault(a =>
             a.OperationName == "GenerateCode" &&
-            a.GetTagItem("pipeline.run_id") as string == run.RunId);
+            GetTagItemSafe(a, "pipeline.run_id") == run.RunId);
         activity.Should().NotBeNull();
         activity!.GetTagItem("pipeline.session_id").Should().BeNull();
     }
@@ -114,7 +114,7 @@ public class SessionIdSpanAttributeTests : IDisposable
         // Assert
         var activity = _activities.FirstOrDefault(a =>
             a.OperationName == "ReviewCode" &&
-            a.GetTagItem("pipeline.run_id") as string == run.RunId);
+            GetTagItemSafe(a, "pipeline.run_id") == run.RunId);
         activity.Should().NotBeNull();
         activity!.GetTagItem("pipeline.codegen_session_id").Should().Be(expectedSessionId);
     }
@@ -145,9 +145,19 @@ public class SessionIdSpanAttributeTests : IDisposable
         // Assert
         var activity = _activities.FirstOrDefault(a =>
             a.OperationName == "AnalyzeIssue" &&
-            a.GetTagItem("pipeline.run_id") as string == run.RunId);
+            GetTagItemSafe(a, "pipeline.run_id") == run.RunId);
         activity.Should().NotBeNull();
         activity!.GetTagItem("pipeline.session_id").Should().Be(expectedSessionId);
+    }
+
+    /// <summary>
+    /// Guards against NullReferenceException when GetTagItem is called on activities that may
+    /// have been captured from concurrent test instances sharing the global ActivitySource listener.
+    /// </summary>
+    private static string? GetTagItemSafe(Activity activity, string key)
+    {
+        try { return activity.GetTagItem(key) as string; }
+        catch { return null; }
     }
 
     private PipelineStepContext BuildContext(PipelineRun run)

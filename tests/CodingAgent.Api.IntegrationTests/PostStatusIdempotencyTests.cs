@@ -158,7 +158,7 @@ public sealed class PostStatusIdempotencyTests
             // Assert — structural guard proven above; no timing dependency on Task.Delay.
             // Both the counter and the log line must be absent because the
             // `if (transitionResult == TransitionResult.Transitioned)` block is never entered.
-            result.Should().BeOfType<Ok>("an idempotent PostStatus must still return 200");
+            result.Should().BeOfType<NoContent>("an idempotent PostStatus on an already-terminal item must return 204 No Content");
             measurements.Should().BeEmpty(
                 $"workdistribution.workitems_terminated must not increment when PostStatus is a no-op for already-{terminal} item");
             capturingSink.Events
@@ -202,12 +202,20 @@ public sealed class PostStatusIdempotencyTests
             item.Id, request, transitionService, runService, lifecycleManager.Object, null);
 
         // Assert
-        result.Should().BeOfType<Ok>("idempotent PostStatus must return 200");
+        result.Should().BeOfType<NoContent>("an idempotent PostStatus on an already-terminal item must return 204 No Content");
         // TODO: dbFactory is null here. On the AlreadyAtTarget path this is fine because
         // EmitTerminalStatusTelemetryAsync is never called. However, if the guard regresses and
         // the fire-and-forget task is launched with a null factory, the test won't catch a
         // NullReferenceException inside that task (it runs after VerifyNoOtherCalls). Consider
         // passing a real dbFactory here so a regressed implementation would surface the failure.
+        // TODO: This test exercises the AlreadyAtTarget→NoContent path via the pre-read guard
+        // (Cancelled/Succeeded short-circuit). The AlreadyAtTarget path reached via
+        // TransitionDetailedAsync (e.g. Failed→Failed, which bypasses the pre-read guard) is NOT
+        // covered by this diff. If the AlreadyAtTarget return were accidentally changed back to
+        // Ok(), HandleJobCompletedAsync would resume emitting a metric for that case and no test
+        // in this diff would catch it. Consider adding a PostStatus(Failed) on an already-Failed
+        // item test to cover the TransitionDetailedAsync→AlreadyAtTarget→NoContent path.
+        // See review finding (TestQualityReviewer) for issue #2802.
         lifecycleManager.VerifyNoOtherCalls();
     }
 
@@ -797,15 +805,15 @@ public sealed class PostStatusIdempotencyTests
         var result = await WorkItemAgentEndpoints.PostStatus(
             item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory);
 
-        // Assert 1: endpoint returns 200
+        // Assert 1: endpoint returns 204 No Content (idempotent no-op signal, issue #2802)
         // TODO: This assertion confirms the result type but does not verify that GetCurrentStatusAsync
         // was the mechanism (i.e. the pre-read guard fired). A mock/spy on transitionService asserting
         // GetCurrentStatusAsync was called exactly once and TransitionDetailedAsync was never called
         // would make the structural claim in the doc-comment verifiable. As-is, a regression that
-        // bypasses the guard and reaches Ok() via another code path would not be caught.
+        // bypasses the guard and reaches NoContent() via another code path would not be caught.
         // See review finding #1 (TestQualityReviewer) for issue #2461.
-        result.Should().BeOfType<Ok>(
-            "PostStatus(Failed) on a Cancelled WorkItem must return 200 (silent idempotent success)");
+        result.Should().BeOfType<NoContent>(
+            "PostStatus(Failed) on a Cancelled WorkItem must return 204 No Content (idempotent no-op — issue #2802)");
 
         // Assert 2: no lifecycle event was fired (strict mock would throw on any unexpected call)
         lifecycleManager.VerifyNoOtherCalls();
@@ -854,13 +862,13 @@ public sealed class PostStatusIdempotencyTests
         var result = await WorkItemAgentEndpoints.PostStatus(
             item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory);
 
-        // Assert 1: endpoint returns 200
+        // Assert 1: endpoint returns 204 No Content (idempotent no-op signal, issue #2802)
         // TODO: Same guard-mechanism verification gap as WhenItemIsCancelled_PostStatusFailed_ReturnOkWithoutTransition —
         // a mock/spy asserting GetCurrentStatusAsync was called and TransitionDetailedAsync was not
         // would make the pre-read guard claim structurally verifiable. See review finding #1
         // (TestQualityReviewer) for issue #2461.
-        result.Should().BeOfType<Ok>(
-            "PostStatus(Failed) on a Succeeded WorkItem must return 200 (silent idempotent success)");
+        result.Should().BeOfType<NoContent>(
+            "PostStatus(Failed) on a Succeeded WorkItem must return 204 No Content (idempotent no-op — issue #2802)");
 
         // Assert 2: no lifecycle event was fired
         lifecycleManager.VerifyNoOtherCalls();

@@ -66,6 +66,8 @@ public sealed class ReconciliationLoopTests
 
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [job] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         var loop = CreateLoop();
         await loop.ReconcileOnceAsync(CancellationToken.None);
@@ -91,6 +93,8 @@ public sealed class ReconciliationLoopTests
 
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [job] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         var loop = CreateLoop();
         await loop.ReconcileOnceAsync(CancellationToken.None);
@@ -469,7 +473,7 @@ public sealed class ReconciliationLoopTests
 
         _workItemClient.Setup(c => c.PostStatusAsync(
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var loop = CreateLoop();
         await loop.EnforceTimeoutsAsync(CancellationToken.None);
@@ -592,6 +596,8 @@ public sealed class ReconciliationLoopTests
         _k8sClient.Setup(c => c.ListJobsAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [job] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         var loop = CreateLoop();
 
@@ -624,6 +630,8 @@ public sealed class ReconciliationLoopTests
         _k8sClient.Setup(c => c.ListJobsAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [job] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         var loop = CreateLoop();
 
@@ -655,6 +663,8 @@ public sealed class ReconciliationLoopTests
         _k8sClient.Setup(c => c.ListJobsAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [job] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         var loop = CreateLoop();
 
@@ -694,6 +704,8 @@ public sealed class ReconciliationLoopTests
 
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [job] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         var loop = CreateLoop();
         await loop.ReconcileOnceAsync(CancellationToken.None);
@@ -1121,7 +1133,7 @@ public sealed class ReconciliationLoopTests
             .ReturnsAsync([item]);
         _workItemClient.Setup(c => c.PostStatusAsync(
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var loop = CreateLoop();
         await loop.EnforceTimeoutsAsync(CancellationToken.None);
@@ -1266,7 +1278,7 @@ public sealed class ReconciliationLoopErrorTests
         _workItemClient.SetupSequence(c => c.PostStatusAsync(
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new Exception("Transient DB error"))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var loop = CreateLoop();
 
@@ -1363,6 +1375,8 @@ public sealed class ReconciliationLoopErrorTests
 
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [job] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         var loop = CreateLoop();
         await loop.ReconcileOnceAsync(CancellationToken.None);
@@ -1394,6 +1408,8 @@ public sealed class ReconciliationLoopErrorTests
 
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [job] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         var loop = CreateLoop();
         await loop.ReconcileOnceAsync(CancellationToken.None);
@@ -1438,6 +1454,8 @@ public sealed class ReconciliationLoopErrorTests
 
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [job] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         var loop = CreateLoop();
         await loop.ReconcileOnceAsync(CancellationToken.None);
@@ -1527,7 +1545,7 @@ public sealed class ReconciliationLoopErrorTests
         // First call throws, second should still be attempted
         _workItemClient.SetupSequence(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new Exception("DB transient"))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         _k8sClient.Setup(c => c.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -1847,7 +1865,7 @@ public sealed class ReconciliationLoopErrorTests
 
         // Cancel after first PostStatusAsync
         _workItemClient.Setup(c => c.PostStatusAsync(id1, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask)
+            .ReturnsAsync(true)
             .Callback(() => cts.Cancel());
 
         var loop = CreateLoop();
@@ -1935,7 +1953,7 @@ public sealed class ReconciliationLoopErrorTests
         _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([runningItem]);
         _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         // Label-selector query returns the actual API-path job
         _k8sClient.Setup(c => c.ListJobsAsync(
@@ -2027,7 +2045,7 @@ public sealed class ReconciliationLoopErrorTests
             });
 
         _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var loop = CreateLoop();
         await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
@@ -2074,7 +2092,7 @@ public sealed class ReconciliationLoopErrorTests
 
         _workItemClient.Setup(c => c.PostStatusAsync(
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var loop = CreateLoop();
         await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
@@ -2137,7 +2155,7 @@ public sealed class ReconciliationLoopErrorTests
 
         _workItemClient.Setup(c => c.PostStatusAsync(
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var loop = CreateLoop();
         await loop.EnforceTimeoutsAsync(CancellationToken.None);
@@ -2360,7 +2378,7 @@ public sealed class ReconciliationLoopErrorTests
         _workItemClient.SetupSequence(c => c.PostStatusAsync(
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("Internal server error", null, System.Net.HttpStatusCode.InternalServerError))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var loop = CreateLoop();
 
@@ -2552,7 +2570,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
             .ReturnsAsync([item]);
         _workItemClient.Setup(c => c.PostStatusAsync(
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         using var canaryCollector = new MetricCollector<long>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_canary_violations");
         using var ageCollector = new MetricCollector<double>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_execution_age_seconds");
@@ -2659,7 +2677,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
             .ReturnsAsync([item]);
         _workItemClient.Setup(c => c.PostStatusAsync(
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         using var canaryCollector = new MetricCollector<long>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_canary_violations");
         using var ageCollector = new MetricCollector<double>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_execution_age_seconds");
@@ -2880,7 +2898,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
 
         _workItemClient.Setup(c => c.PostStatusAsync(
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var completedCountBefore = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.completed");
         var durationCountBefore = _pipelineHistograms.Count(
@@ -2939,7 +2957,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
 
         _workItemClient.Setup(c => c.PostStatusAsync(
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var failedCountBefore = _pipelineCounters.Count(
             r => r.InstrumentName == "pipeline.jobs.failed"
@@ -2995,7 +3013,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
             .ReturnsAsync([item]);
         _workItemClient.Setup(c => c.PostStatusAsync(
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         using var canaryCollector = new MetricCollector<long>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_canary_violations");
         using var ageCollector = new MetricCollector<double>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_execution_age_seconds");
@@ -3063,5 +3081,98 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
             "timeout_canary_violations must not be incremented when null-DispatchedAt + null-CreatedAt item is within grace window");
         ageCollector.GetMeasurementSnapshot().Should().BeEmpty(
             "timeout_execution_age_seconds must not be recorded when null-DispatchedAt + null-CreatedAt item is within grace window");
+    }
+
+    /// <summary>
+    /// AC3 for issue #2802: when a K8s Failed Job is reconciled for an already-terminal work item
+    /// (i.e. PostStatusAsync returns false / HTTP 204 No Content — idempotent no-op),
+    /// HandleJobCompletedAsync must NOT emit any terminal metrics.
+    ///
+    /// This prevents double-counting the work item's terminal outcome: the Cancelled metric was
+    /// already emitted when the item was first cancelled; the late Failed K8s callback must not
+    /// add a second Failed metric entry.
+    ///
+    /// TODO: The symmetric case — K8s Succeeded job whose work item was already terminal (e.g.
+    /// already Cancelled due to a race) — is not covered here. The if (transitioned) guard in
+    /// HandleJobCompletedAsync applies equally to the Succeeded path; a regression that
+    /// re-emits a Succeeded terminal metric for a no-op would not be caught by this test.
+    /// Consider adding a ReconcileOnce_WhenPostStatusReturnsNoOp_ForAlreadyTerminalItem_SucceededJob
+    /// variant to cover that path. See review finding (TestQualityReviewer) for issue #2802.
+    /// </summary>
+    [Fact]
+    public async Task ReconcileOnce_WhenPostStatusReturnsNoOp_ForAlreadyTerminalItem_DoesNotEmitTerminalMetric()
+    {
+        // Arrange: a Failed K8s Job whose work item is already Cancelled (no-op path).
+        var id = Guid.NewGuid();
+        var jobName = $"caa-agent-{id:N}"[..21];
+        var job = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = jobName,
+                Labels = new Dictionary<string, string>
+                {
+                    ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
+                    ["caa/work-item-id"] = id.ToString()
+                }
+            },
+            Spec = new V1JobSpec { Template = new V1PodTemplateSpec { Spec = new V1PodSpec { Volumes = [] } } },
+            Status = new V1JobStatus
+            {
+                Failed = 1,
+                Conditions = [new V1JobCondition { Type = "Failed", Status = "True", Message = "BackoffLimitExceeded" }]
+            }
+        };
+
+        _k8sClient.Setup(c => c.ListJobsAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        // PostStatusAsync returns false: HTTP 204 No Content — the work item was already terminal
+        // (e.g. Cancelled), so the API returns the idempotent no-op signal (issue #2802).
+        _workItemClient.Setup(c => c.PostStatusAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        // Baseline: capture counts before the act so we isolate this test's emissions from
+        // parallel tests that share the static meters.
+        // TODO: The delta-count approach below is fragile when tests run in parallel: a concurrent
+        // test emitting a workdistribution.workitems_terminated measurement between the Before
+        // and After captures can produce a negative delta, which trivially satisfies Be(0) while
+        // masking test pollution. The anti-vacuity assertion in Assert 1 partially mitigates this.
+        // This is a pre-existing pattern in the class (not introduced by this PR). See review
+        // finding (Correctness/TestQualityReviewer) for issue #2802.
+        // TODO: The pipeline.jobs.failed counter (pipeline.jobs.failed) assertion below relies on
+        // that counter being emitted from within the same if (transitioned) guard as
+        // WorkDistributionTelemetry.LogTerminalStatus. If pipeline.jobs.failed is ever decoupled
+        // from LogTerminalStatus and emitted outside the guard, the assertion would silently stop
+        // covering it. Consider an explicit comment or test linking these meters if decoupling
+        // is ever considered. See review finding (TestQualityReviewer) for issue #2802.
+        var terminatedCountBefore = _recordings.Count(r => r.InstrumentName == "workdistribution.workitems_terminated");
+        var durationCountBefore = _recordings.Count(r => r.InstrumentName == "workdistribution.job_execution_duration_seconds");
+        var failedCountBefore = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
+
+        // Act
+        var loop = CreateLoop();
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        // Assert 1: anti-vacuity — PostStatusAsync was called once (the no-op path was reached)
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed"),
+            It.IsAny<CancellationToken>()), Times.Once,
+            "PostStatusAsync must still be called — the no-op must not skip the HTTP call");
+
+        // Assert 2: no terminal metrics emitted (the primary assertion for issue #2802)
+        var terminatedCountAfter = _recordings.Count(r => r.InstrumentName == "workdistribution.workitems_terminated");
+        var durationCountAfter = _recordings.Count(r => r.InstrumentName == "workdistribution.job_execution_duration_seconds");
+        var failedCountAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
+
+        (terminatedCountAfter - terminatedCountBefore).Should().Be(0,
+            "workdistribution.workitems_terminated must NOT be incremented when PostStatusAsync returns false (no-op)");
+        (durationCountAfter - durationCountBefore).Should().Be(0,
+            "workdistribution.job_execution_duration_seconds must NOT be recorded when PostStatusAsync returns false (no-op)");
+        (failedCountAfter - failedCountBefore).Should().Be(0,
+            "pipeline.jobs.failed must NOT be incremented when PostStatusAsync returns false (no-op)");
     }
 }

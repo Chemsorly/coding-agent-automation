@@ -418,14 +418,29 @@ public sealed class PipelineApiWorkItemClientTests : IDisposable
     // ── PostStatusAsync / RequeueAsync / PostLastProgressAsync ──────────────
 
     [Fact]
-    public async Task PostStatusAsync_SendsToCorrectPath()
+    public async Task PostStatusAsync_Returns200_ReturnsTrue()
     {
         var workItemId = Guid.NewGuid();
         _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/status").UsingPost())
             .RespondWith(Response.Create().WithStatusCode(200));
 
-        await _sut.PostStatusAsync(workItemId, new WorkItemStatusUpdate { Status = "Running" });
+        var result = await _sut.PostStatusAsync(workItemId, new WorkItemStatusUpdate { Status = "Running" });
 
+        result.Should().BeTrue("HTTP 200 means a real state transition occurred");
+        _server.LogEntries.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task PostStatusAsync_Returns204_ReturnsFalse()
+    {
+        // HTTP 204 No Content = idempotent no-op (already-terminal item) — issue #2802
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/status").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(204));
+
+        var result = await _sut.PostStatusAsync(workItemId, new WorkItemStatusUpdate { Status = "Failed" });
+
+        result.Should().BeFalse("HTTP 204 No Content signals an idempotent no-op (already-terminal item)");
         _server.LogEntries.Should().HaveCount(1);
     }
 
