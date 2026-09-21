@@ -208,14 +208,7 @@ public sealed class ReconciliationLoop
             var ageResult = ResolveExecutionAge(item);
             if (ageResult is WithinGrace or CanaryViolation) continue;
 
-            // TODO [WARNING]: Hard cast to (Enforceable) is safe today (only three subtypes exist),
-            // but ExecutionAgeResult is an internal abstract record with no compile-time exhaustiveness
-            // guarantee. If a fourth subtype is added anywhere in this file, the cast silently becomes
-            // an InvalidCastException at runtime. Replace with a pattern-match guard
-            //   if (ageResult is not Enforceable enforceable) continue;
-            // or a switch expression so exhaustiveness is load-bearing rather than implicit.
-            // (Correctness review [WARNING] / DotNetSpecialist review [WARNING])
-            var enforceable = (Enforceable)ageResult;
+            if (ageResult is not Enforceable enforceable) continue;
 
             // Not timed out yet — skip.
             // TODO: [WARNING] The strict-less-than guard means executionAgeSeconds == effectiveTimeoutSeconds

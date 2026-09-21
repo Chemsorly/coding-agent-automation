@@ -164,9 +164,6 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             AgentId = new AgentId(agentId),
             ConnectionId = connectionId,
             Hostname = message.Hostname,
-            // TODO (WARNING): Labels is assigned directly from message.Labels whose runtime type is unknown.
-            // If the caller passes a mutable List<string> and later mutates it externally, the snapshot's
-            // Labels reference reflects those mutations. Consider ToList() here to break the aliasing.
             Labels = message.Labels,
             Status = status,
             RegisteredAt = existing?.RegisteredAt ?? now,
@@ -691,13 +688,6 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             // (sync overloads) until a write-path update occurs. Consider calling UpdateAllAgentsCache with
             // the updated snapshot entry, consistent with TransitionStatusAsync which does both.
         }
-        // TODO (WARNING): The filter 'when (ex is not OperationCanceledException)' does not suppress
-        // AggregateException wrapping an OperationCanceledException. If the Redis store returns a faulted
-        // Task whose inner exception is OperationCanceledException wrapped in an AggregateException (which
-        // some StackExchange.Redis code paths do), the outer AggregateException is not OperationCanceledException
-        // and will be caught and swallowed as a Warning instead of propagating. This is consistent with the
-        // pre-existing pattern in AgentRegistryCleanupService.cs:52 and is low-likelihood in practice.
-        // (DotNetSpecialist WARNING)
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.Warning(ex,

@@ -97,10 +97,6 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     /// </summary>
     public bool IsIssueBeingProcessed(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        // TODO: ThrowIfNullOrEmpty is stricter than the original ThrowIfNull — it now rejects empty strings.
-        // Also, [CallerArgumentExpression] emits "issueIdentifier.Value" as ParamName instead of "issueIdentifier".
-        // Consider reverting to ArgumentNullException.ThrowIfNull(issueIdentifier.Value) to match original semantics,
-        // or use the explicit paramName overload: ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier)).
         ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
 
         // Check in-process run
@@ -366,10 +362,6 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         _runService.ReplaceRun(run);
         _logger.Debug("Replaced dispatched run {RunId} for issue {IssueIdentifier}",
             run.RunId, run.IssueIdentifier);
-        // TODO: This NotifyChange() introduces an extra OnChange event that wasn't emitted in the
-        // pre-refactoring code (which called _runService.ReplaceRun directly from the dispatcher).
-        // While benign (triggers an additional UI refresh), this changes observable behavior for
-        // OnChange subscribers. Evaluate whether this notification is desired or should be suppressed.
         NotifyChange();
     }
 

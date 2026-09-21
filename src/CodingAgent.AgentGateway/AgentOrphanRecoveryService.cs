@@ -26,9 +26,6 @@ public sealed class AgentOrphanRecoveryService(
     public async Task RecoverOrphanedStateAsync(AgentRegistrationMessage message, AgentId agentId)
     {
         ArgumentNullException.ThrowIfNull(message);
-        // TODO: Replace ArgumentNullException.ThrowIfNull(agentId.Value) with
-        // ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)) — ThrowIfNull on a struct
-        // field reports "Value" as the parameter name in exceptions rather than "agentId".
         ArgumentNullException.ThrowIfNull(agentId.Value);
 
         // Re-track active job from agent state (handles orchestrator restart scenario)

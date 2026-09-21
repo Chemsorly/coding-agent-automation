@@ -268,10 +268,6 @@ public static class WorkItemDispatchEndpoints
         DispatchWorkItemService dispatchService,
         CancellationToken ct = default)
     {
-        // TODO [WARNING]: `dispatchService` has no ArgumentNullException.ThrowIfNull guard here,
-        // inconsistent with the guard on `request` in DispatchWorkItem and with the constructor
-        // guard in DispatchWorkItemService itself. A null value would produce a NullReferenceException
-        // at first use rather than a clear ArgumentNullException at the entry point.
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
         // Fast path: check status before acquiring the lock.
@@ -482,16 +478,14 @@ public static class WorkItemDispatchEndpoints
             // TODO [WARNING]: This catch swallows all non-cancellation exceptions from ExecuteDispatchLifecycleAsync,
             // including ObjectDisposedException (PipelineDbContext disposed prematurely) and ArgumentNullException
             // (programming errors in the lifecycle), returning 503 for all of them. This masks bugs that would
-            // otherwise surface as 500s during development. This pattern is consistent with DispatchWorkItem but
-            // is a correctness concern for observability — consider narrowing the catch to known transient
+            // otherwise surface as 500s during development. Consider narrowing the catch to known transient
             // exceptions (HttpRequestException, DbException) and re-throwing programming errors.
             // TODO [WARNING]: The lifecycle item state after an exception here is not always Failed.
             // If the exception fires after K8s Job creation but before the Dispatched-status save,
             // the K8s Job may be running while the item is still Pending, enabling a double-dispatch
-            // on the next Scheduler poll cycle. This window is inherited from the lifecycle service
-            // itself (not introduced by this endpoint) but is worth fixing when the lifecycle's
-            // orphan-detection is hardened. For now, return 503 — the Scheduler retry will re-enter
-            // the CAS which will correctly detect the now-Dispatched item and abort.
+            // on the next Scheduler poll cycle. Worth fixing when the lifecycle's orphan-detection is hardened.
+            // For now, return 503 — the Scheduler retry will re-enter the CAS which will correctly detect
+            // the now-Dispatched item and abort.
             // The lifecycle may have already transitioned the item to Failed.
             // Do NOT call SafelyCancelOrphanedDispatchedWorkItemAsync here — the item started
             // as Pending, not Dispatched, so there is no orphaned Dispatched row to cancel.
@@ -547,10 +541,6 @@ public static class WorkItemDispatchEndpoints
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        // TODO [WARNING]: `dispatchService` has no ArgumentNullException.ThrowIfNull guard here,
-        // inconsistent with the guard on `request` above and with the constructor guard in
-        // DispatchWorkItemService itself. A null value would produce a NullReferenceException at
-        // first use rather than a clear ArgumentNullException at the entry point.
 
         // Template resolution: selector → JobTemplate
         var template = templateStore.Resolve(request.AgentSelector ?? "");
