@@ -106,11 +106,9 @@ public sealed class HttpPrimaryCompletionReporter : IJobCompletionReporter
         var accepted = await _lifecycleClient.PostStatusAsync(_workItemId, terminalUpdate, CancellationToken.None);
         if (!accepted)
         {
-            // TODO: The message contains "was rejected — transition was rejected" which is redundant phrasing.
-            // Simplify to a single occurrence of "transition was rejected" when this area is next touched.
             _logger.Warning(
                 "HttpPrimaryCompletionReporter: completion POST for WorkItem {WorkItemId} with status {Status} " +
-                "was rejected — transition was rejected (WorkItem may already be in a terminal state or not found). Agent result not recorded.",
+                "— transition was rejected (WorkItem may already be in a terminal state or not found). Agent result not recorded.",
                 _workItemId,
                 terminalStatus);
         }

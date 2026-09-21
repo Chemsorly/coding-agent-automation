@@ -750,9 +750,9 @@ public partial class LayerBoundaryTests
             // "HeartbeatMonitorService", // DELETED — do not add back
 
             // Spec 046: conditionally registered via AddHostedService lambda pattern.
-            // When signalr.redis.connectionString is set these run; when absent a NoOpHostedService
-            // substitutes. The T4 scanner cannot detect the conditional GetService<T> lambda pattern
-            // so these are listed here as "conditionally registered, not retired".
+            // When signalr.redis.connectionString is set these run; when absent the services receive a
+            // NullRedisStore and become no-ops. The T4 scanner cannot detect the conditional GetService<T>
+            // lambda pattern so these are listed here as "conditionally registered, not retired".
             "AgentRegistryCleanupService",
             "RunServiceCleanupService",
 
