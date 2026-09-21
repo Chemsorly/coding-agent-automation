@@ -52,9 +52,13 @@ public sealed class LabelService : ILabelService
     {
         ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
         ArgumentNullException.ThrowIfNull(newLabel);
-        // TODO: Validate providerConfigId.Value is not null/empty. The previous string parameter
+        // TODO [WARNING]: Validate providerConfigId.Value is not null/empty. The previous string parameter
         // had ArgumentNullException.ThrowIfNull(providerConfigId) which is now lost because structs
         // can't be null, but default(ProviderConfigId) with Value = null can still flow through.
+        // A caller passing default(ProviderConfigId) will propagate null to GetProviderConfigByIdAsync
+        // and SwapIssueLabelAsync/SwapPrLabelAsync, which may throw NullReferenceException or produce
+        // incorrect store lookups rather than a clear validation error at the entry point.
+        // Fix: add ArgumentException.ThrowIfNullOrEmpty(providerConfigId.Value) here and in SwapLabelStrictAsync.
 
         // Validate the transition if the caller provides the expected current label.
         // This is observational only — invalid transitions log a warning but do NOT block.
@@ -78,11 +82,11 @@ public sealed class LabelService : ILabelService
             switch (targetKind)
             {
                 case LabelTargetKind.Issue:
-                    await SwapIssueLabelAsync(providerConfigId.Value, identifier, newLabel, ct);
+                    await SwapIssueLabelAsync(providerConfigId, identifier, newLabel, ct);
                     break;
 
                 case LabelTargetKind.PullRequest:
-                    await SwapPrLabelAsync(providerConfigId.Value, identifier, newLabel, ct);
+                    await SwapPrLabelAsync(providerConfigId, identifier, newLabel, ct);
                     break;
 
                 default:
@@ -110,6 +114,13 @@ public sealed class LabelService : ILabelService
     {
         ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
         ArgumentNullException.ThrowIfNull(newLabel);
+        // TODO [WARNING]: Validate providerConfigId.Value is not null/empty. default(ProviderConfigId)
+        // with Value = null can flow through since structs can't be null. A null Value propagates to
+        // GetProviderConfigByIdAsync in SwapIssueLabelAsync/SwapPrLabelAsync, which may throw
+        // NullReferenceException or produce incorrect store lookups rather than a clear validation
+        // error at the entry point. Fix: add ArgumentException.ThrowIfNullOrEmpty(providerConfigId.Value)
+        // here (same gap exists in SwapLabelAsync). (Correctness/DotNetSpecialist)
+
 
         _logger.Information(
             "Label swap (strict): {Identifier} → {NewLabel} (target={TargetKind}, provider={ProviderConfigId})",
@@ -118,11 +129,11 @@ public sealed class LabelService : ILabelService
         switch (targetKind)
         {
             case LabelTargetKind.Issue:
-                await SwapIssueLabelAsync(providerConfigId.Value, identifier, newLabel, ct, throwOnRemoveExhaustion: true);
+                await SwapIssueLabelAsync(providerConfigId, identifier, newLabel, ct, throwOnRemoveExhaustion: true);
                 break;
 
             case LabelTargetKind.PullRequest:
-                await SwapPrLabelAsync(providerConfigId.Value, identifier, newLabel, ct, throwOnRemoveExhaustion: true);
+                await SwapPrLabelAsync(providerConfigId, identifier, newLabel, ct, throwOnRemoveExhaustion: true);
                 break;
 
             default:
@@ -139,40 +150,46 @@ public sealed class LabelService : ILabelService
         LabelTargetKind targetKind,
         CancellationToken ct)
     {
+        // TODO [WARNING]: EnsureAgentLabelsAsync does not validate providerConfigId.Value before
+        // forwarding it to GetProviderConfigByIdAsync. A default(ProviderConfigId) argument (where
+        // Value is null) will silently return false (exception swallowed in the catch block) rather
+        // than surfacing a clear validation error. Add ArgumentException.ThrowIfNullOrEmpty(providerConfigId.Value)
+        // at entry if a null providerConfigId should be treated as a programming error here. (Correctness)
+
 
         try
         {
             switch (targetKind)
             {
                 case LabelTargetKind.Issue:
-                {
-                    var issueConfig = await _configStore.GetProviderConfigByIdAsync(providerConfigId.Value, ProviderKind.Issue, ct);
-                    if (issueConfig is null)
                     {
-                        _logger.Warning(
-                            "Issue provider config '{ConfigId}' not found for EnsureAgentLabelsAsync",
-                            providerConfigId.Value);
-                        return false;
-                    }
+                        var issueConfig = await _configStore.GetProviderConfigByIdAsync(providerConfigId.Value, ProviderKind.Issue, ct);
+                        if (issueConfig is null)
+                        {
+                            _logger.Warning(
+                                "Issue provider config '{ConfigId}' not found for EnsureAgentLabelsAsync",
+                                providerConfigId.Value);
+                            return false;
+                        }
 
-                    await using var issueProvider = _providerFactory.CreateIssueProvider(issueConfig);
-                    return await issueProvider.EnsureAgentLabelsAsync(ct);
-                }
+                        await using var issueProvider = _providerFactory.CreateIssueProvider(issueConfig);
+                        return await issueProvider.EnsureAgentLabelsAsync(ct);
+                    }
 
                 case LabelTargetKind.PullRequest:
-                {
-                    var repoConfig = await _configStore.GetProviderConfigByIdAsync(providerConfigId.Value, ProviderKind.Repository, ct);
-                    if (repoConfig is null)
                     {
-                        _logger.Warning(
-                            "Repository provider config '{ConfigId}' not found for EnsureAgentLabelsAsync (PR)",
-                            providerConfigId.Value);
-                        return false;
-                    }
+                        var repoConfig = await _configStore.GetProviderConfigByIdAsync(providerConfigId.Value, ProviderKind.Repository, ct);
+                        if (repoConfig is null)
+                        {
+                            _logger.Warning(
+                                "Repository provider config '{ConfigId}' not found for EnsureAgentLabelsAsync (PR)",
+                                providerConfigId.Value);
+                            return false;
+                        }
 
-                    await using var repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig);
-                    return await repoProvider.EnsureAgentLabelsForPullRequestsAsync(ct);
-                }
+                        await using var repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig);
+                        return await repoProvider.EnsureAgentLabelsForPullRequestsAsync(ct);
+                    }
 
                 default:
                     _logger.Warning("Unknown LabelTargetKind {TargetKind} for EnsureAgentLabelsAsync", targetKind);
@@ -192,18 +209,18 @@ public sealed class LabelService : ILabelService
     /// Swaps labels on an issue via IIssueProvider.
     /// </summary>
     private async Task SwapIssueLabelAsync(
-        string issueProviderConfigId,
-        string issueIdentifier,
+        ProviderConfigId issueProviderConfigId,
+        IssueIdentifier issueIdentifier,
         string newLabel,
         CancellationToken ct,
         bool throwOnRemoveExhaustion = false)
     {
-        var issueConfig = await _configStore.GetProviderConfigByIdAsync(issueProviderConfigId, ProviderKind.Issue, ct);
+        var issueConfig = await _configStore.GetProviderConfigByIdAsync(issueProviderConfigId.Value, ProviderKind.Issue, ct);
         if (issueConfig is null)
         {
             _logger.Warning(
                 "Issue provider config '{ConfigId}' not found, skipping label swap for issue {IssueIdentifier}",
-                issueProviderConfigId, issueIdentifier);
+                issueProviderConfigId.Value, issueIdentifier);
             return;
         }
 
@@ -222,18 +239,18 @@ public sealed class LabelService : ILabelService
     /// Swaps labels on a pull request via IRepositoryProvider.
     /// </summary>
     private async Task SwapPrLabelAsync(
-        string repoProviderConfigId,
-        string prIdentifier,
+        ProviderConfigId repoProviderConfigId,
+        IssueIdentifier prIdentifier,
         string newLabel,
         CancellationToken ct,
         bool throwOnRemoveExhaustion = false)
     {
-        var repoConfig = await _configStore.GetProviderConfigByIdAsync(repoProviderConfigId, ProviderKind.Repository, ct);
+        var repoConfig = await _configStore.GetProviderConfigByIdAsync(repoProviderConfigId.Value, ProviderKind.Repository, ct);
         if (repoConfig is null)
         {
             _logger.Warning(
                 "Repository provider config '{ConfigId}' not found, skipping label swap for PR {PrIdentifier}",
-                repoProviderConfigId, prIdentifier);
+                repoProviderConfigId.Value, prIdentifier);
             return;
         }
 
