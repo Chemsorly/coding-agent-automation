@@ -88,6 +88,12 @@ public sealed class AgentRegistryCleanupServiceTests
     public async Task SweepAsync_EmptySet_NoRemovalCalls()
     {
         _store.Setup(s => s.SetMembersAsync("agents:all", It.IsAny<CancellationToken>())).ReturnsAsync([]);
+
+        var svc = CreateService();
+
+        await svc.SweepAsync(CancellationToken.None);
+
+        _store.Verify(s => s.SetRemoveAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
     }
 
     // ── Leader gate ──────────────────────────────────────────────────────
