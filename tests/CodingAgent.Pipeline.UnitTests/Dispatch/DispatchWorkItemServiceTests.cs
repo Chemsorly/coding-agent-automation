@@ -258,6 +258,32 @@ public sealed class DispatchWorkItemServiceTests
         result.Should().BeNull("maxConcurrent=0 means unlimited — must always pass the concurrency gate");
     }
 
+    [Fact]
+    public void ApplyGates_ConcurrencyLimitReached_WhenPvcPoolAlsoEmpty_Returns409()
+    {
+        // Both conditions hold simultaneously: concurrency at limit AND zero available PVCs.
+        // ApplyGates checks concurrency first, so it must return 409 Conflict (not 503).
+        // This confirms the gate ordering is authoritative and that the concurrency gate
+        // short-circuits before the PVC gate — critical for correct PvcPoolExhaustions attribution.
+        var svc = CreateService(maxConcurrent: 2);
+        var template = ResolveTemplate(CreateTemplateStore(maxConcurrent: 2));
+        var normalizedSelector = JobTemplateStore.NormalizeLabels("kiro,dotnet");
+        var concurrencyBySelector = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            [normalizedSelector] = 2  // at limit
+        };
+        var pvcResult = MakePvcResult(available: 0);  // also empty
+
+        var result = svc.ApplyGates(
+            normalizedSelector, "kiro,dotnet",
+            concurrencyBySelector, pvcResult, template, isKiroAgent: true,
+            callerName: "Test");
+
+        result.Should().NotBeNull("combined condition must fire a gate");
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
+            "concurrency gate fires first and must return 409 Conflict, not 503, even when PVC pool is also empty");
+    }
+
     // ── CreateWorkItemEntity ──────────────────────────────────────────────────
 
     [Fact]
