@@ -264,4 +264,111 @@ public class DecompositionAnalysisStepFailureReasonTests : IDisposable
         run.FailureReason.Should().NotContain("context was unavailable",
             "the context-unavailable message must not appear when WriteEpicContextAsync succeeded");
     }
+
+    // ── IsOpenIssueContextDegraded path ───────────────────────────────────────
+
+    /// <summary>
+    /// When WriteEpicContextAsync succeeds but WriteOpenIssueContext wrote 0 files
+    /// (all RequestGetIssue calls silently failed), epicContextFailed must be set true
+    /// and the run must use FailureReason.InfrastructureFailure.
+    /// Covers the IsOpenIssueContextDegraded branch (lines 97–107 of DecompositionAnalysisStep).
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WhenOpenIssueContextDegraded_PlanMissing_FailureCategoryIsInfrastructureFailure()
+    {
+        // Arrange — epic context succeeds but OpenIssuesDownloaded == 0 (hub errors during WriteOpenIssueContext)
+        _issueOps
+            .Setup(o => o.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Epic", Description = "desc", Labels = Array.Empty<string>() });
+        _issueOps
+            .Setup(o => o.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>());
+
+        SetupAgentSuccessNoPlanFile();
+
+        var run = CreateRun();
+        // OpenIssuesDownloaded stays at 0 (default) — simulates all RequestGetIssue calls silently failing
+        var context = BuildContext(run);
+        var step = new DecompositionAnalysisStep();
+
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Stop);
+        run.FailureCategory.Should().Be(FailureReason.InfrastructureFailure,
+            "degraded WriteOpenIssueContext (0 files written) must be treated as InfrastructureFailure");
+        run.FailureReason.Should().Contain("context was unavailable");
+    }
+
+    // ── Agent non-zero exit code path ─────────────────────────────────────────
+
+    /// <summary>
+    /// When the agent exits with a non-zero exit code, the step must fail the run with
+    /// FailureReason.ExitCodeFailure and include the exit code in the reason string.
+    /// Covers lines 140–145 of DecompositionAnalysisStep.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WhenAgentExitsNonZero_FailureCategoryIsExitCodeFailure()
+    {
+        // Arrange — epic context and issue download succeed; agent returns exit code 5
+        _issueOps
+            .Setup(o => o.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Epic", Description = "desc", Labels = Array.Empty<string>() });
+        _issueOps
+            .Setup(o => o.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>());
+
+        _agentProvider
+            .Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 5, OutputLines = ["error output"], Usage = new TokenUsage() });
+
+        var run = CreateRun();
+        run.OpenIssuesDownloaded = 3;
+        var context = BuildContext(run);
+        var step = new DecompositionAnalysisStep();
+
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Stop);
+        run.FailureCategory.Should().Be(FailureReason.ExitCodeFailure);
+        run.FailureReason.Should().Contain("5", "exit code 5 must appear in the failure reason");
+        run.FailureReason.Should().Contain("non-zero exit code");
+    }
+
+    // ── Plan file too short path ───────────────────────────────────────────────
+
+    /// <summary>
+    /// When the agent produces a plan file but its content is below MinimumContentThreshold (20 chars),
+    /// the step must stop and report the short-content failure reason.
+    /// Covers lines 179–184 of DecompositionAnalysisStep.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WhenPlanFileTooShort_StopsWithTooShortMessage()
+    {
+        // Arrange — epic context succeeds, agent succeeds and writes a plan file that is too short
+        _issueOps
+            .Setup(o => o.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Epic", Description = "desc", Labels = Array.Empty<string>() });
+        _issueOps
+            .Setup(o => o.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>());
+
+        _agentProvider
+            .Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["done"], Usage = new TokenUsage() });
+
+        // Write a plan file with only 5 characters — below the 20-char MinimumContentThreshold
+        var planPath = Path.Combine(_agentDir, "decomposition-plan.md");
+        await File.WriteAllTextAsync(planPath, "short");
+
+        var run = CreateRun();
+        run.OpenIssuesDownloaded = 3;
+        var context = BuildContext(run);
+        var step = new DecompositionAnalysisStep();
+
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Stop);
+        run.FailureReason.Should().Contain("too short",
+            "the plan file content is below MinimumContentThreshold and must be reported as too short");
+    }
 }
