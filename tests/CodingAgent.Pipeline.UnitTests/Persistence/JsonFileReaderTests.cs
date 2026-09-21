@@ -55,11 +55,6 @@ public sealed class JsonFileReaderTests : IDisposable
 
         result.Should().BeNull();
         // Missing file logs a Debug message
-        // TODO: [WARNING] This Verify matches the two-argument Debug(string, object) overload.
-        // If Serilog exposes a generic Debug<T>(string, T) overload (rather than the non-generic one),
-        // the It.IsAny<string>() matcher for propertyValue may not match, making this assertion a
-        // silent false positive. If the mock is not catching the call, verify the Serilog version and
-        // switch to a message-template-based matcher (e.g. l.Debug(It.Is<string>(s => s.Contains("not found")), ...)).
         _mockLogger.Verify(
             l => l.Debug(It.IsAny<string>(), It.IsAny<string>()),
             Times.Once);
@@ -104,9 +99,6 @@ public sealed class JsonFileReaderTests : IDisposable
             path, DefaultOptions, _mockLogger.Object, CancellationToken.None);
 
         result.Should().BeNull();
-        // TODO: [WARNING] The Warning(Exception, string, string) Verify may not match if Serilog uses a
-        // generic overload Warning<T>(string, T) rather than the non-generic Warning(string, object) form.
-        // See the matching TODO on the Debug Verify in TryReadJsonFileAsync_MissingFile_ReturnsNull for details.
         _mockLogger.Verify(
             l => l.Warning(It.IsAny<Exception>(), It.IsAny<string>(), It.IsAny<string>()),
             Times.Once);
@@ -166,7 +158,6 @@ public sealed class JsonFileReaderTests : IDisposable
             path, options, _mockLogger.Object, CancellationToken.None);
 
         result.Should().BeNull();
-        // TODO: [WARNING] Same Serilog overload-matching caveat as in TryReadJsonFileAsync_MalformedJson_ReturnsNull_LogsWarning.
         _mockLogger.Verify(
             l => l.Warning(It.IsAny<Exception>(), It.IsAny<string>(), It.IsAny<string>()),
             Times.Once);
