@@ -110,30 +110,9 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
         // 6. Validate plan file exists and ≥20 chars
         var planFilePath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.DecompositionPlanFilePath);
 
-        if (!File.Exists(planFilePath))
-        {
-            var reason = epicContextFailed
-                ? "Agent could not produce a decomposition plan because epic context was unavailable " +
-                  "(RequestGetIssue failed — possible cross-replica state miss). " +
-                  $"Expected file: {AgentWorkspacePaths.DecompositionPlanFilePath}"
-                : "Agent did not produce a decomposition plan file at " +
-                  AgentWorkspacePaths.DecompositionPlanFilePath;
-
-            logger.Warning("Decomposition plan file not found at {Path} for run {RunId} (epicContextFailed={EpicContextFailed})",
-                planFilePath, run.RunId, epicContextFailed);
-            context.Callbacks.EmitOutputLine("❌ " + (epicContextFailed
-                ? "Agent could not produce plan — epic context was unavailable (check API logs for RequestGetIssue errors)"
-                : "Agent did not produce a decomposition plan file"));
-            // Pass FailureReason.InfrastructureFailure on the epicContextFailed path to distinguish
-            // infrastructure/context failures from ordinary missing-output failures. The
-            // FailureReason.InfrastructureFailure value and the two-argument overload exist and are
-            // confirmed to persist to WorkItems.FailureReason via the completion payload pipeline.
-            if (epicContextFailed)
-                await context.FailRunAsync(reason, FailureReason.InfrastructureFailure, ct);
-            else
-                await context.FailRunAsync(reason, ct);
+        var planValidationResult = await ValidatePlanFileAsync(context, planFilePath, epicContextFailed, ct);
+        if (planValidationResult == StepResult.Stop)
             return StepResult.Stop;
-        }
 
         var planContent = await File.ReadAllTextAsync(planFilePath, ct);
         if (planContent.Trim().Length < AdversarialReviewHelper.MinimumContentThreshold)
@@ -185,6 +164,42 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
         }
 
         context.Callbacks.EmitOutputLine("✅ Decomposition analysis complete");
+        return StepResult.Continue;
+    }
+
+    /// <summary>
+    /// Checks whether the decomposition plan file exists and contains enough content.
+    /// Returns <see cref="StepResult.Stop"/> and calls FailRunAsync if the file is missing or too short;
+    /// returns <see cref="StepResult.Continue"/> otherwise.
+    /// </summary>
+    private static async Task<StepResult> ValidatePlanFileAsync(
+        PipelineStepContext context, string planFilePath, bool epicContextFailed, CancellationToken ct)
+    {
+        var run = context.Run;
+        var logger = context.Logger;
+
+        if (!File.Exists(planFilePath))
+        {
+            var reason = epicContextFailed
+                ? "Agent could not produce a decomposition plan because epic context was unavailable " +
+                  "(RequestGetIssue failed — possible cross-replica state miss). " +
+                  $"Expected file: {AgentWorkspacePaths.DecompositionPlanFilePath}"
+                : "Agent did not produce a decomposition plan file at " +
+                  AgentWorkspacePaths.DecompositionPlanFilePath;
+
+            logger.Warning("Decomposition plan file not found at {Path} for run {RunId} (epicContextFailed={EpicContextFailed})",
+                planFilePath, run.RunId, epicContextFailed);
+            context.Callbacks.EmitOutputLine("❌ " + (epicContextFailed
+                ? "Agent could not produce plan — epic context was unavailable (check API logs for RequestGetIssue errors)"
+                : "Agent did not produce a decomposition plan file"));
+
+            if (epicContextFailed)
+                await context.FailRunAsync(reason, FailureReason.InfrastructureFailure, ct);
+            else
+                await context.FailRunAsync(reason, ct);
+            return StepResult.Stop;
+        }
+
         return StepResult.Continue;
     }
 
