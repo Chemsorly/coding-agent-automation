@@ -61,6 +61,88 @@ public sealed class FeedbackService
     }
 
     /// <summary>
+    /// Shared core implementation for collecting structured feedback from the agent.
+    /// Executes the full collect-parse-fallback sequence:
+    /// <see cref="LoadPreviousCategoriesAsync"/> → build prompt → agent <c>ExecuteAsync</c>
+    /// with a timeout-linked CTS → <see cref="ParseFeedbackFromResponse"/> → assigns <c>run.Feedback</c>.
+    /// On timeout (OCE where caller <paramref name="ct"/> is not cancelled) produces a fallback via
+    /// <see cref="CreateFallbackFeedback"/> without propagating. On pipeline-level cancellation
+    /// (OCE where <paramref name="ct"/> is cancelled) re-throws. On any other exception produces a
+    /// fallback with the exception message.
+    /// </summary>
+    /// <remarks>
+    /// The preamble output line ("📋 Collecting …") is caller-specific and is NOT emitted here —
+    /// emit it at the call site before invoking this method.
+    /// Real agent providers absorb their own timeouts via <c>TimeoutHelper.ExecuteWithTimeoutAsync</c>
+    /// and return <c>AgentResult</c> rather than throwing. The <paramref name="feedbackTimeoutSeconds"/>
+    /// parameter / linked CTS is retained as defence in depth for providers that do not use that helper.
+    /// </remarks>
+    // TODO: The CancellationToken parameter ct is positioned 7th (before emitOutputLine) rather than last.
+    // .NET convention for async methods places CancellationToken as the final parameter.
+    // Non-conventional ordering increases argument-transposition risk at call sites.
+    // Reorder to (run, agentProvider, historyService, promptFactory, outcome, feedbackTimeoutSeconds, emitOutputLine, ct)
+    // when making a future breaking-change pass on this internal API.
+    internal async Task CollectFeedbackCoreAsync(
+        PipelineRun run,
+        IAgentProvider agentProvider,
+        IPipelineRunHistoryService? historyService,
+        Func<(IReadOnlyList<string> HarnessCategories, IReadOnlyList<string> IssueCategories), string> promptFactory,
+        FeedbackOutcome outcome,
+        int feedbackTimeoutSeconds,
+        CancellationToken ct,
+        Action<string> emitOutputLine)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        ArgumentNullException.ThrowIfNull(agentProvider);
+        ArgumentNullException.ThrowIfNull(promptFactory);
+        ArgumentNullException.ThrowIfNull(emitOutputLine);
+
+        try
+        {
+            var categories = await LoadPreviousCategoriesAsync(historyService, ct).ConfigureAwait(false);
+            var feedbackPrompt = promptFactory(categories);
+
+            // Create a timeout-linked CTS as defence in depth for providers that do not handle
+            // timeouts internally (real providers use TimeoutHelper and return AgentResult).
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(feedbackTimeoutSeconds));
+
+            var agentResult = await agentProvider.ExecuteAsync(
+                new AgentRequest
+                {
+                    Prompt = feedbackPrompt,
+                    WorkspacePath = run.WorkspacePath!,
+                    Timeout = TimeSpan.FromSeconds(feedbackTimeoutSeconds),
+                    UseResume = true
+                },
+                timeoutCts.Token,
+                line => emitOutputLine(line));
+
+            var responseText = string.Join("\n", agentResult.OutputLines);
+            run.Feedback = ParseFeedbackFromResponse(responseText, outcome, DateTime.UtcNow);
+        }
+        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
+        {
+            // Timeout on the feedback call itself — not a pipeline-level cancellation.
+            // Guard checks the outer ct (not timeoutCts.Token) because when ct is cancelled,
+            // timeoutCts.Token is also cancelled (it is a linked token).
+            _logger.Warning(ex, "Pipeline {RunId} failure feedback collection timed out after {Timeout}s",
+                run.RunId, feedbackTimeoutSeconds);
+            run.Feedback = CreateFallbackFeedback(outcome, "Feedback collection timed out", DateTime.UtcNow);
+        }
+        catch (OperationCanceledException)
+        {
+            // Pipeline-level cancellation — re-throw to let the outer handler deal with it.
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Feedback collection failed");
+            run.Feedback = CreateFallbackFeedback(outcome, $"Feedback collection failed: {ex.Message}", DateTime.UtcNow);
+        }
+    }
+
+    /// <summary>
     /// Parses a <see cref="RunFeedback"/> from the agent's response text.
     /// Extracts the first JSON block matching the feedback schema.
     /// Applies truncation to oversized fields and logs warnings.

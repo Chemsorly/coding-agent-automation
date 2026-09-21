@@ -998,6 +998,39 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task RunReviewLoopAsync_AllAgentsCrash_CallsNotifyChangeBeforeReturning()
+    {
+        // Arrange: both agents crash — same all-crash scenario as RunReviewLoopAsync_AllAgentsCrash_EmitsWarning.
+        // We capture invocation order to verify that NotifyChange() is called AFTER the crash EmitOutputLine.
+        // A count-only assertion (Times.AtLeastOnce) would be a false green: the sequential path already
+        // calls NotifyChange() multiple times per crashed agent (iteration-start, before agent, after-fail),
+        // so the count is satisfied before the crash guard even fires.
+        // TODO: [WARNING] The comment above understates the actual pre-crash NotifyChange count (it's ~3 per
+        // crashed agent: iteration-start at L92, before-agent at L433, and after-fail at L448 of
+        // CodeReviewOrchestrator.cs, not just "twice"). This doesn't affect test correctness — EndWith still
+        // properly anchors the crash-guard call — but consider updating the comment for accuracy.
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new InvalidOperationException("crashed"));
+
+        var config = _config with { CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = "fix" } };
+
+        var callOrder = new List<string>();
+        _mockCallbacks
+            .Setup(c => c.EmitOutputLine(It.Is<string>(s => s.Contains("all review agents failed"))))
+            .Callback(() => callOrder.Add("emit"));
+        _mockCallbacks
+            .Setup(c => c.NotifyChange())
+            .Callback(() => callOrder.Add("notify"));
+
+        // Act
+        await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("AgentA", "AgentB"));
+
+        // Assert: the list must end with ["emit", "notify"] — proving the crash-guard NotifyChange
+        // fires immediately after the crash EmitOutputLine, regardless of prior NotifyChange calls.
+        callOrder.Should().EndWith(new[] { "emit", "notify" });
+    }
+
+    [Fact]
     public async Task WhenAgentRunsCleanlyWithNoFindings_DoesNotEmitCrashWarning()
     {
         // Arrange: agent runs successfully but writes no findings file (clean-code path)
