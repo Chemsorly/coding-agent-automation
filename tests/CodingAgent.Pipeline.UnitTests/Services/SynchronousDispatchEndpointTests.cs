@@ -27,8 +27,8 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 ///
 /// <para>
 /// As of the Pending-queue restore (fix/restore-pending-queue), this endpoint is called by the
-/// Scheduler-side <c>WorkItemDispatchPoller</c>. The Scheduler creates a <c>Pending</c> WorkItem
-/// via <c>POST /api/work-items</c>; <c>WorkItemDispatchPoller</c> then polls those items and calls
+/// Scheduler-side <c>WorkItemDispatchLoop</c>. The Scheduler creates a <c>Pending</c> WorkItem
+/// via <c>POST /api/work-items</c>; <c>WorkItemDispatchLoop</c> then polls those items and calls
 /// <c>POST /api/work-items/dispatch</c> when capacity is available.
 /// </para>
 ///
@@ -685,7 +685,7 @@ public sealed class WorkItemTransitionService_PendingDispatchedTransitionsTests
 {
     /// <summary>
     /// Pending→Dispatched remains valid for ClaimWorkItem (POST /api/work-items/{id}/claim),
-    /// used by the Scheduler's WorkItemDispatchPoller for all task types.
+    /// used by the Scheduler's WorkItemDispatchLoop for all task types.
     /// </summary>
     [Fact]
     public void PendingToDispatched_IsStillValid_ForClaimWorkItem()

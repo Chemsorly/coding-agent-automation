@@ -42,7 +42,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         Assert.True(result.Success, $"Distribution failed: {result.ErrorMessage}");
         Assert.NotNull(result.WorkItemId);
         // Pending enqueue path: Queued=true — item is Pending (visible in UI queue),
-        // WorkItemDispatchPoller (Scheduler) will create the K8s Job when capacity is available.
+        // WorkItemDispatchLoop (Scheduler) will create the K8s Job when capacity is available.
         Assert.True(result.Queued, "Pending enqueue path: Queued should be true (item enters Pending queue first)");
 
         // Assert: WorkItem exists in DB as Pending initially (K8s Job not yet created)
@@ -51,7 +51,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         var item = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == workItemId);
 
         Assert.NotNull(item);
-        // Item starts as Pending; WorkItemDispatchPoller (Scheduler) polls and transitions to Dispatched
+        // Item starts as Pending; WorkItemDispatchLoop (Scheduler) polls and transitions to Dispatched
         Assert.Equal(WorkItemStatus.Pending, item.Status);
         Assert.Equal("k8s-issue-100", item.IssueIdentifier);
         // AgentSelector is stored as-provided (not normalized) on the Pending path
@@ -129,7 +129,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         var item = await db.WorkItems.AsNoTracking()
             .FirstOrDefaultAsync(w => w.IssueIdentifier == "k8s-type-check-500");
         Assert.NotNull(item);
-        // Item starts as Pending; WorkItemDispatchPoller (Scheduler) transitions it to Dispatched
+        // Item starts as Pending; WorkItemDispatchLoop (Scheduler) transitions it to Dispatched
         Assert.Equal(WorkItemStatus.Pending, item.Status);
     }
 
@@ -171,7 +171,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
         var status = await distributor.GetJobStatusAsync(result.WorkItemId!, CancellationToken.None);
 
-        // Assert: should be Pending (item is enqueued as Pending; WorkItemDispatchPoller creates pod)
+        // Assert: should be Pending (item is enqueued as Pending; WorkItemDispatchLoop creates pod)
         Assert.Equal(JobDistributionStatus.Pending, status);
     }
 

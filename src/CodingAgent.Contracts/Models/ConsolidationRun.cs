@@ -24,7 +24,7 @@ public enum ConsolidationRunStatus
     /// The work item has been successfully submitted to the unified dispatch queue as
     /// <c>Pending</c> (i.e. <see cref="DistributionResult.Queued"/> was true on success).
     /// The WorkItem already exists in the database — the Scheduler's
-    /// <c>WorkItemDispatchPoller</c> will pick it up and create the K8s Job when
+    /// <c>WorkItemDispatchLoop</c> will pick it up and create the K8s Job when
     /// capacity is available.
     /// <para>
     /// This state is intentionally excluded from

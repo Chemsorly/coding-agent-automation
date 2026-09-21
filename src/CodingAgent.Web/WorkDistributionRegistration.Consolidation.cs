@@ -78,7 +78,7 @@ public static partial class WorkDistributionRegistration
         // no WorkItemTransitionService. Distribute, cancel, status, and dedup all
         // route through IPipelineApiWorkItemClient. All task types (including Consolidation)
         // are enqueued as Pending WorkItems via POST /api/work-items; the Scheduler's
-        // WorkItemDispatchPoller picks them up with RunType tier ordering.
+        // WorkItemDispatchLoop picks them up with RunType tier ordering.
         services.AddSingleton<IWorkDistributor>(sp =>
         {
             var apiClient = sp.GetRequiredService<IPipelineApiWorkItemClient>();

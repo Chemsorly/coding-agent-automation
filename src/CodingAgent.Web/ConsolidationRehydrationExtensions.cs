@@ -14,9 +14,9 @@ internal static class ConsolidationRehydrationExtensions
     /// Cleans up orphaned consolidation runs from previous sessions.
     /// </summary>
     /// <remarks>
-    /// Pending runs are now poller-owned: consolidation WorkItems are created as
+    /// Pending runs are now loop-owned: consolidation WorkItems are created as
     /// <c>Pending</c> via <c>POST /api/work-items</c> and claimed by the
-    /// <c>WorkItemDispatchPoller</c>. Queued runs not yet dispatched before a pod restart
+    /// <c>WorkItemDispatchLoop</c>. Queued runs not yet dispatched before a pod restart
     /// will be picked up by <see cref="Services.ConsolidationRetryBackgroundService"/>
     /// on its first sweep (default 2-minute interval) — no startup rehydration needed.
     /// <para>

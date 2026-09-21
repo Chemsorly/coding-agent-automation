@@ -28,7 +28,7 @@ public static class WorkItemQueryEndpoints
         group.MapGet("/{id:guid}/retry-count", GetRetryCount).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapGet("/staleness", GetStaleness).RequireAuthorization(ApiAuthPolicies.Operator);
 
-        // ── Metrics feed for the Scheduler's WorkItemCountsPoller ─────────────
+        // ── Metrics feed for the Scheduler's WorkItemCountsService ─────────────
         group.MapGet("/counts-by-status", GetCountsByStatus).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapGet("/{id:guid}/status", GetWorkItemStatus).RequireAuthorization(ApiAuthPolicies.Operator);
     }
@@ -276,7 +276,7 @@ public static class WorkItemQueryEndpoints
 
     /// <summary>
     /// Returns work item counts grouped by (Status, AgentSelector).
-    /// Called by the Scheduler's WorkItemCountsPoller to feed Prometheus gauges.
+    /// Called by the Scheduler's WorkItemCountsService to feed Prometheus gauges.
     /// </summary>
     internal static async Task<IResult> GetCountsByStatus(
         IDbContextFactory<PipelineDbContext> dbFactory,

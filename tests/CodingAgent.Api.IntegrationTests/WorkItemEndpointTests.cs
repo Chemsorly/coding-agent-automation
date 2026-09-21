@@ -1785,7 +1785,7 @@ public sealed class WorkItemEndpointTests
     public async Task GetPendingWorkItems_IncludesConsolidationItems()
     {
         // Consolidation WorkItems are now enqueued as Pending (unified dispatch path, #2566).
-        // GET /api/work-items/pending must include them so the WorkItemDispatchPoller can dispatch them.
+        // GET /api/work-items/pending must include them so the WorkItemDispatchLoop can dispatch them.
         // TODO: [WARNING] This test only verifies the "consolidation items are included" half. There is
         // no assertion that a non-Consolidation Pending item is also returned, which would confirm that
         // removing the old `TaskType != Consolidation` filter didn't accidentally break the general Pending
@@ -1798,7 +1798,7 @@ public sealed class WorkItemEndpointTests
         var items = await response.Content.ReadFromJsonAsync<List<PendingWorkItemDto>>(PipelineJsonOptions.Default);
         items.Should().NotBeNull();
         items!.Should().Contain(i => i.Id == consolidation.Id,
-            "consolidation Pending items must be returned by GET /api/work-items/pending so the WorkItemDispatchPoller can dispatch them");
+            "consolidation Pending items must be returned by GET /api/work-items/pending so the WorkItemDispatchLoop can dispatch them");
     }
 
     [Fact]
@@ -1886,7 +1886,7 @@ public sealed class WorkItemEndpointTests
     /// Starvation boundary: when 51 Review items are pending and maxResults=50, the Take(50)
     /// window fills entirely with Reviews and the single Implementation item is absent.
     /// This documents the intentional starvation contract: lower-tier items are invisible to
-    /// the WorkItemDispatchPoller for that cycle whenever a higher tier has 50+ pending items.
+    /// the WorkItemDispatchLoop for that cycle whenever a higher tier has 50+ pending items.
     /// Decision: decisions.md "Dispatch priority: static ordering Review > Decomposition > Implementation > Consolidation".
     /// </summary>
     [Fact]
