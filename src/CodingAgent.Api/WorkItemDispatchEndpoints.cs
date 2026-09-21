@@ -430,16 +430,14 @@ public static class WorkItemDispatchEndpoints
             pvcResult, template, isKiroAgent, "DispatchPendingWorkItem");
         if (gateResult is not null)
         {
-            // Emit the PVC exhaustion counter here (only on the 503/PVC-gate path) —
-            // this counter belongs exclusively to the DispatchPendingWorkItem path and must
+            // Emit the PVC exhaustion counter only when the gate result IS the 503/PVC-gate path.
+            // This counter belongs exclusively to the DispatchPendingWorkItem path and must
             // NOT be emitted by ApplyGates itself, as DispatchWorkItem does not count exhaustions.
-            // TODO [WARNING]: PvcPoolExhaustions is incorrectly incremented when the concurrency gate
-            // fires first (409) while the PVC pool is simultaneously empty. The predicate
-            // `isKiroAgent && pvcResult.AvailablePvcs.Count == 0` does not distinguish which gate
-            // fired; when both conditions hold, ApplyGates returns a Conflict (409), not a StatusCode
-            // (503), yet this counter still fires — misattributing the rejection as a PVC exhaustion.
-            // Fix: narrow to `if (gateResult is StatusCodeHttpResult { StatusCode: 503 })`.
-            if (isKiroAgent && pvcResult.AvailablePvcs.Count == 0)
+            // Checking the result type (StatusCodeHttpResult { StatusCode: 503 }) rather than
+            // re-deriving pool state ensures the counter does not fire when the concurrency gate
+            // (409 Conflict) short-circuits before the PVC gate is reached — even if both
+            // conditions happen to hold simultaneously.
+            if (gateResult is Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult { StatusCode: 503 })
                 WorkDistributionTelemetry.PvcPoolExhaustions.Add(1);
             return gateResult;
         }
