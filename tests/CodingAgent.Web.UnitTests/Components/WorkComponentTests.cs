@@ -385,7 +385,7 @@ public class WorkComponentTests : BunitContext
             .ReturnsAsync([MakeActiveItem(id, "2231", "Some issue")]);
         _mockWorkItems
             .Setup(c => c.PostStatusAsync(id, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var navMan = Services.GetRequiredService<NavigationManager>();
         var initialUri = navMan.Uri;

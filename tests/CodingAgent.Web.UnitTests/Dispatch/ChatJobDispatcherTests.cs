@@ -1697,18 +1697,16 @@ public class ChatJobDispatcherTests
                 // GetAgentsByLabel returns a real entry so PollForAgentConnection succeeds
                 registryMock.Setup(r => r.GetAgentsByLabel("chat-session-id", capturedDispatchId))
                     .Returns(new List<AgentEntry> { agentEntry });
-                // GetByAgentId throws — this is NOT wrapped in TrySendCancelChatAsync, so the exception
-                // propagates through TerminateChatSessionAsync into WatchJobUntilTerminalAsync's outer catch
-                // TODO [WARNING]: This fault injection assumes GetByAgentId throws rather than returns null.
-                // The production code has a null-check guard (if agentEntry is null return;) so if the
-                // interface contract changes to return null on missing entries, this mock ceases to inject
-                // a fault and all four fault tests silently become vacuous — they pass without ever reaching
-                // catch (Exception) in WatchJobUntilTerminalAsync. Consider asserting the "faulted" outcome
-                // tag or checking entry.Cleaned==1 to confirm the fault path was actually exercised.
+                // GetByAgentIdAsync throws — the exception propagates through TrySendCancelChatAsync
+                // into TerminateChatSessionAsync and then WatchJobUntilTerminalAsync's outer catch.
+                // TODO [WARNING]: If the interface contract changes to return null on missing entries,
+                // this mock ceases to inject a fault and all four fault tests silently become vacuous.
+                // Consider asserting the "faulted" outcome tag or checking entry.Cleaned==1 to confirm
+                // the fault path was actually exercised.
                 // See review finding: TestQualityReviewer WARNING @ line 1371.
-                registryMock.Setup(r => r.GetByAgentId(capturedAgentId))
-                    .Throws(new InvalidOperationException("simulated registry fault for watcher fault test"));
-                // Deregister is a no-op (never reached because GetByAgentId throws first)
+                registryMock.Setup(r => r.GetByAgentIdAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+                    .ThrowsAsync(new InvalidOperationException("simulated registry fault for watcher fault test"));
+                // Deregister is a no-op (never reached because GetByAgentIdAsync throws first)
                 registryMock.Setup(r => r.Deregister(It.IsAny<AgentId>())).Returns(false);
             })
             .Returns(Task.CompletedTask);

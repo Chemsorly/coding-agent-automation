@@ -21,7 +21,9 @@ public interface IWorkItemSweepClient
 
     /// <summary>
     /// Posts a status update for the given WorkItem (e.g. Cancelled).
+    /// Returns <c>true</c> when a real state transition occurred (HTTP 200), or <c>false</c>
+    /// when the request was an idempotent no-op on an already-terminal item (HTTP 204).
     /// Throws <see cref="System.Net.Http.HttpRequestException"/> on non-2xx responses.
     /// </summary>
-    Task PostStatusAsync(Guid workItemId, WorkItemStatusUpdate request, CancellationToken ct = default);
+    Task<bool> PostStatusAsync(Guid workItemId, WorkItemStatusUpdate request, CancellationToken ct = default);
 }

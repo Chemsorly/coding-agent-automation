@@ -50,7 +50,7 @@ public sealed class ExtractLinkedIssuesStep : IPipelineStep
 
         if (linkedIssues.Count > 0)
         {
-            var issueContextDir = Path.Combine(context.Run.WorkspacePath!, ".agent");
+            var issueContextDir = Path.Combine(context.Run.WorkspacePath!, AgentWorkspacePaths.MetadataDirectory);
             Directory.CreateDirectory(issueContextDir);
 
             foreach (var issue in linkedIssues)

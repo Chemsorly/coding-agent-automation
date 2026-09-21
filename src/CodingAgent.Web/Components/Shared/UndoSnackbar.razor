@@ -41,7 +41,7 @@
 
     private async Task UndoClicked()
     {
-        _dismissCts?.Cancel();
+        if (_dismissCts is not null) await _dismissCts.CancelAsync();
         _visible = false;
         if (_undoAction is not null)
             await _undoAction();

@@ -42,7 +42,7 @@ internal sealed class AgentCancellationSender : IAgentCancellationSender
         ArgumentException.ThrowIfNullOrEmpty(agentId.Value);
         ArgumentException.ThrowIfNullOrEmpty(runId.Value);
 
-        var agent = _registry.GetByAgentId(agentId.Value);
+        var agent = await _registry.GetByAgentIdAsync(agentId, ct);
         if (agent is null) return;
 
         using var perAgentCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
