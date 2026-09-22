@@ -16,6 +16,8 @@ internal sealed class FakeHubConnectionManager : IHubConnectionManager
 
     // Controllable behavior
     public Exception? StartException { get; set; }
+    /// <summary>When set, <see cref="DisposeAsync"/> throws this exception (used by coordinator tests).</summary>
+    public Exception? DisposeException { get; set; }
     public int StartCallCount { get; private set; }
     public int StopCallCount { get; private set; }
     public int DisposeCallCount { get; private set; }
@@ -80,6 +82,8 @@ internal sealed class FakeHubConnectionManager : IHubConnectionManager
     public ValueTask DisposeAsync()
     {
         DisposeCallCount++;
+        if (DisposeException is not null)
+            throw DisposeException;
         return ValueTask.CompletedTask;
     }
 
