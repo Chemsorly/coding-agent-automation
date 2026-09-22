@@ -8,8 +8,9 @@ namespace CodingAgent.Infrastructure.UnitTests.Git;
 /// <summary>
 /// Tests for <see cref="RepositoryGitOperations.CollectChangesWithLineStats"/> and
 /// <see cref="RepositoryGitOperations.GetFileChanges"/>, both extracted/refactored in PR #1778.
+/// Uses a local LibGit2Sharp repository (no network, no remote) — not a true integration
+/// test, but previously mis-tagged as such.
 /// </summary>
-[Trait("Category", "Integration")]
 public class RepositoryGitOperationsCollectChangesTests : IDisposable
 {
     private readonly string _repoPath;

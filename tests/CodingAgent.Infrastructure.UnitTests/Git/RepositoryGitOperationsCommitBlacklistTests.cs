@@ -5,10 +5,11 @@ using LibGit2Sharp;
 namespace CodingAgent.Infrastructure.UnitTests.Git;
 
 /// <summary>
-/// Integration tests verifying that <see cref="RepositoryGitOperations.CommitAll"/>
+/// Unit tests verifying that <see cref="RepositoryGitOperations.CommitAll"/>
 /// always unstages .agent/ files regardless of the configured blacklist.
+/// Uses a local LibGit2Sharp repository (no network, no remote) — not a true
+/// integration test, but previously mis-tagged as such.
 /// </summary>
-[Trait("Category", "Integration")]
 public class RepositoryGitOperationsCommitBlacklistTests : IDisposable
 {
     private readonly string _workspacePath;

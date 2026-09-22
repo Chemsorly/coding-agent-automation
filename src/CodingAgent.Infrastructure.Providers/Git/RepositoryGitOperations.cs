@@ -26,6 +26,9 @@ internal static class RepositoryGitOperations
         GlobalSettings.SetOwnerValidation(false);
     }
 
+    // Excluded from coverage: requires a real remote URL and network access.
+    // The LibGit2Sharp clone call cannot be exercised in unit tests without a live remote.
+    [ExcludeFromCodeCoverage]
     public static async Task Clone(
         WorkspacePath workspacePath, string cloneUrl, string baseBranch,
         string tokenUsername, string token, ResiliencePipeline pipeline, CancellationToken ct)
@@ -47,6 +50,9 @@ internal static class RepositoryGitOperations
         }, ct);
     }
 
+    // Excluded from coverage: requires a configured remote (origin) with network access.
+    // The fetch + merge operations cannot be driven in unit tests without a live remote.
+    [ExcludeFromCodeCoverage]
     public static async Task Pull(
         WorkspacePath workspacePath, string baseBranch,
         string tokenUsername, string token, ResiliencePipeline pipeline, CancellationToken ct)
@@ -440,6 +446,10 @@ internal static class RepositoryGitOperations
         return changes;
     }
 
+    // Excluded from coverage: performs a network fetch (Commands.Fetch) against the live remote
+    // to get the latest base branch. The rebase logic (ForceResolveConflictsUsingTheirs, etc.)
+    // is tested separately in integration tests that can create real merge conflicts on disk.
+    [ExcludeFromCodeCoverage]
     public static async Task<MergeResult> MergeFromBase(
         WorkspacePath workspacePath, string baseBranchName,
         string tokenUsername, string token, ResiliencePipeline pipeline, CancellationToken ct)
