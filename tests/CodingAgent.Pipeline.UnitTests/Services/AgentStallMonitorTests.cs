@@ -87,11 +87,16 @@ public class AgentStallMonitorTests
             _run, config, "Test phase", null, _mockLogger.Object, CancellationToken.None,
             timeProvider: fakeTime);
 
-        // Let the monitor loop start and reach its first Delay
-        await YieldToMonitorAsync();
-        fakeTime.Advance(TimeSpan.FromMinutes(1)); // trigger one poll tick
+        // Advance the fake clock in a loop until the death message is enqueued. This eliminates
+        // the race in YieldToMonitorAsync where the Task.Run background loop may not have reached
+        // its first Task.Delay within the fixed 200ms window on a loaded CI runner.
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (_run.ChatHistory.IsEmpty && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+            fakeTime.Advance(TimeSpan.FromMinutes(1));
+        }
 
-        // Wait for the monitor to enqueue the death message
         await WaitForChatHistoryAsync(_run);
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
@@ -139,11 +144,18 @@ public class AgentStallMonitorTests
             _run, config, "Code review agent 'Correctness'", null, _mockLogger.Object,
             CancellationToken.None, timeProvider: fakeTime);
 
-        // After one poll tick: silence=3m > StallWarningInterval=2m.
-        // lastWarnTime is initialised to fake-now, so timeSinceLastWarn = 1m after advancing.
-        // We need timeSinceLastWarn >= StallWarningInterval=2m, so advance 2m total.
-        await YieldToMonitorAsync();
-        fakeTime.Advance(TimeSpan.FromMinutes(2)); // poll tick + satisfies timeSinceLastWarn check
+        // Advance the fake clock in a loop until the silence warning is enqueued. This eliminates
+        // the race in YieldToMonitorAsync where the Task.Run background loop may not have reached
+        // its first Task.Delay within the fixed 200ms window on a loaded CI runner.
+        // Advance by StallWarningInterval (2m) each iteration to satisfy both the poll tick and
+        // the timeSinceLastWarn >= StallWarningInterval guard in a single step.
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (_run.ChatHistory.IsEmpty && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+            fakeTime.Advance(TimeSpan.FromMinutes(2));
+        }
+
         await WaitForChatHistoryAsync(_run);
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
@@ -343,8 +355,16 @@ public class AgentStallMonitorTests
             _run, config, "Quality gate retry agent (attempt 1)", null, _mockLogger.Object,
             CancellationToken.None, stallMetrics: stallMetrics, timeProvider: fakeTime);
 
-        await YieldToMonitorAsync();
-        fakeTime.Advance(TimeSpan.FromMinutes(2));
+        // Advance the fake clock in a loop until the warning metric is emitted. This eliminates
+        // the race in YieldToMonitorAsync where the Task.Run background loop may not have reached
+        // its first Task.Delay within the fixed 200ms window on a loaded CI runner.
+        var warningDeadline = DateTime.UtcNow.AddSeconds(10);
+        while (warningCollector.GetMeasurementSnapshot().Count == 0 && DateTime.UtcNow < warningDeadline)
+        {
+            await Task.Delay(10);
+            fakeTime.Advance(TimeSpan.FromMinutes(2));
+        }
+
         await WaitForMetricAsync(warningCollector);
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
@@ -399,8 +419,16 @@ public class AgentStallMonitorTests
             _run, config, "Quality gate retry agent (attempt 2)", null, _mockLogger.Object,
             CancellationToken.None, stallMetrics: stallMetrics, timeProvider: fakeTime);
 
-        await YieldToMonitorAsync();
-        fakeTime.Advance(TimeSpan.FromMinutes(1));
+        // Advance the fake clock in a loop until the kill metric is emitted. This eliminates
+        // the race in YieldToMonitorAsync where the Task.Run background loop may not have reached
+        // its first Task.Delay within the fixed 200ms window on a loaded CI runner.
+        var killCounterDeadline = DateTime.UtcNow.AddSeconds(10);
+        while (killCollector.GetMeasurementSnapshot().Count == 0 && DateTime.UtcNow < killCounterDeadline)
+        {
+            await Task.Delay(10);
+            fakeTime.Advance(TimeSpan.FromMinutes(1));
+        }
+
         await WaitForMetricAsync(killCollector);
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
@@ -448,8 +476,16 @@ public class AgentStallMonitorTests
             _run, config, "Quality gate retry agent (attempt 3)", null, _mockLogger.Object,
             CancellationToken.None, stallMetrics: stallMetrics, timeProvider: fakeTime);
 
-        await YieldToMonitorAsync();
-        fakeTime.Advance(TimeSpan.FromMinutes(1));
+        // Advance the fake clock in a loop until the process death metric is emitted. This
+        // eliminates the race in YieldToMonitorAsync where the Task.Run background loop may not
+        // have reached its first Task.Delay within the fixed 200ms window on a loaded CI runner.
+        var deathCounterDeadline = DateTime.UtcNow.AddSeconds(10);
+        while (deathCollector.GetMeasurementSnapshot().Count == 0 && DateTime.UtcNow < deathCounterDeadline)
+        {
+            await Task.Delay(10);
+            fakeTime.Advance(TimeSpan.FromMinutes(1));
+        }
+
         await WaitForMetricAsync(deathCollector);
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
