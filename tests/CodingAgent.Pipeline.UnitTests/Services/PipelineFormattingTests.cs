@@ -138,7 +138,7 @@ public class PipelineFormattingTests
     {
         var prefixes = new List<string> { ".github", "docs" };
 
-        PipelineFormatting.IsPathBlacklisted(".github/workflows/ci.yml", prefixes).Should().BeTrue();
+        PathBlacklist.IsPathBlacklisted(".github/workflows/ci.yml", prefixes).Should().BeTrue();
     }
 
     [Fact]
@@ -146,7 +146,7 @@ public class PipelineFormattingTests
     {
         var prefixes = new List<string> { ".github", "docs" };
 
-        PipelineFormatting.IsPathBlacklisted("src/MyService.cs", prefixes).Should().BeFalse();
+        PathBlacklist.IsPathBlacklisted("src/MyService.cs", prefixes).Should().BeFalse();
     }
 
     [Fact]
@@ -154,7 +154,7 @@ public class PipelineFormattingTests
     {
         var prefixes = new List<string> { ".GitHub" };
 
-        PipelineFormatting.IsPathBlacklisted(".github/workflows/ci.yml", prefixes).Should().BeTrue();
+        PathBlacklist.IsPathBlacklisted(".github/workflows/ci.yml", prefixes).Should().BeTrue();
     }
 
     [Fact]
@@ -162,7 +162,7 @@ public class PipelineFormattingTests
     {
         var prefixes = new List<string> { "src\\protected" };
 
-        PipelineFormatting.IsPathBlacklisted("src/protected/secret.cs", prefixes).Should().BeTrue();
+        PathBlacklist.IsPathBlacklisted("src/protected/secret.cs", prefixes).Should().BeTrue();
     }
 
     [Fact]
@@ -170,13 +170,13 @@ public class PipelineFormattingTests
     {
         var prefixes = new List<string> { "README.md" };
 
-        PipelineFormatting.IsPathBlacklisted("README.md", prefixes).Should().BeTrue();
+        PathBlacklist.IsPathBlacklisted("README.md", prefixes).Should().BeTrue();
     }
 
     [Fact]
     public void IsPathBlacklisted_EmptyPrefixes_ReturnsFalse()
     {
-        PipelineFormatting.IsPathBlacklisted("anything.cs", new List<string>()).Should().BeFalse();
+        PathBlacklist.IsPathBlacklisted("anything.cs", new List<string>()).Should().BeFalse();
     }
 
     [Fact]
@@ -184,7 +184,7 @@ public class PipelineFormattingTests
     {
         var prefixes = new List<string> { "docs/" };
 
-        PipelineFormatting.IsPathBlacklisted("docs/readme.md", prefixes).Should().BeTrue();
+        PathBlacklist.IsPathBlacklisted("docs/readme.md", prefixes).Should().BeTrue();
     }
 
     [Fact]
@@ -193,7 +193,7 @@ public class PipelineFormattingTests
         // "doc" should NOT match "docs/readme.md" because it's prefix-based with "/" separator
         var prefixes = new List<string> { "doc" };
 
-        PipelineFormatting.IsPathBlacklisted("docs/readme.md", prefixes).Should().BeFalse();
+        PathBlacklist.IsPathBlacklisted("docs/readme.md", prefixes).Should().BeFalse();
     }
 
     // --- GeneratePrBody ---

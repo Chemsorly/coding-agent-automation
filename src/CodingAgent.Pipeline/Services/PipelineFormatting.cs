@@ -99,16 +99,6 @@ public static partial class PipelineFormatting
         return $"feat: {title} ({issueReference})\n\n{PipelineConstants.AutomatedCommitSuffix}";
     }
 
-    /// <summary>
-    /// Checks whether a file path matches any of the blacklisted path prefixes.
-    /// Matching is prefix-based, case-insensitive, and normalizes backslashes to forward slashes.
-    /// </summary>
-    // Delegates to the shared Infrastructure.Common implementation so Infrastructure.Providers can
-    // use the same logic without referencing Pipeline (Spec 048 Phase 1 kept Providers Pipeline-free).
-    // Kept here so existing PipelineFormatting.IsPathBlacklisted callers/tests stay unchanged.
-    public static bool IsPathBlacklisted(string filePath, IReadOnlyList<string> blacklistedPrefixes)
-        => PathBlacklist.IsPathBlacklisted(filePath, blacklistedPrefixes);
-
     private static void AppendComplianceSection(StringBuilder sb, AcceptanceCriteriaReport? report)
     {
         if (report is null || report.Criteria.Count == 0)
