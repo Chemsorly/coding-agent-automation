@@ -324,7 +324,7 @@ public class AgentStallMonitorTests
 
         await YieldToMonitorAsync();
         fakeTime.Advance(TimeSpan.FromMinutes(2));
-        await WaitForMetricAsync(warningCollector);
+        await WaitForMetricAsync(warningCollector, fakeTime, TimeSpan.FromMinutes(1));
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
@@ -378,7 +378,7 @@ public class AgentStallMonitorTests
 
         await YieldToMonitorAsync();
         fakeTime.Advance(TimeSpan.FromMinutes(1));
-        await WaitForMetricAsync(killCollector);
+        await WaitForMetricAsync(killCollector, fakeTime, TimeSpan.FromMinutes(1));
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
@@ -427,7 +427,7 @@ public class AgentStallMonitorTests
 
         await YieldToMonitorAsync();
         fakeTime.Advance(TimeSpan.FromMinutes(1));
-        await WaitForMetricAsync(deathCollector);
+        await WaitForMetricAsync(deathCollector, fakeTime, TimeSpan.FromMinutes(1));
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
@@ -466,5 +466,27 @@ public class AgentStallMonitorTests
         var deadline = DateTime.UtcNow.AddSeconds(15);
         while (collector.GetMeasurementSnapshot().Count == 0 && DateTime.UtcNow < deadline)
             await Task.Delay(5);
+    }
+
+    /// <summary>
+    /// Waits up to 15 seconds for at least one measurement to appear in the collector,
+    /// periodically re-advancing <paramref name="fakeTime"/> by <paramref name="advancePerTick"/>
+    /// so the monitor loop is unblocked even if it had not yet reached its first Delay
+    /// when the initial advance was called. This eliminates the race in the metrics tests
+    /// where a single upfront Advance can be a no-op if the Task.Run loop hasn't started yet.
+    /// </summary>
+    private static async Task WaitForMetricAsync<T>(
+        MetricCollector<T> collector,
+        FakeTimeProvider fakeTime,
+        TimeSpan advancePerTick)
+        where T : struct
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (collector.GetMeasurementSnapshot().Count == 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+            if (collector.GetMeasurementSnapshot().Count == 0)
+                fakeTime.Advance(advancePerTick);
+        }
     }
 }
