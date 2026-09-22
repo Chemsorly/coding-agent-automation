@@ -6,10 +6,9 @@ namespace CodingAgent.Pipeline;
 /// rather than inlining format strings.
 /// </summary>
 /// <remarks>
-/// Three naming formats exist because each dispatch path was implemented independently:
+/// Two naming formats exist because each dispatch path was implemented independently:
 /// <list type="bullet">
 ///   <item><see cref="ForWorkItem"/> — regular agent jobs (DispatchLoop, removed in #2322)</item>
-///   <item><see cref="ForConsolidation"/> — consolidation jobs (ConsolidationDispatchLoop, removed in #2323; preserved as naming-contract stub for in-flight job compatibility)</item>
 ///   <item><see cref="ForBrain"/> — brain/API-path jobs (DispatchLifecycleService)</item>
 /// </list>
 /// The formats are intentionally preserved as-is. Changing any format string would orphan
@@ -32,19 +31,6 @@ public static class JobNameFactory
     /// <param name="workItemId">The WorkItem ID.</param>
     public static string ForWorkItem(Guid workItemId) =>
         $"caa-agent-{workItemId:N}"[..21]; // "caa-agent-" (10) + 11 hex chars = 21 total
-
-    /// <summary>
-    /// Generates a deterministic K8s Job name for a consolidation WorkItem.
-    /// Format: <c>caa-cons-{first-12-chars-of-guid-no-dashes}</c> = 21 chars total.
-    /// </summary>
-    /// <remarks>
-    /// <c>ConsolidationDispatchLoop</c> (removed in issue #2323) was the only production caller.
-    /// This method is preserved as a naming-contract stub to maintain compatibility with any
-    /// in-flight K8s Jobs that used this format. Do not delete until all such Jobs have completed.
-    /// </remarks>
-    /// <param name="workItemId">The WorkItem ID.</param>
-    public static string ForConsolidation(Guid workItemId) =>
-        $"caa-cons-{workItemId:N}"[..21]; // "caa-cons-" (9) + 12 hex chars = 21 total
 
     /// <summary>
     /// Generates a deterministic K8s Job name for a brain/API-path WorkItem.
