@@ -432,4 +432,179 @@ internal sealed class DispatchWorkItemService
 
         return onSuccess(workItemId);
     }
+
+    // ── Shared gate + context + lifecycle entry point ────────────────────────
+
+    /// <summary>
+    /// Returns <c>true</c> when the template targets a kiro provider.
+    /// Centralises the <c>"kiro"</c> string literal so it does not appear in
+    /// <c>WorkItemDispatchEndpoints.cs</c> (issue #2890, AC3).
+    /// </summary>
+    // TODO [WARNING]: IsKiroAgent has no dedicated unit tests. The method has clear boundary behaviour
+    // (case-insensitive "kiro" vs any other string). An accidental change — e.g. OrdinalIgnoreCase →
+    // Ordinal, or a typo in the literal — would go undetected. Add parameterized tests covering at
+    // minimum: "kiro" (exact), "KIRO" (upper-case), "Kiro" (mixed), "" (empty), "opencode" (other).
+    // (TestQualityReviewer review [WARNING])
+    internal bool IsKiroAgent(JobTemplate template)
+        => string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
+
+    // TODO [WARNING]: DispatchResolvedWorkItemAsync has no dedicated unit tests. It is reached indirectly
+    // via SynchronousDispatchEndpointTests and DispatchPendingWorkItemEndpointTests, but the specific
+    // branching inside this method — gate fires → return gate result; onDispatchFailure null vs non-null
+    // on the 503 path; ExpectedInitialStatus routing — is never explicitly constrained. A regression that
+    // incorrectly wires onDispatchFailure as always-null regardless of the caller's argument would not be
+    // caught by the existing tests. Add direct unit tests for at minimum: (a) gate fires → returns gate
+    // result without calling lifecycle; (b) 503 path with onDispatchFailure non-null → failure callback
+    // is invoked; (c) success path → onSuccess result returned. (TestQualityReviewer review [WARNING])
+    /// <summary>
+    /// Runs the shared <c>isKiroAgent → ApplyGates → DispatchLifecycleContext → RunDispatchLifecycleAsync</c>
+    /// sequence that was previously duplicated in both <c>DispatchPendingWorkItem</c> and
+    /// <c>DispatchWorkItem</c> (issue #2890).
+    ///
+    /// <para>
+    /// <strong>Caller responsibilities (not absorbed here):</strong>
+    /// <list type="bullet">
+    ///   <item>
+    ///     Call <see cref="BuildConcurrencySnapshotAsync"/> and pass the result as
+    ///     <paramref name="concurrencyBySelector"/>. The snapshot must be taken while holding
+    ///     the advisory lock (on the <c>DispatchPendingWorkItem</c> path) or before entity
+    ///     creation (on the <c>DispatchWorkItem</c> path) — the lock ordering cannot be
+    ///     replicated inside this method.
+    ///   </item>
+    ///   <item>
+    ///     Call <see cref="DispatchLifecycleService.QueryAvailablePvcsAsync"/> and pass the
+    ///     result as <paramref name="pvcResult"/>. The <c>DispatchPendingWorkItem</c> path
+    ///     also emits <c>WorkDistributionTelemetry.UpdateCredentialPoolMetrics</c> immediately
+    ///     after that call — that metric must stay in the handler, not here.
+    ///   </item>
+    ///   <item>
+    ///     Construct <see cref="PendingWorkItemProjection"/> from handler-specific sources
+    ///     (<c>quickCheck.*</c> vs <c>entity.*</c>) and pass it as <paramref name="projection"/>.
+    ///   </item>
+    ///   <item>
+    ///     After this method returns, <c>DispatchPendingWorkItem</c> checks whether the result
+    ///     is a 503 and emits <c>WorkDistributionTelemetry.PvcPoolExhaustions</c> — that counter
+    ///     belongs exclusively to that path and must not be moved inside this method.
+    ///   </item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    /// <param name="db">Caller-owned open <see cref="PipelineDbContext"/>.</param>
+    /// <param name="template">Resolved <see cref="JobTemplate"/> for the selector.</param>
+    /// <param name="projection">
+    /// Pre-constructed <see cref="PendingWorkItemProjection"/>. Each handler builds this from
+    /// its own field sources; construction cannot be unified here.
+    /// </param>
+    /// <param name="normalizedSelector">
+    /// Normalized agent-selector key for the concurrency gate and context.
+    /// </param>
+    /// <param name="sanitizedSelector">
+    /// CRLF-stripped form of the selector for log messages and response bodies.
+    /// </param>
+    /// <param name="concurrencyBySelector">
+    /// Snapshot produced by <see cref="BuildConcurrencySnapshotAsync"/> in the caller.
+    /// </param>
+    /// <param name="pvcResult">
+    /// PVC availability snapshot produced by the caller via
+    /// <see cref="DispatchLifecycleService.QueryAvailablePvcsAsync"/>.
+    /// </param>
+    /// <param name="expectedInitialStatus">
+    /// <see cref="WorkItemStatus.Pending"/> for <c>DispatchPendingWorkItem</c>;
+    /// <see cref="WorkItemStatus.Dispatched"/> for <c>DispatchWorkItem</c>.
+    /// Controls <see cref="DispatchLifecycleContext.ExpectedInitialStatus"/> used by the
+    /// race-condition guard inside <c>HandleOrphanedJobIfRaceDetectedAsync</c>.
+    /// </param>
+    /// <param name="logPrefix">
+    /// Prefix embedded in K8s Job names and log messages:
+    /// <c>"pending-dispatch "</c> for <c>DispatchPendingWorkItem</c>;
+    /// <c>"sync-dispatch "</c> for <c>DispatchWorkItem</c>.
+    /// </param>
+    /// <param name="onDispatchFailure">
+    /// Called with <c>(workItemId, reason)</c> on the 503 path.
+    /// <c>null</c> for <c>DispatchPendingWorkItem</c> (item started as Pending — no orphaned
+    /// Dispatched row exists). <c>SafelyCancelOrphanedDispatchedWorkItemAsync</c> for
+    /// <c>DispatchWorkItem</c>.
+    /// </param>
+    /// <param name="onSuccess">
+    /// Factory producing the 200 <see cref="IResult"/> when dispatch succeeds.
+    /// </param>
+    /// <param name="workItemId">Work-item GUID for log messages and the success result.</param>
+    /// <param name="callerName">Short name for log messages (e.g. <c>"DispatchWorkItem"</c>).</param>
+    /// <param name="lifecycle">
+    /// Shared singleton <see cref="DispatchLifecycleService"/>. Passed in to preserve
+    /// <c>_pvcSelectLock</c> singleton semantics.
+    /// </param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>
+    /// A non-null <see cref="IResult"/> from <see cref="ApplyGates"/> if a gate fires;
+    /// the result from <paramref name="onSuccess"/> on dispatch success;
+    /// 503 Service Unavailable on lifecycle failure.
+    /// </returns>
+    internal async Task<IResult> DispatchResolvedWorkItemAsync(
+        PipelineDbContext db,
+        JobTemplate template,
+        PendingWorkItemProjection projection,
+        string normalizedSelector,
+        string sanitizedSelector,
+        // TODO [WARNING]: This parameter should be typed as IReadOnlyDictionary<string, int> to make the
+        // no-mutation contract explicit. The caller's snapshot must remain stable for the lifetime of this
+        // call; FinalizeDispatchAsync mutates a copy inside DispatchLifecycleContext, not this parameter
+        // directly — but the contract is implicit. Changing to IReadOnlyDictionary would catch future
+        // regressions at compile time and surface the intent clearly.
+        // On the DispatchWorkItem path, the early-gate check (earlyGateResult in the handler) uses the same
+        // snapshot; if the lifecycle ever mutated this dictionary, the double-gate assumption would break
+        // silently. (DotNetSpecialist review [WARNING])
+        Dictionary<string, int> concurrencyBySelector,
+        PvcAvailabilityResult pvcResult,
+        WorkItemStatus expectedInitialStatus,
+        string logPrefix,
+        Func<Guid, string, Task>? onDispatchFailure,
+        Func<Guid, IResult> onSuccess,
+        Guid workItemId,
+        string callerName,
+        DispatchLifecycleService lifecycle,
+        CancellationToken ct)
+    {
+        // Compute isKiroAgent exactly once via IsKiroAgent — the "kiro" literal lives there only (AC3).
+        var isKiroAgent = IsKiroAgent(template);
+
+        // Concurrency gate + PVC gate.
+        // NOTE: PvcPoolExhaustions and UpdateCredentialPoolMetrics are NOT emitted here —
+        // those telemetry calls belong exclusively to the DispatchPendingWorkItem handler.
+        // TODO [WARNING]: On the DispatchWorkItem path, concurrencyBySelector was built before entity
+        // creation. The WorkItem was persisted as Dispatched between the early gate (in the handler) and
+        // this second ApplyGates call, so the snapshot does not reflect the newly created item. If the
+        // concurrency limit is N and exactly N-1 items are active, the early gate passes (N-1 < N), the
+        // Dispatched row is created (live count becomes N), and this gate also passes (sees N-1 < N).
+        // This means the path can exceed the concurrency limit by 1. Pre-existing risk — not introduced
+        // by this refactor — but the new double-gate comment ("capacity cannot shrink") is misleading:
+        // capacity CAN appear to grow when this method is reached on the DispatchWorkItem path because
+        // the row we just created is not yet reflected in the snapshot. (Correctness review [WARNING])
+        var gateResult = ApplyGates(
+            normalizedSelector, sanitizedSelector, concurrencyBySelector,
+            pvcResult, template, isKiroAgent, callerName);
+        if (gateResult is not null)
+            return gateResult;
+
+        var ctx = new DispatchLifecycleContext(
+            db,
+            projection,
+            template,
+            isKiroAgent,
+            pvcResult.AvailablePvcs,
+            concurrencyBySelector,
+            logPrefix)
+        {
+            ExpectedInitialStatus = expectedInitialStatus
+        };
+
+        return await RunDispatchLifecycleAsync(
+            ctx,
+            lifecycle,
+            onDispatchFailure,
+            onSuccess,
+            workItemId,
+            callerName,
+            ct);
+    }
 }

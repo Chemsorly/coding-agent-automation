@@ -48,19 +48,10 @@ public partial class QualityGateExecutor
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(report);
 
-        var run = context.Run;
-        var config = context.Config;
-        var callbacks = context.Callbacks;
-
         if (!report.Compilation.Passed || !(report.Tests?.Passed ?? true)
             || context.PipelineProvider == null)
             return report;
 
-        // TryReadHeadShaAsync does not swallow OCE — it rethrows. The catch clauses in this method
-        // handle the two sources of OCE within the try block (4 call sites in ExternalCi.cs):
-        //   • Per-poll CancellationTokenSource timeout (!ct.IsCancellationRequested) → degrade gracefully
-        //   • Pipeline CT cancelled → propagate intentionally (run is being torn down)
-        // Note: WaitForPostPrCiAsync (RetryLoop.cs) has a parallel handler for the post-PR CI path.
         GateResult? ciGate = null;
         try
         {
@@ -68,62 +59,95 @@ public partial class QualityGateExecutor
             if (skipCi)
                 return report;
 
-            // Create draft PR if not exists — ensures CI results (coverage comments) land on the PR
-            await callbacks.CreateDraftPrIfNotExists(run, ct);
+            await context.Callbacks.CreateDraftPrIfNotExists(context.Run, ct);
+            var ciResult = await RunExternalCiPollAsync(context, ct);
 
-            string? commitSha = await TryReadHeadShaAsync(context, "could not read HEAD commit SHA", ct);
+            if (ciResult.ciStatus.State == PipelineRunState.ConflictRestart)
+                return BuildConflictRestartReport(context.Run, report, context.Callbacks);
 
-            callbacks.EmitOutputLine("⏳ Waiting for external CI...");
-            var ciPollStopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var (ciPassed, ciStatus, ciLogPaths) = await PollAndHandleInfraRetryAsync(context, commitSha, config, callbacks, ct);
-
-            // TODO: Duration includes infrastructure retry wait times — consider recording per-attempt duration for better histogram granularity
-            _externalCiDuration.Record(
-                ciPollStopwatch.Elapsed.TotalSeconds,
-                PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
-
-            // Conflict restart: PR is conflicted with main — re-queue as agent:next without creating a draft PR.
-            // run.CurrentStep and run.FinalLabel are set here so PostCompletionBookkeepingAsync picks them up.
-            // FinalizeDraftPrAsync, CollectFailureFeedbackAsync, and any further CI work are intentionally skipped.
-            if (ciStatus.State == PipelineRunState.ConflictRestart)
-            {
-                run.FinalLabel = AgentLabels.Next;
-                run.FailureReason = "PR conflicted with main — restarting pipeline";
-                run.CurrentStep = PipelineStep.ConflictRestart;
-                callbacks.EmitOutputLine("🔄 PR conflicted with main — re-queuing as agent:next for rework...");
-                callbacks.TransitionTo(PipelineStep.ConflictRestart);
-                run.MarkCompleted();
-                return new QualityGateReport
-                {
-                    Compilation = report.Compilation,
-                    Tests = report.Tests!, // null when Tests is null (build-only QGC / legacy deserialization path); all downstream consumers are null-guarded
-                    ExternalCi = new GateResult
-                    {
-                        GateName = "External CI",
-                        Passed = false,
-                        Details = "Conflict restart — PR conflicted with main; re-dispatched as agent:next"
-                    }
-                };
-            }
-
-            ciGate = BuildCiGateResult(ciPassed, ciStatus, ciLogPaths, "CI", "External CI", callbacks);
+            ciGate = CiPollingCoordinator.BuildCiGateResult(
+                ciResult.ciPassed, ciResult.ciStatus, ciResult.ciLogPaths, "CI", "External CI", context.Callbacks);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            ciGate = BuildCiTimeoutGateResult(config.ExternalCiTimeout, "External CI");
+            ciGate = CiPollingCoordinator.BuildCiTimeoutGateResult(context.Config.ExternalCiTimeout, "External CI");
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "Pipeline {RunId} external CI check failed, treating as gate failure", run.RunId);
-            ciGate = BuildCiErrorGateResult("External CI", ex.Message);
+            _logger.Warning(ex, "Pipeline {RunId} external CI check failed, treating as gate failure", context.Run.RunId);
+            ciGate = CiPollingCoordinator.BuildCiErrorGateResult("External CI", ex.Message);
         }
 
         return new QualityGateReport
         {
             Compilation = report.Compilation,
-            Tests = report.Tests!, // null when Tests is null (build-only QGC / legacy deserialization path); all downstream consumers are null-guarded
+            Tests = report.Tests!, // null when Tests is null (build-only QGC / legacy deserialization path)
             ExternalCi = ciGate
+        };
+    }
+
+    /// <summary>
+    /// Performs the commit SHA read, timeout-budgeted CI poll, and external-CI duration recording.
+    /// Extracted from <see cref="AppendExternalCiIfNeededAsync"/> to keep that method under 60 lines.
+    /// Returns (ciPassed, ciStatus, ciLogPaths).
+    /// </summary>
+    private async Task<(bool ciPassed, PipelineRunStatus ciStatus, IReadOnlyDictionary<long, string>? ciLogPaths)>
+        RunExternalCiPollAsync(QualityGateContext context, CancellationToken ct)
+    {
+        var run = context.Run;
+        var config = context.Config;
+        var callbacks = context.Callbacks;
+
+        string? commitSha = await _ciPollingCoordinator.TryReadHeadShaAsync(context, "could not read HEAD commit SHA", ct);
+        callbacks.EmitOutputLine("⏳ Waiting for external CI...");
+        var ciPollStopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        using var timeoutCts = new CancellationTokenSource(config.ExternalCiTimeout);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+        var result = await _ciPollingCoordinator.PollAndHandleInfraRetryAsync(
+            context, commitSha, config, callbacks, linkedCts.Token);
+
+        // TODO [WARNING]: _externalCiDuration.Record is only reached when PollAndHandleInfraRetryAsync
+        // returns normally. If it throws (e.g. an unhandled provider exception), the duration is not
+        // recorded and the stopwatch runs until the using-block disposes the CTSes on stack unwind.
+        // The timeoutCts/linkedCts using declarations ensure disposal regardless, but the metric sample
+        // is silently dropped for error paths. To fix: move _externalCiDuration.Record into a finally
+        // block so it is emitted on both success and exception paths.
+        // TODO: Duration includes infrastructure retry wait times — consider recording per-attempt duration
+        _externalCiDuration.Record(
+            ciPollStopwatch.Elapsed.TotalSeconds,
+            PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
+
+        return result;
+    }
+
+    /// <summary>
+    /// Handles the conflict-restart outcome from CI polling: marks the run for re-queue as
+    /// agent:next and returns the appropriate conflict-restart report.
+    /// Extracted from <see cref="AppendExternalCiIfNeededAsync"/> to keep that method under 60 lines.
+    /// </summary>
+    private static QualityGateReport BuildConflictRestartReport(
+        PipelineRun run, QualityGateReport report, IPipelineCallbacks callbacks)
+    {
+        // Conflict restart: PR is conflicted with main — re-queue as agent:next without creating a draft PR.
+        // run.CurrentStep and run.FinalLabel are set here so PostCompletionBookkeepingAsync picks them up.
+        run.FinalLabel = AgentLabels.Next;
+        run.FailureReason = "PR conflicted with main — restarting pipeline";
+        run.CurrentStep = PipelineStep.ConflictRestart;
+        callbacks.EmitOutputLine("🔄 PR conflicted with main — re-queuing as agent:next for rework...");
+        callbacks.TransitionTo(PipelineStep.ConflictRestart);
+        run.MarkCompleted();
+        return new QualityGateReport
+        {
+            Compilation = report.Compilation,
+            Tests = report.Tests!, // null when Tests is null (build-only QGC / legacy deserialization path)
+            ExternalCi = new GateResult
+            {
+                GateName = "External CI",
+                Passed = false,
+                Details = "Conflict restart — PR conflicted with main; re-dispatched as agent:next"
+            }
         };
     }
 
@@ -185,155 +209,6 @@ public partial class QualityGateExecutor
     }
 
     /// <summary>
-    /// Polls CI and automatically retries on infrastructure failures up to
-    /// <see cref="PipelineConfiguration.MaxInfrastructureRetries"/> times.
-    /// Returns (ciPassed, finalStatus, ciLogPaths).
-    /// </summary>
-    private async Task<(bool ciPassed, PipelineRunStatus ciStatus, IReadOnlyDictionary<long, string>? ciLogPaths)> PollAndHandleInfraRetryAsync(
-        QualityGateContext context,
-        string? pollSha,
-        PipelineConfiguration config,
-        IPipelineCallbacks callbacks,
-        CancellationToken ct)
-    {
-        var run = context.Run;
-
-        // Budget the entire polling session (initial poll + all branch-moved re-polls) against a
-        // single ExternalCiTimeout window.  When the timeout fires the linked token is cancelled;
-        // AppendExternalCiIfNeededAsync's catch (OperationCanceledException when !ct.IsCancellationRequested)
-        // turns that into a "timed out" gate result, matching the existing behaviour for a single poll.
-        using var timeoutCts = new CancellationTokenSource(config.ExternalCiTimeout);
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
-        var pollCt = linkedCts.Token;
-
-        var ciStatus = await PollCiWithNotStartedRetryAsync(context, pollSha, config, callbacks, pollCt);
-        var ciPassed = ciStatus.State == PipelineRunState.Passed;
-        IReadOnlyDictionary<long, string>? ciLogPaths = null;
-
-        // Conflict restart: PR is conflicted (dirty) with main — propagate immediately.
-        // No log writing, no branch-moved loop, no infra-retry.
-        if (ciStatus.State == PipelineRunState.ConflictRestart)
-            return (false, ciStatus, null);
-
-        // Branch-moved cancellation: when CI is Cancelled and the branch HEAD has moved to a new
-        // commit (e.g. a teammate push, a bot merge-from-main, or the pipeline's own retry commit
-        // triggering GitHub's cancel-in-progress concurrency rule), re-enter CI polling on the new
-        // HEAD SHA rather than treating the cancellation as a gate failure that consumes a retry slot.
-        var branchMovedRetries = 0;
-        var lastPolledSha = pollSha;  // tracks the SHA from the previous iteration for the branch-moved guard
-        while (ciStatus.State == PipelineRunState.Cancelled
-               && run.WorkspacePath != null
-               && branchMovedRetries < config.CiCancelledMoveMaxRetries)
-        {
-            var currentHead = await TryReadHeadShaAsync(context, "could not read HEAD after Cancelled", pollCt);
-
-            if (currentHead == null || currentHead == lastPolledSha)
-                break;  // HEAD unchanged — genuine pre-emption or unreadable HEAD, fall through to infra-retry path
-
-            branchMovedRetries++;
-            _logger.Information(
-                "Pipeline {RunId} CI cancelled because branch moved ({OldSha} → {NewSha}), re-polling on new HEAD (attempt {N}/{Max})",
-                run.RunId, lastPolledSha, currentHead, branchMovedRetries, config.CiCancelledMoveMaxRetries);
-            callbacks.EmitOutputLine(
-                $"⏳ CI superseded by new commit on branch — re-polling on updated HEAD (attempt {branchMovedRetries}/{config.CiCancelledMoveMaxRetries})...");
-
-            lastPolledSha = currentHead;
-            ciStatus = await PollCiWithNotStartedRetryAsync(context, currentHead, config, callbacks, pollCt);
-
-            // Conflict restart propagates from branch-moved re-poll too
-            if (ciStatus.State == PipelineRunState.ConflictRestart)
-                return (false, ciStatus, null);
-
-            ciPassed = ciStatus.State == PipelineRunState.Passed;
-        }
-        // TODO [WARNING]: The two exit conditions from the branch-moved loop are handled identically:
-        // (a) HEAD unchanged (currentHead == lastPolledSha) → genuine pre-emption, infra-retry path correct.
-        // (b) branchMovedRetries >= CiCancelledMoveMaxRetries → retries exhausted, branch kept moving.
-        // Both fall through to the same infra-retry section below. For case (b), CiFailureClassifier.Classify
-        // on a Cancelled status with no failed jobs returns Unknown (not Infrastructure), so the infra-retry
-        // while-loop is a no-op and the gate fails — the intended behaviour. However, the distinction is
-        // invisible to future readers and any change that causes case (b) to classify as Infrastructure would
-        // re-introduce the retry storm. Consider adding an explicit log/comment when exiting due to exhausted
-        // retries, or an early break-label to make the two paths distinguishable.
-
-        // Write logs for the final ciStatus only — moved here from immediately after the initial poll
-        // to avoid writing misleading Cancelled-state log files for discarded intermediate polls.
-        if (!ciPassed && run.WorkspacePath != null)
-            ciLogPaths = _ciLogWriter.WriteJobLogs(ciStatus, run.WorkspacePath, run.RunId);
-
-        if (!ciPassed)
-        {
-            var classification = CiFailureClassifier.Classify(ciStatus);
-            while (!ciPassed
-                   && classification == CiFailureClassifier.CiFailureCategory.Infrastructure
-                   && run.InfrastructureRetryCount < config.MaxInfrastructureRetries)
-            {
-                // Pass `pollCt` (the linked, ExternalCiTimeout-budgeted token) so that infra-retry
-                // polling is bounded by the same single-window budget as the initial poll and any
-                // branch-moved re-polls. Fixes #2798.
-                (ciPassed, ciStatus, ciLogPaths) = await ExecuteInfraRetryAsync(
-                    context, config, callbacks, pollCt);
-
-                if (!ciPassed)
-                    classification = CiFailureClassifier.Classify(ciStatus);
-            }
-        }
-
-        return (ciPassed, ciStatus, ciLogPaths);
-    }
-
-    /// <summary>
-    /// Performs one infrastructure-failure retry: increments the counter, logs, creates an empty
-    /// commit, re-pushes, and polls CI again. Returns (ciPassed, newStatus, ciLogPaths).
-    /// </summary>
-    // TODO [WARNING] (#2798 DotNetSpecialist): The `ct` parameter must be the timeout-budgeted token
-    // (e.g. `pollCt` from PollAndHandleInfraRetryAsync) to keep the combined poll-plus-infra-retry
-    // session within a single ExternalCiTimeout window. CommitAllAsync, PushBranchAsync, and
-    // TryReadHeadShaAsync all consume `ct` directly, so an unbudgeted token would leave those
-    // pre-poll operations outside the timeout window. The method signature gives no indication of
-    // this requirement — consider renaming the parameter to `budgetedCt` or adding a contract check.
-    private async Task<(bool ciPassed, PipelineRunStatus ciStatus, IReadOnlyDictionary<long, string>? ciLogPaths)> ExecuteInfraRetryAsync(
-        QualityGateContext context,
-        PipelineConfiguration config,
-        IPipelineCallbacks callbacks,
-        CancellationToken ct)
-    {
-        ct.ThrowIfCancellationRequested();
-        var run = context.Run;
-        run.InfrastructureRetryCount++;
-        _logger.Warning("Pipeline {RunId} CI infrastructure failure detected, auto-retrying ({Attempt}/{Max})",
-            run.RunId, run.InfrastructureRetryCount, config.MaxInfrastructureRetries);
-        callbacks.EmitOutputLine($"⚠️ CI infrastructure failure — auto-retrying ({run.InfrastructureRetryCount}/{config.MaxInfrastructureRetries})...");
-
-        // TODO [WARNING] (#2359 DotNetSpecialist): The empty-commit push below precedes
-        // PollCiWithNotStartedRetryAsync, which means if PollCiWithNotStartedRetryAsync detects
-        // a Conflicted PR on the infra-retry path, one unnecessary empty commit has already been
-        // sent to the conflicted branch. The ConflictRestart status still propagates correctly
-        // (returned by PollCiWithNotStartedRetryAsync and threaded back through
-        // PollAndHandleInfraRetryAsync → AppendExternalCiIfNeededAsync), but the "no empty commit
-        // pushed when ConflictRestart is returned" invariant holds only for the primary
-        // (non-infra-retry) code path, not here. To fix: call CheckForMergeConflictAsync before
-        // the CommitAllAsync/PushBranchAsync below, mirroring the primary path.
-        await context.RepoProvider.CommitAllAsync(run.WorkspacePath!,
-            $"chore: re-trigger CI after infrastructure failure ({run.InfrastructureRetryCount})",
-            config.BlacklistedPaths, allowEmpty: true, ct,
-            config.PipelineInjectedPaths);
-        await context.RepoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, forcePush: true, ct);
-
-        var retrySha = await TryReadHeadShaAsync(context, "could not read HEAD commit SHA for infra retry", ct);
-
-        callbacks.EmitOutputLine("⏳ Waiting for external CI (infrastructure retry)...");
-        var ciStatus = await PollCiWithNotStartedRetryAsync(context, retrySha, config, callbacks, ct);
-        var ciPassed = ciStatus.State == PipelineRunState.Passed;
-
-        IReadOnlyDictionary<long, string>? ciLogPaths = (!ciPassed && run.WorkspacePath != null)
-            ? _ciLogWriter.WriteJobLogs(ciStatus, run.WorkspacePath, run.RunId)
-            : null;
-
-        return (ciPassed, ciStatus, ciLogPaths);
-    }
-
-    /// <summary>
     /// Records blacklisted files on the run and notifies the UI.
     /// </summary>
     private void RecordBlacklistedFiles(
@@ -346,299 +221,4 @@ public partial class QualityGateExecutor
         _prOrchestrator.RecordBlacklistedFiles(run, blacklisted, config);
         callbacks.NotifyChange();
     }
-
-    /// <summary>
-    /// Polls CI with automatic retry when CI never starts (GitHub Actions sometimes doesn't trigger).
-    /// First waits up to <see cref="PipelineConfiguration.CiNotStartedTimeout"/> for any runs to appear.
-    /// If no runs appear, performs a branch-wide CI check (SHA=null) to detect runs that already passed
-    /// on a prior commit — if found, returns immediately without creating a re-trigger commit.
-    /// Otherwise creates an empty commit and re-pushes to trigger CI, repeating up to
-    /// <see cref="PipelineConfiguration.CiNotStartedMaxRetries"/> times.
-    /// Before each empty-commit push (and before the exhaustion failure), checks PR mergeability.
-    /// If <see cref="PrMergeabilityStatus.Conflicted"/>, returns <see cref="PipelineRunState.ConflictRestart"/>
-    /// immediately without pushing any commit.
-    /// When retries are exhausted, sets <see cref="PipelineRun.FailureReason"/> and returns a
-    /// deterministic <see cref="PipelineRunState.Failed"/> status without blocking on a full timeout.
-    /// </summary>
-    private async Task<PipelineRunStatus> PollCiWithNotStartedRetryAsync(
-        QualityGateContext context,
-        string? pollSha,
-        PipelineConfiguration config,
-        IPipelineCallbacks callbacks,
-        CancellationToken ct)
-    {
-        var run = context.Run;
-        var maxRetries = config.CiNotStartedMaxRetries;
-        var notStartedTimeout = config.CiNotStartedTimeout;
-        var pipelineProvider = context.PipelineProvider
-            ?? throw new InvalidOperationException("PipelineProvider must not be null when entering CI polling");
-
-        for (var attempt = 0; attempt <= maxRetries; attempt++)
-        {
-            ct.ThrowIfCancellationRequested();
-
-            // Wait up to CiNotStartedTimeout for any workflow runs to appear
-            var appeared = await WaitForCiRunsToAppearAsync(
-                pipelineProvider, run.BranchName!, pollSha, notStartedTimeout, config.ExternalCiPollInterval, ct);
-
-            if (appeared)
-            {
-                // Runs detected — switch to the full wait-for-completion (uses the full ExternalCiTimeout)
-                return await pipelineProvider.WaitForCompletionAsync(
-                    run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
-            }
-
-            // CI never started within the short timeout — check PR mergeability before taking any action.
-            // If the branch is conflicted (dirty), GitHub will not schedule CI regardless of how many
-            // empty commits are pushed. Return ConflictRestart immediately to avoid exhausting the retry budget.
-            var conflictCheckResult = await CheckForMergeConflictAsync(context, callbacks, ct);
-            if (conflictCheckResult is not null)
-                return conflictCheckResult;
-
-            if (attempt >= maxRetries)
-            {
-                // Deterministic failure — do NOT fall through to WaitForCompletionAsync.
-                // The re-trigger SHA also has no CI runs; blocking for ExternalCiTimeout here
-                // just wastes time before the run reaches FinalizeDraftPrAsync.
-                var msg = $"CI never started after {maxRetries} retries";
-                // TODO: run.FailureReason uses simple assignment here. This is correct today because
-                // AppendExternalCiIfNeededAsync exits early if any prior gate failed, so FailureReason
-                // is always null at this point. However, if ExecuteInfraRetryAsync sets FailureReason
-                // on a prior infra-retry pass and then re-enters PollCiWithNotStartedRetryAsync, this
-                // assignment will silently overwrite the infra-retry reason. Consider using ??= for
-                // consistency with the ??= guard in PullRequestFinalizationService. (#2317)
-                run.FailureReason = msg;
-                _logger.Error("Pipeline {RunId} {Message} — failing run", run.RunId, msg);
-                callbacks.EmitOutputLine($"❌ {msg} — failing run");
-                return new PipelineRunStatus
-                {
-                    State = PipelineRunState.Failed,
-                    Jobs = Array.Empty<PipelineJobResult>()
-                };
-            }
-
-            _logger.Warning(
-                "Pipeline {RunId} CI never started (attempt {Attempt}/{MaxRetries}, waited {Timeout}). Re-pushing to trigger.",
-                run.RunId, attempt + 1, maxRetries, notStartedTimeout);
-            callbacks.EmitOutputLine(
-                $"⚠️ CI never started (attempt {attempt + 1}/{maxRetries}) — re-pushing to trigger GitHub Actions...");
-
-            // Final check before re-pushing — avoid racing with GitHub's delayed trigger for the current SHA
-            var lastCheck = await pipelineProvider.GetRunStatusAsync(run.BranchName!, pollSha, ct);
-            if (lastCheck.State != PipelineRunState.Pending || lastCheck.Jobs.Count > 0)
-            {
-                _logger.Information("Pipeline {RunId} CI appeared just before re-push (race avoided), proceeding to full wait", run.RunId);
-                return await pipelineProvider.WaitForCompletionAsync(
-                    run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
-            }
-
-            // Branch-wide check: detect if CI is already running or passed on a prior SHA of this branch.
-            // Placed after the SHA-specific last-check guard so that a delayed trigger for the
-            // current SHA still takes the more precise SHA-specific completion-wait path.
-            var branchStatus = await pipelineProvider.GetRunStatusAsync(run.BranchName!, commitSha: null, ct);
-            if (branchStatus?.State == PipelineRunState.Passed)
-            {
-                _logger.Information(
-                    "Pipeline {RunId} CI already passed on a prior SHA on branch {Branch} — skipping re-trigger",
-                    run.RunId, run.BranchName);
-                callbacks.EmitOutputLine("✅ CI already passed on this branch — skipping re-trigger");
-                // TODO: branchStatus.Jobs reflects the prior-SHA run's job results, not the current HEAD's.
-                // A SHA-lineage guard would eliminate this stale-data risk. (#2317)
-                return branchStatus;
-            }
-
-            if (branchStatus?.State == PipelineRunState.Running)
-            {
-                // CI is actively running on a prior SHA — do NOT push a re-trigger commit.
-                // Pushing while CI is in-progress would hit GitHub's cancel-in-progress concurrency
-                // rule and kill the active run, causing a self-inflicted failure. Wait for it instead.
-                _logger.Information(
-                    "Pipeline {RunId} CI already running on branch {Branch} — waiting for completion instead of re-triggering",
-                    run.RunId, run.BranchName);
-                callbacks.EmitOutputLine("⏳ CI already running on this branch — waiting for completion...");
-                return await pipelineProvider.WaitForCompletionAsync(
-                    run.BranchName!, commitSha: null, config.ExternalCiTimeout, ct);
-            }
-
-            // Create empty commit and re-push
-            await context.RepoProvider.CommitAllAsync(
-                run.WorkspacePath!,
-                $"chore: re-trigger CI (not started, attempt {attempt + 1})",
-                config.BlacklistedPaths, allowEmpty: true, ct,
-                config.PipelineInjectedPaths);
-            await context.RepoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, forcePush: true, ct);
-
-            // Update the poll SHA to the new commit
-            pollSha = await TryReadHeadShaAsync(context, "could not read HEAD after re-push", ct);
-        }
-
-        // Should not reach here — the attempt >= maxRetries branch always returns.
-        // Return a deterministic failure rather than an open-ended WaitForCompletionAsync call.
-        return new PipelineRunStatus { State = PipelineRunState.Failed, Jobs = Array.Empty<PipelineJobResult>() };
-    }
-
-    /// <summary>
-    /// Checks whether the PR associated with the current run is conflicted with the base branch.
-    /// Returns a <see cref="PipelineRunStatus"/> with <see cref="PipelineRunState.ConflictRestart"/>
-    /// if the PR is <see cref="PrMergeabilityStatus.Conflicted"/>, or <c>null</c> if the check
-    /// was skipped or returned a non-conflicted status.
-    /// </summary>
-    /// <remarks>
-    /// Skips the check (returns null) when:
-    /// <list type="bullet">
-    ///   <item><c>run.PullRequestNumber</c> is null — no PR yet (e.g. this is an infra retry before PR creation)</item>
-    ///   <item><see cref="PrMergeabilityStatus.Unknown"/> — GitHub hasn't computed mergeability yet; fall through to normal re-trigger</item>
-    ///   <item>Any other non-Conflicted status (Behind, Blocked, UpToDate) — fall through to normal re-trigger</item>
-    /// </list>
-    /// </remarks>
-    private async Task<PipelineRunStatus?> CheckForMergeConflictAsync(
-        QualityGateContext context,
-        IPipelineCallbacks callbacks,
-        CancellationToken ct)
-    {
-        var run = context.Run;
-
-        if (run.PullRequestNumber is null
-            || !int.TryParse(run.PullRequestNumber, out var prNum))
-        {
-            _logger.Debug("Pipeline {RunId} skipping mergeability check — PullRequestNumber is null or non-numeric", run.RunId);
-            return null;
-        }
-
-        PrMergeabilityStatus mergeability;
-        try
-        {
-            mergeability = await context.RepoProvider.IsPullRequestBehindBaseAsync(prNum, ct);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            // Non-fatal: if the mergeability check fails (e.g. network error), log and fall through to normal re-trigger.
-            _logger.Debug(ex, "Pipeline {RunId} mergeability check failed for PR #{PrNum}, falling through to normal re-trigger", run.RunId, prNum);
-            return null;
-        }
-
-        if (mergeability == PrMergeabilityStatus.Conflicted)
-        {
-            _logger.Warning("Pipeline {RunId} PR #{PrNum} is conflicted (dirty) — signalling conflict restart", run.RunId, prNum);
-            callbacks.EmitOutputLine("⚠️ PR has merge conflicts with main — restarting pipeline from beginning...");
-            return new PipelineRunStatus { State = PipelineRunState.ConflictRestart, Jobs = Array.Empty<PipelineJobResult>() };
-        }
-
-        // Unknown, Blocked, Behind, UpToDate — log at Debug and fall through to normal re-trigger
-        _logger.Debug("Pipeline {RunId} PR #{PrNum} mergeability is {Status} — continuing with normal re-trigger", run.RunId, prNum, mergeability);
-        return null;
-    }
-
-    /// <summary>
-    /// Polls GetRunStatusAsync until at least one workflow run/job is detected or the timeout expires.
-    /// Returns true if runs appeared, false if the timeout expired with no runs.
-    /// </summary>
-    private async Task<bool> WaitForCiRunsToAppearAsync(
-        IPipelineProvider provider,
-        string branchName,
-        string? commitSha,
-        TimeSpan timeout,
-        TimeSpan pollInterval,
-        CancellationToken ct)
-    {
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-        while (stopwatch.Elapsed < timeout)
-        {
-            ct.ThrowIfCancellationRequested();
-
-            try
-            {
-                var status = await provider.GetRunStatusAsync(branchName, commitSha, ct);
-
-                // Any non-empty state (Running, Passed, Failed, Cancelled) or jobs present means CI started
-                if (status.State != PipelineRunState.Pending || status.Jobs.Count > 0)
-                    return true;
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                // Transient API error (rate limit, network, etc.) — log and keep polling within the timeout
-                _logger.Debug(ex, "WaitForCiRunsToAppearAsync transient error polling {Branch}, will retry", branchName);
-            }
-
-            await Task.Delay(pollInterval, ct);
-        }
-        return false;
-    }
-
-    // ── Shared CI GateResult builders ──────────────────────────────────────────
-
-    /// <summary>
-    /// Builds a <see cref="GateResult"/> for an external CI poll result and emits a UI status line.
-    /// Used by both <see cref="AppendExternalCiIfNeededAsync"/> and <see cref="WaitForPostPrCiAsync"/>.
-    /// </summary>
-    /// <param name="ciPassed">Whether CI passed.</param>
-    /// <param name="ciStatus">The final CI status (used for job count and failure details).</param>
-    /// <param name="ciLogPaths">Optional per-job log paths forwarded to <see cref="QualityGateValidator.BuildCiFailureDetails"/>.</param>
-    /// <param name="detailsPrefix">Prefix used in <see cref="GateResult.Details"/> strings — e.g. "CI" or "Post-PR CI".</param>
-    /// <param name="uiPrefix">Prefix used in <see cref="IPipelineCallbacks.EmitOutputLine"/> messages — e.g. "External CI" or "Post-PR CI".</param>
-    /// <param name="callbacks">Pipeline callbacks for UI output.</param>
-    private static GateResult BuildCiGateResult(
-        bool ciPassed,
-        PipelineRunStatus ciStatus,
-        IReadOnlyDictionary<long, string>? ciLogPaths,
-        string detailsPrefix,
-        string uiPrefix,
-        IPipelineCallbacks callbacks)
-    {
-        // TODO: Add ArgumentNullException.ThrowIfNull(callbacks) guard. All current call sites
-        // pass a non-null callbacks, but the absence of a null check means a future call site
-        // or test that passes null would produce a NullReferenceException at EmitOutputLine
-        // rather than a clear ArgumentNullException at the entry point.
-        var details = ciPassed
-            ? $"{detailsPrefix} passed. {ciStatus.Jobs.Count} job(s) completed."
-            : QualityGateValidator.BuildCiFailureDetails(ciStatus, ciLogPaths);
-
-        // GateName is intentionally "External CI" for all call sites. QualityGateReport exposes a
-        // single ExternalCi slot regardless of whether pre-PR or post-PR CI ran, and downstream
-        // consumers (PipelineRun.BuildCompletionPayload, PipelineFormatting) key on this field name.
-        var gate = new GateResult
-        {
-            GateName = "External CI",
-            Passed = ciPassed,
-            Details = details
-        };
-
-        callbacks.EmitOutputLine(ciPassed
-            ? $"✅ {uiPrefix} passed ({ciStatus.Jobs.Count} jobs)"
-            : $"❌ {uiPrefix} failed: {details}");
-
-        return gate;
-    }
-
-    /// <summary>
-    /// Builds a <see cref="GateResult"/> for an external CI timeout.
-    /// Does NOT emit a UI line — the caller is responsible for any timeout-specific UI output
-    /// (only <see cref="WaitForPostPrCiAsync"/> emits an extra line; <see cref="AppendExternalCiIfNeededAsync"/> does not).
-    /// </summary>
-    /// <param name="timeout">The configured timeout duration (used in the Details string).</param>
-    /// <param name="prefix">Prefix for the Details string — "External CI" or "Post-PR CI".</param>
-    private static GateResult BuildCiTimeoutGateResult(TimeSpan timeout, string prefix) =>
-        // GateName is intentionally "External CI" for all call sites — see BuildCiGateResult above.
-        new GateResult
-        {
-            GateName = "External CI",
-            Passed = false,
-            Details = $"{prefix} timed out after {timeout}"
-        };
-
-    /// <summary>
-    /// Builds a <see cref="GateResult"/> for an unexpected external CI exception.
-    /// </summary>
-    /// <param name="prefix">Prefix for the Details string — "External CI" or "Post-PR CI".</param>
-    /// <param name="message">The exception message.</param>
-    private static GateResult BuildCiErrorGateResult(string prefix, string message) =>
-        // GateName is intentionally "External CI" for all call sites — see BuildCiGateResult above.
-        new GateResult
-        {
-            GateName = "External CI",
-            Passed = false,
-            Details = $"{prefix} error: {message}"
-        };
 }
