@@ -15,6 +15,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 <!-- Session: 20 | Last run: 2026-09-06 | Decisions added: 6 (SecurityScan zombie removal, dead parser removal, HousekeepingTriggerCooldown config, cleanup prompt budget, RetryErrors transient-enqueue, PostPrCiDuration panel still pending); issues created: #2400/#2401 -->
 <!-- Session: 21 | Last run: 2026-09-06 | Decisions added: 6 (AgentTimeout chain verified, FeedbackTimeoutSeconds stale log #2403, PostPrCiDuration panel added, HousekeepingTriggerCooldown #2404, TimeoutSeconds zero-sentinel #2405, Q6 constructor injection pattern); issues created: #2403/#2404/#2405; Grafana panel 57 added -->
 <!-- Session: 22 | Last run: 2026-09-21 | Decisions added: 6 (catch(Exception) MarkCompleted gap #2851, DirectoryNotFoundException fallback no-opinion, ProviderConfigId Phase 2 no-opinion, AgentWorkspacePaths → Contracts #2852, ReconcileOrphanedPipelineRuns load-all no-opinion, OCE swallowing no-opinion); issues created: #2851/#2852 -->
+<!-- Session: 23 | Last run: 2026-09-21 | Decisions added: 6 (StallMonitor kill=AgentTimeout intentional, StallPollInterval not overridable, flat warnings intentional, OpenCode session-status polling, AgentCodingPageService 460 lines stable no-opinion, EnsureSessionAsync coverage complete); no bugs found; Q3 corrected (OpenCode DOES have polling health) -->
+<!-- Session: 24 | Last run: 2026-09-21 | Decisions added: 5 (conflict rework re-queues agent:done intentional, StaleBranchCleaner double-scan #2880, HousekeepingMaxSlotAgeMinutes dead config #2881, DispatchWorkItemService sanitizedSelector no-opinion, HousekeepingActiveLabels set intentional); issues created: #2880/#2881 -->
 <!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService razor component decomposition, Faro CSP script-src when CSP added, TimeoutSeconds end-to-end after #2179 -->
 
 ---
@@ -477,6 +479,84 @@ The practical impact is low: draft PRs are rare (require retry exhaustion), and 
 
 ---
 
+### AgentStallMonitor kill threshold: same as AgentTimeout is intentional — K8s is the last resort
+
+**Date:** 2026-09-21
+**Category:** architecture
+
+**Decision:** `AgentStallMonitor` uses `config.AgentTimeout` as the silence-kill threshold. This is intentional: if an agent has produced no output for the full timeout window, it is definitively stuck. The K8s `activeDeadlineSeconds` (= `AgentTimeout` + 60s buffer) is a last-resort infrastructure kill that fires only if the application-level kill itself fails (process doesn't exit cleanly, container runtime issue, etc.). There is no separate `StallKillTimeout` config field; `AgentTimeout` is the single duration that governs both the application-layer kill and the K8s backstop. The +60s K8s buffer is exactly that: a buffer to let the application kill complete first.
+
+**Context:** The two timeouts operate on different clocks — stall monitor on silence duration, K8s on total elapsed. In practice: a run that produced early output and then stalled will be killed by the stall monitor at `AgentTimeout` of silence; K8s fires only if that kill fails. This is the intended layered defense: application-first, infrastructure-second.
+
+**Alternatives considered:** Separate `StallKillTimeout` field (adds config complexity without benefit — the silence window and the total budget should match); K8s-only (no application-layer kill, relies purely on `activeDeadlineSeconds`).
+
+**Reassess when:** Operators report confusion about silence-based kills happening earlier than the expected wall-clock timeout. At that point a separate `StallKillTimeout` becomes justified.
+
+---
+
+### AgentStallMonitor: StallPollInterval is intentionally not project-overridable
+
+**Date:** 2026-09-21
+**Category:** architecture
+
+**Decision:** `StallPollInterval` (how often `GetHealthStatus` is polled, default 30s) is NOT decorated with `[ProjectOverridable]`. `StallWarningInterval` IS project-overridable. The asymmetry is intentional: polling frequency is a system-level resource concern — more frequent polling means more `GetHealthStatus` calls per active run, which at scale affects all projects simultaneously. Warning cadence is a per-project UX concern — some projects may want faster warning feedback. Operators control `StallPollInterval` globally; projects control warning cadence.
+
+**Reassess when:** A per-project use case for different poll frequencies emerges (e.g., a project with very noisy agents that benefit from less frequent polling).
+
+---
+
+### AgentStallMonitor: stall warnings are flat (no escalation) — intentional observability signal
+
+**Date:** 2026-09-21
+**Category:** architecture
+
+**Decision:** Stall warnings fire at `Warning` level on every `StallWarningInterval` with identical format. There is no severity escalation to `Error` before the kill fires. This is intentional: the repeated Warning messages are the signal that the connection chain (orchestrator → agent process → output) is still alive but silent. They are NOT an indication of imminent failure. The kill fires separately via `HandleKillTimeoutAsync` as an `Error`-level event with "Forcefully terminating" message. Operators counting warning repetitions in Grafana can infer stall duration. An escalated `Error` before the kill would be noise — the kill already fires as an Error.
+
+**Alternatives considered:** Escalate last warning before kill to Error (rejected — the kill itself is already Error-level and fired by a separate code path); progressive warning intervals (rejected — flat interval is simpler and Grafana counting provides the same information).
+
+**Reassess when:** Operators report difficulty distinguishing "agent is running slowly" from "agent is about to be killed" in log streams. A dedicated "kill imminent" log line at Error with a countdown would address that without changing the warning structure.
+
+---
+
+### OpenCode health monitoring: session-status polling, not OS process signals
+
+**Date:** 2026-09-21
+**Category:** architecture
+
+**Decision:** The two agent backends expose health differently and that asymmetry is correct by design:
+- **Kiro:** `KiroCliAgentProvider.GetHealthStatus()` reports `IsProcessAlive` from `IProcessWrapper` — real OS process-alive signal from the managed subprocess.
+- **OpenCode:** `OpenCodeAgentProvider.GetHealthStatus()` always returns `IsProcessAlive = null` (no subprocess), but populates `AllSessionsSummary` from a background `PollAllSessionStatusesAsync` loop that calls `GET /session/status` every 10s. This surfaces subagent session states (retry count, busy/idle distribution) that the primary SSE stream doesn't expose.
+
+Both providers give the stall monitor actionable signal via `AgentHealthStatus` — they just use different mechanisms. `stall.process_deaths` will always be 0 for OpenCode runs; this is expected, not a telemetry gap. `AllSessionsSummary` in stall warning logs is the OpenCode equivalent of process-alive state.
+
+**Alternatives considered:** Treat SSE stream disconnect as process death for OpenCode (rejected — SSE reconnects are normal and transient; a false process-death event would trigger premature error paths).
+
+**Reassess when:** OpenCode exposes an explicit "is the server process alive" endpoint. Until then, `GET /session/status` reachability is the functional equivalent.
+
+---
+
+### AgentCodingPageService at 460 lines: stable after drawer extraction
+
+**Date:** 2026-09-21
+**Category:** ux
+
+**Decision:** No strong opinion on whether `AgentCodingPageService` is decomposed further. At 460 lines (down from 618 at session 22 capture), the drawer layer is cleanly extracted into three dedicated `*DrawerService` instances. The remaining responsibilities — config data properties, template CRUD, loop controls, and `PropagateProviderContext` — are genuine coordinator concerns. Agents should not extract further without a specific pain point (e.g., template CRUD growing past 150 lines on its own). The existing per-drawer service pattern is the template for any future extraction.
+
+**Reassess when:** File exceeds 600 lines again, or template CRUD methods become complex enough to warrant their own service.
+
+---
+
+### EnsureSessionAsync: stall monitoring coverage is complete
+
+**Date:** 2026-09-21
+**Category:** architecture
+
+**Decision:** Both `EnsureSessionAsync` call sites in `AgentPhaseExecutor.Analysis.cs` are already wrapped with `AgentStallMonitor.MonitorAsync` (lines ~114, ~199). Session warm-up hangs are covered. Post-PR enrichment calls (feedback, reflection, brain sync in `PullRequestFinalizationService`) are intentionally NOT wrapped — they are non-fatal best-effort steps executed after the PR is already created. A hang in enrichment is acceptable: the PR is live, the operator can recover manually. Wrapping enrichment with the stall monitor would add kill-on-silence semantics to steps where partial completion is preferable to forced termination.
+
+**Reassess when:** A post-PR enrichment hang is observed in production that cannot be recovered without operator intervention. At that point, the step should either be made interruptible by the existing `CancellationToken` or given a dedicated shorter timeout — not necessarily wrapped with the full stall monitor (which uses `AgentTimeout`).
+
+---
+
 ### AgentWorkspacePaths: belongs in CodingAgent.Contracts — #2852 tracks move
 
 **Date:** 2026-09-21
@@ -871,6 +951,71 @@ The budget is a soft prompt constraint (not mechanically enforced). Agents may e
 **Alternatives considered:** Configurable priority weights (adds complexity for a problem not yet observed in practice), age-based starvation promotion (deferred), keeping round-robin (replaced because it ignores latency sensitivity by job type).
 
 **Reassess when:** Multiple teams share infrastructure and Implementation work is visibly starved by Decomposition/Review volume, or when a configurable priority weight becomes a concrete request.
+
+---
+
+### Conflict rework re-queues issues regardless of current label — only abandonment labels block
+
+**Date:** 2026-09-21
+**Category:** architecture
+
+**Decision:** `IssueReworkService` re-queues a conflicted PR's linked issue to `agent:next` in almost all label states — including `agent:done`, `agent:error`, and `agent:needs-refinement`. Only `agent:wont-do` and `agent:cancelled` (`HousekeepingTerminalReworkBlockers`) block the re-queue, because those represent an explicit human decision to abandon the issue permanently. `agent:done` is intentionally excluded from the blockers: if a PR was created but subsequently conflicted with main, the open conflicted PR always needs rework regardless of what the issue label says. A completed issue with an open conflicted PR must be re-dispatched — the PR's state takes precedence over the issue label.
+
+**Context:** `HousekeepingActiveLabels` (`{Next, InProgress, Epic, EpicApproved, EpicReview}`) is a separate set used by `StaleBranchCleaner` to protect branches from deletion. It is intentionally distinct from `HousekeepingTerminalReworkBlockers` — an issue in `agent:error` should have its stale branch protected (still being worked on) but CAN be re-queued for rework if its PR conflicts.
+
+**Alternatives considered:** Block `agent:done` from re-queue (rejected — the PR's open state takes precedence; completing the issue label doesn't close the PR). Block all non-terminal labels (rejected — too conservative; `agent:error` and `agent:needs-refinement` are precisely the states that warrant automatic rework).
+
+**Reassess when:** An `agent:done` issue is re-dispatched unexpectedly and the PR was already closed/merged. At that point the conflict-detection logic should also check PR state, not just mergeability status.
+
+---
+
+### StaleBranchCleaner double-scan: should reuse housekeeping input — #2880 tracks fix
+
+**Date:** 2026-09-21
+**Category:** architecture
+
+**Decision:** `StaleBranchCleaner.RunBranchCleanupAsync` currently ignores the `agentDonePrs` input passed by `HousekeepingService` and independently re-fetches all open agent PRs via `FetchAllOpenAgentPrBranchesAsync`. This violates KISS/DRY. The double-fetch was introduced because `agentDonePrs` is capped by `ClosedLoopMaxPagesToFetch` (default 10 pages) and a truncated input could miss a PR, causing deletion of a branch that has an open PR. The correct fix is to use a single data source: either pass a `wasInputTruncated` signal and skip cleanup gracefully when truncated, or raise the page cap for the cleanup call path. The independent scan is a pragmatic workaround, not the intended design.
+
+**Status:** Currently in place — #2880 tracks the KISS/DRY fix.
+
+**Reassess when:** #2880 is implemented. Once a single data source is used, `FetchAllOpenAgentPrBranchesAsync` should be removed.
+
+---
+
+### HousekeepingMaxSlotAgeMinutes: dead config — never enabled, remove it — #2881 tracks deletion
+
+**Date:** 2026-09-21
+**Category:** configuration
+
+**Decision:** `PipelineConfiguration.HousekeepingMaxSlotAgeMinutes` (Key 84, default `0` = disabled) was added preemptively to handle potential slot starvation (one PR holding the sole housekeeping concurrency slot indefinitely). The feature has never been enabled in production — DB confirms the default `0` everywhere. Per KISS, dead config should be removed rather than carried indefinitely. Key 84 must be tombstoned following the MessagePack vacancy pattern. No behavior change for existing deployments (default was disabled).
+
+**Status:** Currently present — #2881 tracks deletion.
+
+**Reassess when:** Never for this config. If slot starvation is actually observed in production, introduce a new mechanism with a clearer design and a non-zero recommended default.
+
+---
+
+### HousekeepingActiveLabels set: narrow by design — only live-work labels protect branches
+
+**Date:** 2026-09-21
+**Category:** architecture
+
+**Decision:** `AgentLabels.HousekeepingActiveLabels` = `{Next, InProgress, Epic, EpicApproved, EpicReview}`. These are the labels that mean "a pipeline run is queued or in progress." A branch whose linked issue carries one of these labels is protected from stale-branch deletion. `agent:done`, `agent:error`, `agent:needs-refinement`, `agent:wont-do`, and `agent:cancelled` are intentionally absent — stale branch cleanup is for lingering branches after PR merge or issue abandonment. An errored issue's branch can be deleted (no open PR = stale). The set is narrow by design: only labels that indicate active pipeline work protect branches.
+
+**Alternatives considered:** Use all non-terminal labels (rejected — `agent:error` branches are stale; they don't need protection). Use the full label state machine (rejected — overkill; the set is explicit and maintainable).
+
+**Reassess when:** A new active-work label is added to the pipeline. It must be evaluated against `HousekeepingActiveLabels` — if it means "work is in progress," it belongs in the set.
+
+---
+
+### DispatchWorkItemService.ApplyGates sanitizedSelector: implicit contract, no strong opinion
+
+**Date:** 2026-09-21
+**Category:** architecture
+
+**Decision:** No strong opinion on whether `sanitizedSelector` in `DispatchWorkItemService.ApplyGates` is enforced via a sanitized-string wrapper type or left as an implicit naming contract. Both current callers sanitize before passing. Agents should follow the existing `IssueIdentifier`/`ProviderConfigId` pattern if adding new parameters that embed user-controlled strings into HTTP responses — but this specific parameter is not a priority for wrapping.
+
+**Reassess when:** A new caller passes an unsanitized selector, or a security review flags the implicit contract.
 
 ---
 
@@ -1844,6 +1989,20 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 - "catch(Exception) MarkCompleted gap → #2851" correlates with "ConflictRestart MarkCompleted fix (#2778/#2789)" (same root cause, same file, sibling terminal path; pattern: every terminal catch calling AddRunToHistoryAsync must also call run.MarkCompleted() first)
 - "ReconcileOrphanedPipelineRunsAsync load-all: follow best practices" scoped by "catch(Exception) MarkCompleted gap → #2851" (root-cause fix reduces ghost accumulation; load-all performance concern is moot once #2851 is closed)
 - "ReconcileOrphanedPipelineRunsAsync OCE swallowing: follow best practices" scoped by "ReconcileOrphanedPipelineRunsAsync load-all: follow best practices" (same method, both inconsistencies; apply canonical patterns on next touch)
+- "AgentStallMonitor kill threshold = AgentTimeout: intentional" scoped by "AgentTimeout end-to-end: chain verified complete" (single config knob governs application-layer kill and K8s backstop; +60s buffer makes K8s last resort)
+- "AgentStallMonitor kill threshold = AgentTimeout: intentional" correlates with "WorkItemEntity.TimeoutSeconds zero-sentinel → #2405" (both are consequences of the single-AgentTimeout design; sentinel removal closes the last gap)
+- "StallPollInterval not project-overridable: intentional" scoped by "StallWarningInterval is project-overridable" (polling is system-level, warning cadence is per-project; asymmetry is deliberate)
+- "Stall warnings are flat (no escalation): intentional" scoped by "Telemetry philosophy: instrument every decision point" (Warning repetition IS the signal; separate kill Error is already instrumented)
+- "OpenCode health: session-status polling, not OS signals" scoped by "Agent provider abstraction supports N backends" (health mechanisms differ by backend transport; both satisfy the stall monitor contract via AgentHealthStatus)
+- "OpenCode health: session-status polling, not OS signals" constrains "OpenCode provider returns IsProcessAlive=null" (null is correct — stall.process_deaths=0 for OpenCode is expected, not a telemetry gap)
+- "AgentCodingPageService: stable at 460 lines" resolves "AgentCodingPageService: razor component is current decomposition target" (drawer extraction complete; 460 lines is stable resting point; no further extraction planned)
+- "EnsureSessionAsync stall monitoring: coverage complete" scoped by "AgentStallMonitor kill threshold = AgentTimeout: intentional" (session warm-up already wrapped; post-PR enrichment intentionally not wrapped)
+- "EnsureSessionAsync stall monitoring: coverage complete" scoped by "Partial failure contract: enrichment non-fatal, critical path fatal" (post-PR enrichment is non-fatal — stall monitoring with kill semantics would conflict with best-effort intent)
+- "Conflict rework re-queues agent:done: intentional" scoped by "Label lifecycle: formal state machine (#1046)" (conflict rework is a label transition that bypasses normal state-machine entry points; only abandonment labels block it)
+- "Conflict rework re-queues agent:done: intentional" constrains "HousekeepingTerminalReworkBlockers set" (only wont-do and cancelled are blockers; all other labels including done are fair game for conflict re-queue)
+- "HousekeepingActiveLabels: narrow by design" scoped by "Conflict rework re-queues agent:done: intentional" (the two sets are intentionally distinct: active-work labels protect branches; abandonment labels block conflict re-queue)
+- "StaleBranchCleaner double-scan: should reuse input → #2880" scoped by "Partial failure contract: enrichment non-fatal" (branch cleanup is a housekeeping enrichment step; the double-fetch is a correctness workaround, not a design intent)
+- "HousekeepingMaxSlotAgeMinutes: dead config → #2881" scoped by "HousekeepingTriggerCooldownMinutes: must be PipelineConfiguration field" (same housekeeping config area; both should be lean)
 - Automated calibration design remains explicitly deferred
 - Housekeeping feature calibration data — no empirical data yet; revisit after 50+ housekeeping cycles
 - AgentCodingPageService decomposition — decision captured but implementation not yet started
@@ -1867,14 +2026,18 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 - ProviderConfigId Phase 2 migration — session 22: no-opinion, apply if natural opportunity arises
 - ReconcileOrphanedPipelineRunsAsync load-all inconsistency — session 22: no-opinion, apply ExecuteUpdateAsync on next touch
 - ReconcileOrphanedPipelineRunsAsync OCE swallowing inconsistency — session 22: no-opinion, re-throw on next touch
+- ~~AgentCodingPageService decomposition~~ — resolved session 23: 460 lines, drawer extraction complete, stable
+- ~~AgentStallMonitor kill/warning/health semantics~~ — resolved session 23: 3 decisions captured
+- ~~EnsureSessionAsync stall monitoring coverage~~ — resolved session 23: both call sites already wrapped; post-PR enrichment intentionally excluded
+- DispatchWorkItemService.ApplyGates sanitization contract — session 24: no-opinion, follow existing value-type pattern if adding new user-controlled parameters
+- Conflict rework and stale-branch label policy — session 24: decisions captured (#2880, #2881 for follow-ups)
 
 ### Queued Questions (for next session)
 - Automated calibration design — when a clear mechanism emerges, revisit
 - Housekeeping calibration: after 50+ branch-update cycles, is concurrency=1 still correct?
-- AgentCodingPageService decomposition: after extraction, was the per-drawer split the right granularity?
 - Grafana Faro CSP: when CSP is added, revisit `script-src` to include `unpkg.com`
 - RetryErrors transient-enqueue gate: if failure-feedback prompt accuracy degrades, revisit gating Enqueue on RetryOutcome.Retry
-- ~~HousekeepingTriggerCooldownMinutes: after #2404 lands, verify the method-parameter plumbing~~ — resolved session 22: plumbing confirmed complete and tested
+- ProviderConfigId Phase 2: apply if natural opportunity arises (no-opinion, no blocking issue)
 
 ---
 
