@@ -14,6 +14,9 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.MessagePack" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\CodingAgent.Orchestration\CodingAgent.Orchestration.csproj" />
     <ProjectReference Include="..\CodingAgent.Pipeline\CodingAgent.Pipeline.csproj" />
     <ProjectReference Include="..\CodingAgent.Pipeline.CodeReview\CodingAgent.Pipeline.CodeReview.csproj" />

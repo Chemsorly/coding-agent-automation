@@ -20,7 +20,6 @@
     <ProjectReference Include="..\CodingAgent.Pipeline.CodeReview\CodingAgent.Pipeline.CodeReview.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.MessagePack" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.StackExchangeRedis" />
     <PackageReference Include="StackExchange.Redis" />
     <PackageReference Include="Microsoft.Extensions.Http.Resilience" />
