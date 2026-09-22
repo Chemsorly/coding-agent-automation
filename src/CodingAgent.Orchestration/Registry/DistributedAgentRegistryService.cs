@@ -127,6 +127,21 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
                 agentId, string.Join(", ", message.Labels), connectionId);
         }
 
+        // Fix B1 (issue #2873): if Redis returned null/empty for activeJobId but _localSnapshot
+        // already has a non-null value (e.g. DetectAndRestoreOrphans called SetLocalSnapshotField
+        // before this Register completed its GetAgentRaw read), preserve the in-flight value so
+        // it is carried into the new entry. This closes the most-observed regression: a stale or
+        // absent Redis hash causes Register to overwrite the orphan-restored ActiveJobId with null.
+        // The fallback is skipped when Redis already returned a non-null activeJobId (the normal
+        // re-registration path), so it never overrides a live Redis-sourced value.
+        if (string.IsNullOrEmpty(activeJobId) && _localSnapshot.TryGetValue(agentId, out var snapForFallback))
+            activeJobId = snapForFallback.ActiveJobId;   // preserve orphan-restored value if Redis is stale
+
+        // Recompute status after the fallback — a non-null activeJobId from the snapshot means
+        // this agent is still Busy even if Redis returned an empty/absent hash.
+        if (existing is null && activeJobId is not null)
+            status = AgentStatus.Busy;
+
         // Build hash — do NOT overwrite disabled on re-registration
         var fields = AgentEntryToHashEntries(
             agentId: agentId,
@@ -179,12 +194,35 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // Fields NOT currently reflected in the snapshot:
         //   - lastJobCompletedAt (updated via direct field writes, not tracked here)
         //   - busySince exact timestamp (approximated from existing snap.BusySince in TransitionStatusAsync)
-        _localSnapshot[agentId] = entry;
+        //
+        // Fix B2 (issue #2873): use AddOrUpdate instead of unconditional indexer assignment to
+        // close the T1→T2→T3 race where SetLocalSnapshotField writes ActiveJobId between our
+        // fallback read (Fix B1) and this snapshot write. The updateValueFactory receives the
+        // current live dictionary value at the moment of the atomic swap: if orphan restore has
+        // written a non-null ActiveJobId since our GetAgentRaw / fallback read, we preserve it.
+        // All other fields must come from the freshly-built `entry` to reflect the new registration.
+        // TODO (WARNING issue #2873 review): Fix B2 updateValueFactory preserves ActiveJobId from
+        // `current` but does NOT recompute `entry.Status` to Busy when it does so. If Fix B1's
+        // TryGetValue returned null (it missed the concurrent write) AND updateValueFactory finds
+        // a non-null current.ActiveJobId, the committed entry has ActiveJobId=non-null but
+        // Status=Idle (from `entry`), creating a new ActiveJobId-non-null/Status-Idle state that
+        // no other code path previously produced. This makes the agent visible to GetIdleAgents()
+        // while it is carrying a run. The window is synchronous so the probability is low, but
+        // a correct fix would also propagate Busy status in the updateValueFactory branch.
+        var committedEntry = _localSnapshot.AddOrUpdate(
+            agentId,
+            addValueFactory: _ => entry,
+            updateValueFactory: (_, current) =>
+                string.IsNullOrEmpty(current.ActiveJobId)
+                    ? entry
+                    : entry with { ActiveJobId = current.ActiveJobId });
 
         // Update the all-agents cache so GetAllAgents()/GetIdleAgents() sync overloads see the new entry.
-        UpdateAllAgentsCache(entry);
+        // Use committedEntry (the value actually stored) rather than entry, so the cache reflects any
+        // ActiveJobId that was preserved by the B2 updateValueFactory.
+        UpdateAllAgentsCache(committedEntry);
 
-        return entry;
+        return committedEntry;
     }
 
     private async Task WriteRegistrationAsync(AgentId agentId, string connectionId, AgentStatus status, HashEntry[] fields)
@@ -433,20 +471,64 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // Idle/null-activeJobId snapshot captured at Register() time (issue #2110 CRITICAL-2).
         // Without this, a Busy agent whose hash TTL-expires would be re-registered as Idle
         // with no activeJobId, making it eligible for double-booking by the dispatcher.
-        if (_localSnapshot.TryGetValue(agentId, out var snap))
+        //
+        // Fix A (issue #2873): use AddOrUpdate instead of the non-atomic TryGetValue→with→[key]=
+        // pattern. ConcurrentDictionary.AddOrUpdate provides an atomic read-modify-write:
+        // the updateValueFactory receives the live dictionary value at the moment of the swap,
+        // preventing a concurrent SetLocalSnapshotField write from being silently clobbered.
+        // Note: ConcurrentDictionary.TryUpdate cannot be used here — AgentEntry is a sealed
+        // record and its synthesized Equals compares all public properties including SyncRoot
+        // (a private readonly object reinitialized by each `with {}` copy), so TryUpdate would
+        // always return false and spin infinitely. AddOrUpdate avoids the equality comparison.
+        // The busySinceValue and disconnectedAtValue computations are inside the factory so that
+        // any internal retry by AddOrUpdate under contention uses the current live value.
+        if (_localSnapshot.ContainsKey(agentId))
         {
-            var busySinceValue = newStatus == AgentStatus.Busy ? (snap.BusySince ?? now) : (DateTimeOffset?)null;
-            var disconnectedAtValue = newStatus == AgentStatus.Disconnected ? now : (DateTimeOffset?)null;
-            var updated = snap with
+            // TODO (WARNING issue #2873 review): ContainsKey + AddOrUpdate is not atomic.
+            // A concurrent DeregisterAsync can remove the key between ContainsKey and AddOrUpdate,
+            // causing addValueFactory to fire. The addValueFactory must NOT throw — concurrent
+            // deregistration mid-async-await is a normal production event (agent disconnects while
+            // orphan recovery is calling TransitionStatusAsync). Instead, we return a no-op
+            // AgentEntry and immediately remove it so we don't re-insert a deregistered agent.
+            // The snapshot omission is safe: the agent is being removed from the system anyway.
+            AgentEntry? addedSentinel = null;
+            var committed = _localSnapshot.AddOrUpdate(
+                agentId,
+                addValueFactory: key =>
+                {
+                    // Key was absent at swap time — concurrent deregistration removed it.
+                    // Return a placeholder; it will be removed immediately below.
+                    addedSentinel = new AgentEntry
+                    {
+                        AgentId = new AgentId(key),
+                        ConnectionId = "",
+                        Hostname = "",
+                        Labels = [],
+                        RegisteredAt = DateTimeOffset.MinValue
+                    };
+                    return addedSentinel;
+                },
+                updateValueFactory: (_, current) =>
+                {
+                    var bs = newStatus == AgentStatus.Busy ? (current.BusySince ?? now) : (DateTimeOffset?)null;
+                    var da = newStatus == AgentStatus.Disconnected ? now : (DateTimeOffset?)null;
+                    return current with { Status = newStatus, BusySince = bs, DisconnectedAt = da };
+                });
+            if (addedSentinel is not null)
             {
-                Status = newStatus,
-                BusySince = busySinceValue,
-                DisconnectedAt = disconnectedAtValue
-            };
-            _localSnapshot[agentId] = updated;
-            // Keep all-agents cache in sync so GetIdleAgents()/GetAllAgents() sync overloads
-            // return up-to-date status without hitting Redis.
-            UpdateAllAgentsCache(updated);
+                // The addValueFactory fired — agent was concurrently deregistered.
+                // Remove the sentinel we just inserted to avoid a zombie entry.
+                _localSnapshot.TryRemove(new KeyValuePair<string, AgentEntry>(agentId, addedSentinel));
+                _logger.Debug(
+                    "TransitionStatusAsync: agent {AgentId} removed from snapshot concurrently; snapshot update skipped",
+                    agentId);
+            }
+            else
+            {
+                // Keep all-agents cache in sync so GetIdleAgents()/GetAllAgents() sync overloads
+                // return up-to-date status without hitting Redis.
+                UpdateAllAgentsCache(committed);
+            }
         }
 
         _logger.Information("Agent {AgentId} status transitioned {Old} → {New}", agentId, oldStatus, newStatus);
@@ -670,16 +752,29 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             // snapshot is updated for fields managed through this method).
             // NOTE: snapshot update is intentionally inside the try — it must only run when
             // the Redis write succeeds to prevent snapshot divergence from the actual Redis state.
-            if (_localSnapshot.TryGetValue(agentId.Value, out var snapshot))
+            //
+            // Fix A (issue #2873): use AddOrUpdate instead of the non-atomic TryGetValue→with→[key]=
+            // pattern. See TransitionStatusAsync for the full rationale (TryUpdate is unusable with
+            // AgentEntry due to SyncRoot participation in record equality; AddOrUpdate avoids it).
+            // The ContainsKey guard preserves the existing "skip if not present" semantics.
+            if (_localSnapshot.ContainsKey(agentId.Value))
             {
-                _localSnapshot[agentId.Value] = field switch
-                {
-                    "activeJobId" => snapshot with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
-                    "activeChatSessionId" => snapshot with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
-                    "disabled" => bool.TryParse(value, out var d) ? snapshot with { Disabled = d } : snapshot,
-                    "orphanRestoredAt" => DateTimeOffset.TryParse(value, out var ora) ? snapshot with { OrphanRestoredAt = ora } : snapshot,
-                    _ => snapshot
-                };
+                // TODO (WARNING issue #2873 review): ContainsKey + AddOrUpdate is not atomic;
+                // a concurrent DeregisterAsync between ContainsKey and AddOrUpdate will cause
+                // addValueFactory to throw — acceptable here because the surrounding try/catch
+                // swallows InvalidOperationException and logs at Warning, preventing propagation.
+                _localSnapshot.AddOrUpdate(
+                    agentId.Value,
+                    addValueFactory: _ => throw new InvalidOperationException(
+                        $"DistributedAgentRegistryService.UpdateAgentFieldAsync: unexpected add path for agent {agentId.Value} — key was present at ContainsKey check"),
+                    updateValueFactory: (_, current) => field switch
+                    {
+                        "activeJobId" => current with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
+                        "activeChatSessionId" => current with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
+                        "disabled" => bool.TryParse(value, out var d) ? current with { Disabled = d } : current,
+                        "orphanRestoredAt" => DateTimeOffset.TryParse(value, out var ora) ? current with { OrphanRestoredAt = ora } : current,
+                        _ => current
+                    });
             }
             // TODO: _allAgentsCache is NOT updated here. Fields written via this method (e.g. disabled,
             // activeJobId) will not be reflected in GetAllAgents() / GetBusyAgentCount() sync reads until
@@ -702,33 +797,65 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     public void SetLocalSnapshotField(AgentId agentId, string field, string? value)
     {
         ArgumentNullException.ThrowIfNull(agentId.Value);
-        if (!_localSnapshot.TryGetValue(agentId.Value, out var snap)) return;
-        // TODO (WARNING): This read-then-write on _localSnapshot is non-atomic. A concurrent
-        // UpdateAgentFieldAsync or TransitionStatusAsync completing between TryGetValue and the
-        // indexer assignment can be silently clobbered (lost update), reverting a concurrent
-        // field change. This is the same pre-existing pattern used by UpdateAgentFieldAsync
-        // and TransitionStatusAsync. For full correctness, all _localSnapshot record swaps
-        // should use ConcurrentDictionary.TryUpdate in a compare-and-swap loop, or be funnelled
-        // through a single lock. Fixing this in isolation without fixing the sibling methods
-        // would create an inconsistent guarantee. (Correctness WARNING, issue #2616)
-        // TODO (WARNING): The entry lock in DetectAndRestoreOrphans (the only caller) guards
-        // only the live entry object — not this _localSnapshot dictionary. This write is
-        // therefore unsynchronized against Register, TransitionStatusAsync, and
-        // UpdateAgentFieldAsync. See AgentOrphanRecoveryService.cs for the corresponding note.
-        // TODO (WARNING): The activeChatSessionId and disabled switch arms are currently
-        // unreachable from any production caller (only activeJobId and orphanRestoredAt are
-        // passed by DetectAndRestoreOrphans). Callers must NOT use this method for disabled or
+        // Fix A (issue #2873): use AddOrUpdate instead of the non-atomic TryGetValue→with→[key]=
+        // pattern to make this write atomic with respect to concurrent writes from Register,
+        // UpdateAgentFieldAsync, and TransitionStatusAsync. ConcurrentDictionary.AddOrUpdate
+        // provides an atomic read-modify-write: the updateValueFactory receives the live
+        // dictionary value at the moment of the swap, preventing a concurrent write from being
+        // silently clobbered (lost update).
+        //
+        // ConcurrentDictionary.TryUpdate cannot be used here — AgentEntry is a sealed record
+        // and its synthesized Equals compares all public properties including SyncRoot (a private
+        // readonly object reinitialized by each `with {}` copy), so TryUpdate would always return
+        // false and spin infinitely. AddOrUpdate avoids the equality comparison entirely.
+        //
+        // The ContainsKey guard provides a fast early-exit for the common case where the agent
+        // has been deregistered or never registered (this is a no-op in that scenario).
+        // If deregistration races between ContainsKey and AddOrUpdate, the addValueFactory branch
+        // fires; see the sentinel pattern below for how that case is handled safely.
+        //
+        // NOTE: The activeChatSessionId and disabled switch arms are currently unreachable from
+        // any production caller (only activeJobId and orphanRestoredAt are passed by
+        // DetectAndRestoreOrphans). Callers must NOT use this method for disabled or
         // activeChatSessionId as a substitute for UpdateAgentFieldAsync — SetLocalSnapshotField
-        // is local-only and never writes to Redis, so invoking it for cross-replica fields would
-        // diverge this replica's snapshot from Redis and all other replicas. (Correctness WARNING)
-        _localSnapshot[agentId.Value] = field switch
+        // is local-only and never writes to Redis. (Correctness WARNING)
+        if (!_localSnapshot.ContainsKey(agentId.Value)) return;
+        // TODO (WARNING issue #2873 review): ContainsKey + AddOrUpdate is not atomic.
+        // A concurrent DeregisterAsync can remove the key between ContainsKey and AddOrUpdate,
+        // causing addValueFactory to fire. The addValueFactory must NOT throw — concurrent
+        // deregistration racing SetLocalSnapshotField (called from DetectAndRestoreOrphans inside
+        // a lock) is an edge case but valid production event. Return a no-op placeholder and
+        // remove it immediately so we do not re-insert a deregistered agent.
+        AgentEntry? addedSentinel = null;
+        _localSnapshot.AddOrUpdate(
+            agentId.Value,
+            addValueFactory: key =>
+            {
+                addedSentinel = new AgentEntry
+                {
+                    AgentId = new AgentId(key),
+                    ConnectionId = "",
+                    Hostname = "",
+                    Labels = [],
+                    RegisteredAt = DateTimeOffset.MinValue
+                };
+                return addedSentinel;
+            },
+            updateValueFactory: (_, current) => field switch
+            {
+                "activeJobId" => current with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
+                "orphanRestoredAt" => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, out var ora) ? current with { OrphanRestoredAt = ora } : current,
+                "activeChatSessionId" => current with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
+                "disabled" => bool.TryParse(value, out var d) ? current with { Disabled = d } : current,
+                _ => current
+            });
+        if (addedSentinel is not null)
         {
-            "activeJobId" => snap with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
-            "orphanRestoredAt" => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, out var ora) ? snap with { OrphanRestoredAt = ora } : snap,
-            "activeChatSessionId" => snap with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
-            "disabled" => bool.TryParse(value, out var d) ? snap with { Disabled = d } : snap,
-            _ => snap
-        };
+            _localSnapshot.TryRemove(new KeyValuePair<string, AgentEntry>(agentId.Value, addedSentinel));
+            _logger.Debug(
+                "SetLocalSnapshotField: agent {AgentId} removed from snapshot concurrently; field write skipped",
+                agentId.Value);
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────

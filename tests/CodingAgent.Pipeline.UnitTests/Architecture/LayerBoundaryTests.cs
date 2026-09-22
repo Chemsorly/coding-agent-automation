@@ -483,15 +483,26 @@ public partial class LayerBoundaryTests
             // DistributedAgentRegistryService — snapshot object-initializer (BuildSnapshot method):
             // constructs a new AgentEntry snapshot; the object is not yet shared.
             // Also: _localSnapshot update via record `with { ActiveJobId = ... }` in UpdateAgentFieldAsync
-            // (immutable `with` expression creates a new snapshot record, not a mutation of a live entry).
-            // Also: _localSnapshot update via record `with { ActiveJobId = ... }` in SetLocalSnapshotField
-            // (same pattern: immutable `with` expression on a local snapshot copy, not a live shared entry).
+            // and SetLocalSnapshotField (immutable `with` expression creates a new snapshot record, not
+            // a mutation of a live entry). The old TryGetValue→snapshot→[key]= pattern used `snapshot`
+            // as the base; the new AddOrUpdate pattern uses `current` as the base — same category (a).
+            // Also: Fix B2 Register() AddOrUpdate updateValueFactory preserving non-null ActiveJobId:
+            // `entry with { ActiveJobId = current.ActiveJobId }` is a record-with expression on a
+            // freshly-built `entry` object that is not yet shared (constructed locally in Register).
             // Also: BuildAgentEntryFromHashEntries object-initializer reading from Redis hash.
             ["DistributedAgentRegistryService.cs"] = new(StringComparer.Ordinal)
             {
                 "ActiveJobId = activeJobId,",
                 "\"activeJobId\" => snapshot with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },",
                 "\"activeJobId\" => snap with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },",
+                // AddOrUpdate updateValueFactory variants (Fix A, issue #2873): `current` is the live
+                // dictionary value passed to the factory by ConcurrentDictionary — this `with` expression
+                // produces a new record, it does not mutate the shared entry in place.
+                "\"activeJobId\" => current with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },",
+                // Fix B2 Register() updateValueFactory (issue #2873): preserves non-null ActiveJobId from
+                // the current snapshot when orphan restore has written it concurrently. `entry` is a local
+                // variable constructed in Register() and not yet in any shared collection.
+                ": entry with { ActiveJobId = current.ActiveJobId });",
                 "ActiveJobId = dict.GetValueOrDefault(\"activeJobId\") is { Length: > 0 } aj ? aj : null,",
             },
 
