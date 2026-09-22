@@ -625,6 +625,43 @@ public sealed class WorkItemEndpointTests
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    /// <summary>
+    /// Characterization test for the Dispatched→Pending path in <c>RequeueWorkItem</c>.
+    /// Verifies that: (1) the item transitions to Pending, (2) RetryCount is incremented,
+    /// and (3) <c>K8sJobName</c> is cleared to null (the Dispatched-specific mutation).
+    ///
+    /// <para>
+    /// This test is the safety net for the AC3 loop refactoring. After collapsing the three
+    /// sequential <c>TransitionIfAsync</c> blocks into a loop, this test locks in the
+    /// conditional <c>K8sJobName = null</c> mutation that only applies to the Dispatched→Pending
+    /// path (the Failed and Cancelled paths do not clear <c>K8sJobName</c>).
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task RequeueWorkItem_DispatchedToPending_IncrementsRetryCount_ClearsK8sJobName()
+    {
+        // Arrange: seed a Dispatched item with a non-null K8sJobName and a known RetryCount.
+        var entity = SeedEntity(WorkItemStatus.Dispatched);
+        using (var db = _factory.CreateDbContext())
+        {
+            var item = await db.WorkItems.FindAsync(entity.Id);
+            item!.K8sJobName = "k8s-job-abc123";
+            item.RetryCount = 2;
+            await db.SaveChangesAsync();
+        }
+
+        // Act
+        var response = await _client.PostAsync($"/api/work-items/{entity.Id}/requeue", null);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Assert
+        using var verifyDb = _factory.CreateDbContext();
+        var updated = await verifyDb.WorkItems.FindAsync(entity.Id);
+        updated!.Status.Should().Be(WorkItemStatus.Pending, "Dispatched→Pending transition must succeed");
+        updated.RetryCount.Should().Be(3, "RetryCount must be incremented from 2 to 3");
+        updated.K8sJobName.Should().BeNull("K8sJobName must be cleared to null on Dispatched→Pending requeue");
+    }
+
     // ── RetryCount ────────────────────────────────────────────────────────────────
 
     [Fact]
