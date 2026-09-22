@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using CodingAgent.Api;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Kubernetes;
@@ -257,4 +258,178 @@ internal sealed class DispatchWorkItemService
     /// </summary>
     internal static IResult HandleUniqueViolationFallback()
         => TypedResults.Conflict("A live work item already exists for this issue.");
+
+    // ── Unique-violation idempotent-retry resolver ───────────────────────────────
+
+    /// <summary>
+    /// Handles the <c>catch (Exception ex) when (IsUniqueViolation(ex))</c> body that was
+    /// duplicated across <c>CreateWorkItem</c> and <c>DispatchWorkItem</c>.
+    ///
+    /// <para>
+    /// Opens a fresh <see cref="PipelineDbContext"/> (the original context is faulted after a
+    /// <see cref="Microsoft.EntityFrameworkCore.DbUpdateException"/>) and re-queries by
+    /// <paramref name="workItemId"/>:
+    /// <list type="bullet">
+    ///   <item>
+    ///     <c>isNewlyCreated=true</c> (<c>CreateWorkItem</c> path): checks whether any row with
+    ///     this ID exists. Returns 201 if the row exists (idempotent PK retry); otherwise
+    ///     delegates to <see cref="HandleUniqueViolationFallback"/> (partial unique-index conflict).
+    ///   </item>
+    ///   <item>
+    ///     <c>isNewlyCreated=false</c> (<c>DispatchWorkItem</c> path): projects the existing
+    ///     row's status. Returns 200 if active (<c>Dispatched</c> or <c>Running</c>); returns
+    ///     409 Conflict with a status message if non-active; otherwise delegates to
+    ///     <see cref="HandleUniqueViolationFallback"/>.
+    ///   </item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    /// <param name="dbFactory">
+    /// Factory used to open a fresh context. Must NOT be the faulted context from the caller's
+    /// <c>SaveChangesAsync</c> path.
+    /// </param>
+    /// <param name="workItemId">The ID of the work item that triggered the unique violation.</param>
+    /// <param name="isNewlyCreated">
+    /// <c>true</c> when called from <c>CreateWorkItem</c>; <c>false</c> when called from
+    /// <c>DispatchWorkItem</c>.
+    /// </param>
+    /// <param name="ct">Cancellation token.</param>
+    internal static async Task<IResult> HandleUniqueViolationAsync(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        Guid workItemId,
+        bool isNewlyCreated,
+        CancellationToken ct)
+    {
+        await using var freshDb = await dbFactory.CreateDbContextAsync(ct);
+
+        if (isNewlyCreated)
+        {
+            // CreateWorkItem path: existence check only.
+            // Idempotent PK retry — row already exists with this RunId → return 201 so
+            // EnsureSuccessStatusCode() on the retried response succeeds.
+            var exists = await freshDb.WorkItems.AnyAsync(w => w.Id == workItemId, ct);
+            if (exists)
+                return TypedResults.Created($"/api/work-items/{workItemId}", workItemId);
+        }
+        else
+        {
+            // DispatchWorkItem path: status-aware check.
+            // Return 200 only when the existing item is still active (Dispatched or Running).
+            // For terminal or Pending states, return 409 so the Scheduler re-queues the issue
+            // rather than treating it as dispatched — a Failed/Cancelled item has no K8s Job
+            // and returning 200 would cause DispatchOrchestrationService to swap the GitHub
+            // label to agent:in-progress with no running job.
+            var existing = await freshDb.WorkItems.AsNoTracking()
+                .Select(w => new { w.Id, w.Status })
+                .FirstOrDefaultAsync(w => w.Id == workItemId, ct);
+            if (existing is not null)
+            {
+                var isActive = existing.Status is WorkItemStatus.Dispatched or WorkItemStatus.Running;
+                if (isActive)
+                    return TypedResults.Ok(workItemId);
+                Log.Warning("DispatchWorkItemService.HandleUniqueViolationAsync: idempotent retry for {WorkItemId} but existing item is in non-active state {Status} — returning 409",
+                    workItemId, existing.Status);
+                return TypedResults.Conflict($"Work item {workItemId} already exists in non-active state {existing.Status}.");
+            }
+        }
+
+        // Postgres 23505: partial unique index on (IssueIdentifier, IssueProviderConfigId)
+        // for non-terminal statuses — a different run is already live for this issue.
+        return HandleUniqueViolationFallback();
+    }
+
+    // ── Dispatch lifecycle executor ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Encapsulates the <c>try/catch + !dispatched + 503</c> block that was duplicated inline
+    /// in both <c>DispatchPendingWorkItem</c> and <c>DispatchWorkItem</c>.
+    ///
+    /// <para>
+    /// Calls <see cref="DispatchLifecycleService.ExecuteDispatchLifecycleAsync"/> and returns:
+    /// <list type="bullet">
+    ///   <item>The result from <paramref name="onSuccess"/> when dispatch completes.</item>
+    ///   <item>503 Service Unavailable when the lifecycle returns without dispatching (e.g. PVC
+    ///     race, race-condition early exit) or when it throws a non-cancellation exception.</item>
+    /// </list>
+    /// </para>
+    ///
+    /// <para>
+    /// <strong>Caller responsibilities (preserved, not absorbed):</strong>
+    /// <list type="bullet">
+    ///   <item>
+    ///     <c>WorkDistributionTelemetry.PvcPoolExhaustions</c> must be emitted by the caller
+    ///     (<c>DispatchPendingWorkItem</c>) BEFORE this call, not inside this method.
+    ///   </item>
+    ///   <item>
+    ///     <paramref name="onDispatchFailure"/> must be <c>null</c> for
+    ///     <c>DispatchPendingWorkItem</c> (item started as Pending — no orphaned Dispatched row
+    ///     to clean up) and <c>SafelyCancelOrphanedDispatchedWorkItemAsync</c> for
+    ///     <c>DispatchWorkItem</c>.
+    ///   </item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    /// <param name="ctx">
+    /// Dispatch lifecycle context (built differently by each handler — not constructed here).
+    /// </param>
+    /// <param name="lifecycle">
+    /// The shared singleton <see cref="DispatchLifecycleService"/>. Passed in (not resolved
+    /// from DI) to preserve the <c>_pvcSelectLock</c> singleton semantics.
+    /// </param>
+    /// <param name="onDispatchFailure">
+    /// Called with <c>(workItemId, reason)</c> on the 503 path.
+    /// <c>null</c> on the <c>DispatchPendingWorkItem</c> path (no orphan cleanup needed).
+    /// <c>SafelyCancelOrphanedDispatchedWorkItemAsync</c> on the <c>DispatchWorkItem</c> path.
+    /// </param>
+    /// <param name="onSuccess">
+    /// Factory called with the dispatched work-item ID when dispatch succeeds.
+    /// Returns the <see cref="IResult"/> the endpoint returns to the client (e.g. 200 OK).
+    /// </param>
+    /// <param name="workItemId">Work-item GUID for log messages.</param>
+    /// <param name="callerName">Short caller name for log messages (e.g. <c>"DispatchWorkItem"</c>).</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The success <see cref="IResult"/> on success; 503 on failure.</returns>
+    internal async Task<IResult> RunDispatchLifecycleAsync(
+        DispatchLifecycleContext ctx,
+        DispatchLifecycleService lifecycle,
+        Func<Guid, string, Task>? onDispatchFailure,
+        Func<Guid, IResult> onSuccess,
+        Guid workItemId,
+        string callerName,
+        CancellationToken ct)
+    {
+        bool dispatched = false;
+        try
+        {
+            await lifecycle.ExecuteDispatchLifecycleAsync(
+                ctx,
+                prepareVariant: workItem => WorkItemDispatchEndpoints.PrepareDispatchVariantAsync(ctx.Db, workItem, ct),
+                onDispatchSuccess: _ =>
+                {
+                    dispatched = true;
+                    return Task.CompletedTask;
+                },
+                ct,
+                onFailure: null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Error(ex, "{CallerName}: unhandled exception during dispatch lifecycle for {WorkItemId}",
+                callerName, workItemId);
+            if (onDispatchFailure is not null)
+                await onDispatchFailure(workItemId, $"Dispatch lifecycle threw: {ex.Message}");
+            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        if (!dispatched)
+        {
+            Log.Warning("{CallerName}: lifecycle did not dispatch WorkItem {WorkItemId} (PVC race or K8s failure) — returning 503",
+                callerName, workItemId);
+            if (onDispatchFailure is not null)
+                await onDispatchFailure(workItemId, "Dispatch did not complete (PVC race or K8s failure)");
+            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        return onSuccess(workItemId);
+    }
 }

@@ -87,7 +87,7 @@ public interface IPipelineApiWorkItemClient : IWorkItemSweepClient
 
 /// <summary>
 /// Outcome of a <c>POST /api/work-items/{id}/dispatch</c> call.
-/// Used by <c>WorkItemDispatchPoller</c> in the Scheduler to distinguish permanent rejections
+/// Used by <c>WorkItemDispatchLoop</c> in the Scheduler to distinguish permanent rejections
 /// (stop dispatching this selector for the current cycle) from transient failures (retry next cycle).
 /// </summary>
 public enum DispatchPendingResult

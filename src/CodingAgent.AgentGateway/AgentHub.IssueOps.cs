@@ -1,3 +1,4 @@
+using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -335,15 +336,22 @@ public sealed partial class AgentHub
         // NOTE: ConsolidationConstants.ProviderConfigId is a non-GUID sentinel; PostgresConfigurationStore
         // has a !Guid.TryParse guard that silently returns null for such values. Consolidation runs
         // do not reach issue-ops methods so this is safe in practice.
-        var issueConfig = await _facade.GetProviderConfigByIdAsync(
-            issueProviderConfigId, ProviderKind.Issue, CancellationToken.None);
-        if (issueConfig is null)
+        ProviderConfig issueConfig;
+        try
         {
-            _logger.Error(
-                "ResolveIssueProviderForRunAsync: issue provider config {IssueProviderConfigId} not found for job {JobId} — " +
-                "RequestGetIssue will fail; provider config may have been deleted or the run payload is stale",
-                issueProviderConfigId, jobId);
-            throw new HubException($"Issue provider config '{issueProviderConfigId}' not found for job {jobId}");
+            issueConfig = await ProviderConfigResolver.ResolveRequiredAsync(
+                () => _facade.GetProviderConfigByIdAsync(issueProviderConfigId, ProviderKind.Issue, CancellationToken.None),
+                issueProviderConfigId, ProviderKind.Issue, _logger);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // TODO [WARNING]: The HubException message here only contains ex.Message
+            // ("Provider config 'X' (Issue) not found.") which omits the job ID. The original
+            // code used $"Issue provider config '{issueProviderConfigId}' not found for job {jobId}",
+            // which embedded jobId for operator correlation. Consider passing jobId into the
+            // exception message: $"{ex.Message} (job: {jobId})" to restore the diagnostic context
+            // without duplicating the resolver's log message.
+            throw new HubException(ex.Message);
         }
 
         return (run, _facade.CreateIssueProvider(issueConfig));

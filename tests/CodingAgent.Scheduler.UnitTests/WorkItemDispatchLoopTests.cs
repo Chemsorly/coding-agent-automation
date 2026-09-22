@@ -10,30 +10,30 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgent.Scheduler.UnitTests;
 
 /// <summary>
-/// Unit tests for <see cref="WorkItemDispatchPoller"/>.
+/// Unit tests for <see cref="WorkItemDispatchLoop"/>.
 /// Uses a fast tick interval (1ms) so the service fires within the test window.
 /// All tests are in the SchedulerTiming collection to serialize against other PeriodicTimer tests.
 /// </summary>
 [Collection("SchedulerTiming")]
-public sealed class WorkItemDispatchPollerTests
+public sealed class WorkItemDispatchLoopTests
 {
     private readonly Mock<IPipelineApiWorkItemClient> _mockClient;
     private readonly Mock<ILeaderGate> _mockLeaderGate;
     private readonly Mock<ILogger> _mockLogger;
 
-    public WorkItemDispatchPollerTests()
+    public WorkItemDispatchLoopTests()
     {
         _mockClient = new Mock<IPipelineApiWorkItemClient>();
         _mockLeaderGate = new Mock<ILeaderGate>();
         _mockLogger = new Mock<ILogger>();
-        _mockLogger.Setup(l => l.ForContext<WorkItemDispatchPoller>())
+        _mockLogger.Setup(l => l.ForContext<WorkItemDispatchLoop>())
             .Returns(_mockLogger.Object);
         _mockLogger.Setup(l => l.ForContext(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<bool>()))
             .Returns(_mockLogger.Object);
     }
 
-    private WorkItemDispatchPoller CreatePoller()
-        => new WorkItemDispatchPoller(
+    private WorkItemDispatchLoop CreatePoller()
+        => new WorkItemDispatchLoop(
             _mockClient.Object,
             _mockLeaderGate.Object,
             _mockLogger.Object,
@@ -53,7 +53,7 @@ public sealed class WorkItemDispatchPollerTests
             TimeoutSeconds = 3600
         };
 
-    private static async Task RunPollerForDurationAsync(WorkItemDispatchPoller poller, TimeSpan duration)
+    private static async Task RunPollerForDurationAsync(WorkItemDispatchLoop poller, TimeSpan duration)
     {
         using var cts = new CancellationTokenSource();
         await poller.StartAsync(cts.Token);
@@ -81,7 +81,7 @@ public sealed class WorkItemDispatchPollerTests
         // wall-clock timing flakiness: the loop-based approach (RunPollerForDurationAsync)
         // depends on the service starting and firing a tick within a fixed window, which can
         // fail under CI load. PollAndDispatchAsync executes exactly one poll cycle deterministically.
-        var poller = new WorkItemDispatchPoller(
+        var poller = new WorkItemDispatchLoop(
             _mockClient.Object,
             _mockLeaderGate.Object,
             _mockLogger.Object,
@@ -90,7 +90,7 @@ public sealed class WorkItemDispatchPollerTests
         poller.Dispose();
 
         _mockClient.Verify(c => c.DispatchPendingAsync(itemId, It.IsAny<CancellationToken>()),
-            Times.AtLeastOnce(), "leader poller must dispatch the pending item");
+            Times.AtLeastOnce(), "leader loop must dispatch the pending item");
     }
 
     [Fact]
@@ -108,12 +108,12 @@ public sealed class WorkItemDispatchPollerTests
     public async Task WhenNullGate_ShouldPollUnconditionally()
     {
         // null gate = dev / single-replica mode
-        // Set up mock before constructing poller to avoid unconfigured mock on first poll.
+        // Set up mock before constructing loop to avoid unconfigured mock on first poll.
         _mockClient
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
-        var poller = new WorkItemDispatchPoller(
+        var poller = new WorkItemDispatchLoop(
             _mockClient.Object,
             leaderGate: null,
             _mockLogger.Object,
@@ -183,7 +183,7 @@ public sealed class WorkItemDispatchPollerTests
 
         // Trigger a single poll cycle directly (not via BackgroundService loop)
         // so we can make deterministic assertions about call counts.
-        var poller = new WorkItemDispatchPoller(
+        var poller = new WorkItemDispatchLoop(
             _mockClient.Object,
             _mockLeaderGate.Object,
             _mockLogger.Object,
@@ -215,7 +215,7 @@ public sealed class WorkItemDispatchPollerTests
             .Setup(c => c.DispatchPendingAsync(id1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(DispatchPendingResult.Transient);
 
-        var poller = new WorkItemDispatchPoller(
+        var poller = new WorkItemDispatchLoop(
             _mockClient.Object,
             _mockLeaderGate.Object,
             _mockLogger.Object,
@@ -249,7 +249,7 @@ public sealed class WorkItemDispatchPollerTests
         // Call PollAndDispatchAsync directly to avoid wall-clock timing flakiness.
         // The BackgroundService loop path is tested by WhenLeaderAndPendingExists_ShouldCallDispatchEndpoint;
         // here we only need to verify the exception-handling branch.
-        var poller = new WorkItemDispatchPoller(
+        var poller = new WorkItemDispatchLoop(
             _mockClient.Object,
             _mockLeaderGate.Object,
             _mockLogger.Object,
@@ -278,7 +278,7 @@ public sealed class WorkItemDispatchPollerTests
             .Setup(c => c.DispatchPendingAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("server error"));
 
-        var poller = new WorkItemDispatchPoller(
+        var poller = new WorkItemDispatchLoop(
             _mockClient.Object,
             _mockLeaderGate.Object,
             _mockLogger.Object,

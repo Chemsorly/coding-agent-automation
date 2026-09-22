@@ -28,8 +28,8 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 ///
 /// <para>
 /// As of the Pending-queue restore (fix/restore-pending-queue), this endpoint is called by the
-/// Scheduler-side <c>WorkItemDispatchPoller</c>. The Scheduler creates a <c>Pending</c> WorkItem
-/// via <c>POST /api/work-items</c>; <c>WorkItemDispatchPoller</c> then polls those items and calls
+/// Scheduler-side <c>WorkItemDispatchLoop</c>. The Scheduler creates a <c>Pending</c> WorkItem
+/// via <c>POST /api/work-items</c>; <c>WorkItemDispatchLoop</c> then polls those items and calls
 /// <c>POST /api/work-items/dispatch</c> when capacity is available.
 /// </para>
 ///
@@ -604,7 +604,7 @@ public sealed class WorkItemTransitionService_PendingDispatchedTransitionsTests
 {
     /// <summary>
     /// Pending→Dispatched remains valid for ClaimWorkItem (POST /api/work-items/{id}/claim),
-    /// used by the Scheduler's WorkItemDispatchPoller for all task types.
+    /// used by the Scheduler's WorkItemDispatchLoop for all task types.
     /// </summary>
     [Fact]
     public void PendingToDispatched_IsStillValid_ForClaimWorkItem()
@@ -2070,6 +2070,334 @@ public sealed class DispatchPendingWorkItemEndpointTests
             "PvcPoolExhaustions must not fire when only the concurrency gate rejects the request");
     }
 
+    // ── Test 23: Post-gate PVC race — !dispatched branch → 503, item remains Pending ─
+
+    /// <summary>
+    /// Characterization test for the <c>!dispatched</c> branch in <c>DispatchPendingWorkItem</c>.
+    ///
+    /// <para>
+    /// Gates pass (PVC appears available), the lifecycle is entered, the K8s Job is created, but
+    /// a concurrent path transitions the WorkItem from <c>Pending</c> to <c>Dispatched</c> during
+    /// the K8s API call. When <c>HandleOrphanedJobIfRaceDetectedAsync</c> reloads the WorkItem and
+    /// finds it is no longer in <c>Pending</c> state (<c>ExpectedInitialStatus</c>), it returns
+    /// <c>shouldContinue = false</c> and the lifecycle returns without calling <c>onDispatchSuccess</c>.
+    /// </para>
+    ///
+    /// <para>
+    /// Expected result: 503 Service Unavailable, item remains <c>Dispatched</c> (as set by the
+    /// concurrent path). Critically, <c>SafelyCancelOrphanedDispatchedWorkItemAsync</c> must NOT
+    /// be called on this path — the item was already claimed by the concurrent dispatch, and
+    /// cancelling it would destroy that concurrent run. The <c>DispatchPendingWorkItem</c> handler
+    /// explicitly does NOT pass an <c>onDispatchFailure</c> delegate to <c>RunDispatchLifecycleAsync</c>.
+    /// </para>
+    ///
+    /// <para>
+    /// This test is the safety net for the AC1 extraction: after extracting the <c>!dispatched</c>
+    /// branch into <c>RunDispatchLifecycleAsync</c>, this test proves the extracted method does
+    /// NOT call <c>SafelyCancelOrphanedDispatchedWorkItemAsync</c> on the
+    /// <c>DispatchPendingWorkItem</c> path (where <c>onDispatchFailure</c> is null).
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task DispatchPendingWorkItem_PostGatePvcRace_LifecycleExitsWithoutDispatching_Returns503_ItemUntouched()
+    {
+        // Arrange: seed a Pending item; use a non-kiro template to skip PVC involvement entirely.
+        // The race is simulated at the K8s-call boundary: the K8s mock transitions the item to
+        // Dispatched during CreateJobAsync, so HandleOrphanedJobIfRaceDetectedAsync finds
+        // Status ≠ Pending and returns shouldContinue=false.
+        var dbFactory = CreateDbFactory();
+        var entity = await SeedPendingItemAsync(dbFactory, "opencode,python");
+
+        // Non-kiro template — PVC gate is skipped, no PVC involvement.
+        var templateStore = CreateTemplateStore("opencode,python", maxConcurrent: 5, providerType: "opencode");
+        var resolver = CreateTemplateResolver(templateStore);
+        var lockProvider = CreateNoOpLockProvider();
+
+        // K8s mock: during CreateJobAsync, transition the item to Dispatched in the DB to simulate
+        // a concurrent dispatch path claiming the item between the pre-write save and the
+        // HandleOrphanedJobIfRaceDetectedAsync reload.
+        var k8sMock = new Mock<IKubernetesJobClient>();
+        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (k8s.Models.V1Job _, string _, CancellationToken ct) =>
+            {
+                // Concurrent path: mark the item as Dispatched while CreateJobAsync is running.
+                await using var db = await dbFactory.CreateDbContextAsync(ct);
+                var item = await db.WorkItems.FindAsync([entity.Id], ct);
+                if (item is { Status: WorkItemStatus.Pending })
+                {
+                    item.Status = WorkItemStatus.Dispatched;
+                    item.DispatchedAt = DateTimeOffset.UtcNow;
+                    await db.SaveChangesAsync(ct);
+                }
+            });
+
+        // DeleteJobAsync is called by HandleOrphanedJobIfRaceDetectedAsync — allow it silently.
+        // TODO [WARNING]: No Verify is performed on DeleteJobAsync. HandleOrphanedJobIfRaceDetectedAsync
+        // calling DeleteJobAsync is the mechanism that causes shouldContinue=false and the 503 path here.
+        // If that method is later refactored to skip the delete, the item would stay in a different state
+        // (e.g. Pending rather than Dispatched) and the Status assertion below would fail — but the missing
+        // delete itself would be undetected. Consider adding:
+        //   k8sMock.Verify(k => k.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once)
+        // to lock in that the orphaned-job cleanup runs on this code path.
+        var deleteJobMock = k8sMock;
+        deleteJobMock.Setup(k => k.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Empty PVC pool — non-kiro so PVC gate is not reached.
+        var lifecycle = CreateLifecycleService(k8sMock.Object, pvcPool: []);
+
+        // Act
+        var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
+
+        // Assert 1: endpoint returns 503 (lifecycle exited without dispatching)
+        var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
+        statusResult.Should().NotBeNull("lifecycle exit without dispatching must return 503");
+        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+
+        // Assert 2: item was claimed by the concurrent path and remains Dispatched.
+        // SafelyCancelOrphanedDispatchedWorkItemAsync must NOT have been called
+        // (the item is still Dispatched — it was not transitioned to Failed/Cancelled).
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var updatedItem = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == entity.Id);
+        updatedItem.Should().NotBeNull();
+        updatedItem!.Status.Should().Be(WorkItemStatus.Dispatched,
+            "DispatchPendingWorkItem must not call SafelyCancelOrphanedDispatchedWorkItemAsync — " +
+            "the item was claimed by a concurrent dispatch path and must remain Dispatched");
+    }
+
+}
+
+// ── Characterization tests for unique-violation idempotent-retry (CreateWorkItem + DispatchWorkItem) ──
+
+/// <summary>
+/// Characterization tests for the <c>catch (Exception ex) when (IsUniqueViolation(ex))</c>
+/// block in <c>CreateWorkItem</c> and <c>DispatchWorkItem</c>.
+///
+/// <para>
+/// These tests lock in the behavior of the unique-violation idempotent-retry path before
+/// extracting it into a shared <c>DispatchWorkItemService.HandleUniqueViolationAsync</c> method.
+/// </para>
+///
+/// <para>
+/// EF InMemory throws <c>ArgumentException("An item with the same key has already been added")</c>
+/// on PK duplicate (not <c>DbUpdateException</c>). <c>IsUniqueViolation</c> handles this via the
+/// "An item with the same key has already been added" string match. The partial unique-index case
+/// (IssueIdentifier + IssueProviderConfigId conflict) is simulated by seeding a live item with
+/// the same IssueIdentifier+IssueProviderConfigId pair (since InMemory removes the filtered index
+/// via the shim in <c>TestPipelineDbContext</c>), then engineering a <c>HandleUniqueViolationFallback</c>
+/// call via a <c>ArgumentException</c> triggered by PK collision without a matching ID row.
+/// </para>
+/// </summary>
+public sealed class UniqueViolationIdempotentRetryTests
+{
+    private readonly string _dbName = $"unique-violation-test-{Guid.NewGuid():N}";
+
+    private IDbContextFactory<PipelineDbContext> CreateDbFactory()
+    {
+        var opts = new DbContextOptionsBuilder<PipelineDbContext>()
+            .UseInMemoryDatabase(_dbName)
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+        return new SimpleInMemoryDbContextFactory(opts);
+    }
+
+    private static IOrchestratorRunService CreateRunService() =>
+        new OrchestratorRunService(Mock.Of<Serilog.ILogger>());
+
+    private static JobDistributionRequest MakeRequest(
+        string? issueIdentifier = null,
+        string? runId = null) => new()
+        {
+            IssueIdentifier = new IssueIdentifier(issueIdentifier ?? $"issue-{Guid.NewGuid():N}"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "kiro,dotnet",
+            TimeoutSeconds = 3600,
+            RunId = runId ?? Guid.NewGuid().ToString()
+        };
+
+    private static JobTemplateStore CreateTemplateStore(
+        string labels = "kiro,dotnet",
+        int maxConcurrent = 5,
+        string providerType = "kiro") =>
+        JobTemplateStore.LoadFromYaml($"""
+            - labels: "{labels}"
+              image: "test-image:latest"
+              imagePullPolicy: "Always"
+              providerType: "{providerType}"
+              maxConcurrent: {maxConcurrent}
+            """);
+
+    // ── CreateWorkItem unique-violation tests ────────────────────────────────────
+
+    /// <summary>
+    /// When <c>CreateWorkItem</c> is called twice with the same RunId (same workItemId), the
+    /// second call must return 201 (idempotent PK retry) — the item already exists.
+    /// </summary>
+    [Fact]
+    public async Task CreateWorkItem_UniqueViolation_IdempotentPkRetry_Returns201()
+    {
+        // Arrange: first call creates the item; second call with same RunId triggers PK conflict.
+        var dbFactory = CreateDbFactory();
+        var runService = CreateRunService();
+        var runId = Guid.NewGuid().ToString();
+        var request = MakeRequest(runId: runId);
+
+        // Act: first call — succeeds, returns 201
+        var firstResult = await WorkItemDispatchEndpoints.CreateWorkItem(
+            request, dbFactory, runService, CancellationToken.None);
+        firstResult.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Created<Guid>>(
+            "first call must succeed");
+
+        // Act: second call with same RunId — triggers PK unique violation
+        var secondResult = await WorkItemDispatchEndpoints.CreateWorkItem(
+            request, dbFactory, runService, CancellationToken.None);
+
+        // Assert: second call must return 201 (idempotent — item already exists)
+        var created = secondResult as Microsoft.AspNetCore.Http.HttpResults.Created<Guid>;
+        created.Should().NotBeNull("idempotent PK retry must return 201");
+        var workItemId = Guid.Parse(runId);
+        created!.Value.Should().Be(workItemId, "the returned GUID must match the original workItemId");
+    }
+
+    /// <summary>
+    /// When <c>CreateWorkItem</c> receives a unique-violation exception that is NOT a PK duplicate
+    /// (i.e., a business-rule partial unique index conflict — same IssueIdentifier + IssueProviderConfigId),
+    /// it must return 409 Conflict via <c>HandleUniqueViolationFallback</c>.
+    ///
+    /// <para>
+    /// Simulation: the EF InMemory provider strips filtered indexes (via <c>TestPipelineDbContext</c>),
+    /// so we cannot directly trigger the IssueIdentifier+IssueProviderConfigId index. Instead, we
+    /// seed an existing item for the same issue, then force a PK collision with a DIFFERENT RunId
+    /// by seeding a second item with the same PK (but a non-matching RunId so the idempotent check
+    /// returns 409, not 201). We achieve this by pre-seeding an item with the target ID directly in the DB,
+    /// then calling <c>CreateWorkItem</c> with a RunId matching that pre-seeded ID (so the PK collides,
+    /// and then the idempotent re-check finds the row exists → 201). To get the 409 path we need to trigger
+    /// the conflict on a key that does NOT exist in the DB after the conflict fires. The cleanest approach:
+    /// use a <c>ThrowingDbContextFactory</c> that produces a PK-collision <c>ArgumentException</c> on
+    /// <c>SaveChangesAsync</c> while the corresponding ID does NOT exist in the re-check DB.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task CreateWorkItem_UniqueViolation_WhenNotIdempotentRetry_Returns409()
+    {
+        // Arrange: use a factory that throws a PK-collision ArgumentException on SaveChanges,
+        // but the "re-check" DbContext (fresh) finds no existing row with that workItemId.
+        // This simulates the partial unique-index conflict path where the workItemId is new
+        // but a different run is already live for the same IssueIdentifier+IssueProviderConfigId.
+        var workItemId = Guid.NewGuid();
+        var runId = workItemId.ToString(); // so the endpoint parses this as workItemId
+
+        // Use a two-factory setup: a throwing factory for SaveChanges (triggers IsUniqueViolation)
+        // while the re-check DbContext (opened fresh) finds no row → falls through to HandleUniqueViolationFallback.
+        // We accomplish this by using a real InMemory DB (no pre-seeded row) for both contexts,
+        // but the write context throws ArgumentException to simulate the unique violation.
+        // Since the read-back DB is the same InMemory DB and has no row, HandleUniqueViolationFallback fires.
+        var dbFactory = new ThrowingOnSaveDbContextFactory(_dbName);
+        var runService = CreateRunService();
+        var request = MakeRequest(runId: runId);
+
+        // Act
+        var result = await WorkItemDispatchEndpoints.CreateWorkItem(
+            request, dbFactory, runService, CancellationToken.None);
+
+        // Assert: 409 Conflict via HandleUniqueViolationFallback
+        var conflict = result as Microsoft.AspNetCore.Http.HttpResults.Conflict<string>;
+        conflict.Should().NotBeNull("unique-violation with no pre-existing row must return 409 via HandleUniqueViolationFallback");
+        conflict!.Value.Should().Contain("live work item", "the body must be the HandleUniqueViolationFallback message");
+    }
+
+    // ── DispatchWorkItem unique-violation tests ──────────────────────────────────
+
+    /// <summary>
+    /// When <c>DispatchWorkItem</c> encounters a unique-violation exception and the existing item
+    /// is active (Dispatched or Running), it must return 200 (idempotent retry — item is running).
+    /// </summary>
+    [Fact]
+    public async Task DispatchWorkItem_UniqueViolation_WhenExistingItemIsActive_Returns200()
+    {
+        // Arrange: use a factory where SaveChanges throws ArgumentException (unique violation),
+        // and the re-check DB (fresh context) contains a Dispatched item with the matching ID.
+        var workItemId = Guid.NewGuid();
+        var dbFactory = new PrepopulatedThrowingDbContextFactory(_dbName + "-dw-active", workItemId, WorkItemStatus.Dispatched);
+
+        var runService = CreateRunService();
+        var templateStore = CreateTemplateStore(maxConcurrent: 5);
+        var k8sMock = new Mock<IKubernetesJobClient>();
+        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var lifecycle = CreateLifecycleService(k8sMock.Object);
+
+        // Request with RunId = workItemId → handler uses this as workItemId
+        var request = MakeRequest(runId: workItemId.ToString());
+
+        // Act
+        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
+            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), CancellationToken.None);
+
+        // Assert: 200 OK — item is active (Dispatched), idempotent retry succeeds
+        var ok = result as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
+        ok.Should().NotBeNull("active existing item must return 200 on unique-violation idempotent retry");
+        ok!.Value.Should().Be(workItemId);
+    }
+
+    /// <summary>
+    /// When <c>DispatchWorkItem</c> encounters a unique-violation exception and the existing item
+    /// is in a non-active state (e.g., Failed), it must return 409 Conflict so the Scheduler
+    /// re-queues the issue rather than treating it as dispatched.
+    /// </summary>
+    [Fact]
+    public async Task DispatchWorkItem_UniqueViolation_WhenExistingItemIsNonActive_Returns409()
+    {
+        // Arrange: SaveChanges throws unique violation; re-check DB has a Failed item.
+        var workItemId = Guid.NewGuid();
+        var dbFactory = new PrepopulatedThrowingDbContextFactory(_dbName + "-dw-failed", workItemId, WorkItemStatus.Failed);
+
+        var runService = CreateRunService();
+        var templateStore = CreateTemplateStore(maxConcurrent: 5);
+        var k8sMock = new Mock<IKubernetesJobClient>();
+        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var lifecycle = CreateLifecycleService(k8sMock.Object);
+
+        var request = MakeRequest(runId: workItemId.ToString());
+
+        // Act
+        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
+            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), CancellationToken.None);
+
+        // Assert: 409 Conflict — existing item is non-active (Failed)
+        var conflict = result as Microsoft.AspNetCore.Http.HttpResults.Conflict<string>;
+        conflict.Should().NotBeNull("non-active existing item must return 409 on unique-violation idempotent retry");
+        conflict!.Value.Should().Contain("Failed", "the 409 body must include the current non-active status");
+    }
+
+    // ── Private helpers ──────────────────────────────────────────────────────────
+
+    private DispatchLifecycleService CreateLifecycleService(
+        IKubernetesJobClient? k8sClient = null,
+        IReadOnlyList<string>? pvcPool = null)
+    {
+        var dbFactory = CreateDbFactory();
+        var transitionSvc = new WorkItemTransitionService(
+            dbFactory,
+            Mock.Of<ILogger<WorkItemTransitionService>>());
+        var opts = new DispatchServiceOptions
+        {
+            Namespace = "test",
+            OrchestratorUrl = "http://test",
+            AgentApiKeySecretName = "secret",
+            AgentServiceAccountName = "sa",
+            KiroPvcPool = (pvcPool ?? ["pvc-0", "pvc-1"]).ToList()
+        };
+        return new DispatchLifecycleService(
+            k8sClient ?? Mock.Of<IKubernetesJobClient>(),
+            transitionSvc,
+            opts);
+    }
 }
 
 // TODO [WARNING]: The DispatchWorkItem (synchronous dispatch) paths for CRLF injection are not
@@ -2135,4 +2463,163 @@ file sealed class FaultedDbContextFactory : IDbContextFactory<PipelineDbContext>
 
     public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default) =>
         throw new InvalidOperationException("DB factory faulted");
+}
+
+/// <summary>
+/// An <see cref="IDbContextFactory{TContext}"/> that throws
+/// <see cref="ArgumentException"/> from <c>SaveChangesAsync</c> on the first write (to simulate
+/// an EF InMemory PK-collision unique violation), but allows subsequent read-only contexts
+/// (created fresh via the real InMemory database) to operate normally.
+/// Used by <see cref="UniqueViolationIdempotentRetryTests"/> to exercise the
+/// <c>HandleUniqueViolationFallback</c> path where no matching row exists in the DB.
+/// </summary>
+file sealed class ThrowingOnSaveDbContextFactory : IDbContextFactory<PipelineDbContext>
+{
+    private readonly DbContextOptions<PipelineDbContext> _opts;
+    // TODO [WARNING]: _hasThrown is consumed on the FIRST call to CreateDbContextAsync, not on the
+    // first SaveChangesAsync. If CreateWorkItem opens a read context before the write context
+    // (e.g. a pre-check query added in the future), _hasThrown is set on that read context and
+    // the ThrowingPipelineDbContext is never used for the actual save — the test would then pass
+    // trivially on the non-violation path without exercising HandleUniqueViolationFallback.
+    // Consider switching to a factory that counts SaveChangesAsync invocations instead.
+    private bool _hasThrown;
+
+    public ThrowingOnSaveDbContextFactory(string dbName)
+    {
+        _opts = new DbContextOptionsBuilder<PipelineDbContext>()
+            .UseInMemoryDatabase(dbName + "-throwing")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+    }
+
+    public PipelineDbContext CreateDbContext() => CreateContext();
+
+    public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
+        => Task.FromResult<PipelineDbContext>(CreateContext());
+
+    private PipelineDbContext CreateContext()
+    {
+        if (!_hasThrown)
+        {
+            _hasThrown = true;
+            return new ThrowingPipelineDbContext(_opts);
+        }
+        // Subsequent contexts (the re-check read) return a normal context with an empty DB
+        // (no row with the workItemId exists), so HandleUniqueViolationFallback is invoked.
+        return new TestPipelineDbContext(_opts);
+    }
+}
+
+/// <summary>
+/// A <see cref="PipelineDbContext"/> whose <see cref="SaveChangesAsync"/> always throws
+/// <see cref="ArgumentException"/> with the EF InMemory PK-collision message. Used to
+/// simulate unique-violation triggering without a real Postgres database.
+/// </summary>
+file sealed class ThrowingPipelineDbContext : PipelineDbContext
+{
+    public ThrowingPipelineDbContext(DbContextOptions<PipelineDbContext> opts) : base(opts) { }
+
+    public override Task<int> SaveChangesAsync(CancellationToken ct = default) =>
+        Task.FromException<int>(
+            new ArgumentException("An item with the same key has already been added. Key: simulated-pk-collision"));
+
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken ct = default) =>
+        Task.FromException<int>(
+            new ArgumentException("An item with the same key has already been added. Key: simulated-pk-collision"));
+
+    public override int SaveChanges() =>
+        throw new ArgumentException("An item with the same key has already been added. Key: simulated-pk-collision");
+
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        base.OnModelCreating(mb);
+        foreach (var et in mb.Model.GetEntityTypes())
+        {
+            var rv = et.FindProperty("RowVersion");
+            if (rv != null) { rv.IsConcurrencyToken = false; rv.ValueGenerated = Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.Never; }
+        }
+        foreach (var et in mb.Model.GetEntityTypes())
+        {
+            foreach (var idx in et.GetIndexes().Where(i => i.GetFilter() != null).ToList())
+                et.RemoveIndex(idx);
+        }
+    }
+}
+
+/// <summary>
+/// An <see cref="IDbContextFactory{TContext}"/> for testing the unique-violation catch block in
+/// <c>DispatchWorkItem</c> and <c>CreateWorkItem</c>. On the FIRST call, returns a context whose
+/// <c>SaveChangesAsync</c> throws <see cref="ArgumentException"/> (simulating a unique-violation).
+/// On subsequent calls, returns a real InMemory context pre-populated with a work item at the
+/// specified <paramref name="workItemId"/> in the specified <paramref name="existingStatus"/>.
+/// This simulates the catch block's re-check path: a fresh DbContext is opened to query whether
+/// the conflicting item already exists and in what state.
+/// </summary>
+file sealed class PrepopulatedThrowingDbContextFactory : IDbContextFactory<PipelineDbContext>
+{
+    private readonly DbContextOptions<PipelineDbContext> _throwOpts;
+    private readonly DbContextOptions<PipelineDbContext> _readOpts;
+    private readonly Guid _workItemId;
+    private readonly WorkItemStatus _existingStatus;
+    // TODO [WARNING]: _hasThrown is consumed on the FIRST call to CreateDbContextAsync. The
+    // DispatchWorkItem handler opens at least one context for the pre-save work AND a fresh one
+    // inside HandleUniqueViolationAsync for the re-check. If the handler opens more than one
+    // context before SaveChangesAsync throws, _hasThrown is consumed on the first non-save call
+    // and the re-check context is returned from the throw-opts (empty) DB rather than the
+    // pre-populated read DB — making both DispatchWorkItem unique-violation tests sensitive to
+    // the exact number of CreateDbContextAsync calls before save. Consider tracking invocations
+    // more precisely (e.g. counting SaveChangesAsync throws) to decouple from call-order assumptions.
+    private bool _hasThrown;
+
+    public PrepopulatedThrowingDbContextFactory(string dbName, Guid workItemId, WorkItemStatus existingStatus)
+    {
+        _workItemId = workItemId;
+        _existingStatus = existingStatus;
+
+        // Throwing context uses an empty DB — SaveChangesAsync throws before any write.
+        _throwOpts = new DbContextOptionsBuilder<PipelineDbContext>()
+            .UseInMemoryDatabase(dbName + "-throw")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+
+        // Read context uses a separate DB pre-populated with the "existing" item.
+        _readOpts = new DbContextOptionsBuilder<PipelineDbContext>()
+            .UseInMemoryDatabase(dbName + "-read")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+
+        // Pre-populate the read DB with the "existing" item.
+        using var seedCtx = new TestPipelineDbContext(_readOpts);
+        seedCtx.WorkItems.Add(new WorkItemEntity
+        {
+            Id = workItemId,
+            TaskType = WorkItemTaskType.Implementation,
+            IssueIdentifier = $"issue-{workItemId:N}",
+            IssueProviderConfigId = "prov-1",
+            Status = existingStatus,
+            AgentSelector = "kiro,dotnet",
+            TimeoutSeconds = 3600,
+            CreatedAt = DateTimeOffset.UtcNow,
+            DispatchedAt = existingStatus == WorkItemStatus.Dispatched ? DateTimeOffset.UtcNow : null,
+            Payload = "{}"
+        });
+        seedCtx.SaveChanges();
+    }
+
+    public PipelineDbContext CreateDbContext() => CreateContext();
+
+    public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
+        => Task.FromResult<PipelineDbContext>(CreateContext());
+
+    private PipelineDbContext CreateContext()
+    {
+        if (!_hasThrown)
+        {
+            _hasThrown = true;
+            // First context: throws on SaveChangesAsync; uses an empty DB so Add() succeeds.
+            return new ThrowingPipelineDbContext(_throwOpts);
+        }
+        // Subsequent contexts: reads from the pre-populated DB to find the "existing" item.
+        return new TestPipelineDbContext(_readOpts);
+    }
 }

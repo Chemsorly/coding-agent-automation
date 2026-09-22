@@ -14,7 +14,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 <!-- Session: 19 | Last run: 2026-08-31 | Decisions added: 6 (DistributedAgentRegistry cache staleness, Payload null-discriminator, PostPrCiDuration metric, live K8s dual ListJobsAsync correctness, AssignmentEnricher 503 semantics, traceparent bidirectional); issues created: #2219/#2220/#2221/#2222/#2223 -->
 <!-- Session: 20 | Last run: 2026-09-06 | Decisions added: 6 (SecurityScan zombie removal, dead parser removal, HousekeepingTriggerCooldown config, cleanup prompt budget, RetryErrors transient-enqueue, PostPrCiDuration panel still pending); issues created: #2400/#2401 -->
 <!-- Session: 21 | Last run: 2026-09-06 | Decisions added: 6 (AgentTimeout chain verified, FeedbackTimeoutSeconds stale log #2403, PostPrCiDuration panel added, HousekeepingTriggerCooldown #2404, TimeoutSeconds zero-sentinel #2405, Q6 constructor injection pattern); issues created: #2403/#2404/#2405; Grafana panel 57 added -->
-<!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService razor component decomposition, PostPrCiDuration Grafana panels after #2220 lands, Faro CSP script-src when CSP added, TimeoutSeconds end-to-end after #2179 -->
+<!-- Session: 22 | Last run: 2026-09-21 | Decisions added: 6 (catch(Exception) MarkCompleted gap #2851, DirectoryNotFoundException fallback no-opinion, ProviderConfigId Phase 2 no-opinion, AgentWorkspacePaths → Contracts #2852, ReconcileOrphanedPipelineRuns load-all no-opinion, OCE swallowing no-opinion); issues created: #2851/#2852 -->
+<!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService razor component decomposition, Faro CSP script-src when CSP added, TimeoutSeconds end-to-end after #2179 -->
 
 ---
 
@@ -141,7 +142,8 @@ Leader election continues to handle multi-replica safety. The split was driven b
 
 **Context — regression being corrected:** #2322/#2323 relocated dispatch out of the JobController into the API's `WorkItemDispatchService`, registered on all replicas via `AlwaysLeaderService`. Because each replica builds its own concurrency snapshot from the DB, per-selector `maxConcurrent` is not enforced across replicas — observed live: 4 active pods for a cap of 3. This contradicts two recorded principles: "PipelineLoopService: full loop must be leader-gated in multi-replica deployments" (loops fire concurrently on non-gated replicas) and "the Scheduler is the designated owner of all scheduled/periodic background work; putting periodic logic in the API contradicts the Scheduler's role" (DatabaseMaintenanceService, Spec 047). `AlwaysLeaderService`'s own doc calls the gap "an accepted trade-off for the single-process deployment target" — but production runs the API multi-replica.
 
-**Status (2026-09-13):** Complete — epic #2541 fully resolved. `WorkItemDispatchService` and `AlwaysLeaderService` removed from the API in issue #2547. The `WorkItemDispatchPoller` in the Scheduler is now the sole dispatcher. The `WorkDistribution:Dispatch:Enabled` flag and its Helm wiring have been removed; `Scheduler:Dispatch:Enabled` remains the control flag.
+**Status (2026-09-13):** Complete — epic #2541 fully resolved. `WorkItemDispatchService` and `AlwaysLeaderService` removed from the API in issue #2547. The `WorkItemDispatchPoller` in the Scheduler is now the sole dispatcher — renamed to `WorkItemDispatchLoop` in issue #2844. The `WorkDistribution:Dispatch:Enabled` flag and its Helm wiring have been removed; `Scheduler:Dispatch:Enabled` remains the control flag.
+<!-- TODO: [WARNING] Stale class name above — WorkItemDispatchPoller was renamed to WorkItemDispatchLoop (issue #2844). Update the historical note when this document is next revised. -->
 
 **Reassess when:** No longer needs reassessment — the correct architecture is in place.
 
@@ -475,7 +477,86 @@ The practical impact is low: draft PRs are rare (require retry exhaustion), and 
 
 ---
 
-### AgentTimeout end-to-end: chain verified complete (session 21)
+### AgentWorkspacePaths: belongs in CodingAgent.Contracts — #2852 tracks move
+
+**Date:** 2026-09-21
+**Category:** architecture
+
+**Decision:** `AgentWorkspacePaths` must live in `CodingAgent.Contracts` (not `CodingAgent.Pipeline`) so that all assemblies — including `CodingAgent.Infrastructure.Providers`, `CodingAgent.Contracts` itself, and `KiroCliLib` — can reference workspace path constants without an upward dependency on `CodingAgent.Pipeline`. Five hardcoded `.agent`/`.brain` string literals remain across lower-layer assemblies because they currently cannot reference `AgentWorkspacePaths`. Once moved, all five must be replaced with the centralized constants. No new path constants are in scope; only the namespace/assembly changes.
+
+**Currently broken** — five remaining literals:
+- `KiroCliLib/Core/ProcessWrapper.cs` ~L62 — `.agent` for prompt temp files
+- `CodingAgent.Agent/Executors/RefactoringExecutor.cs` ~L93 — `.brain` for brain clone path
+- `CodingAgent.Pipeline/Services/Steps/EnsureAgentGitignoreStep.cs` ~L25 — `.agent/` in gitignore entry
+- `CodingAgent.Infrastructure.Providers/Git/RepositoryGitOperations.cs` ~L132 — `new[] { ".agent", ".brain" }` git unstage blacklist
+- `CodingAgent.Contracts/Models/PipelineConfiguration.cs` ~L294 — `new[] { ".agent", ".brain" }` default `BlacklistedPaths`
+
+**Context:** `AgentWorkspacePaths` was placed in `CodingAgent.Pipeline` (#2797) because that was the first assembly requiring centralization. The assembly boundary prevents lower-layer assemblies from consuming it. `CodingAgent.Contracts` has no layer-boundary restrictions and is already referenced by all assemblies in the dependency graph.
+
+**Alternatives considered:** Duplicate constants in each assembly (rejected — defeats the purpose of centralization), leave literals as-is (rejected — operator confirmed all path constants should have a single global home).
+
+**Reassess when:** Never for the principle. If a new workspace path constant is needed, it goes in `AgentWorkspacePaths` in `CodingAgent.Contracts` — not as a literal at the call site.
+
+---
+
+### catch(Exception) terminal path: missing run.MarkCompleted() — #2851 tracks fix
+
+**Date:** 2026-09-21
+**Category:** architecture
+
+**Decision:** `QualityGateExecutor.ProceedToQualityGatesAsync` `catch (Exception ex)` handler does not call `run.MarkCompleted()` before `AddRunToHistoryAsync`. This leaves `CompletedAt = null` on exception-terminated runs, producing ghost `PipelineRun` rows that accumulate permanently because retention sweeps gate on `CompletedAt IS NOT NULL`. `DatabaseMaintenanceService.ReconcileOrphanedPipelineRunsAsync` is the compensating sweep; its code comment explicitly names "the separate terminal gap in QualityGateExecutor.RetryLoop." The fix is a single `run.MarkCompleted()` call before `TransitionTo(PipelineStep.Failed)`, matching the `OperationCanceledException` handler directly above.
+
+**Status:** Currently broken — #2851 tracks the one-line fix.
+
+**Context:** Same root cause as #2778 (ConflictRestart missing `MarkCompleted`, fixed in #2789). The OCE handler in the same method was already correct; only the general `Exception` handler was missed.
+
+**Reassess when:** Never once #2851 is fixed. Pattern going forward: every `catch` block that calls `AddRunToHistoryAsync` on a terminal step MUST also call `run.MarkCompleted()` first.
+
+---
+
+### GeneratePrDescriptionAsync FileNotFoundException fallback: follow best practices
+
+**Date:** 2026-09-21
+**Category:** architecture
+
+**Decision:** No strong opinion on whether `GeneratePrDescriptionAsync` catches `FileNotFoundException` only or broadens to `IOException`/`DirectoryNotFoundException` to handle a missing `.agent/` directory. The fallback to `OutputLines` is non-fatal best-effort enrichment. Agents should follow the standard .NET pattern: catch `IOException` broadly when directory absence is possible, or add an explicit `DirectoryNotFoundException` sibling catch when the intent needs to be clear. Either is acceptable; the existing TODO in the file documents the gap.
+
+**Reassess when:** A `DirectoryNotFoundException` is observed in production logs from this path.
+
+---
+
+### ProviderConfigId Phase 2: no strong opinion — follow best practices
+
+**Date:** 2026-09-21
+**Category:** architecture
+
+**Decision:** No strong opinion on whether Phase 2 of the `ProviderConfigId` value-type migration (removing the reverse implicit conversion and pushing the type into wire/DB boundaries) is pursued or deferred. Both outcomes are acceptable. The Phase 1 implicit conversion (`string → ProviderConfigId`) protects adjacent-parameter signatures. If a natural opportunity arises to remove the reverse implicit and update `PipelineRun`, `JobDistributionRequest`, and wire-format DTOs, agents should proceed following the same incremental approach used for `IssueIdentifier`. If no opportunity arises, the implicit stays indefinitely.
+
+**Reassess when:** A transposition bug is traced to an unguarded string parameter that Phase 2 would have caught.
+
+---
+
+### ReconcileOrphanedPipelineRunsAsync: load-all vs. ExecuteUpdateAsync — follow best practices
+
+**Date:** 2026-09-21
+**Category:** architecture
+
+**Decision:** No strong opinion on whether `DatabaseMaintenanceService.ReconcileOrphanedPipelineRunsAsync` is migrated from its current load-all-then-update pattern to `ExecuteUpdateAsync` (set-based SQL, consistent with all other sweeps in the same service). Both are correct. Agents should follow the established pattern in the service: `ExecuteUpdateAsync` is the canonical approach and should be used if this method is touched. The inconsistency is documented in the existing code comment.
+
+**Reassess when:** Ghost-run accumulation rate grows measurably (indicating the root-cause fixes aren't sufficient and the sweep's performance becomes relevant).
+
+---
+
+### ReconcileOrphanedPipelineRunsAsync OCE swallowing: follow best practices
+
+**Date:** 2026-09-21
+**Category:** architecture
+
+**Decision:** No strong opinion on whether the `catch (OperationCanceledException) { return 0; }` in `ReconcileOrphanedPipelineRunsAsync` is changed to re-throw (consistent with all other sweeps in `RunSweepAsync`). Agents should follow the established pattern: re-throwing OCE is the canonical behavior in this service and should be applied if this method is touched. The inconsistency is documented in the existing code comment and the unit test `ReconcileOrphanedPipelineRuns_Cancellation_DoesNotThrow` must be updated if the behavior changes.
+
+**Reassess when:** Never specifically. The canonical pattern is re-throw; apply it on next touch.
+
+---
 
 **Date:** 2026-09-06
 **Category:** architecture
@@ -1757,7 +1838,12 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 - "WorkItemEntity.TimeoutSeconds zero-sentinel → #2405" constrains "AgentTimeout end-to-end: chain verified" (removal gated on DB migration)
 - "FeedbackTimeoutSeconds stale log → #2403" scoped by "FeedbackTimeoutSeconds: must be PipelineConfiguration field" (promotion fixed the timeout logic; log message was missed)
 - "PostPrCiDuration Grafana panel: added session 21" resolves "PostPrCiDuration Grafana panel: confirmed pending session 20"
-### Coverage Gaps (auto-detected)
+- "AgentWorkspacePaths → CodingAgent.Contracts (#2852)" scoped by "Filesystem-as-context" (centralized path constants are the stable reference points for context file delivery)
+- "AgentWorkspacePaths → CodingAgent.Contracts (#2852)" constrains "PR description via .agent/pr-description.md" (once moved, PrDescriptionFilePath constant in Contracts is reachable from all assemblies)
+- "catch(Exception) MarkCompleted gap → #2851" scoped by "Partial failure contract: enrichment non-fatal, critical path fatal" (quality gate failure is critical path — ghost run accumulation is the consequence of the missing MarkCompleted)
+- "catch(Exception) MarkCompleted gap → #2851" correlates with "ConflictRestart MarkCompleted fix (#2778/#2789)" (same root cause, same file, sibling terminal path; pattern: every terminal catch calling AddRunToHistoryAsync must also call run.MarkCompleted() first)
+- "ReconcileOrphanedPipelineRunsAsync load-all: follow best practices" scoped by "catch(Exception) MarkCompleted gap → #2851" (root-cause fix reduces ghost accumulation; load-all performance concern is moot once #2851 is closed)
+- "ReconcileOrphanedPipelineRunsAsync OCE swallowing: follow best practices" scoped by "ReconcileOrphanedPipelineRunsAsync load-all: follow best practices" (same method, both inconsistencies; apply canonical patterns on next touch)
 - Automated calibration design remains explicitly deferred
 - Housekeeping feature calibration data — no empirical data yet; revisit after 50+ housekeeping cycles
 - AgentCodingPageService decomposition — decision captured but implementation not yet started
@@ -1775,6 +1861,12 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 - FeedbackTimeoutSeconds stale log — session 21: issue #2403 created
 - WorkItemEntity.TimeoutSeconds zero-sentinel — session 21: issue #2405 created (migration + guard removal)
 - HousekeepingTriggerCooldownMinutes promotion — session 21: issue #2404 created
+- catch(Exception) MarkCompleted gap — session 22: issue #2851 created
+- AgentWorkspacePaths in wrong assembly — session 22: issue #2852 created
+- DirectoryNotFoundException unhandled in GeneratePrDescriptionAsync — session 22: no-opinion, follow best practices (catch IOException broadly)
+- ProviderConfigId Phase 2 migration — session 22: no-opinion, apply if natural opportunity arises
+- ReconcileOrphanedPipelineRunsAsync load-all inconsistency — session 22: no-opinion, apply ExecuteUpdateAsync on next touch
+- ReconcileOrphanedPipelineRunsAsync OCE swallowing inconsistency — session 22: no-opinion, re-throw on next touch
 
 ### Queued Questions (for next session)
 - Automated calibration design — when a clear mechanism emerges, revisit
@@ -1782,7 +1874,7 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 - AgentCodingPageService decomposition: after extraction, was the per-drawer split the right granularity?
 - Grafana Faro CSP: when CSP is added, revisit `script-src` to include `unpkg.com`
 - RetryErrors transient-enqueue gate: if failure-feedback prompt accuracy degrades, revisit gating Enqueue on RetryOutcome.Retry
-- HousekeepingTriggerCooldownMinutes: after #2404 lands, verify the method-parameter plumbing matches how `cleanupIntervalMinutes` flows from config snapshots
+- ~~HousekeepingTriggerCooldownMinutes: after #2404 lands, verify the method-parameter plumbing~~ — resolved session 22: plumbing confirmed complete and tested
 
 ---
 

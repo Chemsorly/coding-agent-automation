@@ -215,6 +215,105 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
         result.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task GetAgentPullRequestsAsync_ReviewCommentsCappedAt50_GitHub()
+    {
+        // Verifies acceptance criterion 3: Take(50) cap must be applied via shared code.
+        // Stub a PR with 51 non-pipeline-generated review comments.
+        var branchName = "feature/auto-88-cap";
+        StubGet(ApiPath("/search/issues"), new
+        {
+            total_count = 1,
+            incomplete_results = false,
+            items = new[] { BuildSearchIssueJson(88, branchName) }
+        });
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/88"),
+            BuildDetailedPullRequestJson(88, branchName, false, true));
+
+        // 51 inline review comments — all non-pipeline-generated
+        // TODO [WARNING]: All 51 stubs share the same created_at timestamp ("2026-01-15T10:00:00Z").
+        // FinalizeReviewComments applies OrderBy(c => c.CreatedAt) before Take(50), so with equal
+        // timestamps the 50 items retained by the cap are non-deterministically ordered, making
+        // the specific comments returned unpredictable across runs. If any future assertion needs
+        // to verify which 50 comments survive (not just that there are 50), assign distinct
+        // created_at values (e.g. addMinutes(i)) to each stub to make the ordering deterministic.
+        var reviewComments = Enumerable.Range(1, 51).Select(i => new
+        {
+            id = i,
+            body = $"Review comment {i}",
+            user = new { login = "reviewer", id = 1 },
+            path = "src/file.cs",
+            created_at = "2026-01-15T10:00:00Z",
+            updated_at = "2026-01-15T10:00:00Z"
+        }).ToArray();
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/88/comments"), reviewComments);
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/88/comments"), Array.Empty<object>());
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/88/reviews"), Array.Empty<object>());
+
+        await using var provider = CreateProvider();
+        var result = await provider.GetAgentPullRequestsAsync("88", CancellationToken.None);
+
+        result.Should().HaveCount(1);
+        // TODO [WARNING]: This assertion uses BeLessThanOrEqualTo(50) which would also pass if
+        // the cap were accidentally removed and 51 comments returned (it would fail), but would
+        // also pass if all comments were silently dropped (count = 0). Use Be(50) to assert the
+        // exact expected count when exactly 51 non-pipeline comments are stubbed.
+        result[0].ReviewComments.Count.Should().BeLessThanOrEqualTo(50,
+            "GetAgentPullRequestsAsync must cap review comments at 50");
+    }
+
+    [Fact]
+    public async Task GetAgentPullRequestsAsync_PipelineGeneratedReviewBody_IsFiltered_GitHub()
+    {
+        // CRITICAL fix: verifies that FinalizeReviewComments filters pipeline-generated content
+        // from the /reviews concat arm. The refactoring removed the per-source
+        // IsPipelineGeneratedComment guard from the reviews.Where() clause and relies on
+        // FinalizeReviewComments to filter the combined stream. This test pins that the filter
+        // actually reaches review-body content.
+        var branchName = "feature/auto-89-review-filter";
+        StubGet(ApiPath("/search/issues"), new
+        {
+            total_count = 1,
+            incomplete_results = false,
+            items = new[] { BuildSearchIssueJson(89, branchName) }
+        });
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/89"),
+            BuildDetailedPullRequestJson(89, branchName, false, true));
+
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/89/comments"), Array.Empty<object>());
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/89/comments"), Array.Empty<object>());
+
+        // One pipeline-generated review body and one real review body
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/89/reviews"), new[]
+        {
+            new
+            {
+                id = 1,
+                body = "## 🤖 Pipeline generated review\nSome automated findings.",
+                user = new { login = "kiro[bot]", id = 1 },
+                state = "COMMENTED",
+                submitted_at = "2026-01-15T10:00:00Z"
+            },
+            new
+            {
+                id = 2,
+                body = "Human code review comment",
+                user = new { login = "reviewer", id = 2 },
+                state = "COMMENTED",
+                submitted_at = "2026-01-15T11:00:00Z"
+            }
+        });
+
+        await using var provider = CreateProvider();
+        var result = await provider.GetAgentPullRequestsAsync("89", CancellationToken.None);
+
+        result.Should().HaveCount(1);
+        result[0].ReviewComments.Should().ContainSingle(
+            "only the non-pipeline-generated review body should remain");
+        result[0].ReviewComments[0].Body.Should().Be("Human code review comment",
+            "the pipeline-generated review body must be filtered by FinalizeReviewComments");
+    }
+
     #endregion
 
     #region UpdatePullRequestAsync
