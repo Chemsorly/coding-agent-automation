@@ -107,6 +107,7 @@ public sealed class HousekeepingService : IHousekeepingService
         IIssueProvider issueProvider,
         string issueProviderId,
         IReadOnlyList<PullRequestSummary> agentDonePrs,
+        bool wasInputTruncated,
         int effectiveConcurrencyLimit,
         bool branchCleanupEnabled,
         int cleanupIntervalMinutes,
@@ -167,7 +168,7 @@ public sealed class HousekeepingService : IHousekeepingService
 
         // ── Step 7: Stale branch cleanup ──────────────────────────────────────
         await _staleBranchCleaner.RunIfDueAsync(repoProvider, issueProvider, agentDonePrs,
-            repoProviderId, repoTag, branchCleanupEnabled, cleanupIntervalMinutes, ct);
+            wasInputTruncated, repoProviderId, repoTag, branchCleanupEnabled, cleanupIntervalMinutes, ct);
     }
 
     // ── Step 1 ────────────────────────────────────────────────────────────────
