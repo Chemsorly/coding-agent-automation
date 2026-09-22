@@ -154,8 +154,44 @@ public class ProcessWrapperPropertiesTests : IDisposable
         act.Should().NotThrow("Kill() on a completed process must be a no-op");
     }
 
+    [Fact]
+    [System.Runtime.Versioning.SupportedOSPlatform("linux")]
+    [System.Runtime.Versioning.SupportedOSPlatform("osx")]
+    public async Task Kill_WhileRunning_DoesNotThrow()
+    {
+        // /usr/bin/yes outputs lines indefinitely — stays alive long enough for Kill().
+        var yesConfig = new global::KiroCliLib.Configuration.Configuration
+        {
+            KiroCliPath = "/usr/bin/yes",
+            UseWsl = false
+        };
+        var wrapper = new ProcessWrapper(yesConfig, _logger);
+        using var cts = new CancellationTokenSource();
+
+        try
+        {
+            var runTask = wrapper.StartAsync("hello", _workspaceDir, useResume: false, cts.Token);
+
+            // Give the process a moment to start.
+            await Task.Delay(100);
+
+            // Kill() on a running process must not throw.
+            var act = () => wrapper.Kill();
+            act.Should().NotThrow("Kill() must be safe to call on any running process");
+
+            cts.Cancel();
+            try { await runTask; } catch { /* expected: OCE or wrapped exception after kill */ }
+        }
+        finally
+        {
+            // Suppress disposal exceptions — Process handle may be invalid post-kill.
+            try { wrapper.Dispose(); } catch { /* expected */ }
+        }
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_workspaceDir, recursive: true); } catch { /* best-effort */ }
+        GC.SuppressFinalize(this);
     }
 }
