@@ -44,6 +44,7 @@ public sealed class StaleBranchCleaner : IStaleBranchCleaner
         IRepositoryProvider repoProvider,
         IIssueProvider issueProvider,
         IReadOnlyList<PullRequestSummary> agentDonePrs,
+        bool wasInputTruncated,
         string repoProviderId,
         KeyValuePair<string, object?> repoTag,
         bool enabled,
@@ -65,8 +66,15 @@ public sealed class StaleBranchCleaner : IStaleBranchCleaner
             // in HousekeepingService.RunStaleBranchCleanupIfDueAsync and is therefore a
             // pre-existing trade-off, not a regression. To fix, commit the timestamp only after
             // RunBranchCleanupAsync returns successfully.
+            // TODO [WARNING]: When wasInputTruncated=true, RunBranchCleanupAsync returns
+            // immediately after the truncation guard (no work is done), but _lastCleanupAt is
+            // already stamped here — advancing the cadence clock even though cleanup was skipped.
+            // An operator who raises ClosedLoopMaxPagesToFetch to fix the truncation will still
+            // have to wait a full HousekeepingBranchCleanupIntervalMinutes before cleanup runs.
+            // Fix: stamp _lastCleanupAt only after a non-skipped cleanup completes, or at minimum
+            // after the truncation guard inside RunBranchCleanupAsync passes.
             _lastCleanupAt[repoProviderId] = now;
-            await RunBranchCleanupAsync(repoProvider, issueProvider, agentDonePrs, repoTag, ct);
+            await RunBranchCleanupAsync(repoProvider, issueProvider, agentDonePrs, wasInputTruncated, repoTag, ct);
         }
     }
 
@@ -78,9 +86,24 @@ public sealed class StaleBranchCleaner : IStaleBranchCleaner
         IRepositoryProvider repoProvider,
         IIssueProvider issueProvider,
         IReadOnlyList<PullRequestSummary> agentDonePrs,
+        bool wasInputTruncated,
         KeyValuePair<string, object?> repoTag,
         CancellationToken ct)
     {
+        // Safety guard: if the PR input was truncated (capped by ClosedLoopMaxPagesToFetch),
+        // skip this cleanup cycle entirely. A truncated input cannot reliably protect all
+        // branches — PRs beyond the pagination cap would be absent, and their branches could
+        // be incorrectly deleted. Operators who need branch cleanup to run must raise
+        // ClosedLoopMaxPagesToFetch so that the full set of open PRs is fetched each cycle.
+        if (wasInputTruncated)
+        {
+            _logger.Warning(
+                "StaleBranchCleaner: agentDonePrs input was truncated (ClosedLoopMaxPagesToFetch cap reached); " +
+                "skipping branch cleanup this cycle to avoid deleting branches whose PRs are beyond the pagination limit. " +
+                "Raise ClosedLoopMaxPagesToFetch to enable cleanup in repos with many open agent PRs.");
+            return;
+        }
+
         IReadOnlyList<string> allAgentBranches;
         try
         {
@@ -96,27 +119,12 @@ public sealed class StaleBranchCleaner : IStaleBranchCleaner
         if (allAgentBranches.Count == 0)
             return;
 
-        // Build a complete set of branches that have open PRs — these must never be deleted.
-        // NOTE: We do NOT rely solely on agentDonePrs here. That list is capped by
-        // ClosedLoopMaxPagesToFetch (default 10 pages). In repos with many open agent PRs, PRs
-        // beyond the cap are absent, and their branches would be incorrectly deleted. Instead,
-        // fetch all open agent PRs independently with an unlimited page scan so that every open
-        // PR's branch is protected regardless of the housekeeping input cap.
-        HashSet<string> branchesWithOpenPr;
-        try
-        {
-            branchesWithOpenPr = await FetchAllOpenAgentPrBranchesAsync(repoProvider, ct);
-        }
-        catch (Exception ex)
-        {
-            // Skip cleanup this cycle — falling back to the truncated agentDonePrs list would
-            // reproduce the original bug: branches whose PRs were beyond the pagination cap
-            // could still be deleted. It is safer to skip than to delete live branches.
-            _logger.Warning(ex,
-                "StaleBranchCleaner: failed to fetch complete open-PR list for branch cleanup; skipping branch cleanup this cycle: {Error}",
-                ex.Message);
-            return;
-        }
+        // Build the set of branches that have open PRs from the (already-fetched, non-truncated)
+        // agentDonePrs input. This is the sole branch-protection guard — no independent API scan
+        // is needed because wasInputTruncated was checked above.
+        var branchesWithOpenPr = new HashSet<string>(
+            agentDonePrs.Select(pr => pr.BranchName),
+            StringComparer.OrdinalIgnoreCase);
 
         foreach (var branchName in allAgentBranches)
         {
@@ -172,42 +180,6 @@ public sealed class StaleBranchCleaner : IStaleBranchCleaner
                     branchName, ex.Message);
             }
         }
-    }
-
-    /// <summary>
-    /// Fetches all open agent-created PR branch names from the repository, paginating until
-    /// exhausted. Used by <see cref="RunBranchCleanupAsync"/> to build a complete branch-protection
-    /// set independently of the (possibly page-capped) <c>agentDonePrs</c> input.
-    /// </summary>
-    private static async Task<HashSet<string>> FetchAllOpenAgentPrBranchesAsync(
-        IRepositoryProvider repoProvider, CancellationToken ct)
-    {
-        var branches = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var page = 1;
-        const int PageSize = 100;
-        const int MaxPages = 50; // 5 000 open agent PRs — unreachable ceiling, guards against malformed HasMore
-
-        while (true)
-        {
-            var result = await repoProvider.ListOpenPullRequestsAsync(page, PageSize, null, ct);
-            foreach (var pr in result.Items)
-            {
-                if (pr.BranchName.StartsWith(PipelineConstants.BranchPrefix, StringComparison.Ordinal))
-                    branches.Add(pr.BranchName);
-            }
-
-            if (!result.HasMore)
-                break;
-
-            // Safety cap: 50 pages × 100 PRs/page = 5 000 open agent PRs. Unreachable in
-            // practice, but prevents an unbounded loop if HasMore is malformed.
-            if (page >= MaxPages)
-                break;
-
-            page++;
-        }
-
-        return branches;
     }
 
     /// <summary>

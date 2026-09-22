@@ -52,7 +52,8 @@ public class HousekeepingReprobeMetricsTests
         var staleBranchMock = new Mock<IStaleBranchCleaner>();
         staleBranchMock.Setup(s => s.RunIfDueAsync(
                 It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(),
+                It.IsAny<string>(),
                 It.IsAny<KeyValuePair<string, object?>>(), It.IsAny<bool>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -91,7 +92,7 @@ public class HousekeepingReprobeMetricsTests
         HousekeepingService svc, Mock<IRepositoryProvider> repo, Mock<IIssueProvider> issues,
         IReadOnlyList<PullRequestSummary> prs, int limit = 1)
         => svc.ExecuteAsync(repo.Object, RepoId, issues.Object, IssueProviderId,
-            prs, limit, false, 60, 25, CancellationToken.None);
+            prs, wasInputTruncated: false, limit, false, 60, 25, CancellationToken.None);
 
     private (System.Diagnostics.Metrics.MeterListener Listener,
              System.Collections.Concurrent.ConcurrentBag<(string Name, long Value, KeyValuePair<string, object?>[] Tags)> Measurements)

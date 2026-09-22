@@ -9,7 +9,8 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// Tests for the <see cref="TemplatePoller"/> internal static methods introduced in this PR:
 /// <see cref="TemplatePoller.IsAuthError"/>,
 /// <see cref="TemplatePoller.ClearQueuesForTemplate"/>,
-/// <see cref="TemplatePoller.FetchAllPagesAsync{T}"/>, and
+/// <see cref="TemplatePoller.FetchAllPagesAsync{T}"/>,
+/// <see cref="TemplatePoller.FetchAllPagesWithTruncationAsync{T}"/>, and
 /// <see cref="TemplatePoller.SelectDecompositionTemplate"/>.
 /// </summary>
 public class TemplatePolllerStaticMethodTests
@@ -81,6 +82,13 @@ public class TemplatePolllerStaticMethodTests
 
     // ── ClearQueuesForTemplate ────────────────────────────────────────────
 
+    // TODO [WARNING]: These tests pass an empty agentDonePrTruncated dictionary but never assert
+    // that ClearQueuesForTemplate wrote a false entry into it. If the production line
+    // `agentDonePrTruncated[templateId.Value] = false` were accidentally removed, these tests
+    // would still pass, leaving a stale true entry from a prior poll cycle and silently
+    // suppressing branch cleanup every subsequent cycle for that template.
+    // Consider adding: agentDonePrTruncated[templateId.Value].Should().BeFalse().
+
     [Fact]
     public void ClearQueuesForTemplate_SetsEmptyListsForTemplate()
     {
@@ -103,7 +111,8 @@ public class TemplatePolllerStaticMethodTests
             [templateId.Value] = [MakePr(99)]
         };
 
-        TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues, agentDonePrQueues);
+        var agentDonePrTruncated = new Dictionary<string, bool>();
+        TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues, agentDonePrQueues, agentDonePrTruncated);
 
         issueQueues[templateId.Value].Should().BeEmpty();
         prQueues[templateId.Value].Should().BeEmpty();
@@ -121,7 +130,8 @@ public class TemplatePolllerStaticMethodTests
 
         var agentDonePrQueues = new Dictionary<string, List<PullRequestSummary>>();
 
-        TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues, agentDonePrQueues);
+        var agentDonePrTruncated = new Dictionary<string, bool>();
+        TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues, agentDonePrQueues, agentDonePrTruncated);
 
         issueQueues.Should().ContainKey(templateId.Value);
         prQueues.Should().ContainKey(templateId.Value);
@@ -160,7 +170,8 @@ public class TemplatePolllerStaticMethodTests
             [otherId] = [MakePr(43)]
         };
 
-        TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues, agentDonePrQueues);
+        var agentDonePrTruncated = new Dictionary<string, bool>();
+        TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues, agentDonePrQueues, agentDonePrTruncated);
 
         issueQueues[otherId].Should().HaveCount(1, "other template's queue must be untouched");
         prQueues[otherId].Should().HaveCount(1, "other template's PR queue must be untouched");
@@ -169,6 +180,10 @@ public class TemplatePolllerStaticMethodTests
     }
 
     // ── FetchAllPagesAsync ────────────────────────────────────────────────
+
+    // TODO [SUGGESTION]: FetchAllPagesAsync is a thin wrapper over FetchAllPagesWithTruncationAsync
+    // that discards the WasTruncated flag. Direct tests for FetchAllPagesWithTruncationAsync are
+    // in the "── FetchAllPagesWithTruncationAsync ──" section below.
 
     [Fact]
     public async Task FetchAllPagesAsync_SinglePage_ReturnsAllItems()
@@ -251,6 +266,67 @@ public class TemplatePolllerStaticMethodTests
             ct: cts.Token);
 
         await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    // ── FetchAllPagesWithTruncationAsync ──────────────────────────────────
+    // These tests cover the behaviour that replaces the old MaxPagesCap protection in
+    // StaleBranchCleaner.FetchAllOpenAgentPrBranchesAsync (deleted in this change-set).
+    // The old test RunIfDueAsync_MaxPagesCap_StopsLoopAndProtectsBranch verified that the
+    // independent PR scan in StaleBranchCleaner stopped at 50 pages and still protected a
+    // branch found on page 1. That protection now relies on:
+    //   1. FetchAllPagesWithTruncationAsync returning WasTruncated=true at the cap (tested here).
+    //   2. StaleBranchCleaner skipping cleanup when WasTruncated is propagated (tested in
+    //      StaleBranchCleanerTests.RunIfDueAsync_TruncatedInput_BranchWithOpenPrBeyondCap_NotDeleted).
+
+    [Fact]
+    public async Task FetchAllPagesWithTruncationAsync_NaturalEnd_ReturnsFalseWasTruncated()
+    {
+        // All pages consumed naturally (HasMore=false on last page) → WasTruncated must be false.
+        var (result, wasTruncated) = await TemplatePoller.FetchAllPagesWithTruncationAsync<IssueSummary>(
+            (page, pageSize, ct) => page switch
+            {
+                1 => Task.FromResult(MakePagedResult([MakeIssue("i1")], hasMore: true, currentPage: 1)),
+                _ => Task.FromResult(MakePagedResult([MakeIssue("i2")], hasMore: false, currentPage: page))
+            },
+            maxPages: 5,
+            ct: CancellationToken.None);
+
+        wasTruncated.Should().BeFalse("loop ended because HasMore=false, not because the cap was hit");
+        result.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task FetchAllPagesWithTruncationAsync_HitsPageCap_ReturnsTrueWasTruncated()
+    {
+        // HasMore=true at the page cap → WasTruncated must be true and the loop must stop.
+        // This is the direct equivalent of the old MaxPagesCap assertion in StaleBranchCleaner:
+        // when the provider always returns HasMore=true, the loop must stop at maxPages and
+        // signal that the result is incomplete.
+        var callCount = 0;
+        var (result, wasTruncated) = await TemplatePoller.FetchAllPagesWithTruncationAsync<IssueSummary>(
+            (page, pageSize, ct) =>
+            {
+                callCount++;
+                return Task.FromResult(MakePagedResult([MakeIssue($"i{page}")], hasMore: true, currentPage: page));
+            },
+            maxPages: 3,
+            ct: CancellationToken.None);
+
+        wasTruncated.Should().BeTrue("HasMore was still true when the page cap was reached");
+        callCount.Should().Be(3, "exactly maxPages pages must be fetched before the cap breaks the loop");
+        result.Should().HaveCount(3, "items from all fetched pages including the cap-breaking page are included");
+    }
+
+    [Fact]
+    public async Task FetchAllPagesWithTruncationAsync_SinglePageNoMore_ReturnsFalseWasTruncated()
+    {
+        var (result, wasTruncated) = await TemplatePoller.FetchAllPagesWithTruncationAsync<IssueSummary>(
+            (page, pageSize, ct) => Task.FromResult(MakePagedResult([MakeIssue("i1")], hasMore: false)),
+            maxPages: 5,
+            ct: CancellationToken.None);
+
+        wasTruncated.Should().BeFalse();
+        result.Should().HaveCount(1);
     }
 
     // ── SelectDecompositionTemplate ───────────────────────────────────────

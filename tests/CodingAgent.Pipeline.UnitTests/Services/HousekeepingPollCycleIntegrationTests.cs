@@ -52,7 +52,7 @@ public class HousekeepingPollCycleIntegrationTests
         housekeepingMock.Setup(s => s.ExecuteAsync(
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-            It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
+            It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
             It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -170,7 +170,7 @@ public class HousekeepingPollCycleIntegrationTests
         var template = MakeTemplate(housekeepingEnabled: true);
         var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
 
-        var (_, _, _, agentDonePrQueues) = await poller.PollTemplateQueuesAsync(
+        var (_, _, _, agentDonePrQueues, _) = await poller.PollTemplateQueuesAsync(
             [template], 3, statuses, reportIdx, reportStatus, notifyChange,
             CancellationToken.None);
 
@@ -188,7 +188,7 @@ public class HousekeepingPollCycleIntegrationTests
         var template = MakeTemplate(housekeepingEnabled: true);
         var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
 
-        var (_, _, _, agentDonePrQueues) = await poller.PollTemplateQueuesAsync(
+        var (_, _, _, agentDonePrQueues, _) = await poller.PollTemplateQueuesAsync(
             [template], 3, statuses, reportIdx, reportStatus, notifyChange,
             CancellationToken.None);
 
@@ -204,11 +204,59 @@ public class HousekeepingPollCycleIntegrationTests
         var template = MakeTemplate(housekeepingEnabled: false);
         var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
 
-        var (_, _, _, agentDonePrQueues) = await poller.PollTemplateQueuesAsync(
+        var (_, _, _, agentDonePrQueues, _) = await poller.PollTemplateQueuesAsync(
             [template], 3, statuses, reportIdx, reportStatus, notifyChange,
             CancellationToken.None);
 
         agentDonePrQueues.Should().ContainKey("t-hk");
         agentDonePrQueues["t-hk"].Should().BeEmpty();
+    }
+
+    // ── Polling failure → agentDonePrTruncated is set to true ────────────────
+
+    /// <summary>
+    /// When <c>ListOpenPullRequestsAsync</c> throws during <c>PollAgentDonePrQueueAsync</c>,
+    /// <c>agentDonePrTruncated</c> must be set to <c>true</c> so that
+    /// <see cref="StaleBranchCleaner"/> skips the cleanup cycle rather than treating the
+    /// resulting empty PR list as a complete (non-truncated) authoritative set and deleting
+    /// every agent branch whose issue has a terminal label.
+    ///
+    /// This replaces the safety guarantee previously provided by
+    /// <c>FetchAllOpenAgentPrBranchesAsync</c>'s own throw path in <c>StaleBranchCleaner</c>,
+    /// which skipped cleanup when the independent PR scan failed.
+    /// </summary>
+    [Fact]
+    public async Task PollTemplateQueuesAsync_FetchPrsFails_AgentDonePrTruncatedIsTrue()
+    {
+        // Arrange: provider throws a transient error when listing open PRs
+        var repoProviderMock = new Mock<IRepositoryProvider>();
+        repoProviderMock.Setup(r => r.SupportsServerSideBranchUpdate).Returns(true);
+        repoProviderMock.Setup(r => r.ListOpenPullRequestsAsync(
+                It.IsAny<int>(), It.IsAny<int>(),
+                It.Is<IReadOnlyList<string>?>(l => l == null),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("503 Service Unavailable"));
+
+        var mockFactory = new Mock<IProviderFactory>();
+        var logger = Mock.Of<Serilog.ILogger>();
+        var cacheManager = new ProviderCacheManager(mockFactory.Object, logger);
+        cacheManager.RepoProviders[RepoProviderId] = repoProviderMock.Object;
+
+        var poller = new TemplatePoller(cacheManager, logger);
+        var template = MakeTemplate(housekeepingEnabled: true);
+        var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
+
+        // Act
+        var (_, _, _, agentDonePrQueues, agentDonePrTruncated) = await poller.PollTemplateQueuesAsync(
+            [template], 3, statuses, reportIdx, reportStatus, notifyChange,
+            CancellationToken.None);
+
+        // Assert: the poll must not throw (failure is swallowed with a Warning)
+        // and agentDonePrTruncated must be true so StaleBranchCleaner skips cleanup
+        agentDonePrQueues["t-hk"].Should().BeEmpty(
+            "no PRs were fetched because the provider threw");
+        agentDonePrTruncated["t-hk"].Should().BeTrue(
+            "a polling failure is equivalent to a truncated result — StaleBranchCleaner must skip " +
+            "cleanup rather than treating the empty list as a complete authoritative set");
     }
 }
