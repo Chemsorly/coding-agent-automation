@@ -332,7 +332,9 @@ public class TemplatePolllerStaticMethodTests
         var project = new PipelineProject { Id = "p1", Name = "P1", TemplateIds = [tpl1.Id, tpl2.Id, tpl3.Id] };
         var lookup = new Dictionary<string, PipelineJobTemplate>
         {
-            [tpl1.Id] = tpl1, [tpl2.Id] = tpl2, [tpl3.Id] = tpl3
+            [tpl1.Id] = tpl1,
+            [tpl2.Id] = tpl2,
+            [tpl3.Id] = tpl3
         };
 
         var result = TemplatePoller.SelectDecompositionTemplate(project, lookup);
