@@ -129,6 +129,7 @@ public sealed class HousekeepingService : IHousekeepingService
         int cleanupIntervalMinutes,
         int triggerCooldownMinutes,
         int maxSlotAgeMinutes,
+        bool wasInputTruncated,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(repoProvider);
@@ -191,7 +192,8 @@ public sealed class HousekeepingService : IHousekeepingService
 
         // ── Step 7: Stale branch cleanup ──────────────────────────────────────
         await _staleBranchCleaner.RunIfDueAsync(repoProvider, issueProvider, agentDonePrs,
-            repoProviderId, repoTag, branchCleanupEnabled, cleanupIntervalMinutes, ct);
+            repoProviderId, repoTag, branchCleanupEnabled, cleanupIntervalMinutes,
+            wasInputTruncated, ct);
     }
 
     // ── Step 1 ────────────────────────────────────────────────────────────────

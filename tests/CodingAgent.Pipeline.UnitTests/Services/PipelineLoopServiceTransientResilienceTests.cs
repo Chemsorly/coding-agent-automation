@@ -178,7 +178,7 @@ public sealed class PipelineLoopServiceTransientResilienceTests : IAsyncDisposab
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
                 It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(() =>
             {
                 callCount++;
@@ -244,7 +244,7 @@ public sealed class PipelineLoopServiceTransientResilienceTests : IAsyncDisposab
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
                 It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(() =>
             {
                 callCount++;
@@ -294,7 +294,7 @@ public sealed class PipelineLoopServiceTransientResilienceTests : IAsyncDisposab
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
                 It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Throws(new InvalidOperationException("genuine bug — must not be retried"));
 
         var svc = CreateServiceWithHousekeeping(housekeepingMock.Object);

@@ -49,7 +49,8 @@ public class StaleBranchCleanerTests
         Mock<IIssueProvider> issues,
         bool enabled = true,
         int intervalMinutes = 0,
-        IReadOnlyList<PullRequestSummary>? agentDonePrs = null)
+        IReadOnlyList<PullRequestSummary>? agentDonePrs = null,
+        bool wasInputTruncated = false)
     {
         var repoTag = new KeyValuePair<string, object?>("repo_provider_id", RepoId);
         return cleaner.RunIfDueAsync(
@@ -57,6 +58,7 @@ public class StaleBranchCleanerTests
             agentDonePrs ?? Array.Empty<PullRequestSummary>(),
             RepoId, repoTag,
             enabled, intervalMinutes,
+            wasInputTruncated,
             CancellationToken.None);
     }
 
@@ -65,17 +67,6 @@ public class StaleBranchCleanerTests
         var mock = new Mock<IRepositoryProvider>();
         mock.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<string>)[]);
-        mock.Setup(p => p.ListOpenPullRequestsAsync(
-                It.IsAny<int>(), It.IsAny<int>(),
-                It.Is<IReadOnlyList<string>?>(l => l == null),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<PullRequestSummary>
-            {
-                Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
-                Page = 1,
-                PageSize = 100,
-                HasMore = false
-            });
         return mock;
     }
 
@@ -201,7 +192,114 @@ public class StaleBranchCleanerTests
             "exactly 60 minutes meets the >= boundary — cleanup must run");
     }
 
-    // ── Branch with open PR → not deleted ────────────────────────────────────
+    // ── Input truncated → cleanup skipped ────────────────────────────────────
+
+    [Fact]
+    public async Task RunIfDueAsync_WhenInputTruncated_CleanupSkipped()
+    {
+        var cleaner = Create();
+        var agentBranch = $"{PipelineConstants.BranchPrefix}99-some-feature";
+
+        var repo = new Mock<IRepositoryProvider>();
+        repo.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
+
+        var issues = new Mock<IIssueProvider>();
+        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("99"), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(MakeIssue("99", AgentLabels.Done));
+
+        // Pass wasInputTruncated=true with no agentDonePrs entry for this branch
+        await RunAsync(cleaner, repo, issues, wasInputTruncated: true,
+            agentDonePrs: Array.Empty<PullRequestSummary>());
+
+        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+            "cleanup must be skipped when input is truncated — branch must not be deleted");
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_WhenInputTruncated_NoProviderApisCalled()
+    {
+        // Confirms the truncation early-exit fires before any per-branch API calls (GetIssueAsync).
+        var cleaner = Create();
+        var agentBranch = $"{PipelineConstants.BranchPrefix}42-fix-login";
+
+        var repo = new Mock<IRepositoryProvider>();
+        repo.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
+
+        var issues = new Mock<IIssueProvider>();
+
+        await RunAsync(cleaner, repo, issues, wasInputTruncated: true,
+            agentDonePrs: Array.Empty<PullRequestSummary>());
+
+        issues.Verify(i => i.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "GetIssueAsync must not be called when cleanup is skipped due to truncated input");
+        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── Input not truncated: agentDonePrs used for branch protection ──────────
+
+    [Fact]
+    public async Task RunIfDueAsync_WhenInputNotTruncated_UsesAgentDonePrsForProtection()
+    {
+        // Branch whose PR is in agentDonePrs — must not be deleted.
+        // ListOpenPullRequestsAsync is never called (independent fetch removed).
+        var cleaner = Create();
+        var agentBranch = $"{PipelineConstants.BranchPrefix}99-some-feature";
+        var openPr = MakePr(99, agentBranch);
+
+        var repo = new Mock<IRepositoryProvider>();
+        repo.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
+
+        var issues = new Mock<IIssueProvider>();
+
+        await RunAsync(cleaner, repo, issues,
+            wasInputTruncated: false,
+            agentDonePrs: new[] { openPr });
+
+        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+            "branch has an open PR in agentDonePrs — must not be deleted");
+        repo.Verify(p => p.ListOpenPullRequestsAsync(
+            It.IsAny<int>(), It.IsAny<int>(),
+            It.IsAny<IReadOnlyList<string>?>(),
+            It.IsAny<CancellationToken>()), Times.Never,
+            "StaleBranchCleaner must not call ListOpenPullRequestsAsync independently");
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_WhenInputNotTruncated_BranchNotInAgentDonePrs_Deleted()
+    {
+        // No PR in agentDonePrs + done issue = branch is deleted.
+        // ListOpenPullRequestsAsync is never called.
+        var cleaner = Create();
+        var agentBranch = $"{PipelineConstants.BranchPrefix}42-fix-login";
+
+        var repo = new Mock<IRepositoryProvider>();
+        repo.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
+        repo.Setup(p => p.DeleteBranchAsync(agentBranch, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var issues = new Mock<IIssueProvider>();
+        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(MakeIssue("42", AgentLabels.Done));
+
+        await RunAsync(cleaner, repo, issues,
+            wasInputTruncated: false,
+            agentDonePrs: Array.Empty<PullRequestSummary>());
+
+        repo.Verify(p => p.DeleteBranchAsync(agentBranch, It.IsAny<CancellationToken>()), Times.Once,
+            "no open PR in agentDonePrs + terminal issue label → branch must be deleted");
+        repo.Verify(p => p.ListOpenPullRequestsAsync(
+            It.IsAny<int>(), It.IsAny<int>(),
+            It.IsAny<IReadOnlyList<string>?>(),
+            It.IsAny<CancellationToken>()), Times.Never,
+            "StaleBranchCleaner must not call ListOpenPullRequestsAsync independently");
+    }
+
+    // ── Branch with open PR (in agentDonePrs) → not deleted ──────────────────
 
     [Fact]
     public async Task RunIfDueAsync_BranchWithOpenPr_NotDeleted()
@@ -213,21 +311,11 @@ public class StaleBranchCleanerTests
         var repo = new Mock<IRepositoryProvider>();
         repo.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
-        repo.Setup(p => p.ListOpenPullRequestsAsync(
-                It.IsAny<int>(), It.IsAny<int>(),
-                It.Is<IReadOnlyList<string>?>(l => l == null),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<PullRequestSummary>
-            {
-                Items = new[] { openPr }.AsReadOnly(),
-                Page = 1,
-                PageSize = 100,
-                HasMore = false
-            });
 
         var issues = new Mock<IIssueProvider>();
 
-        await RunAsync(cleaner, repo, issues);
+        // Pass the open PR via agentDonePrs — branch protection comes from agentDonePrs now
+        await RunAsync(cleaner, repo, issues, agentDonePrs: new[] { openPr });
 
         repo.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
             "branch has an open PR — must not be deleted");
@@ -244,17 +332,6 @@ public class StaleBranchCleanerTests
         var repo = new Mock<IRepositoryProvider>();
         repo.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
-        repo.Setup(p => p.ListOpenPullRequestsAsync(
-                It.IsAny<int>(), It.IsAny<int>(),
-                It.Is<IReadOnlyList<string>?>(l => l == null),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<PullRequestSummary>
-            {
-                Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
-                Page = 1,
-                PageSize = 100,
-                HasMore = false
-            });
 
         var issues = new Mock<IIssueProvider>();
         issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
@@ -275,17 +352,6 @@ public class StaleBranchCleanerTests
         var repo = new Mock<IRepositoryProvider>();
         repo.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
-        repo.Setup(p => p.ListOpenPullRequestsAsync(
-                It.IsAny<int>(), It.IsAny<int>(),
-                It.Is<IReadOnlyList<string>?>(l => l == null),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<PullRequestSummary>
-            {
-                Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
-                Page = 1,
-                PageSize = 100,
-                HasMore = false
-            });
 
         var issues = new Mock<IIssueProvider>();
         issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
@@ -308,17 +374,6 @@ public class StaleBranchCleanerTests
         var repo = new Mock<IRepositoryProvider>();
         repo.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
-        repo.Setup(p => p.ListOpenPullRequestsAsync(
-                It.IsAny<int>(), It.IsAny<int>(),
-                It.Is<IReadOnlyList<string>?>(l => l == null),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<PullRequestSummary>
-            {
-                Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
-                Page = 1,
-                PageSize = 100,
-                HasMore = false
-            });
         repo.Setup(p => p.DeleteBranchAsync(agentBranch, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -332,32 +387,32 @@ public class StaleBranchCleanerTests
             "no open PR + terminal issue label → branch must be deleted");
     }
 
-    // ── FetchAllOpenAgentPrBranches throws → cleanup skipped ─────────────────
+    // ── Cleanup skipped when input was truncated (replaces old FetchAllOpenPrBranchesThrows test) ──
 
     [Fact]
-    public async Task RunIfDueAsync_FetchAllOpenPrBranchesThrows_CleanupSkipped()
+    public async Task RunIfDueAsync_WhenInputTruncated_NoDeletionOccurs()
     {
+        // Verifies that when wasInputTruncated=true, no branches are deleted regardless of
+        // issue label state. Replaces the old FetchAllOpenPrBranchesThrows test which tested
+        // the now-removed independent fetch code path.
         var cleaner = Create();
         var agentBranch = $"{PipelineConstants.BranchPrefix}42-fix-something";
 
         var repo = new Mock<IRepositoryProvider>();
         repo.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
-        repo.Setup(p => p.ListOpenPullRequestsAsync(
-                It.IsAny<int>(), It.IsAny<int>(),
-                It.Is<IReadOnlyList<string>?>(l => l == null),
-                It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new NotSupportedException("not supported"));
 
         var issues = new Mock<IIssueProvider>();
         issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
               .ReturnsAsync(MakeIssue("42", AgentLabels.Done));
 
-        var ex = await Record.ExceptionAsync(() => RunAsync(cleaner, repo, issues));
+        var ex = await Record.ExceptionAsync(() => RunAsync(cleaner, repo, issues,
+            wasInputTruncated: true,
+            agentDonePrs: Array.Empty<PullRequestSummary>()));
 
-        ex.Should().BeNull("FetchAllOpenAgentPrBranches failure must not propagate");
+        ex.Should().BeNull("truncated-input skip must not propagate an exception");
         repo.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
-            "cleanup must be skipped entirely when open-PR fetch fails");
+            "cleanup must be skipped entirely when input is truncated");
     }
 
     // ── DeleteBranchAsync throws → continues to next branch ──────────────────
@@ -372,17 +427,6 @@ public class StaleBranchCleanerTests
         var repo = new Mock<IRepositoryProvider>();
         repo.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<string>)[branch1, branch2]);
-        repo.Setup(p => p.ListOpenPullRequestsAsync(
-                It.IsAny<int>(), It.IsAny<int>(),
-                It.Is<IReadOnlyList<string>?>(l => l == null),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<PullRequestSummary>
-            {
-                Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
-                Page = 1,
-                PageSize = 100,
-                HasMore = false
-            });
         repo.Setup(p => p.DeleteBranchAsync(branch1, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("server error"));
         repo.Setup(p => p.DeleteBranchAsync(branch2, It.IsAny<CancellationToken>()))
@@ -418,92 +462,5 @@ public class StaleBranchCleanerTests
 
         ex.Should().BeNull("ListAgentBranches failure must be swallowed");
         repo.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    // ── FetchAllOpenAgentPrBranches pagination — MaxPages cap ─────────────────
-
-    [Fact]
-    public async Task RunIfDueAsync_MaxPagesCap_StopsLoopAndProtectsBranch()
-    {
-        var cleaner = Create();
-        var agentBranch = $"{PipelineConstants.BranchPrefix}99-capped-feature";
-
-        var repo = new Mock<IRepositoryProvider>();
-        repo.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
-        // Page 1: returns the agent branch, always HasMore=true (malformed provider)
-        repo.Setup(p => p.ListOpenPullRequestsAsync(
-                1, It.IsAny<int>(),
-                It.Is<IReadOnlyList<string>?>(l => l == null),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<PullRequestSummary>
-            {
-                Items = new[] { MakePr(99, agentBranch) }.AsReadOnly(),
-                Page = 1,
-                PageSize = 100,
-                HasMore = true
-            });
-        // Pages 2+: empty, still HasMore=true
-        repo.Setup(p => p.ListOpenPullRequestsAsync(
-                It.Is<int>(p => p > 1), It.IsAny<int>(),
-                It.Is<IReadOnlyList<string>?>(l => l == null),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<PullRequestSummary>
-            {
-                Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
-                Page = 2,
-                PageSize = 100,
-                HasMore = true
-            });
-
-        var issues = new Mock<IIssueProvider>();
-
-        var ex = await Record.ExceptionAsync(() => RunAsync(cleaner, repo, issues));
-
-        ex.Should().BeNull("MaxPages cap must not throw");
-        repo.Verify(p => p.DeleteBranchAsync(agentBranch, It.IsAny<CancellationToken>()), Times.Never,
-            "branch found on page 1 before MaxPages cap must still be protected");
-        repo.Verify(p => p.ListOpenPullRequestsAsync(
-            It.IsAny<int>(), It.IsAny<int>(),
-            It.Is<IReadOnlyList<string>?>(l => l == null),
-            It.IsAny<CancellationToken>()), Times.Exactly(50),
-            "exactly MaxPages=50 pages must be fetched before the cap breaks the loop");
-    }
-
-    // ── Open PR not in agentDonePrs (pagination regression) ──────────────────
-
-    [Fact]
-    public async Task RunIfDueAsync_BranchWithOpenPrNotInAgentDonePrs_NotDeleted()
-    {
-        var cleaner = Create();
-        var agentBranch = $"{PipelineConstants.BranchPrefix}99-over-cap-feature";
-        var openPr = MakePr(99, agentBranch);
-
-        var repo = new Mock<IRepositoryProvider>();
-        repo.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
-        // agentDonePrs passed in is EMPTY — the PR was beyond the pagination cap.
-        // Independent open-PR check confirms an open PR exists.
-        repo.Setup(p => p.ListOpenPullRequestsAsync(
-                It.IsAny<int>(), It.IsAny<int>(),
-                It.Is<IReadOnlyList<string>?>(l => l == null),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<PullRequestSummary>
-            {
-                Items = new[] { openPr }.AsReadOnly(),
-                Page = 1,
-                PageSize = 100,
-                HasMore = false
-            });
-
-        var issues = new Mock<IIssueProvider>();
-        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("99"), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(MakeIssue("99", AgentLabels.Done));
-
-        // Pass empty agentDonePrs to simulate pagination cap
-        await RunAsync(cleaner, repo, issues, agentDonePrs: Array.Empty<PullRequestSummary>());
-
-        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
-            "branch has an open PR even though it was absent from agentDonePrs — must not be deleted");
     }
 }

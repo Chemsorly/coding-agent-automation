@@ -1611,7 +1611,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
                 It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         _loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
@@ -1658,7 +1658,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
             It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()),
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()),
             Times.Once,
             "ExecuteAsync must be called exactly once per cycle for a shared repo — dedup guard prevents double-invocation");
     }
@@ -1738,7 +1738,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         var snapshot = BuildSnapshot([template]);
 
         // Should return immediately without touching any provider
-        var act = () => svc.RunHousekeepingAsync(snapshot, new Dictionary<string, List<PullRequestSummary>>(), CancellationToken.None);
+        var act = () => svc.RunHousekeepingAsync(snapshot, new Dictionary<string, (List<PullRequestSummary> Prs, bool WasTruncated)>(), CancellationToken.None);
         await act.Should().NotThrowAsync();
     }
 
@@ -1751,7 +1751,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
             It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+            It.IsAny<bool>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var svc = CreateServiceWithHousekeeping(housekeepingMock.Object);
         var template = new PipelineJobTemplate
@@ -1765,14 +1765,14 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         };
         var snapshot = BuildSnapshot([template]);
 
-        await svc.RunHousekeepingAsync(snapshot, new Dictionary<string, List<PullRequestSummary>>(), CancellationToken.None);
+        await svc.RunHousekeepingAsync(snapshot, new Dictionary<string, (List<PullRequestSummary> Prs, bool WasTruncated)>(), CancellationToken.None);
 
         housekeepingMock.Verify(h => h.ExecuteAsync(
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
             It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -1784,7 +1784,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
             It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+            It.IsAny<bool>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var svc = CreateServiceWithHousekeeping(housekeepingMock.Object);
         // Do NOT seed RepoProviders — simulate cache miss
@@ -1799,14 +1799,14 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         };
         var snapshot = BuildSnapshot([template]);
 
-        await svc.RunHousekeepingAsync(snapshot, new Dictionary<string, List<PullRequestSummary>>(), CancellationToken.None);
+        await svc.RunHousekeepingAsync(snapshot, new Dictionary<string, (List<PullRequestSummary> Prs, bool WasTruncated)>(), CancellationToken.None);
 
         housekeepingMock.Verify(h => h.ExecuteAsync(
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
             It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // TODO: Add RunHousekeepingAsync_SkipsTemplateWhenIssueProviderNotInCache test. The guard
@@ -1822,7 +1822,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
             It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+            It.IsAny<bool>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
         mockRepoProvider.Setup(r => r.SupportsServerSideBranchUpdate).Returns(false);
@@ -1842,14 +1842,14 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         };
         var snapshot = BuildSnapshot([template]);
 
-        await svc.RunHousekeepingAsync(snapshot, new Dictionary<string, List<PullRequestSummary>>(), CancellationToken.None);
+        await svc.RunHousekeepingAsync(snapshot, new Dictionary<string, (List<PullRequestSummary> Prs, bool WasTruncated)>(), CancellationToken.None);
 
         housekeepingMock.Verify(h => h.ExecuteAsync(
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
             It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -1862,10 +1862,10 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
                 It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, int, bool, int, int, int, CancellationToken>(
-                (_, _, _, _, _, limit, _, _, _, _, _) => capturedLimit = limit)
+                IReadOnlyList<PullRequestSummary>, int, bool, int, int, int, bool, CancellationToken>(
+                (_, _, _, _, _, limit, _, _, _, _, _, _) => capturedLimit = limit)
             .Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
@@ -1887,7 +1887,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         };
         var snapshot = BuildSnapshot([template]);
 
-        await svc.RunHousekeepingAsync(snapshot, new Dictionary<string, List<PullRequestSummary>>(), CancellationToken.None);
+        await svc.RunHousekeepingAsync(snapshot, new Dictionary<string, (List<PullRequestSummary> Prs, bool WasTruncated)>(), CancellationToken.None);
 
         Assert.Equal(5, capturedLimit);
     }
@@ -1902,10 +1902,10 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
                 It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, int, bool, int, int, int, CancellationToken>(
-                (_, _, _, _, _, limit, _, _, _, _, _) => capturedLimit = limit)
+                IReadOnlyList<PullRequestSummary>, int, bool, int, int, int, bool, CancellationToken>(
+                (_, _, _, _, _, limit, _, _, _, _, _, _) => capturedLimit = limit)
             .Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
@@ -1928,7 +1928,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         var config = TestPipelineConfig.Default() with { HousekeepingConcurrencyLimit = 3 };
         var snapshot = BuildSnapshot([template], config);
 
-        await svc.RunHousekeepingAsync(snapshot, new Dictionary<string, List<PullRequestSummary>>(), CancellationToken.None);
+        await svc.RunHousekeepingAsync(snapshot, new Dictionary<string, (List<PullRequestSummary> Prs, bool WasTruncated)>(), CancellationToken.None);
 
         Assert.Equal(3, capturedLimit);
     }
@@ -1943,10 +1943,10 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
                 It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, int, bool, int, int, int, CancellationToken>(
-                (_, _, _, _, _, limit, _, _, _, _, _) => capturedLimit = limit)
+                IReadOnlyList<PullRequestSummary>, int, bool, int, int, int, bool, CancellationToken>(
+                (_, _, _, _, _, limit, _, _, _, _, _, _) => capturedLimit = limit)
             .Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
@@ -1969,7 +1969,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         var config = TestPipelineConfig.Default() with { HousekeepingConcurrencyLimit = 0 };
         var snapshot = BuildSnapshot([template], config);
 
-        await svc.RunHousekeepingAsync(snapshot, new Dictionary<string, List<PullRequestSummary>>(), CancellationToken.None);
+        await svc.RunHousekeepingAsync(snapshot, new Dictionary<string, (List<PullRequestSummary> Prs, bool WasTruncated)>(), CancellationToken.None);
 
         Assert.Equal(1, capturedLimit);
     }
@@ -1990,10 +1990,10 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
                 It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, int, bool, int, int, int, CancellationToken>(
-                (_, _, _, _, donePrs, _, _, _, _, _, _) => capturedDonePrs = donePrs)
+                IReadOnlyList<PullRequestSummary>, int, bool, int, int, int, bool, CancellationToken>(
+                (_, _, _, _, donePrs, _, _, _, _, _, _, _) => capturedDonePrs = donePrs)
             .Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
@@ -2014,7 +2014,14 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         };
         var snapshot = BuildSnapshot([template]);
         // agentDonePrQueues is empty — template ID not present
-        var emptyQueues = new Dictionary<string, List<PullRequestSummary>>();
+        // TODO: [WARNING] All RunHousekeepingAsync tests that supply an actual queue entry use the
+        // default ([], false) tuple (key absent → defaults to ([], false)). There is no test that
+        // seeds agentDonePrQueues["template-id"] = (prs, true) and verifies that wasTruncated=true
+        // is forwarded to IHousekeepingService.ExecuteAsync. The two Callback-based tests that
+        // capture donePrs do not also capture wasTruncated, so a bug dropping the truncation flag
+        // in PipelineLoopService.MultiTemplateLoop would go undetected.
+        // Add: RunHousekeepingAsync_WhenQueueEntryTruncated_ForwardsWasTruncatedToExecuteAsync.
+        var emptyQueues = new Dictionary<string, (List<PullRequestSummary> Prs, bool WasTruncated)>();
 
         await svc.RunHousekeepingAsync(snapshot, emptyQueues, CancellationToken.None);
 
@@ -2024,7 +2031,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
             It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
         Assert.NotNull(capturedDonePrs);
         Assert.Empty(capturedDonePrs!);
     }
@@ -2112,10 +2119,10 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
                 It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, int, bool, int, int, int, CancellationToken>(
-                (_, _, _, _, donePrs, _, _, _, _, _, _) => capturedDonePrs = donePrs)
+                IReadOnlyList<PullRequestSummary>, int, bool, int, int, int, bool, CancellationToken>(
+                (_, _, _, _, donePrs, _, _, _, _, _, _, _) => capturedDonePrs = donePrs)
             .Returns(Task.CompletedTask);
 
         _loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
@@ -2156,7 +2163,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
             It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
 
         Assert.NotNull(capturedDonePrs);
         Assert.Single(capturedDonePrs!);

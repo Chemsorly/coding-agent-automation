@@ -54,7 +54,7 @@ public class HousekeepingReprobeMetricsTests
                 It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<string>(),
                 It.IsAny<KeyValuePair<string, object?>>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var reworkMock = new Mock<IIssueReworkService>();
@@ -91,7 +91,7 @@ public class HousekeepingReprobeMetricsTests
         HousekeepingService svc, Mock<IRepositoryProvider> repo, Mock<IIssueProvider> issues,
         IReadOnlyList<PullRequestSummary> prs, int limit = 1)
         => svc.ExecuteAsync(repo.Object, RepoId, issues.Object, IssueProviderId,
-            prs, limit, false, 60, 25, 0, CancellationToken.None);
+            prs, limit, false, 60, 25, 0, false, CancellationToken.None);
 
     private (System.Diagnostics.Metrics.MeterListener Listener,
              System.Collections.Concurrent.ConcurrentBag<(string Name, long Value, KeyValuePair<string, object?>[] Tags)> Measurements)

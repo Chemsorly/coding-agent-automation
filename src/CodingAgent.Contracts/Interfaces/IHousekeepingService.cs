@@ -39,6 +39,12 @@ public interface IHousekeepingService
     /// evicted regardless of mergeability status. Prevents a single PR stuck at Blocked/Unknown from
     /// monopolising the slot indefinitely. Clamped to ≥ 1. A value of 0 disables time-based eviction.
     /// Sourced from <see cref="PipelineConfiguration.HousekeepingMaxSlotAgeMinutes"/>.</param>
+    /// <param name="wasInputTruncated">
+    /// When <c>true</c>, the <paramref name="agentDonePrs"/> list was cut short by the
+    /// <c>ClosedLoopMaxPagesToFetch</c> page cap and may not include all open agent PRs. The
+    /// stale-branch cleanup step will be skipped with a Warning log to avoid false-positive
+    /// branch deletions.
+    /// </param>
     /// <param name="ct">Cancellation token for the mergeability checks. The update HTTP calls
     /// use <see cref="CancellationToken.None"/> internally so they complete independently.</param>
     Task ExecuteAsync(
@@ -52,5 +58,6 @@ public interface IHousekeepingService
         int cleanupIntervalMinutes,
         int triggerCooldownMinutes,
         int maxSlotAgeMinutes,
+        bool wasInputTruncated,
         CancellationToken ct);
 }

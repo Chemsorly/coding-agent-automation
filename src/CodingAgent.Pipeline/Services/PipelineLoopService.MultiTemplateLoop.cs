@@ -490,7 +490,7 @@ public sealed partial class PipelineLoopService
     // apparent contract unnecessarily. Carried forward from the pre-refactor inline block.
     internal async Task RunHousekeepingAsync(
         CycleSnapshot snapshot,
-        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
+        Dictionary<string, (List<PullRequestSummary> Prs, bool WasTruncated)> agentDonePrQueues,
         CancellationToken ct)
     {
         if (_housekeepingService is not { } housekeepingService) return;
@@ -504,7 +504,9 @@ public sealed partial class PipelineLoopService
             if (!repoProvider.SupportsServerSideBranchUpdate) continue;
             if (!_cacheManager.IssueProviders.TryGetValue(template.IssueProviderId, out var issueProvider)) continue;
 
-            var donePrs = agentDonePrQueues.TryGetValue(template.Id, out var d) ? d : [];
+            var (donePrs, wasTruncated) = agentDonePrQueues.TryGetValue(template.Id, out var entry)
+                ? entry
+                : ([], false);
             var limit = Math.Max(1,
                 template.HousekeepingConcurrencyLimit ?? snapshot.Config.HousekeepingConcurrencyLimit);
 
@@ -516,6 +518,7 @@ public sealed partial class PipelineLoopService
                 snapshot.Config.HousekeepingBranchCleanupIntervalMinutes,
                 snapshot.Config.HousekeepingTriggerCooldownMinutes,
                 snapshot.Config.HousekeepingMaxSlotAgeMinutes,
+                wasTruncated,
                 ct);
         }
     }

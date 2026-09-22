@@ -54,7 +54,7 @@ public class HousekeepingPollCycleIntegrationTests
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
             It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()))
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var poller = new TemplatePoller(cacheManager, logger);
@@ -174,7 +174,7 @@ public class HousekeepingPollCycleIntegrationTests
             [template], 3, statuses, reportIdx, reportStatus, notifyChange,
             CancellationToken.None);
 
-        agentDonePrQueues["t-hk"].Should().ContainSingle()
+        agentDonePrQueues["t-hk"].Prs.Should().ContainSingle()
             .Which.BranchName.Should().Be(agentPr.BranchName,
                 "only agent-created PRs (branch prefix 'feature/auto-') should be included");
     }
@@ -209,6 +209,6 @@ public class HousekeepingPollCycleIntegrationTests
             CancellationToken.None);
 
         agentDonePrQueues.Should().ContainKey("t-hk");
-        agentDonePrQueues["t-hk"].Should().BeEmpty();
+        agentDonePrQueues["t-hk"].Prs.Should().BeEmpty();
     }
 }

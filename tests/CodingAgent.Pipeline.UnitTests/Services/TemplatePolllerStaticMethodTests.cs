@@ -98,9 +98,9 @@ public class TemplatePolllerStaticMethodTests
             [templateId.Value] = [(MakeIssue("epic1"), PipelineRunType.DecompositionAnalysis)]
         };
 
-        var agentDonePrQueues = new Dictionary<string, List<PullRequestSummary>>
+        var agentDonePrQueues = new Dictionary<string, (List<PullRequestSummary> Prs, bool WasTruncated)>
         {
-            [templateId.Value] = [MakePr(99)]
+            [templateId.Value] = ([MakePr(99)], true)
         };
 
         TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues, agentDonePrQueues);
@@ -108,7 +108,8 @@ public class TemplatePolllerStaticMethodTests
         issueQueues[templateId.Value].Should().BeEmpty();
         prQueues[templateId.Value].Should().BeEmpty();
         decompQueues[templateId.Value].Should().BeEmpty();
-        agentDonePrQueues[templateId.Value].Should().BeEmpty("ClearQueuesForTemplate must also clear agentDonePrQueues");
+        agentDonePrQueues[templateId.Value].Prs.Should().BeEmpty("ClearQueuesForTemplate must also clear agentDonePrQueues");
+        agentDonePrQueues[templateId.Value].WasTruncated.Should().BeFalse("ClearQueuesForTemplate must reset WasTruncated to false");
     }
 
     [Fact]
@@ -119,7 +120,7 @@ public class TemplatePolllerStaticMethodTests
         var prQueues = new Dictionary<string, List<PullRequestSummary>>();
         var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
 
-        var agentDonePrQueues = new Dictionary<string, List<PullRequestSummary>>();
+        var agentDonePrQueues = new Dictionary<string, (List<PullRequestSummary> Prs, bool WasTruncated)>();
 
         TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues, agentDonePrQueues);
 
@@ -130,7 +131,8 @@ public class TemplatePolllerStaticMethodTests
         issueQueues[templateId.Value].Should().BeEmpty();
         prQueues[templateId.Value].Should().BeEmpty();
         decompQueues[templateId.Value].Should().BeEmpty();
-        agentDonePrQueues[templateId.Value].Should().BeEmpty();
+        agentDonePrQueues[templateId.Value].Prs.Should().BeEmpty();
+        agentDonePrQueues[templateId.Value].WasTruncated.Should().BeFalse();
     }
 
     [Fact]
@@ -154,18 +156,20 @@ public class TemplatePolllerStaticMethodTests
             [otherId] = []
         };
 
-        var agentDonePrQueues = new Dictionary<string, List<PullRequestSummary>>
+        var agentDonePrQueues = new Dictionary<string, (List<PullRequestSummary> Prs, bool WasTruncated)>
         {
-            [templateId.Value] = [MakePr(42)],
-            [otherId] = [MakePr(43)]
+            [templateId.Value] = ([MakePr(42)], false),
+            [otherId] = ([MakePr(43)], true)
         };
 
         TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues, agentDonePrQueues);
 
         issueQueues[otherId].Should().HaveCount(1, "other template's queue must be untouched");
         prQueues[otherId].Should().HaveCount(1, "other template's PR queue must be untouched");
-        agentDonePrQueues[otherId].Should().HaveCount(1, "other template's agentDone queue must be untouched");
-        agentDonePrQueues[templateId.Value].Should().BeEmpty("only the target template's agentDone queue is cleared");
+        agentDonePrQueues[otherId].Prs.Should().HaveCount(1, "other template's agentDone queue must be untouched");
+        agentDonePrQueues[otherId].WasTruncated.Should().BeTrue("other template's WasTruncated must be untouched");
+        agentDonePrQueues[templateId.Value].Prs.Should().BeEmpty("only the target template's agentDone queue is cleared");
+        agentDonePrQueues[templateId.Value].WasTruncated.Should().BeFalse("cleared template's WasTruncated must be false");
     }
 
     // ── FetchAllPagesAsync ────────────────────────────────────────────────
@@ -173,7 +177,7 @@ public class TemplatePolllerStaticMethodTests
     [Fact]
     public async Task FetchAllPagesAsync_SinglePage_ReturnsAllItems()
     {
-        var result = await TemplatePoller.FetchAllPagesAsync<IssueSummary>(
+        var (result, _) = await TemplatePoller.FetchAllPagesAsync<IssueSummary>(
             (page, pageSize, ct) => Task.FromResult(MakePagedResult([MakeIssue("i1"), MakeIssue("i2")], hasMore: false)),
             maxPages: 3,
             ct: CancellationToken.None);
@@ -188,7 +192,7 @@ public class TemplatePolllerStaticMethodTests
     {
         var callCount = 0;
 
-        var result = await TemplatePoller.FetchAllPagesAsync<IssueSummary>(
+        var (result, _) = await TemplatePoller.FetchAllPagesAsync<IssueSummary>(
             (page, pageSize, ct) =>
             {
                 callCount++;
@@ -211,7 +215,7 @@ public class TemplatePolllerStaticMethodTests
     {
         var callCount = 0;
 
-        var result = await TemplatePoller.FetchAllPagesAsync<IssueSummary>(
+        var (result, wasTruncated) = await TemplatePoller.FetchAllPagesAsync<IssueSummary>(
             (page, pageSize, ct) =>
             {
                 callCount++;
@@ -222,12 +226,35 @@ public class TemplatePolllerStaticMethodTests
 
         callCount.Should().Be(2, "should stop at maxPages even when HasMore=true");
         result.Should().HaveCount(2);
+        wasTruncated.Should().BeTrue("stopped at page cap with HasMore=true — input is truncated");
+    }
+
+    [Fact]
+    public async Task FetchAllPagesAsync_HasMoreFalseOnLastPage_NotTruncated()
+    {
+        // When the last page (which happens to be page == maxPages) returns HasMore=false,
+        // the loop exits via the natural-end break, not the cap break. WasTruncated must be false.
+        var callCount = 0;
+
+        var (result, wasTruncated) = await TemplatePoller.FetchAllPagesAsync<IssueSummary>(
+            (page, pageSize, ct) =>
+            {
+                callCount++;
+                // Page 2 returns HasMore=false (last page is exactly the cap page)
+                return Task.FromResult(MakePagedResult([MakeIssue($"i{page}")], hasMore: page < 2, currentPage: page));
+            },
+            maxPages: 2,
+            ct: CancellationToken.None);
+
+        callCount.Should().Be(2);
+        result.Should().HaveCount(2);
+        wasTruncated.Should().BeFalse("last page returned HasMore=false — exhausted naturally, not truncated");
     }
 
     [Fact]
     public async Task FetchAllPagesAsync_EmptyFirstPage_ReturnsEmpty()
     {
-        var result = await TemplatePoller.FetchAllPagesAsync<IssueSummary>(
+        var (result, _) = await TemplatePoller.FetchAllPagesAsync<IssueSummary>(
             (page, pageSize, ct) => Task.FromResult(MakePagedResult(Array.Empty<IssueSummary>(), hasMore: false)),
             maxPages: 3,
             ct: CancellationToken.None);

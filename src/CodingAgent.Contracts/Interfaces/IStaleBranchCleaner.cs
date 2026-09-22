@@ -17,13 +17,19 @@ public interface IStaleBranchCleaner
     /// <param name="repoProvider">Repository provider used to list and delete branches.</param>
     /// <param name="issueProvider">Issue provider used to check issue labels.</param>
     /// <param name="agentDonePrs">
-    /// The current set of open agent PRs (used as a secondary guard for branch protection;
-    /// the primary guard is a full open-PR scan via <c>ListOpenPullRequestsAsync</c>).
+    /// The current set of open agent PRs sourced from the housekeeping poller. Used to build the
+    /// branch-protection set when <paramref name="wasInputTruncated"/> is <c>false</c>.
     /// </param>
     /// <param name="repoProviderId">Repository provider ID, used as the cadence key.</param>
     /// <param name="repoTag">OTel tag for all telemetry emitted during this call.</param>
     /// <param name="enabled">When false, the method returns immediately without doing anything.</param>
     /// <param name="cleanupIntervalMinutes">Minimum minutes between cleanup passes for the same repo.</param>
+    /// <param name="wasInputTruncated">
+    /// When <c>true</c>, the <paramref name="agentDonePrs"/> list was cut short by the
+    /// <c>ClosedLoopMaxPagesToFetch</c> page cap and may not include all open agent PRs. Cleanup
+    /// is skipped with a Warning log to avoid false-positive branch deletions. Raise
+    /// <c>ClosedLoopMaxPagesToFetch</c> to enable cleanup in repos with many open agent PRs.
+    /// </param>
     /// <param name="ct">Cancellation token.</param>
     Task RunIfDueAsync(
         IRepositoryProvider repoProvider,
@@ -33,5 +39,6 @@ public interface IStaleBranchCleaner
         KeyValuePair<string, object?> repoTag,
         bool enabled,
         int cleanupIntervalMinutes,
+        bool wasInputTruncated,
         CancellationToken ct);
 }

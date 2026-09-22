@@ -601,7 +601,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
                 It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         // Synchronization gates for the BlockingDispatchOrchestrationService:
@@ -653,7 +653,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
             It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Never,
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never,
             "RunHousekeepingAsync must not be entered after StopLoop() — " +
             "ExecuteCycleAsync's _stopRequested guard fires before housekeeping is reached");
 
@@ -704,7 +704,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
                 It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(async () =>
             {
                 // Signal test thread: "housekeeping entered — safe to call StopLoop()"
@@ -775,7 +775,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
             It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Once,
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once,
             "Housekeeping mock must have been called exactly once — stop was requested during its execution");
 
         // Assert: sweep was skipped — second guard in ExecuteCycleAsync fired
@@ -805,7 +805,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
                 It.IsAny<IIssueProvider>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
                 It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var workItemClientMock = new Mock<IWorkItemSweepClient>();
@@ -846,7 +846,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         svc._cacheManager.IssueProviders["ip-1"] = mockIssueProvider.Object;
 
         var snapshot = BuildMinimalSnapshot([template]);
-        var emptyQueues = new Dictionary<string, List<PullRequestSummary>>();
+        var emptyQueues = new Dictionary<string, (List<PullRequestSummary> Prs, bool WasTruncated)>();
 
         // Act: call both methods directly (both are internal)
         // TODO: [WARNING] Direct invocation bypasses ExecuteCycleAsync, where the two new
@@ -865,7 +865,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
             It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Once,
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once,
             "RunHousekeepingAsync must invoke the housekeeping service when stop is NOT requested");
 
         // Assert: GetPendingAsync was called once — sweep ran normally

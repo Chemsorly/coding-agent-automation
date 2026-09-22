@@ -193,13 +193,19 @@ public class AgentStallMonitorTests
             _run, config, "Stuck agent", null, _mockLogger.Object, CancellationToken.None,
             timeProvider: fakeTime);
 
-        // Yield so the monitor loop starts and suspends on the first Delay(1m)
-        await YieldToMonitorAsync();
+        // Advance the fake clock in a loop until KillAsync fires. This eliminates the race in
+        // YieldToMonitorAsync where the Task.Run background loop may not have reached its first
+        // Task.Delay within the fixed 200ms window on a loaded CI runner.
+        // The loop advances by StallPollInterval (1m) on each iteration; the monitor fires on
+        // the first tick where silence (10m + elapsed) > AgentTimeout (5m), so typically 1–2
+        // iterations. The 10-second wall-clock deadline guards against complete failure.
+        var killDeadline = DateTime.UtcNow.AddSeconds(10);
+        while (!killCalled.Task.IsCompleted && DateTime.UtcNow < killDeadline)
+        {
+            await Task.Delay(10);
+            fakeTime.Advance(TimeSpan.FromMinutes(1));
+        }
 
-        // Advance 1 minute → poll tick fires, silence = 10m+1m = 11m > AgentTimeout=5m → KillAsync called
-        fakeTime.Advance(TimeSpan.FromMinutes(1));
-
-        // KillAsync must be called promptly — no wall-clock dependency
         await killCalled.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
