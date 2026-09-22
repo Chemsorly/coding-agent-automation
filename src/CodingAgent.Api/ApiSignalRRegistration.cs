@@ -1,9 +1,4 @@
 using CodingAgent.AgentGateway;
-using CodingAgent.Orchestration.Registry;
-using CodingAgent.Pipeline.Models;
-using MessagePack;
-using MessagePack.Formatters;
-using MessagePack.Resolvers;
 using Microsoft.AspNetCore.SignalR;
 using Serilog;
 using StackExchange.Redis;
@@ -19,33 +14,16 @@ internal static class ApiSignalRRegistration
     /// <summary>
     /// Registers SignalR with MessagePack protocol, agent authorization filter,
     /// and an optional Redis backplane when SignalR:Redis:ConnectionString is set.
+    /// The shared core (MessagePack formatter list, MaximumReceiveMessageSize,
+    /// AgentAuthorizationFilter) is provided by
+    /// <see cref="AgentSignalRServiceCollectionExtensions.AddAgentSignalRServices"/>.
     /// Channel prefix "caa" matches the monolith (Req 5.8).
     /// </summary>
     public static IServiceCollection AddApiSignalR(
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var signalR = services.AddSignalR(options =>
-            {
-                options.MaximumReceiveMessageSize = 128 * 1024; // 128 KB
-                // AddFilter is the ONLY way to activate a hub filter. Registering
-                // AgentAuthorizationFilter as IHubFilter in DI does not install it — the
-                // dispatcher reads HubOptions.HubFilters, which only AddFilter populates.
-                options.AddFilter<AgentAuthorizationFilter>();
-            })
-            .AddMessagePackProtocol(options =>
-            {
-                options.SerializerOptions = MessagePackSerializerOptions.Standard
-                    .WithResolver(CompositeResolver.Create(
-                        new IMessagePackFormatter[] { new JobIdFormatter(), new AgentIdFormatter() },
-                        new IFormatterResolver[] { ContractlessStandardResolverAllowPrivate.Instance }));
-            });
-
-        // Hub filter for agent authorization — resolved by AddFilter<AgentAuthorizationFilter>()
-        // above, so it must be registered under its concrete type.
-        services.AddSingleton(sp => new AgentAuthorizationFilter(
-            sp.GetRequiredService<IAgentRegistryService>(),
-            Log.Logger));
+        var signalR = services.AddAgentSignalRServices();
 
         // ── Optional Redis backplane (Req 5.8) ──────────────────────────────
         var redisConnectionString = configuration.GetValue<string>("SignalR:Redis:ConnectionString");

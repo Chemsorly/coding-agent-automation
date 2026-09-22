@@ -21,42 +21,9 @@ namespace CodingAgent.Pipeline.Services;
 public sealed class HousekeepingService : IHousekeepingService
 {
     private readonly IOrchestratorRunService _runService;
+    private readonly IStaleBranchCleaner _staleBranchCleaner;
+    private readonly IIssueReworkService _issueReworkService;
     private readonly ILogger _logger;
-
-    /// <summary>
-    /// Issue labels that indicate the issue is already actively queued or in-progress.
-    /// Used to guard both conflict-rework label swaps and stale branch deletion.
-    /// </summary>
-    private static readonly HashSet<string> ActiveLabels = new(StringComparer.Ordinal)
-    {
-        AgentLabels.Next,
-        AgentLabels.InProgress,
-        AgentLabels.Epic,
-        AgentLabels.EpicApproved,
-        AgentLabels.EpicReview,
-    };
-
-    /// <summary>
-    /// Issue labels representing an explicit human decision to abandon work — conflict rework
-    /// must not re-queue these issues as <c>agent:next</c>.
-    /// Distinct from <see cref="ActiveLabels"/> to avoid affecting stale-branch cleanup,
-    /// which should still delete branches for these abandoned issues.
-    /// <para>
-    /// <c>agent:done</c> is intentionally <em>excluded</em>: it means the agent completed a run,
-    /// but the resulting PR may still be open and conflicted. An open conflicted PR always needs
-    /// rework regardless of the issue's current label — <c>agent:done</c> is not a human signal
-    /// to abandon the work.
-    /// </para>
-    /// <para>
-    /// <c>agent:error</c> and <c>agent:needs-refinement</c> are intentionally excluded —
-    /// they are human-placed signals that the issue should be re-queued for rework.
-    /// </para>
-    /// </summary>
-    private static readonly HashSet<string> TerminalReworkBlockers = new(StringComparer.Ordinal)
-    {
-        AgentLabels.WontDo,
-        AgentLabels.Cancelled,
-    };
 
     /// <summary>
     /// Controls how fire-and-forget update tasks are dispatched.
@@ -66,7 +33,7 @@ public sealed class HousekeepingService : IHousekeepingService
     internal Func<Task, Task> FireAndForget { get; set; } = task => { _ = task; return Task.CompletedTask; };
 
     /// <summary>
-    /// Overridable time source for the cleanup interval guard.
+    /// Overridable time source for the cooldown and ordering guards.
     /// In tests: replace with a lambda that returns a controlled time.
     /// </summary>
     internal Func<DateTimeOffset> UtcNow { get; set; } = () => DateTimeOffset.UtcNow;
@@ -93,12 +60,6 @@ public sealed class HousekeepingService : IHousekeepingService
     /// to make the pairing structural rather than a documentation convention.
     /// </remarks>
     private readonly ConcurrentDictionary<(string repoId, int prNumber), DateTimeOffset> _inFlightAt = new();
-
-    /// <summary>
-    /// Tracks when the last stale-branch cleanup pass ran per repository,
-    /// so we don't call <c>ListAgentBranchesAsync</c> on every tick.
-    /// </summary>
-    private readonly ConcurrentDictionary<string, DateTimeOffset> _lastCleanupAt = new();
 
     /// <summary>
     /// Tracks when each PR last had a branch update triggered, keyed by (repoProviderId, prNumber).
@@ -140,11 +101,19 @@ public sealed class HousekeepingService : IHousekeepingService
     internal Func<TimeSpan, CancellationToken, Task> ReprobeDelayFunc { get; set; } =
         (delay, ct) => Task.Delay(delay, ct);
 
-    public HousekeepingService(IOrchestratorRunService runService, ILogger logger)
+    public HousekeepingService(
+        IOrchestratorRunService runService,
+        IStaleBranchCleaner staleBranchCleaner,
+        IIssueReworkService issueReworkService,
+        ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(runService);
+        ArgumentNullException.ThrowIfNull(staleBranchCleaner);
+        ArgumentNullException.ThrowIfNull(issueReworkService);
         ArgumentNullException.ThrowIfNull(logger);
         _runService = runService;
+        _staleBranchCleaner = staleBranchCleaner;
+        _issueReworkService = issueReworkService;
         _logger = logger;
     }
 
@@ -178,6 +147,12 @@ public sealed class HousekeepingService : IHousekeepingService
         var limit = Math.Max(1, effectiveConcurrencyLimit);
         var repoTag = new KeyValuePair<string, object?>("repo_provider_id", repoProviderId);
 
+        // Capture UtcNow once for the entire tick so all steps in this call share a consistent
+        // timestamp. Previously UtcNow() was called separately in OrderCandidates and inside the
+        // foreach in SelectAndTriggerBranchUpdatesAsync, producing inconsistent values within
+        // the same logical cycle.
+        var now = UtcNow();
+
         // ── Step 1: Build mergeability map — one call per PR, with re-probe for Unknown ──
         var mergeabilityMap = await BuildMergeabilityMapAsync(repoProvider, repoProviderId, agentDonePrs, repoTag, ct);
 
@@ -198,24 +173,24 @@ public sealed class HousekeepingService : IHousekeepingService
         // ── Step 3: Evict resolved in-flight entries ──────────────────────────
         var currentPrNumbers = new HashSet<int>(agentDonePrs.Select(p => p.Number));
         EvictInFlightSlots(inFlight, evictedThisCycle, currentPrNumbers, mergeabilityMap,
-            repoProviderId, repoTag, UtcNow(), maxSlotAgeMinutes);
+            repoProviderId, repoTag, now, maxSlotAgeMinutes);
 
         // ── Step 4: Get active run branches (for rework exclusion) ───────────
         var (activeRunBranches, activeRunBranchesUnavailable) = await FetchActiveRunBranchesAsync(ct);
 
         // ── Step 5: Order candidates — auto-merge first, then by cooldown, random within each tier
-        var sorted = OrderCandidates(agentDonePrs, repoProviderId, triggerCooldown);
+        var sorted = OrderCandidates(agentDonePrs, repoProviderId, triggerCooldown, now);
 
         // ── Step 6a: Handle Conflicted PRs — swap linked issue to agent:next ─
-        await TriggerConflictReworkAsync(sorted, mergeabilityMap, activeRunBranches,
+        await _issueReworkService.TriggerConflictReworkAsync(sorted, mergeabilityMap, activeRunBranches,
             activeRunBranchesUnavailable, repoProvider, issueProvider, issueProviderId, repoTag, ct);
 
         // ── Step 6b: Select and trigger eligible branch updates ───────────────
         await SelectAndTriggerBranchUpdatesAsync(sorted, inFlight, evictedThisCycle, mergeabilityMap,
-            activeRunBranches, activeRunBranchesUnavailable, repoProvider, repoProviderId, repoTag, limit, triggerCooldown, ct);
+            activeRunBranches, activeRunBranchesUnavailable, repoProvider, repoProviderId, repoTag, limit, triggerCooldown, now, ct);
 
         // ── Step 7: Stale branch cleanup ──────────────────────────────────────
-        await RunStaleBranchCleanupIfDueAsync(repoProvider, issueProvider, agentDonePrs,
+        await _staleBranchCleaner.RunIfDueAsync(repoProvider, issueProvider, agentDonePrs,
             repoProviderId, repoTag, branchCleanupEnabled, cleanupIntervalMinutes, ct);
     }
 
@@ -250,7 +225,7 @@ public sealed class HousekeepingService : IHousekeepingService
     ///   - https://stackoverflow.com/a/30620973 (GitHub staff confirming lazy computation)
     ///   - https://github.com/mergerine/github-mergerine/issues/9 (probe-trigger pattern)
     /// </remarks>
-    private async Task<Dictionary<int, PrMergeabilityStatus>> BuildMergeabilityMapAsync(
+    private async Task<IReadOnlyDictionary<int, PrMergeabilityStatus>> BuildMergeabilityMapAsync(
         IRepositoryProvider repoProvider,
         string repoProviderId,
         IReadOnlyList<PullRequestSummary> agentDonePrs,
@@ -311,11 +286,11 @@ public sealed class HousekeepingService : IHousekeepingService
                             prNumber, resolved, repoProviderId);
                         var resolvedLabel = resolved switch
                         {
-                            PrMergeabilityStatus.Behind     => "behind",
-                            PrMergeabilityStatus.UpToDate   => "up_to_date",
+                            PrMergeabilityStatus.Behind => "behind",
+                            PrMergeabilityStatus.UpToDate => "up_to_date",
                             PrMergeabilityStatus.Conflicted => "conflicted",
-                            PrMergeabilityStatus.Blocked    => "blocked",
-                            _                               => "unknown",
+                            PrMergeabilityStatus.Blocked => "blocked",
+                            _ => "unknown",
                         };
                         var resolvedTag = new KeyValuePair<string, object?>("resolved_state", resolvedLabel);
                         PipelineTelemetry.HousekeepingReprobeResolved.Add(1, repoTag, resolvedTag);
@@ -356,9 +331,7 @@ public sealed class HousekeepingService : IHousekeepingService
         HashSet<int> inFlight,
         HashSet<int> evictedThisCycle,
         HashSet<int> currentPrNumbers,
-        // TODO: mergeabilityMap should be IReadOnlyDictionary<int, PrMergeabilityStatus> —
-        // this method only reads the map. See matching TODO in TriggerConflictReworkAsync.
-        Dictionary<int, PrMergeabilityStatus> mergeabilityMap,
+        IReadOnlyDictionary<int, PrMergeabilityStatus> mergeabilityMap,
         string repoProviderId,
         KeyValuePair<string, object?> repoTag,
         DateTimeOffset now,
@@ -414,7 +387,7 @@ public sealed class HousekeepingService : IHousekeepingService
     /// <c>(empty, unavailable: true)</c> on failure so callers can apply the conservative
     /// skip-all fallback.
     /// </summary>
-    private async Task<(HashSet<string> Branches, bool Unavailable)> FetchActiveRunBranchesAsync(CancellationToken ct)
+    private async Task<(IReadOnlySet<string> Branches, bool Unavailable)> FetchActiveRunBranchesAsync(CancellationToken ct)
     {
         try
         {
@@ -434,7 +407,7 @@ public sealed class HousekeepingService : IHousekeepingService
             // and reach this catch block rather than being silently swallowed as empty lists.
             _logger.Warning(ex,
                 "HousekeepingService: failed to get active runs for branch exclusion; skipping all branch updates AND conflict rework this cycle (conservative fallback)");
-            return ([], true);
+            return (new HashSet<string>(), true);
         }
     }
 
@@ -452,9 +425,9 @@ public sealed class HousekeepingService : IHousekeepingService
     private List<PullRequestSummary> OrderCandidates(
         IReadOnlyList<PullRequestSummary> agentDonePrs,
         string repoProviderId,
-        TimeSpan triggerCooldown)
+        TimeSpan triggerCooldown,
+        DateTimeOffset now)
     {
-        var now = UtcNow();
         return agentDonePrs
             .OrderBy(pr =>
             {
@@ -466,55 +439,6 @@ public sealed class HousekeepingService : IHousekeepingService
             })
             .ThenBy(_ => Random.Shared.Next())
             .ToList();
-    }
-
-    // ── Step 6a ───────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// For each conflicted PR in <paramref name="sorted"/>, swaps the linked issue's label
-    /// to <c>agent:next</c> to trigger a rework dispatch run — unless the PR's branch has an
-    /// active run or active-run data was unavailable.
-    /// </summary>
-    private async Task TriggerConflictReworkAsync(
-        IReadOnlyList<PullRequestSummary> sorted,
-        // TODO: mergeabilityMap should be IReadOnlyDictionary<int, PrMergeabilityStatus> — this
-        // method only reads the map (via indexer). The concrete Dictionary<> type unnecessarily
-        // exposes a mutable interface. Same applies to SelectAndTriggerBranchUpdatesAsync and
-        // EvictInFlightSlots. Change all three when the call-site return type of
-        // BuildMergeabilityMapAsync is widened or an explicit cast is added.
-        Dictionary<int, PrMergeabilityStatus> mergeabilityMap,
-        // TODO: activeRunBranches should be IReadOnlySet<string> — this method only calls
-        // Contains() and never mutates the set. As declared, a future edit could accidentally
-        // call .Add()/.Remove() on the shared set and silently corrupt it across Steps 6a and 6b
-        // in the same cycle. Same applies to SelectAndTriggerBranchUpdatesAsync.
-        HashSet<string> activeRunBranches,
-        bool activeRunBranchesUnavailable,
-        IRepositoryProvider repoProvider,
-        IIssueProvider issueProvider,
-        string issueProviderId,
-        KeyValuePair<string, object?> repoTag,
-        CancellationToken ct)
-    {
-        foreach (var pr in sorted)
-        {
-            if (mergeabilityMap[pr.Number] != PrMergeabilityStatus.Conflicted)
-                continue;
-
-            // Skip if the branch still has an active run — the pod is live and the issue
-            // will be re-queued naturally when the run completes. Swapping the label now
-            // would leave the issue stuck at agent:next with no new dispatch possible.
-            // Also skip conservatively when active-run data was unavailable (Step 4 threw) —
-            // we cannot confirm whether the branch is safe to rework.
-            if (activeRunBranchesUnavailable || activeRunBranches.Contains(pr.BranchName))
-            {
-                _logger.Debug(
-                    "HousekeepingService: PR #{PrNumber} is conflicted but branch '{Branch}' has an active run — skipping rework swap",
-                    pr.Number, pr.BranchName);
-                continue;
-            }
-
-            await TriggerReworkAsync(repoProvider, issueProvider, issueProviderId, pr, repoTag, ct);
-        }
     }
 
     // ── Step 6b ───────────────────────────────────────────────────────────────
@@ -542,18 +466,15 @@ public sealed class HousekeepingService : IHousekeepingService
         IReadOnlyList<PullRequestSummary> sorted,
         HashSet<int> inFlight,
         HashSet<int> evictedThisCycle,
-        // TODO: mergeabilityMap should be IReadOnlyDictionary<int, PrMergeabilityStatus> —
-        // this method only reads the map. See matching TODO in TriggerConflictReworkAsync.
-        Dictionary<int, PrMergeabilityStatus> mergeabilityMap,
-        // TODO: activeRunBranches should be IReadOnlySet<string> — this method only calls
-        // Contains() and never mutates the set. See matching TODO in TriggerConflictReworkAsync.
-        HashSet<string> activeRunBranches,
+        IReadOnlyDictionary<int, PrMergeabilityStatus> mergeabilityMap,
+        IReadOnlySet<string> activeRunBranches,
         bool activeRunBranchesUnavailable,
         IRepositoryProvider repoProvider,
         string repoProviderId,
         KeyValuePair<string, object?> repoTag,
         int limit,
         TimeSpan triggerCooldown,
+        DateTimeOffset now,
         CancellationToken ct)
     {
         foreach (var pr in sorted)
@@ -615,330 +536,25 @@ public sealed class HousekeepingService : IHousekeepingService
             // Cooldown guard: skip if this PR was triggered too recently.
             // This prevents a PR whose CI hasn't finished yet (Blocked→clean→behind
             // fast-cycle) from immediately re-occupying the slot and starving others.
-            // TODO: UtcNow() is called inside the foreach loop on every iteration rather than
-            // once at entry. If FireAndForget introduces any delay (e.g. in integration tests
-            // where it awaits the real task), the clock can advance between iterations and
-            // produce inconsistent now6b values within the same logical cycle. Capture
-            // UtcNow() once at method entry (consistent with EvictInFlightSlots and
-            // OrderCandidates) and pass the captured value down to the cooldown check.
-            var now6b = UtcNow();
             var lastTriggered = _lastTriggeredAt.GetValueOrDefault((repoProviderId, pr.Number), DateTimeOffset.MinValue);
-            if ((now6b - lastTriggered) < triggerCooldown)
+            if ((now - lastTriggered) < triggerCooldown)
             {
                 _logger.Debug(
                     "HousekeepingService: PR #{PrNumber} is behind but was triggered {Elapsed:F0}m ago (cooldown {Cooldown:F0}m) — skipping to allow other PRs to proceed",
-                    pr.Number, (now6b - lastTriggered).TotalMinutes, triggerCooldown.TotalMinutes);
+                    pr.Number, (now - lastTriggered).TotalMinutes, triggerCooldown.TotalMinutes);
                 PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
                 continue;
             }
 
-            _lastTriggeredAt[(repoProviderId, pr.Number)] = now6b;
+            _lastTriggeredAt[(repoProviderId, pr.Number)] = now;
             inFlight.Add(pr.Number);
-            _inFlightAt[(repoProviderId, pr.Number)] = now6b; // record slot acquisition time for max-age eviction
+            _inFlightAt[(repoProviderId, pr.Number)] = now; // record slot acquisition time for max-age eviction
             PipelineTelemetry.HousekeepingTriggered.Add(1, repoTag);
             await FireAndForget(UpdateAsync(repoProvider, repoProviderId, pr.Number, repoTag));
         }
     }
 
-    // ── Step 7 ────────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Runs stale-branch cleanup if <paramref name="branchCleanupEnabled"/> is true and
-    /// the cleanup interval has elapsed since the last pass for this repository.
-    /// </summary>
-    private async Task RunStaleBranchCleanupIfDueAsync(
-        IRepositoryProvider repoProvider,
-        IIssueProvider issueProvider,
-        IReadOnlyList<PullRequestSummary> agentDonePrs,
-        string repoProviderId,
-        KeyValuePair<string, object?> repoTag,
-        bool branchCleanupEnabled,
-        int cleanupIntervalMinutes,
-        CancellationToken ct)
-    {
-        if (!branchCleanupEnabled)
-            return;
-
-        var now = UtcNow();
-        var lastCleanup = _lastCleanupAt.GetValueOrDefault(repoProviderId, DateTimeOffset.MinValue);
-        var intervalElapsed = (now - lastCleanup).TotalMinutes >= cleanupIntervalMinutes;
-
-        if (intervalElapsed)
-        {
-            _lastCleanupAt[repoProviderId] = now;
-            await RunBranchCleanupAsync(repoProvider, issueProvider, agentDonePrs, repoTag, ct);
-        }
-    }
-
-    // ── Existing private helpers (unchanged) ──────────────────────────────────
-
-    /// <summary>
-    /// Lists all agent branches, skips those with an open PR or an active issue label,
-    /// and deletes the rest.
-    /// </summary>
-    private async Task RunBranchCleanupAsync(
-        IRepositoryProvider repoProvider,
-        IIssueProvider issueProvider,
-        IReadOnlyList<PullRequestSummary> agentDonePrs,
-        KeyValuePair<string, object?> repoTag,
-        CancellationToken ct)
-    {
-        IReadOnlyList<string> allAgentBranches;
-        try
-        {
-            allAgentBranches = await repoProvider.ListAgentBranchesAsync(ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex,
-                "HousekeepingService: failed to list agent branches for cleanup: {Error}", ex.Message);
-            return;
-        }
-
-        if (allAgentBranches.Count == 0)
-            return;
-
-        // Build a complete set of branches that have open PRs — these must never be deleted.
-        // NOTE: We do NOT rely solely on agentDonePrs here. That list is capped by
-        // ClosedLoopMaxPagesToFetch (default 10 pages). In repos with many open agent PRs, PRs
-        // beyond the cap are absent, and their branches would be incorrectly deleted. Instead,
-        // fetch all open agent PRs independently with an unlimited page scan so that every open
-        // PR's branch is protected regardless of the housekeeping input cap.
-        HashSet<string> branchesWithOpenPr;
-        try
-        {
-            branchesWithOpenPr = await FetchAllOpenAgentPrBranchesAsync(repoProvider, ct);
-        }
-        catch (Exception ex)
-        {
-            // Skip cleanup this cycle — falling back to the truncated agentDonePrs list would
-            // reproduce the original bug: branches whose PRs were beyond the pagination cap
-            // could still be deleted. It is safer to skip than to delete live branches.
-            _logger.Warning(ex,
-                "HousekeepingService: failed to fetch complete open-PR list for branch cleanup; skipping branch cleanup this cycle: {Error}",
-                ex.Message);
-            return;
-        }
-
-        foreach (var branchName in allAgentBranches)
-        {
-            // Skip if an open PR exists for this branch
-            if (branchesWithOpenPr.Contains(branchName))
-                continue;
-
-            // Extract issue identifier from branch name: "feature/auto-{issueId}-{slug}"
-            var issueId = ExtractIssueId(branchName);
-            if (issueId is null)
-            {
-                _logger.Debug(
-                    "HousekeepingService: cannot extract issue ID from branch {BranchName} — skipping",
-                    branchName);
-                continue;
-            }
-
-            // Check issue label state — skip if issue is actively being worked on
-            IssueDetail issue;
-            try
-            {
-                issue = await issueProvider.GetIssueAsync(new IssueIdentifier(issueId), ct);
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex,
-                    "HousekeepingService: failed to fetch issue {IssueId} for branch {BranchName} cleanup — skipping: {Error}",
-                    issueId, branchName, ex.Message);
-                continue;
-            }
-
-            if (issue.Labels.Any(l => ActiveLabels.Contains(l)))
-            {
-                _logger.Debug(
-                    "HousekeepingService: issue {IssueId} for branch {BranchName} has active label — skipping cleanup",
-                    issueId, branchName);
-                continue;
-            }
-
-            // Safe to delete
-            try
-            {
-                await repoProvider.DeleteBranchAsync(branchName, ct);
-                PipelineTelemetry.HousekeepingBranchDeleted.Add(1, repoTag);
-                _logger.Information(
-                    "HousekeepingService: deleted stale branch {BranchName} (issue {IssueId})",
-                    branchName, issueId);
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex,
-                    "HousekeepingService: failed to delete branch {BranchName}: {Error}",
-                    branchName, ex.Message);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Fetches all open agent-created PR branch names from the repository, paginating until
-    /// exhausted. Used by <see cref="RunBranchCleanupAsync"/> to build a complete branch-protection
-    /// set independently of the (possibly page-capped) <c>agentDonePrs</c> input.
-    /// </summary>
-    private static async Task<HashSet<string>> FetchAllOpenAgentPrBranchesAsync(
-        IRepositoryProvider repoProvider, CancellationToken ct)
-    {
-        var branches = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var page = 1;
-        const int PageSize = 100;
-        const int MaxPages = 50; // 5 000 open agent PRs — unreachable ceiling, guards against malformed HasMore
-
-        while (true)
-        {
-            var result = await repoProvider.ListOpenPullRequestsAsync(page, PageSize, null, ct);
-            foreach (var pr in result.Items)
-            {
-                if (pr.BranchName.StartsWith(PipelineConstants.BranchPrefix, StringComparison.Ordinal))
-                    branches.Add(pr.BranchName);
-            }
-
-            if (!result.HasMore)
-                break;
-
-            // Safety cap: 50 pages × 100 PRs/page = 5 000 open agent PRs. Unreachable in
-            // practice, but prevents an unbounded loop if HasMore is malformed.
-            if (page >= MaxPages)
-                break;
-
-            page++;
-        }
-
-        return branches;
-    }
-
-    /// <summary>
-    /// Extracts the issue identifier from an agent branch name.
-    /// Branch format: <c>feature/auto-{issueId}-{slug}</c>.
-    /// Returns null if the format does not match.
-    /// </summary>
-    internal static string? ExtractIssueId(string branchName)
-    {
-        if (!branchName.StartsWith(PipelineConstants.BranchPrefix, StringComparison.Ordinal))
-            return null;
-
-        var rest = branchName[PipelineConstants.BranchPrefix.Length..]; // "123-fix-login"
-        if (rest.Length == 0)
-            return null;
-
-        var dashIdx = rest.IndexOf('-');
-        return dashIdx > 0 ? rest[..dashIdx] : rest;
-    }
-
-    /// <summary>
-    /// Handles a conflicted PR: extracts linked issues and swaps eligible issue labels
-    /// to <c>agent:next</c> so the pipeline dispatches a rework run.
-    /// </summary>
-    private async Task TriggerReworkAsync(
-        IRepositoryProvider repoProvider,
-        IIssueProvider issueProvider,
-        string issueProviderId,
-        PullRequestSummary pr,
-        KeyValuePair<string, object?> repoTag,
-        CancellationToken ct)
-    {
-        IReadOnlyList<string> linkedIssues;
-        try
-        {
-            linkedIssues = await repoProvider.ExtractLinkedIssuesAsync(pr.Number, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex,
-                "HousekeepingService: failed to extract linked issues for PR #{PrNumber}: {Error}",
-                pr.Number, ex.Message);
-            return;
-        }
-
-        if (linkedIssues.Count == 0)
-        {
-            _logger.Information(
-                "HousekeepingService: PR #{PrNumber} is conflicted but has no linked issues — skipping rework",
-                pr.Number);
-            return;
-        }
-
-        foreach (var issueIdString in linkedIssues)
-        {
-            await TrySwapIssueToNextAsync(issueProvider, issueProviderId, pr.Number, issueIdString, repoTag, ct);
-        }
-    }
-
-    /// <summary>
-    /// Fetches the issue linked to a conflicted PR and swaps its label to <c>agent:next</c>
-    /// so it is re-queued for rework — unless the issue already carries an active label
-    /// (see <see cref="ActiveLabels"/>) or an abandonment label (see <see cref="TerminalReworkBlockers"/>),
-    /// in which case it returns early without modifying any labels.
-    /// <c>agent:error</c>, <c>agent:needs-refinement</c>, and <c>agent:done</c> are valid rework
-    /// targets — an open conflicted PR always needs another agent run regardless of the issue's
-    /// current label. Only <c>agent:wont-do</c> and <c>agent:cancelled</c> block re-queue, as
-    /// these represent explicit human decisions to abandon the work.
-    /// </summary>
-    private async Task TrySwapIssueToNextAsync(
-        IIssueProvider issueProvider,
-        string issueProviderId,
-        int prNumber,
-        string issueIdString,
-        KeyValuePair<string, object?> repoTag,
-        CancellationToken ct)
-    {
-        IssueIdentifier issueId = issueIdString;
-        IssueDetail issue;
-        try
-        {
-            issue = await issueProvider.GetIssueAsync(issueId, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex,
-                "HousekeepingService: failed to fetch issue {IssueId} linked to PR #{PrNumber}: {Error}",
-                issueIdString, prNumber, ex.Message);
-            return;
-        }
-
-        if (issue.Labels.Any(l => ActiveLabels.Contains(l)))
-        {
-            _logger.Debug(
-                "HousekeepingService: issue {IssueId} linked to conflicted PR #{PrNumber} already has an active label — skipping rework swap",
-                issueIdString, prNumber);
-            return;
-        }
-
-        if (issue.Labels.Any(l => TerminalReworkBlockers.Contains(l)))
-        {
-            _logger.Debug(
-                "HousekeepingService: issue {IssueId} linked to conflicted PR #{PrNumber} has an abandonment label (agent:wont-do or agent:cancelled) — skipping rework swap",
-                issueIdString, prNumber);
-            return;
-        }
-
-        try
-        {
-            await AgentLabelOperations.SwapAsync(
-                removeLabel: (label, c) => issueProvider.RemoveLabelAsync(issueId, label, c),
-                addLabel: (label, c) => issueProvider.AddLabelAsync(issueId, label, c),
-                newLabel: AgentLabels.Next,
-                ct: ct,
-                expectedCurrentLabel: issue.Labels.FirstOrDefault(l => l.StartsWith("agent:", StringComparison.Ordinal)),
-                identifier: issueIdString);
-
-            PipelineTelemetry.HousekeepingConflictReworkTriggered.Add(1, repoTag);
-            _logger.Information(
-                "HousekeepingService: re-queued issue {IssueId} for rework due to merge conflict on PR #{PrNumber} (issueProvider: {IssueProviderId})",
-                issueIdString, prNumber, issueProviderId);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex,
-                "HousekeepingService: failed to swap label on issue {IssueId} linked to PR #{PrNumber}: {Error}",
-                issueIdString, prNumber, ex.Message);
-        }
-    }
+    // ── UpdateAsync ───────────────────────────────────────────────────────────
 
     /// <summary>
     /// Fire-and-forget wrapper for <see cref="IRepositoryProvider.UpdatePullRequestBranchAsync"/>.
