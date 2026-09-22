@@ -1,6 +1,7 @@
 using CodingAgent.Api;
 using CodingAgent.AgentGateway;
 using CodingAgent.Infrastructure;
+using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Services;
@@ -8,22 +9,16 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Serilog;
-using Serilog.Enrichers.Span;
 
 // Bootstrap logger: captures log output before UseSerilog takes over
-Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Information()
-    .WriteTo.Console(
-        outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] {Message:lj}{NewLine}{Exception}",
-        theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
-    .CreateBootstrapLogger();
+Log.Logger = HostBootstrap.CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
 
 // ── Startup identity log ─────────────────────────────────────────────────────
 var version = Environment.GetEnvironmentVariable("SERVICE_VERSION") ?? "local";
 var serviceName = builder.Configuration.GetValue<string>("OTEL_SERVICE_NAME") ?? "coding-agent-api";
-Log.Information("Pipeline API starting: ServiceName={ServiceName} Version={Version}", serviceName, version);
+HostBootstrap.LogStartupIdentity("Pipeline API", serviceName, version);
 
 // ── Fast-fail: PostgreSQL required ──────────────────────────────────────────
 var dbConnectionString = DatabaseConnectionResolver.Resolve(builder.Configuration);

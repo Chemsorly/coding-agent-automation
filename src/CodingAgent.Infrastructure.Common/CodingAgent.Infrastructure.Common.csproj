@@ -26,6 +26,7 @@
     <PackageReference Include="Microsoft.Extensions.Resilience" />
     <PackageReference Include="OpenTelemetry.Api" />
     <PackageReference Include="Serilog" />
+    <PackageReference Include="Serilog.AspNetCore" />
     <PackageReference Include="Serilog.Sinks.OpenTelemetry" />
   </ItemGroup>
 
