@@ -9,19 +9,14 @@ using Serilog;
 using Serilog.Enrichers.Span;
 
 // Bootstrap logger: captures log output before UseSerilog takes over
-Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Information()
-    .WriteTo.Console(
-        outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] {Message:lj}{NewLine}{Exception}",
-        theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
-    .CreateBootstrapLogger();
+Log.Logger = HostBootstrap.CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
 
 // ── Startup identity log ──────────────────────────────────────────────────
 var version = Environment.GetEnvironmentVariable("SERVICE_VERSION") ?? "local";
 var serviceName = builder.Configuration.GetValue<string>("OTEL_SERVICE_NAME") ?? "coding-agent-scheduler";
-Log.Information("Scheduler starting: ServiceName={ServiceName} Version={Version}", serviceName, version);
+HostBootstrap.LogStartupIdentity("Scheduler", serviceName, version);
 
 // ── Fast-fail: Pipeline API URL required ─────────────────────────────────
 var pipelineApiBaseUrl = builder.Configuration.GetValue<string>("PipelineApi__BaseUrl")

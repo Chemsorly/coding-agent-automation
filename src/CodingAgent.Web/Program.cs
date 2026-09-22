@@ -2,6 +2,7 @@ using CodingAgent.Web;
 using CodingAgent.Api.Client;
 using CodingAgent.AgentGateway;
 using CodingAgent.Infrastructure;
+using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.Pipeline;
 using CodingAgent.Web.Models;
 using CodingAgent.Orchestration.Registry;
@@ -14,17 +15,16 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Serilog;
-using Serilog.Enrichers.Span;
 
 // Bootstrap logger: captures log output during service registration (before UseSerilog takes over at Build())
 // TODO: Add integration test verifying ResolveApiKey log messages appear in output (review-findings #953)
 const string AgentApiKeyConfigKey = "AGENT_API_KEY"; // S1192: single source for repeated literal
-Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Information()
-    .WriteTo.Console(
-        outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] {Message:lj}{NewLine}{Exception}",
-        theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
-    .CreateBootstrapLogger();
+Log.Logger = HostBootstrap.CreateBootstrapLogger();
+// TODO: Web host has no startup-identity log; the other three hosts (Api, Scheduler, JobController)
+// all call HostBootstrap.LogStartupIdentity(...) immediately after CreateBootstrapLogger(). Add a
+// matching call here (read OTEL_SERVICE_NAME + SERVICE_VERSION and pass to LogStartupIdentity) so
+// all four hosts emit a consistent startup line and failed pod starts are easier to diagnose.
+// (review-findings #2865)
 
 var builder = WebApplication.CreateBuilder(args);
 

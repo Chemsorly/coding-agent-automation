@@ -10,12 +10,7 @@ using Serilog;
 using Serilog.Enrichers.Span;
 
 // Bootstrap logger — captures startup log output before UseSerilog takes over
-Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Information()
-    .WriteTo.Console(
-        outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] {Message:lj}{NewLine}{Exception}",
-        theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
-    .CreateBootstrapLogger();
+Log.Logger = HostBootstrap.CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -48,9 +43,15 @@ if (!string.Equals(Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
 }
 
 // ── Startup identity log ─────────────────────────────────────────────────────
+// TODO: This identity log is placed after the fast-fail guards, so if any guard fires the
+// startup line is never emitted. The other three hosts (Api, Scheduler, Web) emit the identity
+// log before their guards, enabling operators to distinguish "process started then failed config
+// check" from "process crashed before logging". Move this block above the fast-fail section
+// (i.e. immediately after Log.Logger = HostBootstrap.CreateBootstrapLogger()) to make
+// JobController consistent with its siblings. (review-findings #2865)
 var version = Environment.GetEnvironmentVariable("SERVICE_VERSION") ?? "local";
 var serviceName = builder.Configuration.GetValue<string>("OTEL_SERVICE_NAME") ?? "coding-agent-jobcontroller";
-Log.Information("Job Controller starting: ServiceName={ServiceName} Version={Version}", serviceName, version);
+HostBootstrap.LogStartupIdentity("Job Controller", serviceName, version);
 
 // ── Pipeline API client ───────────────────────────────────────────────────────
 builder.Services.AddPipelineApiClient(new PipelineApiClientOptions
