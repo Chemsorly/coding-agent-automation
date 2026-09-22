@@ -334,7 +334,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         var allRuns = await _runStore.LoadAllRunsAsync(ct);
 
         // Only select runs with Queued status for dispatch. Pending runs already have a live
-        // WorkItem in the database — the Scheduler's WorkItemDispatchPoller will pick them up
+        // WorkItem in the database — the Scheduler's WorkItemDispatchLoop will pick them up
         // and create the K8s Job when capacity is available. Re-dispatching Pending runs would
         // cause a recurring 409 loop (each POST /api/work-items returns Conflict, which is
         // treated as idempotent Queued=true, which re-triggers this path indefinitely).

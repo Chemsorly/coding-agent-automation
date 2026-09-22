@@ -1,6 +1,7 @@
 using NGitLab;
 using NGitLab.Models;
 using Serilog;
+using CodingAgent.Infrastructure.Git;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.CodeReview.Models;
 using CodingAgent.Pipeline.Interfaces;
@@ -305,15 +306,13 @@ public partial class GitLabRepositoryProvider
     public async Task<PagedResult<PullRequestSummary>> ListOpenPullRequestsAsync(
         int page, int pageSize, IReadOnlyList<string>? labels, CancellationToken ct)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
-        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, 100);
+        SharedPrOperations.ValidatePaginationArgs(page, pageSize);
 
         var query = new MergeRequestQuery
         {
             State = MergeRequestState.opened,
             Labels = labels is { Count: > 0 } ? string.Join(",", labels) : null,
-            PerPage = pageSize
+            PerPage = pageSize + 1 // overfetch by one to detect HasMore; Take(pageSize+1) below is the hard limit
         };
 
         // Use overfetch-by-one pattern to detect HasMore (same as EnumerateIssuesAsync)
@@ -328,7 +327,7 @@ public partial class GitLabRepositoryProvider
             "ListOpenMergeRequests", ct);
 
         var hasMore = mrs.Count > pageSize;
-        var items = mrs.Take(pageSize).Select(mr => new PullRequestSummary
+        var mappedItems = mrs.Take(pageSize).Select(mr => new PullRequestSummary
         {
             Number = (int)mr.Iid,
             Identifier = mr.Iid.ToString(),
@@ -344,13 +343,7 @@ public partial class GitLabRepositoryProvider
             HasAutoMerge = mr.MergeWhenPipelineSucceeds,
         }).ToList();
 
-        return new PagedResult<PullRequestSummary>
-        {
-            Items = items.AsReadOnly(),
-            Page = page,
-            PageSize = pageSize,
-            HasMore = hasMore
-        };
+        return SharedPrOperations.BuildPagedResult(mappedItems, page, pageSize, hasMore);
     }
 
     // ─── Label Management ────────────────────────────────────────────────────────
@@ -443,15 +436,21 @@ public partial class GitLabRepositoryProvider
                 if (string.IsNullOrEmpty(note.Body)) continue;
 
                 var author = note.Author?.Username ?? "";
-                var isBot = author.Contains("bot", StringComparison.OrdinalIgnoreCase);
 
                 results.Add(new PrConversationComment
                 {
                     Author = author,
                     CreatedAt = note.CreatedAt.ToUniversalTime(),
                     Body = note.Body,
-                    IsBot = isBot,
-                    IsAuthor = string.Equals(author, prAuthor, StringComparison.OrdinalIgnoreCase),
+                    // TODO [WARNING]: IsBotAuthor uses EndsWith("[bot]") only. The original GitLab
+                    // code used Contains("bot", OrdinalIgnoreCase), which also flagged usernames
+                    // like "gitlab-bot", "ci-bot", "release-bot", or "renovate-bot". Those accounts
+                    // now return IsBot = false. If the broader Contains("bot") heuristic is needed
+                    // for GitLab, override here with:
+                    //   IsBot = SharedPrOperations.IsBotAuthor(author) ||
+                    //           author.Contains("bot", StringComparison.OrdinalIgnoreCase)
+                    IsBot = SharedPrOperations.IsBotAuthor(author),
+                    IsAuthor = SharedPrOperations.IsCommentAuthor(author, prAuthor),
                     FilePath = null,
                     Line = null,
                     IsResolved = null
@@ -459,7 +458,7 @@ public partial class GitLabRepositoryProvider
             }
         }
 
-        return results.OrderBy(c => c.CreatedAt).ToList().AsReadOnly();
+        return SharedPrOperations.FinalizeConversationComments(results);
     }
 
     // ─── Review Operations ───────────────────────────────────────────────────────
@@ -631,10 +630,9 @@ public partial class GitLabRepositoryProvider
             "Found {Count} previous review thread(s) to resolve on MR !{PrNumber}",
             matchingThreads.Count, prNumber);
 
-        // Resolve each matching thread. Log warning and continue on individual failures.
-        foreach (var thread in matchingThreads)
-        {
-            try
+        await SharedPrOperations.RunDismissLoopAsync(
+            matchingThreads,
+            async (thread, token) =>
             {
                 await ExecuteWriteWithResilienceAsync(
                     client =>
@@ -644,18 +642,14 @@ public partial class GitLabRepositoryProvider
                         {
                             Id = thread.Id,
                             Resolved = true
-                        }), ct);
+                        }), token);
                     },
-                    $"DismissPreviousReview.Resolve({thread.Id})", ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                Log.Warning(
-                    ex,
-                    "Failed to resolve discussion thread {ThreadId} on MR !{PrNumber}. Continuing with remaining threads.",
-                    thread.Id, prNumber);
-            }
-        }
+                    $"DismissPreviousReview.Resolve({thread.Id})", token);
+            },
+            thread => thread.Id,
+            "discussion thread",
+            prNumber,
+            ct);
 
         // Log the reason (GitLab's resolve API does not accept a reason message)
         Log.Debug("Dismissed previous reviews on MR !{PrNumber} with reason: {Reason}", prNumber, reason);
@@ -743,7 +737,7 @@ public partial class GitLabRepositoryProvider
 
     /// <summary>
     /// Retrieves review comments from MR discussions, filtering out pipeline-generated comments.
-    /// Returns up to 50 comments ordered by creation date.
+    /// Returns up to 50 comments ordered by creation date, via <see cref="SharedPrOperations.FinalizeReviewComments"/>.
     /// </summary>
     private async Task<IReadOnlyList<PullRequestReviewComment>> GetMergeRequestReviewCommentsAsync(
         IGitLabClient client, long mrIid, CancellationToken ct)
@@ -758,11 +752,8 @@ public partial class GitLabRepositoryProvider
                 },
                 "GetMergeRequestReviewComments", ct);
 
-            return discussions
+            var projected = discussions
                 .SelectMany(d => d.Notes ?? Enumerable.Empty<MergeRequestComment>())
-                .Where(n => !CommentMarkers.IsPipelineGeneratedComment(n.Body))
-                .OrderBy(n => n.CreatedAt)
-                .Take(50)
                 .Select(n => new PullRequestReviewComment
                 {
                     Id = n.Id.ToString(),
@@ -770,8 +761,9 @@ public partial class GitLabRepositoryProvider
                     Author = n.Author?.Username ?? string.Empty,
                     CreatedAt = n.CreatedAt.ToUniversalTime(),
                     Path = null // GitLab discussion notes don't expose path at the note level easily
-                })
-                .ToList();
+                });
+
+            return SharedPrOperations.FinalizeReviewComments(projected);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

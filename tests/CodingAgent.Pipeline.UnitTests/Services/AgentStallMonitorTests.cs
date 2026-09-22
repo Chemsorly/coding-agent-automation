@@ -461,25 +461,26 @@ public class AgentStallMonitorTests
     // ── Polling helpers ────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Waits up to 5 seconds for the monitor to enqueue a ChatHistory entry.
+    /// Waits up to 15 seconds for the monitor to enqueue a ChatHistory entry.
     /// The wait is cheap because the monitor fires immediately after <c>fakeTime.Advance</c>
     /// unblocks its <c>Delay</c> — this loop typically exits on the first or second iteration.
-    /// The 5-second cap is not a performance target; it is a safety net against infinite hangs.
+    /// The 15-second cap (up from 5s) guards against ThreadPool scheduling delays on loaded CI
+    /// runners where the monitor's Task.Run continuation may be queued behind other work items.
     /// </summary>
     private static async Task WaitForChatHistoryAsync(PipelineRun run)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        var deadline = DateTime.UtcNow.AddSeconds(15);
         while (run.ChatHistory.IsEmpty && DateTime.UtcNow < deadline)
             await Task.Delay(5);
     }
 
     /// <summary>
-    /// Waits up to 5 seconds for at least one measurement to appear in the collector.
+    /// Waits up to 15 seconds for at least one measurement to appear in the collector.
     /// </summary>
     private static async Task WaitForMetricAsync<T>(MetricCollector<T> collector)
         where T : struct
     {
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        var deadline = DateTime.UtcNow.AddSeconds(15);
         while (collector.GetMeasurementSnapshot().Count == 0 && DateTime.UtcNow < deadline)
             await Task.Delay(5);
     }

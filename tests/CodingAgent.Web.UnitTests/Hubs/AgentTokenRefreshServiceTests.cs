@@ -594,6 +594,11 @@ public sealed class AgentTokenRefreshServiceRetryTests
 
     // ── Repo kind: throws after all retries exhausted ─────────────────────────
 
+    // TODO [WARNING]: The stale comment below was accurate when written but the
+    // RefreshToken_RepoKind_TransientNullOnFirstAttempt_SucceedsOnSecondAttempt test already
+    // exists above (line ~552) and asserts Times.Exactly(2). The coverage gap is closed.
+    // This comment should be removed in a follow-up cleanup pass to avoid misleading reviewers
+    // into thinking the test is still missing.
     [Fact]
     public async Task RefreshToken_RepoKind_AllAttemptsReturnNull_ThrowsHubExceptionAfterTwoAttempts()
     {
@@ -617,16 +622,14 @@ public sealed class AgentTokenRefreshServiceRetryTests
             f => f.GetProviderConfigByIdAsync("repo-retry", ProviderKind.Repository, It.IsAny<CancellationToken>()),
             Times.Exactly(2));
 
-        // Warning log must include the config ID as the first positional argument (acceptance criterion).
-        // We match on argument values rather than the template string to avoid fragility against
-        // template renames — the important invariant is that repoProviderConfigId is logged, not
-        // the exact placeholder name used in the template.
+        // Error log must include the config ID. After migration the Error is emitted by
+        // ProviderConfigResolver.ResolveRequiredAsync with template "Provider config {ConfigId} ({Kind}) not found."
+        // Arg 0 = config ID (string), Arg 1 = ProviderKind. Verify both are present.
         _mockLogger.Verify(
-            l => l.Warning(
-                It.IsAny<string>(),                        // message template (not asserted — implementation detail)
-                It.Is<string>(id => id == "repo-retry"),  // repoProviderConfigId must be the first positional arg
-                It.IsAny<string>(),                        // jobId
-                It.IsAny<ProviderKind>()),                 // providerKind
+            l => l.Error(
+                It.IsAny<string>(),
+                It.Is<string>(id => id == "repo-retry"),
+                It.Is<ProviderKind>(k => k == ProviderKind.Repository)),
             Times.Once);
     }
 
@@ -703,21 +706,14 @@ public sealed class AgentTokenRefreshServiceRetryTests
             f => f.GetProviderConfigByIdAsync("brain-retry", ProviderKind.Repository, It.IsAny<CancellationToken>()),
             Times.Exactly(2));
 
-        // Warning log must include the brain config ID (acceptance criterion).
-        // The brain branch logs (jobId, brainProviderConfigId) — brainProviderConfigId is the second
-        // positional arg in the current template. We verify the config ID value appears somewhere in
-        // the logger call rather than asserting positional order, since the template is acknowledged
-        // as inconsistent with the repo branch (TODO in production code to align argument order).
-        // TODO [WARNING]: the brain warning template logs {JobId} first and {BrainConfigId} second,
-        // which is the inverse of the repo branch ({ConfigId} first, {JobId} second). If structured
-        // log consumers extract ConfigId by position, the brain path will bind it to the job GUID.
-        // Align the brain template with the repo pattern when the TODO in AgentTokenRefreshService
-        // is resolved: "Provider config {ConfigId} not found for job {JobId} (kind: {ProviderKind})".
+        // Error log must include the brain config ID. After migration the Error is emitted by
+        // ProviderConfigResolver.ResolveRequiredAsync with template "Provider config {ConfigId} ({Kind}) not found."
+        // Arg 0 = config ID (string), Arg 1 = ProviderKind.Repository (since brain configs are stored as Repository kind).
         _mockLogger.Verify(
-            l => l.Warning(
-                It.IsAny<string>(),                              // message template
-                It.IsAny<string>(),                              // first positional arg (jobId in brain template)
-                It.Is<string>(id => id == "brain-retry")),       // brainProviderConfigId (second positional arg)
+            l => l.Error(
+                It.IsAny<string>(),
+                It.Is<string>(id => id == "brain-retry"),
+                It.Is<ProviderKind>(k => k == ProviderKind.Repository)),
             Times.Once);
     }
 }

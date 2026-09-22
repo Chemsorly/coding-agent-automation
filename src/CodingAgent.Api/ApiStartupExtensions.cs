@@ -127,7 +127,7 @@ internal static class ApiStartupExtensions
         // TODO: GetAllAgents() reads from _allAgentsCache which starts empty on process restart and
         // is only populated after the first write-path or async refresh. On a fresh replica boot,
         // this gauge will report 0 for all agents until a write path warms the cache — a correctness
-        // regression for the OTel metric. Consider seeding via a background refresh (e.g. WorkItemCountsPoller)
+        // regression for the OTel metric. Consider seeding via a background refresh (e.g. WorkItemCountsService)
         // so the cache is warmed before the first gauge collection.
         _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.connections.total",
             () => agentRegistry.GetAllAgents().Count, "{connection}", "Total registered agents");
