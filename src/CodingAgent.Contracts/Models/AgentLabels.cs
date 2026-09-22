@@ -86,6 +86,42 @@ public static class AgentLabels
     };
 
     /// <summary>
+    /// Issue labels that indicate the issue is actively queued or in-progress.
+    /// Used by housekeeping collaborators to guard both conflict-rework label swaps and stale
+    /// branch deletion. An issue bearing any of these labels must not be re-queued or have its
+    /// branch deleted — work is either pending dispatch or currently running.
+    /// </summary>
+    public static readonly IReadOnlySet<string> HousekeepingActiveLabels = new HashSet<string>(StringComparer.Ordinal)
+    {
+        Next,
+        InProgress,
+        Epic,
+        EpicApproved,
+        EpicReview,
+    };
+
+    /// <summary>
+    /// Issue labels representing an explicit human decision to abandon work.
+    /// Conflict rework must not re-queue these issues as <c>agent:next</c>.
+    /// Distinct from <see cref="HousekeepingActiveLabels"/> to avoid affecting stale-branch cleanup,
+    /// which should still delete branches for these abandoned issues.
+    /// <para>
+    /// <c>agent:done</c> is intentionally <em>excluded</em>: it means the agent completed a run,
+    /// but the resulting PR may still be open and conflicted. An open conflicted PR always needs
+    /// rework regardless of the issue's current label.
+    /// </para>
+    /// <para>
+    /// <c>agent:error</c> and <c>agent:needs-refinement</c> are intentionally excluded —
+    /// they are human-placed signals that the issue should be re-queued for rework.
+    /// </para>
+    /// </summary>
+    public static readonly IReadOnlySet<string> HousekeepingTerminalReworkBlockers = new HashSet<string>(StringComparer.Ordinal)
+    {
+        WontDo,
+        Cancelled,
+    };
+
+    /// <summary>
     /// Precedence ordering for resolving dual-label issues (excludes <see cref="Generated"/>,
     /// which is orthogonal and may legitimately coexist with any status label).
     /// When multiple agent:* labels are found on a single issue, the label with the lowest

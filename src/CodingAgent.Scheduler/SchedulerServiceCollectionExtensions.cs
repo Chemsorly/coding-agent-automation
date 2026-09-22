@@ -231,8 +231,12 @@ public static class SchedulerServiceCollectionExtensions
         services.AddSingleton<IDependencyChecker>(_ => new DependencyChecker(Log.Logger));
 
         // ── Housekeeping ──────────────────────────────────────────────────────
+        services.AddSingleton<IStaleBranchCleaner>(_ => new StaleBranchCleaner(Log.Logger));
+        services.AddSingleton<IIssueReworkService>(_ => new IssueReworkService(Log.Logger));
         services.AddSingleton<IHousekeepingService>(sp => new HousekeepingService(
             sp.GetRequiredService<IOrchestratorRunService>(),
+            sp.GetRequiredService<IStaleBranchCleaner>(),
+            sp.GetRequiredService<IIssueReworkService>(),
             Log.Logger));
 
         // ── PipelineLoopService ───────────────────────────────────────────────
