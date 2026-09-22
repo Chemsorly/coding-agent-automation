@@ -9,7 +9,11 @@ namespace CodingAgent.Web.UnitTests.Services;
 /// <summary>
 /// Unit tests for <see cref="ConsolidationDispatcher.DispatchRunAsync"/>.
 /// Tests the dispatcher in isolation — all dependencies are mocked.
+/// [Collection("Metrics")] serializes this class with ConsolidationDispatcherObservabilityTests:
+/// several tests here trigger the consolidation.dispatch.permanent_failures counter, which would
+/// inject extra measurements into the observability test's MeterListener if run concurrently.
 /// </summary>
+[Collection("Metrics")]
 public sealed class ConsolidationDispatcherTests
 {
     private readonly Mock<IWorkDistributor> _workDistributor = new();

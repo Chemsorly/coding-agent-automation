@@ -14,10 +14,13 @@ namespace CodingAgent.Web.UnitTests.Telemetry;
 /// counter is incremented (with the correct run.type tag) when a permanent dispatch failure
 /// cascades the run to Failed.
 ///
-/// Uses a scoped <see cref="MeterListener"/> (disposed inside each test) to observe the global
-/// static <see cref="PipelineTelemetry.Meter"/> without requiring [Collection("Metrics")]
-/// serialization — the listener is live only for the duration of each individual test.
+/// Uses a scoped <see cref="MeterListener"/> to observe the global static
+/// <see cref="PipelineTelemetry.Meter"/>. [Collection("Metrics")] serializes this class with
+/// <see cref="CodingAgent.Web.UnitTests.Services.ConsolidationDispatcherTests"/> (and other
+/// metric-observing classes) to prevent concurrent permanent-failure paths from injecting
+/// extra measurements into the listener and flaking the ContainSingle assertion.
 /// </summary>
+[Collection("Metrics")]
 public sealed class ConsolidationDispatcherObservabilityTests
 {
     private readonly Mock<IWorkDistributor> _workDistributor = new();
@@ -94,14 +97,7 @@ public sealed class ConsolidationDispatcherObservabilityTests
             StartedAtUtc = DateTimeOffset.UtcNow
         };
 
-        // TODO: This test class does not use [Collection("Metrics")] because its MeterListener
-        // callbacks filter strictly on "consolidation.dispatch.permanent_failures" and that
-        // instrument is currently incremented by exactly one production path. If a future test
-        // also exercises ConsolidationDispatcher permanent failure in parallel, the ContainSingle
-        // assertion below could observe extra measurements and flake. Consider adding
-        // [Collection("Metrics")] for defensive consistency with MetricsTestCollection convention.
-        //
-        // TODO: If PipelineTelemetry counter creation is ever made lazy/deferred, InstrumentPublished
+        // NOTE: If PipelineTelemetry counter creation is ever made lazy/deferred, InstrumentPublished
         // would need to be triggered after Start() — currently safe because the counter is a
         // global static field initialised at class-load time, so Start() replays the publication.
         var measurements = new List<(long Value, string RunType)>();
