@@ -75,7 +75,9 @@ public class HousekeepingReprobeMetricsTests
                     .ReturnsAsync(new PagedResult<PullRequestSummary>
                     {
                         Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
-                        Page = 1, PageSize = 100, HasMore = false
+                        Page = 1,
+                        PageSize = 100,
+                        HasMore = false
                     });
 
         var svc = new HousekeepingService(runsMock.Object, staleBranchMock.Object, reworkMock.Object, Log.Logger);
@@ -221,10 +223,10 @@ public class HousekeepingReprobeMetricsTests
     }
 
     [Theory]
-    [InlineData(PrMergeabilityStatus.Behind,     "behind")]
-    [InlineData(PrMergeabilityStatus.UpToDate,   "up_to_date")]
+    [InlineData(PrMergeabilityStatus.Behind, "behind")]
+    [InlineData(PrMergeabilityStatus.UpToDate, "up_to_date")]
     [InlineData(PrMergeabilityStatus.Conflicted, "conflicted")]
-    [InlineData(PrMergeabilityStatus.Blocked,    "blocked")]
+    [InlineData(PrMergeabilityStatus.Blocked, "blocked")]
     public async Task HousekeepingReprobeResolved_ResolvedStateTag_UsesSnakeCaseValues(
         PrMergeabilityStatus reprobeResult, string expectedTag)
     {

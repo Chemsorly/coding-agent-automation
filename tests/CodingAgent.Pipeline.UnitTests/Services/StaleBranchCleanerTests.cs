@@ -72,7 +72,9 @@ public class StaleBranchCleanerTests
             .ReturnsAsync(new PagedResult<PullRequestSummary>
             {
                 Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
             });
         return mock;
     }
@@ -218,7 +220,9 @@ public class StaleBranchCleanerTests
             .ReturnsAsync(new PagedResult<PullRequestSummary>
             {
                 Items = new[] { openPr }.AsReadOnly(),
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
             });
 
         var issues = new Mock<IIssueProvider>();
@@ -247,7 +251,9 @@ public class StaleBranchCleanerTests
             .ReturnsAsync(new PagedResult<PullRequestSummary>
             {
                 Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
             });
 
         var issues = new Mock<IIssueProvider>();
@@ -276,7 +282,9 @@ public class StaleBranchCleanerTests
             .ReturnsAsync(new PagedResult<PullRequestSummary>
             {
                 Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
             });
 
         var issues = new Mock<IIssueProvider>();
@@ -307,7 +315,9 @@ public class StaleBranchCleanerTests
             .ReturnsAsync(new PagedResult<PullRequestSummary>
             {
                 Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
             });
         repo.Setup(p => p.DeleteBranchAsync(agentBranch, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -369,7 +379,9 @@ public class StaleBranchCleanerTests
             .ReturnsAsync(new PagedResult<PullRequestSummary>
             {
                 Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
             });
         repo.Setup(p => p.DeleteBranchAsync(branch1, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("server error"));
@@ -427,7 +439,9 @@ public class StaleBranchCleanerTests
             .ReturnsAsync(new PagedResult<PullRequestSummary>
             {
                 Items = new[] { MakePr(99, agentBranch) }.AsReadOnly(),
-                Page = 1, PageSize = 100, HasMore = true
+                Page = 1,
+                PageSize = 100,
+                HasMore = true
             });
         // Pages 2+: empty, still HasMore=true
         repo.Setup(p => p.ListOpenPullRequestsAsync(
@@ -437,7 +451,9 @@ public class StaleBranchCleanerTests
             .ReturnsAsync(new PagedResult<PullRequestSummary>
             {
                 Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
-                Page = 2, PageSize = 100, HasMore = true
+                Page = 2,
+                PageSize = 100,
+                HasMore = true
             });
 
         var issues = new Mock<IIssueProvider>();
@@ -475,7 +491,9 @@ public class StaleBranchCleanerTests
             .ReturnsAsync(new PagedResult<PullRequestSummary>
             {
                 Items = new[] { openPr }.AsReadOnly(),
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
             });
 
         var issues = new Mock<IIssueProvider>();

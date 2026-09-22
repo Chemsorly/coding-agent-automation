@@ -286,11 +286,11 @@ public sealed class HousekeepingService : IHousekeepingService
                             prNumber, resolved, repoProviderId);
                         var resolvedLabel = resolved switch
                         {
-                            PrMergeabilityStatus.Behind     => "behind",
-                            PrMergeabilityStatus.UpToDate   => "up_to_date",
+                            PrMergeabilityStatus.Behind => "behind",
+                            PrMergeabilityStatus.UpToDate => "up_to_date",
                             PrMergeabilityStatus.Conflicted => "conflicted",
-                            PrMergeabilityStatus.Blocked    => "blocked",
-                            _                               => "unknown",
+                            PrMergeabilityStatus.Blocked => "blocked",
+                            _ => "unknown",
                         };
                         var resolvedTag = new KeyValuePair<string, object?>("resolved_state", resolvedLabel);
                         PipelineTelemetry.HousekeepingReprobeResolved.Add(1, repoTag, resolvedTag);
