@@ -9,5 +9,4 @@ internal static class ActivityTags
     public const string Outcome = "outcome";
     public const string Decision = "decision";
     public const string Unknown = "unknown";
-    public const string Manual = "manual";
 }
