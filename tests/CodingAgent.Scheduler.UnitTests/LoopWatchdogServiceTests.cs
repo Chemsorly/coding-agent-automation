@@ -148,7 +148,7 @@ public sealed class LoopWatchdogServiceTests
     /// When ILeaderGate is null (dev/single-replica mode with no K8s leader election),
     /// the watchdog treats this instance as the leader and heals unconditionally when
     /// the loop is dormant and auto-start is enabled.
-    /// Mirrors the WorkItemCountsPoller.WhenNullGate_PollsUnconditionally pattern.
+    /// Mirrors the WorkItemCountsService.WhenNullGate_PollsUnconditionally pattern.
     /// </summary>
     [Fact]
     public async Task WhenNullLeaderGate_WatchdogHealsUnconditionally()

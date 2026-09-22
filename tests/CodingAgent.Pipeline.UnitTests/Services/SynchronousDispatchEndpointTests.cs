@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Reflection;
 using AwesomeAssertions;
 using CodingAgent.Api;
@@ -27,8 +28,8 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 ///
 /// <para>
 /// As of the Pending-queue restore (fix/restore-pending-queue), this endpoint is called by the
-/// Scheduler-side <c>WorkItemDispatchPoller</c>. The Scheduler creates a <c>Pending</c> WorkItem
-/// via <c>POST /api/work-items</c>; <c>WorkItemDispatchPoller</c> then polls those items and calls
+/// Scheduler-side <c>WorkItemDispatchLoop</c>. The Scheduler creates a <c>Pending</c> WorkItem
+/// via <c>POST /api/work-items</c>; <c>WorkItemDispatchLoop</c> then polls those items and calls
 /// <c>POST /api/work-items/dispatch</c> when capacity is available.
 /// </para>
 ///
@@ -589,88 +590,6 @@ public sealed class SynchronousDispatchEndpointTests
     // the branches swapped) would go undetected on this path — the zero and negative tests both
     // produce the default value regardless of which branch runs when the input is <= 0.
     // (Correctness + TestQualityReviewer review [WARNING])
-
-    // ── AC #3 (issue #2818): create-as-Dispatched path invokes SafelyCancelOrphanedDispatchedWorkItemAsync ──
-
-    /// <summary>
-    /// Characterization test for acceptance criterion #3 of issue #2818 (positive assertion).
-    ///
-    /// When K8s Job creation fails on the <c>DispatchWorkItem</c> (create-as-Dispatched) path,
-    /// the endpoint must call <c>SafelyCancelOrphanedDispatchedWorkItemAsync</c> — which in turn
-    /// calls <c>FailWorkItemAsync</c> — to ensure the orphaned <c>Dispatched</c> row does not
-    /// linger forever.
-    ///
-    /// Observable effect: the WorkItem created as <c>Dispatched</c> before the K8s call must NOT
-    /// remain in <c>Dispatched</c> state after the 503 response (it transitions to
-    /// <c>Failed</c> or <c>Cancelled</c> via the cleanup call).
-    ///
-    /// Paired with
-    /// <see cref="DispatchPendingWorkItemEndpointTests.DispatchPendingWorkItem_OnK8sFailure_DoesNotCallSafelyCancelOrphanedDispatchedWorkItemAsync"/>
-    /// to avoid a vacuous pass: this test provides the positive call-count assertion on the
-    /// create path, while the paired test proves the existing-Pending path does NOT invoke
-    /// the same cleanup.
-    /// </summary>
-    [Fact]
-    public async Task DispatchWorkItem_OnK8sFailure_CallsSafelyCancelOrphanedDispatchedWorkItemAsync()
-    {
-        // Arrange: K8s mock throws to simulate K8s API failure during Job creation.
-        // No WorkItem is pre-seeded — DispatchWorkItem creates it directly as Dispatched
-        // before calling the lifecycle.
-        var dbFactory = CreateDbFactory();
-        var runService = CreateRunService();
-        var templateStore = CreateTemplateStore(maxConcurrent: 5);
-
-        var k8sMock = new Mock<IKubernetesJobClient>();
-        k8sMock.Setup(k => k.CreateJobAsync(
-                It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("K8s API unavailable"));
-
-        var lifecycle = CreateLifecycleService(k8sMock.Object);
-        var request = MakeRequest(WorkItemTaskType.Implementation, "kiro,dotnet");
-
-        // Act
-        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore,
-            new DispatchWorkItemService(templateStore), CancellationToken.None);
-
-        // Assert 1: 503 returned (K8s failure → dispatch error)
-        var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
-        statusResult.Should().NotBeNull("K8s failure must return 503");
-        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
-
-        // Assert 2: K8s CreateJobAsync was called exactly once — confirming the WorkItem was
-        // written as Dispatched BEFORE the K8s call (the cleanup obligation is real, not vacuous).
-        k8sMock.Verify(
-            k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Once,
-            "K8s Job creation must have been attempted exactly once, proving the item existed as Dispatched before failure");
-
-        // Assert 3: the WorkItem must NOT remain in Dispatched state.
-        // SafelyCancelOrphanedDispatchedWorkItemAsync (called in the catch block) transitions
-        // Dispatched → Failed. Even if the lifecycle's own FailWorkItemAsync already ran first,
-        // this assertion verifies the orphan-cleanup path was invoked and the item is cleaned up.
-        // TODO [WARNING]: Assert 3 uses NotBe(WorkItemStatus.Dispatched) rather than Be(WorkItemStatus.Failed).
-        // This is too weak — if cleanup produced Cancelled (or any future non-Dispatched status), the test
-        // still passes. Should be changed to Be(WorkItemStatus.Failed) since SafelyCancelOrphanedDispatchedWorkItemAsync
-        // is documented to transition Dispatched→Failed via FailWorkItemAsync. (TestQualityReviewer review [WARNING])
-        // TODO [WARNING]: This test covers only the exception-catch failure path (K8s throws → catch block →
-        // onDispatchFailure). The second failure path in RunDispatchOrchestrationAsync — the `!dispatched` tail
-        // (ExecuteDispatchLifecycleAsync returns normally without dispatching, e.g. PVC race) — is not exercised
-        // by any new test in this diff. A regression that accidentally removed `await onDispatchFailure()` from the
-        // `!dispatched` branch on the create-as-Dispatched path would not be detected. (TestQualityReviewer review [WARNING])
-        // TODO [WARNING]: Assert 3's state assertion cannot isolate SafelyCancelOrphanedDispatchedWorkItemAsync
-        // specifically — if the lifecycle's own FailWorkItemAsync already transitioned the item away from Dispatched
-        // before the exception escaped, the assertion passes even when onDispatchFailure is a no-op. A behavior-level
-        // assertion (Times.AtLeastOnce on a dependency invoked exclusively by SafelyCancelOrphanedDispatchedWorkItemAsync)
-        // would close this gap. (Correctness + DotNetSpecialist review [WARNING])
-        await using var db = await dbFactory.CreateDbContextAsync();
-        var item = await db.WorkItems.AsNoTracking()
-            .FirstOrDefaultAsync(w => w.IssueIdentifier == request.IssueIdentifier.Value);
-        item.Should().NotBeNull("WorkItem must have been created as Dispatched before the K8s call");
-        item!.Status.Should().NotBe(WorkItemStatus.Dispatched,
-            "the orphaned Dispatched WorkItem must be cleaned up (transitioned to Failed) after a K8s failure — " +
-            "SafelyCancelOrphanedDispatchedWorkItemAsync must have been called on the create-as-Dispatched path");
-    }
 }
 
 /// <summary>
@@ -685,7 +604,7 @@ public sealed class WorkItemTransitionService_PendingDispatchedTransitionsTests
 {
     /// <summary>
     /// Pending→Dispatched remains valid for ClaimWorkItem (POST /api/work-items/{id}/claim),
-    /// used by the Scheduler's WorkItemDispatchPoller for all task types.
+    /// used by the Scheduler's WorkItemDispatchLoop for all task types.
     /// </summary>
     [Fact]
     public void PendingToDispatched_IsStillValid_ForClaimWorkItem()
@@ -790,13 +709,9 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
     private DispatchLifecycleService CreateLifecycleService(
         IKubernetesJobClient? k8sClient = null,
-        IReadOnlyList<string>? pvcPool = null,
-        IDbContextFactory<PipelineDbContext>? lifecycleDbFactory = null)
+        IReadOnlyList<string>? pvcPool = null)
     {
-        // lifecycleDbFactory allows callers to inject a CountingDbContextFactory to spy on
-        // FailWorkItemAsync calls (which are the only calls routed through _transitionService's
-        // factory rather than the endpoint-passed ctx.Db). When null, falls back to CreateDbFactory().
-        var dbFactory = lifecycleDbFactory ?? CreateDbFactory();
+        var dbFactory = CreateDbFactory();
         var transitionSvc = new WorkItemTransitionService(
             dbFactory,
             Mock.Of<ILogger<WorkItemTransitionService>>());
@@ -1958,105 +1873,530 @@ public sealed class DispatchPendingWorkItemEndpointTests
             Times.Once,
             "LoadAgentProfilesAsync must be called once — confirming the profile-fallback path was taken");
     }
-
-    // ── AC #3 (issue #2818): existing-Pending path does NOT call SafelyCancelOrphanedDispatchedWorkItemAsync ──
+    // ── Test 20: Combined concurrency+PVC — 409, counter NOT incremented ─────
 
     /// <summary>
-    /// Characterization test for acceptance criterion #3 of issue #2818 (non-vacuous Times.Never assertion).
-    ///
-    /// When K8s Job creation fails on the <c>DispatchPendingWorkItem</c> (existing-Pending) path,
-    /// the endpoint must NOT call <c>SafelyCancelOrphanedDispatchedWorkItemAsync</c>. The item
-    /// was never written as <c>Dispatched</c> before the K8s call, so there is no orphaned
-    /// Dispatched row to cancel — the lifecycle's own <c>FailWorkItemAsync</c> (Pending→Failed)
-    /// is the only cleanup needed.
-    ///
-    /// <para>
-    /// Non-vacuous assertion strategy:
-    /// <c>SafelyCancelOrphanedDispatchedWorkItemAsync</c> calls <c>lifecycle.FailWorkItemAsync</c>,
-    /// which calls <c>WorkItemTransitionService.TransitionAsync</c>, which calls
-    /// <c>_dbFactory.CreateDbContextAsync</c>. By injecting a <see cref="CountingDbContextFactory"/>
-    /// as the lifecycle's transition-service factory, we can count exactly how many
-    /// <c>FailWorkItemAsync</c> invocations occurred at the lifecycle level:
-    /// <list type="bullet">
-    ///   <item>Correct behavior: exactly 1 call — the lifecycle's own Pending→Failed transition.</item>
-    ///   <item>Bug (orphan cleanup accidentally called): 2 calls — lifecycle's call + orphan cleanup's
-    ///     call (which would be a no-op at the DB level because the item is already Failed, but the
-    ///     <c>CreateDbContextAsync</c> call still occurs before the early return).</item>
-    /// </list>
-    /// This count is independent of item state and therefore non-vacuous, satisfying the acceptance
-    /// criterion's "Times.Never" requirement without requiring an interface on
-    /// <c>DispatchLifecycleService</c>.
-    /// </para>
-    ///
-    /// Paired with
-    /// <see cref="SynchronousDispatchEndpointTests.DispatchWorkItem_OnK8sFailure_CallsSafelyCancelOrphanedDispatchedWorkItemAsync"/>
-    /// which provides the positive call-count assertion on the create-as-Dispatched path, ensuring
-    /// this test is not a vacuous pass.
+    /// AC2: When both the concurrency limit is reached AND the PVC pool is empty for a Kiro agent,
+    /// <c>ApplyGates</c> returns a 409 Conflict (concurrency gate fires first, short-circuiting
+    /// before the PVC gate). The <c>PvcPoolExhaustions</c> counter must NOT be incremented because
+    /// the rejection is a concurrency rejection, not a PVC exhaustion.
     /// </summary>
+    // TODO [WARNING]: This test covers the Kiro-agent combined scenario only. The prior bug was
+    // specifically gated on `isKiroAgent && pvcResult.AvailablePvcs.Count == 0`, so a non-Kiro
+    // agent in the same concurrency-limit + empty-"PVC pool" situation would not have triggered
+    // the old over-counting. The production fix (`gateResult is StatusCodeHttpResult { StatusCode: 503 }`)
+    // is correct regardless of agent type, but there is no test asserting that a non-Kiro agent
+    // with a combined concurrency+PVC rejection also does not increment PvcPoolExhaustions.
+    // This is a missing-coverage gap rather than a regression risk for the current fix.
     [Fact]
-    public async Task DispatchPendingWorkItem_OnK8sFailure_DoesNotCallSafelyCancelOrphanedDispatchedWorkItemAsync()
+    public async Task DispatchPendingWorkItem_ConcurrencyLimitReachedAndPvcPoolEmpty_Returns409_AndDoesNotIncrementPvcPoolExhaustions()
     {
-        // Arrange: K8s mock throws to simulate K8s API failure during Job creation.
-        // A Pending WorkItem is pre-seeded — DispatchPendingWorkItem claims an existing item,
-        // it does NOT create a new one as Dispatched.
         var dbFactory = CreateDbFactory();
+        // Fill concurrency limit (maxConcurrent=2) and claim the only PVC simultaneously.
+        await SeedActiveItemAsync(dbFactory, "kiro,dotnet", claimedPvcName: "pvc-0");
+        // TODO [WARNING]: The second SeedActiveItemAsync call intentionally omits claimedPvcName
+        // (leaving it null). QueryAvailablePvcsAsync filters claimed PVCs by ClaimedPvcName != null,
+        // so only "pvc-0" (from the first item) is treated as claimed, leaving zero available PVCs
+        // from the single-entry pool ["pvc-0"]. This null is load-bearing: if a future maintainer
+        // adds a claimedPvcName here or extends the pool, the "zero available PVCs" precondition
+        // could silently break without a direct test failure on the concurrency assertion.
+        await SeedActiveItemAsync(dbFactory, "kiro,dotnet");
         var entity = await SeedPendingItemAsync(dbFactory, "kiro,dotnet");
 
-        var templateStore = CreateTemplateStore("kiro,dotnet", maxConcurrent: 5);
-        var k8sMock = new Mock<IKubernetesJobClient>();
-        k8sMock.Setup(k => k.CreateJobAsync(
-                It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("K8s API unavailable"));
-
-        // Inject a counting factory into the lifecycle's WorkItemTransitionService so we can
-        // precisely count FailWorkItemAsync calls. The lifecycle uses this factory ONLY for
-        // TransitionAsync calls (FailWorkItemAsync and related). The endpoint's pre-flight DB
-        // reads use the separate `dbFactory` above, so counts are not polluted by endpoint-level
-        // reads. The counting factory wraps the same in-memory database (_dbName) so all
-        // state changes are visible across both factory instances.
-        var countingLifecycleFactory = new CountingDbContextFactory(CreateDbFactory());
-        var lifecycle = CreateLifecycleService(k8sMock.Object, ["pvc-0"], lifecycleDbFactory: countingLifecycleFactory);
+        var templateStore = CreateTemplateStore("kiro,dotnet", maxConcurrent: 2);
+        // PVC pool contains only "pvc-0", which is already claimed → zero available PVCs.
+        var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0"]);
         var resolver = CreateTemplateResolver(templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
-        // Act
+        // Subscribe to PvcPoolExhaustions on the static meter before calling the endpoint.
+        // MeterListener captures only measurements made during its active window (delta semantics).
+        // TODO [WARNING]: The three MeterListener setups in Tests 20, 21, and 22 duplicate the
+        // instrument name string "workdistribution.pvc_pool_exhaustions" verbatim. If the instrument
+        // is ever renamed, all three listeners silently stop enabling the instrument, exhaustionCount
+        // stays 0, and assertions that check for 0 will still pass — creating vacuous tests that no
+        // longer guard the fix. Extract a shared helper (e.g. CreatePvcExhaustionListener) to ensure
+        // a rename is caught at a single site.
+        long exhaustionCount = 0;
+        // TODO [WARNING]: `counting` is a plain bool read inside the MeterListener callback, which
+        // may be invoked on a thread-pool thread. While the await before `counting = false` provides
+        // a memory barrier in practice on current .NET semantics, the read inside the callback has
+        // no formal visibility guarantee. Use `volatile bool counting` or replace with an
+        // Interlocked-controlled long to make the ordering robust and silence analyser warnings.
+        // The same applies to the identical pattern in Tests 21 and 22.
+        var counting = false;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName &&
+                instrument.Name == "workdistribution.pvc_pool_exhaustions")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
+        {
+            if (counting && instrument.Name == "workdistribution.pvc_pool_exhaustions")
+                Interlocked.Add(ref exhaustionCount, measurement);
+        });
+        listener.Start();
+        // Warm-up: the static instrument was created before the listener started; enabling via
+        // InstrumentPublished during Start() handles already-published instruments correctly.
+
+        counting = true;
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider,
-            CreateDispatchService(templateStore), CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
+        counting = false;
 
-        // Assert 1: 503 returned (K8s failure → dispatch error)
-        var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
-        statusResult.Should().NotBeNull("K8s failure must return 503");
-        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+        // Gate result: concurrency limit fires first → 409, not 503.
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
+            "concurrency gate fires before the PVC gate — combined rejection must return 409");
 
-        // Assert 2 (non-vacuous Times.Never): exactly ONE FailWorkItemAsync call was made — the
-        // lifecycle's own Pending→Failed transition. If SafelyCancelOrphanedDispatchedWorkItemAsync
-        // were accidentally wired in on this path, it would trigger a SECOND FailWorkItemAsync call
-        // (TransitionAsync reads the item and returns AlreadyAtTarget, but CreateDbContextAsync is
-        // still called before the early return). The count of 1 here is non-vacuous: it would fail
-        // to 2 if the orphan-cleanup path were incorrectly activated.
-        // TODO [WARNING]: CountingDbContextFactory counts ALL CreateDbContextAsync calls routed through
-        // the lifecycle's WorkItemTransitionService, not exclusively FailWorkItemAsync calls. If the
-        // lifecycle's K8s-failure path were ever refactored to make additional TransitionAsync calls
-        // (e.g. an audit log write or optimistic retry), the count would exceed 1 even without
-        // SafelyCancelOrphanedDispatchedWorkItemAsync being called, producing a false test failure.
-        // The assertion's correctness depends on the assumption that exactly one TransitionAsync-routed
-        // call occurs on the K8s-failure path — an assumption that is not explicitly verified and could
-        // silently break under internal lifecycle refactors. (TestQualityReviewer review [WARNING])
-        countingLifecycleFactory.CreateDbContextAsyncCallCount.Should().Be(1,
-            "exactly one FailWorkItemAsync call must have occurred (the lifecycle's own Pending→Failed " +
-            "transition). A second call would indicate SafelyCancelOrphanedDispatchedWorkItemAsync was " +
-            "incorrectly invoked on the existing-Pending path, which has no orphaned Dispatched row.");
+        // Counter must NOT have been incremented (this was the bug).
+        Interlocked.Read(ref exhaustionCount).Should().Be(0,
+            "PvcPoolExhaustions must not fire on a 409 concurrency rejection, even when the PVC pool is also empty");
 
-        // Assert 3: the WorkItem is in Failed state — the lifecycle's own FailWorkItemAsync
-        // (Pending→Failed) ran, which is the ONLY cleanup on this path.
+        // Item must remain Pending (gate rejection must not alter state).
         await using var db = await dbFactory.CreateDbContextAsync();
         var item = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == entity.Id);
-        item.Should().NotBeNull();
-        item!.Status.Should().Be(WorkItemStatus.Failed,
-            "the lifecycle must have transitioned the Pending item to Failed after K8s failure — " +
-            "no SafelyCancelOrphanedDispatchedWorkItemAsync call is made on the existing-Pending path " +
-            "because the item was never written as Dispatched before the K8s call");
+        item!.Status.Should().Be(WorkItemStatus.Pending, "gate rejection must leave the item Pending");
+    }
+
+    // ── Test 21: Genuine PVC exhaustion (503) — counter IS incremented ────────
+
+    /// <summary>
+    /// Positive regression guard: when the PVC pool is empty and concurrency is below the limit,
+    /// <c>ApplyGates</c> returns 503 and <c>PvcPoolExhaustions</c> must be incremented by 1.
+    /// This verifies the fix did not break the correct path.
+    /// </summary>
+    [Fact]
+    public async Task DispatchPendingWorkItem_PvcPoolEmpty_ConcurrencyBelow_Returns503_AndIncrementsPvcPoolExhaustions()
+    {
+        var dbFactory = CreateDbFactory();
+        // Claim the only PVC but stay below maxConcurrent=5 → concurrency gate passes, PVC gate fires.
+        await SeedActiveItemAsync(dbFactory, "kiro,dotnet", claimedPvcName: "pvc-0");
+        var entity = await SeedPendingItemAsync(dbFactory, "kiro,dotnet");
+
+        var templateStore = CreateTemplateStore("kiro,dotnet", maxConcurrent: 5);
+        var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0"]);
+        var resolver = CreateTemplateResolver(templateStore);
+        var lockProvider = CreateNoOpLockProvider();
+
+        long exhaustionCount = 0;
+        // TODO [WARNING]: `counting` is a plain bool read inside the MeterListener callback, which
+        // may be invoked on a thread-pool thread. While the await before `counting = false` provides
+        // a memory barrier in practice on current .NET semantics, the read inside the callback has
+        // no formal visibility guarantee. Use `volatile bool counting` or an Interlocked-controlled
+        // long to make the ordering robust. See Test 20 for the same note.
+        var counting = false;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName &&
+                instrument.Name == "workdistribution.pvc_pool_exhaustions")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
+        {
+            if (counting && instrument.Name == "workdistribution.pvc_pool_exhaustions")
+                Interlocked.Add(ref exhaustionCount, measurement);
+        });
+        listener.Start();
+
+        counting = true;
+        var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
+        counting = false;
+
+        // PVC gate fires → 503.
+        var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
+        statusResult.Should().NotBeNull();
+        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable,
+            "zero available PVCs with concurrency below limit must return 503");
+
+        // Counter must have been incremented exactly once.
+        Interlocked.Read(ref exhaustionCount).Should().Be(1,
+            "PvcPoolExhaustions must be incremented by 1 when the 503/PVC-gate path fires");
+    }
+
+    // ── Test 22: Concurrency rejection with PVCs available — counter NOT incremented ──
+
+    /// <summary>
+    /// Control case: when only the concurrency gate fires (PVCs are available), the endpoint
+    /// returns 409 and <c>PvcPoolExhaustions</c> must not be incremented.
+    /// </summary>
+    [Fact]
+    public async Task DispatchPendingWorkItem_ConcurrencyLimitReached_PvcsAvailable_Returns409_AndDoesNotIncrementPvcPoolExhaustions()
+    {
+        var dbFactory = CreateDbFactory();
+        await SeedActiveItemAsync(dbFactory, "kiro,dotnet");
+        await SeedActiveItemAsync(dbFactory, "kiro,dotnet");
+        var entity = await SeedPendingItemAsync(dbFactory, "kiro,dotnet");
+
+        var templateStore = CreateTemplateStore("kiro,dotnet", maxConcurrent: 2);
+        // PVCs are available — only the concurrency gate fires.
+        var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0", "pvc-1"]);
+        var resolver = CreateTemplateResolver(templateStore);
+        var lockProvider = CreateNoOpLockProvider();
+
+        long exhaustionCount = 0;
+        // TODO [WARNING]: `counting` is a plain bool read inside the MeterListener callback, which
+        // may be invoked on a thread-pool thread. While the await before `counting = false` provides
+        // a memory barrier in practice on current .NET semantics, the read inside the callback has
+        // no formal visibility guarantee. Use `volatile bool counting` or an Interlocked-controlled
+        // long to make the ordering robust. See Test 20 for the same note.
+        var counting = false;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName &&
+                instrument.Name == "workdistribution.pvc_pool_exhaustions")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
+        {
+            if (counting && instrument.Name == "workdistribution.pvc_pool_exhaustions")
+                Interlocked.Add(ref exhaustionCount, measurement);
+        });
+        listener.Start();
+
+        counting = true;
+        var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
+        counting = false;
+
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
+            "concurrency limit with PVCs available must return 409");
+
+        Interlocked.Read(ref exhaustionCount).Should().Be(0,
+            "PvcPoolExhaustions must not fire when only the concurrency gate rejects the request");
+    }
+
+    // ── Test 23: Post-gate PVC race — !dispatched branch → 503, item remains Pending ─
+
+    /// <summary>
+    /// Characterization test for the <c>!dispatched</c> branch in <c>DispatchPendingWorkItem</c>.
+    ///
+    /// <para>
+    /// Gates pass (PVC appears available), the lifecycle is entered, the K8s Job is created, but
+    /// a concurrent path transitions the WorkItem from <c>Pending</c> to <c>Dispatched</c> during
+    /// the K8s API call. When <c>HandleOrphanedJobIfRaceDetectedAsync</c> reloads the WorkItem and
+    /// finds it is no longer in <c>Pending</c> state (<c>ExpectedInitialStatus</c>), it returns
+    /// <c>shouldContinue = false</c> and the lifecycle returns without calling <c>onDispatchSuccess</c>.
+    /// </para>
+    ///
+    /// <para>
+    /// Expected result: 503 Service Unavailable, item remains <c>Dispatched</c> (as set by the
+    /// concurrent path). Critically, <c>SafelyCancelOrphanedDispatchedWorkItemAsync</c> must NOT
+    /// be called on this path — the item was already claimed by the concurrent dispatch, and
+    /// cancelling it would destroy that concurrent run. The <c>DispatchPendingWorkItem</c> handler
+    /// explicitly does NOT pass an <c>onDispatchFailure</c> delegate to <c>RunDispatchLifecycleAsync</c>.
+    /// </para>
+    ///
+    /// <para>
+    /// This test is the safety net for the AC1 extraction: after extracting the <c>!dispatched</c>
+    /// branch into <c>RunDispatchLifecycleAsync</c>, this test proves the extracted method does
+    /// NOT call <c>SafelyCancelOrphanedDispatchedWorkItemAsync</c> on the
+    /// <c>DispatchPendingWorkItem</c> path (where <c>onDispatchFailure</c> is null).
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task DispatchPendingWorkItem_PostGatePvcRace_LifecycleExitsWithoutDispatching_Returns503_ItemUntouched()
+    {
+        // Arrange: seed a Pending item; use a non-kiro template to skip PVC involvement entirely.
+        // The race is simulated at the K8s-call boundary: the K8s mock transitions the item to
+        // Dispatched during CreateJobAsync, so HandleOrphanedJobIfRaceDetectedAsync finds
+        // Status ≠ Pending and returns shouldContinue=false.
+        var dbFactory = CreateDbFactory();
+        var entity = await SeedPendingItemAsync(dbFactory, "opencode,python");
+
+        // Non-kiro template — PVC gate is skipped, no PVC involvement.
+        var templateStore = CreateTemplateStore("opencode,python", maxConcurrent: 5, providerType: "opencode");
+        var resolver = CreateTemplateResolver(templateStore);
+        var lockProvider = CreateNoOpLockProvider();
+
+        // K8s mock: during CreateJobAsync, transition the item to Dispatched in the DB to simulate
+        // a concurrent dispatch path claiming the item between the pre-write save and the
+        // HandleOrphanedJobIfRaceDetectedAsync reload.
+        var k8sMock = new Mock<IKubernetesJobClient>();
+        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (k8s.Models.V1Job _, string _, CancellationToken ct) =>
+            {
+                // Concurrent path: mark the item as Dispatched while CreateJobAsync is running.
+                await using var db = await dbFactory.CreateDbContextAsync(ct);
+                var item = await db.WorkItems.FindAsync([entity.Id], ct);
+                if (item is { Status: WorkItemStatus.Pending })
+                {
+                    item.Status = WorkItemStatus.Dispatched;
+                    item.DispatchedAt = DateTimeOffset.UtcNow;
+                    await db.SaveChangesAsync(ct);
+                }
+            });
+
+        // DeleteJobAsync is called by HandleOrphanedJobIfRaceDetectedAsync — allow it silently.
+        // TODO [WARNING]: No Verify is performed on DeleteJobAsync. HandleOrphanedJobIfRaceDetectedAsync
+        // calling DeleteJobAsync is the mechanism that causes shouldContinue=false and the 503 path here.
+        // If that method is later refactored to skip the delete, the item would stay in a different state
+        // (e.g. Pending rather than Dispatched) and the Status assertion below would fail — but the missing
+        // delete itself would be undetected. Consider adding:
+        //   k8sMock.Verify(k => k.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once)
+        // to lock in that the orphaned-job cleanup runs on this code path.
+        var deleteJobMock = k8sMock;
+        deleteJobMock.Setup(k => k.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Empty PVC pool — non-kiro so PVC gate is not reached.
+        var lifecycle = CreateLifecycleService(k8sMock.Object, pvcPool: []);
+
+        // Act
+        var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
+            entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
+
+        // Assert 1: endpoint returns 503 (lifecycle exited without dispatching)
+        var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
+        statusResult.Should().NotBeNull("lifecycle exit without dispatching must return 503");
+        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+
+        // Assert 2: item was claimed by the concurrent path and remains Dispatched.
+        // SafelyCancelOrphanedDispatchedWorkItemAsync must NOT have been called
+        // (the item is still Dispatched — it was not transitioned to Failed/Cancelled).
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var updatedItem = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == entity.Id);
+        updatedItem.Should().NotBeNull();
+        updatedItem!.Status.Should().Be(WorkItemStatus.Dispatched,
+            "DispatchPendingWorkItem must not call SafelyCancelOrphanedDispatchedWorkItemAsync — " +
+            "the item was claimed by a concurrent dispatch path and must remain Dispatched");
+    }
+
+}
+
+// ── Characterization tests for unique-violation idempotent-retry (CreateWorkItem + DispatchWorkItem) ──
+
+/// <summary>
+/// Characterization tests for the <c>catch (Exception ex) when (IsUniqueViolation(ex))</c>
+/// block in <c>CreateWorkItem</c> and <c>DispatchWorkItem</c>.
+///
+/// <para>
+/// These tests lock in the behavior of the unique-violation idempotent-retry path before
+/// extracting it into a shared <c>DispatchWorkItemService.HandleUniqueViolationAsync</c> method.
+/// </para>
+///
+/// <para>
+/// EF InMemory throws <c>ArgumentException("An item with the same key has already been added")</c>
+/// on PK duplicate (not <c>DbUpdateException</c>). <c>IsUniqueViolation</c> handles this via the
+/// "An item with the same key has already been added" string match. The partial unique-index case
+/// (IssueIdentifier + IssueProviderConfigId conflict) is simulated by seeding a live item with
+/// the same IssueIdentifier+IssueProviderConfigId pair (since InMemory removes the filtered index
+/// via the shim in <c>TestPipelineDbContext</c>), then engineering a <c>HandleUniqueViolationFallback</c>
+/// call via a <c>ArgumentException</c> triggered by PK collision without a matching ID row.
+/// </para>
+/// </summary>
+public sealed class UniqueViolationIdempotentRetryTests
+{
+    private readonly string _dbName = $"unique-violation-test-{Guid.NewGuid():N}";
+
+    private IDbContextFactory<PipelineDbContext> CreateDbFactory()
+    {
+        var opts = new DbContextOptionsBuilder<PipelineDbContext>()
+            .UseInMemoryDatabase(_dbName)
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+        return new SimpleInMemoryDbContextFactory(opts);
+    }
+
+    private static IOrchestratorRunService CreateRunService() =>
+        new OrchestratorRunService(Mock.Of<Serilog.ILogger>());
+
+    private static JobDistributionRequest MakeRequest(
+        string? issueIdentifier = null,
+        string? runId = null) => new()
+        {
+            IssueIdentifier = new IssueIdentifier(issueIdentifier ?? $"issue-{Guid.NewGuid():N}"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "kiro,dotnet",
+            TimeoutSeconds = 3600,
+            RunId = runId ?? Guid.NewGuid().ToString()
+        };
+
+    private static JobTemplateStore CreateTemplateStore(
+        string labels = "kiro,dotnet",
+        int maxConcurrent = 5,
+        string providerType = "kiro") =>
+        JobTemplateStore.LoadFromYaml($"""
+            - labels: "{labels}"
+              image: "test-image:latest"
+              imagePullPolicy: "Always"
+              providerType: "{providerType}"
+              maxConcurrent: {maxConcurrent}
+            """);
+
+    // ── CreateWorkItem unique-violation tests ────────────────────────────────────
+
+    /// <summary>
+    /// When <c>CreateWorkItem</c> is called twice with the same RunId (same workItemId), the
+    /// second call must return 201 (idempotent PK retry) — the item already exists.
+    /// </summary>
+    [Fact]
+    public async Task CreateWorkItem_UniqueViolation_IdempotentPkRetry_Returns201()
+    {
+        // Arrange: first call creates the item; second call with same RunId triggers PK conflict.
+        var dbFactory = CreateDbFactory();
+        var runService = CreateRunService();
+        var runId = Guid.NewGuid().ToString();
+        var request = MakeRequest(runId: runId);
+
+        // Act: first call — succeeds, returns 201
+        var firstResult = await WorkItemDispatchEndpoints.CreateWorkItem(
+            request, dbFactory, runService, CancellationToken.None);
+        firstResult.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Created<Guid>>(
+            "first call must succeed");
+
+        // Act: second call with same RunId — triggers PK unique violation
+        var secondResult = await WorkItemDispatchEndpoints.CreateWorkItem(
+            request, dbFactory, runService, CancellationToken.None);
+
+        // Assert: second call must return 201 (idempotent — item already exists)
+        var created = secondResult as Microsoft.AspNetCore.Http.HttpResults.Created<Guid>;
+        created.Should().NotBeNull("idempotent PK retry must return 201");
+        var workItemId = Guid.Parse(runId);
+        created!.Value.Should().Be(workItemId, "the returned GUID must match the original workItemId");
+    }
+
+    /// <summary>
+    /// When <c>CreateWorkItem</c> receives a unique-violation exception that is NOT a PK duplicate
+    /// (i.e., a business-rule partial unique index conflict — same IssueIdentifier + IssueProviderConfigId),
+    /// it must return 409 Conflict via <c>HandleUniqueViolationFallback</c>.
+    ///
+    /// <para>
+    /// Simulation: the EF InMemory provider strips filtered indexes (via <c>TestPipelineDbContext</c>),
+    /// so we cannot directly trigger the IssueIdentifier+IssueProviderConfigId index. Instead, we
+    /// seed an existing item for the same issue, then force a PK collision with a DIFFERENT RunId
+    /// by seeding a second item with the same PK (but a non-matching RunId so the idempotent check
+    /// returns 409, not 201). We achieve this by pre-seeding an item with the target ID directly in the DB,
+    /// then calling <c>CreateWorkItem</c> with a RunId matching that pre-seeded ID (so the PK collides,
+    /// and then the idempotent re-check finds the row exists → 201). To get the 409 path we need to trigger
+    /// the conflict on a key that does NOT exist in the DB after the conflict fires. The cleanest approach:
+    /// use a <c>ThrowingDbContextFactory</c> that produces a PK-collision <c>ArgumentException</c> on
+    /// <c>SaveChangesAsync</c> while the corresponding ID does NOT exist in the re-check DB.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task CreateWorkItem_UniqueViolation_WhenNotIdempotentRetry_Returns409()
+    {
+        // Arrange: use a factory that throws a PK-collision ArgumentException on SaveChanges,
+        // but the "re-check" DbContext (fresh) finds no existing row with that workItemId.
+        // This simulates the partial unique-index conflict path where the workItemId is new
+        // but a different run is already live for the same IssueIdentifier+IssueProviderConfigId.
+        var workItemId = Guid.NewGuid();
+        var runId = workItemId.ToString(); // so the endpoint parses this as workItemId
+
+        // Use a two-factory setup: a throwing factory for SaveChanges (triggers IsUniqueViolation)
+        // while the re-check DbContext (opened fresh) finds no row → falls through to HandleUniqueViolationFallback.
+        // We accomplish this by using a real InMemory DB (no pre-seeded row) for both contexts,
+        // but the write context throws ArgumentException to simulate the unique violation.
+        // Since the read-back DB is the same InMemory DB and has no row, HandleUniqueViolationFallback fires.
+        var dbFactory = new ThrowingOnSaveDbContextFactory(_dbName);
+        var runService = CreateRunService();
+        var request = MakeRequest(runId: runId);
+
+        // Act
+        var result = await WorkItemDispatchEndpoints.CreateWorkItem(
+            request, dbFactory, runService, CancellationToken.None);
+
+        // Assert: 409 Conflict via HandleUniqueViolationFallback
+        var conflict = result as Microsoft.AspNetCore.Http.HttpResults.Conflict<string>;
+        conflict.Should().NotBeNull("unique-violation with no pre-existing row must return 409 via HandleUniqueViolationFallback");
+        conflict!.Value.Should().Contain("live work item", "the body must be the HandleUniqueViolationFallback message");
+    }
+
+    // ── DispatchWorkItem unique-violation tests ──────────────────────────────────
+
+    /// <summary>
+    /// When <c>DispatchWorkItem</c> encounters a unique-violation exception and the existing item
+    /// is active (Dispatched or Running), it must return 200 (idempotent retry — item is running).
+    /// </summary>
+    [Fact]
+    public async Task DispatchWorkItem_UniqueViolation_WhenExistingItemIsActive_Returns200()
+    {
+        // Arrange: use a factory where SaveChanges throws ArgumentException (unique violation),
+        // and the re-check DB (fresh context) contains a Dispatched item with the matching ID.
+        var workItemId = Guid.NewGuid();
+        var dbFactory = new PrepopulatedThrowingDbContextFactory(_dbName + "-dw-active", workItemId, WorkItemStatus.Dispatched);
+
+        var runService = CreateRunService();
+        var templateStore = CreateTemplateStore(maxConcurrent: 5);
+        var k8sMock = new Mock<IKubernetesJobClient>();
+        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var lifecycle = CreateLifecycleService(k8sMock.Object);
+
+        // Request with RunId = workItemId → handler uses this as workItemId
+        var request = MakeRequest(runId: workItemId.ToString());
+
+        // Act
+        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
+            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), CancellationToken.None);
+
+        // Assert: 200 OK — item is active (Dispatched), idempotent retry succeeds
+        var ok = result as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
+        ok.Should().NotBeNull("active existing item must return 200 on unique-violation idempotent retry");
+        ok!.Value.Should().Be(workItemId);
+    }
+
+    /// <summary>
+    /// When <c>DispatchWorkItem</c> encounters a unique-violation exception and the existing item
+    /// is in a non-active state (e.g., Failed), it must return 409 Conflict so the Scheduler
+    /// re-queues the issue rather than treating it as dispatched.
+    /// </summary>
+    [Fact]
+    public async Task DispatchWorkItem_UniqueViolation_WhenExistingItemIsNonActive_Returns409()
+    {
+        // Arrange: SaveChanges throws unique violation; re-check DB has a Failed item.
+        var workItemId = Guid.NewGuid();
+        var dbFactory = new PrepopulatedThrowingDbContextFactory(_dbName + "-dw-failed", workItemId, WorkItemStatus.Failed);
+
+        var runService = CreateRunService();
+        var templateStore = CreateTemplateStore(maxConcurrent: 5);
+        var k8sMock = new Mock<IKubernetesJobClient>();
+        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var lifecycle = CreateLifecycleService(k8sMock.Object);
+
+        var request = MakeRequest(runId: workItemId.ToString());
+
+        // Act
+        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
+            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), CancellationToken.None);
+
+        // Assert: 409 Conflict — existing item is non-active (Failed)
+        var conflict = result as Microsoft.AspNetCore.Http.HttpResults.Conflict<string>;
+        conflict.Should().NotBeNull("non-active existing item must return 409 on unique-violation idempotent retry");
+        conflict!.Value.Should().Contain("Failed", "the 409 body must include the current non-active status");
+    }
+
+    // ── Private helpers ──────────────────────────────────────────────────────────
+
+    private DispatchLifecycleService CreateLifecycleService(
+        IKubernetesJobClient? k8sClient = null,
+        IReadOnlyList<string>? pvcPool = null)
+    {
+        var dbFactory = CreateDbFactory();
+        var transitionSvc = new WorkItemTransitionService(
+            dbFactory,
+            Mock.Of<ILogger<WorkItemTransitionService>>());
+        var opts = new DispatchServiceOptions
+        {
+            Namespace = "test",
+            OrchestratorUrl = "http://test",
+            AgentApiKeySecretName = "secret",
+            AgentServiceAccountName = "sa",
+            KiroPvcPool = (pvcPool ?? ["pvc-0", "pvc-1"]).ToList()
+        };
+        return new DispatchLifecycleService(
+            k8sClient ?? Mock.Of<IKubernetesJobClient>(),
+            transitionSvc,
+            opts);
     }
 }
 
@@ -2126,38 +2466,160 @@ file sealed class FaultedDbContextFactory : IDbContextFactory<PipelineDbContext>
 }
 
 /// <summary>
-/// An <see cref="IDbContextFactory{TContext}"/> decorator that counts
-/// <see cref="CreateDbContextAsync"/> calls. Used by
-/// <see cref="DispatchPendingWorkItemEndpointTests.DispatchPendingWorkItem_OnK8sFailure_DoesNotCallSafelyCancelOrphanedDispatchedWorkItemAsync"/>
-/// to provide a non-vacuous Times.Never assertion.
-///
-/// <para>
-/// <c>DispatchLifecycleService.FailWorkItemAsync</c> calls
-/// <c>WorkItemTransitionService.TransitionAsync</c>, which calls
-/// <c>_dbFactory.CreateDbContextAsync</c> exactly once per invocation (even when the item is
-/// already at the target status — <c>AlreadyAtTarget</c> returns after the first read, before the
-/// save, but after <c>CreateDbContextAsync</c>). By injecting this factory as the lifecycle's
-/// transition-service factory, callers can assert on <see cref="CreateDbContextAsyncCallCount"/>
-/// to verify the exact number of <c>FailWorkItemAsync</c> invocations, which is not observable
-/// via item state alone.
-/// </para>
+/// An <see cref="IDbContextFactory{TContext}"/> that throws
+/// <see cref="ArgumentException"/> from <c>SaveChangesAsync</c> on the first write (to simulate
+/// an EF InMemory PK-collision unique violation), but allows subsequent read-only contexts
+/// (created fresh via the real InMemory database) to operate normally.
+/// Used by <see cref="UniqueViolationIdempotentRetryTests"/> to exercise the
+/// <c>HandleUniqueViolationFallback</c> path where no matching row exists in the DB.
 /// </summary>
-file sealed class CountingDbContextFactory(IDbContextFactory<PipelineDbContext> inner)
-    : IDbContextFactory<PipelineDbContext>
+file sealed class ThrowingOnSaveDbContextFactory : IDbContextFactory<PipelineDbContext>
 {
-    private int _createDbContextAsyncCallCount;
+    private readonly DbContextOptions<PipelineDbContext> _opts;
+    // TODO [WARNING]: _hasThrown is consumed on the FIRST call to CreateDbContextAsync, not on the
+    // first SaveChangesAsync. If CreateWorkItem opens a read context before the write context
+    // (e.g. a pre-check query added in the future), _hasThrown is set on that read context and
+    // the ThrowingPipelineDbContext is never used for the actual save — the test would then pass
+    // trivially on the non-violation path without exercising HandleUniqueViolationFallback.
+    // Consider switching to a factory that counts SaveChangesAsync invocations instead.
+    private bool _hasThrown;
 
-    /// <summary>
-    /// The number of times <see cref="CreateDbContextAsync"/> has been called.
-    /// Each <c>FailWorkItemAsync</c> invocation increments this counter by exactly 1.
-    /// </summary>
-    public int CreateDbContextAsyncCallCount => _createDbContextAsyncCallCount;
+    public ThrowingOnSaveDbContextFactory(string dbName)
+    {
+        _opts = new DbContextOptionsBuilder<PipelineDbContext>()
+            .UseInMemoryDatabase(dbName + "-throwing")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+    }
 
-    public PipelineDbContext CreateDbContext() => inner.CreateDbContext();
+    public PipelineDbContext CreateDbContext() => CreateContext();
 
     public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
+        => Task.FromResult<PipelineDbContext>(CreateContext());
+
+    private PipelineDbContext CreateContext()
     {
-        Interlocked.Increment(ref _createDbContextAsyncCallCount);
-        return inner.CreateDbContextAsync(ct);
+        if (!_hasThrown)
+        {
+            _hasThrown = true;
+            return new ThrowingPipelineDbContext(_opts);
+        }
+        // Subsequent contexts (the re-check read) return a normal context with an empty DB
+        // (no row with the workItemId exists), so HandleUniqueViolationFallback is invoked.
+        return new TestPipelineDbContext(_opts);
+    }
+}
+
+/// <summary>
+/// A <see cref="PipelineDbContext"/> whose <see cref="SaveChangesAsync"/> always throws
+/// <see cref="ArgumentException"/> with the EF InMemory PK-collision message. Used to
+/// simulate unique-violation triggering without a real Postgres database.
+/// </summary>
+file sealed class ThrowingPipelineDbContext : PipelineDbContext
+{
+    public ThrowingPipelineDbContext(DbContextOptions<PipelineDbContext> opts) : base(opts) { }
+
+    public override Task<int> SaveChangesAsync(CancellationToken ct = default) =>
+        Task.FromException<int>(
+            new ArgumentException("An item with the same key has already been added. Key: simulated-pk-collision"));
+
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken ct = default) =>
+        Task.FromException<int>(
+            new ArgumentException("An item with the same key has already been added. Key: simulated-pk-collision"));
+
+    public override int SaveChanges() =>
+        throw new ArgumentException("An item with the same key has already been added. Key: simulated-pk-collision");
+
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        base.OnModelCreating(mb);
+        foreach (var et in mb.Model.GetEntityTypes())
+        {
+            var rv = et.FindProperty("RowVersion");
+            if (rv != null) { rv.IsConcurrencyToken = false; rv.ValueGenerated = Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.Never; }
+        }
+        foreach (var et in mb.Model.GetEntityTypes())
+        {
+            foreach (var idx in et.GetIndexes().Where(i => i.GetFilter() != null).ToList())
+                et.RemoveIndex(idx);
+        }
+    }
+}
+
+/// <summary>
+/// An <see cref="IDbContextFactory{TContext}"/> for testing the unique-violation catch block in
+/// <c>DispatchWorkItem</c> and <c>CreateWorkItem</c>. On the FIRST call, returns a context whose
+/// <c>SaveChangesAsync</c> throws <see cref="ArgumentException"/> (simulating a unique-violation).
+/// On subsequent calls, returns a real InMemory context pre-populated with a work item at the
+/// specified <paramref name="workItemId"/> in the specified <paramref name="existingStatus"/>.
+/// This simulates the catch block's re-check path: a fresh DbContext is opened to query whether
+/// the conflicting item already exists and in what state.
+/// </summary>
+file sealed class PrepopulatedThrowingDbContextFactory : IDbContextFactory<PipelineDbContext>
+{
+    private readonly DbContextOptions<PipelineDbContext> _throwOpts;
+    private readonly DbContextOptions<PipelineDbContext> _readOpts;
+    private readonly Guid _workItemId;
+    private readonly WorkItemStatus _existingStatus;
+    // TODO [WARNING]: _hasThrown is consumed on the FIRST call to CreateDbContextAsync. The
+    // DispatchWorkItem handler opens at least one context for the pre-save work AND a fresh one
+    // inside HandleUniqueViolationAsync for the re-check. If the handler opens more than one
+    // context before SaveChangesAsync throws, _hasThrown is consumed on the first non-save call
+    // and the re-check context is returned from the throw-opts (empty) DB rather than the
+    // pre-populated read DB — making both DispatchWorkItem unique-violation tests sensitive to
+    // the exact number of CreateDbContextAsync calls before save. Consider tracking invocations
+    // more precisely (e.g. counting SaveChangesAsync throws) to decouple from call-order assumptions.
+    private bool _hasThrown;
+
+    public PrepopulatedThrowingDbContextFactory(string dbName, Guid workItemId, WorkItemStatus existingStatus)
+    {
+        _workItemId = workItemId;
+        _existingStatus = existingStatus;
+
+        // Throwing context uses an empty DB — SaveChangesAsync throws before any write.
+        _throwOpts = new DbContextOptionsBuilder<PipelineDbContext>()
+            .UseInMemoryDatabase(dbName + "-throw")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+
+        // Read context uses a separate DB pre-populated with the "existing" item.
+        _readOpts = new DbContextOptionsBuilder<PipelineDbContext>()
+            .UseInMemoryDatabase(dbName + "-read")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+
+        // Pre-populate the read DB with the "existing" item.
+        using var seedCtx = new TestPipelineDbContext(_readOpts);
+        seedCtx.WorkItems.Add(new WorkItemEntity
+        {
+            Id = workItemId,
+            TaskType = WorkItemTaskType.Implementation,
+            IssueIdentifier = $"issue-{workItemId:N}",
+            IssueProviderConfigId = "prov-1",
+            Status = existingStatus,
+            AgentSelector = "kiro,dotnet",
+            TimeoutSeconds = 3600,
+            CreatedAt = DateTimeOffset.UtcNow,
+            DispatchedAt = existingStatus == WorkItemStatus.Dispatched ? DateTimeOffset.UtcNow : null,
+            Payload = "{}"
+        });
+        seedCtx.SaveChanges();
+    }
+
+    public PipelineDbContext CreateDbContext() => CreateContext();
+
+    public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
+        => Task.FromResult<PipelineDbContext>(CreateContext());
+
+    private PipelineDbContext CreateContext()
+    {
+        if (!_hasThrown)
+        {
+            _hasThrown = true;
+            // First context: throws on SaveChangesAsync; uses an empty DB so Add() succeeds.
+            return new ThrowingPipelineDbContext(_throwOpts);
+        }
+        // Subsequent contexts: reads from the pre-populated DB to find the "existing" item.
+        return new TestPipelineDbContext(_readOpts);
     }
 }

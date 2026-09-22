@@ -2,6 +2,7 @@ using System.Text.Json;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Persistence;
+using Serilog;
 
 namespace CodingAgent.Pipeline.Services;
 
@@ -49,17 +50,14 @@ public sealed class FileSystemConsolidationRunStore : IConsolidationRunStore
 
         foreach (var file in files)
         {
-            try
-            {
-                var json = await File.ReadAllTextAsync(file, ct);
-                var run = JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
-                if (run is not null)
-                    runs.Add(run);
-            }
-            catch
-            {
-                // Skip corrupt files — same behavior as original inline code
-            }
+            // Use the shared helper for consistent missing-file / empty-file / parse-error handling.
+            // A null result (any error) is silently skipped — same skip-corrupt-files semantics as before.
+            // TODO: [WARNING] Log.Logger (Serilog static global) is used here for the same reason as GetByIdAsync —
+            // no injected ILogger in this class. Thread one in if this class is ever extended.
+            var run = await JsonFileReader.TryReadJsonFileAsync<ConsolidationRun>(
+                file, PipelineJsonOptions.Default, Log.Logger, ct);
+            if (run is not null)
+                runs.Add(run);
         }
 
         return runs;
@@ -71,18 +69,12 @@ public sealed class FileSystemConsolidationRunStore : IConsolidationRunStore
             return null;
 
         var filePath = GetFilePath(runId.Value);
-        if (!File.Exists(filePath))
-            return null;
-
-        try
-        {
-            var json = await File.ReadAllTextAsync(filePath, ct);
-            return JsonSerializer.Deserialize<ConsolidationRun>(json, PipelineJsonOptions.Default);
-        }
-        catch
-        {
-            return null;
-        }
+        // TODO: [WARNING] Log.Logger (Serilog static global) is used because this class has no injected ILogger.
+        // In tests that construct the store directly without bootstrapping Serilog, Log.Logger resolves to
+        // SilentLogger and warnings about malformed files will be swallowed silently. If an ILogger is ever
+        // threaded into this class, pass it here instead of Log.Logger.
+        return await JsonFileReader.TryReadJsonFileAsync<ConsolidationRun>(
+            filePath, PipelineJsonOptions.Default, Log.Logger, ct);
     }
 
     public Task DeleteRunAsync(RunId runId, CancellationToken ct)

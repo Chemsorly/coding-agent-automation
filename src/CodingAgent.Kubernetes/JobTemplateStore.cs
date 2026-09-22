@@ -82,6 +82,11 @@ public sealed class JobTemplateStore
     /// <exception cref="YamlDotNet.Core.YamlException">Thrown if YAML content is malformed.</exception>
     public static JobTemplateStore LoadFromFile(string filePath)
     {
+        // NOTE: This method intentionally does NOT use JsonFileReader.TryReadJsonFileAsync.
+        // It is a fail-fast factory method — a missing or malformed templates file is a
+        // startup configuration error, not a runtime null-return condition. Callers rely on
+        // FileNotFoundException / JsonException / YamlException being thrown so that the
+        // host can surface a clear startup failure rather than silently running with no templates.
         if (!File.Exists(filePath))
         {
             Log.Error("Job templates file not found: {FilePath}", filePath);

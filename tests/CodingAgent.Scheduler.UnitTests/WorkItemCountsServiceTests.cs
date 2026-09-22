@@ -9,35 +9,35 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgent.Scheduler.UnitTests;
 
 /// <summary>
-/// Unit tests for WorkItemCountsPoller — validates leader gating and error handling.
+/// Unit tests for WorkItemCountsService — validates leader gating and error handling.
 /// Uses a fast tick interval (1ms) so the service fires within the test window.
 /// </summary>
 [Collection("SchedulerTiming")]
-public sealed class WorkItemCountsPollerTests
+public sealed class WorkItemCountsServiceTests
 {
     private readonly Mock<ISchedulerApiClient> _mockClient;
     private readonly Mock<ILeaderGate> _mockLeaderGate;
     private readonly Mock<ILogger> _mockLogger;
 
-    public WorkItemCountsPollerTests()
+    public WorkItemCountsServiceTests()
     {
         _mockClient = new Mock<ISchedulerApiClient>();
         _mockLeaderGate = new Mock<ILeaderGate>();
         _mockLogger = new Mock<ILogger>();
-        _mockLogger.Setup(l => l.ForContext<WorkItemCountsPoller>())
+        _mockLogger.Setup(l => l.ForContext<WorkItemCountsService>())
             .Returns(_mockLogger.Object);
         _mockLogger.Setup(l => l.ForContext(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<bool>()))
             .Returns(_mockLogger.Object);
     }
 
-    private WorkItemCountsPoller CreatePoller()
-        => new WorkItemCountsPoller(
+    private WorkItemCountsService CreatePoller()
+        => new WorkItemCountsService(
             _mockClient.Object,
             _mockLeaderGate.Object,
             _mockLogger.Object,
             interval: TimeSpan.FromMilliseconds(1));
 
-    private static async Task RunPollerForDurationAsync(WorkItemCountsPoller poller, TimeSpan duration)
+    private static async Task RunPollerForDurationAsync(WorkItemCountsService poller, TimeSpan duration)
     {
         using var cts = new CancellationTokenSource();
         await poller.StartAsync(cts.Token);
@@ -92,13 +92,13 @@ public sealed class WorkItemCountsPollerTests
     public async Task WhenNullGate_PollsUnconditionally()
     {
         // null gate = dev / single-replica mode
-        // Set up the mock before constructing the poller so the background task never sees
+        // Set up the mock before constructing the service so the background task never sees
         // an unconfigured mock on the first poll (which fires immediately in ExecuteAsync).
         _mockClient
             .Setup(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
-        var poller = new WorkItemCountsPoller(
+        var poller = new WorkItemCountsService(
             _mockClient.Object,
             leaderGate: null,
             _mockLogger.Object,

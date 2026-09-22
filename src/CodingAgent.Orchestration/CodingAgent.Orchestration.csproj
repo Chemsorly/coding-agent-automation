@@ -7,6 +7,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- TODO [WARNING]: CodingAgent.AgentGateway requires this InternalsVisibleTo because
+         ProviderConfigResolver is an internal class. TryResolveAsync and ResolveRequiredAsync are
+         declared public but the class itself is internal, so access is entirely load-bearing on
+         this attribute. If this attribute is removed, all ProviderConfigResolver call sites in
+         AgentGateway will break at compile time. -->
+    <InternalsVisibleTo Include="CodingAgent.AgentGateway" />
     <InternalsVisibleTo Include="CodingAgent.Web" />
     <InternalsVisibleTo Include="CodingAgent.Api" />
     <InternalsVisibleTo Include="CodingAgent.Web.UnitTests" />

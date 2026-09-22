@@ -192,6 +192,32 @@ public class PullRequestFinalizationServiceTests
         capturedRequest!.Timeout.Should().Be(TimeSpan.FromSeconds(60));
     }
 
+    [Fact]
+    public async Task CollectFeedbackAsync_PipelineCancellation_PropagatesOperationCanceledException()
+    {
+        // Validates: pipeline-level cancellation (ct.IsCancellationRequested == true) must propagate
+        // out of CollectFeedbackAsync — the "when (ex is not OperationCanceledException)" guard must
+        // not swallow it.
+        var run = CreateRun();
+        var agentProvider = new Mock<IAgentProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        agentProvider
+            .Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new OperationCanceledException("pipeline cancelled"));
+
+        var act = async () => await _sut.CollectFeedbackAsync(
+            run, agentProvider.Object, feedbackService, null, _ => { }, cts.Token, new PipelineConfiguration());
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        // TODO: Also assert run.Feedback.Should().BeNull() here. If a future change accidentally
+        // sets fallback feedback before re-throwing in CollectFeedbackCoreAsync, this test would
+        // not catch the regression — it only verifies exception propagation, not that no fallback
+        // was set. Adding the null assertion fully characterizes the pipeline-cancellation contract.
+    }
+
     // ── RunPostPrSequenceAsync ──
 
     [Fact]

@@ -129,20 +129,12 @@ public static class WorkItemDispatchEndpoints
         catch (Exception ex) when (IsUniqueViolation(ex))
         {
             // Distinguish idempotent PK retry from business-rule unique index conflict.
-            // If a row with this workItemId already exists, this is a safe idempotent retry —
-            // return 201 so EnsureSuccessStatusCode() on the retried response succeeds.
-            //
-            // Note: Postgres throws DbUpdateException (SQLSTATE 23505); EF InMemory throws
-            // ArgumentException("An item with the same key has already been added") directly,
-            // so the catch must be on Exception rather than DbUpdateException.
-            await using var readDb = await dbFactory.CreateDbContextAsync(ct);
-            var exists = await readDb.WorkItems.AnyAsync(w => w.Id == workItemId, ct);
-            if (exists)
-                return TypedResults.Created($"/api/work-items/{workItemId}", workItemId);
-
-            // Postgres 23505: partial unique index on (IssueIdentifier, IssueProviderConfigId)
-            // for non-terminal statuses — a different run is already live for this issue.
-            return DispatchWorkItemService.HandleUniqueViolationFallback();
+            // Delegates to DispatchWorkItemService.HandleUniqueViolationAsync which opens
+            // a fresh DbContext (this context is faulted after the exception) to re-query:
+            // - If a row with workItemId already exists → 201 (idempotent PK retry).
+            // - Otherwise → 409 via HandleUniqueViolationFallback (partial unique index on
+            //   (IssueIdentifier, IssueProviderConfigId) — a different run is already live).
+            return await DispatchWorkItemService.HandleUniqueViolationAsync(dbFactory, workItemId, isNewlyCreated: true, ct);
         }
 
         // Materialise in-memory PipelineRun in the API's IOrchestratorRunService so the UI
@@ -268,10 +260,6 @@ public static class WorkItemDispatchEndpoints
         DispatchWorkItemService dispatchService,
         CancellationToken ct = default)
     {
-        // TODO [WARNING]: `dispatchService` has no ArgumentNullException.ThrowIfNull guard here,
-        // inconsistent with the guard on `request` in DispatchWorkItem and with the constructor
-        // guard in DispatchWorkItemService itself. A null value would produce a NullReferenceException
-        // at first use rather than a clear ArgumentNullException at the entry point.
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
         // Fast path: check status before acquiring the lock.
@@ -310,11 +298,8 @@ public static class WorkItemDispatchEndpoints
         // The label swap to agent:in-progress is NOT in scope — it happens in AgentHub.RegisterAgent.
         //
         // Note: this lock only protects concurrent calls to THIS endpoint. DispatchWorkItem
-        // (collection-level) and WorkItemDispatchPoller (Scheduler background poller) do NOT acquire
+        // (collection-level) and WorkItemDispatchLoop (Scheduler background loop) do NOT acquire
         // this lock. Cross-path correctness is provided by the CAS in ExecuteDispatchLifecycleAsync.
-        // TODO [WARNING]: The two-variable lock pattern (IAsyncDisposable lockHandle; ... await using var _ = lockHandle)
-        // is non-idiomatic. Prefer a try/finally or helper wrapper if this method is refactored, to
-        // ensure the handle is always disposed even under unexpected async state-machine faults.
         IAsyncDisposable lockHandle;
         try
         {
@@ -325,11 +310,6 @@ public static class WorkItemDispatchEndpoints
             // PostgresDistributedLockProvider retries with pg_try_advisory_lock for up to 60s.
             // A timeout means another call has held the lock for that entire window (e.g. a slow
             // K8s API response). Return 503 — transient, the Scheduler should retry next cycle.
-            // TODO [WARNING]: normalizedSelector is sanitized inline here instead of using a pre-computed
-            // sanitizedNormalizedSelector variable. All other log/Conflict sites use the pre-computed
-            // sanitizedSelector. If a second log call using normalizedSelector is added in this method,
-            // the author may miss sanitizing it. Consider declaring a sanitizedNormalizedSelector variable
-            // alongside sanitizedSelector at the top of this method for consistency.
             Log.Warning("DispatchPendingWorkItem: advisory lock acquisition timed out for selector {Selector} — returning 503", CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(normalizedSelector));
             return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
@@ -337,7 +317,7 @@ public static class WorkItemDispatchEndpoints
         await using var _ = lockHandle;
 
         // Post-lock status re-read: close the TOCTOU window.
-        // Another dispatch path (WorkItemDispatchPoller, DispatchWorkItem, or a concurrent call
+        // Another dispatch path (WorkItemDispatchLoop, DispatchWorkItem, or a concurrent call
         // to this endpoint) may have transitioned the item from Pending → Dispatched between
         // the fast-path check above and lock acquisition. The advisory lock serialises concurrent
         // callers on this endpoint; without this re-read, the loser enters
@@ -350,14 +330,6 @@ public static class WorkItemDispatchEndpoints
         // status transitions, not DELETE) and is treated as non-Pending to avoid dispatching a
         // ghost. Using a nullable projection avoids the default(WorkItemStatus) == Pending pitfall
         // that a plain .Select(w => w.Status).FirstOrDefaultAsync() would have if the row vanished.
-        // TODO [WARNING]: This re-read relies on READ COMMITTED isolation semantics: the query must
-        // see committed writes from a concurrent transaction that dispatched the item between the
-        // fast-path check and lock acquisition. Postgres defaults to READ COMMITTED, which is safe.
-        // If the DbContext is ever configured with REPEATABLE READ or SERIALIZABLE isolation (via
-        // UseNpgsql options, a migration, or a global EF Core interceptor), this query may return
-        // the snapshot taken before lock acquisition and see stale Pending status — silently
-        // re-opening the TOCTOU window. If isolation level is tightened, obtain this re-read from
-        // a fresh DbContext via dbFactory.CreateDbContextAsync() (outside the existing transaction).
         var postLockCheck = await db.WorkItems.AsNoTracking()
             .Select(w => new { w.Id, w.Status })
             .FirstOrDefaultAsync(w => w.Id == id, ct);
@@ -380,11 +352,6 @@ public static class WorkItemDispatchEndpoints
         // Query PVC availability.
         var pvcPool = lifecycle.GetPvcPool();
         var pvcResult = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, pvcPool, ct);
-        // TODO [WARNING]: pvcResult.AvailablePvcs is the mutable list passed into DispatchLifecycleContext below.
-        // The lifecycle may mutate it internally (re-adding a PVC on a race). This is the same contract as
-        // DispatchWorkItem. If the PVC gate or metric call is ever moved *after* the lifecycle call, the count
-        // would be stale. Keep the PVC gate and metric emission before the lifecycle call.
-
         // Emit credential-pool gauge BEFORE the PVC gate so the metric is always updated
         // whenever the PVC query runs (including on PVC-exhaustion 503).
         // Deliberate exception to the BuildStateAsync restriction: this endpoint is the
@@ -430,16 +397,14 @@ public static class WorkItemDispatchEndpoints
             pvcResult, template, isKiroAgent, "DispatchPendingWorkItem");
         if (gateResult is not null)
         {
-            // Emit the PVC exhaustion counter here (only on the 503/PVC-gate path) —
-            // this counter belongs exclusively to the DispatchPendingWorkItem path and must
+            // Emit the PVC exhaustion counter only when the gate result IS the 503/PVC-gate path.
+            // This counter belongs exclusively to the DispatchPendingWorkItem path and must
             // NOT be emitted by ApplyGates itself, as DispatchWorkItem does not count exhaustions.
-            // TODO [WARNING]: PvcPoolExhaustions is incorrectly incremented when the concurrency gate
-            // fires first (409) while the PVC pool is simultaneously empty. The predicate
-            // `isKiroAgent && pvcResult.AvailablePvcs.Count == 0` does not distinguish which gate
-            // fired; when both conditions hold, ApplyGates returns a Conflict (409), not a StatusCode
-            // (503), yet this counter still fires — misattributing the rejection as a PVC exhaustion.
-            // Fix: narrow to `if (gateResult is StatusCodeHttpResult { StatusCode: 503 })`.
-            if (isKiroAgent && pvcResult.AvailablePvcs.Count == 0)
+            // Checking the result type (StatusCodeHttpResult { StatusCode: 503 }) rather than
+            // re-deriving pool state ensures the counter does not fire when the concurrency gate
+            // (409 Conflict) short-circuits before the PVC gate is reached — even if both
+            // conditions happen to hold simultaneously.
+            if (gateResult is Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult { StatusCode: 503 })
                 WorkDistributionTelemetry.PvcPoolExhaustions.Add(1);
             return gateResult;
         }
@@ -481,22 +446,17 @@ public static class WorkItemDispatchEndpoints
             concurrencyBySelector,
             "pending-dispatch ");
 
-        // TODO [WARNING]: The outer endpoint CancellationToken ct is captured by the prepareVariant lambda.
-        // If the HTTP client disconnects and cancels ct while ExecuteDispatchLifecycleAsync is
-        // mid-flight, LoadProjectSecretsAsync will throw OperationCanceledException. The lifecycle's
-        // outer catch (when ex is not OperationCanceledException) correctly re-throws it, and
-        // the advisory lock handle is still disposed via await using var _ = lockHandle on the
-        // stack — no deadlock or resource leak. This comment documents the cancellation contract:
-        // ct cancellation propagates as OperationCanceledException to the caller, not as 503.
-        return await RunDispatchOrchestrationAsync(
+        // Shared lifecycle execution: try/catch + !dispatched + 503 path are consolidated in
+        // RunDispatchLifecycleAsync (issue #2859). onDispatchFailure is null here — the item
+        // started as Pending, not Dispatched, so SafelyCancelOrphanedDispatchedWorkItemAsync
+        // must NOT be called (no orphaned Dispatched row exists on this path).
+        return await dispatchService.RunDispatchLifecycleAsync(
             ctx,
             lifecycle,
-            prepareVariant: workItem => PrepareDispatchVariantAsync(db, workItem, ct),
-            // Do NOT call SafelyCancelOrphanedDispatchedWorkItemAsync here — the item started
-            // as Pending, not Dispatched, so there is no orphaned Dispatched row to cancel.
-            // FailWorkItemAsync (Pending→Failed) is called internally by the lifecycle on K8s failure.
-            onDispatchFailure: () => Task.CompletedTask,
-            endpointLogPrefix: "DispatchPendingWorkItem",
+            onDispatchFailure: null,
+            onSuccess: _ => TypedResults.Ok(id),
+            id,
+            "DispatchPendingWorkItem",
             ct);
     }
 
@@ -525,10 +485,6 @@ public static class WorkItemDispatchEndpoints
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        // TODO [WARNING]: `dispatchService` has no ArgumentNullException.ThrowIfNull guard here,
-        // inconsistent with the guard on `request` above and with the constructor guard in
-        // DispatchWorkItemService itself. A null value would produce a NullReferenceException at
-        // first use rather than a clear ArgumentNullException at the entry point.
 
         // Template resolution: selector → JobTemplate
         var template = templateStore.Resolve(request.AgentSelector ?? "");
@@ -606,30 +562,13 @@ public static class WorkItemDispatchEndpoints
         catch (Exception ex) when (IsUniqueViolation(ex))
         {
             // Idempotent retry: a work item with this ID already exists.
-            // Return 200 only when the existing item is still active (Dispatched or Running).
-            // For terminal or Pending states, return 409 so the Scheduler re-queues the issue
-            // rather than treating it as dispatched — a Failed/Cancelled item has no K8s Job
-            // and returning 200 would cause DispatchOrchestrationService to swap the GitHub
-            // label to agent:in-progress with no running job.
-            //
-            // Use a fresh DbContext — after DbUpdateException the original context is in a faulted state
-            // and further queries on it may return stale results or fail.
-            await using var freshDb = await dbFactory.CreateDbContextAsync(ct);
-            var existing = await freshDb.WorkItems.AsNoTracking()
-                .Select(w => new { w.Id, w.Status })
-                .FirstOrDefaultAsync(w => w.Id == workItemId, ct);
-            if (existing is not null)
-            {
-                var isActive = existing.Status is WorkItemStatus.Dispatched or WorkItemStatus.Running;
-                if (isActive)
-                    return TypedResults.Ok(workItemId);
-                Log.Warning("DispatchWorkItem: idempotent retry for {WorkItemId} but existing item is in non-active state {Status} — returning 409",
-                    workItemId, existing.Status);
-                return TypedResults.Conflict($"Work item {workItemId} already exists in non-active state {existing.Status}.");
-            }
-            // Shared fallback: partial unique index on (IssueIdentifier, IssueProviderConfigId) —
-            // a different run is already live for this issue.
-            return DispatchWorkItemService.HandleUniqueViolationFallback();
+            // Delegates to DispatchWorkItemService.HandleUniqueViolationAsync which opens
+            // a fresh DbContext (this context is faulted after the exception) to re-query
+            // the existing item's status:
+            // - Active (Dispatched/Running) → 200 OK.
+            // - Non-active → 409 Conflict (Scheduler must re-queue).
+            // - Not found → 409 via HandleUniqueViolationFallback (IssueIdentifier conflict).
+            return await DispatchWorkItemService.HandleUniqueViolationAsync(dbFactory, workItemId, isNewlyCreated: false, ct);
         }
 
         // Register PipelineRun so the UI can subscribe to hub events immediately.
@@ -670,132 +609,28 @@ public static class WorkItemDispatchEndpoints
             ExpectedInitialStatus = WorkItemStatus.Dispatched
         };
 
-        return await RunDispatchOrchestrationAsync(
+        // Shared lifecycle execution: try/catch + !dispatched + 503 path are consolidated in
+        // RunDispatchLifecycleAsync (issue #2859). SafelyCancelOrphanedDispatchedWorkItemAsync is
+        // passed as onDispatchFailure — it must be called on the 503 path for DispatchWorkItem
+        // (item was created as Dispatched; without cleanup it stays orphaned with no running Job).
+        return await dispatchService.RunDispatchLifecycleAsync(
             ctx,
             lifecycle,
-            prepareVariant: workItem => PrepareDispatchVariantAsync(db, workItem, ct),
-            // Clean up the item on failure: if the lifecycle didn't already transition it to Failed,
-            // cancel it now so it doesn't remain as an orphaned Dispatched item forever.
-            // DispatchLoop no longer exists to pick up orphaned items on the live dispatch path.
-            // Use CancellationToken.None: the originating request token may already be cancelled
-            // (client disconnected), but the cleanup write must complete regardless.
-            onDispatchFailure: () => SafelyCancelOrphanedDispatchedWorkItemAsync(lifecycle, workItemId, "Dispatch lifecycle failed (exception or no-dispatch)"),
-            endpointLogPrefix: "DispatchWorkItem",
+            onDispatchFailure: (id, reason) => SafelyCancelOrphanedDispatchedWorkItemAsync(lifecycle, id, reason),
+            onSuccess: id => TypedResults.Ok(id),
+            workItemId,
+            "DispatchWorkItem",
             ct);
-    }
-
-    /// <summary>
-    /// Shared dispatch orchestration skeleton for both dispatch endpoints.
-    /// Executes <see cref="DispatchLifecycleService.ExecuteDispatchLifecycleAsync"/>, handles the
-    /// non-cancellation exception catch, and handles the <c>!dispatched</c> tail — each of which
-    /// was previously duplicated verbatim across
-    /// <see cref="DispatchPendingWorkItem"/> and <see cref="DispatchWorkItem"/>.
-    ///
-    /// <para>
-    /// Caller responsibilities (NOT delegated to this helper):
-    /// <list type="bullet">
-    ///   <item>All pre-flight checks (fast-path status check, advisory lock, post-lock re-check,
-    ///     concurrency snapshot, PVC query, gate application, projection construction, context construction).</item>
-    ///   <item><see cref="WorkDistributionTelemetry.UpdateCredentialPoolMetrics"/> and
-    ///     <see cref="WorkDistributionTelemetry.PvcPoolExhaustions"/> emission — these belong
-    ///     exclusively to <see cref="DispatchPendingWorkItem"/> and must NOT be called from here.</item>
-    /// </list>
-    /// </para>
-    /// </summary>
-    /// <param name="ctx">
-    /// The fully-constructed lifecycle context (including the correct
-    /// <see cref="DispatchLifecycleContext.ExpectedInitialStatus"/>).
-    /// </param>
-    /// <param name="lifecycle">The lifecycle service to invoke.</param>
-    /// <param name="prepareVariant">
-    /// Variant-specific preparation lambda passed directly to
-    /// <see cref="DispatchLifecycleService.ExecuteDispatchLifecycleAsync"/>.
-    /// </param>
-    /// <param name="onDispatchFailure">
-    /// Called on both failure paths (exception catch AND <c>!dispatched</c> tail) before the 503
-    /// is returned. For <see cref="DispatchWorkItem"/>, this calls
-    /// <see cref="SafelyCancelOrphanedDispatchedWorkItemAsync"/> to ensure the orphaned
-    /// <c>Dispatched</c> row is cleaned up. For <see cref="DispatchPendingWorkItem"/>, this is a
-    /// no-op (<c>() => Task.CompletedTask</c>) — the item was never written as <c>Dispatched</c>,
-    /// so no orphaned row exists.
-    /// Typed as <see cref="Func{Task}"/> (no token) to guarantee that
-    /// <see cref="SafelyCancelOrphanedDispatchedWorkItemAsync"/> always runs with
-    /// <see cref="CancellationToken.None"/> — the outer request token may already be cancelled.
-    /// TODO [WARNING]: Typed as Func&lt;Task&gt; (no CancellationToken parameter). This forecloses the option
-    /// of passing a token to future failure-cleanup logic without a refactor. The current use-case is
-    /// correctly handled (always CancellationToken.None for orphan cleanup), but the asymmetry between
-    /// ct being passed to ExecuteDispatchLifecycleAsync while onDispatchFailure silently ignores it can
-    /// surprise future maintainers. (DotNetSpecialist review [WARNING])
-    /// </param>
-    /// <param name="endpointLogPrefix">
-    /// Name of the calling endpoint for log messages (e.g. <c>"DispatchPendingWorkItem"</c>).
-    /// </param>
-    /// <param name="ct">Cancellation token for the lifecycle call (NOT passed to <paramref name="onDispatchFailure"/>).</param>
-    private static async Task<IResult> RunDispatchOrchestrationAsync(
-        DispatchLifecycleContext ctx,
-        DispatchLifecycleService lifecycle,
-        Func<WorkItemEntity, Task<(bool shouldContinue, Dictionary<string, string>? projectSecrets)>> prepareVariant,
-        Func<Task> onDispatchFailure,
-        string endpointLogPrefix,
-        CancellationToken ct)
-    {
-        var workItemId = ctx.Item.Id;
-
-        bool dispatched = false;
-        try
-        {
-            await lifecycle.ExecuteDispatchLifecycleAsync(
-                ctx,
-                prepareVariant,
-                onDispatchSuccess: _ =>
-                {
-                    dispatched = true;
-                    // Label swap to agent:in-progress is handled by the endpoint's downstream
-                    // handler (AgentHub.RegisterAgent for DispatchPendingWorkItem,
-                    // DispatchOrchestrationService for DispatchWorkItem). No action needed here.
-                    return Task.CompletedTask;
-                },
-                ct,
-                onFailure: null);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            Log.Error(ex, "{EndpointLogPrefix}: unhandled exception during dispatch lifecycle for {WorkItemId}",
-                endpointLogPrefix, workItemId);
-            // onDispatchFailure is a no-op for DispatchPendingWorkItem (no orphaned Dispatched row).
-            // For DispatchWorkItem it calls SafelyCancelOrphanedDispatchedWorkItemAsync with
-            // CancellationToken.None so cleanup always completes even if the request was cancelled.
-            // TODO [WARNING]: An exception thrown by onDispatchFailure itself is not caught here.
-            // For the DispatchWorkItem path, SafelyCancelOrphanedDispatchedWorkItemAsync could throw a
-            // non-cancellation exception (e.g. transient DB error in its own catch-all), causing the 503
-            // response to never be returned and propagating an unhandled exception to the caller. This
-            // helper appears to be a safe error sink but is not fully safe against cleanup exceptions.
-            // Consider wrapping the onDispatchFailure call in a try/catch that logs and continues.
-            // (Correctness review [WARNING])
-            await onDispatchFailure();
-            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
-        }
-
-        if (!dispatched)
-        {
-            // ExecuteDispatchLifecycleAsync returned without dispatching — PVC race
-            // (another replica claimed the same PVC under _pvcSelectLock) or K8s Job creation
-            // failed (lifecycle already called FailWorkItemAsync in that case).
-            Log.Warning("{EndpointLogPrefix}: lifecycle did not dispatch WorkItem {WorkItemId} (PVC race or K8s failure) — returning 503",
-                endpointLogPrefix, workItemId);
-            await onDispatchFailure();
-            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
-        }
-
-        return TypedResults.Ok(workItemId);
     }
 
     /// <summary>
     /// Loads project secrets for a work item if a project is configured.
     /// Shared by <see cref="DispatchPendingWorkItem"/> and <see cref="DispatchWorkItem"/> to
     /// eliminate the duplicated prepareVariant lambda body.
+    /// Called by <see cref="CodingAgent.Api.Dispatch.DispatchWorkItemService.RunDispatchLifecycleAsync"/>
+    /// to invoke the shared variant preparation logic without a delegate parameter.
     /// </summary>
-    private static async Task<(bool shouldContinue, Dictionary<string, string>? projectSecrets)> PrepareDispatchVariantAsync(
+    internal static async Task<(bool shouldContinue, Dictionary<string, string>? projectSecrets)> PrepareDispatchVariantAsync(
         PipelineDbContext db,
         WorkItemEntity workItem,
         CancellationToken ct)
@@ -950,57 +785,19 @@ public static class WorkItemDispatchEndpoints
         IDbContextFactory<PipelineDbContext> dbFactory,
         CancellationToken ct)
     {
-        // Try Failed → Pending
-        var succeededFromFailed = await transitionService.TransitionIfAsync(
-            id,
-            expectedCurrent: WorkItemStatus.Failed,
-            target: WorkItemStatus.Pending,
-            mutate: entity =>
-            {
-                entity.RetryCount++;
-                entity.DispatchedAt = null;
-                entity.AssignedAgentId = null;
-            },
-            ct: ct);
-
-        if (succeededFromFailed)
-            return TypedResults.Ok();
-
-        // Try Cancelled → Pending
-        var succeededFromCancelled = await transitionService.TransitionIfAsync(
-            id,
-            expectedCurrent: WorkItemStatus.Cancelled,
-            target: WorkItemStatus.Pending,
-            mutate: entity =>
-            {
-                entity.RetryCount++;
-                entity.DispatchedAt = null;
-                entity.AssignedAgentId = null;
-            },
-            ct: ct);
-
-        if (succeededFromCancelled)
-            return TypedResults.Ok();
-
-        // Try Dispatched → Pending — handles Job creation failures where ClaimAsync succeeded
-        // but the K8s Job could not be created (API server unreachable, invalid spec, no PVC).
-        // Without this, the item stays stuck in Dispatched until EnforceDispatchedTimeoutAsync
-        // marks it Failed (losing the retry rather than re-queuing it).
-        var succeededFromDispatched = await transitionService.TransitionIfAsync(
-            id,
-            expectedCurrent: WorkItemStatus.Dispatched,
-            target: WorkItemStatus.Pending,
-            mutate: entity =>
-            {
-                entity.RetryCount++;
-                entity.DispatchedAt = null;
-                entity.AssignedAgentId = null;
-                entity.K8sJobName = null;
-            },
-            ct: ct);
-
-        if (succeededFromDispatched)
-            return TypedResults.Ok();
+        // Collapse the three sequential TransitionIfAsync blocks into a loop (issue #2859).
+        // Failed→Pending and Cancelled→Pending share the same mutate lambda.
+        // Dispatched→Pending additionally clears K8sJobName (the item had a K8s Job assigned).
+        var sourceStates = new[] { WorkItemStatus.Failed, WorkItemStatus.Cancelled, WorkItemStatus.Dispatched };
+        foreach (var sourceState in sourceStates)
+        {
+            Action<WorkItemEntity> mutate = sourceState == WorkItemStatus.Dispatched
+                ? (e => { e.RetryCount++; e.DispatchedAt = null; e.AssignedAgentId = null; e.K8sJobName = null; })
+                : (e => { e.RetryCount++; e.DispatchedAt = null; e.AssignedAgentId = null; });
+            var succeeded = await transitionService.TransitionIfAsync(id, sourceState, WorkItemStatus.Pending, mutate, ct);
+            if (succeeded)
+                return TypedResults.Ok();
+        }
 
         // Check existence to differentiate 404 from 409
         await using var db = await dbFactory.CreateDbContextAsync(ct);
@@ -1260,11 +1057,6 @@ public static class WorkItemDispatchEndpoints
                 TypedResults.Conflict("Cannot update PriorityWeight: work item is not in Pending status."),
             Infrastructure.Persistence.Services.UpdatePriorityWeightResult.ConcurrencyConflict =>
                 TypedResults.Conflict("Cannot update PriorityWeight: concurrent update conflict, please retry."),
-            // TODO: [WARNING] The default arm silently maps any future UpdatePriorityWeightResult values
-            // to 404 NotFound. If a new result code is added to the enum, the compiler will not warn
-            // that it is unhandled here. Consider adding an explicit case for UpdatePriorityWeightResult.NotFound
-            // and replacing the default arm with a throw (or a 500 response) to catch unhandled cases
-            // at compile time. The current behavior is correct for all existing values.
             _ => TypedResults.NotFound()
         };
     }

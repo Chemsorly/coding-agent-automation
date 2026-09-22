@@ -63,8 +63,6 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
 
     // Internal hooks for test determinism: fire-and-forget tasks are stored here so tests can
     // await them instead of using Thread.Sleep. Not used in production code paths.
-    // TODO (WARNING): Consider a dedicated FlushAsync() or IAsyncDisposable pattern if more
-    // fire-and-forget methods need deterministic test coverage.
     internal Task LastHeartbeatTask { get; private set; } = Task.CompletedTask;
     internal Task LastDeregisterTask { get; private set; } = Task.CompletedTask;
 
@@ -153,18 +151,8 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // Log any Redis write failures so they surface rather than being swallowed silently.
         // Mark the agent as having a pending write so GetAgentRaw can return the snapshot
         // during the fire-and-forget window. Cleared by WriteRegistrationAsync on completion.
-        // TODO (WARNING): _pendingRegistrationWrite is keyed here using the pre-extracted string local
-        // 'agentId', while WriteRegistrationAsync (now accepting AgentId) removes via agentId.Value.
-        // Both evaluate to the same string today, but the asymmetry is a latent hazard if Register is
-        // ever refactored to change how 'agentId' is derived. Consider using message.AgentId.Value here
-        // consistently to eliminate the asymmetry.
         _pendingRegistrationWrite[agentId] = 0;
         _ = WriteRegistrationAsync(message.AgentId, connectionId, status, fields)
-            // TODO (WARNING): The ContinueWith lambda captures the local string 'agentId' while the
-            // WriteRegistrationAsync call above uses message.AgentId (the value-type wrapper). Both
-            // refer to the same identity, but the inconsistency could mislead a future reader or
-            // produce incorrect log output if 'agentId' is mutated before the continuation runs (e.g.
-            // in a loop). Using message.AgentId.Value in the lambda would be more self-contained.
             .ContinueWith(t => _logger.Warning(t.Exception,
                 "WriteRegistrationAsync failed for agent {AgentId}", agentId),
                 TaskContinuationOptions.OnlyOnFaulted);
@@ -176,9 +164,6 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             AgentId = new AgentId(agentId),
             ConnectionId = connectionId,
             Hostname = message.Hostname,
-            // TODO (WARNING): Labels is assigned directly from message.Labels whose runtime type is unknown.
-            // If the caller passes a mutable List<string> and later mutates it externally, the snapshot's
-            // Labels reference reflects those mutations. Consider ToList() here to break the aliasing.
             Labels = message.Labels,
             Status = status,
             RegisteredAt = existing?.RegisteredAt ?? now,
@@ -194,8 +179,6 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // Fields NOT currently reflected in the snapshot:
         //   - lastJobCompletedAt (updated via direct field writes, not tracked here)
         //   - busySince exact timestamp (approximated from existing snap.BusySince in TransitionStatusAsync)
-        // TODO (WARNING): TOCTOU risk if external code writes directly to the Redis hash without going
-        // through TransitionStatus / UpdateAgentFieldAsync (e.g. ReconciliationService direct writes).
         _localSnapshot[agentId] = entry;
 
         // Update the all-agents cache so GetAllAgents()/GetIdleAgents() sync overloads see the new entry.
@@ -705,13 +688,6 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             // (sync overloads) until a write-path update occurs. Consider calling UpdateAllAgentsCache with
             // the updated snapshot entry, consistent with TransitionStatusAsync which does both.
         }
-        // TODO (WARNING): The filter 'when (ex is not OperationCanceledException)' does not suppress
-        // AggregateException wrapping an OperationCanceledException. If the Redis store returns a faulted
-        // Task whose inner exception is OperationCanceledException wrapped in an AggregateException (which
-        // some StackExchange.Redis code paths do), the outer AggregateException is not OperationCanceledException
-        // and will be caught and swallowed as a Warning instead of propagating. This is consistent with the
-        // pre-existing pattern in AgentRegistryCleanupService.cs:52 and is low-likelihood in practice.
-        // (DotNetSpecialist WARNING)
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.Warning(ex,
@@ -725,10 +701,6 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     /// <inheritdoc />
     public void SetLocalSnapshotField(AgentId agentId, string field, string? value)
     {
-        // TODO (WARNING): ThrowIfNull checks agentId.Value (the inner string), not the AgentId
-        // struct itself — AgentId is a value type and cannot be null. This is intentional and
-        // consistent with sibling methods (UpdateAgentFieldAsync, TransitionStatusAsync) that
-        // use the same guard pattern. (DotNetSpecialist WARNING, issue #2616)
         ArgumentNullException.ThrowIfNull(agentId.Value);
         if (!_localSnapshot.TryGetValue(agentId.Value, out var snap)) return;
         // TODO (WARNING): This read-then-write on _localSnapshot is non-atomic. A concurrent
@@ -757,9 +729,6 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             "disabled" => bool.TryParse(value, out var d) ? snap with { Disabled = d } : snap,
             _ => snap
         };
-        // TODO (WARNING): _allAgentsCache is not updated here (consistent with UpdateAgentFieldAsync).
-        // GetBusyAgentCount/GetAllAgents/GetAgentsByLabel sync reads will not reflect the restored
-        // ActiveJobId until the next Register or TransitionStatusAsync call. Out of scope per issue #2616.
     }
 
     // ── Helpers ───────────────────────────────────────────────────────

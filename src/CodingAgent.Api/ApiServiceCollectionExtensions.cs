@@ -513,7 +513,7 @@ public static class ApiServiceCollectionExtensions
         // DispatchLifecycleService — shared PVC-selection lock + K8s Job creation lifecycle.
         // DispatchTemplateResolver — agent-selector → JobTemplate fallback resolution.
         // DispatchStateBuilder     — builds concurrency map and PVC availability state.
-        // Used by WorkItemDispatchPoller (Scheduler) via POST /api/work-items/{id}/dispatch.
+        // Used by WorkItemDispatchLoop (Scheduler) via POST /api/work-items/{id}/dispatch.
         services.AddSingleton<CodingAgent.Api.Dispatch.DispatchLifecycleService>(sp =>
         {
             var jobClient = sp.GetService<IKubernetesJobClient>();
@@ -549,8 +549,8 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<JobTemplateStore>()));
 
         // ── WorkItemMetricsBackgroundService ──────────────────────────────────────────────────
-        // Spec 047: Removed from API hosted services — replaced by WorkItemCountsPoller in
-        // CodingAgent.Scheduler. WorkItemCountsPoller polls GET /api/work-items/counts-by-status
+        // Spec 047: Removed from API hosted services — replaced by WorkItemCountsService in
+        // CodingAgent.Scheduler. WorkItemCountsService polls GET /api/work-items/counts-by-status
         // and registers the same WorkDistributionTelemetry callback from the Scheduler process.
 
         // ── ModelFetchJobService ─────────────────────────────────────────────────────────────

@@ -99,7 +99,10 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
-                Items = new List<IssueSummary>(), Page = 1, PageSize = 50, HasMore = false
+                Items = new List<IssueSummary>(),
+                Page = 1,
+                PageSize = 50,
+                HasMore = false
             });
         _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
             .Returns(_mockIssueProvider.Object);
@@ -246,7 +249,10 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
                 pollCalled = true;
                 return new PagedResult<IssueSummary>
                 {
-                    Items = new List<IssueSummary>(), Page = 1, PageSize = 50, HasMore = false
+                    Items = new List<IssueSummary>(),
+                    Page = 1,
+                    PageSize = 50,
+                    HasMore = false
                 };
             });
 
@@ -305,7 +311,10 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
                 pollCalled = true;
                 return new PagedResult<IssueSummary>
                 {
-                    Items = new List<IssueSummary>(), Page = 1, PageSize = 50, HasMore = false
+                    Items = new List<IssueSummary>(),
+                    Page = 1,
+                    PageSize = 50,
+                    HasMore = false
                 };
             });
 
@@ -361,7 +370,10 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
                 pollCalled = true;
                 return new PagedResult<IssueSummary>
                 {
-                    Items = new List<IssueSummary>(), Page = 1, PageSize = 50, HasMore = false
+                    Items = new List<IssueSummary>(),
+                    Page = 1,
+                    PageSize = 50,
+                    HasMore = false
                 };
             });
 
@@ -425,7 +437,10 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
                 }
                 return new PagedResult<IssueSummary>
                 {
-                    Items = new List<IssueSummary>(), Page = 1, PageSize = 50, HasMore = false
+                    Items = new List<IssueSummary>(),
+                    Page = 1,
+                    PageSize = 50,
+                    HasMore = false
                 };
             });
 
@@ -535,37 +550,49 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
                     secondCycleDone.TrySetResult();
                 return new PagedResult<IssueSummary>
                 {
-                    Items = new List<IssueSummary>(), Page = 1, PageSize = 50, HasMore = false
+                    Items = new List<IssueSummary>(),
+                    Page = 1,
+                    PageSize = 50,
+                    HasMore = false
                 };
             });
 
         var svc = CreateService(workDistributor: mockDistributor.Object);
         using var hostCts = new CancellationTokenSource();
-        _ = InvokeExecuteAsync(svc, hostCts.Token);
+        var executeTask = InvokeExecuteAsync(svc, hostCts.Token);
 
         var started = await svc.StartLoopAsync();
         started.Should().BeTrue("loop must start with valid templates");
 
         await secondCycleDone.Task.WaitAsync(TimeSpan.FromSeconds(15));
 
+        // Snapshot the call log before stopping to exclude any partial cycle 3 recordings.
+        // If cycle 3 has already started SnapshotCycleConfigAsync it may record Templates
+        // but not Issue (cancelled mid-way), which would corrupt the LastSeq ordering check.
+        List<(int Seq, string Name)> frozenLog;
+        lock (sync) { frozenLog = [.. callLog]; }
+
         svc.StopLoop();
         hostCts.Cancel();
+
+        // Wait for the background service to fully stop so no further calls are made.
+        try { await executeTask.WaitAsync(TimeSpan.FromSeconds(5)); } catch { /* cancellation or timeout */ }
 
         // Extract ordering using the last occurrence of each step name so we compare
         // within a single runtime cycle rather than mixing startup and runtime calls.
         // StartLoopAsync triggers LoadPipelineConfig + LoadAllTemplates + LoadProviderConfigs
         // (Issue + Repository) but NOT GetActiveIssueIdentifiers/ReconcileStuckItems.
         // After startup, both sets of calls appear in each runtime cycle.
-        lock (sync)
+        // Use frozenLog (snapshotted at secondCycleDone) to avoid partial-cycle 3 contamination.
         {
-            callLog.Should().Contain(e => e.Name == "LoadPipelineConfig", "step 1 must be recorded");
-            callLog.Should().Contain(e => e.Name == "LoadAllTemplates", "step 2 must be recorded");
-            callLog.Should().Contain(e => e.Name == "LoadProviderConfigs_Issue", "step 3 must be recorded");
-            callLog.Should().Contain(e => e.Name == "GetActiveIssueIdentifiers", "step 5 must be recorded");
-            callLog.Should().Contain(e => e.Name == "ReconcileStuckItems", "step 6 must be recorded");
+            frozenLog.Should().Contain(e => e.Name == "LoadPipelineConfig", "step 1 must be recorded");
+            frozenLog.Should().Contain(e => e.Name == "LoadAllTemplates", "step 2 must be recorded");
+            frozenLog.Should().Contain(e => e.Name == "LoadProviderConfigs_Issue", "step 3 must be recorded");
+            frozenLog.Should().Contain(e => e.Name == "GetActiveIssueIdentifiers", "step 5 must be recorded");
+            frozenLog.Should().Contain(e => e.Name == "ReconcileStuckItems", "step 6 must be recorded");
 
             // Use last occurrence of each to analyze a single complete cycle
-            int LastSeq(string name) => callLog.Where(e => e.Name == name).Max(e => e.Seq);
+            int LastSeq(string name) => frozenLog.Where(e => e.Name == name).Max(e => e.Seq);
 
             var seqConfig = LastSeq("LoadPipelineConfig");
             var seqTemplates = LastSeq("LoadAllTemplates");

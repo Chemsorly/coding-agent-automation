@@ -173,4 +173,41 @@ public sealed class FileSystemConsolidationRunStoreTests : IDisposable
         var act = () => _sut.DeleteRunAsync("not-a-guid", CancellationToken.None);
         await act.Should().NotThrowAsync();
     }
+
+    [Fact]
+    public async Task GetByIdAsync_EmptyFile_ReturnsNull()
+    {
+        // File exists but contains no content — helper's IsNullOrWhiteSpace guard fires
+        var runId = Guid.NewGuid().ToString();
+        var filePath = Path.Combine(_tempDir, $"{runId}.json");
+        await File.WriteAllTextAsync(filePath, "");
+
+        var result = await _sut.GetByIdAsync((RunId)runId, CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task LoadAllRunsAsync_CorruptFileInDirectory_SkipsCorruptReturnsValidSiblings()
+    {
+        // Verifies that LoadAllRunsAsync silently skips corrupt/empty files and returns all valid sibling runs.
+        // This covers the skip-corrupt-files semantics after refactoring to JsonFileReader.TryReadJsonFileAsync.
+        var goodRun = CreateRun(RunIdA, ConsolidationRunType.BrainConsolidation);
+        await _sut.SaveRunAsync(goodRun, CancellationToken.None);
+
+        // Write a corrupt file alongside the valid one
+        var corruptRunId = Guid.NewGuid().ToString();
+        var corruptPath = Path.Combine(_tempDir, $"{corruptRunId}.json");
+        await File.WriteAllTextAsync(corruptPath, "{ not valid json !!!");
+
+        // Write an empty file too
+        var emptyRunId = Guid.NewGuid().ToString();
+        var emptyPath = Path.Combine(_tempDir, $"{emptyRunId}.json");
+        await File.WriteAllTextAsync(emptyPath, "");
+
+        var all = await _sut.LoadAllRunsAsync(CancellationToken.None);
+
+        // Only the valid run should be returned; corrupt and empty files are skipped silently
+        all.Should().ContainSingle(r => r.RunId == RunIdA);
+    }
 }

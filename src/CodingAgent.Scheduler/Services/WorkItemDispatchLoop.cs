@@ -20,7 +20,7 @@ namespace CodingAgent.Scheduler.Services;
 ///     (sorted by RunType tier: Review &gt; Decomposition &gt; Implementation &gt; Consolidation,
 ///     then <c>PriorityWeight DESC</c> within a tier, then <c>CreatedAt ASC</c>). When
 ///     <c>Consolidation:UnifiedDispatch:Enabled</c> is false, consolidation items are excluded
-///     by the endpoint; when true, they are included and dispatched via this poller.
+///     by the endpoint; when true, they are included and dispatched via this loop.
 ///     The <c>maxResults</c> window (default 50) is filled strictly in tier order — if 50+
 ///     items of a higher tier are pending, lower-tier items are invisible to this cycle.</item>
 ///   <item>Dispatches each item sequentially so the endpoint's per-call snapshot stays accurate.</item>
@@ -38,7 +38,7 @@ namespace CodingAgent.Scheduler.Services;
 /// Registered in <see cref="CodingAgent.Scheduler.SchedulerServiceCollectionExtensions"/> when the flag is true.
 /// </para>
 /// </summary>
-public sealed class WorkItemDispatchPoller : BackgroundService
+public sealed class WorkItemDispatchLoop : BackgroundService
 {
     private readonly IPipelineApiWorkItemClient _workItemClient;
     private readonly ILeaderGate? _leaderGate;
@@ -46,7 +46,7 @@ public sealed class WorkItemDispatchPoller : BackgroundService
     private readonly TimeSpan _interval;
     private readonly TokenBucketRateLimiter _rateLimiter;
 
-    public WorkItemDispatchPoller(
+    public WorkItemDispatchLoop(
         IPipelineApiWorkItemClient workItemClient,
         ILeaderGate? leaderGate,
         ILogger logger,
@@ -56,7 +56,7 @@ public sealed class WorkItemDispatchPoller : BackgroundService
         _workItemClient = workItemClient ?? throw new ArgumentNullException(nameof(workItemClient));
         ArgumentNullException.ThrowIfNull(logger);
         _leaderGate = leaderGate;
-        _logger = logger.ForContext<WorkItemDispatchPoller>();
+        _logger = logger.ForContext<WorkItemDispatchLoop>();
         _interval = interval ?? TimeSpan.FromSeconds(10);
         // Inline construction — RateLimiterFactory is internal to CodingAgent.Infrastructure.Common
         // and inaccessible from this assembly.
@@ -74,7 +74,7 @@ public sealed class WorkItemDispatchPoller : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.Information(
-            "WorkItemDispatchPoller started — interval {Interval}, rateLimitPerSecond {RateLimit}",
+            "WorkItemDispatchLoop started — interval {Interval}, rateLimitPerSecond {RateLimit}",
             _interval, _rateLimiter.GetStatistics()?.CurrentAvailablePermits);
 
         using var timer = new PeriodicTimer(_interval);
@@ -94,7 +94,7 @@ public sealed class WorkItemDispatchPoller : BackgroundService
             // Only the leader Scheduler replica dispatches items.
             if (_leaderGate is { IsLeader: false })
             {
-                _logger.Debug("WorkItemDispatchPoller: skipping tick — not the leader");
+                _logger.Debug("WorkItemDispatchLoop: skipping tick — not the leader");
                 continue;
             }
 
@@ -115,14 +115,14 @@ public sealed class WorkItemDispatchPoller : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "WorkItemDispatchPoller: failed to fetch pending work items — will retry next interval");
+            _logger.Warning(ex, "WorkItemDispatchLoop: failed to fetch pending work items — will retry next interval");
             return;
         }
 
         if (pending.Count == 0)
         {
             // Still record the epoch even when idle so the DispatcherStalled alert fires only
-            // when the poller itself stops running, not when the queue is simply empty.
+            // when the loop itself stops running, not when the queue is simply empty.
             WorkDistributionTelemetry.RecordLastPollEpoch();
             return;
         }
@@ -140,7 +140,7 @@ public sealed class WorkItemDispatchPoller : BackgroundService
             if (stoppedSelectors.Contains(item.AgentSelector))
             {
                 _logger.Debug(
-                    "WorkItemDispatchPoller: skipping {WorkItemId} — selector {AgentSelector} is stopped for this cycle",
+                    "WorkItemDispatchLoop: skipping {WorkItemId} — selector {AgentSelector} is stopped for this cycle",
                     item.Id, item.AgentSelector);
                 continue;
             }
@@ -150,7 +150,7 @@ public sealed class WorkItemDispatchPoller : BackgroundService
             if (!lease.IsAcquired)
             {
                 _logger.Warning(
-                    "WorkItemDispatchPoller: rate limiter rejected lease for {WorkItemId} — aborting cycle",
+                    "WorkItemDispatchLoop: rate limiter rejected lease for {WorkItemId} — aborting cycle",
                     item.Id);
                 break;
             }
@@ -167,7 +167,7 @@ public sealed class WorkItemDispatchPoller : BackgroundService
             catch (Exception ex)
             {
                 _logger.Warning(ex,
-                    "WorkItemDispatchPoller: unexpected error dispatching {WorkItemId} — aborting cycle",
+                    "WorkItemDispatchLoop: unexpected error dispatching {WorkItemId} — aborting cycle",
                     item.Id);
                 break;
             }
@@ -175,7 +175,7 @@ public sealed class WorkItemDispatchPoller : BackgroundService
             switch (result)
             {
                 case DispatchPendingResult.Dispatched:
-                    _logger.Debug("WorkItemDispatchPoller: dispatched {WorkItemId}", item.Id);
+                    _logger.Debug("WorkItemDispatchLoop: dispatched {WorkItemId}", item.Id);
                     break;
 
                 case DispatchPendingResult.PermanentRejection:
@@ -183,7 +183,7 @@ public sealed class WorkItemDispatchPoller : BackgroundService
                     // Stop dispatching all items with this selector for the current cycle.
                     stoppedSelectors.Add(item.AgentSelector);
                     _logger.Debug(
-                        "WorkItemDispatchPoller: permanent rejection for {WorkItemId} (selector {AgentSelector}) — "
+                        "WorkItemDispatchLoop: permanent rejection for {WorkItemId} (selector {AgentSelector}) — "
                         + "selector blocked for this cycle",
                         item.Id, item.AgentSelector);
                     break;
@@ -192,7 +192,7 @@ public sealed class WorkItemDispatchPoller : BackgroundService
                     // 503 — PVC unavailable, advisory lock timeout, or K8s failure.
                     // Abort the entire cycle; retry on the next tick.
                     _logger.Warning(
-                        "WorkItemDispatchPoller: transient failure for {WorkItemId} — aborting cycle, will retry next interval",
+                        "WorkItemDispatchLoop: transient failure for {WorkItemId} — aborting cycle, will retry next interval",
                         item.Id);
                     goto exitLoop;
             }
@@ -200,7 +200,7 @@ public sealed class WorkItemDispatchPoller : BackgroundService
 
     exitLoop:
         // Record the epoch after each cycle (including cycles that were aborted mid-way).
-        // The static call cannot be mocked by Moq — this is consistent with how WorkItemCountsPoller
+        // The static call cannot be mocked by Moq — this is consistent with how WorkItemCountsService
         // calls WorkDistributionTelemetry.RegisterWorkItemsByStatusCallback directly.
         WorkDistributionTelemetry.RecordLastPollEpoch();
     }
