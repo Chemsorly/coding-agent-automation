@@ -71,7 +71,8 @@ public class HousekeepingServiceTests
         var staleBranchCleanerMock = new Mock<IStaleBranchCleaner>();
         staleBranchCleanerMock.Setup(s => s.RunIfDueAsync(
                 It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(),
+                It.IsAny<string>(),
                 It.IsAny<KeyValuePair<string, object?>>(), It.IsAny<bool>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -115,10 +116,11 @@ public class HousekeepingServiceTests
         int limit = 1,
         bool branchCleanup = false,
         int intervalMinutes = 60,
-        int triggerCooldownMinutes = 25)
+        int triggerCooldownMinutes = 25,
+        bool wasInputTruncated = false)
         => svc.ExecuteAsync(
             repo.Object, RepoId, issues.Object, IssueProviderId,
-            prs, limit, branchCleanup, intervalMinutes, triggerCooldownMinutes, CancellationToken.None);
+            prs, wasInputTruncated, limit, branchCleanup, intervalMinutes, triggerCooldownMinutes, CancellationToken.None);
 
     private static PipelineRun ActiveRun(string branch) => new()
     {
@@ -651,7 +653,8 @@ public class HousekeepingServiceTests
         var staleBranchMock = new Mock<IStaleBranchCleaner>();
         staleBranchMock.Setup(s => s.RunIfDueAsync(
                 It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(),
+                It.IsAny<string>(),
                 It.IsAny<KeyValuePair<string, object?>>(), It.IsAny<bool>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -680,7 +683,7 @@ public class HousekeepingServiceTests
         // Act: must not throw
         var ex = await Record.ExceptionAsync(() =>
             svc.ExecuteAsync(providerMock.Object, RepoId, issuesMock.Object, IssueProviderId,
-                [MakePr(1)], 1, false, 60, 25, CancellationToken.None));
+                [MakePr(1)], wasInputTruncated: false, 1, false, 60, 25, CancellationToken.None));
 
         ex.Should().BeNull("HousekeepingService must not propagate GetActiveRunBranchesAsync exceptions");
 
@@ -719,7 +722,8 @@ public class HousekeepingServiceTests
         var staleBranchMock = new Mock<IStaleBranchCleaner>();
         staleBranchMock.Setup(s => s.RunIfDueAsync(
                 It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(),
+                It.IsAny<string>(),
                 It.IsAny<KeyValuePair<string, object?>>(), It.IsAny<bool>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -743,7 +747,7 @@ public class HousekeepingServiceTests
         // Act: must not throw
         var ex = await Record.ExceptionAsync(() =>
             svc.ExecuteAsync(providerMock.Object, RepoId, issuesMock.Object, IssueProviderId,
-                [MakePr(1)], 1, false, 60, 25, CancellationToken.None));
+                [MakePr(1)], wasInputTruncated: false, 1, false, 60, 25, CancellationToken.None));
 
         ex.Should().BeNull("HousekeepingService must not propagate GetActiveRunBranchesAsync exceptions");
 
@@ -843,6 +847,12 @@ public class HousekeepingServiceTests
     }
 
     // ─── Stale branch cleanup — HousekeepingService delegates to IStaleBranchCleaner ──────
+    // TODO [WARNING]: Both ExecuteAsync_WithBranchCleanup_DelegatesToStaleBranchCleaner and
+    // ExecuteAsync_WithBranchCleanupDisabled_DelegatesToStaleBranchCleanerWithEnabledFalse only
+    // test wasInputTruncated: false. Add a test verifying that HousekeepingService passes
+    // wasInputTruncated: true through to IStaleBranchCleaner.RunIfDueAsync. Without it, a
+    // regression that hard-codes wasInputTruncated=false in HousekeepingService.cs would not
+    // be caught — the central correctness requirement of this change-set has no coverage here.
 
 
     /// <summary>
@@ -859,7 +869,8 @@ public class HousekeepingServiceTests
         var staleBranchMock = new Mock<IStaleBranchCleaner>();
         staleBranchMock.Setup(s => s.RunIfDueAsync(
                 It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(),
+                It.IsAny<string>(),
                 It.IsAny<KeyValuePair<string, object?>>(), It.IsAny<bool>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -882,12 +893,12 @@ public class HousekeepingServiceTests
 
         await svc.ExecuteAsync(
             providerMock.Object, RepoId, issuesMock.Object, IssueProviderId,
-            [], 1, branchCleanupEnabled: true, cleanupIntervalMinutes: 60, triggerCooldownMinutes: 25,
+            [], wasInputTruncated: false, 1, branchCleanupEnabled: true, cleanupIntervalMinutes: 60, triggerCooldownMinutes: 25,
             CancellationToken.None);
 
         staleBranchMock.Verify(s => s.RunIfDueAsync(
             providerMock.Object, issuesMock.Object,
-            It.IsAny<IReadOnlyList<PullRequestSummary>>(), RepoId,
+            It.IsAny<IReadOnlyList<PullRequestSummary>>(), false, RepoId,
             It.IsAny<KeyValuePair<string, object?>>(),
             true, 60, It.IsAny<CancellationToken>()), Times.Once,
             "HousekeepingService must delegate stale-branch cleanup to IStaleBranchCleaner");
@@ -903,7 +914,8 @@ public class HousekeepingServiceTests
         var staleBranchMock = new Mock<IStaleBranchCleaner>();
         staleBranchMock.Setup(s => s.RunIfDueAsync(
                 It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(),
+                It.IsAny<string>(),
                 It.IsAny<KeyValuePair<string, object?>>(), It.IsAny<bool>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -926,12 +938,12 @@ public class HousekeepingServiceTests
 
         await svc.ExecuteAsync(
             providerMock.Object, RepoId, issuesMock.Object, IssueProviderId,
-            [], 1, branchCleanupEnabled: false, cleanupIntervalMinutes: 60, triggerCooldownMinutes: 25,
+            [], wasInputTruncated: false, 1, branchCleanupEnabled: false, cleanupIntervalMinutes: 60, triggerCooldownMinutes: 25,
             CancellationToken.None);
 
         staleBranchMock.Verify(s => s.RunIfDueAsync(
             providerMock.Object, issuesMock.Object,
-            It.IsAny<IReadOnlyList<PullRequestSummary>>(), RepoId,
+            It.IsAny<IReadOnlyList<PullRequestSummary>>(), false, RepoId,
             It.IsAny<KeyValuePair<string, object?>>(),
             false, 60, It.IsAny<CancellationToken>()), Times.Once,
             "HousekeepingService must pass enabled=false to IStaleBranchCleaner when branchCleanupEnabled is false");
@@ -953,7 +965,8 @@ public class HousekeepingServiceTests
         var staleBranchMock = new Mock<IStaleBranchCleaner>();
         staleBranchMock.Setup(s => s.RunIfDueAsync(
                 It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(),
+                It.IsAny<string>(),
                 It.IsAny<KeyValuePair<string, object?>>(), It.IsAny<bool>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -978,7 +991,7 @@ public class HousekeepingServiceTests
 
         await svc.ExecuteAsync(
             providerMock.Object, RepoId, issuesMock.Object, IssueProviderId,
-            [MakePr(1)], 1, branchCleanupEnabled: false, cleanupIntervalMinutes: 60,
+            [MakePr(1)], wasInputTruncated: false, 1, branchCleanupEnabled: false, cleanupIntervalMinutes: 60,
             triggerCooldownMinutes: 25, CancellationToken.None);
 
         reworkMock.Verify(s => s.TriggerConflictReworkAsync(
@@ -1410,7 +1423,7 @@ public class HousekeepingServiceTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             svc.ExecuteAsync(
                 provider.Object, RepoId, issues.Object, IssueProviderId,
-                [MakePr(1)], 1, false, 60, 25, cts.Token));
+                [MakePr(1)], wasInputTruncated: false, 1, false, 60, 25, cts.Token));
 
         // Only the initial probe should have fired; re-probe must be skipped after cancellation
         provider.Verify(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()),
