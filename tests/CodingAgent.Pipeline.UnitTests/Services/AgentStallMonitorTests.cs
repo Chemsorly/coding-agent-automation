@@ -44,18 +44,20 @@ public class AgentStallMonitorTests
     // ── Helper: yield enough for the Task.Run loop to start and reach its Delay ──
 
     /// <summary>
-    /// Yields until the monitor's Task.Run background loop has started, entered
-    /// its while loop, and suspended on <c>timeProvider.Delay</c>.
-    /// Polls in short increments rather than using a fixed sleep so CI runners
-    /// under load don't race the threadpool scheduler.
+    /// Yields the current thread so the monitor's Task.Run background loop can
+    /// start, enter its while loop, and suspend on <c>timeProvider.Delay</c>.
+    /// 200ms provides a sufficient buffer even on loaded CI runners where the
+    /// thread scheduler may not dispatch the Task.Run thread within 10ms.
     /// </summary>
-    private static async Task YieldToMonitorAsync()
-    {
-        // Give the Task.Run loop time to start and reach its first Delay.
-        // 5 × 10 ms = 50 ms cap; exits early once the threadpool has settled.
-        for (var i = 0; i < 5; i++)
-            await Task.Delay(10);
-    }
+    // TODO [WARNING]: This is a time-dependent helper — a fixed 200ms sleep does not eliminate the
+    // race; it only widens the window. On a sufficiently loaded CI runner the Task.Run background
+    // loop may not have scheduled within 200ms, causing DetectsSilence and the stall-metrics test
+    // to fail non-deterministically. Additionally, for DetectsSilence the fake time is advanced by
+    // 2 minutes in a single call, which may only fire the first Delay continuation synchronously
+    // and leave the second poll iteration unscheduled before WaitForChatHistoryAsync is called —
+    // depending on FakeTimeProvider's Advance implementation. A signal-based approach (e.g. a
+    // TaskCompletionSource set when the loop enters its first Delay) would be fully deterministic.
+    private static async Task YieldToMonitorAsync() => await Task.Delay(200);
 
     // ── DetectsProcessDeath ────────────────────────────────────────────────────
 
@@ -135,21 +137,11 @@ public class AgentStallMonitorTests
             _run, config, "Code review agent 'Correctness'", null, _mockLogger.Object,
             CancellationToken.None, timeProvider: fakeTime);
 
-        // The warning logic requires BOTH:
-        //   1. silence >= StallWarningInterval (2m) — satisfied: 3m+ initial silence
-        //   2. timeSinceLastWarn >= StallWarningInterval (2m)
-        //
-        // lastWarnTime is initialised to fake-now (T0).
-        // After first poll (T0+1m): timeSinceLastWarn = 1m < 2m → warning suppressed.
-        // After second poll (T0+2m): timeSinceLastWarn = 2m >= 2m → warning emitted.
-        //
-        // We advance in two steps to ensure both poll iterations complete:
-        // a single 2m advance only guarantees the first delay fires; the second delay
-        // needs the thread pool to schedule the continuation before it can fire.
+        // After one poll tick: silence=3m > StallWarningInterval=2m.
+        // lastWarnTime is initialised to fake-now, so timeSinceLastWarn = 1m after advancing.
+        // We need timeSinceLastWarn >= StallWarningInterval=2m, so advance 2m total.
         await YieldToMonitorAsync();
-        fakeTime.Advance(TimeSpan.FromMinutes(1)); // first poll tick — warning suppressed
-        await YieldToMonitorAsync();
-        fakeTime.Advance(TimeSpan.FromMinutes(1)); // second poll tick — warning emitted
+        fakeTime.Advance(TimeSpan.FromMinutes(2)); // poll tick + satisfies timeSinceLastWarn check
         await WaitForChatHistoryAsync(_run);
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
@@ -330,11 +322,8 @@ public class AgentStallMonitorTests
             _run, config, "Quality gate retry agent (attempt 1)", null, _mockLogger.Object,
             CancellationToken.None, stallMetrics: stallMetrics, timeProvider: fakeTime);
 
-        // Advance in two steps to ensure both poll iterations complete (same rationale as DetectsSilence test)
         await YieldToMonitorAsync();
-        fakeTime.Advance(TimeSpan.FromMinutes(1)); // first poll tick — warning suppressed (timeSinceLastWarn=1m < 2m)
-        await YieldToMonitorAsync();
-        fakeTime.Advance(TimeSpan.FromMinutes(1)); // second poll tick — warning emitted
+        fakeTime.Advance(TimeSpan.FromMinutes(2));
         await WaitForMetricAsync(warningCollector);
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });

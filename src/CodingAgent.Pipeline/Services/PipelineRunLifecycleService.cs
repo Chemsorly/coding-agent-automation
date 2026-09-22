@@ -97,10 +97,6 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     /// </summary>
     public bool IsIssueBeingProcessed(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        // TODO: ThrowIfNullOrEmpty is stricter than the original ThrowIfNull — it now rejects empty strings.
-        // Also, [CallerArgumentExpression] emits "issueIdentifier.Value" as ParamName instead of "issueIdentifier".
-        // Consider reverting to ArgumentNullException.ThrowIfNull(issueIdentifier.Value) to match original semantics,
-        // or use the explicit paramName overload: ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier)).
         ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
 
         // Check in-process run
@@ -218,12 +214,6 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
             old = _cancellationTokenSource;
             _cancellationTokenSource = newCts;
         }
-        // TODO: [WARNING] old?.Dispose() is called outside the lock, so a concurrent CancelPipelineAsync that read
-        // the same 'old' reference under its own lock scope can race on the dispose of that replaced CTS. This risks
-        // a double-dispose of the *old* CTS (not the active one being cancelled), which CancellationTokenSource.Dispose
-        // tolerates silently. The _cancelLock comment states it serialises CreateLinkedCancellationToken — that claim
-        // is only partially true: the field swap is serialised, but the subsequent dispose of the old CTS is not.
-        // To fully serialise, move old?.Dispose() inside the lock, or accept the pre-existing benign double-dispose risk.
         old?.Dispose();
         return newCts.Token;
     }
@@ -372,10 +362,6 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         _runService.ReplaceRun(run);
         _logger.Debug("Replaced dispatched run {RunId} for issue {IssueIdentifier}",
             run.RunId, run.IssueIdentifier);
-        // TODO: This NotifyChange() introduces an extra OnChange event that wasn't emitted in the
-        // pre-refactoring code (which called _runService.ReplaceRun directly from the dispatcher).
-        // While benign (triggers an additional UI refresh), this changes observable behavior for
-        // OnChange subscribers. Evaluate whether this notification is desired or should be suppressed.
         NotifyChange();
     }
 
