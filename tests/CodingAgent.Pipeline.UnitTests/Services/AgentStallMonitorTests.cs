@@ -20,7 +20,16 @@ namespace CodingAgent.Pipeline.UnitTests;
 /// so the Task.Run loop reaches its first <c>timeProvider.Delay</c>, then call
 /// <c>fakeTime.Advance()</c> to unblock it.  The fake delay completes synchronously
 /// on the ThreadPool thread running the monitor loop.
+///
+/// [Collection("Metrics")] serializes this class with LayerBoundaryTests, which
+/// performs heavy synchronous file-system I/O (scanning src/) across many tests.
+/// When LayerBoundaryTests and AgentStallMonitorTests run concurrently, the blocking
+/// I/O exhausts threadpool threads and the monitor's Task.Run loop cannot start
+/// within the 200 ms YieldToMonitorAsync window — causing the FakeTimeProvider
+/// Advance to fire before the monitor is suspended on its first Delay, leaving
+/// the metric collector empty and the test failing with "collection is empty".
 /// </summary>
+[Collection("Metrics")]
 public class AgentStallMonitorTests
 {
     private readonly Mock<IAgentProvider> _mockAgent;

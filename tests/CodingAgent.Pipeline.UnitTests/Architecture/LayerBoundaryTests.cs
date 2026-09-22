@@ -11,7 +11,16 @@ namespace CodingAgent.Pipeline.UnitTests.Architecture;
 /// - Infrastructure.Persistence references Providers (one-way)
 /// - Agent projects must NOT reference Orchestration
 /// - Agent must NOT reference Infrastructure.Persistence (T9 invariant — compile-time enforcement)
+///
+/// [Collection("Metrics")] serializes this class with AgentStallMonitorTests.
+/// Several tests here perform heavy synchronous file-system I/O (Directory.EnumerateFiles
+/// + File.ReadAllText across all of src/) that blocks threadpool threads. When running in
+/// parallel with AgentStallMonitorTests — which relies on Task.Run and a 200 ms yield to
+/// reach its first FakeTimeProvider.Delay — the blocking I/O can starve the threadpool and
+/// cause the metric to never be emitted, making the ContainSingle assertion fail with
+/// "collection is empty". Serializing the two classes prevents this race.
 /// </summary>
+[Collection("Metrics")]
 public partial class LayerBoundaryTests
 {
     // Assembly anchors for each layer
