@@ -45,23 +45,6 @@ public sealed class HousekeepingService : IHousekeepingService
     private readonly ConcurrentDictionary<string, HashSet<int>> _inFlight = new();
 
     /// <summary>
-    /// Tracks when each PR's in-flight slot was acquired, keyed by (repoProviderId, prNumber).
-    /// Used to implement max-age slot eviction: a PR that has held the slot for longer than
-    /// <see cref="PipelineConfiguration.HousekeepingMaxSlotAgeMinutes"/> is evicted regardless
-    /// of mergeability status, preventing a single stuck PR from starving all other behind PRs.
-    /// Cleared on normal slot release (Steps 3 and 6b) and on PR removal from the polled set.
-    /// </summary>
-    /// <remarks>
-    /// TODO: the invariant "every entry in _inFlight has a matching entry in _inFlightAt" is not
-    /// enforced structurally — it relies on Step 6b being the only writer to both dictionaries.
-    /// A PR that enters _inFlight without a corresponding _inFlightAt entry (e.g. via a future code
-    /// path) will have slotAge fall back to 0.0 and max-age eviction will silently never fire for it.
-    /// Consider encapsulating both writes behind a helper method (e.g. AcquireSlot / ReleaseSlot)
-    /// to make the pairing structural rather than a documentation convention.
-    /// </remarks>
-    private readonly ConcurrentDictionary<(string repoId, int prNumber), DateTimeOffset> _inFlightAt = new();
-
-    /// <summary>
     /// Tracks when each PR last had a branch update triggered, keyed by (repoProviderId, prNumber).
     /// Keyed by repo to prevent cross-repo collisions when the singleton handles multiple repos
     /// (two repos can both have a PR #N — their cooldown entries must not interfere).
@@ -128,7 +111,6 @@ public sealed class HousekeepingService : IHousekeepingService
         bool branchCleanupEnabled,
         int cleanupIntervalMinutes,
         int triggerCooldownMinutes,
-        int maxSlotAgeMinutes,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(repoProvider);
@@ -161,19 +143,13 @@ public sealed class HousekeepingService : IHousekeepingService
         // The two statements below are trivial state-initialisation whose results are shared
         // between Steps 3 and 6b, making extraction awkward (would need out-parameters or a
         // tuple return). If strict compliance with "each step is a distinct private method" is
-        // required, extract as e.g. InitializeInFlightState(repoProviderId, out var evictedThisCycle).
+        // required, extract as e.g. InitializeInFlightState(repoProviderId).
         var inFlight = _inFlight.GetOrAdd(repoProviderId, _ => new HashSet<int>());
-
-        // Tracks PR numbers that were max-age evicted in Step 3 during this cycle.
-        // Step 6b checks this set before re-admitting Behind PRs to prevent an evicted PR
-        // from immediately re-acquiring the slot it was just freed from in the same call.
-        // Allocated fresh on every ExecuteAsync call — no cross-cycle state.
-        var evictedThisCycle = new HashSet<int>();
 
         // ── Step 3: Evict resolved in-flight entries ──────────────────────────
         var currentPrNumbers = new HashSet<int>(agentDonePrs.Select(p => p.Number));
-        EvictInFlightSlots(inFlight, evictedThisCycle, currentPrNumbers, mergeabilityMap,
-            repoProviderId, repoTag, now, maxSlotAgeMinutes);
+        EvictInFlightSlots(inFlight, currentPrNumbers, mergeabilityMap,
+            repoProviderId, repoTag, now);
 
         // ── Step 4: Get active run branches (for rework exclusion) ───────────
         var (activeRunBranches, activeRunBranchesUnavailable) = await FetchActiveRunBranchesAsync(ct);
@@ -186,7 +162,7 @@ public sealed class HousekeepingService : IHousekeepingService
             activeRunBranchesUnavailable, repoProvider, issueProvider, issueProviderId, repoTag, ct);
 
         // ── Step 6b: Select and trigger eligible branch updates ───────────────
-        await SelectAndTriggerBranchUpdatesAsync(sorted, inFlight, evictedThisCycle, mergeabilityMap,
+        await SelectAndTriggerBranchUpdatesAsync(sorted, inFlight, mergeabilityMap,
             activeRunBranches, activeRunBranchesUnavailable, repoProvider, repoProviderId, repoTag, limit, triggerCooldown, now, ct);
 
         // ── Step 7: Stale branch cleanup ──────────────────────────────────────
@@ -319,23 +295,19 @@ public sealed class HousekeepingService : IHousekeepingService
 
     /// <summary>
     /// Removes in-flight entries that are no longer valid: PRs absent from the current list
-    /// (merged/closed), PRs whose mergeability resolved to a non-blocking state, and PRs that
-    /// have held the slot longer than <paramref name="maxSlotAgeMinutes"/>.
+    /// (merged/closed) and PRs whose mergeability resolved to a non-blocking state.
     /// </summary>
     /// <remarks>
-    /// Mutates <paramref name="inFlight"/> and <paramref name="evictedThisCycle"/> in-place.
-    /// Also removes entries from the <c>_inFlightAt</c> instance field (all eviction paths)
-    /// and from <c>_lastTriggeredAt</c> (PR-absent path only).
+    /// Mutates <paramref name="inFlight"/> in-place.
+    /// Also removes entries from <c>_lastTriggeredAt</c> (PR-absent path only).
     /// </remarks>
     private void EvictInFlightSlots(
         HashSet<int> inFlight,
-        HashSet<int> evictedThisCycle,
         HashSet<int> currentPrNumbers,
         IReadOnlyDictionary<int, PrMergeabilityStatus> mergeabilityMap,
         string repoProviderId,
         KeyValuePair<string, object?> repoTag,
-        DateTimeOffset now,
-        int maxSlotAgeMinutes)
+        DateTimeOffset now)
     {
         foreach (var prNumber in inFlight.ToList())
         {
@@ -343,36 +315,15 @@ public sealed class HousekeepingService : IHousekeepingService
             {
                 inFlight.Remove(prNumber);
                 _lastTriggeredAt.TryRemove((repoProviderId, prNumber), out _); // PR merged/closed — clear cooldown state
-                _inFlightAt.TryRemove((repoProviderId, prNumber), out _);       // clear slot entry time
                 PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
             }
             else
             {
                 var status = mergeabilityMap[prNumber];
 
-                // Max-age eviction: if this slot has been held longer than the configured threshold,
-                // release it regardless of mergeability status. This prevents a single PR stuck at
-                // Blocked/Unknown from monopolising the slot and starving all other behind PRs.
-                // maxSlotAgeMinutes=0 disables time-based eviction (preserves previous behaviour).
-                var slotAge = maxSlotAgeMinutes > 0
-                    && _inFlightAt.TryGetValue((repoProviderId, prNumber), out var acquiredAt)
-                    ? (now - acquiredAt).TotalMinutes
-                    : 0.0;
-
-                if (maxSlotAgeMinutes > 0 && slotAge >= maxSlotAgeMinutes)
-                {
-                    _logger.Information(
-                        "HousekeepingService: PR #{PrNumber} in repo {RepoId} has held the slot for {SlotAge:F0}m (max {MaxAge}m, status={Status}) — evicting to unblock other PRs",
-                        prNumber, repoProviderId, slotAge, maxSlotAgeMinutes, status);
-                    inFlight.Remove(prNumber);
-                    _inFlightAt.TryRemove((repoProviderId, prNumber), out _);
-                    evictedThisCycle.Add(prNumber);
-                    PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
-                }
-                else if (status != PrMergeabilityStatus.Blocked && status != PrMergeabilityStatus.Unknown)
+                if (status != PrMergeabilityStatus.Blocked && status != PrMergeabilityStatus.Unknown)
                 {
                     inFlight.Remove(prNumber);
-                    _inFlightAt.TryRemove((repoProviderId, prNumber), out _);
                     PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
                 }
             }
@@ -454,18 +405,16 @@ public sealed class HousekeepingService : IHousekeepingService
     ///   <item>Draft PR — skip</item>
     ///   <item>Active-run data unavailable — skip (conservative fallback)</item>
     ///   <item>Branch has an active run — skip</item>
-    ///   <item>PR was max-age evicted this cycle — skip (prevent same-cycle re-admission)</item>
     ///   <item>Already in-flight — skip</item>
     ///   <item>Not Behind — skip</item>
     ///   <item>Within trigger cooldown — skip</item>
     /// </list>
-    /// Mutates <paramref name="inFlight"/>, <c>_inFlightAt</c>, and <c>_lastTriggeredAt</c>
+    /// Mutates <paramref name="inFlight"/> and <c>_lastTriggeredAt</c>
     /// in-place for each PR that passes all guards.
     /// </remarks>
     private async Task SelectAndTriggerBranchUpdatesAsync(
         IReadOnlyList<PullRequestSummary> sorted,
         HashSet<int> inFlight,
-        HashSet<int> evictedThisCycle,
         IReadOnlyDictionary<int, PrMergeabilityStatus> mergeabilityMap,
         IReadOnlySet<string> activeRunBranches,
         bool activeRunBranchesUnavailable,
@@ -508,18 +457,6 @@ public sealed class HousekeepingService : IHousekeepingService
                 continue;
             }
 
-            // Max-age eviction guard: if this PR was evicted from the slot in Step 3 during
-            // this same cycle, do not re-admit it. This prevents a chronically-Behind PR from
-            // immediately re-acquiring the slot it was just released from, which would make
-            // max-age eviction a no-op and starve other eligible Behind PRs.
-            // On the next poll tick, evictedThisCycle is re-allocated empty — the PR is freely
-            // eligible for re-selection on subsequent cycles (subject to normal cooldown rules).
-            if (evictedThisCycle.Contains(pr.Number))
-            {
-                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
-                continue;
-            }
-
             if (inFlight.Contains(pr.Number))
             {
                 PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
@@ -548,7 +485,6 @@ public sealed class HousekeepingService : IHousekeepingService
 
             _lastTriggeredAt[(repoProviderId, pr.Number)] = now;
             inFlight.Add(pr.Number);
-            _inFlightAt[(repoProviderId, pr.Number)] = now; // record slot acquisition time for max-age eviction
             PipelineTelemetry.HousekeepingTriggered.Add(1, repoTag);
             await FireAndForget(UpdateAsync(repoProvider, repoProviderId, pr.Number, repoTag));
         }
