@@ -515,7 +515,6 @@ public sealed partial class PipelineLoopService
                 template.HousekeepingBranchCleanupEnabled,
                 snapshot.Config.HousekeepingBranchCleanupIntervalMinutes,
                 snapshot.Config.HousekeepingTriggerCooldownMinutes,
-                snapshot.Config.HousekeepingMaxSlotAgeMinutes,
                 ct);
         }
     }

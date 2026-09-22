@@ -91,7 +91,7 @@ public class HousekeepingReprobeMetricsTests
         HousekeepingService svc, Mock<IRepositoryProvider> repo, Mock<IIssueProvider> issues,
         IReadOnlyList<PullRequestSummary> prs, int limit = 1)
         => svc.ExecuteAsync(repo.Object, RepoId, issues.Object, IssueProviderId,
-            prs, limit, false, 60, 25, 0, CancellationToken.None);
+            prs, limit, false, 60, 25, CancellationToken.None);
 
     private (System.Diagnostics.Metrics.MeterListener Listener,
              System.Collections.Concurrent.ConcurrentBag<(string Name, long Value, KeyValuePair<string, object?>[] Tags)> Measurements)
