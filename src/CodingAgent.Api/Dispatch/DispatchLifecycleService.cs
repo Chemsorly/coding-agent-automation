@@ -62,8 +62,7 @@ internal sealed class DispatchLifecycleService : IDisposable
     {
         var claimedPvcs = await db.WorkItems
             .Where(w => w.ClaimedPvcName != null &&
-                        (w.Status == WorkItemStatus.Pending ||
-                         w.Status == WorkItemStatus.Dispatched ||
+                        (w.Status == WorkItemStatus.Dispatched ||
                          w.Status == WorkItemStatus.Running))
             .Select(w => w.ClaimedPvcName!)
             .ToListAsync(ct);
@@ -142,11 +141,14 @@ internal sealed class DispatchLifecycleService : IDisposable
             return;
         }
 
-        // Pre-write K8sJobName (and ClaimedPvcName) to WorkItem BEFORE K8s API call.
-        // EF change tracking also persists any entity mutations from prepareVariant (e.g., Payload).
+        // Pre-write K8sJobName to WorkItem BEFORE K8s API call.
+        // ClaimedPvcName is NOT written here — it is set atomically with Status=Dispatched
+        // in FinalizeDispatchAsync (see below) so that a Pending WorkItem never holds a
+        // non-null ClaimedPvcName in the database. Pre-writing ClaimedPvcName would pin the
+        // item to a specific PVC for its entire queue lifetime, causing starvation if that
+        // PVC stays busy. EF change tracking also persists any entity mutations from
+        // prepareVariant (e.g., Payload).
         workItem.K8sJobName = jobName;
-        if (claimedPvc is not null)
-            workItem.ClaimedPvcName = claimedPvc;
 
         try
         {
@@ -180,6 +182,11 @@ internal sealed class DispatchLifecycleService : IDisposable
         workItem = reloadedWorkItem!;
         workItem.Status = WorkItemStatus.Dispatched;
         workItem.DispatchedAt = DateTimeOffset.UtcNow;
+        // Set ClaimedPvcName on the reloaded (actively tracked) entity so it is persisted
+        // atomically with Status=Dispatched. Must target this reloaded reference — the
+        // earlier workItem reference was detached when HandleOrphanedJobIfRaceDetectedAsync
+        // called db.ChangeTracker.Clear() before re-fetching from the DB.
+        workItem.ClaimedPvcName = claimedPvc;
 
         await FinalizeDispatchAsync(db, workItem, item, logPrefix, concurrencyBySelector, onDispatchSuccess, _log, ct);
     }
