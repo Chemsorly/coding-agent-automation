@@ -157,7 +157,6 @@ The Job Controller-side recordings are not affected by any of the above.
 ### Work Distribution Metrics
 
 The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetry.cs` (`src/CodingAgent.Infrastructure.Common/Telemetry/WorkDistributionTelemetry.cs`, namespace `CodingAgent.Pipeline.Telemetry`). Instruments are fed by `ReconciliationService` in the Job Controller, and by `WorkItemCountsService` in the Scheduler (`workitems_by_status` gauge only — `WorkItemMetricsBackgroundService` was removed from the Pipeline API in Spec 047/048).
-<!-- TODO: [WARNING] Stale class name — WorkItemCountsPoller was renamed to WorkItemCountsService (issue #2844). -->
 
 | Metric | Type | Unit | Tags | Description |
 |--------|------|------|------|-------------|

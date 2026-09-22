@@ -9,19 +9,31 @@ How to set up a fresh Kubernetes deployment or migrate configuration from an exi
 1. Deploy the Helm chart:
    ```bash
    helm install coding-agent ./helm/coding-agent-automation \
-     --set secrets.agentApiKey="$(openssl rand -hex 32)" \
      --set database.host=postgres.coding-agent.svc.cluster.local \
      --set database.auth.existingSecret=postgres-secret
    ```
 
-2. Open the web UI. A first-run banner will appear prompting you to configure job templates.
+   > **`secrets.agentApiKey` is optional.** When omitted, the chart auto-generates a cryptographically secure key on first install via a pre-install hook Job and stores it in the chart-managed Secret. The generated key is preserved across upgrades (the hook is a no-op when the Secret already exists). To use your own key, add `--set secrets.agentApiKey="$(openssl rand -hex 32)"`.
+   >
+   > To retrieve the auto-generated key after install:
+   > ```bash
+   > kubectl get secret <release>-coding-agent-automation -n <ns> \
+   >   -o jsonpath='{.data.agent-api-key}' | base64 -d
+   > ```
 
-3. Go to **Settings** and configure:
+2. **Enable the dispatch loop.** `scheduler.dispatch.enabled` defaults to `false`. With the API-side dispatch loop removed, a deployment without this flag will have no active dispatcher — `Pending` WorkItems accumulate and are never promoted to `Dispatched`. Set it on install:
+   ```bash
+   --set scheduler.dispatch.enabled=true
+   ```
+
+3. Open the web UI. A first-run banner will appear prompting you to configure job templates.
+
+4. Go to **Settings** and configure:
    - Providers (Issue, Repository, Agent, optionally Pipeline/CI)
    - Agent Profiles, Quality Gate Configs, Reviewer Configs
    - Pipeline Job Templates
 
-4. Create a pipeline job template and start a run, or enable closed-loop mode to process `agent:next` issues automatically.
+5. Create a pipeline job template and start a run, or enable closed-loop mode to process `agent:next` issues automatically.
 
 > After upgrading from Spec 041 to a later release, start the pipeline loop manually from the web UI on first boot. Closed-loop auto-start is restored in Spec 045.
 
