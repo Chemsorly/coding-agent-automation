@@ -571,6 +571,10 @@ public static class ApiServiceCollectionExtensions
         // making it the correct process for chat dispatch and the registry poll loop.
         // Spec 049: ILeaderElectionService removed — all replicas can dispatch. The K8s
         // double-dispatch guard (CheckForExistingJob) is already replica-safe.
+        //
+        // ChatHeartbeatTracker and ChatSessionWatcher are internal to CodingAgent.AgentGateway.
+        // The public ChatJobDispatcher constructor accepts IRedisStore? and constructs the
+        // collaborators internally, so CodingAgent.Api does not need to reference internal types.
         services.AddSingleton<ChatJobDispatcher>(sp =>
         {
             var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
