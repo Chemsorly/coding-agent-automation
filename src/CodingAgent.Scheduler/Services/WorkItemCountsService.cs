@@ -14,7 +14,7 @@ namespace CodingAgent.Scheduler.Services;
 /// WorkDistributionTelemetry.workitems_by_status observable gauge.
 /// Leader-gated — only one Scheduler replica registers measurements at a time.
 /// </summary>
-public sealed class WorkItemCountsPoller : BackgroundService
+public sealed class WorkItemCountsService : BackgroundService
 {
     private readonly ISchedulerApiClient _apiClient;
     private readonly ILeaderGate? _leaderGate;
@@ -23,7 +23,7 @@ public sealed class WorkItemCountsPoller : BackgroundService
 
     private IEnumerable<Measurement<long>> _cachedMeasurements = [];
 
-    public WorkItemCountsPoller(
+    public WorkItemCountsService(
         ISchedulerApiClient apiClient,
         ILeaderGate? leaderGate,
         ILogger logger,
@@ -31,7 +31,7 @@ public sealed class WorkItemCountsPoller : BackgroundService
     {
         _apiClient = apiClient;
         _leaderGate = leaderGate;
-        _logger = logger.ForContext<WorkItemCountsPoller>();
+        _logger = logger.ForContext<WorkItemCountsService>();
         _interval = interval ?? TimeSpan.FromSeconds(10);
 
         // Register the gauge callback once at construction — same pattern as WorkItemMetricsBackgroundService.
@@ -41,7 +41,7 @@ public sealed class WorkItemCountsPoller : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.Information("WorkItemCountsPoller started — polling every {Interval}", _interval);
+        _logger.Information("WorkItemCountsService started — polling every {Interval}", _interval);
 
         // Immediate first poll
         await UpdateMeasurementsAsync(stoppingToken);
@@ -70,7 +70,7 @@ public sealed class WorkItemCountsPoller : BackgroundService
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "WorkItemCountsPoller: failed to fetch counts — resetting to empty");
+            _logger.Warning(ex, "WorkItemCountsService: failed to fetch counts — resetting to empty");
             Volatile.Write(ref _cachedMeasurements, []);
         }
     }

@@ -82,7 +82,7 @@ public class WorkItemTransitionServiceTests
     public void PendingToDispatched_IsValid_ForClaimWorkItemEndpoint()
     {
         // Pending→Dispatched is used by ClaimWorkItem (POST /api/work-items/{id}/claim),
-        // which the Scheduler's WorkItemDispatchPoller calls for all task types.
+        // which the Scheduler's WorkItemDispatchLoop calls for all task types.
         WorkItemTransitionService.IsValidTransition(WorkItemStatus.Pending, WorkItemStatus.Dispatched)
             .Should().BeTrue("Pending→Dispatched is used by ClaimWorkItem for all task types via the Scheduler");
     }

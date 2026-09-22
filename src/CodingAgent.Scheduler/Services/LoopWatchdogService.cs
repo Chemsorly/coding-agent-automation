@@ -34,7 +34,7 @@ namespace CodingAgent.Scheduler.Services;
 /// Note on null gate: a null <see cref="ILeaderGate"/> means leader election is
 /// not configured (single-replica / dev mode). In that case the watchdog treats
 /// the current instance as the leader and heals unconditionally if conditions 2
-/// and 3 are met — matching the pattern used by <see cref="WorkItemCountsPoller"/>.
+/// and 3 are met — matching the pattern used by <see cref="WorkItemCountsService"/>.
 /// </para>
 /// </remarks>
 public sealed class LoopWatchdogService : BackgroundService

@@ -265,7 +265,7 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
         => (current, target) switch
         {
             // Pending→Dispatched: used by ClaimWorkItem (POST /api/work-items/{id}/claim).
-            // The Scheduler's WorkItemDispatchPoller uses this endpoint for all task types.
+            // The Scheduler's WorkItemDispatchLoop uses this endpoint for all task types.
             (WorkItemStatus.Pending, WorkItemStatus.Dispatched or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,
             // Dispatched→Pending: used by RequeueWorkItem (POST /api/work-items/{id}/requeue)
             // when K8s Job creation fails after a successful claim — the item must be returned to

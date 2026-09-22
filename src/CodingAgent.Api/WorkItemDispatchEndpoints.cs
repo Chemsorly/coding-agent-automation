@@ -298,7 +298,7 @@ public static class WorkItemDispatchEndpoints
         // The label swap to agent:in-progress is NOT in scope — it happens in AgentHub.RegisterAgent.
         //
         // Note: this lock only protects concurrent calls to THIS endpoint. DispatchWorkItem
-        // (collection-level) and WorkItemDispatchPoller (Scheduler background poller) do NOT acquire
+        // (collection-level) and WorkItemDispatchLoop (Scheduler background loop) do NOT acquire
         // this lock. Cross-path correctness is provided by the CAS in ExecuteDispatchLifecycleAsync.
         IAsyncDisposable lockHandle;
         try
@@ -317,7 +317,7 @@ public static class WorkItemDispatchEndpoints
         await using var _ = lockHandle;
 
         // Post-lock status re-read: close the TOCTOU window.
-        // Another dispatch path (WorkItemDispatchPoller, DispatchWorkItem, or a concurrent call
+        // Another dispatch path (WorkItemDispatchLoop, DispatchWorkItem, or a concurrent call
         // to this endpoint) may have transitioned the item from Pending → Dispatched between
         // the fast-path check above and lock acquisition. The advisory lock serialises concurrent
         // callers on this endpoint; without this re-read, the loser enters

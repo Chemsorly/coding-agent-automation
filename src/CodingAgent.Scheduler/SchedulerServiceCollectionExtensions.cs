@@ -268,7 +268,7 @@ public static class SchedulerServiceCollectionExtensions
         // is dormant, this pod is the leader, and ClosedLoopAutoStart=true in config.
         // Covers both the exception-killed-loop scenario and hangs (which no exception
         // handler can catch). A null leader gate (dev/single-replica mode) causes the
-        // watchdog to treat this instance as the leader — matching WorkItemCountsPoller.
+        // watchdog to treat this instance as the leader — matching WorkItemCountsService.
         // TODO: DI lifetime skew — IPipelineApiConfigClient is registered as transient (AddHttpClient),
         //   but LoopWatchdogService is a singleton, so the transient instance is captured for the
         //   process lifetime. This prevents socket recycling and bypasses IHttpClientFactory's
@@ -333,7 +333,7 @@ public static class SchedulerServiceCollectionExtensions
         // ── Scheduler-specific background services ────────────────────────────
         services.AddSingleton<ISchedulerApiClient>(sp =>
         {
-            // RetentionSweepSchedulerService and WorkItemCountsPoller call the API (not the Scheduler).
+            // RetentionSweepSchedulerService and WorkItemCountsService call the API (not the Scheduler).
             // Register an HttpClient pointing to the Pipeline API base URL.
             var factory = sp.GetRequiredService<IHttpClientFactory>();
             var httpClient = factory.CreateClient("SchedulerToApi");
@@ -353,28 +353,28 @@ public static class SchedulerServiceCollectionExtensions
                 Log.Logger));
         services.AddHostedService(sp => sp.GetRequiredService<RetentionSweepSchedulerService>());
 
-        services.AddSingleton<WorkItemCountsPoller>(sp =>
-            new WorkItemCountsPoller(
+        services.AddSingleton<WorkItemCountsService>(sp =>
+            new WorkItemCountsService(
                 sp.GetRequiredService<ISchedulerApiClient>(),
                 sp.GetService<ILeaderElectionService>(),
                 Log.Logger));
-        services.AddHostedService(sp => sp.GetRequiredService<WorkItemCountsPoller>());
+        services.AddHostedService(sp => sp.GetRequiredService<WorkItemCountsService>());
 
-        // ── WorkItemDispatchPoller (flag-off by default) ───────────────────────────────
+        // ── WorkItemDispatchLoop (flag-off by default) ────────────────────────────────────
         // Gates on Scheduler:Dispatch:Enabled (default false). Flip to true to enable
         // the Scheduler-side dispatch loop. The API-side dispatch loop was removed in issue #2547.
         // Both flags default to preserving current behavior — merging this changes nothing.
         if (config.GetValue("Scheduler:Dispatch:Enabled", defaultValue: false))
         {
             var rateLimitPerSecond = config.GetValue("Scheduler:Dispatch:RateLimitPerSecond", defaultValue: 10);
-            services.AddSingleton<WorkItemDispatchPoller>(sp =>
-                new WorkItemDispatchPoller(
+            services.AddSingleton<WorkItemDispatchLoop>(sp =>
+                new WorkItemDispatchLoop(
                     sp.GetRequiredService<IPipelineApiWorkItemClient>(),
                     sp.GetService<ILeaderElectionService>(),
                     Log.Logger,
                     rateLimitPerSecond: rateLimitPerSecond));
             services.AddHostedService(sp =>
-                sp.GetRequiredService<WorkItemDispatchPoller>());
+                sp.GetRequiredService<WorkItemDispatchLoop>());
         }
 
         return services;
