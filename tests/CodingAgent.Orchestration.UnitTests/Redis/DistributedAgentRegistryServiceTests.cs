@@ -569,6 +569,12 @@ public sealed class DistributedAgentRegistryServiceTests
         // Assert: Redis was updated even though _localSnapshot did not contain the agent.
         _store.GetHash("agent:agent-remote")!["activeJobId"].Should().Be("run-cross",
             "UpdateAgentFieldAsync must write to Redis regardless of whether _localSnapshot contains the agent");
+        // TODO (WARNING issue #2873 review): this test does not assert that _localSnapshot was NOT
+        // modified for agent-remote (which is the invariant being exercised: ContainsKey returns false
+        // so the snapshot update block is skipped). Add an assertion such as:
+        //   _sut.GetByConnectionId("conn-remote").Should().BeNull(
+        //       "agent-remote must not appear in the local snapshot — it was not registered on this replica");
+        // to make the snapshot-skipped behaviour explicit and guarded against regression. (test quality review WARNING, issue #2873)
     }
 
     // ── UpdateHeartbeat — TTL expiry recovery ─────────────────────────────────
@@ -823,6 +829,13 @@ public sealed class DistributedAgentRegistryServiceTests
         // Assert: no exception must propagate — the catch block swallows Redis faults.
         await act.Should().NotThrowAsync(
             "UpdateAgentFieldAsync must swallow Redis faults and not propagate them to callers");
+        // TODO (WARNING issue #2873 review): this test only asserts the no-throw guarantee. It does
+        // not assert snapshot state after the fault. Because the AddOrUpdate snapshot update executes
+        // after the awaited Redis write, a Redis fault aborts before the snapshot update runs, leaving
+        // the snapshot unchanged from its pre-call state. A regression that partially updated the
+        // snapshot before throwing would not be caught here. Add an assertion that the snapshot is
+        // unchanged (e.g. sut.GetByConnectionId("conn-1")?.ActiveJobId.Should().BeNull()) to close
+        // this coverage gap. (test quality review WARNING, issue #2873)
     }
 
     [Fact]
@@ -1348,6 +1361,63 @@ public sealed class DistributedAgentRegistryServiceTests
             snap!.ActiveJobId.Should().Be("run-stress",
                 $"iteration {i}: concurrent UpdateAgentFieldAsync must not clobber ActiveJobId");
         }
+    }
+
+    [Fact]
+    public async Task Register_WithNonNullSnapshotActiveJobId_CommitsStatusBusy_WhenRedisHashExistsButActiveJobIdEmpty()
+    {
+        // CRITICAL regression test (issue #2873 review finding #1 / #7):
+        // Verifies that the committed snapshot entry has Status=Busy (not Idle) whenever
+        // ActiveJobId is non-null — specifically the branch where Redis returns a non-null entry
+        // with an empty activeJobId string (existing != null, activeJobId == ""). In the pre-fix
+        // code the status recompute guard was `if (existing is null && activeJobId is not null)`,
+        // which is false when existing != null, so `status` stayed Idle. The agent was then
+        // committed to the snapshot as Idle with a non-null ActiveJobId — a double-booking vector.
+        //
+        // Fix: the guard was changed to `if (!string.IsNullOrEmpty(activeJobId) && status != Busy)`
+        // which fires regardless of whether existing is null or non-null.
+        //
+        // Setup: register agent-1 and set orphan-restored ActiveJobId in _localSnapshot.
+        // Then manipulate the Redis hash so it returns activeJobId="" (empty) on the next GetAgentRaw.
+        // Register(conn-2) will: existing != null, activeJobId="" → Fix B1 fallback reads snapshot →
+        // activeJobId="run-orphan". Fixed guard: !string.IsNullOrEmpty → status = Busy → entry.Status=Busy.
+        // UpdateAllAgentsCache(committedEntry) → GetIdleAgents() must NOT include agent-1.
+        _sut.Register(Msg("agent-1"), "conn-1");
+        // Simulate orphan restore setting the ActiveJobId in _localSnapshot.
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "activeJobId", "run-orphan");
+
+        // Verify pre-condition: snapshot has the restored value.
+        var beforeReRegister = _sut.GetByConnectionId("conn-1");
+        beforeReRegister!.ActiveJobId.Should().Be("run-orphan", "pre-condition: snapshot has orphan-restored value");
+
+        // The Redis hash was written by the initial Register() with activeJobId="" (no active job at
+        // registration time). ForceExpire is NOT called — the hash remains present but has empty activeJobId.
+        // This means existing != null but activeJobId == "" after GetAgentRaw, exercising the branch that
+        // the old `existing is null` guard did NOT cover.
+        // GetAgentRaw returns the hash from Redis directly (WriteRegistrationAsync completed via FakeRedisStore);
+        // the hash has activeJobId="" as written by the initial Register().
+
+        // Act: re-register (simulates kiro-cli reconnect); Redis hash is present but activeJobId="".
+        _sut.Register(Msg("agent-1"), "conn-2");
+
+        // Assert: Fix B1 fallback preserved "run-orphan"; fixed status-recompute guard fires on
+        // `existing != null` branch too → Status must be Busy.
+        var entryAfter = _sut.GetByConnectionId("conn-2");
+        entryAfter.Should().NotBeNull();
+        entryAfter!.ActiveJobId.Should().Be("run-orphan",
+            "Fix B1 fallback must preserve the orphan-restored ActiveJobId even when Redis returns " +
+            "a non-null hash with empty activeJobId (existing != null path)");
+        entryAfter.Status.Should().Be(AgentStatus.Busy,
+            "Status must be Busy whenever ActiveJobId is non-null — the old `existing is null` guard " +
+            "missed the `existing != null + empty activeJobId` branch (CRITICAL issue #2873 review #1)");
+
+        // Additionally verify GetIdleAgents() does NOT include this agent — double-booking guard.
+        // If Status were incorrectly Idle, UpdateAllAgentsCache would add it to the idle set and
+        // GetIdleAgents() would return it, making it eligible for a new dispatch while carrying a run.
+        var idleAgents = await _sut.GetIdleAgentsAsync(CancellationToken.None);
+        idleAgents.Should().NotContain(a => a.AgentId.Value == "agent-1",
+            "an agent with a non-null ActiveJobId must not appear in GetIdleAgents() — " +
+            "registering it as Idle when it has an active run is a double-booking vector");
     }
 }
 

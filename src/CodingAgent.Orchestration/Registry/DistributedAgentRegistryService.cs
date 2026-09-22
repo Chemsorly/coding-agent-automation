@@ -138,9 +138,14 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         if (string.IsNullOrEmpty(activeJobId) && _localSnapshot.TryGetValue(agentId, out var snapForFallback))
             activeJobId = snapForFallback.ActiveJobId;   // preserve orphan-restored value if Redis is stale
 
-        // Recompute status after the fallback — a non-null activeJobId from the snapshot means
-        // this agent is still Busy even if Redis returned an empty/absent hash.
-        if (existing is null && activeJobId is not null)
+        // Recompute status after the fallback — a non-null activeJobId (whether sourced from Redis
+        // or from the Fix B1 snapshot fallback) means this agent is still Busy. The original guard
+        // `existing is null && activeJobId is not null` was too narrow: it missed the case where
+        // Redis returned a non-null entry with an empty activeJobId string, in which case existing
+        // is non-null but activeJobId was filled in by Fix B1. The corrected guard fires whenever
+        // activeJobId is non-null regardless of whether Redis returned an entry.
+        // (issue #2873 review: .NET specialist WARNING → promoted fix)
+        if (!string.IsNullOrEmpty(activeJobId) && status != AgentStatus.Busy)
             status = AgentStatus.Busy;
 
         // Build hash — do NOT overwrite disabled on re-registration
@@ -202,21 +207,40 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // current live dictionary value at the moment of the atomic swap: if orphan restore has
         // written a non-null ActiveJobId since our GetAgentRaw / fallback read, we preserve it.
         // All other fields must come from the freshly-built `entry` to reflect the new registration.
-        // TODO (WARNING issue #2873 review): Fix B2 updateValueFactory preserves ActiveJobId from
-        // `current` but does NOT recompute `entry.Status` to Busy when it does so. If Fix B1's
-        // TryGetValue returned null (it missed the concurrent write) AND updateValueFactory finds
-        // a non-null current.ActiveJobId, the committed entry has ActiveJobId=non-null but
-        // Status=Idle (from `entry`), creating a new ActiveJobId-non-null/Status-Idle state that
-        // no other code path previously produced. This makes the agent visible to GetIdleAgents()
-        // while it is carrying a run. The window is synchronous so the probability is low, but
-        // a correct fix would also propagate Busy status in the updateValueFactory branch.
+        // When preserving a non-null ActiveJobId we also force Status=Busy and carry BusySince
+        // forward: an agent carrying an active run must never be committed to the snapshot as Idle
+        // (that would expose it to GetIdleAgents() and create a double-booking vector). This fixes
+        // the CRITICAL gap identified in issue #2873 review where the old updateValueFactory
+        // preserved ActiveJobId but left Status=Idle from `entry`.
+        // TODO (WARNING issue #2873 review): B2 updateValueFactory preserves current.ActiveJobId
+        // whenever it is non-null, but does NOT distinguish between a legitimately orphan-restored
+        // ActiveJobId and a stale value from a prior run where UpdateAgentFieldAsync("activeJobId",null)
+        // was silently lost (e.g. swallowed by UpdateAgentFieldAsync's catch block). If the prior run's
+        // clear write failed, a new Register(message.ActiveJob=null) will carry the old run's ActiveJobId
+        // into the new snapshot, making the agent appear Busy for a completed run — a potential
+        // double-booking vector. This is a pre-existing snapshot-divergence risk (from UpdateAgentFieldAsync's
+        // catch-block silencing) amplified by the preservation logic. Resolving this requires either
+        // reliable clear-on-completion writes or a TTL-based expiry of the snapshot ActiveJobId. (issue #2873)
+        //
+        // TODO (WARNING issue #2873 review): `entry.BusySince` is always null in the updateValueFactory's
+        // preservation branch because the `entry` initializer above does not carry BusySince from
+        // `existing` (existing is null when Fix B1's fallback fires, and BusySince is omitted from
+        // the entry object initializer in all other cases). As a result, `entry.BusySince ?? now`
+        // always evaluates to `now` (re-registration time), discarding the agent's original dispatch
+        // BusySince. This is a data-accuracy regression for metrics that compute agent utilization
+        // duration from BusySince; it does not affect the [RequiresActiveJob] correctness path. (issue #2873)
         var committedEntry = _localSnapshot.AddOrUpdate(
             agentId,
             addValueFactory: _ => entry,
             updateValueFactory: (_, current) =>
                 string.IsNullOrEmpty(current.ActiveJobId)
                     ? entry
-                    : entry with { ActiveJobId = current.ActiveJobId });
+                    : entry with
+                    {
+                        ActiveJobId = current.ActiveJobId,
+                        Status = AgentStatus.Busy,
+                        BusySince = entry.BusySince ?? now
+                    });
 
         // Update the all-agents cache so GetAllAgents()/GetIdleAgents() sync overloads see the new entry.
         // Use committedEntry (the value actually stored) rather than entry, so the cache reflects any
@@ -494,6 +518,12 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             // The snapshot omission is safe: the agent is being removed from the system anyway.
             // Sentinel is detected by RegisteredAt == DateTimeOffset.MinValue (never valid for a
             // real registration) so we avoid a captured-nullable pattern that Sonar flags as S2583.
+            // NOTE: the sentinel is momentarily visible in _localSnapshot between AddOrUpdate return
+            // and TryRemove. A concurrent GetByConnectionId or GetAllAgents reader in that window
+            // would see a sentinel AgentEntry (RegisteredAt=MinValue, Status=default, ActiveJobId=null,
+            // ConnectionId=""). GetByConnectionId would not match it (ConnectionId is empty), so the
+            // practical risk is low, but the window is real. Full atomicity would require a dedicated
+            // per-agent lock around AddOrUpdate+TryRemove, which is out of scope for this fix. (.NET specialist WARNING, issue #2873)
             var committed = _localSnapshot.AddOrUpdate(
                 agentId,
                 addValueFactory: CreateDeregistrationRaceSentinel,
@@ -744,6 +774,12 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
                 // a concurrent DeregisterAsync between ContainsKey and AddOrUpdate will cause
                 // addValueFactory to throw — acceptable here because the surrounding try/catch
                 // swallows InvalidOperationException and logs at Warning, preventing propagation.
+                // However the throw-vs-sentinel asymmetry with TransitionStatusAsync / SetLocalSnapshotField
+                // (which use CreateDeregistrationRaceSentinel) is inconsistent: the thrown exception is
+                // caught and logged as a "Redis fault", which is misleading — the cause is a concurrent
+                // deregistration race, not a Redis error. Consider using the sentinel pattern here too,
+                // or refine the catch-block log message to distinguish the deregistration race from an
+                // actual Redis fault. (correctness review WARNING #3; .NET specialist WARNING #2)
                 _localSnapshot.AddOrUpdate(
                     agentId.Value,
                     addValueFactory: _ => throw new InvalidOperationException(
@@ -800,6 +836,14 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // DetectAndRestoreOrphans). Callers must NOT use this method for disabled or
         // activeChatSessionId as a substitute for UpdateAgentFieldAsync — SetLocalSnapshotField
         // is local-only and never writes to Redis. (Correctness WARNING)
+        // TODO (WARNING issue #2873 review): Fix A guarantees atomicity (no lost update between
+        // two concurrent writers) but does NOT prevent a caller from passing value=null for
+        // activeJobId — that would atomically clobber an orphan-restored ActiveJobId back to null.
+        // The issue invariant ("no write path may overwrite ActiveJobId back to null unless the run
+        // completed/cancelled") is therefore enforced by caller contract, not by this method.
+        // Callers MUST NOT invoke SetLocalSnapshotField("activeJobId", null) while a run is live.
+        // The only current caller (DetectAndRestoreOrphans) always passes the restored runId, so
+        // this is safe today. Document this contract if new callers are added. (correctness review WARNING #5)
         if (!_localSnapshot.ContainsKey(agentId.Value)) return;
         // TODO (WARNING issue #2873 review): ContainsKey + AddOrUpdate is not atomic.
         // A concurrent DeregisterAsync can remove the key between ContainsKey and AddOrUpdate,

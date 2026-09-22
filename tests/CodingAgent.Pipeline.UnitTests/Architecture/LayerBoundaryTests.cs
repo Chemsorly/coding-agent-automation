@@ -502,7 +502,9 @@ public partial class LayerBoundaryTests
                 // Fix B2 Register() updateValueFactory (issue #2873): preserves non-null ActiveJobId from
                 // the current snapshot when orphan restore has written it concurrently. `entry` is a local
                 // variable constructed in Register() and not yet in any shared collection.
-                ": entry with { ActiveJobId = current.ActiveJobId });",
+                // The `with {}` expression on `entry` produces a new record; ActiveJobId comes from `current`
+                // (the live dictionary value at swap time) and is not a mutation of any shared entry.
+                "ActiveJobId = current.ActiveJobId,",
                 "ActiveJobId = dict.GetValueOrDefault(\"activeJobId\") is { Length: > 0 } aj ? aj : null,",
             },
 

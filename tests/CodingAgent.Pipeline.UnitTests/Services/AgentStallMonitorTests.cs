@@ -46,8 +46,10 @@ public class AgentStallMonitorTests
     /// <summary>
     /// Yields the current thread so the monitor's Task.Run background loop can
     /// start, enter its while loop, and suspend on <c>timeProvider.Delay</c>.
-    /// 200ms provides a sufficient buffer even on loaded CI runners where the
-    /// thread scheduler may not dispatch the Task.Run thread within 10ms.
+    /// 500ms provides a wider buffer on loaded CI runners where the thread scheduler
+    /// may not dispatch the Task.Run thread within a short window; metrics tests
+    /// additionally re-advance the fake clock inside <c>WaitForMetricAsync</c> to
+    /// recover if the initial advance fired before the loop was scheduled.
     /// </summary>
     // TODO [WARNING]: This is a time-dependent helper — a fixed sleep does not eliminate the
     // race; it only widens the window. On a sufficiently loaded CI runner the Task.Run background
@@ -325,7 +327,7 @@ public class AgentStallMonitorTests
 
         await YieldToMonitorAsync();
         fakeTime.Advance(TimeSpan.FromMinutes(2));
-        await WaitForMetricAsync(warningCollector);
+        await WaitForMetricAsync(warningCollector, fakeTime, TimeSpan.FromMinutes(1));
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
@@ -379,7 +381,7 @@ public class AgentStallMonitorTests
 
         await YieldToMonitorAsync();
         fakeTime.Advance(TimeSpan.FromMinutes(1));
-        await WaitForMetricAsync(killCollector);
+        await WaitForMetricAsync(killCollector, fakeTime, TimeSpan.FromMinutes(1));
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
@@ -428,7 +430,7 @@ public class AgentStallMonitorTests
 
         await YieldToMonitorAsync();
         fakeTime.Advance(TimeSpan.FromMinutes(1));
-        await WaitForMetricAsync(deathCollector);
+        await WaitForMetricAsync(deathCollector, fakeTime, TimeSpan.FromMinutes(1));
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
@@ -460,12 +462,24 @@ public class AgentStallMonitorTests
 
     /// <summary>
     /// Waits up to 15 seconds for at least one measurement to appear in the collector.
+    /// Periodically re-advances the fake clock by <paramref name="advancePerTick"/> to
+    /// recover from the race where the initial <c>fakeTime.Advance</c> fired before the
+    /// monitor's Task.Run loop had registered its first <c>timeProvider.Delay</c>. Without
+    /// re-advancing, a single missed advance means the metric is never emitted and the test
+    /// spins to the 15-second deadline — a flaky failure. (test quality review CRITICAL)
     /// </summary>
-    private static async Task WaitForMetricAsync<T>(MetricCollector<T> collector)
+    private static async Task WaitForMetricAsync<T>(
+        MetricCollector<T> collector,
+        FakeTimeProvider fakeTime,
+        TimeSpan advancePerTick)
         where T : struct
     {
         var deadline = DateTime.UtcNow.AddSeconds(15);
         while (collector.GetMeasurementSnapshot().Count == 0 && DateTime.UtcNow < deadline)
-            await Task.Delay(5);
+        {
+            await Task.Delay(10);
+            if (collector.GetMeasurementSnapshot().Count == 0)
+                fakeTime.Advance(advancePerTick);
+        }
     }
 }
