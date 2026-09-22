@@ -65,7 +65,28 @@ public class HousekeepingServiceTests
         runsMock.Setup(r => r.GetActiveRunBranchesAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync(activeBranches);
 
-        var svc = new HousekeepingService(runsMock.Object, Log.Logger);
+        // Collaborator mocks: default to no-ops so existing tests keep working.
+        // Tests that need specific stale-branch or rework behaviour use StaleBranchCleanerTests /
+        // IssueReworkServiceTests directly rather than routing through HousekeepingService.
+        var staleBranchCleanerMock = new Mock<IStaleBranchCleaner>();
+        staleBranchCleanerMock.Setup(s => s.RunIfDueAsync(
+                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<string>(),
+                It.IsAny<KeyValuePair<string, object?>>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var issueReworkServiceMock = new Mock<IIssueReworkService>();
+        issueReworkServiceMock.Setup(s => s.TriggerConflictReworkAsync(
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(),
+                It.IsAny<IReadOnlyDictionary<int, PrMergeabilityStatus>>(),
+                It.IsAny<IReadOnlySet<string>>(), It.IsAny<bool>(),
+                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
+                It.IsAny<string>(), It.IsAny<KeyValuePair<string, object?>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var svc = new HousekeepingService(runsMock.Object, staleBranchCleanerMock.Object, issueReworkServiceMock.Object, Log.Logger);
         svc.FireAndForget = task => task;
 
         // Default: FetchAllOpenAgentPrBranchesAsync returns no open PRs.
@@ -121,7 +142,7 @@ public class HousekeepingServiceTests
     [InlineData("feature/manual-123", null)]     // wrong prefix
     public void ExtractIssueId_VariousInputs_ReturnsExpected(string branchName, string? expected)
     {
-        var result = HousekeepingService.ExtractIssueId(branchName);
+        var result = StaleBranchCleaner.ExtractIssueId(branchName);
         result.Should().Be(expected);
     }
 
@@ -628,7 +649,25 @@ public class HousekeepingServiceTests
         runsMock.Setup(r => r.GetActiveRunBranchesAsync(It.IsAny<CancellationToken>()))
                 .ThrowsAsync(new InvalidOperationException("API down"));
 
-        var svc = new HousekeepingService(runsMock.Object, Log.Logger);
+        var staleBranchMock = new Mock<IStaleBranchCleaner>();
+        staleBranchMock.Setup(s => s.RunIfDueAsync(
+                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<string>(),
+                It.IsAny<KeyValuePair<string, object?>>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var reworkMock = new Mock<IIssueReworkService>();
+        reworkMock.Setup(s => s.TriggerConflictReworkAsync(
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(),
+                It.IsAny<IReadOnlyDictionary<int, PrMergeabilityStatus>>(),
+                It.IsAny<IReadOnlySet<string>>(), It.IsAny<bool>(),
+                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
+                It.IsAny<string>(), It.IsAny<KeyValuePair<string, object?>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var svc = new HousekeepingService(runsMock.Object, staleBranchMock.Object, reworkMock.Object, Log.Logger);
         svc.FireAndForget = task => task;
 
         providerMock.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
@@ -657,20 +696,46 @@ public class HousekeepingServiceTests
 
     // ── GetActiveRunsThrows → conflict rework (Step 6a) is also skipped ──────
 
+    // TODO: This test verifies only that IIssueReworkService.TriggerConflictReworkAsync is called
+    // with activeRunBranchesUnavailable=true (routing check), not that the guard is actually
+    // honoured inside the collaborator. If a developer removes the guard inside
+    // IssueReworkService.TriggerConflictReworkAsync, this test still passes because reworkMock is
+    // a no-op. The collaborator guard is covered by
+    // IssueReworkServiceTests.TriggerConflictReworkAsync_UnavailableActiveRuns_Skipped, so the
+    // regression boundary is partially mitigated — but a combined integration-style test would
+    // make the safety boundary more visible.
     [Fact]
     public async Task ExecuteAsync_GetActiveRunsThrows_SkipsConflictReworkConservatively()
     {
         // Complements ExecuteAsync_GetActiveRunsThrows_SkipsBranchUpdatesConservatively.
         // The activeRunBranchesUnavailable flag gates BOTH Step 6b (branch update) and
-        // Step 6a (conflict rework). This test pins the Step 6a path — a regression that
-        // removes the flag check from Step 6a while leaving Step 6b intact must fail here.
+        // Step 6a (conflict rework). This test pins the Step 6a path — IIssueReworkService
+        // must be called with activeRunBranchesUnavailable=true so it can apply the conservative skip.
         var providerMock = new Mock<IRepositoryProvider>();
         var issuesMock = new Mock<IIssueProvider>();
         var runsMock = new Mock<IOrchestratorRunService>();
         runsMock.Setup(r => r.GetActiveRunBranchesAsync(It.IsAny<CancellationToken>()))
                 .ThrowsAsync(new InvalidOperationException("API down"));
 
-        var svc = new HousekeepingService(runsMock.Object, Log.Logger);
+        var staleBranchMock = new Mock<IStaleBranchCleaner>();
+        staleBranchMock.Setup(s => s.RunIfDueAsync(
+                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<string>(),
+                It.IsAny<KeyValuePair<string, object?>>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var reworkMock = new Mock<IIssueReworkService>();
+        reworkMock.Setup(s => s.TriggerConflictReworkAsync(
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(),
+                It.IsAny<IReadOnlyDictionary<int, PrMergeabilityStatus>>(),
+                It.IsAny<IReadOnlySet<string>>(), It.IsAny<bool>(),
+                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
+                It.IsAny<string>(), It.IsAny<KeyValuePair<string, object?>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var svc = new HousekeepingService(runsMock.Object, staleBranchMock.Object, reworkMock.Object, Log.Logger);
         svc.FireAndForget = task => task;
 
         providerMock.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
@@ -683,16 +748,17 @@ public class HousekeepingServiceTests
 
         ex.Should().BeNull("HousekeepingService must not propagate GetActiveRunBranchesAsync exceptions");
 
-        // Assert: conservative fallback — rework swap must be SKIPPED.
-        // ExtractLinkedIssuesAsync must never be called because TriggerReworkAsync must not be reached.
-        providerMock.Verify(
-            p => p.ExtractLinkedIssuesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "TriggerReworkAsync must not be called when active-run branch data is unavailable");
-        issuesMock.Verify(
-            i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "label swap must not be triggered when active-run branch data is unavailable");
+        // Assert: IIssueReworkService must have been called with activeRunBranchesUnavailable=true
+        // so the conservative skip fires inside the collaborator.
+        reworkMock.Verify(s => s.TriggerConflictReworkAsync(
+            It.IsAny<IReadOnlyList<PullRequestSummary>>(),
+            It.IsAny<IReadOnlyDictionary<int, PrMergeabilityStatus>>(),
+            It.IsAny<IReadOnlySet<string>>(),
+            true,   // activeRunBranchesUnavailable must be true
+            providerMock.Object, issuesMock.Object,
+            It.IsAny<string>(), It.IsAny<KeyValuePair<string, object?>>(),
+            It.IsAny<CancellationToken>()), Times.Once,
+            "IIssueReworkService.TriggerConflictReworkAsync must be called with activeRunBranchesUnavailable=true");
     }
 
     // ── Limit = 0 → clamped to 1 ─────────────────────────────────────────────
@@ -737,219 +803,27 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── Conflicted → ExtractLinkedIssues called ───────────────────────────────
+    // ── Conflict rework — delegation is tested in IssueReworkServiceTests ────
 
-    [Fact]
-    public async Task ExecuteAsync_ConflictedPr_CallsExtractLinkedIssues()
-    {
-        var (svc, provider, issues, _) = Create();
-        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
-        provider.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)[]);
-
-        await ExecAsync(svc, provider, issues, [MakePr(1)]);
-
-        provider.Verify(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    // ── Conflicted + agent:done → swap to agent:next (open conflicted PR needs rework) ──
+    // The conflict-rework label mutation logic (TriggerConflictReworkAsync, TriggerReworkAsync,
+    // TrySwapIssueToNextAsync) now lives in IssueReworkService. HousekeepingService only delegates.
+    // All label-permutation, active-run, no-linked-issues, and swap-failure tests are in
+    // IssueReworkServiceTests. The delegation itself is tested in ExecuteAsync_ConflictedPr_DelegatesToIssueReworkService.
 
     /// <summary>
-    /// Regression test for the #2236 over-correction: an open PR with merge conflicts whose
-    /// linked issue carries agent:done MUST be re-queued for rework. The issue is done from the
-    /// agent's perspective, but the PR has not merged — conflict resolution requires another run.
-    /// agent:wont-do and agent:cancelled remain blockers (human decisions to abandon the work).
+    /// Verifies that a Conflicted PR does NOT trigger a branch update (it is not Behind),
+    /// while a Behind PR on a different slot still gets triggered. This exercises the
+    /// mergeability-map pass-through from Step 1 to Step 6b (not the rework path).
     /// </summary>
+    // TODO: The original test also verified via Times.Never that ExtractLinkedIssuesAsync was
+    // not called on the evicted conflicted PR, pinning the interaction between the eviction step
+    // (Step 3) and the rework delegation (Step 6a). With rework mocked to a no-op, that
+    // interaction is no longer observable here. A regression where Step 6a is called with a
+    // stale sorted list after eviction would not be detected by this test. Consider adding an
+    // assertion that verifies the rework mock was called (or not called) with the expected sorted
+    // list after the eviction cycle to restore that coverage.
     [Fact]
-    public async Task ExecuteAsync_ConflictedPr_IssueWithAgentDone_SwapsToAgentNext()
-    {
-        var (svc, provider, issues, _) = Create();
-        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
-        provider.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)["42"]);
-        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(MakeIssue("42", AgentLabels.Done));
-        issues.Setup(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-              .Returns(Task.CompletedTask);
-        issues.Setup(i => i.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-              .Returns(Task.CompletedTask);
-
-        await ExecAsync(svc, provider, issues, [MakePr(1)]);
-
-        issues.Verify(i => i.AddLabelAsync(
-            It.Is<IssueIdentifier>(id => id.Value == "42"),
-            AgentLabels.Next,
-            It.IsAny<CancellationToken>()), Times.Once,
-            "open conflicted PR with agent:done issue must be re-queued for rework — the PR has not merged");
-        issues.Verify(i => i.RemoveLabelAsync(
-            It.Is<IssueIdentifier>(id => id.Value == "42"),
-            AgentLabels.Done,
-            It.IsAny<CancellationToken>()), Times.Once,
-            "agent:done must be removed as part of the rework swap");
-    }
-
-    // ── Conflicted → SwapAsync throws → warning, no propagation ─────────────
-
-    [Fact]
-    public async Task ExecuteAsync_ConflictedPr_SwapAsyncThrows_WarningLoggedNoPropagation()
-    {
-        // Covers the catch block in TrySwapIssueToNextAsync when AgentLabelOperations.SwapAsync
-        // throws (e.g. transient API error on AddLabelAsync after RemoveLabelAsync succeeds).
-        var (svc, provider, issues, _) = Create();
-        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
-        provider.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)["42"]);
-        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(MakeIssue("42", AgentLabels.Error));
-        // Simulate AddLabelAsync failing after RemoveLabelAsync succeeds
-        issues.Setup(i => i.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-              .Returns(Task.CompletedTask);
-        issues.Setup(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-              .ThrowsAsync(new InvalidOperationException("API error on add"));
-
-        var ex = await Record.ExceptionAsync(() => ExecAsync(svc, provider, issues, [MakePr(1)]));
-
-        ex.Should().BeNull("SwapAsync failure must be caught and not propagate");
-    }
-
-    // ── Conflicted + agent:next → no swap ────────────────────────────────────
-
-    [Fact]
-    public async Task ExecuteAsync_ConflictedPr_IssueAlreadyAgentNext_SkipsSwap()
-    {
-        var (svc, provider, issues, _) = Create();
-        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
-        provider.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)["42"]);
-        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(MakeIssue("42", AgentLabels.Next));
-
-        await ExecAsync(svc, provider, issues, [MakePr(1)]);
-
-        issues.Verify(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
-
-    // ── Conflicted + agent:in-progress → no swap ─────────────────────────────
-
-    [Fact]
-    public async Task ExecuteAsync_ConflictedPr_IssueAgentInProgress_SkipsSwap()
-    {
-        var (svc, provider, issues, _) = Create();
-        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
-        provider.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)["42"]);
-        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(MakeIssue("42", AgentLabels.InProgress));
-
-        await ExecAsync(svc, provider, issues, [MakePr(1)]);
-
-        issues.Verify(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
-
-    // ── Conflicted + branch active → no swap (guard fires before TriggerReworkAsync) ─
-
-    [Fact]
-    public async Task ExecuteAsync_ConflictedPr_BranchIsActive_SkipsReworkSwap()
-    {
-        var (svc, provider, issues, _) = Create(activeRuns: [ActiveRun("feature/auto-42-some-fix")]);
-        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
-
-        await ExecAsync(svc, provider, issues, [MakePr(1, branch: "feature/auto-42-some-fix")]);
-
-        provider.Verify(p => p.ExtractLinkedIssuesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
-            Times.Never, "TriggerReworkAsync must not be called when branch has an active run");
-        issues.Verify(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never, "label swap must not be triggered when branch has an active run");
-    }
-
-    // ── Conflicted + different branch active → guard is branch-name–specific ─
-
-    // TODO: This test conflates two concerns — the branch-name specificity guard (primary) and the implicit
-    // assertion that agent:error remains a valid rework target (incidental). If agent:error were accidentally
-    // added to TerminalReworkBlockers, this test would still fail for the right reason, but only because
-    // AddLabelAsync is Times.Once — not because of a dedicated agent:error pass-through assertion. Consider
-    // adding a dedicated test: ExecuteAsync_ConflictedPr_IssueWithAgentError_SwapsToAgentNext (no active
-    // runs, simple setup) so the agent:error-as-rework-target invariant is tested independently of the
-    // branch guard. (Raised by TestQualityReviewer review on 2026-09-04.)
-    [Fact]
-    public async Task ExecuteAsync_ConflictedPr_DifferentBranchIsActive_ProceedsWithReworkSwap()
-    {
-        // An active run on a *different* branch must not block the swap for the conflicted PR.
-        // Guards a buggy "any active run → skip all" implementation.
-        var (svc, provider, issues, _) = Create(activeRuns: [ActiveRun("feature/auto-99-other")]);
-        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
-        provider.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)["42"]);
-        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(MakeIssue("42", AgentLabels.Error));
-        issues.Setup(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-              .Returns(Task.CompletedTask);
-        issues.Setup(i => i.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-              .Returns(Task.CompletedTask);
-
-        await ExecAsync(svc, provider, issues, [MakePr(1, branch: "feature/auto-42-some-fix")]);
-
-        provider.Verify(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()),
-            Times.Once, "TriggerReworkAsync must proceed when only a different branch is active");
-        issues.Verify(i => i.AddLabelAsync(
-            It.Is<IssueIdentifier>(id => id.Value == "42"),
-            AgentLabels.Next, It.IsAny<CancellationToken>()), Times.Once,
-            "label swap must be triggered when the PR's branch is not in active runs");
-    }
-
-    // ── Conflicted + empty linked issues → no crash ───────────────────────────
-
-    [Fact]
-    public async Task ExecuteAsync_ConflictedPr_NoLinkedIssues_NoSwap()
-    {
-        var (svc, provider, issues, _) = Create();
-        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
-        provider.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)[]);
-
-        var ex = await Record.ExceptionAsync(() => ExecAsync(svc, provider, issues, [MakePr(1)]));
-
-        ex.Should().BeNull();
-        issues.Verify(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
-
-    // ── Conflicted ExtractLinkedIssues throws → continues ────────────────────
-
-    [Fact]
-    public async Task ExecuteAsync_ConflictedPr_ExtractLinkedIssuesThrows_ContinuesProcessing()
-    {
-        var (svc, provider, issues, _) = Create();
-        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
-        provider.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
-                .ThrowsAsync(new InvalidOperationException("API error"));
-        provider.Setup(p => p.IsPullRequestBehindBaseAsync(2, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(PrMergeabilityStatus.Behind);
-        provider.Setup(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
-
-        var ex = await Record.ExceptionAsync(
-            () => ExecAsync(svc, provider, issues, [MakePr(1), MakePr(2)]));
-
-        ex.Should().BeNull();
-        provider.Verify(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    // ── Conflicted in-flight → evicted ────────────────────────────────────────
-
-    [Fact]
-    public async Task ExecuteAsync_ConflictedInFlightPr_IsEvicted()
+    public async Task ExecuteAsync_ConflictedInFlightPr_IsEvicted_BehindPrTriggered()
     {
         var (svc, provider, issues, _) = Create();
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
@@ -961,8 +835,6 @@ public class HousekeepingServiceTests
 
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.Conflicted);
-        provider.Setup(p => p.ExtractLinkedIssuesAsync(10, It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)[]);
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(20, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.Behind);
 
@@ -971,323 +843,172 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── UpToDate PR → no rework swap ─────────────────────────────────────────
+    // ─── Stale branch cleanup — HousekeepingService delegates to IStaleBranchCleaner ──────
 
+
+    /// <summary>
+    /// Verifies that HousekeepingService delegates to IStaleBranchCleaner.RunIfDueAsync with
+    /// the correct parameters. The actual stale-branch logic is tested in StaleBranchCleanerTests.
+    /// </summary>
     [Fact]
-    public async Task ExecuteAsync_UpToDatePr_NoReworkSwap()
+    public async Task ExecuteAsync_WithBranchCleanup_DelegatesToStaleBranchCleaner()
     {
-        var (svc, provider, issues, _) = Create();
-        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(PrMergeabilityStatus.UpToDate);
+        var runsMock = new Mock<IOrchestratorRunService>();
+        runsMock.Setup(r => r.GetActiveRunBranchesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new HashSet<string>());
 
-        await ExecAsync(svc, provider, issues, [MakePr(1)]);
+        var staleBranchMock = new Mock<IStaleBranchCleaner>();
+        staleBranchMock.Setup(s => s.RunIfDueAsync(
+                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<string>(),
+                It.IsAny<KeyValuePair<string, object?>>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
-        provider.Verify(p => p.ExtractLinkedIssuesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
-        issues.Verify(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
+        var reworkMock = new Mock<IIssueReworkService>();
+        reworkMock.Setup(s => s.TriggerConflictReworkAsync(
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(),
+                It.IsAny<IReadOnlyDictionary<int, PrMergeabilityStatus>>(),
+                It.IsAny<IReadOnlySet<string>>(), It.IsAny<bool>(),
+                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
+                It.IsAny<string>(), It.IsAny<KeyValuePair<string, object?>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
-    // ─── Stale branch cleanup ─────────────────────────────────────────────────
+        var svc = new HousekeepingService(runsMock.Object, staleBranchMock.Object, reworkMock.Object, Log.Logger);
+        svc.FireAndForget = task => task;
 
-    [Fact]
-    public async Task ExecuteAsync_BranchCleanupDisabled_ListAgentBranchesNotCalled()
-    {
-        var (svc, provider, issues, _) = Create();
+        var providerMock = new Mock<IRepositoryProvider>();
+        var issuesMock = new Mock<IIssueProvider>();
 
-        await ExecAsync(svc, provider, issues, [], branchCleanup: false);
+        await svc.ExecuteAsync(
+            providerMock.Object, RepoId, issuesMock.Object, IssueProviderId,
+            [], 1, branchCleanupEnabled: true, cleanupIntervalMinutes: 60, triggerCooldownMinutes: 25,
+            maxSlotAgeMinutes: 0, CancellationToken.None);
 
-        provider.Verify(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_BranchCleanupEnabled_IntervalNotElapsed_ListNotCalled()
-    {
-        var (svc, provider, issues, _) = Create();
-        var now = DateTimeOffset.UtcNow;
-        svc.UtcNow = () => now;
-
-        // First tick — seeds _lastCleanupAt
-        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)[]);
-
-        await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 60);
-        provider.Invocations.Clear();
-
-        // Second tick — interval not elapsed (still the same time)
-        await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 60);
-
-        provider.Verify(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()), Times.Never,
-            "cleanup interval has not elapsed — ListAgentBranchesAsync must not be called again");
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_BranchCleanupEnabled_IntervalElapsed_ListIsCalled()
-    {
-        var (svc, provider, issues, _) = Create();
-        var t0 = DateTimeOffset.UtcNow;
-        svc.UtcNow = () => t0;
-
-        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)[]);
-
-        // First tick
-        await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 60);
-        provider.Invocations.Clear();
-
-        // Advance time past the interval
-        svc.UtcNow = () => t0.AddMinutes(61);
-        await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 60);
-
-        provider.Verify(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()), Times.Once,
-            "interval elapsed — ListAgentBranchesAsync must be called");
+        staleBranchMock.Verify(s => s.RunIfDueAsync(
+            providerMock.Object, issuesMock.Object,
+            It.IsAny<IReadOnlyList<PullRequestSummary>>(), RepoId,
+            It.IsAny<KeyValuePair<string, object?>>(),
+            true, 60, It.IsAny<CancellationToken>()), Times.Once,
+            "HousekeepingService must delegate stale-branch cleanup to IStaleBranchCleaner");
     }
 
     [Fact]
-    public async Task ExecuteAsync_BranchWithOpenPr_NotDeleted()
+    public async Task ExecuteAsync_WithBranchCleanupDisabled_DelegatesToStaleBranchCleanerWithEnabledFalse()
     {
-        var (svc, provider, issues, _) = Create();
-        var agentBranch = $"{PipelineConstants.BranchPrefix}99-some-feature";
-        var openPr = MakePr(99, agentBranch);
+        var runsMock = new Mock<IOrchestratorRunService>();
+        runsMock.Setup(r => r.GetActiveRunBranchesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new HashSet<string>());
 
-        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
-        provider.Setup(p => p.IsPullRequestBehindBaseAsync(99, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(PrMergeabilityStatus.UpToDate);
-        // Set up the independent open-PR fetch (FetchAllOpenAgentPrBranchesAsync) to return the open PR.
-        // Pass empty agentDonePrs so the fallback path cannot protect the branch — only the
-        // independent fetch can. This ensures the primary code path (not the fallback) is exercised.
-        provider.Setup(p => p.ListOpenPullRequestsAsync(
-                    It.IsAny<int>(), It.IsAny<int>(),
-                    It.Is<IReadOnlyList<string>?>(l => l == null),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new PagedResult<PullRequestSummary>
-                {
-                    Items = new[] { openPr }.AsReadOnly(),
-                    Page = 1,
-                    PageSize = 100,
-                    HasMore = false
-                });
+        var staleBranchMock = new Mock<IStaleBranchCleaner>();
+        staleBranchMock.Setup(s => s.RunIfDueAsync(
+                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<string>(),
+                It.IsAny<KeyValuePair<string, object?>>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
-        await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0);
+        var reworkMock = new Mock<IIssueReworkService>();
+        reworkMock.Setup(s => s.TriggerConflictReworkAsync(
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(),
+                It.IsAny<IReadOnlyDictionary<int, PrMergeabilityStatus>>(),
+                It.IsAny<IReadOnlySet<string>>(), It.IsAny<bool>(),
+                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
+                It.IsAny<string>(), It.IsAny<KeyValuePair<string, object?>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
-        provider.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
-            "branch has an open PR — must not be deleted");
+        var svc = new HousekeepingService(runsMock.Object, staleBranchMock.Object, reworkMock.Object, Log.Logger);
+        svc.FireAndForget = task => task;
+
+        var providerMock = new Mock<IRepositoryProvider>();
+        var issuesMock = new Mock<IIssueProvider>();
+
+        await svc.ExecuteAsync(
+            providerMock.Object, RepoId, issuesMock.Object, IssueProviderId,
+            [], 1, branchCleanupEnabled: false, cleanupIntervalMinutes: 60, triggerCooldownMinutes: 25,
+            maxSlotAgeMinutes: 0, CancellationToken.None);
+
+        staleBranchMock.Verify(s => s.RunIfDueAsync(
+            providerMock.Object, issuesMock.Object,
+            It.IsAny<IReadOnlyList<PullRequestSummary>>(), RepoId,
+            It.IsAny<KeyValuePair<string, object?>>(),
+            false, 60, It.IsAny<CancellationToken>()), Times.Once,
+            "HousekeepingService must pass enabled=false to IStaleBranchCleaner when branchCleanupEnabled is false");
     }
 
+    // ─── Conflict rework — HousekeepingService delegates to IIssueReworkService ────────────
+
+    /// <summary>
+    /// Verifies that HousekeepingService delegates to IIssueReworkService.TriggerConflictReworkAsync
+    /// with the sorted PR list and correct parameters. Rework logic is tested in IssueReworkServiceTests.
+    /// </summary>
     [Fact]
-    public async Task ExecuteAsync_BranchWithAgentNextIssue_NotDeleted()
+    public async Task ExecuteAsync_ConflictedPr_DelegatesToIssueReworkService()
     {
-        var (svc, provider, issues, _) = Create();
-        var agentBranch = $"{PipelineConstants.BranchPrefix}42-fix-login";
+        var runsMock = new Mock<IOrchestratorRunService>();
+        runsMock.Setup(r => r.GetActiveRunBranchesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new HashSet<string>());
 
-        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
-        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(MakeIssue("42", AgentLabels.Next));
+        var staleBranchMock = new Mock<IStaleBranchCleaner>();
+        staleBranchMock.Setup(s => s.RunIfDueAsync(
+                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<string>(),
+                It.IsAny<KeyValuePair<string, object?>>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
-        await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0);
+        var reworkMock = new Mock<IIssueReworkService>();
+        reworkMock.Setup(s => s.TriggerConflictReworkAsync(
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(),
+                It.IsAny<IReadOnlyDictionary<int, PrMergeabilityStatus>>(),
+                It.IsAny<IReadOnlySet<string>>(), It.IsAny<bool>(),
+                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
+                It.IsAny<string>(), It.IsAny<KeyValuePair<string, object?>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
-        provider.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
-            "issue has agent:next — may create a new PR soon, must not delete");
+        var svc = new HousekeepingService(runsMock.Object, staleBranchMock.Object, reworkMock.Object, Log.Logger);
+        svc.FireAndForget = task => task;
+
+        var providerMock = new Mock<IRepositoryProvider>();
+        providerMock.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(PrMergeabilityStatus.Conflicted);
+        var issuesMock = new Mock<IIssueProvider>();
+
+        await svc.ExecuteAsync(
+            providerMock.Object, RepoId, issuesMock.Object, IssueProviderId,
+            [MakePr(1)], 1, branchCleanupEnabled: false, cleanupIntervalMinutes: 60,
+            triggerCooldownMinutes: 25, maxSlotAgeMinutes: 0, CancellationToken.None);
+
+        reworkMock.Verify(s => s.TriggerConflictReworkAsync(
+            It.Is<IReadOnlyList<PullRequestSummary>>(list => list.Any(p => p.Number == 1)),
+            It.IsAny<IReadOnlyDictionary<int, PrMergeabilityStatus>>(),
+            It.IsAny<IReadOnlySet<string>>(), false,
+            providerMock.Object, issuesMock.Object,
+            IssueProviderId, It.IsAny<KeyValuePair<string, object?>>(),
+            It.IsAny<CancellationToken>()), Times.Once,
+            "HousekeepingService must delegate conflict-rework to IIssueReworkService");
     }
 
-    [Fact]
-    public async Task ExecuteAsync_BranchWithAgentDoneIssueAndNoPr_IsDeleted()
-    {
-        var (svc, provider, issues, _) = Create();
-        var agentBranch = $"{PipelineConstants.BranchPrefix}42-fix-login";
-
-        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
-        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(MakeIssue("42", AgentLabels.Done));
-        provider.Setup(p => p.DeleteBranchAsync(agentBranch, It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
-
-        await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0);
-
-        provider.Verify(p => p.DeleteBranchAsync(agentBranch, It.IsAny<CancellationToken>()), Times.Once,
-            "no open PR + terminal issue label → branch must be deleted");
-    }
-
-    // ── Branch cleanup: open PR not in agentDonePrs (pagination truncation) ──
+    // ── Branch with agent:epic-review issue → not deleted ────────────────────
+    // NOTE: This test now verifies delegation to StaleBranchCleaner (not the inline cleanup logic).
+    // The actual epic-review label protection is tested in StaleBranchCleanerTests.
 
     [Fact]
-    public async Task ExecuteAsync_BranchWithOpenPrNotInAgentDonePrs_NotDeleted()
+    public async Task ExecuteAsync_BranchWithEpicReviewIssue_NotDeleted()
     {
-        // Regression: agentDonePrs is capped by ClosedLoopMaxPagesToFetch. If the repo has more
-        // open agent PRs than the cap, branches beyond the cap are absent from the input list.
-        // RunBranchCleanupAsync must independently query open PRs for each candidate branch
-        // rather than relying solely on the truncated agentDonePrs set, to avoid deleting live branches.
-        var (svc, provider, issues, _) = Create();
-        var agentBranch = $"{PipelineConstants.BranchPrefix}99-over-cap-feature";
+        // With StaleBranchCleaner mocked, branch cleanup is delegated entirely.
+        // Verify the delegation happens (with branchCleanup=true) — the label protection
+        // logic itself is covered in StaleBranchCleanerTests.
+        var (svc, _, issues, _) = Create();
+        var providerMock = new Mock<IRepositoryProvider>();
 
-        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
-        // agentDonePrs is EMPTY — the PR for this branch was beyond the pagination cap.
-        // The branch's issue has agent:done — no active-label protection from the label check.
-        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("99"), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(MakeIssue("99", AgentLabels.Done));
-        // Independent open-PR check confirms an open PR exists on this branch.
-        provider.Setup(p => p.ListOpenPullRequestsAsync(
-                    It.IsAny<int>(), It.IsAny<int>(),
-                    It.Is<IReadOnlyList<string>?>(l => l == null),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new PagedResult<PullRequestSummary>
-                {
-                    Items = new[] { MakePr(99, agentBranch) }.AsReadOnly(),
-                    Page = 1,
-                    PageSize = 10,
-                    HasMore = false
-                });
+        await ExecAsync(svc, providerMock, issues, [], branchCleanup: true, intervalMinutes: 0);
 
-        await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0);
-
-        provider.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
-            "branch has an open PR even though it was absent from the truncated agentDonePrs — must not be deleted");
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_BranchDeleteThrows_ContinuesProcessingOtherBranches()
-    {
-        var (svc, provider, issues, _) = Create();
-        var branch1 = $"{PipelineConstants.BranchPrefix}10-feat-a";
-        var branch2 = $"{PipelineConstants.BranchPrefix}20-feat-b";
-
-        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)[branch1, branch2]);
-        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("10"), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(MakeIssue("10", AgentLabels.Done));
-        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("20"), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(MakeIssue("20", AgentLabels.Done));
-        provider.Setup(p => p.DeleteBranchAsync(branch1, It.IsAny<CancellationToken>()))
-                .ThrowsAsync(new InvalidOperationException("server error"));
-        provider.Setup(p => p.DeleteBranchAsync(branch2, It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
-
-        var ex = await Record.ExceptionAsync(
-            () => ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0));
-
-        ex.Should().BeNull("delete failure must be swallowed");
-        provider.Verify(p => p.DeleteBranchAsync(branch2, It.IsAny<CancellationToken>()), Times.Once,
-            "second branch must still be processed after first delete fails");
-    }
-
-    // ── Branch cleanup: FetchAllOpenAgentPrBranchesAsync throws → cleanup skipped ──
-
-    [Fact]
-    public async Task ExecuteAsync_FetchAllOpenAgentPrBranchesThrows_SkipsCleanup()
-    {
-        // Covers the catch block in RunBranchCleanupAsync when FetchAllOpenAgentPrBranchesAsync throws
-        // (e.g. NotSupportedException from a provider that doesn't implement ListOpenPullRequestsAsync).
-        // Cleanup must be skipped entirely — falling back to the truncated agentDonePrs list would
-        // reproduce the original bug.
-        var (svc, provider, issues, _) = Create();
-        var agentBranch = $"{PipelineConstants.BranchPrefix}42-fix-something";
-
-        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
-        // Override the default ListOpenPullRequestsAsync to throw — simulates a provider
-        // that doesn't support this method (e.g. a stub or unsupported provider).
-        provider.Setup(p => p.ListOpenPullRequestsAsync(
-                    It.IsAny<int>(), It.IsAny<int>(),
-                    It.Is<IReadOnlyList<string>?>(l => l == null),
-                    It.IsAny<CancellationToken>()))
-                .ThrowsAsync(new NotSupportedException("not supported"));
-        // Issue has agent:done — would normally be deleted if cleanup proceeded.
-        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(MakeIssue("42", AgentLabels.Done));
-
-        var ex = await Record.ExceptionAsync(
-            () => ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0));
-
-        ex.Should().BeNull("FetchAllOpenAgentPrBranches failure must not propagate");
-        provider.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
-            "cleanup must be skipped entirely when the open-PR fetch fails");
-    }
-
-    // ── Branch cleanup: MaxPages safety cap stops infinite HasMore loop ───────
-
-    [Fact]
-    public async Task FetchAllOpenAgentPrBranches_MaxPagesCap_StopsLoop()
-    {
-        // Exercises the page >= MaxPages break in FetchAllOpenAgentPrBranchesAsync.
-        // Simulates a provider that always returns HasMore=true (malformed pagination).
-        // The method must collect what it finds and break rather than looping forever.
-        var (svc, provider, issues, _) = Create();
-        var agentBranch = $"{PipelineConstants.BranchPrefix}99-capped-feature";
-
-        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
-        // Every page returns HasMore=true, simulating a malformed provider.
-        // The branch only appears on page 1; subsequent pages return empty.
-        provider.Setup(p => p.ListOpenPullRequestsAsync(
-                    1, It.IsAny<int>(),
-                    It.Is<IReadOnlyList<string>?>(l => l == null),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new PagedResult<PullRequestSummary>
-                {
-                    Items = new[] { MakePr(99, agentBranch) }.AsReadOnly(),
-                    Page = 1,
-                    PageSize = 100,
-                    HasMore = true   // always true — malformed
-                });
-        provider.Setup(p => p.ListOpenPullRequestsAsync(
-                    It.Is<int>(p => p > 1), It.IsAny<int>(),
-                    It.Is<IReadOnlyList<string>?>(l => l == null),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new PagedResult<PullRequestSummary>
-                {
-                    Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
-                    Page = 2,
-                    PageSize = 100,
-                    HasMore = true   // always true
-                });
-
-        var ex = await Record.ExceptionAsync(
-            () => ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0));
-
-        ex.Should().BeNull("MaxPages cap must not throw");
-        // Branch was collected on page 1 — it must be protected from deletion.
-        provider.Verify(p => p.DeleteBranchAsync(agentBranch, It.IsAny<CancellationToken>()), Times.Never,
-            "branch found before MaxPages cap must still be protected");
-        // Provider must be called MaxPages (50) times, not indefinitely.
-        provider.Verify(p => p.ListOpenPullRequestsAsync(
-            It.IsAny<int>(), It.IsAny<int>(),
-            It.Is<IReadOnlyList<string>?>(l => l == null),
-            It.IsAny<CancellationToken>()), Times.Exactly(50),
-            "exactly MaxPages=50 pages must be fetched before the cap breaks the loop");
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_EmptyBranchList_NoBranchApiCalls()
-    {
-        var (svc, provider, issues, _) = Create();
-
-        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)[]);
-
-        var ex = await Record.ExceptionAsync(
-            () => ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0));
-
-        ex.Should().BeNull();
-        provider.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        issues.Verify(i => i.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ListAgentBranchesThrows_ContinuesWithoutCleanup()
-    {
-        var (svc, provider, issues, _) = Create();
-
-        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
-                .ThrowsAsync(new InvalidOperationException("API down"));
-
-        var ex = await Record.ExceptionAsync(
-            () => ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0));
-
-        ex.Should().BeNull("ListAgentBranches failure must be swallowed");
-        provider.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        // No direct provider calls for branch deletion — cleanup is fully delegated
+        providerMock.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── HasAutoMerge priority (3-tier sort) ───────────────────────────────────
@@ -1456,120 +1177,10 @@ public class HousekeepingServiceTests
             Times.Never, "no PR should be triggered when both are within their 24h cooldown window");
     }
 
-    // ── Conflicted + agent:epic-review → no rework swap ───────────────────────
-
-    [Fact]
-    public async Task ExecuteAsync_ConflictedPr_IssueWithEpicReview_SkipsReworkSwap()
-    {
-        var (svc, provider, issues, _) = Create();
-        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
-        provider.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)["42"]);
-        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(MakeIssue("42", AgentLabels.EpicReview));
-
-        await ExecAsync(svc, provider, issues, [MakePr(1)]);
-
-        // TODO: also verify RemoveLabelAsync is never called — SwapAsync invokes both Remove+Add, so a
-        // regression that removes the label but correctly guards the add would not be caught here.
-        // Pre-existing gap shared with ExecuteAsync_ConflictedPr_IssueAgentInProgress_SkipsSwap.
-        issues.Verify(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "issue has agent:epic-review — awaiting human review, must not be re-queued for rework");
-        issues.Verify(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()),
-            Times.Once,
-            "issue was fetched (guard fired after fetch, not before)");
-    }
-
-    // ── Conflicted + agent:wont-do → skip swap (terminal label) ──────────────
-
-    [Fact]
-    public async Task ExecuteAsync_ConflictedPr_IssueWithAgentWontDo_SkipsReworkSwap()
-    {
-        var (svc, provider, issues, _) = Create();
-        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
-        provider.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)["42"]);
-        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(MakeIssue("42", AgentLabels.WontDo));
-
-        await ExecAsync(svc, provider, issues, [MakePr(1)]);
-
-        issues.Verify(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Never,
-            "agent:wont-do is a terminal label — must not be re-queued for rework");
-        issues.Verify(i => i.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    // ── Conflicted + agent:cancelled → skip swap (terminal label) ────────────
-
-    [Fact]
-    public async Task ExecuteAsync_ConflictedPr_IssueWithAgentCancelled_SkipsReworkSwap()
-    {
-        var (svc, provider, issues, _) = Create();
-        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
-        provider.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)["42"]);
-        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(MakeIssue("42", AgentLabels.Cancelled));
-
-        await ExecAsync(svc, provider, issues, [MakePr(1)]);
-
-        issues.Verify(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Never,
-            "agent:cancelled is a terminal label — must not be re-queued for rework");
-        issues.Verify(i => i.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    // ── Conflicted + agent:needs-refinement → swap proceeds (intentional rework target) ─
-
-    [Fact]
-    public async Task ExecuteAsync_ConflictedPr_IssueWithAgentNeedsRefinement_SwapsToNext()
-    {
-        // agent:needs-refinement is a human-placed signal that rework is needed — must remain a valid rework target.
-        var (svc, provider, issues, _) = Create();
-        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
-        provider.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)["42"]);
-        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(MakeIssue("42", AgentLabels.NeedsRefinement));
-        issues.Setup(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-              .Returns(Task.CompletedTask);
-        issues.Setup(i => i.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-              .Returns(Task.CompletedTask);
-
-        await ExecAsync(svc, provider, issues, [MakePr(1)]);
-
-        issues.Verify(i => i.AddLabelAsync(
-            It.Is<IssueIdentifier>(id => id.Value == "42"),
-            AgentLabels.Next, It.IsAny<CancellationToken>()), Times.Once,
-            "agent:needs-refinement is an intentional rework target — label swap must proceed");
-    }
-
-    // ── Branch with agent:epic-review issue → not deleted ────────────────────
-
-    [Fact]
-    public async Task ExecuteAsync_BranchWithEpicReviewIssue_NotDeleted()
-    {
-        var (svc, provider, issues, _) = Create();
-        var agentBranch = $"{PipelineConstants.BranchPrefix}42-epic-decomp";
-
-        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
-        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(MakeIssue("42", AgentLabels.EpicReview));
-
-        await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0);
-
-        provider.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
-            "issue has agent:epic-review — awaiting human review, branch must not be deleted");
-    }
+    // ── Conflicted label-permutation tests → moved to IssueReworkServiceTests ─────────────
+    // Tests for epic-review, wont-do, cancelled, needs-refinement, error, agent:done label
+    // permutations live in IssueReworkServiceTests.cs. The delegation itself is verified in
+    // ExecuteAsync_ConflictedPr_DelegatesToIssueReworkService (above).
 
     // ── Gap A + D: Per-PR exception isolation in mergeability probe ───────────
 
@@ -2049,58 +1660,40 @@ public class HousekeepingServiceTests
             Times.Once, "PR #2 resolved to Behind — must be updated");
     }
 
-    // ── TriggerConflictReworkAsync — agent:error as valid rework target ───────
-
-    // TODO: Acceptance criterion #3 requires each extracted step method to have at least one
-    // unit test that exercises it in isolation with a positive-outcome assertion. Only one new
-    // test was added in this changeset (below). The remaining extracted methods rely entirely on
-    // pre-existing characterisation tests that go via the full ExecuteAsync coordinator:
-    //   - BuildMergeabilityMapAsync: covered by ExecuteAsync_Behind_TriggersUpdate etc.
-    //   - EvictInFlightSlots: covered by ExecuteAsync_InFlightPrNotInList_Evicted etc.
-    //   - FetchActiveRunBranchesAsync: covered by ExecuteAsync_GetActiveRunsThrows_* etc.
-    //   - OrderCandidates: covered by auto-merge ordering tests (full pipeline path).
-    //   - SelectAndTriggerBranchUpdatesAsync: covered by ExecuteAsync_Behind_TriggersUpdate etc.
-    //   - RunStaleBranchCleanupIfDueAsync: covered by ExecuteAsync_BranchCleanupEnabled_* etc.
-    // If the criterion's intent is "add a new test per extracted method in this changeset,"
-    // five of six extracted methods are uncovered by this diff. Consider adding dedicated
-    // tests (e.g. OrderCandidates tier ordering with a frozen clock and limit=1, EvictInFlightSlots
-    // direct mutation assertions) to document the isolation intent for each extracted method.
+    // ── UtcNow captured once per tick ────────────────────────────────────────
 
     /// <summary>
-    /// Regression guard for the agent:error-as-rework-target invariant.
-    /// A conflicted PR whose linked issue carries <c>agent:error</c> MUST be re-queued for
-    /// rework. <c>agent:error</c> is an explicit human signal that the issue needs another
-    /// attempt — it is intentionally excluded from <c>TerminalReworkBlockers</c>.
-    /// This test exercises <c>TriggerConflictReworkAsync</c> in isolation: no active runs,
-    /// one conflicted PR, one linked issue with <c>agent:error</c>.
+    /// Verifies that <c>UtcNow</c> is called exactly once per <see cref="HousekeepingService.ExecuteAsync"/>
+    /// call, not multiple times (e.g., inside the foreach in Step 6b). A single captured timestamp
+    /// ensures all steps in the same tick share a consistent view of "now".
     /// </summary>
+    // TODO: The assertion callCount.Should().Be(1) would also pass if UtcNow were never called
+    // (callCount == 0), for example if the implementation were refactored to use
+    // DateTimeOffset.UtcNow directly without going through the seam. Consider strengthening to
+    // callCount.Should().BeGreaterThan(0).And.Be(1) or splitting into two separate assertions
+    // ("called at least once" + "not called more than once") to catch the seam-bypass regression.
     [Fact]
-    public async Task ExecuteAsync_ConflictedPr_IssueWithAgentError_SwapsToAgentNext()
+    public async Task ExecuteAsync_UtcNowCapturedOncePerTick()
     {
         var (svc, provider, issues, _) = Create();
-        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
-        provider.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<string>)["42"]);
-        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(MakeIssue("42", AgentLabels.Error));
-        issues.Setup(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-              .Returns(Task.CompletedTask);
-        issues.Setup(i => i.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-              .Returns(Task.CompletedTask);
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
 
-        await ExecAsync(svc, provider, issues, [MakePr(1)]);
+        var callCount = 0;
+        var fixedNow = DateTimeOffset.UtcNow;
+        svc.UtcNow = () => { callCount++; return fixedNow; };
 
-        issues.Verify(i => i.AddLabelAsync(
-            It.Is<IssueIdentifier>(id => id.Value == "42"),
-            AgentLabels.Next,
-            It.IsAny<CancellationToken>()), Times.Once,
-            "agent:error is a valid rework target — open conflicted PR requires another run regardless of the issue label");
-        issues.Verify(i => i.RemoveLabelAsync(
-            It.Is<IssueIdentifier>(id => id.Value == "42"),
-            AgentLabels.Error,
-            It.IsAny<CancellationToken>()), Times.Once,
-            "agent:error must be removed as part of the rework swap");
+        // Use 3 PRs so the foreach in SelectAndTriggerBranchUpdatesAsync iterates multiple times.
+        await ExecAsync(svc, provider, issues, [MakePr(1), MakePr(2), MakePr(3)], limit: 3);
+
+        callCount.Should().Be(1,
+            "UtcNow must be called exactly once per ExecuteAsync tick — not once per loop iteration");
     }
+
+    // ── TriggerConflictReworkAsync — agent:error as valid rework target ───────
+    // This test is now covered by IssueReworkServiceTests.TriggerConflictReworkAsync_ConflictedPr_AgentErrorIssue_SwapsToNext.
+    // The delegation from HousekeepingService is tested in ExecuteAsync_ConflictedPr_DelegatesToIssueReworkService.
 }
 

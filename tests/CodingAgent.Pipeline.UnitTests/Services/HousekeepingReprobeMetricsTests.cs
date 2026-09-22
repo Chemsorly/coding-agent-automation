@@ -49,6 +49,24 @@ public class HousekeepingReprobeMetricsTests
         runsMock.Setup(r => r.GetActiveRunBranchesAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new HashSet<string>());
 
+        var staleBranchMock = new Mock<IStaleBranchCleaner>();
+        staleBranchMock.Setup(s => s.RunIfDueAsync(
+                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<string>(),
+                It.IsAny<KeyValuePair<string, object?>>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var reworkMock = new Mock<IIssueReworkService>();
+        reworkMock.Setup(s => s.TriggerConflictReworkAsync(
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(),
+                It.IsAny<IReadOnlyDictionary<int, PrMergeabilityStatus>>(),
+                It.IsAny<IReadOnlySet<string>>(), It.IsAny<bool>(),
+                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
+                It.IsAny<string>(), It.IsAny<KeyValuePair<string, object?>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
         var providerMock = new Mock<IRepositoryProvider>();
         providerMock.Setup(p => p.ListOpenPullRequestsAsync(
                         It.IsAny<int>(), It.IsAny<int>(),
@@ -57,10 +75,12 @@ public class HousekeepingReprobeMetricsTests
                     .ReturnsAsync(new PagedResult<PullRequestSummary>
                     {
                         Items = Array.Empty<PullRequestSummary>().AsReadOnly(),
-                        Page = 1, PageSize = 100, HasMore = false
+                        Page = 1,
+                        PageSize = 100,
+                        HasMore = false
                     });
 
-        var svc = new HousekeepingService(runsMock.Object, Log.Logger);
+        var svc = new HousekeepingService(runsMock.Object, staleBranchMock.Object, reworkMock.Object, Log.Logger);
         svc.FireAndForget = task => task;
         svc.MergeabilityReprobeDelay = TimeSpan.Zero;
 
@@ -203,10 +223,10 @@ public class HousekeepingReprobeMetricsTests
     }
 
     [Theory]
-    [InlineData(PrMergeabilityStatus.Behind,     "behind")]
-    [InlineData(PrMergeabilityStatus.UpToDate,   "up_to_date")]
+    [InlineData(PrMergeabilityStatus.Behind, "behind")]
+    [InlineData(PrMergeabilityStatus.UpToDate, "up_to_date")]
     [InlineData(PrMergeabilityStatus.Conflicted, "conflicted")]
-    [InlineData(PrMergeabilityStatus.Blocked,    "blocked")]
+    [InlineData(PrMergeabilityStatus.Blocked, "blocked")]
     public async Task HousekeepingReprobeResolved_ResolvedStateTag_UsesSnakeCaseValues(
         PrMergeabilityStatus reprobeResult, string expectedTag)
     {
