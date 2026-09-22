@@ -9,11 +9,12 @@ namespace CodingAgent.Pipeline.UnitTests;
 /// <summary>
 /// Characterization tests for the GateResult.Details strings produced by
 /// <see cref="QualityGateExecutor.AppendExternalCiIfNeededAsync"/> and the post-PR CI path in
-/// <see cref="QualityGateExecutor"/>.<c>WaitForPostPrCiAsync</c> (exercised via
+/// <see cref="CiPollingCoordinator"/>.<c>WaitForPostPrCiAsync</c> (exercised via
 /// <see cref="QualityGateExecutor.ProceedToQualityGatesAsync"/>).
 ///
 /// These tests lock in the exact Details text for pass, fail, timeout, and error arms before
 /// the extract-method refactor (issue #2625), so any accidental change to the strings is caught.
+/// The static gate-builder methods moved to <see cref="CiPollingCoordinator"/> in issue #2889.
 /// </summary>
 public class QualityGateExecutorCiGateBuilderTests
 {
