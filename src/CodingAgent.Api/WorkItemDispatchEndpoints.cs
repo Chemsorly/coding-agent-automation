@@ -388,28 +388,7 @@ public static class WorkItemDispatchEndpoints
             : normalizedSelector;
         var sanitizedEffectiveSelector = CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(effectiveSelector);
 
-        // Concurrency gate + PVC gate via shared helper.
-        // UpdateCredentialPoolMetrics is emitted just above, before this call, as required —
-        // it must stay outside ApplyGates (DispatchPendingWorkItem-only metric).
-        var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
-        var gateResult = dispatchService.ApplyGates(
-            effectiveSelector, sanitizedEffectiveSelector, concurrencyBySelector,
-            pvcResult, template, isKiroAgent, "DispatchPendingWorkItem");
-        if (gateResult is not null)
-        {
-            // Emit the PVC exhaustion counter only when the gate result IS the 503/PVC-gate path.
-            // This counter belongs exclusively to the DispatchPendingWorkItem path and must
-            // NOT be emitted by ApplyGates itself, as DispatchWorkItem does not count exhaustions.
-            // Checking the result type (StatusCodeHttpResult { StatusCode: 503 }) rather than
-            // re-deriving pool state ensures the counter does not fire when the concurrency gate
-            // (409 Conflict) short-circuits before the PVC gate is reached — even if both
-            // conditions happen to hold simultaneously.
-            if (gateResult is Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult { StatusCode: 503 })
-                WorkDistributionTelemetry.PvcPoolExhaustions.Add(1);
-            return gateResult;
-        }
-
-        // Build the projection for ExecuteDispatchLifecycleAsync.
+        // Build the projection for the shared dispatch helper.
         // TODO [WARNING]: When the profile fallback resolves the template, projection.AgentSelector is
         // set to normalizedSelector (e.g. "dotnet"), not to the template's canonical labels (e.g. "dotnet,kiro").
         // FinalizeDispatchAsync will increment concurrencyBySelector["dotnet"] rather than ["dotnet,kiro"].
@@ -431,33 +410,41 @@ public static class WorkItemDispatchEndpoints
             PriorityWeight = quickCheck.PriorityWeight
         };
 
-        // ExpectedInitialStatus is left at the default (Pending) — do NOT copy the
-        // "ExpectedInitialStatus = WorkItemStatus.Dispatched" override from DispatchWorkItem.
-        // That override applies because DispatchWorkItem creates items directly as Dispatched.
-        // Here the item already exists as Pending; the lifecycle race-guard must see Pending
-        // after K8s Job creation to proceed — setting it to Dispatched would cause the guard
-        // to treat the Pending row as a race and delete the K8s Job silently.
-        var ctx = new DispatchLifecycleContext(
-            db,
-            projection,
-            template,
-            isKiroAgent,
-            pvcResult.AvailablePvcs,
-            concurrencyBySelector,
-            "pending-dispatch ");
-
-        // Shared lifecycle execution: try/catch + !dispatched + 503 path are consolidated in
-        // RunDispatchLifecycleAsync (issue #2859). onDispatchFailure is null here — the item
-        // started as Pending, not Dispatched, so SafelyCancelOrphanedDispatchedWorkItemAsync
+        // Gate + context construction + lifecycle execution via shared helper (issue #2890).
+        // ExpectedInitialStatus is Pending (the default) — this item already exists as Pending;
+        // the lifecycle race-guard must see Pending after K8s Job creation. Do NOT pass Dispatched
+        // here (that override applies to DispatchWorkItem which creates items directly as Dispatched).
+        // onDispatchFailure is null — the item started as Pending, so SafelyCancelOrphanedDispatchedWorkItemAsync
         // must NOT be called (no orphaned Dispatched row exists on this path).
-        return await dispatchService.RunDispatchLifecycleAsync(
-            ctx,
-            lifecycle,
+        // The PvcPoolExhaustions counter is emitted after the call (below) rather than inside the helper —
+        // it belongs exclusively to this path and must fire only on the 503/PVC-gate result.
+        var dispatchResult = await dispatchService.DispatchResolvedWorkItemAsync(
+            db,
+            template,
+            projection,
+            normalizedSelector: effectiveSelector,
+            sanitizedSelector: sanitizedEffectiveSelector,
+            concurrencyBySelector,
+            pvcResult,
+            expectedInitialStatus: WorkItemStatus.Pending,
+            logPrefix: "pending-dispatch ",
             onDispatchFailure: null,
             onSuccess: _ => TypedResults.Ok(id),
-            id,
-            "DispatchPendingWorkItem",
+            workItemId: id,
+            callerName: "DispatchPendingWorkItem",
+            lifecycle,
             ct);
+
+        // Emit the PVC exhaustion counter only when the shared helper returned the 503/PVC-gate result.
+        // This counter belongs exclusively to the DispatchPendingWorkItem path and must NOT be emitted
+        // inside DispatchResolvedWorkItemAsync (DispatchWorkItem does not count exhaustions).
+        // Checking the result type (StatusCodeHttpResult { StatusCode: 503 }) rather than re-deriving
+        // pool state ensures the counter does not fire when the concurrency gate (409) short-circuits
+        // before the PVC gate — even if both conditions hold simultaneously.
+        if (dispatchResult is Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult { StatusCode: 503 })
+            WorkDistributionTelemetry.PvcPoolExhaustions.Add(1);
+
+        return dispatchResult;
     }
 
     // ── POST /dispatch — synchronous dispatch endpoint ────────────────────
@@ -498,8 +485,6 @@ public static class WorkItemDispatchEndpoints
             return TypedResults.StatusCode(StatusCodes.Status422UnprocessableEntity);
         }
 
-        var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
-
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
         // Build concurrency map (dispatched/running items by selector)
@@ -523,17 +508,35 @@ public static class WorkItemDispatchEndpoints
         // invariant across replicas.
         var pvcPool = lifecycle.GetPvcPool();
         var pvcResult = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, pvcPool, ct);
-        var availablePvcs = pvcResult.AvailablePvcs;
 
-        // Concurrency gate + PVC gate via shared helper.
+        // Normalize and sanitize the selector for the gate check and log messages.
         // NOTE: No PvcPoolExhaustions counter here — that metric belongs exclusively to DispatchPendingWorkItem.
         var normalizedReqSelector = JobTemplateStore.NormalizeLabels(request.AgentSelector ?? "");
         var sanitizedReqSelector = CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(request.AgentSelector);
-        var gateResult = dispatchService.ApplyGates(
+
+        // Run the gate check BEFORE creating the entity so a 409/503 rejection does not
+        // leave an orphaned Dispatched row in the database. DispatchResolvedWorkItemAsync
+        // (called below after entity creation) re-runs the gate; it will pass a second time
+        // since capacity cannot shrink between these two calls on the same request.
+        // isKiroAgent is computed inside DispatchWorkItemService.IsKiroAgent (no literal here — AC3).
+        // TODO [WARNING]: IsKiroAgent is evaluated here AND again inside DispatchResolvedWorkItemAsync on the same
+        // template. Both are pure/deterministic today, so results are always consistent. If IsKiroAgent ever
+        // becomes context-dependent, the two calls could diverge and produce inconsistent gate decisions without
+        // any test catching it. Consider passing the computed value as a parameter to DispatchResolvedWorkItemAsync
+        // to make the single-evaluation contract explicit. (TestQualityReviewer, DotNetSpecialist review [WARNING])
+        // TODO [WARNING]: pvcResult.AvailablePvcs is a mutable List<string> passed by reference. The early gate
+        // reads its Count here; DispatchResolvedWorkItemAsync → SelectPvcAsync will later mutate/drain that same
+        // list. Both calls currently occur on the same request before any PVC selection, so the count is stable
+        // in practice. However, if SelectPvcAsync or any future refactor moves list mutation before the second
+        // gate check inside DispatchResolvedWorkItemAsync, the second gate could observe a stale (lower) count
+        // after the Dispatched row has already been persisted, producing a 503 with an orphaned entity.
+        // Verify that AvailablePvcs is not mutated between the two gate evaluations, or snapshot it immutably.
+        // (Correctness, DotNetSpecialist review [WARNING])
+        var earlyGateResult = dispatchService.ApplyGates(
             normalizedReqSelector, sanitizedReqSelector, concurrencyBySelector,
-            pvcResult, template, isKiroAgent, "DispatchWorkItem");
-        if (gateResult is not null)
-            return gateResult;
+            pvcResult, template, dispatchService.IsKiroAgent(template), "DispatchWorkItem");
+        if (earlyGateResult is not null)
+            return earlyGateResult;
 
         // Capacity checks passed — create the WorkItem directly as Dispatched.
         // Issue #2322 requirement: no WorkItem is ever written as Pending on the live dispatch path.
@@ -581,7 +584,7 @@ public static class WorkItemDispatchEndpoints
         if (run is not null)
             runService.AddRun(run);
 
-        // Projection for ExecuteDispatchLifecycleAsync
+        // Projection for the shared dispatch helper (issue #2890).
         var projection = new PendingWorkItemProjection
         {
             Id = workItemId,
@@ -595,31 +598,27 @@ public static class WorkItemDispatchEndpoints
             PriorityWeight = entity.PriorityWeight
         };
 
-        var ctx = new DispatchLifecycleContext(
+        // Gate + context construction + lifecycle execution via shared helper (issue #2890).
+        // ExpectedInitialStatus is Dispatched — the WorkItem was created directly as Dispatched
+        // (issue #2322: no Pending write on live path). The lifecycle race-guard checks this
+        // status when reloading the item after K8s Job creation.
+        // SafelyCancelOrphanedDispatchedWorkItemAsync is passed as onDispatchFailure — the item
+        // was created as Dispatched; without cleanup it stays orphaned with no running Job.
+        return await dispatchService.DispatchResolvedWorkItemAsync(
             db,
-            projection,
             template,
-            isKiroAgent,
-            availablePvcs,
+            projection,
+            normalizedSelector: normalizedReqSelector,
+            sanitizedSelector: sanitizedReqSelector,
             concurrencyBySelector,
-            "sync-dispatch ")
-        {
-            // The WorkItem was created directly as Dispatched (issue #2322: no Pending write on live path).
-            // The lifecycle race-guard checks this status when reloading the item after K8s Job creation.
-            ExpectedInitialStatus = WorkItemStatus.Dispatched
-        };
-
-        // Shared lifecycle execution: try/catch + !dispatched + 503 path are consolidated in
-        // RunDispatchLifecycleAsync (issue #2859). SafelyCancelOrphanedDispatchedWorkItemAsync is
-        // passed as onDispatchFailure — it must be called on the 503 path for DispatchWorkItem
-        // (item was created as Dispatched; without cleanup it stays orphaned with no running Job).
-        return await dispatchService.RunDispatchLifecycleAsync(
-            ctx,
-            lifecycle,
+            pvcResult,
+            expectedInitialStatus: WorkItemStatus.Dispatched,
+            logPrefix: "sync-dispatch ",
             onDispatchFailure: (id, reason) => SafelyCancelOrphanedDispatchedWorkItemAsync(lifecycle, id, reason),
             onSuccess: id => TypedResults.Ok(id),
             workItemId,
-            "DispatchWorkItem",
+            callerName: "DispatchWorkItem",
+            lifecycle,
             ct);
     }
 

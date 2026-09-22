@@ -24,14 +24,18 @@ namespace CodingAgent.Agent;
 /// for the coordinator (<see cref="AgentWorkerService"/>) to wire its handlers to.
 /// </para>
 /// <para>
+/// The registration gate, <c>SafeDisposeAsync</c>, and the terminal-close reconnect loop
+/// (with <see cref="Interlocked.CompareExchange{T}"/> ownership transfer) are extracted into
+/// <see cref="ConnectionReconnectCoordinator"/> and shared with <see cref="AgentConnectionManager"/>.
+/// </para>
+/// <para>
 /// After successful reconnection, <see cref="DrainBufferAsync"/> replays buffered completion
 /// messages and releases the job slot if the buffer empties.
 /// </para>
 /// </remarks>
 public sealed class AgentConnectionLifecycle : IAsyncDisposable
 {
-    private volatile IHubConnectionManager? _hubManager;
-    private readonly IHubConnectionManagerFactory _hubManagerFactory;
+    private readonly ConnectionReconnectCoordinator _coordinator;
     private readonly SignalRCompletionReporter _completionReporter;
     private readonly AgentJobSlotManager _slotManager;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
@@ -56,13 +60,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
 
     /// <summary>Resolved when SignalChatEnd() is called; unblocks the ConnectAndRunAsync wait.</summary>
     internal readonly TaskCompletionSource _chatEndSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    // ── Registration gate ────────────────────────────────────────────────
-    // Starts as completed (no blocking on first use before any reconnect occurs).
-    // Reset to a new incomplete TCS at the start of every reconnect / terminal-close handler
-    // BEFORE any awaits; completed after RegisterAgent succeeds.
-    // WaitForRegistrationAsync blocks callers during the reconnect-race window.
-    private TaskCompletionSource _registrationGate = CreateCompletedGate();
 
     /// <summary>
     /// Injectable seam for KiroCliSettingsWriter.ApplyAsync. Tests override this to
@@ -105,8 +102,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(hostApplicationLifetime);
         ArgumentNullException.ThrowIfNull(logger);
 
-        _hubManager = hubManager;
-        _hubManagerFactory = hubManagerFactory;
         _completionReporter = completionReporter;
         _slotManager = slotManager;
         _hostApplicationLifetime = hostApplicationLifetime;
@@ -133,14 +128,28 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
             ?? "";
         _chatModel = runtimeOptions?.ChatModel ?? Environment.GetEnvironmentVariable(AgentDefaults.EnvChatModel);
         _chatEffort = runtimeOptions?.ChatEffort ?? Environment.GetEnvironmentVariable(AgentDefaults.EnvChatEffort);
+
+        // Compose the coordinator. It takes ownership of the initial hub manager.
+        // DrainBufferAsync is passed as afterSuccessfulReconnect — safe as a method-group
+        // reference in a sealed class (no virtual dispatch; fields are fully initialised by
+        // the time the delegate is invoked during reconnection).
+        _coordinator = new ConnectionReconnectCoordinator(
+            initialHubManager: hubManager,
+            agentId: _agentId,
+            factory: hubManagerFactory,
+            logger: logger,
+            lifetime: hostApplicationLifetime,
+            wireHandlers: WireEventHandlers,
+            registerAgent: (mgr, ct) => _signalRPipeline.ExecuteAsync(async token =>
+                await mgr.Connection.InvokeAsync(HubMethodNames.RegisterAgent, BuildRegistrationMessage(), token), ct).AsTask(),
+            afterSuccessfulReconnect: DrainBufferAsync);
     }
 
     /// <summary>The underlying hub connection for business handlers to invoke server methods.</summary>
-    public HubConnection Connection => _hubManager?.Connection
-        ?? throw new ObjectDisposedException(nameof(AgentConnectionLifecycle));
+    public HubConnection Connection => _coordinator.Connection;
 
     /// <summary>Whether the hub connection is currently active.</summary>
-    public bool IsConnected => _hubManager?.IsConnected ?? false;
+    public bool IsConnected => _coordinator.IsConnected;
 
     /// <summary>
     /// Waits until the agent's registration with the orchestrator is complete.
@@ -149,26 +158,8 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     /// <c>RegisterAgent</c> succeeds) so hub invocations are not rejected.
     /// </summary>
     /// <param name="ct">Cancellation token; times out at <c>SignalRTimeout</c> by default.</param>
-    public async Task WaitForRegistrationAsync(CancellationToken ct)
-    {
-        var gate = _registrationGate;
-        if (gate.Task.IsCompleted)
-            return;
-
-        await WaitWithTimeoutAsync(gate.Task, ct);
-    }
-
-    private Task WaitWithTimeoutAsync(Task gateTask, CancellationToken ct)
-    {
-        return ReconnectionHelper.WaitWithTimeoutAsync(gateTask, ct, _agentId, _logger);
-    }
-
-    private static TaskCompletionSource CreateCompletedGate()
-    {
-        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        tcs.SetResult();
-        return tcs;
-    }
+    public Task WaitForRegistrationAsync(CancellationToken ct)
+        => _coordinator.WaitForRegistrationAsync(ct);
 
     /// <summary>
     /// Connects to the orchestrator, registers the agent, and runs the heartbeat loop
@@ -178,7 +169,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     /// </summary>
     public async Task ConnectAndRunAsync(CancellationToken stoppingToken)
     {
-        var manager = _hubManager
+        var manager = _coordinator.CurrentManager
             ?? throw new ObjectDisposedException(nameof(AgentConnectionLifecycle));
 
         // Chat mode: apply model/effort settings to ~/.kiro/settings/cli.json before connecting
@@ -238,7 +229,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
             _agentId, string.Join(", ", _baseLabels));
 
         // Complete the registration gate so waiters can proceed
-        _registrationGate.TrySetResult();
+        _coordinator.CompleteRegistrationGate();
 
         // Chat mode: wait for SignalChatEnd() signal instead of heartbeat loop
         if (_isChatMode)
@@ -273,7 +264,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     /// </summary>
     public async Task ShutdownAsync()
     {
-        var manager = _hubManager;
+        var manager = _coordinator.CurrentManager;
         if (manager is null) return;
 
         // Deregister from orchestrator
@@ -303,21 +294,11 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     }
 
     /// <summary>
-    /// Atomically nulls and disposes the underlying <see cref="HubConnectionManager"/>.
-    /// Uses <see cref="Interlocked.Exchange{T}"/> to guarantee exactly-once disposal,
-    /// even if <see cref="DisposeAsync"/> races with <see cref="ShutdownAsync"/> or
-    /// <see cref="HandleTerminalClosedAsync"/>.
+    /// Atomically nulls and disposes the underlying <see cref="HubConnectionManager"/> via the coordinator.
+    /// Guarantees exactly-once disposal even if <see cref="DisposeAsync"/> races with
+    /// <see cref="ShutdownAsync"/> or <see cref="HandleTerminalClosedAsync"/>.
     /// </summary>
-    public async ValueTask DisposeAsync()
-    {
-        // Cancel any waiters on the registration gate so they are not left hanging at shutdown.
-        // Pass ApplicationStopping so that the gate's cancellation carries the shutdown token context.
-        _registrationGate.TrySetCanceled(_hostApplicationLifetime.ApplicationStopping);
-
-        var manager = Interlocked.Exchange(ref _hubManager, null);
-        if (manager is null) return;
-        await SafeDisposeAsync(manager);
-    }
+    public ValueTask DisposeAsync() => _coordinator.DisposeAsync();
 
     // TODO: Event handlers on old HubConnectionManager instances are never unwired before disposal.
     // While disposal should prevent further event firings, explicitly unsubscribing before
@@ -335,80 +316,12 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
 
     // delayOverride is a test seam (null in production) so reconnection tests need not wait the real
     // exponential backoff; mirrors AgentConnectionManager.HandleTerminalClosedAsync.
-    internal async Task HandleTerminalClosedAsync(Exception? error, int maxAttempts = 10, Func<int, TimeSpan>? delayOverride = null)
-    {
-        // Reset the registration gate BEFORE any awaits so callers that land during
-        // the terminal-close recovery window are held until re-registration succeeds.
-        _registrationGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        _logger.Warning(error, "SignalR connection entered terminal Closed state, attempting fresh reconnection");
-
-        var ct = _hostApplicationLifetime.ApplicationStopping;
-        for (var attempt = 1; attempt <= maxAttempts; attempt++)
-        {
-            var delay = delayOverride?.Invoke(attempt) ?? ReconnectionHelper.CalculateReconnectionDelay(attempt);
-            _logger.Information("Reconnection attempt {Attempt}/{Max} after {Delay:F1}s",
-                attempt, maxAttempts, delay.TotalSeconds);
-
-            IHubConnectionManager? newManager = null;
-            try
-            {
-                await Task.Delay(delay, ct);
-
-                var oldManager = _hubManager;
-                if (oldManager is null) return; // Already disposed
-
-                newManager = _hubManagerFactory.Create();
-                WireEventHandlers(newManager);
-                await newManager.StartAsync(ct);
-
-                // Register BEFORE transferring ownership — if registration fails,
-                // newManager is still non-null and the catch block disposes it correctly.
-                var registration = BuildRegistrationMessage();
-                await _signalRPipeline.ExecuteAsync(async token =>
-                    await newManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), ct);
-
-                if (Interlocked.CompareExchange(ref _hubManager, newManager, oldManager) != oldManager)
-                {
-                    // CAS failed — DisposeAsync ran concurrently; dispose the orphaned newManager
-                    await SafeDisposeAsync(newManager);
-                    newManager = null;
-                    // Gate was already cancelled by DisposeAsync — leave it as-is
-                    return;
-                }
-                newManager = null; // Ownership transferred — skip disposal in catch
-
-                // Dispose old manager after successful swap.
-                // Safe: DisposeAsync does not fire the Closed event (no re-entrant call).
-                await SafeDisposeAsync(oldManager);
-
-                _logger.Information("Agent {AgentId} reconnected and re-registered after terminal close", _agentId);
-                // Unblock waiters now that re-registration succeeded
-                _registrationGate.TrySetResult();
-                await DrainBufferAsync();
-                return;
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                await SafeDisposeAsync(newManager);
-                return;
-            }
-            catch (Exception ex)
-            {
-                await SafeDisposeAsync(newManager);
-                _logger.Warning(ex, "Reconnection attempt {Attempt} failed", attempt);
-            }
-        }
-
-        _logger.Error("All {MaxAttempts} reconnection attempts exhausted, shutting down agent", maxAttempts);
-        // TODO [WARNING]: Consider TrySetCanceled() here instead of TrySetResult() so that callers
-        // unblocked by the gate know the connection is terminal rather than "registered". Using
-        // TrySetResult() allows callers to proceed into hub invocations on a dead connection,
-        // generating noisy errors before shutdown completes. (Correctness Review)
-        // Complete the gate so callers don't hang forever when giving up
-        _registrationGate.TrySetResult();
-        _hostApplicationLifetime.StopApplication();
-    }
+    internal Task HandleTerminalClosedAsync(Exception? error, int maxAttempts = 10, Func<int, TimeSpan>? delayOverride = null)
+        => _coordinator.HandleTerminalClosedAsync(
+            error,
+            maxAttempts,
+            delayOverride,
+            appStoppingToken: _hostApplicationLifetime.ApplicationStopping);
 
     /// <summary>
     /// Re-registers the agent with the orchestrator after a SignalR reconnection.
@@ -419,13 +332,13 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     {
         // Reset the registration gate BEFORE any awaits so callers that land in
         // the reconnect window are held until re-registration succeeds.
-        _registrationGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _coordinator.ResetRegistrationGate();
 
         PipelineTelemetry.AgentReconnections.Add(1);
         _logger.Information("Re-registering agent {AgentId} after reconnection (connectionId={ConnectionId})",
             _agentId, connectionId);
 
-        var manager = _hubManager;
+        var manager = _coordinator.CurrentManager;
         if (manager is null) return; // Already disposed
 
         var registration = BuildRegistrationMessage();
@@ -438,7 +351,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
                 CancellationToken.None);
             _logger.Information("Agent {AgentId} re-registered successfully after reconnection", _agentId);
             // Unblock waiters now that re-registration succeeded
-            _registrationGate.TrySetResult();
+            _coordinator.CompleteRegistrationGate();
             await DrainBufferAsync();
         }
         catch (Exception ex)
@@ -452,13 +365,13 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
                 {
                     await Task.Delay(ExtendedRetryDelay, ct);
 
-                    var currentManager = _hubManager;
+                    var currentManager = _coordinator.CurrentManager;
                     if (currentManager is null) return; // Disposed during retry
 
                     await currentManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, ct);
                     _logger.Information("Agent {AgentId} re-registered on extended attempt {Attempt}", _agentId, i + 1);
                     // Unblock waiters on successful extended retry
-                    _registrationGate.TrySetResult();
+                    _coordinator.CompleteRegistrationGate();
                     await DrainBufferAsync();
                     return;
                 }
@@ -470,7 +383,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
                     // Using TrySetResult() suggests success to callers, which may then attempt hub
                     // invocations on a shutting-down connection. (Correctness Review)
                     // Release waiters on cancellation so they don't hang at shutdown
-                    _registrationGate.TrySetResult();
+                    _coordinator.CompleteRegistrationGate();
                     return;
                 }
                 catch (Exception retryEx)
@@ -483,10 +396,17 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
             // TODO [WARNING]: Consider TrySetCanceled() here instead of TrySetResult() so that callers
             // unblocked by the gate know the connection is terminal rather than "registered". (Correctness Review)
             // Release waiters before stopping so they don't hang at shutdown
-            _registrationGate.TrySetResult();
+            _coordinator.CompleteRegistrationGate();
             _hostApplicationLifetime.StopApplication();
         }
     }
+
+    /// <summary>
+    /// Returns <c>true</c> when a buffered message has exhausted its retry budget
+    /// and should be dropped rather than re-buffered.
+    /// </summary>
+    internal static bool ShouldDropBufferedMessage(BufferedCriticalMessage msg, int maxDrainAttempts)
+        => msg.DrainAttempts >= maxDrainAttempts;
 
     /// <summary>
     /// Drains the critical message buffer by replaying each buffered message over
@@ -497,13 +417,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     /// counter. Messages exceeding max drain attempts are dropped. After drain,
     /// the job slot is released if the buffer is empty.
     /// </remarks>
-    /// <summary>
-    /// Returns <c>true</c> when a buffered message has exhausted its retry budget
-    /// and should be dropped rather than re-buffered.
-    /// </summary>
-    internal static bool ShouldDropBufferedMessage(BufferedCriticalMessage msg, int maxDrainAttempts)
-        => msg.DrainAttempts >= maxDrainAttempts;
-
     internal async Task DrainBufferAsync()
     {
         if (!_completionReporter.HasPendingMessages)
@@ -528,7 +441,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
 
             try
             {
-                var manager = _hubManager;
+                var manager = _coordinator.CurrentManager;
                 if (manager is null) return; // Disposed during drain
 
                 switch (msg)
@@ -571,19 +484,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
             _logger.Warning("Buffer still has pending messages after drain — job slot remains held");
     }
 
-    private async ValueTask SafeDisposeAsync(IHubConnectionManager? manager)
-    {
-        if (manager is null) return;
-        try
-        {
-            await manager.DisposeAsync();
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Exception during HubConnectionManager disposal (suppressed)");
-        }
-    }
-
     private AgentRegistrationMessage BuildRegistrationMessage()
     {
         var labels = _isChatMode
@@ -613,7 +513,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
 
     private async Task SendHeartbeatAsync(CancellationToken ct)
     {
-        var manager = _hubManager;
+        var manager = _coordinator.CurrentManager;
         if (manager is null) return;
 
         var heartbeat = new HeartbeatMessage
@@ -626,5 +526,4 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
 
         await manager.Connection.InvokeAsync(HubMethodNames.Heartbeat, heartbeat, ct);
     }
-
 }
