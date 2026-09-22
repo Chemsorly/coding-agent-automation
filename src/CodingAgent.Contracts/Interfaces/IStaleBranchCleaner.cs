@@ -17,8 +17,15 @@ public interface IStaleBranchCleaner
     /// <param name="repoProvider">Repository provider used to list and delete branches.</param>
     /// <param name="issueProvider">Issue provider used to check issue labels.</param>
     /// <param name="agentDonePrs">
-    /// The current set of open agent PRs (used as a secondary guard for branch protection;
-    /// the primary guard is a full open-PR scan via <c>ListOpenPullRequestsAsync</c>).
+    /// The current set of open agent PRs, used as the sole branch-protection guard.
+    /// When <paramref name="wasInputTruncated"/> is true this list is incomplete and cleanup
+    /// is skipped entirely with a Warning log.
+    /// </param>
+    /// <param name="wasInputTruncated">
+    /// True when <paramref name="agentDonePrs"/> was capped by <c>ClosedLoopMaxPagesToFetch</c>
+    /// and may be missing PRs beyond the pagination limit. When true, the cleanup cycle is
+    /// skipped with a Warning rather than risking deletion of a branch that has an open PR
+    /// not present in the truncated list.
     /// </param>
     /// <param name="repoProviderId">Repository provider ID, used as the cadence key.</param>
     /// <param name="repoTag">OTel tag for all telemetry emitted during this call.</param>
@@ -29,6 +36,7 @@ public interface IStaleBranchCleaner
         IRepositoryProvider repoProvider,
         IIssueProvider issueProvider,
         IReadOnlyList<PullRequestSummary> agentDonePrs,
+        bool wasInputTruncated,
         string repoProviderId,
         KeyValuePair<string, object?> repoTag,
         bool enabled,

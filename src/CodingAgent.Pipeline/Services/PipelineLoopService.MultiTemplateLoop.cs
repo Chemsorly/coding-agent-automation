@@ -121,7 +121,7 @@ public sealed partial class PipelineLoopService
     {
         var failuresBefore = BuildTemplateFailureBaseline(snapshot.PollableTemplates);
 
-        var (issueQueues, prQueues, decompositionQueues, agentDonePrQueues) = await _poller.PollTemplateQueuesAsync(
+        var (issueQueues, prQueues, decompositionQueues, agentDonePrQueues, agentDonePrTruncated) = await _poller.PollTemplateQueuesAsync(
             snapshot.PollableTemplates, snapshot.Config.ClosedLoopMaxPagesToFetch, _templateStatuses,
             i => CurrentCycleTemplateIndex = i,
             msg => { lock (_lock) { StatusMessage = msg; } },
@@ -176,7 +176,7 @@ public sealed partial class PipelineLoopService
         CurrentIssueIdentifier = null;
 
         if (_stopRequested || ct.IsCancellationRequested) return false;
-        await RunHousekeepingAsync(snapshot, agentDonePrQueues, ct);
+        await RunHousekeepingAsync(snapshot, agentDonePrQueues, agentDonePrTruncated, ct);
 
         if (_stopRequested || ct.IsCancellationRequested) return false;
         if (snapshot.Config.QueueSweepEnabled)
@@ -491,6 +491,7 @@ public sealed partial class PipelineLoopService
     internal async Task RunHousekeepingAsync(
         CycleSnapshot snapshot,
         Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
+        Dictionary<string, bool> agentDonePrTruncated,
         CancellationToken ct)
     {
         if (_housekeepingService is not { } housekeepingService) return;
@@ -505,13 +506,14 @@ public sealed partial class PipelineLoopService
             if (!_cacheManager.IssueProviders.TryGetValue(template.IssueProviderId, out var issueProvider)) continue;
 
             var donePrs = agentDonePrQueues.TryGetValue(template.Id, out var d) ? d : [];
+            var wasTruncated = agentDonePrTruncated.TryGetValue(template.Id, out var t) && t;
             var limit = Math.Max(1,
                 template.HousekeepingConcurrencyLimit ?? snapshot.Config.HousekeepingConcurrencyLimit);
 
             await housekeepingService.ExecuteAsync(
                 repoProvider, template.RepoProviderId,
                 issueProvider, template.IssueProviderId,
-                donePrs, limit,
+                donePrs, wasTruncated, limit,
                 template.HousekeepingBranchCleanupEnabled,
                 snapshot.Config.HousekeepingBranchCleanupIntervalMinutes,
                 snapshot.Config.HousekeepingTriggerCooldownMinutes,
