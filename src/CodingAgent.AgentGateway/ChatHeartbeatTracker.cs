@@ -56,37 +56,27 @@ internal sealed class ChatHeartbeatTracker : IChatHeartbeatTracker
     }
 
     /// <inheritdoc/>
-    public Task WriteRedisHeartbeatAsync(string agentId)
+    public async Task WriteRedisHeartbeatAsync(string agentId)
     {
-        // TODO [WARNING]: The returned Task is the OnlyOnFaulted continuation, which is in the
-        // Canceled state (not Completed) when SetAsync succeeds. Any caller that awaits the
-        // returned task on the happy path will receive TaskCanceledException. Current callers
-        // use `_ =` (fire-and-forget) so there is no immediate throw, but the interface's return
-        // type is Task and any future caller that awaits it will be surprised. Fix: either return
-        // Task.CompletedTask after calling ContinueWith (keeping the fault-logging side-effect),
-        // or use await + try/catch so the returned task is always completed successfully.
-        // See review finding: DotNetSpecialist WARNING @ ChatHeartbeatTracker.cs:66.
-        //
-        // TODO [WARNING]: agentId is not null-checked. A null agentId will produce a
-        // NullReferenceException inside HeartbeatKey (string interpolation) rather than a
-        // clean ArgumentNullException at the call site. Add ArgumentNullException.ThrowIfNull(agentId).
-        // See review finding: DotNetSpecialist WARNING @ ChatHeartbeatTracker.cs:56.
+        ArgumentNullException.ThrowIfNull(agentId);
         var ttl = TimeSpan.FromSeconds(_options.ChatIdleTimeoutSeconds * 2);
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        return _redis.SetAsync(HeartbeatKey(agentId), nowMs.ToString(), ttl)
-            .ContinueWith(t => _logger.Warning(t.Exception,
-                "ChatHeartbeatTracker: Redis heartbeat write failed for {AgentId}", agentId),
-                TaskContinuationOptions.OnlyOnFaulted);
+        try
+        {
+            await _redis.SetAsync(HeartbeatKey(agentId), nowMs.ToString(), ttl).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex,
+                "ChatHeartbeatTracker: Redis heartbeat write failed for {AgentId}", agentId);
+        }
     }
 
     /// <inheritdoc/>
     public async Task<(bool Available, DateTimeOffset? Heartbeat)> TryGetRedisHeartbeatAsync(
         string jobName, string agentId)
     {
-        // TODO [WARNING]: agentId is not null-checked. A null agentId silently produces an incorrect
-        // Redis key ("chat:heartbeat:"), returning (true, null) instead of failing fast.
-        // Add ArgumentNullException.ThrowIfNull(agentId).
-        // See review finding: DotNetSpecialist WARNING @ ChatHeartbeatTracker.cs:75.
+        ArgumentNullException.ThrowIfNull(agentId);
         try
         {
             var raw = await _redis.GetAsync(HeartbeatKey(agentId)).ConfigureAwait(false);
@@ -105,16 +95,18 @@ internal sealed class ChatHeartbeatTracker : IChatHeartbeatTracker
     }
 
     /// <inheritdoc/>
-    public Task DeleteRedisHeartbeatAsync(string agentId)
+    public async Task DeleteRedisHeartbeatAsync(string agentId)
     {
-        // TODO [WARNING]: Same ContinueWith/TaskCanceledException issue as WriteRedisHeartbeatAsync —
-        // the returned Task is in the Canceled state on the happy path. Fix alongside WriteRedisHeartbeatAsync.
-        // TODO [WARNING]: agentId is not null-checked. Add ArgumentNullException.ThrowIfNull(agentId).
-        // See review findings: DotNetSpecialist WARNING @ ChatHeartbeatTracker.cs:97 and :56.
-        return _redis.DeleteAsync(HeartbeatKey(agentId))
-            .ContinueWith(t => _logger.Warning(t.Exception,
-                "ChatHeartbeatTracker: Redis heartbeat key delete failed for {AgentId}", agentId),
-                TaskContinuationOptions.OnlyOnFaulted);
+        ArgumentNullException.ThrowIfNull(agentId);
+        try
+        {
+            await _redis.DeleteAsync(HeartbeatKey(agentId)).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex,
+                "ChatHeartbeatTracker: Redis heartbeat key delete failed for {AgentId}", agentId);
+        }
     }
 
     private static string HeartbeatKey(string agentId) => $"chat:heartbeat:{agentId}";
