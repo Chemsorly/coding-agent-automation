@@ -9,6 +9,8 @@
     <InternalsVisibleTo Include="CodingAgent.Pipeline.UnitTests" />
     <InternalsVisibleTo Include="CodingAgent.Web.IntegrationTests" />
     <InternalsVisibleTo Include="CodingAgent.Web.E2ETests" />
+    <!-- Required by Moq to mock internal interfaces in test projects -->
+    <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
   </ItemGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />

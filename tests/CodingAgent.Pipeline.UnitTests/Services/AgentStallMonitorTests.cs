@@ -122,7 +122,9 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
+                IsExecuting = true,
+                ProcessId = 1,
+                IsProcessAlive = true,
                 // Already 3 minutes silent relative to fake "now"
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-3)
             });
@@ -171,7 +173,9 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
+                IsExecuting = true,
+                ProcessId = 1,
+                IsProcessAlive = true,
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-10)
             });
 
@@ -224,7 +228,9 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
+                IsExecuting = true,
+                ProcessId = 1,
+                IsProcessAlive = true,
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime
             });
 
@@ -269,9 +275,16 @@ public class AgentStallMonitorTests
             _run, config, "Session warm-up", null, _mockLogger.Object, CancellationToken.None,
             timeProvider: fakeTime);
 
-        await YieldToMonitorAsync();
-        fakeTime.Advance(TimeSpan.FromMinutes(1));
-        await WaitForChatHistoryAsync(_run);
+        // Advance repeatedly until the monitor loop has started, consumed the fake delay,
+        // and enqueued the process-death message. This eliminates the race in YieldToMonitorAsync
+        // where the Task.Run loop may not have reached its first Task.Delay within 200 ms on a
+        // loaded CI runner.
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (_run.ChatHistory.IsEmpty && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+            fakeTime.Advance(TimeSpan.FromMinutes(1));
+        }
 
         tcs.SetResult();
         await task;
@@ -308,7 +321,9 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
+                IsExecuting = true,
+                ProcessId = 1,
+                IsProcessAlive = true,
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-3)
             });
 
@@ -361,7 +376,9 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
+                IsExecuting = true,
+                ProcessId = 1,
+                IsProcessAlive = true,
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-10)
             });
 
