@@ -176,6 +176,7 @@ public class AgentStallMonitorTests
     public async Task KillsAfterHardTimeout_CallsKillAsync()
     {
         var fakeTime = new FakeTimeProvider();
+        var signalingTime = new SignalingFakeTimeProvider(fakeTime);
 
         var config = new PipelineConfiguration
         {
@@ -204,16 +205,16 @@ public class AgentStallMonitorTests
             _mockAgent.Object,
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
             _run, config, "Stuck agent", null, _mockLogger.Object, CancellationToken.None,
-            timeProvider: fakeTime);
+            timeProvider: signalingTime);
 
-        // Yield so the monitor loop starts and suspends on the first Delay(1m)
-        await YieldToMonitorAsync();
+        // Wait until the monitor has registered its timer with FakeTimeProvider, then advance
+        await signalingTime.FirstTimerRegistered;
 
         // Advance 1 minute → poll tick fires, silence = 10m+1m = 11m > AgentTimeout=5m → KillAsync called
         fakeTime.Advance(TimeSpan.FromMinutes(1));
 
-        // KillAsync must be called promptly — no wall-clock dependency
-        await killCalled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // KillAsync runs asynchronously after the timer fires; WaitForChatHistoryAsync covers the wait
+        await WaitForChatHistoryAsync(_run);
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
