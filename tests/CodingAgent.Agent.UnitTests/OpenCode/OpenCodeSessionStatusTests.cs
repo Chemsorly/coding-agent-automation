@@ -266,8 +266,11 @@ public class OpenCodeSessionStatusTests
         var factory = new SimpleClientFactory(handler);
         var provider = new OpenCodeAgentProvider(factory, new Mock<ILogger>().Object);
 
-        // Cancel after enough time for one poll cycle to run (with fast initial delay override)
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        // Cancel after enough time for one poll cycle to run (with fast initial delay override).
+        // Use 2000 ms instead of 200 ms to prevent flakiness under CI load — the initial delay
+        // is only 10 ms, so 2000 ms still guarantees cancellation fires after at least one cycle
+        // while giving the mock HTTP handler ample scheduling time to return.
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(2000));
 
         await provider.PollAllSessionStatusesAsyncForTest(cts.Token, initialDelayMs: 10);
 

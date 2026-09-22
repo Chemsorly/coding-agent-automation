@@ -1,3 +1,4 @@
+using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -38,12 +39,11 @@ public sealed class AgentIssueOperations : IHubIssueOperations
     {
         try
         {
-            var issueConfig = await _facade.GetProviderConfigByIdAsync(run.IssueProviderConfigId, ProviderKind.Issue, ct);
+            var issueConfig = await ProviderConfigResolver.TryResolveAsync(
+                () => _facade.GetProviderConfigByIdAsync(run.IssueProviderConfigId, ProviderKind.Issue, ct),
+                run.IssueProviderConfigId, ProviderKind.Issue, _logger);
             if (issueConfig is null)
-            {
-                _logger.Warning("Issue provider config '{ConfigId}' not found for run {RunId}", run.IssueProviderConfigId, run.RunId);
                 return null;
-            }
 
             await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
             // Validate initializes provider state (e.g., GitLab PathWithNamespace) needed for URL construction
@@ -100,12 +100,11 @@ public sealed class AgentIssueOperations : IHubIssueOperations
                 return;
             }
 
-            var repoConfig = await _facade.GetProviderConfigByIdAsync(run.RepoProviderConfigId, ProviderKind.Repository, ct);
+            var repoConfig = await ProviderConfigResolver.TryResolveAsync(
+                () => _facade.GetProviderConfigByIdAsync(run.RepoProviderConfigId, ProviderKind.Repository, ct),
+                run.RepoProviderConfigId, ProviderKind.Repository, _logger);
             if (repoConfig is null)
-            {
-                _logger.Warning("Repo provider config '{ConfigId}' not found for run {RunId}, skipping feedback link", run.RepoProviderConfigId, run.RunId);
                 return;
-            }
 
             if (!int.TryParse(run.PullRequestNumber, out var prNumber))
                 return;

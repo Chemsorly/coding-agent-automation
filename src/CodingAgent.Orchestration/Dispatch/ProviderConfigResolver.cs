@@ -68,4 +68,71 @@ internal static class ProviderConfigResolver
             id, kind);
         return null;
     }
+
+    /// <summary>
+    /// Resolves a provider config by calling <paramref name="fetcher"/> (typically
+    /// <c>IAgentHubFacade.GetProviderConfigByIdAsync</c>). Returns null on miss and logs a
+    /// Warning. Use this overload at AgentGateway call sites that do not have access to a
+    /// pre-loaded config list or <see cref="IConfigurationStore"/>.
+    /// </summary>
+    /// <param name="fetcher">Delegate that performs the actual config lookup.</param>
+    /// <param name="id">Provider config ID — used only for the diagnostic log message.</param>
+    /// <param name="kind">Provider kind — used only for the diagnostic log message.</param>
+    /// <param name="logger">Serilog logger for diagnostics.</param>
+    /// <returns>The resolved config, or null if not found.</returns>
+    // TODO [WARNING]: Warning is always emitted when fetcher returns null, including after embedded
+    // retry logic in the fetcher lambda. Callers that wrap custom retry logic should be aware that
+    // the Warning fires after all retries are exhausted (the desired behavior), but any future
+    // caller that intentionally returns null (e.g., feature-flag check) will also produce Warning
+    // noise. Document this invariant at call sites that embed retry logic.
+    // TODO [WARNING]: public modifier on a method of an internal static class is effectively
+    // internal but inconsistent with the conventional style of marking internal class members
+    // explicitly as internal. Normalise to internal to make access intent explicit and prevent
+    // confusion if the class visibility is ever reviewed.
+    public static async Task<ProviderConfig?> TryResolveAsync(
+        Func<Task<ProviderConfig?>> fetcher,
+        string id,
+        ProviderKind kind,
+        ILogger logger)
+    {
+        var config = await fetcher();
+        if (config is null)
+        {
+            logger.Warning(
+                "Provider config {ConfigId} ({Kind}) not found.",
+                id, kind);
+        }
+        return config;
+    }
+
+    /// <summary>
+    /// Resolves a provider config by calling <paramref name="fetcher"/> (typically
+    /// <c>IAgentHubFacade.GetProviderConfigByIdAsync</c>). Throws
+    /// <see cref="InvalidOperationException"/> on miss and logs an Error. Use this overload at
+    /// AgentGateway call sites that do not have access to a pre-loaded config list or
+    /// <see cref="IConfigurationStore"/>.
+    /// </summary>
+    /// <param name="fetcher">Delegate that performs the actual config lookup.</param>
+    /// <param name="id">Provider config ID — used for the diagnostic log and exception message.</param>
+    /// <param name="kind">Provider kind — used for the diagnostic log and exception message.</param>
+    /// <param name="logger">Serilog logger for diagnostics.</param>
+    /// <returns>The resolved config (never null).</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the config is not found.</exception>
+    public static async Task<ProviderConfig> ResolveRequiredAsync(
+        Func<Task<ProviderConfig?>> fetcher,
+        string id,
+        ProviderKind kind,
+        ILogger logger)
+    {
+        var config = await fetcher();
+        if (config is null)
+        {
+            logger.Error(
+                "Provider config {ConfigId} ({Kind}) not found.",
+                id, kind);
+            throw new InvalidOperationException(
+                $"Provider config '{id}' ({kind}) not found.");
+        }
+        return config;
+    }
 }
