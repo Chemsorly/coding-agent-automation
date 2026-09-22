@@ -238,15 +238,15 @@ The `ip → next` conflict-restart transition is automatic and does not require 
 
 ## Housekeeping
 
-The `HousekeepingService` is a per-poll-cycle service that manages `agent:done` PRs and stale agent branches. It is enabled per template via `HousekeepingEnabled: true` on the `PipelineJobTemplate`.
+`HousekeepingService` is a per-poll-cycle orchestrator that manages `agent:done` PRs and stale agent branches. It is enabled per template via `HousekeepingEnabled: true` on the `PipelineJobTemplate`. Two extracted collaborators handle the concrete work: `IssueReworkService` (conflict rework) and `StaleBranchCleaner` (stale branch deletion).
 
 ### What it does each poll cycle
 
-1. **Conflict rework** — For every `agent:done` PR that is merge-conflicted: extracts linked issues, swaps any terminal `agent:*` label back to `agent:next` so the pipeline dispatches a rework run. Skips issues already carrying an active label (`agent:next`, `agent:in-progress`, `agent:epic`, `agent:epic-approved`).
+1. **Conflict rework** — `IssueReworkService.TriggerConflictReworkAsync` handles every `agent:done` PR that is merge-conflicted: extracts linked issues, swaps any terminal `agent:*` label back to `agent:next` so the pipeline dispatches a rework run. Skips issues already carrying an active label (`agent:next`, `agent:in-progress`, `agent:epic`, `agent:epic-approved`) or an abandonment label (`agent:wont-do`, `agent:cancelled`).
 
 2. **Automated branch updates** — For every `agent:done` PR that is behind its base branch: triggers a server-side branch update (fire-and-forget). Respects the `effectiveConcurrencyLimit` (template-level `HousekeepingConcurrencyLimit` or global fallback) — at most N updates are in-flight per repository at any time. Draft PRs and branches with active runs are skipped.
 
-3. **Stale branch cleanup** (when `HousekeepingBranchCleanupEnabled: true`) — On a configurable interval (`HousekeepingBranchCleanupIntervalMinutes`, default 60 min): lists all `feature/auto-*` branches, skips any that have an open PR or whose linked issue carries an active label, deletes the rest.
+3. **Stale branch cleanup** (when `HousekeepingBranchCleanupEnabled: true`) — `StaleBranchCleaner.RunIfDueAsync` runs on a configurable interval (`HousekeepingBranchCleanupIntervalMinutes`, default 60 min): lists all `feature/auto-*` branches, skips any that have an open PR or whose linked issue carries an active label, deletes the rest.
 
 ### Configuration
 

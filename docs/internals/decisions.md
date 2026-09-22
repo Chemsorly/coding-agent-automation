@@ -17,6 +17,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 <!-- Session: 22 | Last run: 2026-09-21 | Decisions added: 6 (catch(Exception) MarkCompleted gap #2851, DirectoryNotFoundException fallback no-opinion, ProviderConfigId Phase 2 no-opinion, AgentWorkspacePaths → Contracts #2852, ReconcileOrphanedPipelineRuns load-all no-opinion, OCE swallowing no-opinion); issues created: #2851/#2852 -->
 <!-- Session: 23 | Last run: 2026-09-21 | Decisions added: 6 (StallMonitor kill=AgentTimeout intentional, StallPollInterval not overridable, flat warnings intentional, OpenCode session-status polling, AgentCodingPageService 460 lines stable no-opinion, EnsureSessionAsync coverage complete); no bugs found; Q3 corrected (OpenCode DOES have polling health) -->
 <!-- Session: 24 | Last run: 2026-09-21 | Decisions added: 5 (conflict rework re-queues agent:done intentional, StaleBranchCleaner double-scan #2880, HousekeepingMaxSlotAgeMinutes dead config #2881, DispatchWorkItemService sanitizedSelector no-opinion, HousekeepingActiveLabels set intentional); issues created: #2880/#2881 -->
+<!-- Session: 25 | Last run: 2026-09-22 | Decisions added: 5 (ChatSessionWatcher idle-kill deadlock no-opinion, RequestGetIssue double-retry intentional, zero-context=InfrastructureFailure intentional, dispatch 503 = next poll cycle, IssueReworkService fail-closed intentional); no bugs found -->
+<!-- Session: 26 | Last run: 2026-09-22 | Decisions added: 3 (PvcPoolExhaustions KISS/DRY no-opinion, advisory lock asymmetry no-opinion, ChatHeartbeatTracker null-tracker no-opinion); issues created: #2883 -->
 <!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService razor component decomposition, Faro CSP script-src when CSP added, TimeoutSeconds end-to-end after #2179 -->
 
 ---
@@ -144,8 +146,7 @@ Leader election continues to handle multi-replica safety. The split was driven b
 
 **Context — regression being corrected:** #2322/#2323 relocated dispatch out of the JobController into the API's `WorkItemDispatchService`, registered on all replicas via `AlwaysLeaderService`. Because each replica builds its own concurrency snapshot from the DB, per-selector `maxConcurrent` is not enforced across replicas — observed live: 4 active pods for a cap of 3. This contradicts two recorded principles: "PipelineLoopService: full loop must be leader-gated in multi-replica deployments" (loops fire concurrently on non-gated replicas) and "the Scheduler is the designated owner of all scheduled/periodic background work; putting periodic logic in the API contradicts the Scheduler's role" (DatabaseMaintenanceService, Spec 047). `AlwaysLeaderService`'s own doc calls the gap "an accepted trade-off for the single-process deployment target" — but production runs the API multi-replica.
 
-**Status (2026-09-13):** Complete — epic #2541 fully resolved. `WorkItemDispatchService` and `AlwaysLeaderService` removed from the API in issue #2547. The `WorkItemDispatchPoller` in the Scheduler is now the sole dispatcher — renamed to `WorkItemDispatchLoop` in issue #2844. The `WorkDistribution:Dispatch:Enabled` flag and its Helm wiring have been removed; `Scheduler:Dispatch:Enabled` remains the control flag.
-<!-- TODO: [WARNING] Stale class name above — WorkItemDispatchPoller was renamed to WorkItemDispatchLoop (issue #2844). Update the historical note when this document is next revised. -->
+**Status (2026-09-13):** Complete — epic #2541 fully resolved. `WorkItemDispatchService` and `AlwaysLeaderService` removed from the API in issue #2547. The `WorkItemDispatchLoop` in the Scheduler is now the sole dispatcher (renamed from `WorkItemDispatchPoller` in issue #2844). The `WorkDistribution:Dispatch:Enabled` flag and its Helm wiring have been removed; `Scheduler:Dispatch:Enabled` remains the control flag.
 
 **Reassess when:** No longer needs reassessment — the correct architecture is in place.
 
@@ -1886,6 +1887,116 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 
 ---
 
+### IssueReworkService: fail-closed on missing active-run data is intentional
+
+**Date:** 2026-09-22
+**Category:** architecture
+
+**Decision:** When `HousekeepingService` fails to fetch the active-run branch set (Step 4 throws), `IssueReworkService.TriggerConflictReworkAsync` skips ALL rework swaps for that cycle — it does not attempt partial rework on PRs where branches appear safe. Fail-closed is correct: a double-dispatch (swapping `agent:next` onto an issue that already has an active run) produces a stuck duplicate label state that requires manual recovery. A one-cycle rework delay during a K8s blip costs nothing — the housekeeping loop retries on the next iteration. The system runs in the background on a loop; liveness pressure does not outweigh safety.
+
+**Context:** Same fail-closed principle as `PipelineLoopService` leader-gating and `IssueReworkService`'s per-PR active-run check. Partial application with incomplete state data is the category of mistake that created the `DispatchGatedLabels` mechanism.
+
+**Alternatives considered:** Fail-open on missing active-run data (swap where branch name doesn't appear in partial result — unsafe; a truncated or errored list looks identical to "no active runs").
+
+**Reassess when:** A K8s list failure repeatedly blocks urgent rework for multiple consecutive cycles. At that point, add a staleness threshold: use last-known active-run data if it is less than N minutes old rather than treating any error as "unavailable."
+
+---
+
+### Dispatch 503: polling loop is the retry mechanism, no explicit handler needed
+
+**Date:** 2026-09-22
+**Category:** architecture
+
+**Decision:** When `DispatchWorkItemService.RunDispatchLifecycleAsync` returns HTTP 503 (PVC race or K8s Job creation failure), the work item remains in `Pending` state. The `WorkItemDispatchLoop` in the Scheduler is a polling loop — on the next cycle, the item is visible in the `Pending` queue and dispatch is retried automatically. No explicit 503-retry logic, dead-letter queue, or operator alert is needed. The system runs in the background on a loop; a missed dispatch attempt is transparently recovered on the next iteration. Speed is not a constraint for background work.
+
+**Context:** Same design principle as "system does not need to be super fast since it runs in the background on a loop anyway." The `DispatchPendingWorkItem` endpoint is the Scheduler-facing path; `DispatchWorkItem` is the agent-facing synchronous path. On the Scheduler path, 503 = "try next cycle." On the agent path (synchronous dispatch), 503 triggers `SafelyCancelOrphanedDispatchedWorkItemAsync` to prevent a stuck work item.
+
+**Alternatives considered:** Explicit retry-after header (adds complexity for a problem the poll loop already handles), dead-letter on repeated 503 (adds operator noise for what is usually a transient K8s blip), operator alert on first 503 (too noisy during routine K8s disruptions).
+
+**Reassess when:** If the polling interval is too coarse for the workload (items waiting multiple full cycles during sustained K8s issues), reduce `WorkItemDispatchLoopIntervalSeconds` or add exponential backoff within the dispatch loop itself.
+
+---
+
+### Zero open-issue context on decomposition run: InfrastructureFailure, not agent failure
+
+**Date:** 2026-09-22
+**Category:** architecture
+
+**Decision:** When `run.OpenIssuesDownloaded == 0` on a `DecompositionAnalysis` or `Decomposition` run, `DecompositionAnalysisStep` treats the missing plan file as `FailureReason.InfrastructureFailure` rather than a generic agent failure. The agent literally cannot produce a decomposition plan without issue context — a zero download count means all `RequestGetIssue` calls silently failed (cross-replica state miss or GitHub API failure). This is the orchestrator's fault, not the agent's. Classifying it as `InfrastructureFailure` preserves the retry budget for real agent failures.
+
+**Context:** `RequestGetIssue` returns 404 when the hub doesn't have the run registered (cross-replica state miss, most common during rolling deploys). Errors are swallowed per-identifier in the context writer. The `OpenIssuesDownloaded` counter is the trip-wire. Comparable systems (Devin, OpenHands) don't distinguish infrastructure failures from agent failures — everything consumes the retry budget. This system's distinction reflects that context-miss is a known, categorized failure mode.
+
+**Alternatives considered:** Generic failure classification (simpler, but penalizes the agent's retry budget for orchestrator faults), immediate retry on zero context (could loop indefinitely during sustained state-miss; bounded-retry via InfrastructureFailure path is safer).
+
+**Reassess when:** `InfrastructureFailure` becomes overloaded with multiple root causes that need different recovery strategies. If so, add more discriminating `FailureReason` variants.
+
+---
+
+### RequestGetIssue double-retry tier: intentional resilience, applies to CI waiting loop too
+
+**Date:** 2026-09-22
+**Category:** architecture
+
+**Decision:** `AgentHub.Decomposition.cs` and `AgentOrphanRecoveryService` use a second retry tier outside the provider's own `CreateGitHubApiPipeline` retry budget. The outer tier catches exceptions wrapping `"Failed to "` provider errors (thrown by `ExecuteWithIssueProviderAsync` when the provider's inner retry budget is exhausted) and retries with a 2-minute outer timeout. This two-tier approach is intentional: GitHub API blips lasting longer than the inner pipeline's budget exist in production (brief upstream outages, rate-limit surges at the token boundary). The outer tier provides a longer recovery window without requiring the inner retry count to be bloated. The same double-tier resilience pattern should be applied to the CI waiting loop (`PollCiWithNotStartedRetryAsync`) and other infrastructure-failure-mode loops where the provider call may fail transiently after the inner retry budget is exhausted.
+
+**Context:** The inner `CreateGitHubApiPipeline` has a short budget (tight retry timing, few attempts). A 2-minute outer timeout caps total retry time so this doesn't delay the agent indefinitely. The pattern follows the same reasoning as the `ExternalCiDuration` / `PollCiWithNotStartedRetryAsync` re-push mechanism: GitHub webhooks and API calls are unreliable enough that application-level resilience is required in addition to provider-level retry.
+
+**Alternatives considered:** Single tier with longer inner budget (inflates inner timing for all calls, not just blip-recovery scenarios), no outer tier (accepts occasional hard failure when inner budget is exhausted during brief upstream blips).
+
+**Reassess when:** GitHub API reliability improves measurably, or if the outer tier is observed masking repeated failures that should surface as errors. Track via: `stall.RequestGetIssue.outer_retry_fired` counter if added.
+
+---
+
+### ChatSessionWatcher idle-kill: watcher self-await is a known gap, force-delete is the current invariant
+
+**Date:** 2026-09-22
+**Category:** architecture
+
+**Decision:** No strong preference on whether the `ChatSessionWatcher.TryTriggerIdleKillAsync` self-await deadlock is fixed. The current behavior — every idle chat kill burns `ChatTerminationGracePeriodSeconds` before cleanup, with the graceful path structurally unreachable — is acceptable. Force-delete is always correct for idle kills (unresponsive or idle agents by definition don't need graceful shutdown). The grace period wait is a bounded cost (`ChatTerminationGracePeriodSeconds`) and the code has a `// TODO [WARNING]` for the fix. Agents may fix it by routing idle-kill directly through K8s delete + `CleanupSession` (bypassing `TerminateChatSessionAsync`), but only if the idempotent `CleanupSession` CAS gate is preserved.
+
+**Context:** `entry.WatcherTask` is the task running `WatchJobUntilTerminalAsync`, so calling `TerminateChatSessionAsync` (which awaits `entry.WatcherTask`) from inside that task creates a self-await that always times out. The fix is structurally clean: idle-kill should invoke K8s delete directly then call `cleanupCallback` — the same pattern `TerminateChatSessionAsync` uses after the grace period elapses anyway. The pre-existing behavior predates the `ChatSessionWatcher` extraction.
+
+**Alternatives considered:** Keep current (force-delete is correct for idle; grace period is bounded overhead — acceptable); fix via direct K8s delete path (restores graceful kill when agent responds before grace period — faster cleanup, less noise in K8s events).
+
+**Reassess when:** Operators report K8s events noise from repeated force-deletes on idle chat kills, or if `ChatTerminationGracePeriodSeconds` is increased to a value where the overhead becomes measurable.
+
+---
+
+### ChatHeartbeatTracker null-tracker: Redis required for multi-replica is already documented — no-opinion on startup warning
+
+**Date:** 2026-09-22
+**Category:** architecture
+
+**Decision:** No strong preference on whether `ChatJobDispatcher.StartAsync` emits a startup warning when `_heartbeatTracker is null` and the API is running multi-replica. The "Chat keepalive Redis required for multi-replica" decision already documents the requirement. The `DistributedAgentRegistryService` pattern (explicit startup warning) would add consistency, but the silent null-tracker degradation is also acceptable since Redis is documented as a multi-replica prerequisite. Agents may add the warning for consistency with `DistributedAgentRegistryService`; no blocking issue exists.
+
+**Context:** `ChatJobDispatcher` receives `null` for `IChatHeartbeatTracker` when Redis is absent, falling back to local in-process ticks. In multi-replica deployments this causes false idle-kills after `ChatIdleTimeoutSeconds`. The existing startup warning in `DistributedAgentRegistryService` follows the same scenario.
+
+**Reassess when:** A production incident traces to chat pods being falsely idle-killed with no log indication that Redis was absent. At that point add the startup warning.
+
+---
+
+### DispatchPendingWorkItem advisory lock asymmetry: follow best practices
+
+**Date:** 2026-09-22
+**Category:** architecture
+
+**Decision:** No strong preference on whether the advisory lock in `DispatchPendingWorkItem` (Scheduler path) is also applied to `DispatchWorkItem` (agent-synchronous path). The asymmetry is neither confirmed intentional nor confirmed an oversight. Both patterns are acceptable: the CAS inside `ExecuteDispatchLifecycleAsync` is the cross-path correctness guard; the advisory lock is an efficiency optimization. Agents adding a third dispatch path should assess whether concurrent calls are possible on that path — if yes, follow the `DispatchPendingWorkItem` pattern (add the advisory lock); if no, follow `DispatchWorkItem` (CAS only).
+
+**Reassess when:** An over-dispatch race is traced to the `DispatchWorkItem` path in multi-replica operation. At that point, apply the Postgres advisory lock matching `DispatchPendingWorkItem`.
+
+---
+
+### PvcPoolExhaustions counter placement: follow KISS and DRY
+
+**Date:** 2026-09-22
+**Category:** architecture
+
+**Decision:** No strong preference on whether `PvcPoolExhaustions` is emitted exclusively from `DispatchPendingWorkItem` (current) or from all paths that hit the PVC gate. Follow KISS and DRY: if the counter should measure "any PVC gate 503", move it into `ApplyGates` where the gate fires. If the counter's intended semantics are "Scheduler-blocked-by-PVC only" (current comments say this), leave it at the call site. Agents should not introduce a third emission site without aligning with the existing comment-documented intent. If the semantics are clarified to "all exhaustion events", move the counter into `ApplyGates` and remove the two existing call-site emissions.
+
+**Reassess when:** A Grafana dashboard query is documented that relies on the current Scheduler-only semantics, at which point the metric's scope is locked. Until then, either interpretation is acceptable — just keep it consistent.
+
+---
+
 ## Decision Map
 
 ### Relationships
@@ -2031,6 +2142,29 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 - ~~EnsureSessionAsync stall monitoring coverage~~ — resolved session 23: both call sites already wrapped; post-PR enrichment intentionally excluded
 - DispatchWorkItemService.ApplyGates sanitization contract — session 24: no-opinion, follow existing value-type pattern if adding new user-controlled parameters
 - Conflict rework and stale-branch label policy — session 24: decisions captured (#2880, #2881 for follow-ups)
+- ChatSessionWatcher idle-kill watcher-self-await — session 25: no-opinion (force-delete path is the invariant; fix acceptable if pursued)
+- RequestGetIssue double-retry tier — session 25: intentional resilience pattern; same policy applies to CI waiting loop
+- Zero open-issue context = InfrastructureFailure — session 25: confirmed correct classification
+- Dispatch 503 recovery — session 25: next poll cycle is the retry mechanism; no explicit 503 handler needed
+- IssueReworkService fail-closed on missing active-run data — session 25: confirmed correct; safety over liveness on a polling loop
+- PvcPoolExhaustions counter placement — session 26: no-opinion, follow KISS/DRY — emit from ApplyGates if semantics are "all exhaustion events", leave at call site if Scheduler-only is intentional
+- DispatchPendingWorkItem advisory lock asymmetry — session 26: no-opinion, follow best practices on new dispatch paths
+- ChatHeartbeatTracker null-tracker startup warning — session 26: no-opinion, Redis already documented as required; warning would add consistency
+
+- "PvcPoolExhaustions counter placement: follow KISS/DRY" scoped by "Telemetry philosophy: instrument every decision point" (counter scope must match the event semantics; KISS/DRY favors single-site emission)
+- "DispatchPendingWorkItem advisory lock asymmetry: follow best practices" scoped by "Dispatch loop belongs in a leader-elected controller" (advisory lock is the per-path contention guard; CAS is the cross-path correctness guard)
+- "ChatHeartbeatTracker null-tracker: Redis required for multi-replica" scoped by "Chat keepalive Redis required for multi-replica" (null-tracker is the fallback when the documented requirement is not met)
+
+- "IssueReworkService: fail-closed on missing active-run data" scoped by "Partial failure contract: enrichment non-fatal, critical path fatal" (rework swap is enrichment — skipping one cycle is non-fatal; double-dispatch would be a correctness violation)
+- "IssueReworkService: fail-closed on missing active-run data" scoped by "HousekeepingActiveLabels: narrow by design" (both are housekeeping guard conditions that fail-closed when state is uncertain)
+- "Dispatch 503: polling loop is retry mechanism" scoped by "Dispatch loop belongs in a leader-elected controller" (Scheduler's WorkItemDispatchLoop is the polling loop that picks up Pending items; 503 = item stays Pending)
+- "Dispatch 503: polling loop is retry mechanism" correlates with "AssignmentEnricher: 503 on enrichment failure" (both use 503 as a signal that the work item must be retried — but at different layers: Scheduler-facing vs agent-facing)
+- "Zero open-issue context = InfrastructureFailure" scoped by "Partial failure contract: enrichment non-fatal, critical path fatal" (context delivery is on the critical path for decomposition; zero context is infrastructure fault, not agent fault)
+- "Zero open-issue context = InfrastructureFailure" scoped by "Open issue context: cross-issue awareness" (the context system failing completely is a different failure mode than partial or absent context by design)
+- "RequestGetIssue double-retry tier: intentional" scoped by "External CI re-push: workaround for GitHub webhook unreliability" (same root cause: GitHub API and webhook delivery are unreliable; application-layer resilience on top of provider-layer retry is the established pattern)
+- "RequestGetIssue double-retry tier: intentional" constrains "RequestGetIssue double-retry tier applies to CI waiting loop too" (same pattern should be applied consistently across all provider-dependent polling loops)
+- "ChatSessionWatcher idle-kill self-await: force-delete invariant" scoped by "AgentJobTimeoutSeconds: unified backstop" (grace period cost is bounded; force-delete on idle is correct regardless of agent responsiveness)
+- "ChatSessionWatcher idle-kill self-await: force-delete invariant" scoped by "Chat keepalive Redis required for multi-replica" (idle-kill fires when heartbeat is absent; Redis is the authoritative heartbeat for multi-replica — both decisions protect chat session correctness)
 
 ### Queued Questions (for next session)
 - Automated calibration design — when a clear mechanism emerges, revisit
@@ -2038,6 +2172,8 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 - Grafana Faro CSP: when CSP is added, revisit `script-src` to include `unpkg.com`
 - RetryErrors transient-enqueue gate: if failure-feedback prompt accuracy degrades, revisit gating Enqueue on RetryOutcome.Retry
 - ProviderConfigId Phase 2: apply if natural opportunity arises (no-opinion, no blocking issue)
+- ChatSessionWatcher idle-kill deadlock: if the watcher self-await TODO is actioned, verify the fix doesn't regress the idempotent CleanupSession CAS gate
+- RequestGetIssue double-retry: verify same pattern applied to CI waiting loop (PollCiWithNotStartedRetryAsync)
 
 ---
 

@@ -5,10 +5,10 @@
 The application runs on Kubernetes as five distinct processes:
 
 - **Orchestrator** (`CodingAgent.Web`) — Blazor Server app. Hosts the web UI. No direct database access — all config and run history read from the Pipeline API via HTTP. `IAgentHubConnection` (defined in `CodingAgent.Api.Client`, scoped per Blazor circuit) subscribes to the API hub for live run streaming.
-- **Pipeline API** (`CodingAgent.Api`) — HTTP and SignalR hub server. Authoritative database owner (EF Core + Postgres). Hosts `AgentHub`, `AgentRegistryService`, `OrchestratorRunService`, `DatabaseMaintenanceService`, and `ChatJobDispatcher`.
+- **Pipeline API** (`CodingAgent.Api`) — HTTP and SignalR hub server. Authoritative database owner (EF Core + Postgres). Hosts `AgentHub`, `AgentRegistryService`, `OrchestratorRunService`, `DatabaseMaintenanceService`, `ChatJobDispatcher`, `ChatSessionWatcher`, and `ChatHeartbeatTracker`.
 - **Job Controller** (`CodingAgent.JobController`) — Kubernetes Job dispatch. Receives dispatch requests from `KubernetesWorkDistributor` (in the Pipeline API) and creates K8s Jobs atomically via `POST /api/work-items/dispatch`. Leader-elected via a `caa-{release}-dispatch-lock` Lease (name configured via `jobController.leaderElection.dispatchLeaseName`). Stateless between dispatches; all state lives in Postgres via the API.
 - **Scheduler** (`CodingAgent.Scheduler`) — Owns all scheduled/periodic background work: orphaned label recovery, housekeeping, work-item metrics polling, and periodic maintenance sweeps. No direct Postgres connection — all persistence goes through the Pipeline API. Leader-elected via `caa-{release}-scheduler-lock` Lease.
-- **Agent Host** (`CodingAgent.Agent`) — Ephemeral K8s Job pod. Connects to the Pipeline API hub using `AGENT_API_KEY` as a Bearer token. Picks up assignments via `GET /api/work-items/{id}/assignment`, reports progress and terminal status via hub methods and `POST /api/work-items/{id}/status`. Two execution modes: _work-item pods_ (spawned with `--work-item-id`) and _chat pods_.
+- **Agent Host** (`CodingAgent.Agent`) — Ephemeral K8s Job pod. Connects to the Pipeline API hub using `AGENT_API_KEY` as a Bearer token. Picks up assignments via `GET /api/work-items/{id}/assignment`, reports progress and terminal status via hub methods and `POST /api/work-items/{id}/status`. Two execution modes: _work-item pods_ (started with `--mode=workitem --work-item-id=<guid>`) and _chat pods_ (started with `--mode=chat`). Both flags are required for work-item mode; `--mode` alone is sufficient for chat mode.
 
 Supporting libraries (shared, not deployed independently):
 
@@ -16,7 +16,7 @@ Supporting libraries (shared, not deployed independently):
 - **Infrastructure.Persistence** (`CodingAgent.Infrastructure.Persistence`) — EF Core context, database migrations, config store. Directly referenced by `CodingAgent.Api` and `CodingAgent.AgentGateway`. The Scheduler and Orchestrator have no direct or transitive reference to Persistence.
 - **Infrastructure.Providers** (`CodingAgent.Infrastructure.Providers`) — Provider implementations (GitHub, GitLab, filesystem), token vending. Linked into the Pipeline API, Agent, Scheduler, Job Controller, and Orchestration.
 - **Pipeline** (`CodingAgent.Pipeline`) — Core pipeline model, step execution, `PipelineLoopService`, `HousekeepingService`, `DispatchScheduler`, interfaces, constants. Linked into the Scheduler (which registers and runs these services), the Pipeline API, and the Orchestrator (for pipeline model types and loop-status polling).
-- **Hub** (`CodingAgent.AgentGateway`) — Full hub implementation: `AgentHub` (split across 8 partial classes), authentication handlers (`AgentApiKeyAuthHandler`), `ChatJobDispatcher` (ephemeral chat pod dispatch), job lifecycle services (`AgentJobLifecycleService`, `AgentOrphanRecoveryService`, `AgentTokenRefreshService`), `AgentHubFacade`, and DI wiring. Linked into the Pipeline API and Orchestrator.
+- **Hub** (`CodingAgent.AgentGateway`) — Full hub implementation: `AgentHub` (split across 8 partial classes), authentication handlers (`AgentApiKeyAuthHandler`), chat pod dispatch and session management (`ChatJobDispatcher` — dispatch and lifecycle, `ChatSessionWatcher` — per-session idle-kill and watcher loop, `ChatHeartbeatTracker` — Redis cross-replica heartbeat storage), job lifecycle services (`AgentJobLifecycleService`, `AgentOrphanRecoveryService`, `AgentTokenRefreshService`), `AgentHubFacade`, and DI wiring. Linked into the Pipeline API and Orchestrator.
 
 ### Agent API Keys
 
@@ -78,7 +78,7 @@ The chart deploys:
 |------|-------------|
 | `orchestrator.image.repository/tag` | Orchestrator container image |
 | `web.replicas` | Number of Orchestrator (web) replicas (default: `2`). Values > 1 require `signalr.redis.connectionString` to be set for correct chat keepalive behavior (see Redis note below). |
-| `api.replicas` | Number of Pipeline API replicas (default: `1`). Values > 1 require `signalr.redis.connectionString` to be set — the chart fails at render time otherwise, since without Redis in-memory state cannot be shared across replicas. |
+| `api.replicas` | Number of Pipeline API replicas (default: `2`). Values > 1 require `signalr.redis.connectionString` to be set — the chart fails at render time otherwise, since without Redis in-memory state cannot be shared across replicas. |
 | `jobTemplates[]` | List of K8s Job templates defining pod specs per label set. Each entry controls which image, resources, securityContext, initContainers, and `maxConcurrent` to use when dispatching work-item pods. |
 | `secrets.agentApiKey` | HMAC master key for agent auth |
 | `secrets.otelHeaders` | OTLP auth headers |
@@ -105,6 +105,8 @@ The chart deploys:
 | `credentialPools.kiro` | List of PVC names for Kiro agent credential data. PVCs **must** use `ReadWriteOnce` or `ReadWriteOncePod` to prevent concurrent access from multiple agent Jobs. The pipeline API claims one PVC per dispatched Job. |
 | `signalr.redis.enabled` | Documents intent to enable Redis backplane (default: `false`). Note: the Helm templates only check `signalr.redis.connectionString` — setting `enabled: true` without a non-empty `connectionString` has no effect. To activate the backplane, set `signalr.redis.connectionString` to a non-empty value. |
 | `signalr.redis.connectionString` | Redis connection string (deploy Redis independently) |
+| `scheduler.dispatch.enabled` | **Must be `true` for the dispatch loop to run.** Defaults to `false`. The API-side dispatch loop was removed in issue #2547; `scheduler.dispatch.enabled=true` activates the `WorkItemDispatchLoop` in the Scheduler as the sole dispatcher. A deployment with this left at `false` will have no active dispatcher — `Pending` WorkItems accumulate indefinitely. Set explicitly on every install/upgrade: `--set scheduler.dispatch.enabled=true`. |
+| `web.consolidation.unifiedDispatch.enabled` / `scheduler.consolidation.unifiedDispatch.enabled` | Feature flag for the unified consolidation dispatch path (default: `false`). When `false`, consolidation runs use the legacy synchronous dispatch path. Set both `web.consolidation.unifiedDispatch.enabled=true` and `scheduler.consolidation.unifiedDispatch.enabled=true` together to enable. Only enable after issue #2563 (RunType tier ordering at dispatch) is deployed. |
 | `monitoring.prometheusRules.enabled` | Create PrometheusRule resources for alerting (requires Prometheus Operator) |
 
 ### Defining Agent Pod Templates
@@ -189,8 +191,7 @@ Three independent leases are used — one per relevant process (the Pipeline API
 | `PipelineLoopService` | Dispatches pipeline runs | Pauses (leader gate blocks loop entry) |
 | `OrphanedLabelRecoveryService` | Sweeps for issues with stale `agent:in-progress` labels | Waits |
 | `HousekeepingService` | Manages `agent:done` PRs, branch updates, and stale branch cleanup | Waits |
-| `WorkItemCountsPoller` | Emits work-item count metrics to `CodingAgent.WorkDistribution` | Waits |
-<!-- TODO: [WARNING] Stale class name — WorkItemCountsPoller was renamed to WorkItemCountsService (issue #2844). Update this table row. -->
+| `WorkItemCountsService` | Emits work-item count metrics to `CodingAgent.WorkDistribution` | Waits |
 
 #### Configuration
 

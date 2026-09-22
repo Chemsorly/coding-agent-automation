@@ -33,7 +33,7 @@ After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pip
 │  PipelineDbContext (EF Core)  — authoritative Postgres access               │
 │  WorkItemEndpoints, ConfigEndpoints, PipelineRunEndpoints                  │
 │  DatabaseMaintenanceService (triggered by Scheduler via HTTP)              │
-│  ChatJobDispatcher                                                          │
+│  ChatJobDispatcher + ChatSessionWatcher + ChatHeartbeatTracker             │
 │  No leader election lease                                                   │
 └─────────────────────────────────────────────────────────────────────────────┘
          │  POST /api/work-items (claim)   ▲ hub: ReportOutputLines etc.
@@ -55,14 +55,12 @@ After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pip
 │  PipelineLoopService  — dispatches impl/review/decomp runs                  │
 │  OrphanedLabelRecoveryService                                               │
 │  HousekeepingService                                                        │
-│  WorkItemCountsPoller  — emits WorkDistributionTelemetry gauges             │
+│  WorkItemCountsService  — emits WorkDistributionTelemetry gauges            │
 │  Lease: caa-{release}-scheduler-lock                                        │
 │                                                                             │
 │  No EF Core. All persistence via Pipeline API (HTTP).                       │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
-
-<!-- TODO: [WARNING] Stale class name in ASCII diagram above — WorkItemCountsPoller was renamed to WorkItemCountsService (issue #2844). Update the diagram when this document is next revised. -->
 
 ### Where the Locking-Critical Singletons Live
 

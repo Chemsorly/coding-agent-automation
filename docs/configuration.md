@@ -91,16 +91,16 @@ These control in-memory bounded data structures for each pipeline run. Rarely ne
 
 ### Chat Pod Lifecycle
 
-These settings control the lifetime of ephemeral chat session pods dispatched by `ChatJobDispatcher`. They map to `workDistribution.dispatch.*` in `values.yaml` and are bound via `WorkDistribution:Dispatch:*` environment variables on the Pipeline API and Job Controller.
+These settings control the lifetime of ephemeral chat session pods. Pod dispatch is handled by `ChatJobDispatcher`; the per-session idle-kill loop and K8s job polling run in `ChatSessionWatcher`; cross-replica heartbeat storage uses `ChatHeartbeatTracker` (only when Redis is configured). Settings map to `workDistribution.dispatch.*` in `values.yaml` and are bound via `WorkDistribution:Dispatch:*` environment variables on the Pipeline API and Job Controller.
 
 | values.yaml key / env var | Default | Description |
 |---------------------------|---------|-------------|
 | `workDistribution.dispatch.chatJobMaxDurationSeconds` | 7200 | Maximum lifetime (seconds) of a **chat session** K8s Job pod. Sets `activeDeadlineSeconds` on the chat pod spec — the pod is forcibly terminated by Kubernetes when this deadline passes. Minimum: 60s. **Note:** this setting does NOT apply to work-item agent jobs or consolidation jobs; those derive their `activeDeadlineSeconds` from `PipelineConfiguration.AgentTimeout` (per-project overridable, default 30 min). See [Configuration — Pipeline Settings](configuration.md#pipeline-settings). |
 | `workDistribution.dispatch.chatPodConnectTimeoutSeconds` | 120 | Maximum time (seconds) the dispatcher waits for a chat pod to connect to the hub after the Job is created before aborting and returning an error to the caller. Minimum: 5s. |
 | `workDistribution.dispatch.chatTerminationGracePeriodSeconds` | 120 | `terminationGracePeriodSeconds` on the chat pod spec — time Kubernetes allows for graceful shutdown before SIGKILL. Minimum: 5s. |
-| `workDistribution.dispatch.chatIdleTimeoutSeconds` | 90 | Seconds a chat pod may remain idle (no client keepalive heartbeat) before the watcher terminates it automatically. The Blazor UI sends a heartbeat while the chat window is open; closed or crashed windows are cleaned up within this window. Minimum: 10s. |
+| `workDistribution.dispatch.chatIdleTimeoutSeconds` | 90 | Seconds a chat pod may remain idle (no client keepalive heartbeat) before `ChatSessionWatcher` terminates it automatically. The Blazor UI sends a heartbeat while the chat window is open; closed or crashed windows are cleaned up within this window. Minimum: 10s. |
 
-> **Note on `api.replicas`:** The `WorkDistribution:Dispatch:ChatReplicaCount` env var is automatically derived from `api.replicas` by the Helm chart — it is not a standalone `workDistribution.dispatch.*` key. When Redis is absent and `api.replicas > 1`, `ChatJobDispatcher` emits a startup warning that keepalive heartbeats may be silently lost on non-watcher replicas.
+> **Note on `api.replicas`:** The `WorkDistribution:Dispatch:ChatReplicaCount` env var is automatically derived from `api.replicas` by the Helm chart — it is not a standalone `workDistribution.dispatch.*` key. When Redis is absent and `api.replicas > 1`, `ChatJobDispatcher` emits a startup warning that keepalive heartbeats may be silently lost on non-watcher replicas (since `ChatHeartbeatTracker` is only instantiated when Redis is configured).
 
 ## Quality Gate Settings
 
@@ -316,7 +316,7 @@ The maintenance service is triggered by the Scheduler via `POST /api/scheduler/m
 | `AGENT_API_KEY` | Must match the orchestrator's key |
 | `AGENT_API_KEY_FILE` | File path containing the API key (K8s Secret mount alternative to `AGENT_API_KEY` env var) |
 | `AGENT_PROVIDER_TYPE` | Agent backend type: `KiroCli` or `OpenCode`. When absent or empty, defaults to `KiroCli`. |
-| `KIRO_CLI_PATH` | Override path for the Kiro CLI executable (default: `/home/ubuntu/.local/bin/kiro-cli`) |
+| `KIRO_CLI_PATH` | Override path for the Kiro CLI executable (default: `/root/.local/bin/kiro-cli`) |
 | `OPENCODE_BASE_URL` | Override base URL for the OpenCode HTTP API (default: `http://127.0.0.1:4096`) |
 | `OPENCODE_CONFIG_CONTENT` | JSON configuration for OpenCode agents (injected as environment variable, not needed for Kiro agents) |
 | `OPENCODE_SERVER_PASSWORD` | Password for OpenCode server authentication (required for OpenCode agents) |
