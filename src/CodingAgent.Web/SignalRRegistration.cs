@@ -1,11 +1,4 @@
 using CodingAgent.AgentGateway;
-using CodingAgent.Orchestration.Registry;
-using CodingAgent.Pipeline.Models;
-using MessagePack;
-using MessagePack.Formatters;
-using MessagePack.Resolvers;
-using Microsoft.AspNetCore.SignalR;
-using Serilog;
 
 namespace CodingAgent.Web;
 
@@ -17,33 +10,13 @@ internal static class SignalRRegistration
 {
     /// <summary>
     /// Adds SignalR hub services with MessagePack protocol and agent authorization filter.
+    /// Delegates to <see cref="AgentSignalRServiceCollectionExtensions.AddAgentSignalRServices"/>
+    /// so the formatter list and filter wiring are defined exactly once in
+    /// <c>CodingAgent.AgentGateway</c>.
     /// </summary>
     public static IServiceCollection AddSignalRServices(this IServiceCollection services)
     {
-        services.AddSignalR(options =>
-            {
-                // Agents may send output chunks or large payloads; default 32KB is too restrictive.
-                options.MaximumReceiveMessageSize = 128 * 1024; // 128 KB
-                // AddFilter is the ONLY way to activate a hub filter. Registering
-                // AgentAuthorizationFilter as IHubFilter in DI does not install it.
-                // The filter short-circuits for non-AgentHub hubs, so Blazor's ComponentHub
-                // is unaffected.
-                options.AddFilter<AgentAuthorizationFilter>();
-            })
-            .AddMessagePackProtocol(options =>
-            {
-                options.SerializerOptions = MessagePackSerializerOptions.Standard
-                    .WithResolver(CompositeResolver.Create(
-                        new IMessagePackFormatter[] { new JobIdFormatter(), new AgentIdFormatter() },
-                        new IFormatterResolver[] { ContractlessStandardResolverAllowPrivate.Instance }));
-            });
-
-        // Hub filter for agent authorization — resolved by AddFilter<AgentAuthorizationFilter>()
-        // above, so it must be registered under its concrete type.
-        services.AddSingleton(sp => new AgentAuthorizationFilter(
-            sp.GetRequiredService<IAgentRegistryService>(),
-            Log.Logger));
-
+        services.AddAgentSignalRServices();
         return services;
     }
 }

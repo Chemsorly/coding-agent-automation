@@ -861,6 +861,70 @@ public partial class LayerBoundaryTests
             "Complete T8 to remove these references.");
     }
 
+    // ── Issue #2862: SignalR + MessagePack registration must not be duplicated ─────
+    // After consolidation into CodingAgent.AgentGateway (AddAgentSignalRServices), neither
+    // host registration file may contain the MessagePack protocol setup or the
+    // AgentAuthorizationFilter singleton registration. This source-scan guard prevents
+    // the duplication from creeping back in.
+    //
+    // Scans the two host-specific registration files only (not the shared extension itself).
+    //
+    // TODO: This test only verifies that forbidden patterns are ABSENT from host files. It does
+    // not assert that the shared extension (AgentSignalRServiceCollectionExtensions.cs) actually
+    // CONTAINS the canonical patterns (CompositeResolver.Create, JobIdFormatter, AgentIdFormatter,
+    // MaximumReceiveMessageSize, new AgentAuthorizationFilter, etc.). If the shared extension were
+    // deleted or emptied, this test would still pass. Consider adding a complementary positive
+    // assertion over AgentSignalRServiceCollectionExtensions.cs.
+    //
+    // TODO: This test does not verify that the host registration files actually CALL
+    // AddAgentSignalRServices. If that delegation were replaced with a no-op or removed entirely,
+    // the hub would silently lose the MessagePack protocol and the authorization filter, but this
+    // test would still pass because no forbidden patterns are present. Consider adding an assertion
+    // that each host file contains "AddAgentSignalRServices".
+    //
+    // TODO: This test does not scan the shared extension itself for internal duplication. A future
+    // contributor could add a second CompositeResolver.Create call inside
+    // AgentSignalRServiceCollectionExtensions.cs (e.g. in a new overload) and this test would not
+    // detect it. If the "defined exactly once" invariant matters, consider scanning the extension
+    // file and asserting that CompositeResolver.Create appears exactly once.
+
+    [Fact]
+    public void SignalRRegistration_ShouldNot_DuplicateSharedCore()
+    {
+        var filesToCheck = new[]
+        {
+            Path.Combine(RepoRoot, "src", "CodingAgent.Api",  "ApiSignalRRegistration.cs"),
+            Path.Combine(RepoRoot, "src", "CodingAgent.Web",  "SignalRRegistration.cs"),
+        };
+
+        // Patterns that must only appear in the shared AgentGateway extension,
+        // never in host-specific registration files.
+        var forbiddenPatterns = new[]
+        {
+            ("AddMessagePackProtocol(", "MessagePack protocol setup must live only in AddAgentSignalRServices (AgentGateway)"),
+            ("CompositeResolver.Create",  "MessagePack formatter list must live only in AddAgentSignalRServices (AgentGateway)"),
+            ("ContractlessStandardResolverAllowPrivate", "MessagePack resolver must live only in AddAgentSignalRServices (AgentGateway)"),
+            ("new AgentAuthorizationFilter(", "AgentAuthorizationFilter singleton registration must live only in AddAgentSignalRServices (AgentGateway)"),
+        };
+
+        var violations = new List<string>();
+        foreach (var filePath in filesToCheck)
+        {
+            Assert.True(File.Exists(filePath), $"Expected registration file not found: {filePath}");
+            var content = File.ReadAllText(filePath);
+            foreach (var (pattern, reason) in forbiddenPatterns)
+            {
+                if (content.Contains(pattern, StringComparison.Ordinal))
+                    violations.Add($"{Path.GetFileName(filePath)}: contains '{pattern}' — {reason}");
+            }
+        }
+
+        Assert.True(violations.Count == 0,
+            $"Host registration files contain SignalR/MessagePack setup that should only exist " +
+            $"in CodingAgent.AgentGateway.AgentSignalRServiceCollectionExtensions:\n" +
+            string.Join("\n", violations.Select(v => $"  {v}")));
+    }
+
     // ── Spec 048 Phase 4: the legacy monolith namespace prefix is fully retired ──
     // After the rename every type lives under CodingAgent.* (KiroCliLib excepted). No file may
     // reintroduce the old monolith-era prefix (assembled below as `forbidden`) — as a namespace,

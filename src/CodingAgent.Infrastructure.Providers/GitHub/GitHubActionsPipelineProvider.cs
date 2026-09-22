@@ -131,7 +131,7 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
         };
     }
 
-    public async Task<PipelineRunStatus> WaitForCompletionAsync(
+    public Task<PipelineRunStatus> WaitForCompletionAsync(
         string branchName, string? commitSha, TimeSpan timeout, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(branchName);
@@ -139,51 +139,16 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
         _logger.Information("Polling CI for branch {Branch} (commit: {CommitSha}, timeout: {Timeout})",
             branchName, commitSha ?? "any", timeout);
 
-        var pollCount = 0;
-        PipelineRunStatus? lastStatus = null;
-
-        return await TimeoutHelper.ExecuteWithTimeoutAsync(
-            timeout, ct,
-            async linkedCt =>
-            {
-                while (true)
-                {
-                    linkedCt.ThrowIfCancellationRequested();
-                    pollCount++;
-
-                    var status = await GetRunStatusAsync(branchName, commitSha, linkedCt);
-                    lastStatus = status;
-
-                    _logger.Information("CI poll #{PollCount}: {State} — {RunCount} run(s), {JobCount} job(s)",
-                        pollCount, status.State, status.Jobs.Count > 0 ? status.Jobs.Count : 0,
-                        status.Jobs.Count);
-
-                    if (status.State is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled)
-                    {
-                        _logger.Information("CI completed: {State} after {PollCount} poll(s)", status.State, pollCount);
-
-                        if (status.State == PipelineRunState.Failed)
-                        {
-                            status = await EnrichFailedJobsWithLogsAsync(status, linkedCt);
-                        }
-
-                        return status;
-                    }
-
-                    await Task.Delay(_pollInterval, linkedCt);
-                }
-            },
-            () =>
-            {
-                _logger.Warning("CI polling timed out after {Timeout} ({PollCount} polls). Last state: {State}",
-                    timeout, pollCount, lastStatus?.State);
-                return Task.FromResult(lastStatus ?? new PipelineRunStatus
-                {
-                    State = PipelineRunState.Pending,
-                    Jobs = Array.Empty<PipelineJobResult>(),
-                    CommitSha = commitSha
-                });
-            });
+        return PipelinePollingHelper.PollUntilCompleteAsync(
+            getRunStatusAsync: ct2 => GetRunStatusAsync(branchName, commitSha, ct2),
+            enrichFailedJobsAsync: (status, ct2) => PipelinePollingHelper.EnrichFailedJobsWithLogsAsync(
+                status, GetJobLogsAsync, "job", ct2, _logger),
+            isTerminalState: s => s.State is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled,
+            pollInterval: _pollInterval,
+            timeout: timeout,
+            logPrefix: "CI",
+            ct: ct,
+            logger: _logger);
     }
 
     /// <inheritdoc />
@@ -203,83 +168,6 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
             _logger.Warning(ex, "Failed to fetch logs for job (id={JobId})", jobId);
             return null;
         }
-    }
-
-    /// <summary>
-    /// Fetches full log content from the GitHub Actions API for each failed job.
-    /// </summary>
-    private async Task<PipelineRunStatus> EnrichFailedJobsWithLogsAsync(
-        PipelineRunStatus status, CancellationToken ct)
-    {
-        var failedJobIds = status.Jobs
-            .Where(j => j.State == PipelineRunState.Failed && j.JobId > 0)
-            .Select(j => j.JobId)
-            .ToHashSet();
-
-        if (failedJobIds.Count == 0)
-            return status;
-
-        var logsByJobId = await FetchLogsForFailedJobsAsync(failedJobIds, ct);
-
-        if (logsByJobId.Count == 0)
-            return status;
-
-        return new PipelineRunStatus
-        {
-            State = status.State,
-            Jobs = BuildEnrichedJobList(status.Jobs, logsByJobId),
-            Url = status.Url,
-            StartedAt = status.StartedAt,
-            CompletedAt = status.CompletedAt,
-            CommitSha = status.CommitSha
-        };
-    }
-
-    /// <summary>
-    /// Fetches log content for a set of failed job IDs. Returns a dictionary mapping
-    /// job ID to log content for each job where logs were successfully retrieved.
-    /// </summary>
-    private async Task<Dictionary<long, string>> FetchLogsForFailedJobsAsync(
-        IEnumerable<long> failedJobIds, CancellationToken ct)
-    {
-        var logsByJobId = new Dictionary<long, string>();
-        foreach (var jobId in failedJobIds)
-        {
-            var logContent = await GetJobLogsAsync(jobId, ct);
-            if (logContent is not null)
-            {
-                logsByJobId[jobId] = logContent;
-                _logger.Debug("Fetched {Length} chars of logs for failed job (id={JobId})",
-                    logContent.Length, jobId);
-            }
-        }
-        return logsByJobId;
-    }
-
-    /// <summary>
-    /// Produces a new job list with log content injected for jobs whose IDs appear in
-    /// <paramref name="logsByJobId"/>. Jobs not in the dictionary are returned unchanged.
-    /// </summary>
-    private static List<PipelineJobResult> BuildEnrichedJobList(
-        IReadOnlyList<PipelineJobResult> originalJobs,
-        Dictionary<long, string> logsByJobId)
-    {
-        return originalJobs.Select(job =>
-        {
-            if (logsByJobId.TryGetValue(job.JobId, out var content))
-            {
-                return new PipelineJobResult
-                {
-                    Name = job.Name,
-                    State = job.State,
-                    FailureReason = job.FailureReason,
-                    LogUrl = job.LogUrl,
-                    JobId = job.JobId,
-                    LogContent = content
-                };
-            }
-            return job;
-        }).ToList();
     }
 
     internal static PipelineRunState MapJobState(WorkflowJobStatus status, WorkflowJobConclusion? conclusion)
