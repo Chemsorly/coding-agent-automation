@@ -156,17 +156,93 @@ public class AgentConnectionManagerGateTests
         await terminalCloseTask.ContinueWith(_ => { });
     }
 
-    // TODO [WARNING]: Missing test — "InvokeAsync waits for registration before proceeding" is listed
-    // as a verified behaviour in the class comment but no test exercises it. A regression that removes
-    // `await WaitForRegistrationAsync(ct)` from InvokeAsync/InvokeAsync<T> would leave all existing
-    // tests green. Add a test that: holds the gate open, calls InvokeAsync concurrently, verifies it
-    // blocks, then completes the gate and verifies InvokeAsync proceeds. (Test Quality Review)
+    // ── InvokeAsync waits for registration before proceeding ─────────────────
 
-    // TODO [WARNING]: Missing test — "RegisterAgent is exempt from the gate (does not await itself —
-    // no deadlock)" is listed as a verified behaviour but has no test. A self-deadlock on the initial
-    // ConnectAndRegisterAsync call is the most dangerous failure mode; the issue spec explicitly
-    // required this test case. Add a test that calls ConnectAndRegisterAsync and verifies it completes
-    // without deadlocking. (Test Quality Review)
+    /// <summary>
+    /// Verifies that <see cref="AgentConnectionManager.InvokeAsync"/> waits for the registration
+    /// gate before forwarding the action to the hub. A regression removing
+    /// <c>await WaitForRegistrationAsync(ct)</c> from InvokeAsync would leave other gate tests green
+    /// but allow hub calls to proceed during reconnection, which would be rejected by the orchestrator.
+    /// </summary>
+    [Fact]
+    public async Task InvokeAsync_WhileGateIsOpen_BlocksUntilGateCompletes()
+    {
+        var startBlocker = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var blockingHub = new FakeHubConnectionManager
+        {
+            StartFunc = _ => startBlocker.Task.ContinueWith(_ => { })
+        };
+
+        var (manager, _) = CreateManager(factoryFunc: () => blockingHub);
+        manager.UpdateRegistration(TestRegistration);
+
+        // Start terminal-close recovery — resets the gate synchronously, then blocks in StartAsync
+        var terminalCloseTask = Task.Run(() =>
+            manager.HandleTerminalClosedAsync(null, maxAttempts: 1, delayOverride: _ => TimeSpan.Zero));
+
+        await Task.Delay(200); // let loop reset the gate and reach the blocking StartAsync
+
+        // InvokeAsync should block — gate is still open
+        var actionCalled = false;
+        var invokeTask = manager.InvokeAsync(
+            (conn, ct) => { actionCalled = true; return Task.CompletedTask; },
+            CancellationToken.None);
+
+        var completedEarly = await Task.WhenAny(invokeTask, Task.Delay(150));
+        completedEarly.Should().NotBe(invokeTask,
+            "InvokeAsync must block while the registration gate is incomplete");
+        actionCalled.Should().BeFalse("the action must not be called while the gate is open");
+
+        // Release the StartAsync blocker — reconnect completes, gate gets TrySetResult
+        startBlocker.SetResult(true);
+
+        // InvokeAsync should now unblock (action may throw since FakeHub isn't started — that's fine)
+        // TODO [WARNING]: This test does not assert actionCalled becomes true after the gate is released.
+        // The ContinueWith below swallows both success and failure, so if a regression prevents the action
+        // from ever being called (e.g. method throws before invoking it), the BeLessThan(2000ms) timing
+        // assertion still passes. Assert actionCalled.Should().BeTrue() or verify the task result separately.
+        // (AgentConnectionManagerGateTests.cs:156 — TestQualityReviewer review)
+        //
+        // TODO [WARNING]: This test only covers the non-generic InvokeAsync overload. The generic
+        // InvokeAsync<T> overload also calls _coordinator.WaitForRegistrationAsync(ct) independently.
+        // A regression removing that call from the <T> overload would not be detected. Add a parallel
+        // test for InvokeAsync<T> blocking on the gate.
+        // (AgentConnectionManagerGateTests.cs:156 — TestQualityReviewer review)
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await invokeTask.ContinueWith(_ => { }); // swallow action failure
+        sw.Stop();
+
+        sw.ElapsedMilliseconds.Should().BeLessThan(2000,
+            "InvokeAsync must unblock promptly once the gate is completed");
+
+        await terminalCloseTask.ContinueWith(_ => { });
+    }
+
+    // ── ConnectAndRegisterAsync does not self-deadlock ───────────────────────
+
+    /// <summary>
+    /// Verifies that <see cref="AgentConnectionManager.ConnectAndRegisterAsync"/> does not deadlock
+    /// by awaiting the registration gate it is about to complete. The gate starts completed, so
+    /// <c>InvokeAsync</c>/<c>WaitForRegistrationAsync</c> must not block the call path.
+    /// </summary>
+    [Fact]
+    public async Task ConnectAndRegisterAsync_CompletesWithoutDeadlock()
+    {
+        var (manager, _) = CreateManager();
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        // FakeHub.StartAsync succeeds; the RegisterAgent InvokeAsync on an unstarted HubConnection
+        // will throw — that is expected in tests (no real server). The key assertion is it completes
+        // rather than hanging forever.
+        await manager.ConnectAndRegisterAsync(TestRegistration, cts.Token)
+            .ContinueWith(_ => { }); // swallow any connect/register failure
+
+        // If we reach here without the CTS firing, there was no deadlock
+        cts.IsCancellationRequested.Should().BeFalse(
+            "ConnectAndRegisterAsync must not deadlock (must not await the gate it completes)");
+    }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
