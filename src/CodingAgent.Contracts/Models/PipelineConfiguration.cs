@@ -23,23 +23,35 @@ public sealed record PipelineConfiguration
 
     [Key(4)]
     [ProjectOverridable(Order = 3)]
-    // TODO [WARNING]: The init accessor throws ArgumentOutOfRangeException on TimeSpan.Zero.
-    // PipelineConfiguration is deserialized from persisted JSON via System.Text.Json in
-    // PostgresConfigurationStore.LoadPipelineConfigAsync/UpdatePipelineConfigAsync, which invokes
-    // the init setter during deserialization. Any existing PipelineConfig DB row that previously
-    // stored "AgentTimeout":"00:00:00" (a value that was legal before this validation was added —
-    // the integration test formerly saved/loaded TimeSpan.Zero) will now throw at load time,
-    // breaking config loading for the entire application. If any such rows exist in production,
-    // either add a DB migration to normalize stored zeros to PipelineConstants.DefaultAgentTimeout,
-    // or clamp/normalize a loaded zero value before assignment rather than throwing.
-    // (Correctness review [WARNING] @ PipelineConfiguration.cs:31)
     public TimeSpan AgentTimeout
     {
         get => _agentTimeout;
         init
         {
+            // Clamp a stored zero to the default rather than throwing.
+            // PipelineConfiguration is deserialized from persisted JSON by System.Text.Json (via
+            // PostgresConfigurationStore.LoadPipelineConfigAsync/UpdatePipelineConfigAsync), which
+            // invokes init setters during deserialization. Any DB row that previously stored
+            // "AgentTimeout":"00:00:00" — a value that was legal before this validation was added —
+            // or a null value (TimeSpanJsonConverter.Read returns TimeSpan.Zero for null) would crash
+            // config loading for the entire application if we throw here. Normalize zero to the default
+            // so stale rows are self-healing without requiring a DB migration.
+            // Negative values remain invalid (programmatic misuse) and still throw.
+            if (value == TimeSpan.Zero)
+            {
+                _agentTimeout = PipelineConstants.DefaultAgentTimeout;
+                return;
+            }
+            // TODO [WARNING]: ThrowIfLessThan(value, TimeSpan.Zero) produces a runtime message of
+            // "must be greater than or equal to 00:00:00", which is technically correct but misleading:
+            // the actual allowed range is strictly positive (> 0), because zero is already intercepted
+            // by the early-return clamp above. The only code path that reaches this guard is a negative
+            // value (programmatic misuse). Consider replacing with a manual throw new
+            // ArgumentOutOfRangeException(nameof(AgentTimeout), value, "AgentTimeout must be positive.")
+            // to produce a message that matches the actual contract.
+            // (Correctness review [WARNING] @ PipelineConfiguration.cs:50)
 #pragma warning disable S3236 // 'value' is the implicit init parameter; callers need the property name in the exception.
-            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value, TimeSpan.Zero, nameof(AgentTimeout));
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, TimeSpan.Zero, nameof(AgentTimeout));
 #pragma warning restore S3236
             _agentTimeout = value;
         }
