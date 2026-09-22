@@ -1,4 +1,5 @@
 using CodingAgent.Orchestration;
+using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR;
@@ -96,23 +97,33 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
             }
 
             // Retry once on transient null: provider config store may have a brief propagation lag.
-            var brainConfig = await _facade.GetProviderConfigByIdAsync(brainProviderConfigId.Value.Value, ProviderKind.Repository, ct);
-            if (brainConfig is null)
+            ProviderConfig brainConfig;
+            try
             {
-                await Task.Delay(500, ct);
-                brainConfig = await _facade.GetProviderConfigByIdAsync(brainProviderConfigId.Value.Value, ProviderKind.Repository, ct);
+                // TODO [WARNING]: If GetProviderConfigByIdAsync throws an exception (rather than
+                // returning null) during either attempt, Task.Delay and the second attempt are
+                // skipped entirely and the original exception propagates through ResolveRequiredAsync
+                // without being caught by the catch (InvalidOperationException) block below —
+                // surfacing a raw non-HubException to the SignalR caller. This was also present in
+                // the pre-refactor code but is less obvious here because the two-attempt pattern is
+                // embedded in a lambda. Fix: catch Exception (not just InvalidOperationException)
+                // at the call site, or wrap exceptions inside the lambda before returning null.
+                brainConfig = await ProviderConfigResolver.ResolveRequiredAsync(
+                    async () =>
+                    {
+                        var cfg = await _facade.GetProviderConfigByIdAsync(brainProviderConfigId.Value.Value, ProviderKind.Repository, ct);
+                        if (cfg is null)
+                        {
+                            await Task.Delay(500, ct);
+                            cfg = await _facade.GetProviderConfigByIdAsync(brainProviderConfigId.Value.Value, ProviderKind.Repository, ct);
+                        }
+                        return cfg;
+                    },
+                    brainProviderConfigId.Value.Value, ProviderKind.Repository, _logger);
             }
-
-            if (brainConfig is null)
+            catch (InvalidOperationException ex)
             {
-                _logger.Warning("Brain token refresh for job {JobId}: config {BrainConfigId} not found in store",
-                    jobId, brainProviderConfigId.Value.Value);
-                // TODO [WARNING]: The exception message uses `brainProviderConfigId` (the ProviderConfigId? struct)
-                // via string interpolation. If ProviderConfigId.ToString() returns the default record representation
-                // (e.g. "ProviderConfigId { Value = brain-1 }") rather than the bare ID string, the message will
-                // be misleading. Use brainProviderConfigId.Value.Value to match the logger call above and ensure
-                // the exception message contains the raw config ID string.
-                throw new HubException($"Brain provider config '{brainProviderConfigId}' not found for job {jobId}");
+                throw new HubException($"Brain provider config '{brainProviderConfigId.Value.Value}' not found for job {jobId}", ex);
             }
             return brainConfig;
         }
@@ -125,19 +136,33 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
             }
 
             // Retry once on transient null: provider config store may have a brief propagation lag.
-            var repoConfig = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId.Value.Value, ProviderKind.Repository, ct);
-            if (repoConfig is null)
+            ProviderConfig repoConfig;
+            try
             {
-                await Task.Delay(500, ct);
-                repoConfig = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId.Value.Value, ProviderKind.Repository, ct);
+                // TODO [WARNING]: If GetProviderConfigByIdAsync throws an exception (rather than
+                // returning null) during either attempt, Task.Delay and the second attempt are
+                // skipped entirely and the original exception propagates through ResolveRequiredAsync
+                // without being caught by the catch (InvalidOperationException) block below —
+                // surfacing a raw non-HubException to the SignalR caller. This was also present in
+                // the pre-refactor code but is less obvious here because the two-attempt pattern is
+                // embedded in a lambda. Fix: catch Exception (not just InvalidOperationException)
+                // at the call site, or wrap exceptions inside the lambda before returning null.
+                repoConfig = await ProviderConfigResolver.ResolveRequiredAsync(
+                    async () =>
+                    {
+                        var cfg = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId.Value.Value, ProviderKind.Repository, ct);
+                        if (cfg is null)
+                        {
+                            await Task.Delay(500, ct);
+                            cfg = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId.Value.Value, ProviderKind.Repository, ct);
+                        }
+                        return cfg;
+                    },
+                    repoProviderConfigId.Value.Value, ProviderKind.Repository, _logger);
             }
-
-            if (repoConfig is null)
+            catch (InvalidOperationException ex)
             {
-                _logger.Warning(
-                    "Provider config {ConfigId} not found for job {JobId} (kind: {ProviderKind})",
-                    repoProviderConfigId.Value.Value, jobId, providerKind);
-                throw new HubException($"Provider config not found for job {jobId} (kind: {providerKind})");
+                throw new HubException($"Provider config not found for job {jobId} (kind: {providerKind})", ex);
             }
             return repoConfig;
         }
