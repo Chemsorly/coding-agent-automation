@@ -476,13 +476,38 @@ public sealed class AgentHubIssueProxyTests
         var hub = CreateHub();
         var act = () => hub.RequestGetIssue("job-1", "42");
         await act.Should().ThrowAsync<HubException>().WithMessage("*missing-config*not found*");
-        // TODO: [WARNING] Add a Verify call here to confirm GetProviderConfigByIdAsync was actually
-        // invoked with the config ID from the run (IssueProviderConfigId = "missing-config"). Without it,
-        // if the production code stopped calling GetProviderConfigByIdAsync or passed a different ID,
-        // Moq would silently return null (its default for reference types) and the test would still pass
-        // for the wrong reason. Add:
-        //   _mockFacade.Verify(f => f.GetProviderConfigByIdAsync("missing-config", ProviderKind.Issue,
-        //       It.IsAny<CancellationToken>()), Times.Once);
+        _mockFacade.Verify(f => f.GetProviderConfigByIdAsync("missing-config", ProviderKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RequestGetIssue_NoProviderConfig_LogsErrorLevel()
+    {
+        // ResolveIssueProviderForRunAsync must log at Error (not Warning) when the issue config is missing.
+        var run = new PipelineRun
+        {
+            RunId = "job-err",
+            IssueIdentifier = "org/repo#99",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "missing-err-cfg",
+            RepoProviderConfigId = "repo-cfg-1"
+        };
+        _mockFacade.Setup(f => f.GetRun("job-err")).Returns(run);
+        _mockFacade
+            .Setup(f => f.GetProviderConfigByIdAsync("missing-err-cfg", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderConfig?)null);
+
+        var hub = CreateHub();
+        var act = () => hub.RequestGetIssue("job-err", "99");
+        await act.Should().ThrowAsync<HubException>();
+
+        // Error log must fire (not Warning) — this is a critical failure path.
+        // ResolveRequiredAsync logs Error with template "Provider config {ConfigId} ({Kind}) not found."
+        // Arg 0 = config ID (string), Arg 1 = ProviderKind.
+        _mockLogger.Verify(l => l.Error(
+            It.IsAny<string>(),
+            It.Is<string>(id => id == "missing-err-cfg"),
+            It.Is<ProviderKind>(k => k == ProviderKind.Issue)), Times.AtLeastOnce);
     }
 
     [Fact]
@@ -665,15 +690,20 @@ public sealed class AgentHubIssueProxyTests
     }
 
     /// <summary>
-    /// AC1: When issue provider config is not found, a Warning is emitted before throwing HubException,
-    /// so the missing-config failure is visible in API logs.
-    /// Moq verification targets the typed generic overload Warning(string, T0, T1).
+    /// AC1: When issue provider config is not found, an Error is emitted (via ResolveRequiredAsync)
+    /// before throwing HubException, so the missing-config failure is visible in API logs.
+    /// Moq verification targets the typed generic overload Error(string, T0, T1).
     /// </summary>
     // TODO: Same Moq generic overload resolution fragility as the run-not-found test above.
-    // The two-arg Warning(string, T0, T1) overload matching depends on Serilog's ILogger generic
+    // The two-arg Error(string, T0, T1) overload matching depends on Serilog's ILogger generic
     // interface structure. A Serilog upgrade or parameter type change could silently affect
-    // which overload is bound. Argument order is correct (configId first, jobId second) but
+    // which overload is bound. Argument order is correct (configId first, kind second) but
     // should be re-validated if tests start producing unexpected verification failures.
+    // TODO [WARNING]: The test name and original XML-doc summary say "LogsWarning" but
+    // ResolveRequiredAsync now logs at Error level. The name should be renamed to
+    // RequestGetIssue_ProviderConfigNotFound_LogsErrorBeforeThrowingHubException to match the
+    // actual assertion and avoid misleading future maintainers. The XML-doc above has been
+    // updated but the method name requires a rename refactor across the test class.
     [Fact]
     public async Task RequestGetIssue_ProviderConfigNotFound_LogsWarningBeforeThrowingHubException()
     {
@@ -695,21 +725,16 @@ public sealed class AgentHubIssueProxyTests
 
         await act.Should().ThrowAsync<HubException>().WithMessage("*missing-config*");
 
-        // Error(string messageTemplate, T0 propertyValue0, T1 propertyValue1) —
-        // "... {IssueProviderConfigId} ... {JobId}" with string configId, string jobId
+        // ResolveRequiredAsync logs Error with template "Provider config {ConfigId} ({Kind}) not found."
+        // Arg 0 = config ID (string), Arg 1 = ProviderKind.Issue
         _mockLogger.Verify(
             l => l.Error(
-                It.Is<string>(s => s.Contains("{IssueProviderConfigId}") && s.Contains("{JobId}")),
+                It.IsAny<string>(),
                 It.Is<string>(s => s == "missing-config"),
-                It.Is<string>(s => s == "job-1")),
+                It.Is<ProviderKind>(k => k == ProviderKind.Issue)),
             Times.Once);
-        // TODO: [WARNING] Add a Verify call here to confirm GetProviderConfigByIdAsync was actually
-        // invoked with the config ID from the run (IssueProviderConfigId = "missing-config"). Without it,
-        // if the production code stopped calling GetProviderConfigByIdAsync or passed a different ID,
-        // Moq would silently return null (its default for reference types) and the test would still pass
-        // for the wrong reason. Add:
-        //   _mockFacade.Verify(f => f.GetProviderConfigByIdAsync("missing-config", ProviderKind.Issue,
-        //       It.IsAny<CancellationToken>()), Times.Once);
+        _mockFacade.Verify(f => f.GetProviderConfigByIdAsync("missing-config", ProviderKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
     }
     /// </summary>
     [Fact]
