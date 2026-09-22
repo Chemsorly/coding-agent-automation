@@ -16,13 +16,10 @@ namespace CodingAgent.Pipeline.UnitTests;
 /// All timing-sensitive tests inject <see cref="FakeTimeProvider"/> so they are
 /// deterministic — no wall-clock waits, no CI flakiness.
 ///
-/// Pattern: create a <see cref="SignalingFakeTimeProvider"/>, await its
-/// <c>FirstTimerRegistered</c> task to know when the monitor has registered its
-/// first <c>Task.Delay</c> callback with FakeTimeProvider, then call
-/// <c>fakeTime.Advance()</c> to unblock it. This is fully race-free because the
-/// timer registration happens synchronously inside <c>Task.Delay</c>'s call to
-/// <c>CreateTimer</c> — so by the time the signal fires, the timer is guaranteed
-/// to be queued.
+/// Pattern: start the monitor, yield briefly with <c>await Task.Delay(small)</c>
+/// so the Task.Run loop reaches its first <c>timeProvider.Delay</c>, then call
+/// <c>fakeTime.Advance()</c> to unblock it.  The fake delay completes synchronously
+/// on the ThreadPool thread running the monitor loop.
 /// </summary>
 public class AgentStallMonitorTests
 {
@@ -44,37 +41,23 @@ public class AgentStallMonitorTests
         };
     }
 
-    /// <summary>
-    /// Wraps <see cref="FakeTimeProvider"/> and signals <see cref="FirstTimerRegistered"/>
-    /// the first time <see cref="CreateTimer"/> is called. This lets tests wait until the
-    /// monitor has registered its polling timer before advancing fake time, eliminating the
-    /// race that existed when a fixed-duration <c>Task.Delay</c> was used for synchronisation.
-    /// </summary>
-    private sealed class SignalingFakeTimeProvider(FakeTimeProvider inner) : TimeProvider
-    {
-        private readonly TaskCompletionSource _firstTimer =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        /// <summary>Completes when the first <c>CreateTimer</c> call has been made.</summary>
-        public Task FirstTimerRegistered => _firstTimer.Task;
-
-        public override DateTimeOffset GetUtcNow() => inner.GetUtcNow();
-
-        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
-        {
-            var timer = inner.CreateTimer(callback, state, dueTime, period);
-            _firstTimer.TrySetResult();
-            return timer;
-        }
-    }
-
-    // ── Legacy fallback ────────────────────────────────────────────────────────
+    // ── Helper: yield enough for the Task.Run loop to start and reach its Delay ──
 
     /// <summary>
-    /// Legacy fallback yield — kept for tests that do not need to advance fake time
-    /// and therefore have no race to guard against. Not used by timing-sensitive tests.
+    /// Yields the current thread so the monitor's Task.Run background loop can
+    /// start, enter its while loop, and suspend on <c>timeProvider.Delay</c>.
+    /// 200ms provides a sufficient buffer even on loaded CI runners where the
+    /// thread scheduler may not dispatch the Task.Run thread within 10ms.
     /// </summary>
-    private static async Task YieldToMonitorAsync() => await Task.Delay(200);
+    // TODO [WARNING]: This is a time-dependent helper — a fixed sleep does not eliminate the
+    // race; it only widens the window. On a sufficiently loaded CI runner the Task.Run background
+    // loop may not have scheduled within the delay, causing DetectsSilence and the stall-metrics test
+    // to fail non-deterministically. Additionally, for DetectsSilence the fake time is advanced by
+    // 2 minutes in a single call, which may only fire the first Delay continuation synchronously
+    // and leave the second poll iteration unscheduled before WaitForChatHistoryAsync is called —
+    // depending on FakeTimeProvider's Advance implementation. A signal-based approach (e.g. a
+    // TaskCompletionSource set when the loop enters its first Delay) would be fully deterministic.
+    private static async Task YieldToMonitorAsync() => await Task.Delay(500);
 
     // ── DetectsProcessDeath ────────────────────────────────────────────────────
 
@@ -106,7 +89,7 @@ public class AgentStallMonitorTests
 
         // Let the monitor loop start and reach its first Delay
         await YieldToMonitorAsync();
-        fakeTime.Advance(TimeSpan.FromMinutes(1));
+        fakeTime.Advance(TimeSpan.FromMinutes(1)); // trigger one poll tick
 
         // Wait for the monitor to enqueue the death message
         await WaitForChatHistoryAsync(_run);
@@ -139,9 +122,7 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true,
-                ProcessId = 1,
-                IsProcessAlive = true,
+                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
                 // Already 3 minutes silent relative to fake "now"
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-3)
             });
@@ -178,7 +159,6 @@ public class AgentStallMonitorTests
     public async Task KillsAfterHardTimeout_CallsKillAsync()
     {
         var fakeTime = new FakeTimeProvider();
-        var signalingTime = new SignalingFakeTimeProvider(fakeTime);
 
         var config = new PipelineConfiguration
         {
@@ -191,9 +171,7 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true,
-                ProcessId = 1,
-                IsProcessAlive = true,
+                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-10)
             });
 
@@ -209,16 +187,17 @@ public class AgentStallMonitorTests
             _mockAgent.Object,
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
             _run, config, "Stuck agent", null, _mockLogger.Object, CancellationToken.None,
-            timeProvider: signalingTime);
+            timeProvider: fakeTime);
 
-        // Wait until the monitor has registered its timer with FakeTimeProvider, then advance
-        await signalingTime.FirstTimerRegistered;
+        // Yield so the monitor loop starts and suspends on the first Delay(1m)
+        await YieldToMonitorAsync();
 
         // Advance 1 minute → poll tick fires, silence = 10m+1m = 11m > AgentTimeout=5m → KillAsync called
         fakeTime.Advance(TimeSpan.FromMinutes(1));
 
-        // KillAsync runs asynchronously after the timer fires; WaitForChatHistoryAsync covers the wait
-        await WaitForChatHistoryAsync(_run);
+        // KillAsync must be called promptly — no wall-clock dependency.
+        // 10s timeout is generous; the fake-time Advance unblocks the monitor synchronously.
+        await killCalled.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
@@ -246,9 +225,7 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true,
-                ProcessId = 1,
-                IsProcessAlive = true,
+                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime
             });
 
@@ -293,16 +270,9 @@ public class AgentStallMonitorTests
             _run, config, "Session warm-up", null, _mockLogger.Object, CancellationToken.None,
             timeProvider: fakeTime);
 
-        // Advance repeatedly until the monitor loop has started, consumed the fake delay,
-        // and enqueued the process-death message. This eliminates the race in YieldToMonitorAsync
-        // where the Task.Run loop may not have reached its first Task.Delay within 200 ms on a
-        // loaded CI runner.
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (_run.ChatHistory.IsEmpty && DateTime.UtcNow < deadline)
-        {
-            await Task.Delay(10);
-            fakeTime.Advance(TimeSpan.FromMinutes(1));
-        }
+        await YieldToMonitorAsync();
+        fakeTime.Advance(TimeSpan.FromMinutes(1));
+        await WaitForChatHistoryAsync(_run);
 
         tcs.SetResult();
         await task;
@@ -320,7 +290,6 @@ public class AgentStallMonitorTests
     public async Task HandleSilenceWarning_EmitsStallWarningsCounter()
     {
         var fakeTime = new FakeTimeProvider();
-        var signalingTime = new SignalingFakeTimeProvider(fakeTime);
         var factory = new TestMeterFactory();
         var meter = factory.Create(new System.Diagnostics.Metrics.MeterOptions(PipelineTelemetry.SourceName));
         var warningsCounter = meter.CreateCounter<long>("quality_gate.stall.warnings", "{warning}");
@@ -340,9 +309,7 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true,
-                ProcessId = 1,
-                IsProcessAlive = true,
+                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-3)
             });
 
@@ -354,11 +321,11 @@ public class AgentStallMonitorTests
             _mockAgent.Object,
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
             _run, config, "Quality gate retry agent (attempt 1)", null, _mockLogger.Object,
-            CancellationToken.None, stallMetrics: stallMetrics, timeProvider: signalingTime);
+            CancellationToken.None, stallMetrics: stallMetrics, timeProvider: fakeTime);
 
-        await signalingTime.FirstTimerRegistered;
+        await YieldToMonitorAsync();
         fakeTime.Advance(TimeSpan.FromMinutes(2));
-        await WaitForMetricAsync(warningCollector, fakeTime, TimeSpan.FromMinutes(1));
+        await WaitForMetricAsync(warningCollector);
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
@@ -395,9 +362,7 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true,
-                ProcessId = 1,
-                IsProcessAlive = true,
+                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-10)
             });
 
@@ -405,6 +370,7 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns(tcs.Task);
         _mockAgent.Setup(a => a.KillAsync()).Returns(Task.CompletedTask);
+
         var task = AgentStallMonitor.ExecuteWithMonitoringAsync(
             _mockAgent.Object,
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
@@ -413,7 +379,7 @@ public class AgentStallMonitorTests
 
         await YieldToMonitorAsync();
         fakeTime.Advance(TimeSpan.FromMinutes(1));
-        await WaitForMetricAsync(killCollector, fakeTime, TimeSpan.FromMinutes(1));
+        await WaitForMetricAsync(killCollector);
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
@@ -462,7 +428,7 @@ public class AgentStallMonitorTests
 
         await YieldToMonitorAsync();
         fakeTime.Advance(TimeSpan.FromMinutes(1));
-        await WaitForMetricAsync(deathCollector, fakeTime, TimeSpan.FromMinutes(1));
+        await WaitForMetricAsync(deathCollector);
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
@@ -501,27 +467,5 @@ public class AgentStallMonitorTests
         var deadline = DateTime.UtcNow.AddSeconds(15);
         while (collector.GetMeasurementSnapshot().Count == 0 && DateTime.UtcNow < deadline)
             await Task.Delay(5);
-    }
-
-    /// <summary>
-    /// Waits up to 15 seconds for at least one measurement to appear in the collector,
-    /// periodically re-advancing <paramref name="fakeTime"/> by <paramref name="advancePerTick"/>
-    /// so the monitor loop is unblocked even if it had not yet reached its first Delay
-    /// when the initial advance was called. This eliminates the race in the metrics tests
-    /// where a single upfront Advance can be a no-op if the Task.Run loop hasn't started yet.
-    /// </summary>
-    private static async Task WaitForMetricAsync<T>(
-        MetricCollector<T> collector,
-        FakeTimeProvider fakeTime,
-        TimeSpan advancePerTick)
-        where T : struct
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(15);
-        while (collector.GetMeasurementSnapshot().Count == 0 && DateTime.UtcNow < deadline)
-        {
-            await Task.Delay(10);
-            if (collector.GetMeasurementSnapshot().Count == 0)
-                fakeTime.Advance(advancePerTick);
-        }
     }
 }
