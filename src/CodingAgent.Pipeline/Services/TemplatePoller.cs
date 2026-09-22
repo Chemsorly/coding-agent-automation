@@ -30,7 +30,8 @@ internal sealed class TemplatePoller
     internal async Task<(Dictionary<string, List<IssueSummary>> IssueQueues,
                           Dictionary<string, List<PullRequestSummary>> PrQueues,
                           Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> DecompositionQueues,
-                          Dictionary<string, List<PullRequestSummary>> AgentDonePrQueues)>
+                          Dictionary<string, List<PullRequestSummary>> AgentDonePrQueues,
+                          Dictionary<string, bool> AgentDonePrTruncated)>
         PollTemplateQueuesAsync(
             IReadOnlyList<PipelineJobTemplate> pollableTemplates,
             int maxPagesToFetch,
@@ -44,6 +45,7 @@ internal sealed class TemplatePoller
         var prQueues = new Dictionary<string, List<PullRequestSummary>>();
         var decompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
         var agentDonePrQueues = new Dictionary<string, List<PullRequestSummary>>();
+        var agentDonePrTruncated = new Dictionary<string, bool>();
 
         for (int i = 0; i < pollableTemplates.Count; i++)
         {
@@ -60,7 +62,7 @@ internal sealed class TemplatePoller
 
             try
             {
-                await PollSingleTemplateAsync(template, maxPagesToFetch, templateStatuses, issueQueues, prQueues, decompositionQueues, agentDonePrQueues, ct);
+                await PollSingleTemplateAsync(template, maxPagesToFetch, templateStatuses, issueQueues, prQueues, decompositionQueues, agentDonePrQueues, agentDonePrTruncated, ct);
             }
             catch (OperationCanceledException)
             {
@@ -68,19 +70,19 @@ internal sealed class TemplatePoller
             }
             catch (RateLimitExceededException ex)
             {
-                HandleRateLimitException(template, ex, templateStatuses, issueQueues, prQueues, decompositionQueues, agentDonePrQueues);
+                HandleRateLimitException(template, ex, templateStatuses, issueQueues, prQueues, decompositionQueues, agentDonePrQueues, agentDonePrTruncated);
             }
             catch (Exception ex) when (IsAuthError(ex))
             {
-                await HandleAuthErrorExceptionAsync(template, ex, templateStatuses, issueQueues, prQueues, decompositionQueues, agentDonePrQueues);
+                await HandleAuthErrorExceptionAsync(template, ex, templateStatuses, issueQueues, prQueues, decompositionQueues, agentDonePrQueues, agentDonePrTruncated);
             }
             catch (Exception ex)
             {
-                HandleGenericPollException(template, ex, templateStatuses, issueQueues, prQueues, decompositionQueues, agentDonePrQueues);
+                HandleGenericPollException(template, ex, templateStatuses, issueQueues, prQueues, decompositionQueues, agentDonePrQueues, agentDonePrTruncated);
             }
         }
 
-        return (issueQueues, prQueues, decompositionQueues, agentDonePrQueues);
+        return (issueQueues, prQueues, decompositionQueues, agentDonePrQueues, agentDonePrTruncated);
     }
 
     /// <summary>
@@ -95,12 +97,13 @@ internal sealed class TemplatePoller
         Dictionary<string, List<PullRequestSummary>> prQueues,
         Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
         Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
+        Dictionary<string, bool> agentDonePrTruncated,
         CancellationToken ct)
     {
         await PollIssueQueueAsync(template, maxPagesToFetch, templateStatuses, issueQueues, ct);
         await PollPrQueueAsync(template, maxPagesToFetch, prQueues, ct);
         await PollDecompositionQueueAsync(template, maxPagesToFetch, decompositionQueues, ct);
-        await PollAgentDonePrQueueAsync(template, maxPagesToFetch, agentDonePrQueues, ct);
+        await PollAgentDonePrQueueAsync(template, maxPagesToFetch, agentDonePrQueues, agentDonePrTruncated, ct);
 
         // Success — update status (agentDonePrQueues not counted as dispatchable work)
         var issueCount = issueQueues[template.Id].Count;
@@ -204,9 +207,11 @@ internal sealed class TemplatePoller
         PipelineJobTemplate template,
         int maxPagesToFetch,
         Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
+        Dictionary<string, bool> agentDonePrTruncated,
         CancellationToken ct)
     {
         agentDonePrQueues[template.Id] = new List<PullRequestSummary>();
+        agentDonePrTruncated[template.Id] = false;
         if (!template.HousekeepingEnabled) return;
 
         try
@@ -220,11 +225,19 @@ internal sealed class TemplatePoller
 
             if (!repoProvider.SupportsServerSideBranchUpdate) return;
 
-            agentDonePrQueues[template.Id] = await FetchAgentDonePullRequestsAsync(repoProvider, maxPagesToFetch, ct);
+            var (prs, wasTruncated) = await FetchAgentDonePullRequestsAsync(repoProvider, maxPagesToFetch, ct);
+            agentDonePrQueues[template.Id] = prs;
+            agentDonePrTruncated[template.Id] = wasTruncated;
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
+            // A polling failure means we have an empty PR list but cannot know whether it is
+            // complete. Treat it the same as a truncated result: set wasInputTruncated=true so
+            // that StaleBranchCleaner skips the cleanup cycle rather than deleting every agent
+            // branch whose issue has a terminal label. This matches the safety behaviour of the
+            // old FetchAllOpenAgentPrBranchesAsync throw path, which skipped cleanup on failure.
+            agentDonePrTruncated[template.Id] = true;
             _logger.Warning(ex, "Template '{TemplateName}' agent:done PR polling failed: {Error}",
                 template.Name, ex.Message);
         }
@@ -235,19 +248,21 @@ internal sealed class TemplatePoller
     /// Uses branch name prefix (<c>feature/auto-</c>) rather than label filtering because the agent
     /// applies <c>agent:done</c> to the <em>issue</em>, not the PR — PRs have no agent status labels.
     /// IsDraft and active-run exclusion are applied in HousekeepingService.ExecuteAsync.
+    /// Returns the fetched list and a flag indicating whether the result was truncated by
+    /// <paramref name="maxPages"/> before all pages were consumed.
     /// </summary>
-    private static async Task<List<PullRequestSummary>> FetchAgentDonePullRequestsAsync(
+    private static async Task<(List<PullRequestSummary> Prs, bool WasTruncated)> FetchAgentDonePullRequestsAsync(
         IRepositoryProvider repoProvider, int maxPages, CancellationToken ct)
     {
         // Fetch all open PRs (no label filter — agent:done is on the issue, not the PR).
-        var all = await FetchAllPagesAsync<PullRequestSummary>(
+        var (all, wasTruncated) = await FetchAllPagesWithTruncationAsync<PullRequestSummary>(
             (page, pageSize, token) =>
                 repoProvider.ListOpenPullRequestsAsync(page, pageSize, null, token),
             maxPages, ct);
 
         // Filter to agent-created PRs by branch prefix.
         all.RemoveAll(pr => !pr.BranchName.StartsWith(PipelineConstants.BranchPrefix, StringComparison.Ordinal));
-        return all;
+        return (all, wasTruncated);
     }
 
     /// <summary>
@@ -307,7 +322,8 @@ internal sealed class TemplatePoller
         Dictionary<string, List<IssueSummary>> issueQueues,
         Dictionary<string, List<PullRequestSummary>> prQueues,
         Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
-        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues)
+        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
+        Dictionary<string, bool> agentDonePrTruncated)
     {
         _logger.Warning(ex, "Template '{TemplateName}' rate limited until {ResetAt}", template.Name, ex.ResetAt);
         var prevStatus = templateStatuses.TryGetValue(template.Id, out var s) ? s : ConfigStatusSnapshot.Empty;
@@ -317,7 +333,7 @@ internal sealed class TemplatePoller
             RateLimitResetAt = ex.ResetAt,
             IsCurrentlyPolling = false
         };
-        ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues, agentDonePrQueues);
+        ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues, agentDonePrQueues, agentDonePrTruncated);
     }
 
     /// <summary>Handles an auth error exception: evicts cached provider, updates status, clears queues.</summary>
@@ -328,7 +344,8 @@ internal sealed class TemplatePoller
         Dictionary<string, List<IssueSummary>> issueQueues,
         Dictionary<string, List<PullRequestSummary>> prQueues,
         Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
-        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues)
+        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
+        Dictionary<string, bool> agentDonePrTruncated)
     {
         _logger.Warning(ex, "Template '{TemplateName}' auth error, evicting cached provider", template.Name);
         await _cacheManager.EvictOnAuthErrorAsync(template.IssueProviderId);
@@ -341,7 +358,7 @@ internal sealed class TemplatePoller
             IsCurrentlyPolling = false
         };
         PipelineTelemetry.LoopBackoffEvents.Add(1);
-        ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues, agentDonePrQueues);
+        ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues, agentDonePrQueues, agentDonePrTruncated);
     }
 
     /// <summary>Handles a generic poll exception: updates failure status, clears queues.</summary>
@@ -352,7 +369,8 @@ internal sealed class TemplatePoller
         Dictionary<string, List<IssueSummary>> issueQueues,
         Dictionary<string, List<PullRequestSummary>> prQueues,
         Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
-        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues)
+        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
+        Dictionary<string, bool> agentDonePrTruncated)
     {
         _logger.Warning(ex, "Template '{TemplateName}' poll failed: {Error}", template.Name, ex.Message);
         var prevStatus = templateStatuses.TryGetValue(template.Id, out var s) ? s : ConfigStatusSnapshot.Empty;
@@ -364,7 +382,7 @@ internal sealed class TemplatePoller
             IsCurrentlyPolling = false
         };
         PipelineTelemetry.LoopBackoffEvents.Add(1);
-        ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues, agentDonePrQueues);
+        ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues, agentDonePrQueues, agentDonePrTruncated);
     }
 
     /// <summary>
@@ -519,6 +537,28 @@ internal sealed class TemplatePoller
         int maxPages,
         CancellationToken ct)
     {
+        var (result, _) = await FetchAllPagesWithTruncationAsync(fetchPage, maxPages, ct);
+        return result;
+    }
+
+    /// <summary>
+    /// Fetches all pages from a paginated API up to maxPages, and indicates whether the result
+    /// was truncated (i.e., stopped due to the page cap while <c>HasMore</c> was still true).
+    /// </summary>
+    /// <remarks>
+    /// Note: when the page cap is hit, items from all fetched pages — including the page that
+    /// triggered the cap — are included in the returned list. The <c>WasTruncated=true</c> flag
+    /// signals "at least one more page exists that was not fetched", not "the last page is absent".
+    /// Callers that use WasTruncated as a safety gate (e.g. StaleBranchCleaner) will correctly
+    /// skip processing even though partial data is present.
+    /// TODO [WARNING]: This semantic asymmetry (truncated ≠ all items absent) is noted here for
+    /// clarity. No action required unless the contract is tightened in future.
+    /// </remarks>
+    internal static async Task<(List<T> Items, bool WasTruncated)> FetchAllPagesWithTruncationAsync<T>(
+        Func<int, int, CancellationToken, Task<PagedResult<T>>> fetchPage,
+        int maxPages,
+        CancellationToken ct)
+    {
         var result = new List<T>();
         int page = 1;
         const int pageSize = PipelineConstants.DefaultPageSize;
@@ -528,11 +568,11 @@ internal sealed class TemplatePoller
             var pagedResult = await fetchPage(page, pageSize, ct);
             result.AddRange(pagedResult.Items);
             if (!pagedResult.HasMore) break;
-            if (page >= maxPages) break;
+            if (page >= maxPages) return (result, true); // truncated by cap
             page++;
         }
 
-        return result;
+        return (result, false);
     }
 
     /// <summary>Determines if an exception is an auth-related error (401/403/credential).</summary>
@@ -557,12 +597,14 @@ internal sealed class TemplatePoller
         Dictionary<string, List<IssueSummary>> issueQueues,
         Dictionary<string, List<PullRequestSummary>> prQueues,
         Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
-        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues)
+        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
+        Dictionary<string, bool> agentDonePrTruncated)
     {
         issueQueues[templateId.Value] = new List<IssueSummary>();
         prQueues[templateId.Value] = new List<PullRequestSummary>();
         decompositionQueues[templateId.Value] = new List<(IssueSummary, PipelineRunType)>();
         agentDonePrQueues[templateId.Value] = new List<PullRequestSummary>();
+        agentDonePrTruncated[templateId.Value] = false;
     }
 
     /// <summary>
