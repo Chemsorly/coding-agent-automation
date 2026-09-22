@@ -527,6 +527,50 @@ public sealed class DistributedAgentRegistryServiceTests
         _store.GetHash("agent:agent-1")!["activeJobId"].Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task UpdateAgentFieldAsync_UnknownField_LeavesSnapshotUnchanged()
+    {
+        // Arrange: register and set an activeJobId so we have a known initial state.
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.SetLocalSnapshotField(new AgentId("agent-1"), "activeJobId", "run-99");
+
+        // Act: call with a field name not in the switch statement — the _ => current arm fires.
+        await _sut.UpdateAgentFieldAsync(new AgentId("agent-1"), "nonExistentField", "some-value");
+
+        // Assert: snapshot must be unchanged (no existing field corrupted).
+        var entry = _sut.GetByConnectionId("conn-1");
+        entry.Should().NotBeNull();
+        entry!.ActiveJobId.Should().Be("run-99",
+            "UpdateAgentFieldAsync with an unknown field must not corrupt existing snapshot fields via the _ => current fallback arm");
+    }
+
+    [Fact]
+    public async Task UpdateAgentFieldAsync_WhenAgentNotInLocalSnapshot_StillUpdatesRedis()
+    {
+        // Arrange: insert the hash directly into the fake store (simulating a cross-replica agent
+        // that is in Redis but not in _localSnapshot on this replica). The ContainsKey check will
+        // return false, so the snapshot update block is skipped — but the Redis write must still
+        // succeed.
+        await _store.HashSetAsync("agent:agent-remote", [
+            new StackExchange.Redis.HashEntry("agentId", "agent-remote"),
+            new StackExchange.Redis.HashEntry("connectionId", "conn-remote"),
+            new StackExchange.Redis.HashEntry("hostname", "host-remote"),
+            new StackExchange.Redis.HashEntry("status", "Idle"),
+            new StackExchange.Redis.HashEntry("registeredAt", DateTimeOffset.UtcNow.ToString("O")),
+            new StackExchange.Redis.HashEntry("labels", "[]"),
+            new StackExchange.Redis.HashEntry("activeJobId", ""),
+            new StackExchange.Redis.HashEntry("disabled", "False"),
+        ]);
+        await _store.SetAddAsync("agents:all", "agent-remote");
+
+        // Act: update a field — agent is in Redis but not in _localSnapshot.
+        await _sut.UpdateAgentFieldAsync(new AgentId("agent-remote"), "activeJobId", "run-cross");
+
+        // Assert: Redis was updated even though _localSnapshot did not contain the agent.
+        _store.GetHash("agent:agent-remote")!["activeJobId"].Should().Be("run-cross",
+            "UpdateAgentFieldAsync must write to Redis regardless of whether _localSnapshot contains the agent");
+    }
+
     // ── UpdateHeartbeat — TTL expiry recovery ─────────────────────────────────
 
     [Fact]
