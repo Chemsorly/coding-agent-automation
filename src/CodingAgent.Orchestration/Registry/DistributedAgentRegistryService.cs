@@ -491,14 +491,15 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             // orphan recovery is calling TransitionStatusAsync). Instead, we return a no-op
             // AgentEntry and immediately remove it so we don't re-insert a deregistered agent.
             // The snapshot omission is safe: the agent is being removed from the system anyway.
-            AgentEntry? addedSentinel = null;
+            // Sentinel is detected by RegisteredAt == DateTimeOffset.MinValue (never valid for a
+            // real registration) so we avoid a captured-nullable pattern that Sonar flags as S2583.
             var committed = _localSnapshot.AddOrUpdate(
                 agentId,
                 addValueFactory: key =>
                 {
                     // Key was absent at swap time — concurrent deregistration removed it.
-                    // Return a placeholder; it will be removed immediately below.
-                    addedSentinel = new AgentEntry
+                    // Return a sentinel (RegisteredAt=MinValue); it will be removed immediately below.
+                    return new AgentEntry
                     {
                         AgentId = new AgentId(key),
                         ConnectionId = "",
@@ -506,7 +507,6 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
                         Labels = [],
                         RegisteredAt = DateTimeOffset.MinValue
                     };
-                    return addedSentinel;
                 },
                 updateValueFactory: (_, current) =>
                 {
@@ -514,11 +514,11 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
                     var da = newStatus == AgentStatus.Disconnected ? now : (DateTimeOffset?)null;
                     return current with { Status = newStatus, BusySince = bs, DisconnectedAt = da };
                 });
-            if (addedSentinel is not null)
+            if (committed.RegisteredAt == DateTimeOffset.MinValue)
             {
                 // The addValueFactory fired — agent was concurrently deregistered.
                 // Remove the sentinel we just inserted to avoid a zombie entry.
-                _localSnapshot.TryRemove(new KeyValuePair<string, AgentEntry>(agentId, addedSentinel));
+                _localSnapshot.TryRemove(new KeyValuePair<string, AgentEntry>(agentId, committed));
                 _logger.Debug(
                     "TransitionStatusAsync: agent {AgentId} removed from snapshot concurrently; snapshot update skipped",
                     agentId);
@@ -826,12 +826,13 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // deregistration racing SetLocalSnapshotField (called from DetectAndRestoreOrphans inside
         // a lock) is an edge case but valid production event. Return a no-op placeholder and
         // remove it immediately so we do not re-insert a deregistered agent.
-        AgentEntry? addedSentinel = null;
-        _localSnapshot.AddOrUpdate(
+        // Sentinel is detected by RegisteredAt == DateTimeOffset.MinValue (never valid for a
+        // real registration) so we avoid a captured-nullable pattern that Sonar flags as S2583.
+        var committedField = _localSnapshot.AddOrUpdate(
             agentId.Value,
             addValueFactory: key =>
             {
-                addedSentinel = new AgentEntry
+                return new AgentEntry
                 {
                     AgentId = new AgentId(key),
                     ConnectionId = "",
@@ -839,7 +840,6 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
                     Labels = [],
                     RegisteredAt = DateTimeOffset.MinValue
                 };
-                return addedSentinel;
             },
             updateValueFactory: (_, current) => field switch
             {
@@ -849,9 +849,9 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
                 "disabled" => bool.TryParse(value, out var d) ? current with { Disabled = d } : current,
                 _ => current
             });
-        if (addedSentinel is not null)
+        if (committedField.RegisteredAt == DateTimeOffset.MinValue)
         {
-            _localSnapshot.TryRemove(new KeyValuePair<string, AgentEntry>(agentId.Value, addedSentinel));
+            _localSnapshot.TryRemove(new KeyValuePair<string, AgentEntry>(agentId.Value, committedField));
             _logger.Debug(
                 "SetLocalSnapshotField: agent {AgentId} removed from snapshot concurrently; field write skipped",
                 agentId.Value);

@@ -166,6 +166,35 @@ public sealed class DistributedAgentRegistryServiceTests
         _store.GetHash("agent:agent-1")!["status"].Should().Be("Idle");
     }
 
+    [Fact]
+    public void TransitionStatus_DisconnectedToBusy_IsRejected_StatusRemainsDisconnected()
+    {
+        // Arrange: register and transition to Disconnected.
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.TransitionStatus(new AgentId("agent-1"), AgentStatus.Disconnected);
+        _store.GetHash("agent:agent-1")!["status"].Should().Be("Disconnected", "pre-condition");
+
+        // Act: attempt to transition directly Disconnected → Busy (must re-register first).
+        _sut.TransitionStatus(new AgentId("agent-1"), AgentStatus.Busy);
+
+        // Assert: status must remain Disconnected — the invalid transition is rejected.
+        _store.GetHash("agent:agent-1")!["status"].Should().Be("Disconnected",
+            "Disconnected → Busy is an invalid transition; the agent must re-register before becoming Busy");
+        _store.GetSet("agents:idle").Should().NotContain("agent-1",
+            "a rejected transition must not add the agent to the idle set");
+    }
+
+    [Fact]
+    public void TransitionStatus_UnknownAgent_IsNoOp()
+    {
+        // TransitionStatus for a non-existent agent must not throw and must not
+        // create a partial hash entry.
+        var act = () => _sut.TransitionStatus(new AgentId("agent-ghost"), AgentStatus.Busy);
+        act.Should().NotThrow("TransitionStatus for an unregistered agent must be a silent no-op");
+        _store.GetHash("agent:agent-ghost").Should().BeNull(
+            "no entry must be created for an agent that was never registered");
+    }
+
     // ── UpdateHeartbeat ───────────────────────────────────────────────────────
 
     [Fact]
@@ -734,6 +763,104 @@ public sealed class DistributedAgentRegistryServiceTests
     //     and ExpireAsync fault injection)
     //   - CaptureSink (or use TestUtilities.CaptureSink if one exists)
     // These are unrelated to the _allAgentsCache race and should be restored in a follow-up.
+
+    [Fact]
+    public async Task UpdateAgentFieldAsync_WhenRedisFaults_DoesNotThrow()
+    {
+        // Arrange: use a store that throws on HashSetFieldAsync to simulate a Redis fault.
+        // The catch block in UpdateAgentFieldAsync must swallow the exception and not propagate it.
+        var faultingStore = new HashSetFieldFaultingFakeRedisStore();
+        var sut = new DistributedAgentRegistryService(faultingStore, Log.Logger);
+        sut.Register(Msg("agent-1"), "conn-1");
+
+        // Act: UpdateAgentFieldAsync must not throw even though the Redis write faults.
+        var act = async () => await sut.UpdateAgentFieldAsync(new AgentId("agent-1"), "activeJobId", "run-fault");
+
+        // Assert: no exception must propagate — the catch block swallows Redis faults.
+        await act.Should().NotThrowAsync(
+            "UpdateAgentFieldAsync must swallow Redis faults and not propagate them to callers");
+    }
+
+    [Fact]
+    public async Task UpdateAgentFieldAsync_UpdatesSnapshot_ForDisabledField()
+    {
+        // Arrange
+        _sut.Register(Msg("agent-1"), "conn-1");
+
+        // Act: set disabled=true via UpdateAgentFieldAsync (goes through the snapshot update path).
+        await _sut.UpdateAgentFieldAsync(new AgentId("agent-1"), "disabled", "true");
+
+        // Assert: the snapshot must reflect the updated value.
+        var entry = _sut.GetByConnectionId("conn-1");
+        entry.Should().NotBeNull();
+        entry!.Disabled.Should().BeTrue(
+            "UpdateAgentFieldAsync must update the disabled field in _localSnapshot via the AddOrUpdate path");
+    }
+
+    [Fact]
+    public async Task UpdateAgentFieldAsync_UpdatesSnapshot_ForOrphanRestoredAtField()
+    {
+        // Arrange
+        _sut.Register(Msg("agent-1"), "conn-1");
+        var orphanRestoredAt = DateTimeOffset.UtcNow;
+
+        // Act: set orphanRestoredAt via UpdateAgentFieldAsync.
+        await _sut.UpdateAgentFieldAsync(new AgentId("agent-1"), "orphanRestoredAt", orphanRestoredAt.ToString("O"));
+
+        // Assert: the snapshot must reflect the parsed DateTimeOffset.
+        var entry = _sut.GetByConnectionId("conn-1");
+        entry.Should().NotBeNull();
+        entry!.OrphanRestoredAt.Should().NotBeNull();
+        entry.OrphanRestoredAt!.Value.Should().BeCloseTo(orphanRestoredAt, TimeSpan.FromSeconds(1),
+            "UpdateAgentFieldAsync must update OrphanRestoredAt in _localSnapshot via the AddOrUpdate path");
+    }
+
+    // ── GetAgentsByLabel ──────────────────────────────────────────────────────
+
+    [Fact]
+    public void GetAgentsByLabel_ReturnsMatchingAgents()
+    {
+        // Arrange: register agents with labels in "key=value" format (the actual production format).
+        // GetAgentsByLabel("stack", "dotnet") searches for a label string equal to "stack=dotnet".
+        _sut.Register(Msg("agent-dotnet", ["stack=dotnet", "provider=kiro"]), "conn-1");
+        _sut.Register(Msg("agent-python", ["stack=python", "provider=opencode"]), "conn-2");
+        _sut.Register(Msg("agent-dotnet-2", ["stack=dotnet", "provider=kiro"]), "conn-3");
+
+        // Act: filter by stack=dotnet.
+        var dotnetAgents = _sut.GetAgentsByLabel("stack", "dotnet");
+
+        // Assert: only agents with the "stack=dotnet" label are returned.
+        dotnetAgents.Should().HaveCount(2,
+            "GetAgentsByLabel must return all agents whose label set contains the requested key=value pair");
+        dotnetAgents.Select(a => a.AgentId.Value).Should().BeEquivalentTo(["agent-dotnet", "agent-dotnet-2"]);
+    }
+
+    [Fact]
+    public void GetAgentsByLabel_ReturnsEmpty_WhenNoMatchingAgents()
+    {
+        // Arrange: register agents with labels that don't match the query.
+        _sut.Register(Msg("agent-1", ["stack=python", "provider=opencode"]), "conn-1");
+
+        // Act
+        var result = _sut.GetAgentsByLabel("stack", "dotnet");
+
+        // Assert
+        result.Should().BeEmpty("no agents have the requested label");
+    }
+
+    [Fact]
+    public void GetAgentsByLabel_IsCaseInsensitive()
+    {
+        // Arrange: register an agent with a mixed-case label.
+        _sut.Register(Msg("agent-1", ["Stack=DotNet"]), "conn-1");
+
+        // Act: query with lowercase — should still match due to OrdinalIgnoreCase comparison.
+        var result = _sut.GetAgentsByLabel("stack", "dotnet");
+
+        // Assert
+        result.Should().HaveCount(1, "GetAgentsByLabel must use case-insensitive label matching");
+        result[0].AgentId.Value.Should().Be("agent-1");
+    }
 
     // ── SetLocalSnapshotField ─────────────────────────────────────────────────
 
@@ -1374,6 +1501,42 @@ internal sealed class HashGetAllBlockingFakeRedisStore : IRedisStore
     public Task<bool> ExpireAtAsync(string key, DateTimeOffset expiry) => _inner.ExpireAtAsync(key, expiry);
     public Task HashSetAsync(string key, StackExchange.Redis.HashEntry[] fields) => _inner.HashSetAsync(key, fields);
     public Task<bool> HashSetFieldAsync(string key, string field, string value) => _inner.HashSetFieldAsync(key, field, value);
+    public Task<long> SetAddAsync(string key, string value) => _inner.SetAddAsync(key, value);
+    public Task<long> SetRemoveAsync(string key, string value) => _inner.SetRemoveAsync(key, value);
+    public Task<string[]> SetMembersAsync(string key) => _inner.SetMembersAsync(key);
+    public Task<string[]> SetMembersAsync(string key, CancellationToken ct) => _inner.SetMembersAsync(key, ct);
+    public Task<long> SetCardinalityAsync(string key) => _inner.SetCardinalityAsync(key);
+    public Task<long> ListRightPushAsync(string key, string[] values) => _inner.ListRightPushAsync(key, values);
+    public Task ListTrimAsync(string key, long start, long stop) => _inner.ListTrimAsync(key, start, stop);
+    public Task<string[]> ListRangeAsync(string key, long start, long stop) => _inner.ListRangeAsync(key, start, stop);
+    public Task<bool> ExistsAsync(string key) => _inner.ExistsAsync(key);
+    public Task<bool> PingAsync() => _inner.PingAsync();
+    public Task<StackExchange.Redis.RedisResult> ScriptEvaluateAsync(string script, StackExchange.Redis.RedisKey[] keys, StackExchange.Redis.RedisValue[] values) => _inner.ScriptEvaluateAsync(script, keys, values);
+}
+
+/// <summary>
+/// An <see cref="IRedisStore"/> decorator that throws <see cref="InvalidOperationException"/>
+/// from <see cref="HashSetFieldAsync"/> to simulate a Redis fault. All other operations
+/// delegate to the inner <see cref="FakeRedisStore"/>. Used to verify that
+/// <c>UpdateAgentFieldAsync</c>'s <c>catch</c> block swallows the exception.
+/// </summary>
+internal sealed class HashSetFieldFaultingFakeRedisStore : IRedisStore
+{
+    private readonly FakeRedisStore _inner = new();
+
+    public Task<bool> HashSetFieldAsync(string key, string field, string value)
+        => Task.FromException<bool>(new InvalidOperationException("Simulated Redis fault in HashSetFieldAsync"));
+
+    // Delegate all other operations to the inner FakeRedisStore.
+    public Task<bool> SetAsync(string key, string value, TimeSpan? expiry = null, StackExchange.Redis.When when = StackExchange.Redis.When.Always) => _inner.SetAsync(key, value, expiry, when);
+    public Task<string?> GetAsync(string key) => _inner.GetAsync(key);
+    public Task<bool> SetIfNotExistsAsync(string key, string value, TimeSpan expiry) => _inner.SetIfNotExistsAsync(key, value, expiry);
+    public Task<bool> DeleteAsync(string key) => _inner.DeleteAsync(key);
+    public Task<bool> ExpireAsync(string key, TimeSpan expiry) => _inner.ExpireAsync(key, expiry);
+    public Task<bool> ExpireAtAsync(string key, DateTimeOffset expiry) => _inner.ExpireAtAsync(key, expiry);
+    public Task<StackExchange.Redis.HashEntry[]> HashGetAllAsync(string key) => _inner.HashGetAllAsync(key);
+    public Task<StackExchange.Redis.HashEntry[]> HashGetAllAsync(string key, CancellationToken ct) => _inner.HashGetAllAsync(key, ct);
+    public Task HashSetAsync(string key, StackExchange.Redis.HashEntry[] fields) => _inner.HashSetAsync(key, fields);
     public Task<long> SetAddAsync(string key, string value) => _inner.SetAddAsync(key, value);
     public Task<long> SetRemoveAsync(string key, string value) => _inner.SetRemoveAsync(key, value);
     public Task<string[]> SetMembersAsync(string key) => _inner.SetMembersAsync(key);
