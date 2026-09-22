@@ -83,7 +83,7 @@ public class DispatchLifecycleServicePvcQueryTests : IDisposable
         // Arrange
         var pvcPool = new List<string> { "pvc-1", "pvc-2" };
 
-        await InsertWorkItemWithPvc(Guid.NewGuid(), "pvc-1", WorkItemStatus.Pending);
+        await InsertWorkItemWithPvc(Guid.NewGuid(), "pvc-1", WorkItemStatus.Dispatched);
         await InsertWorkItemWithPvc(Guid.NewGuid(), "pvc-2", WorkItemStatus.Running);
 
         await using var db = await _dbFactory.CreateDbContextAsync();
@@ -182,18 +182,11 @@ public class DispatchLifecycleServicePvcQueryTests : IDisposable
     public async Task CredentialPoolStatus_WhenAllPvcsAllocated_AvailableIsZero()
     {
         // Arrange — 4-slot pool, all 4 claimed by active work items.
-        // Note: the Pending entry below has ClaimedPvcName set, which is an artificial seed
-        // state — in production a Pending item only has ClaimedPvcName if it was requeued
-        // before RequeueAsync cleared it (see CRITICAL fix in WorkItemTransitionService.RequeueAsync).
-        // TODO: Replace the Pending entry with Dispatched to keep the fixture consistent with
-        // the "all dispatched" scenario the test describes, and to avoid false confidence if the
-        // status filter in QueryAvailablePvcsAsync is ever narrowed to exclude Pending.
-        // See review-findings-testqualityreviewer.md [WARNING] at line 183.
         var pvcPool = new List<string> { "pvc-1", "pvc-2", "pvc-3", "pvc-4" };
         await InsertWorkItemWithPvc(Guid.NewGuid(), "pvc-1", WorkItemStatus.Running);
         await InsertWorkItemWithPvc(Guid.NewGuid(), "pvc-2", WorkItemStatus.Running);
         await InsertWorkItemWithPvc(Guid.NewGuid(), "pvc-3", WorkItemStatus.Dispatched);
-        await InsertWorkItemWithPvc(Guid.NewGuid(), "pvc-4", WorkItemStatus.Pending);
+        await InsertWorkItemWithPvc(Guid.NewGuid(), "pvc-4", WorkItemStatus.Dispatched);
 
         await using var db = await _dbFactory.CreateDbContextAsync();
 
