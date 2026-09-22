@@ -95,7 +95,7 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
                 if (killResult == IdleKillResult.KillTriggered) return;
                 if (killResult == IdleKillResult.GuardFired) continue;
 
-        var (job, readError) = await TryReadJobAsync(jobName).ConfigureAwait(false);
+                var (job, readError) = await TryReadJobAsync(jobName).ConfigureAwait(false);
                 // TODO [WARNING]: TryReadJobAsync forwards CancellationToken.None to ReadJobAsync.
                 // If ct is cancelled while ReadJobAsync is in-flight (e.g. host shutdown with a slow K8s API),
                 // the read will not be interrupted — the watcher cannot observe cancellation until the next
