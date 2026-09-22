@@ -30,6 +30,11 @@ public interface IHousekeepingService
     /// <param name="issueProvider">Provider for fetching issue details and swapping labels.</param>
     /// <param name="issueProviderId">Issue provider config ID for label swap routing.</param>
     /// <param name="agentDonePrs">Current agent:done PR list for this template. May be empty.</param>
+    /// <param name="wasInputTruncated">
+    /// True when <paramref name="agentDonePrs"/> was capped by <c>ClosedLoopMaxPagesToFetch</c>.
+    /// Forwarded to <see cref="IStaleBranchCleaner"/> — when true, branch cleanup is skipped
+    /// with a Warning rather than risking deleting a branch whose PR was beyond the cap.
+    /// </param>
     /// <param name="effectiveConcurrencyLimit">Max in-flight updates for this repo. Clamped to ≥ 1.</param>
     /// <param name="branchCleanupEnabled">Whether to run stale branch cleanup this cycle.</param>
     /// <param name="cleanupIntervalMinutes">Minimum minutes between cleanup passes. 0 = every tick.</param>
@@ -43,6 +48,7 @@ public interface IHousekeepingService
         IIssueProvider issueProvider,
         string issueProviderId,
         IReadOnlyList<PullRequestSummary> agentDonePrs,
+        bool wasInputTruncated,
         int effectiveConcurrencyLimit,
         bool branchCleanupEnabled,
         int cleanupIntervalMinutes,
