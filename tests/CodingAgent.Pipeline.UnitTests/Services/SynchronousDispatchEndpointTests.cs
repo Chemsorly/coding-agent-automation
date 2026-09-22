@@ -590,6 +590,48 @@ public sealed class SynchronousDispatchEndpointTests
     // the branches swapped) would go undetected on this path — the zero and negative tests both
     // produce the default value regardless of which branch runs when the input is <= 0.
     // (Correctness + TestQualityReviewer review [WARNING])
+
+    // TODO [WARNING]: The three TimeoutSeconds tests (zero, negative, and positive) are structurally
+    // identical — same arrange, same act, same DB-read pattern — differing only in the input value and
+    // expected stored value. Consolidate them into a single [Theory] / [InlineData] test with triples
+    // (inputTimeout, expectedStoredValue, reason) to eliminate copy-paste and make adding a fourth
+    // variant trivial. (TestQualityReviewer review [WARNING])
+    /// <summary>
+    /// AC (issue #2745): POST /api/work-items/dispatch with a positive TimeoutSeconds must store
+    /// the provided value unchanged rather than being replaced by <c>DefaultAgentTimeout</c>.
+    /// Without this test, an accidental inversion of the clamp condition (<c>&gt; 0</c> → <c>&gt;= 0</c>)
+    /// would go undetected — the zero and negative tests both produce the default value regardless
+    /// of which branch executes when the input is ≤ 0.
+    /// </summary>
+    [Fact]
+    public async Task DispatchWorkItem_WithPositiveTimeoutSeconds_StoresAsProvided()
+    {
+        var dbFactory = CreateDbFactory();
+        var runService = CreateRunService();
+        var templateStore = CreateTemplateStore(maxConcurrent: 5);
+        var k8sMock = new Mock<IKubernetesJobClient>();
+        k8sMock.Setup(k => k.CreateJobAsync(
+                It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var lifecycle = CreateLifecycleService(k8sMock.Object);
+
+        const int customTimeout = 7200;
+        var request = MakeRequest() with { TimeoutSeconds = customTimeout };
+
+        var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
+            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), CancellationToken.None);
+
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
+            "dispatch must succeed so we can verify the stored TimeoutSeconds");
+
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.AsNoTracking()
+            .FirstOrDefaultAsync(w => w.IssueIdentifier == request.IssueIdentifier.Value);
+        item.Should().NotBeNull();
+        item!.TimeoutSeconds.Should().Be(
+            customTimeout,
+            "a positive TimeoutSeconds must be stored as-is without clamping");
+    }
 }
 
 /// <summary>

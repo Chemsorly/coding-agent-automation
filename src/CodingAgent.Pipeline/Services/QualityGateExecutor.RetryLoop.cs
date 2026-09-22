@@ -10,9 +10,6 @@ public partial class QualityGateExecutor
     /// <summary>Maximum consecutive transient provider errors before the retry loop is aborted.</summary>
     private const int MaxConsecutiveTransientRetries = 10;
 
-    /// <summary>Prefix used for the post-PR CI gate result Details and UI messages.</summary>
-    private const string PostPrCiPrefix = "Post-PR CI";
-
     // Outcome tag values for the quality_gate.retries counter.
     // These match the per-branch semantics of RunFixAgentIterationAsync.
     private const string OutcomeTransient = "transient";
@@ -178,102 +175,14 @@ public partial class QualityGateExecutor
     /// CI workflows that only trigger on <c>pull_request</c> events (not on branch pushes),
     /// which would not have been caught by the pre-PR <see cref="AppendExternalCiIfNeededAsync"/>
     /// call if that call exited early via the <c>skipCiIfNoChanges</c> path.
+    /// Delegates to <see cref="CiPollingCoordinator.WaitForPostPrCiAsync"/> which owns the
+    /// polling logic, telemetry recording, and InfrastructureRetryCount isolation.
     /// </summary>
-    /// <remarks>
-    /// Returns the original <paramref name="report"/> with <see cref="QualityGateReport.ExternalCi"/>
-    /// replaced by the post-PR CI result. Returns the unchanged report (with no <c>ExternalCi</c>
-    /// mutation) when <see cref="QualityGateContext.PipelineProvider"/> is null or
-    /// <see cref="PipelineRun.BranchName"/> is empty — both are treated as "CI not configured".
-    /// </remarks>
-    private async Task<QualityGateReport> WaitForPostPrCiAsync(
+    private Task<QualityGateReport> WaitForPostPrCiAsync(
         QualityGateContext context,
         QualityGateReport report,
         CancellationToken ct)
-    {
-        var run = context.Run;
-        var config = context.Config;
-        var callbacks = context.Callbacks;
-
-        if (context.PipelineProvider is null || string.IsNullOrEmpty(run.BranchName))
-            return report;
-
-        _logger.Information("Pipeline {RunId} waiting for post-PR CI on branch {BranchName}", run.RunId, run.BranchName);
-        callbacks.EmitOutputLine("⏳ Waiting for post-PR CI...");
-
-        var commitSha = await TryReadHeadShaAsync(context, "could not read HEAD SHA for post-PR CI wait", ct);
-
-        // Snapshot and reset InfrastructureRetryCount so post-PR CI gets its own fresh budget.
-        // The pre-PR CI poll (AppendExternalCiIfNeededAsync) may have consumed some or all of
-        // MaxInfrastructureRetries. Without a reset, a single infra failure here would exhaust
-        // the remaining budget and skip retries, degrading to draft PR unnecessarily.
-        var priorInfraRetryCount = run.InfrastructureRetryCount;
-        run.InfrastructureRetryCount = 0;
-
-        // Tracks the entire post-PR CI wait including polling and infra retries, so that
-        // pipeline_step_duration_seconds{step_name="WaitForPostPrCi"} accounts for time that
-        // would otherwise be invisible in the "Avg Step Duration" Grafana panel.
-        var waitSw = System.Diagnostics.Stopwatch.StartNew();
-        GateResult ciGate;
-        try
-        {
-            try
-            {
-                var ciPollStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                var (ciPassed, ciStatus, ciLogPaths) = await PollAndHandleInfraRetryAsync(context, commitSha, config, callbacks, ct);
-
-                // PostPrCiDuration is a dedicated histogram for the post-PR CI wait, separate from
-                // ExternalCiDuration (which is recorded in AppendExternalCiIfNeededAsync for the
-                // pre-PR CI pass). Using a distinct metric avoids inflating pre-PR p50/p99 with
-                // post-PR observations and makes the per-phase time budget observable in Grafana.
-                _postPrCiDuration.Record(
-                    ciPollStopwatch.Elapsed.TotalSeconds,
-                    PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
-
-                ciGate = BuildCiGateResult(ciPassed, ciStatus, ciLogPaths, PostPrCiPrefix, PostPrCiPrefix, callbacks);
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                ciGate = BuildCiTimeoutGateResult(config.ExternalCiTimeout, PostPrCiPrefix);
-                callbacks.EmitOutputLine($"❌ {PostPrCiPrefix} timed out after {config.ExternalCiTimeout}");
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Pipeline {RunId} post-PR CI check failed, treating as gate failure", run.RunId);
-                ciGate = BuildCiErrorGateResult(PostPrCiPrefix, ex.Message);
-            }
-            finally
-            {
-                // Restore the accumulated count so the run summary reflects the total infra retries
-                // across both pre-PR and post-PR CI polls.
-                run.InfrastructureRetryCount += priorInfraRetryCount;
-            }
-        }
-        finally
-        {
-            waitSw.Stop();
-            // Guard against genuine pipeline cancellation (ct.IsCancellationRequested).
-            // When the outer ct is cancelled the inner catch(OperationCanceledException){ throw; }
-            // re-throws and this finally still runs.  Recording a partial elapsed time as a
-            // complete WaitForPostPrCi observation would distort p50/p99 histogram aggregations
-            // for long CI waits (potentially hours).  Only emit the sample when the wait
-            // completed — successfully or with a CI-level error — not when the pipeline itself
-            // was cancelled mid-poll.
-            if (!ct.IsCancellationRequested)
-            {
-                var stepTags = PipelineTelemetry.BuildStepTags("WaitForPostPrCi", run.RunType, run.ProjectId, run.ProjectName);
-                _stepDuration.Record(waitSw.Elapsed.TotalSeconds, stepTags);
-                _stepCount.Add(1, stepTags);
-            }
-        }
-
-        return new QualityGateReport
-        {
-            Compilation = report.Compilation,
-            Tests = report.Tests,
-            ExternalCi = ciGate
-        };
-    }
+        => _ciPollingCoordinator.WaitForPostPrCiAsync(context, report, ct);
 
     /// <summary>
     /// Encapsulates the draft-PR finalization pattern: log a warning, emit a UI line,
