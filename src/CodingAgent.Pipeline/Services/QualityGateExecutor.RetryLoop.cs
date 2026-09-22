@@ -72,6 +72,7 @@ public partial class QualityGateExecutor
         {
             _logger.Error(ex, "Pipeline {RunId} quality gate validation failed", run.RunId);
             run.FailureReason = $"Quality gate validation error: {ex.Message}";
+            run.MarkCompleted();
             _logger.Information(
                 "Pipeline {RunId} QualityGateExecutor swapping label to agent:error for issue {IssueIdentifier} (reason=quality gate validation error)",
                 run.RunId, run.IssueIdentifier);
