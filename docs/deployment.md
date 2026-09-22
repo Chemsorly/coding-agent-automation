@@ -190,6 +190,7 @@ Three independent leases are used — one per relevant process (the Pipeline API
 | `OrphanedLabelRecoveryService` | Sweeps for issues with stale `agent:in-progress` labels | Waits |
 | `HousekeepingService` | Manages `agent:done` PRs, branch updates, and stale branch cleanup | Waits |
 | `WorkItemCountsPoller` | Emits work-item count metrics to `CodingAgent.WorkDistribution` | Waits |
+<!-- TODO: [WARNING] Stale class name — WorkItemCountsPoller was renamed to WorkItemCountsService (issue #2844). Update this table row. -->
 
 #### Configuration
 

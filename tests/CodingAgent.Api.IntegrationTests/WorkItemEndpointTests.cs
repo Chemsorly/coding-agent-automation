@@ -625,6 +625,43 @@ public sealed class WorkItemEndpointTests
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    /// <summary>
+    /// Characterization test for the Dispatched→Pending path in <c>RequeueWorkItem</c>.
+    /// Verifies that: (1) the item transitions to Pending, (2) RetryCount is incremented,
+    /// and (3) <c>K8sJobName</c> is cleared to null (the Dispatched-specific mutation).
+    ///
+    /// <para>
+    /// This test is the safety net for the AC3 loop refactoring. After collapsing the three
+    /// sequential <c>TransitionIfAsync</c> blocks into a loop, this test locks in the
+    /// conditional <c>K8sJobName = null</c> mutation that only applies to the Dispatched→Pending
+    /// path (the Failed and Cancelled paths do not clear <c>K8sJobName</c>).
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task RequeueWorkItem_DispatchedToPending_IncrementsRetryCount_ClearsK8sJobName()
+    {
+        // Arrange: seed a Dispatched item with a non-null K8sJobName and a known RetryCount.
+        var entity = SeedEntity(WorkItemStatus.Dispatched);
+        using (var db = _factory.CreateDbContext())
+        {
+            var item = await db.WorkItems.FindAsync(entity.Id);
+            item!.K8sJobName = "k8s-job-abc123";
+            item.RetryCount = 2;
+            await db.SaveChangesAsync();
+        }
+
+        // Act
+        var response = await _client.PostAsync($"/api/work-items/{entity.Id}/requeue", null);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Assert
+        using var verifyDb = _factory.CreateDbContext();
+        var updated = await verifyDb.WorkItems.FindAsync(entity.Id);
+        updated!.Status.Should().Be(WorkItemStatus.Pending, "Dispatched→Pending transition must succeed");
+        updated.RetryCount.Should().Be(3, "RetryCount must be incremented from 2 to 3");
+        updated.K8sJobName.Should().BeNull("K8sJobName must be cleared to null on Dispatched→Pending requeue");
+    }
+
     // ── RetryCount ────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -1785,7 +1822,7 @@ public sealed class WorkItemEndpointTests
     public async Task GetPendingWorkItems_IncludesConsolidationItems()
     {
         // Consolidation WorkItems are now enqueued as Pending (unified dispatch path, #2566).
-        // GET /api/work-items/pending must include them so the WorkItemDispatchPoller can dispatch them.
+        // GET /api/work-items/pending must include them so the WorkItemDispatchLoop can dispatch them.
         // TODO: [WARNING] This test only verifies the "consolidation items are included" half. There is
         // no assertion that a non-Consolidation Pending item is also returned, which would confirm that
         // removing the old `TaskType != Consolidation` filter didn't accidentally break the general Pending
@@ -1798,7 +1835,7 @@ public sealed class WorkItemEndpointTests
         var items = await response.Content.ReadFromJsonAsync<List<PendingWorkItemDto>>(PipelineJsonOptions.Default);
         items.Should().NotBeNull();
         items!.Should().Contain(i => i.Id == consolidation.Id,
-            "consolidation Pending items must be returned by GET /api/work-items/pending so the WorkItemDispatchPoller can dispatch them");
+            "consolidation Pending items must be returned by GET /api/work-items/pending so the WorkItemDispatchLoop can dispatch them");
     }
 
     [Fact]
@@ -1886,7 +1923,7 @@ public sealed class WorkItemEndpointTests
     /// Starvation boundary: when 51 Review items are pending and maxResults=50, the Take(50)
     /// window fills entirely with Reviews and the single Implementation item is absent.
     /// This documents the intentional starvation contract: lower-tier items are invisible to
-    /// the WorkItemDispatchPoller for that cycle whenever a higher tier has 50+ pending items.
+    /// the WorkItemDispatchLoop for that cycle whenever a higher tier has 50+ pending items.
     /// Decision: decisions.md "Dispatch priority: static ordering Review > Decomposition > Implementation > Consolidation".
     /// </summary>
     [Fact]

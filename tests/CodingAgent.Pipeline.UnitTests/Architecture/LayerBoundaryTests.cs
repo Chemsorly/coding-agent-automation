@@ -757,7 +757,7 @@ public partial class LayerBoundaryTests
             "RunServiceCleanupService",
 
             // Spec 048 Phase 2: WorkItemMetricsBackgroundService was deleted (dead code since
-            // Spec 047, replaced by WorkItemCountsPoller in the Scheduler which polls
+            // Spec 047, replaced by WorkItemCountsService in the Scheduler which polls
             // GET /api/work-items/counts-by-status). No allowlist entry is needed — the scanner
             // cannot discover a type that no longer exists in src/.
 
@@ -767,15 +767,15 @@ public partial class LayerBoundaryTests
             "LoopStatusPollingService",
 
             // WorkItemDispatchService — DELETED in issue #2547 (post-cutover teardown of the API
-            // dispatch loop). The Scheduler-side WorkItemDispatchPoller is the sole dispatcher.
+            // dispatch loop). The Scheduler-side WorkItemDispatchLoop is the sole dispatcher.
             // "WorkItemDispatchService", // DELETED — do not add back
 
-            // WorkItemDispatchPoller is conditionally registered in SchedulerServiceCollectionExtensions
+            // WorkItemDispatchLoop is conditionally registered in SchedulerServiceCollectionExtensions
             // under the Scheduler:Dispatch:Enabled flag (default false). Registration uses the lambda
-            // pattern: services.AddHostedService(sp => sp.GetRequiredService<WorkItemDispatchPoller>()).
+            // pattern: services.AddHostedService(sp => sp.GetRequiredService<WorkItemDispatchLoop>()).
             // The T4 scanner only detects AddHostedService<T>() (generic form), not the lambda pattern.
             // The service IS actively registered when Scheduler:Dispatch:Enabled=true.
-            "WorkItemDispatchPoller",
+            "WorkItemDispatchLoop",
         };
 
         // ── Step 3: find all concrete BackgroundService subclasses in src files ──

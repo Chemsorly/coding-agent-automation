@@ -227,7 +227,7 @@ public class WorkDistributorAdditionalTests
     {
         // Pending enqueue path: DistributeAsync calls POST /api/work-items (CreateAsync)
         // which creates the WorkItem as Pending in the visible UI queue.
-        // WorkItemDispatchPoller (Scheduler) will later pick it up and create the K8s Job.
+        // WorkItemDispatchLoop (Scheduler) will later pick it up and create the K8s Job.
         var sut = CreateKubernetes();
         var request = CreateMinimalRequest();
 

@@ -62,6 +62,8 @@ After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pip
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+<!-- TODO: [WARNING] Stale class name in ASCII diagram above — WorkItemCountsPoller was renamed to WorkItemCountsService (issue #2844). Update the diagram when this document is next revised. -->
+
 ### Where the Locking-Critical Singletons Live
 
 The **authoritative** instances of the services described in this document run in the **Pipeline API** process (`CodingAgent.Api`). The Orchestrator registers read-model replicas of `AgentRegistryService` and `OrchestratorRunService` — backed by `DistributedAgentRegistryService` / `DistributedRunService` when Redis is configured, keeping the Blazor UI in sync without direct DB access.

@@ -403,7 +403,8 @@ api:
     # Mirrors web.env.readinessDrainDelaySeconds. Must be < terminationGracePeriodSeconds - preStop.
     readinessDrainDelaySeconds: 15
   # Consolidation unified-dispatch feature flag — gates whether GET /api/work-items/pending
-  # includes consolidation items for WorkItemDispatchPoller. Must match the web pod setting.
+  # TODO: [WARNING] Stale class name — WorkItemDispatchPoller was renamed to WorkItemDispatchLoop (issue #2844).
+  # includes consolidation items for WorkItemDispatchLoop. Must match the web pod setting.
   # Defaults false; enable after all prerequisites (#2582–#2585 + this change) deploy.
   consolidation:
     unifiedDispatch:
@@ -477,9 +478,10 @@ scheduler:
     # Empty (default) = release-scoped: caa-<release>-scheduler-lock
     leaseName: ""
   dispatch:
-    # Whether the Scheduler-side WorkItemDispatchPoller is enabled.
+    # Whether the Scheduler-side WorkItemDispatchLoop is enabled.
+    # TODO: [WARNING] Stale class name — WorkItemDispatchPoller was renamed to WorkItemDispatchLoop (issue #2844).
     # The API-side dispatch loop has been removed (issue #2547). Set to true to enable
-    # the Scheduler WorkItemDispatchPoller as the sole dispatcher.
+    # the Scheduler WorkItemDispatchLoop as the sole dispatcher.
     # TODO [WARNING]: This defaults to false. With the API-side dispatch loop removed and this
     # flag still false, a fresh install or an upgrade that does not explicitly set this to true
     # will have NO active dispatcher — Pending WorkItems will accumulate indefinitely and never
