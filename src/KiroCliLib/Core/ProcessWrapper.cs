@@ -18,6 +18,13 @@ public class ProcessWrapper : IProcessWrapper
     private const int WslKillTimeoutMs = 2000;
     private const int ProcessKillTimeoutMs = 5000;
 
+    // KiroCliLib cannot reference CodingAgent.Contracts (circular dependency: Contracts → KiroCliLib).
+    // Keep the agent directory name as a local constant that mirrors AgentWorkspacePaths.MetadataDirectory.
+    // If the directory name ever changes, update AgentWorkspacePaths.MetadataDirectory in
+    // CodingAgent.Contracts and this constant together.
+    // internal visibility allows ProcessWrapperConstantsTests to pin the value against accidental drift.
+    internal const string AgentMetadataDirectory = ".agent";
+
     private readonly Configuration.Configuration _config;
     private readonly ILogger _logger;
     private readonly bool _useWsl;
@@ -59,7 +66,7 @@ public class ProcessWrapper : IProcessWrapper
         // quotes, newlines, backticks, and JSON that cause exit code 2 (argument parse error).
         // Use a unique filename per invocation to prevent race conditions when multiple
         // processes run concurrently (parallel review agents in the same workspace).
-        var agentDir = Path.Combine(workspaceDirectory, ".agent");
+        var agentDir = Path.Combine(workspaceDirectory, AgentMetadataDirectory);
         Directory.CreateDirectory(agentDir);
         var promptId = Guid.NewGuid().ToString("N")[..8];
         var promptFile = Path.Combine(agentDir, $"prompt-input-{promptId}.md");
@@ -70,7 +77,9 @@ public class ProcessWrapper : IProcessWrapper
 
         // The @path syntax expands file contents inline before sending (per Kiro docs).
         // Use explicit relative path (@./path) to avoid prompt name collision.
-        var inlinePrompt = $"@.agent/prompt-input-{promptId}.md";
+        // TODO: Use AgentWorkspacePaths.MetadataDirectory here once KiroCliLib can reference CodingAgent.Contracts
+        //       without a circular dependency. For now, AgentMetadataDirectory mirrors it locally.
+        var inlinePrompt = $"@{AgentMetadataDirectory}/prompt-input-{promptId}.md";
         var resumeFlag = resumeSessionId is not null
             ? $"--resume-id {resumeSessionId}"
             : useResume ? "--resume" : null;

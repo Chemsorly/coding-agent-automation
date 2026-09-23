@@ -3,6 +3,7 @@ using static CodingAgent.Pipeline.Models.PipelineConfigurationDefaults;
 
 namespace CodingAgent.Pipeline.Models;
 
+
 [MessagePackObject]
 public sealed record PipelineConfiguration
 {
@@ -303,7 +304,7 @@ public sealed record PipelineConfiguration
 
     [Key(10)]
     [ProjectOverridable(Order = 26)]
-    public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { ".agent", ".brain" };
+    public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { AgentWorkspacePaths.MetadataDirectory, AgentWorkspacePaths.BrainDirectory };
 
     /// <summary>
     /// Agent-provider-specific paths that are ALWAYS unstaged before commit, regardless of
