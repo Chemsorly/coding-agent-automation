@@ -53,10 +53,6 @@ public partial class TemplateTableSection
     private string? _expandedFeaturesTemplateId;
 
     // Number of columns — 9 when Actions is visible (loop inactive), 8 when hidden (loop active).
-    // TODO: [WARNING] These hard-coded counts (8/9) will silently produce misaligned colspan on the
-    // feature-config and label-preview rows if any column is ever added or removed from the header.
-    // Consider deriving _columnCount from the rendered header column count rather than hard-coding it,
-    // or at minimum adding a test that asserts the rendered colspan matches the actual header count.
     private int _columnCount => IsLoopActive ? 8 : 9;
 
     private void ToggleMoveMenu(string? templateId) =>

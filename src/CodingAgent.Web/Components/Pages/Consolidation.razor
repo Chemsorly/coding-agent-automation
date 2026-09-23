@@ -349,20 +349,16 @@
             // Null-coalesce: this section is embedded in the Pipelines page, so a null return
             // (e.g. a service that doesn't honour the non-null contract) must not NRE the render.
             _runHistory = await ConsolidationService.GetRunHistoryAsync(CancellationToken.None) ?? [];
+            _anyRunCancellable = _runHistory.Any(r =>
+                r.Status == ConsolidationRunStatus.Queued ||
+                r.Status == ConsolidationRunStatus.Pending);
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to load consolidation run history");
             _runHistory = [];
+            _anyRunCancellable = false;
         }
-        _anyRunCancellable = _runHistory.Any(r =>
-            r.Status == ConsolidationRunStatus.Queued ||
-            r.Status == ConsolidationRunStatus.Pending);
-        // TODO: [WARNING] _anyRunCancellable is computed outside the try/catch that loads _runHistory.
-        // This is safe today (the catch sets _runHistory = [] so .Any() returns false), but placing
-        // this computation *inside* the run-history try block (immediately after _runHistory is assigned)
-        // would make the data flow explicit and prevent a future refactor from accidentally computing it
-        // against a partially-initialised list. Move it inside the try block when touching this area.
 
         try
         {

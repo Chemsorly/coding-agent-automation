@@ -424,11 +424,7 @@
     {
         _loading = true;
         _error = null;
-        // TODO: [WARNING] _anyRunHasTokens must be reset here alongside _loading so that a failed or
-        // cancelled load (OperationCanceledException / generic exception) does not leave a stale value
-        // from a previous project scope. Without this reset, switching project scope while the network
-        // call fails mid-flight leaves the Tokens column visible (or hidden) based on stale data, causing
-        // a <col>/<th>/<td> count mismatch in the rendered table. Add: _anyRunHasTokens = false;
+        _anyRunHasTokens = false;
         try
         {
             _result = await RunHistory.GetRunHistoryAsync(
