@@ -1,4 +1,5 @@
 using CodingAgent.AgentGateway;
+using Microsoft.Extensions.Hosting;
 
 namespace CodingAgent.Web;
 
@@ -14,9 +15,11 @@ internal static class SignalRRegistration
     /// so the formatter list and filter wiring are defined exactly once in
     /// <c>CodingAgent.AgentGateway</c>.
     /// </summary>
-    public static IServiceCollection AddSignalRServices(this IServiceCollection services)
+    public static IServiceCollection AddSignalRServices(
+        this IServiceCollection services,
+        IHostEnvironment environment)
     {
-        services.AddAgentSignalRServices();
+        services.AddAgentSignalRServices(environment);
         return services;
     }
 }

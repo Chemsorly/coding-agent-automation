@@ -53,7 +53,7 @@ builder.Services.AddApiOrchestration(builder.Configuration);
 builder.Services.AddAgentHubServices();  // shared, from CodingAgent.AgentGateway
 
 // ── SignalR (with optional Redis backplane) ──────────────────────────────────
-builder.Services.AddApiSignalR(builder.Configuration);
+builder.Services.AddApiSignalR(builder.Configuration, builder.Environment);
 
 // ── Agent API key authentication + authorization ─────────────────────────────
 builder.Services.AddApiAuthentication(agentApiKey, Log.Logger);

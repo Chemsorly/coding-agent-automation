@@ -4,15 +4,19 @@ using Microsoft.EntityFrameworkCore;
 namespace CodingAgent.Api.IntegrationTests;
 
 /// <summary>
-/// Unit tests for <see cref="WorkItemDispatchEndpoints.IsUniqueViolation"/>.
-/// Exercises each branch of the method to ensure new code paths have coverage:
-/// - DbUpdateException wrapping a "duplicate key" inner message (Postgres fallback path)
-/// - DbUpdateException wrapping a "unique constraint" inner message (Postgres fallback path)
-/// - Plain exception with "duplicate key" in the top-level message
-/// - Plain exception with "unique constraint" in the top-level message
-/// - EF InMemory exact phrase ("An item with the same key has already been added")
-/// - Non-matching exceptions that should return false
+/// Smoke tests for <see cref="WorkItemDispatchEndpoints.IsUniqueViolation"/>, which delegates
+/// to <see cref="CodingAgent.Infrastructure.Persistence.Services.PostgresErrorClassifier.IsUniqueViolation"/>.
+/// Primary coverage lives in <c>PostgresErrorClassifierTests</c> in CodingAgent.Infrastructure.UnitTests.
+/// These tests verify the delegation path and keep the existing contract from drifting.
 /// </summary>
+// TODO: Add a smoke test that exercises the delegation path through the reflection-based
+// PostgresException.SqlState == "23505" branch (i.e., construct a DbUpdateException wrapping
+// a real PostgresException with SQLSTATE 23505 and assert IsUniqueViolation returns true).
+// All current tests only hit the message-based fallback arm; if the reflection call in
+// PostgresErrorClassifier silently broke (e.g., SqlState property name changed), none of
+// these smoke tests would catch it. This requires adding 'using Npgsql;' and a PackageReference
+// for Npgsql (which flows transitively via CodingAgent.Infrastructure.Persistence, but may
+// need an explicit reference for direct constructor use). (TestQualityReviewer review warning)
 public sealed class IsUniqueViolationTests
 {
     // ── DbUpdateException wrapping inner messages ──────────────────────────────
