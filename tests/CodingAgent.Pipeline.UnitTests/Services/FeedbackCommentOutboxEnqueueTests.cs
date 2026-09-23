@@ -41,14 +41,15 @@ public sealed class FeedbackCommentOutboxEnqueueTests
         _appLifetime.Setup(l => l.ApplicationStopping).Returns(CancellationToken.None);
 
         _sut = new AgentJobLifecycleService(
-            _facade.Object,
-            _lifecycle.Object,
-            _labelService.Object,
-            _issueOps.Object,
-            _changeNotifier.Object,
-            _appLifetime.Object,
-            _outbox.Object,
-            _logger.Object);
+            new AgentJobLifecycleServiceDependencies(
+                _facade.Object,
+                _lifecycle.Object,
+                _labelService.Object,
+                _issueOps.Object,
+                _changeNotifier.Object,
+                _appLifetime.Object,
+                _outbox.Object,
+                _logger.Object));
     }
 
     // ── Helpers ────────────────────────────────────────────────────────

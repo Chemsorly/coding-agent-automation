@@ -1062,14 +1062,15 @@ public sealed class AgentHubBehaviorTests : IDisposable
         appLifetime.SetupGet(l => l.ApplicationStopping).Returns(CancellationToken.None);
         var outbox = new Mock<IFeedbackCommentOutbox>();
         return new AgentJobLifecycleService(
-            _mockFacade.Object,
-            _mockLifecycleManager.Object,
-            _mockLabelService.Object,
-            issueOps,
-            changeNotifier,
-            appLifetime.Object,
-            outbox.Object,
-            _mockLogger.Object);
+            new AgentJobLifecycleServiceDependencies(
+                _mockFacade.Object,
+                _mockLifecycleManager.Object,
+                _mockLabelService.Object,
+                issueOps,
+                changeNotifier,
+                appLifetime.Object,
+                outbox.Object,
+                _mockLogger.Object));
     }
 
     [Fact]
