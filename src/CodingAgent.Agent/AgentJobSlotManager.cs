@@ -245,17 +245,6 @@ public sealed class AgentJobSlotManager
     }
 
     /// <summary>
-    /// Sets the active job assignment metadata after slot acquisition.
-    /// </summary>
-    public void SetActiveJobAssignment(JobAssignmentMessage message, PipelineRunType runType)
-    {
-        lock (_busyLock)
-        {
-            _activeJobAssignment = message;
-        }
-    }
-
-    /// <summary>
     /// Sets the active job task reference (for shutdown/cancel-wait patterns).
     /// </summary>
     public void SetActiveJobTask(Task task)
