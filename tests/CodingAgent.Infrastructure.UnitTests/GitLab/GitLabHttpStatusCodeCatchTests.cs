@@ -2,7 +2,6 @@ using System.Net;
 using AwesomeAssertions;
 using Moq;
 using NGitLab;
-using NGitLab.Mock.Config;
 using NGitLab.Models;
 using CodingAgent.Infrastructure.GitLab;
 using CodingAgent.Pipeline.Models;
@@ -24,18 +23,6 @@ namespace CodingAgent.Infrastructure.UnitTests.GitLab;
 public class GitLabHttpStatusCodeCatchTests
 {
     #region Helpers
-
-    private static (IGitLabClient Client, int ProjectId) CreateMockServer()
-    {
-        var server = new GitLabConfig()
-            .WithUser("TestUser", isDefault: true)
-            .WithProject("TestProject", @namespace: "TestUser", addDefaultUserAsMaintainer: true)
-            .BuildServer();
-
-        var client = server.CreateClient();
-        var projectId = (int)client.Projects.Accessible.First().Id;
-        return (client, projectId);
-    }
 
     /// <summary>
     /// Creates a mock IGitLabClient whose Issues.GetAsync throws <paramref name="ex"/> for any call.
@@ -107,16 +94,7 @@ public class GitLabHttpStatusCodeCatchTests
             .Setup(c => c.Create(It.IsAny<ProjectIssueNoteCreate>()))
             .Throws(ex);
 
-        // Use MockBehavior.Loose so that GetProjectIssueNoteClient always returns our mock
-        // regardless of how the ProjectId int→long→NGitLab.Models.ProjectId conversion resolves.
         var clientMock = new Mock<IGitLabClient>(MockBehavior.Loose);
-        clientMock
-            .Setup(c => c.GetProjectIssueNoteClient(It.IsAny<NGitLab.Models.ProjectId>()))
-            .Returns(noteClientMock.Object);
-        // Also set up a catch-all via the indexer returning the same mock for any ProjectId value
-        clientMock
-            .SetupAllProperties();
-        // Re-set GetProjectIssueNoteClient after SetupAllProperties
         clientMock
             .Setup(c => c.GetProjectIssueNoteClient(It.IsAny<NGitLab.Models.ProjectId>()))
             .Returns(noteClientMock.Object);
@@ -135,11 +113,6 @@ public class GitLabHttpStatusCodeCatchTests
             .Throws(ex);
 
         var clientMock = new Mock<IGitLabClient>(MockBehavior.Loose);
-        clientMock
-            .Setup(c => c.GetProjectIssueNoteClient(It.IsAny<NGitLab.Models.ProjectId>()))
-            .Returns(noteClientMock.Object);
-        clientMock
-            .SetupAllProperties();
         clientMock
             .Setup(c => c.GetProjectIssueNoteClient(It.IsAny<NGitLab.Models.ProjectId>()))
             .Returns(noteClientMock.Object);
