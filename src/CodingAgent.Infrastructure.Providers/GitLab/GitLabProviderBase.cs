@@ -1,3 +1,4 @@
+using System.Net;
 using NGitLab;
 using NGitLab.Models;
 using Polly;
@@ -137,13 +138,13 @@ public abstract class GitLabProviderBase : IAsyncDisposable
             _httpUrlToRepo = project.HttpUrl;
             _pathWithNamespace = project.PathWithNamespace;
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 401 || (int)ex.StatusCode == 403)
+        catch (GitLabException ex) when (ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
             throw new InvalidOperationException(
                 $"Authentication or authorization failure for GitLab project {ProjectId}. " +
                 $"Verify the access token has sufficient permissions.", ex);
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 404)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             throw new InvalidOperationException(
                 $"GitLab project {ProjectId} not found or not accessible. " +
@@ -178,7 +179,7 @@ public abstract class GitLabProviderBase : IAsyncDisposable
                 return await operation(client);
             }, context);
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 429)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests)
         {
             // NGitLab does not expose Retry-After header — estimate reset time
             var resetAt = DateTimeOffset.UtcNow.AddSeconds(60);
@@ -232,7 +233,7 @@ public abstract class GitLabProviderBase : IAsyncDisposable
                 return await operation(client);
             }, context);
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 429)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests)
         {
             var resetAt = DateTimeOffset.UtcNow.AddSeconds(60);
             Log.Warning(ex, "GitLab API rate limit exceeded, reset at {Reset}", resetAt);

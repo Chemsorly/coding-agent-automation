@@ -297,8 +297,10 @@ public static class ApiServiceCollectionExtensions
         });
         services.AddHttpClient("TokenVending")
             .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
-        services.AddSingleton<ITokenVendingService>(sp =>
+        services.AddSingleton<TokenVendingService>(sp =>
             new TokenVendingService(Log.Logger, sp.GetRequiredService<IHttpClientFactory>()));
+        services.AddSingleton<ITokenVendingService>(sp => sp.GetRequiredService<TokenVendingService>());
+        services.AddHostedService(sp => new TokenCacheHousekeepingService(sp.GetRequiredService<TokenVendingService>(), Log.Logger));
 
         // ── ILabelService ────────────────────────────────────────────────────
         services.AddSingleton<ILabelService>(sp => new LabelService(

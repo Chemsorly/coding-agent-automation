@@ -27,6 +27,14 @@ namespace CodingAgent.Web.UnitTests.Hubs;
 /// - Reconnect-race rejections (agentId query param present) log at Debug.
 /// - True unregistered connections log at Warning.
 /// </summary>
+/// <remarks>
+/// Placed in [Collection("Metrics")] to prevent cross-talk through the process-global static
+/// <see cref="PipelineTelemetry.Meter"/>. Without serialization, parallel tests that also
+/// exercise <see cref="AgentAuthorizationFilter"/> emit measurements on the same instrument,
+/// which the raw <see cref="System.Diagnostics.Metrics.MeterListener"/> in these tests
+/// captures — causing spurious "2 items found" failures.
+/// </remarks>
+[Collection("Metrics")]
 public class AgentAuthorizationFilterObservabilityTests
 {
     private readonly Mock<IAgentRegistryService> _registryMock;

@@ -148,7 +148,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             AnalysisRefreshCount = refreshCount,
             CreatedRun = run,
             Project = project,
-            McpServers = MergeMcpServers(profile.McpServers, project.McpServers),
+            McpServers = McpServerMerge.Merge(profile.McpServers, project.McpServers),
             TraceContext = PipelineTelemetry.CaptureTraceContext("DispatchOrchestration")
         };
     }
@@ -607,25 +607,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         // Note: in-memory run cleanup is no longer done here. The run is owned by the API's
         // IOrchestratorRunService; the API will remove it when the WorkItem transitions to a
         // terminal state via POST /api/work-items/{id}/status (Req 1a.1 Option A).
-    }
-
-    /// <summary>
-    /// Merges profile-level and project-level MCP server configurations.
-    /// Project servers override profile servers with the same Name (case-insensitive);
-    /// new project server names are appended. Null or empty project servers = passthrough.
-    /// </summary>
-    internal static IReadOnlyList<McpServerConfig> MergeMcpServers(
-        IReadOnlyList<McpServerConfig> profileServers,
-        IReadOnlyList<McpServerConfig>? projectServers)
-    {
-        if (projectServers is null or { Count: 0 })
-            return profileServers;
-
-        var merged = profileServers.ToDictionary(s => s.Name, StringComparer.OrdinalIgnoreCase);
-        foreach (var ps in projectServers)
-            merged[ps.Name] = ps;
-
-        return merged.Values.ToList();
     }
 
     /// <summary>

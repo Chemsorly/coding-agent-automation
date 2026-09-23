@@ -10,6 +10,7 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Services;
 using FsCheck;
 using FsCheck.Xunit;
+using Microsoft.Extensions.Hosting;
 using Moq;
 using Moq.Protected;
 using ILogger = Serilog.ILogger;
@@ -664,6 +665,301 @@ public class TokenVendingServiceTests
         {
             return ex.Message.Contains(config.DisplayName) && ex.Message.Contains(config.Id);
         }
+    }
+
+    #endregion
+
+    #region TimeProvider injection and cache eviction
+
+    /// <summary>
+    /// Prerequisite test: verifies that both DateTimeOffset.UtcNow reads in
+    /// GenerateAgentTokenAsync were replaced with _timeProvider.GetUtcNow().
+    ///
+    /// A cache hit on the second call (same time, same key) proves the fast path
+    /// respects the injected clock. A cache miss after advancing the clock past the
+    /// renewal buffer proves the slow-path double-check also uses the injected clock.
+    /// </summary>
+    [Fact]
+    public async Task GenerateAgentTokenAsync_UsesTimeProvider_ForCacheHitCheck()
+    {
+        var privateKeyBase64 = GenerateTestRsaPrivateKeyBase64();
+        var config = CreateRepoConfigWithValidKey(privateKeyBase64);
+        var startTime = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(startTime);
+
+        var callCount = 0;
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((_, _) =>
+            {
+                callCount++;
+                // Token expires 1 hour from whatever "now" is at mint time
+                var expiresAt = clock.GetUtcNow().AddHours(1).ToString("O");
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Created)
+                {
+                    Content = new StringContent(
+                        JsonSerializer.Serialize(new { token = $"ghs_token_{callCount}", expires_at = expiresAt }),
+                        System.Text.Encoding.UTF8,
+                        "application/json")
+                });
+            });
+
+        var httpClient = new HttpClient(mockHandler.Object);
+        var service = new TokenVendingService(_mockLogger.Object, httpClient, clock);
+
+        // First call — mints from GitHub
+        var (token1, _) = await service.GenerateAgentTokenAsync(config, CancellationToken.None);
+        callCount.Should().Be(1);
+        token1.Should().Be("ghs_token_1");
+
+        // Second call at the same time — cache hit, no HTTP call
+        var (token2, _) = await service.GenerateAgentTokenAsync(config, CancellationToken.None);
+        callCount.Should().Be(1, "second call should be a cache hit at the same clock time");
+        token2.Should().Be("ghs_token_1");
+
+        // Advance clock into the renewal buffer (token expires at start+1h; buffer is 5 min;
+        // so advancing to start+56min triggers a fresh mint)
+        clock.Advance(TimeSpan.FromMinutes(56));
+        var (token3, _) = await service.GenerateAgentTokenAsync(config, CancellationToken.None);
+        callCount.Should().Be(2, "advancing past the renewal buffer should trigger a new mint");
+        token3.Should().Be("ghs_token_2");
+    }
+
+    /// <summary>
+    /// Verifies that TrimExpiredCacheEntries removes an expired token entry
+    /// and disposes (removes) its corresponding semaphore entry.
+    /// Both CacheCount and SemaphoreCount must reach 0 to satisfy the two
+    /// acceptance criteria independently.
+    /// </summary>
+    [Fact]
+    public async Task TrimExpiredCacheEntries_RemovesExpiredEntry_AndDisposesMatchingSemaphore()
+    {
+        var privateKeyBase64 = GenerateTestRsaPrivateKeyBase64();
+        var config = CreateRepoConfigWithValidKey(privateKeyBase64);
+        var startTime = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(startTime);
+
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((_, _) =>
+            {
+                // Token expires 1 hour from now — well outside the renewal buffer,
+                // so the first call will be cached and subsequent calls are cache hits.
+                var expiresAt = clock.GetUtcNow().AddHours(1).ToString("O");
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Created)
+                {
+                    Content = new StringContent(
+                        JsonSerializer.Serialize(new { token = "ghs_token", expires_at = expiresAt }),
+                        System.Text.Encoding.UTF8,
+                        "application/json")
+                });
+            });
+
+        var httpClient = new HttpClient(mockHandler.Object);
+        var service = new TokenVendingService(_mockLogger.Object, httpClient, clock);
+
+        // Seed the cache
+        await service.GenerateAgentTokenAsync(config, CancellationToken.None);
+        service.CacheCount.Should().Be(1);
+        service.SemaphoreCount.Should().Be(1);
+
+        // Advance past expiry (startTime + 1 hour)
+        clock.Advance(TimeSpan.FromHours(1).Add(TimeSpan.FromSeconds(1)));
+
+        // Trim
+        service.TrimExpiredCacheEntries();
+
+        service.CacheCount.Should().Be(0, "expired token entry must be removed from _tokenCache");
+        // TODO [WARNING]: SemaphoreCount == 0 proves the entry was removed from the dictionary,
+        // but does not verify that Dispose() was actually called on the removed SemaphoreSlim.
+        // To assert disposal explicitly, expose the removed instance (e.g., via an internal
+        // TrimExpiredCacheEntries overload that returns removed semaphores) and assert
+        // removedSem.IsDisposed via reflection, or use a mock/subclass that tracks Dispose calls.
+        service.SemaphoreCount.Should().Be(0, "semaphore entry must be removed and disposed when its token expires");
+    }
+
+    /// <summary>
+    /// Verifies that TrimExpiredCacheEntries does NOT remove a cache entry whose
+    /// token has not yet expired.
+    /// </summary>
+    [Fact]
+    public async Task TrimExpiredCacheEntries_DoesNotRemoveValidEntry()
+    {
+        var privateKeyBase64 = GenerateTestRsaPrivateKeyBase64();
+        var config = CreateRepoConfigWithValidKey(privateKeyBase64);
+        var startTime = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(startTime);
+
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = new StringContent(
+                    JsonSerializer.Serialize(new { token = "ghs_token", expires_at = startTime.AddHours(1).ToString("O") }),
+                    System.Text.Encoding.UTF8,
+                    "application/json")
+            });
+
+        var httpClient = new HttpClient(mockHandler.Object);
+        var service = new TokenVendingService(_mockLogger.Object, httpClient, clock);
+
+        // Seed the cache
+        await service.GenerateAgentTokenAsync(config, CancellationToken.None);
+        service.CacheCount.Should().Be(1);
+
+        // Trim without advancing the clock
+        service.TrimExpiredCacheEntries();
+
+        service.CacheCount.Should().Be(1, "non-expired entry must not be removed by housekeeping");
+        service.SemaphoreCount.Should().Be(1, "semaphore for a non-expired entry must not be removed");
+    }
+
+    /// <summary>
+    /// Acceptance criterion test: demonstrates that the cache count does not grow
+    /// unboundedly when the same expired key is re-requested.
+    ///
+    /// Without eviction, repeated re-requests for the same key after each expiry
+    /// leave stale entries in _tokenCache (each bypassed on the fast path but never
+    /// cleaned up). With eviction, CacheCount returns to 1 after each trim cycle.
+    /// </summary>
+    [Fact]
+    public async Task TrimExpiredCacheEntries_CacheCountDoesNotGrowUnboundedly_WhenSameExpiredKeyIsReRequested()
+    {
+        var privateKeyBase64 = GenerateTestRsaPrivateKeyBase64();
+        var config = CreateRepoConfigWithValidKey(privateKeyBase64);
+        var startTime = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(startTime);
+
+        var httpCallCount = 0;
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((_, _) =>
+            {
+                httpCallCount++;
+                // Token is valid for 1 hour from the current fake time.
+                // This ensures the token is safely outside the 5-minute renewal buffer,
+                // so subsequent requests within the same clock instant are cache hits.
+                var expiresAt = clock.GetUtcNow().AddHours(1).ToString("O");
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Created)
+                {
+                    Content = new StringContent(
+                        JsonSerializer.Serialize(new { token = $"ghs_token_{httpCallCount}", expires_at = expiresAt }),
+                        System.Text.Encoding.UTF8,
+                        "application/json")
+                });
+            });
+
+        var httpClient = new HttpClient(mockHandler.Object);
+        var service = new TokenVendingService(_mockLogger.Object, httpClient, clock);
+
+        // ── Round 1: make 3 requests for the same key ─────────────────────
+        for (var i = 0; i < 3; i++)
+            await service.GenerateAgentTokenAsync(config, CancellationToken.None);
+
+        // Only 1 HTTP call should have been made (the other 2 are cache hits)
+        httpCallCount.Should().Be(1, "repeated requests for the same key within its lifetime must be cache hits");
+        service.CacheCount.Should().Be(1);
+        service.SemaphoreCount.Should().Be(1);
+
+        // ── Expire and trim ───────────────────────────────────────────────
+        // Advance past startTime + 1 hour (the token expiry)
+        clock.Advance(TimeSpan.FromHours(1).Add(TimeSpan.FromSeconds(1)));
+        service.TrimExpiredCacheEntries();
+
+        service.CacheCount.Should().Be(0, "expired entry must be removed after trim");
+        service.SemaphoreCount.Should().Be(0, "expired semaphore must be removed after trim");
+
+        // ── Round 2: make 3 more requests for the same key ───────────────
+        for (var i = 0; i < 3; i++)
+            await service.GenerateAgentTokenAsync(config, CancellationToken.None);
+
+        // Exactly 1 additional HTTP call for the re-mint (not 3 more)
+        httpCallCount.Should().Be(2, "only one re-mint should occur — the subsequent 2 calls are cache hits");
+        service.CacheCount.Should().Be(1, "cache must contain exactly 1 entry after re-mint, not accumulate stale entries");
+        service.SemaphoreCount.Should().Be(1, "semaphore map must contain exactly 1 entry, not accumulate stale entries");
+    }
+
+    /// <summary>
+    /// Verifies that TokenCacheHousekeepingService calls TrimExpiredCacheEntries on each timer tick.
+    /// Uses a very short sweep interval and a seeded expired entry so the tick effect is observable
+    /// without needing to subclass TokenVendingService.
+    /// </summary>
+    [Fact]
+    public async Task TokenCacheHousekeepingService_EvictsExpiredEntries_OnEachTick()
+    {
+        var privateKeyBase64 = GenerateTestRsaPrivateKeyBase64();
+        var config = CreateRepoConfigWithValidKey(privateKeyBase64);
+        var startTime = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(startTime);
+
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((_, _) =>
+            {
+                // Token expires 1 hour from now so the initial mint is cached.
+                var expiresAt = clock.GetUtcNow().AddHours(1).ToString("O");
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Created)
+                {
+                    Content = new StringContent(
+                        JsonSerializer.Serialize(new { token = "ghs_token", expires_at = expiresAt }),
+                        System.Text.Encoding.UTF8,
+                        "application/json")
+                });
+            });
+
+        var httpClient = new HttpClient(mockHandler.Object);
+        var service = new TokenVendingService(_mockLogger.Object, httpClient, clock);
+
+        // Seed the cache with a token that expires in 1 hour
+        await service.GenerateAgentTokenAsync(config, CancellationToken.None);
+        service.CacheCount.Should().Be(1);
+
+        // Advance clock past expiry BEFORE starting the housekeeping service
+        clock.Advance(TimeSpan.FromHours(1).Add(TimeSpan.FromSeconds(1)));
+
+        // Start housekeeping service with a very short sweep interval
+        using var cts = new CancellationTokenSource();
+        var housekeepingService = new TokenCacheHousekeepingService(
+            service,
+            _mockLogger.Object,
+            sweepInterval: TimeSpan.FromMilliseconds(50),
+            timeProvider: clock);
+
+        await ((IHostedService)housekeepingService).StartAsync(cts.Token);
+
+        // Wait for the tick to fire and evict the expired entry
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (service.CacheCount > 0 && DateTimeOffset.UtcNow < deadline)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(50));
+            await Task.Delay(10);
+        }
+
+        await cts.CancelAsync();
+        await ((IHostedService)housekeepingService).StopAsync(CancellationToken.None);
+
+        service.CacheCount.Should().Be(0, "TokenCacheHousekeepingService must evict expired entries on each tick");
+        service.SemaphoreCount.Should().Be(0, "TokenCacheHousekeepingService must remove expired semaphore entries on each tick");
     }
 
     #endregion

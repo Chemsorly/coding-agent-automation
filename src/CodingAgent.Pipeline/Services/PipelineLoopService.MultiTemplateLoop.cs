@@ -370,22 +370,8 @@ public sealed partial class PipelineLoopService
         if (!sweepEnabled) return;
         if (_workItemClient is null) return;
 
-        IReadOnlyList<PendingWorkItemDto> pending;
-        try
-        {
-            pending = await _workItemClient.GetPendingAsync(maxResults: 500, ct);
-            if (pending.Count == 500)
-                _logger.Warning("QueueSweep: GetPendingAsync returned the maximum 500 items — some Pending WorkItems may have been skipped this cycle");
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "QueueSweep: failed to fetch pending items, skipping this cycle");
-            return;
-        }
+        var pending = await FetchPendingBatchAsync(ct);
+        if (pending is null) return; // fetch failed — logged inside FetchPendingBatchAsync, abort sweep
 
         foreach (var item in pending)
         {
@@ -433,50 +419,113 @@ public sealed partial class PipelineLoopService
                 "(provider {IssueProviderConfigId}) — {ItemKind2} no longer eligible",
                 item.Id, item.TaskType, itemKind, item.IssueIdentifier, item.IssueProviderConfigId, itemKind);
 
-            try
+            await DispatchPendingItemAsync(item, itemKind, ct);
+        }
+    }
+
+    /// <summary>
+    /// Fetches the current batch of Pending WorkItems from the API.
+    /// Returns <c>null</c> when the fetch fails (non-cancellation error) — the caller should
+    /// abort the sweep cycle. Re-throws <see cref="OperationCanceledException"/> so shutdown
+    /// propagates correctly.
+    /// </summary>
+    private async Task<IReadOnlyList<PendingWorkItemDto>?> FetchPendingBatchAsync(CancellationToken ct)
+    {
+        try
+        {
+            var pending = await _workItemClient!.GetPendingAsync(maxResults: 500, ct);
+            if (pending.Count == 500)
+                _logger.Warning("QueueSweep: GetPendingAsync returned the maximum 500 items — some Pending WorkItems may have been skipped this cycle");
+            return pending;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "QueueSweep: failed to fetch pending items, skipping this cycle");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Attempts to cancel a single Pending WorkItem via <c>PostStatusAsync</c> and handles
+    /// the three possible exception outcomes via <see cref="ClassifyDispatchException"/>:
+    /// <list type="bullet">
+    ///   <item><see cref="DispatchExceptionKind.ExpectedRace"/> — HTTP 400/404/409: item already transitioned; logged at Debug.</item>
+    ///   <item><see cref="DispatchExceptionKind.Cancellation"/> — <see cref="OperationCanceledException"/>: re-thrown to propagate shutdown.</item>
+    ///   <item><see cref="DispatchExceptionKind.UnexpectedFailure"/> — any other exception: logged at Warning and counted in <see cref="PipelineTelemetry.QueueSweepFailed"/>.</item>
+    /// </list>
+    /// On success, increments <see cref="PipelineTelemetry.QueueSweepCancelled"/>.
+    /// </summary>
+    // TODO: [WARNING] itemKind parameter is never used inside this method — the ErrorMessage
+    // derives "PR"/"Issue" from item.TaskType inline, duplicating rather than reusing itemKind.
+    // Remove the parameter and update callers once that dead dependency is confirmed safe.
+    private async Task DispatchPendingItemAsync(PendingWorkItemDto item, string itemKind, CancellationToken ct)
+    {
+        try
+        {
+            // TODO: PostStatusAsync now returns Task<bool> (true=real transition, false=idempotent
+            // no-op / HTTP 204). The return value is discarded here, so _queueSweepCancelled
+            // increments for both real cancellations and idempotent no-ops (item was already
+            // Cancelled). This is analogous to the double-count bug fixed in HandleJobCompletedAsync
+            // (issue #2802). The impact is at most a cosmetic metric discrepancy since the item
+            // was already terminal. Fix: capture the bool and skip _queueSweepCancelled.Add(1)
+            // when false. See review finding (Correctness) for issue #2802.
+            await _workItemClient!.PostStatusAsync(item.Id,
+                new WorkItemStatusUpdate
+                {
+                    Status = "Cancelled",
+                    ErrorMessage = $"{(item.TaskType == WorkItemTaskType.Review ? "PR" : "Issue")} no longer eligible for dispatch (queue sweep)"
+                }, ct);
+            // Increment cancelled counter AFTER successful PostStatusAsync so it counts
+            // confirmed cancellations, not just cancel attempts.
+            _queueSweepCancelled.Add(1);
+        }
+        catch (Exception ex)
+        {
+            switch (ClassifyDispatchException(ex))
             {
-                // TODO: PostStatusAsync now returns Task<bool> (true=real transition, false=idempotent
-                // no-op / HTTP 204). The return value is discarded here, so _queueSweepCancelled
-                // increments for both real cancellations and idempotent no-ops (item was already
-                // Cancelled). This is analogous to the double-count bug fixed in HandleJobCompletedAsync
-                // (issue #2802). The impact is at most a cosmetic metric discrepancy since the item
-                // was already terminal. Fix: capture the bool and skip _queueSweepCancelled.Add(1)
-                // when false. See review finding (Correctness) for issue #2802.
-                await _workItemClient.PostStatusAsync(item.Id,
-                    new WorkItemStatusUpdate
-                    {
-                        Status = "Cancelled",
-                        ErrorMessage = $"{(item.TaskType == WorkItemTaskType.Review ? "PR" : "Issue")} no longer eligible for dispatch (queue sweep)"
-                    }, ct);
-                // Increment cancelled counter AFTER successful PostStatusAsync so it counts
-                // confirmed cancellations, not just cancel attempts.
-                _queueSweepCancelled.Add(1);
-            }
-            catch (HttpRequestException httpEx) when (
-                httpEx.StatusCode is System.Net.HttpStatusCode.BadRequest
-                    or System.Net.HttpStatusCode.NotFound
-                    or System.Net.HttpStatusCode.Conflict)
-            {
-                // Expected race: item was claimed/transitioned by the DispatchLoop between our
-                // GetPendingAsync scan and this PostStatusAsync call. Treat as non-error.
-                _logger.Debug(
-                    "QueueSweep: WorkItem {WorkItemId} already transitioned (HTTP {StatusCode}) — skipping",
-                    item.Id, (int?)httpEx.StatusCode);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                // Unexpected failure (network error, timeout, 5xx). Count and log at Warning.
-                _queueSweepFailed.Add(1);
-                _logger.Warning(ex,
-                    "QueueSweep: PostStatusAsync failed unexpectedly for WorkItem {WorkItemId} — will retry next cycle",
-                    item.Id);
+                case DispatchExceptionKind.ExpectedRace:
+                    // Expected race: item was claimed/transitioned by the DispatchLoop between our
+                    // GetPendingAsync scan and this PostStatusAsync call. Treat as non-error.
+                    _logger.Debug(
+                        "QueueSweep: WorkItem {WorkItemId} already transitioned (HTTP {StatusCode}) — skipping",
+                        item.Id, (int?)((ex as HttpRequestException)?.StatusCode));
+                    break;
+                case DispatchExceptionKind.Cancellation:
+                    // TODO: [WARNING] `throw;` (bare) inside a switch inside a catch block
+                    // correctly re-throws the active exception in C# without losing the stack
+                    // trace — this is well-defined language semantics, not an accident. A reader
+                    // unfamiliar with this nuance might assume it loses the stack or doesn't
+                    // compile. The behaviour is intentional and correct.
+                    throw;
+                default: // DispatchExceptionKind.UnexpectedFailure
+                    // Unexpected failure (network error, timeout, 5xx). Count and log at Warning.
+                    _queueSweepFailed.Add(1);
+                    _logger.Warning(ex,
+                        "QueueSweep: PostStatusAsync failed unexpectedly for WorkItem {WorkItemId} — will retry next cycle",
+                        item.Id);
+                    break;
             }
         }
     }
+
+    /// <summary>
+    /// Classifies a <c>PostStatusAsync</c> exception into one of three outcomes so
+    /// <see cref="DispatchPendingItemAsync"/> can handle each case without a multi-arm catch block.
+    /// Mirrors the pattern of <see cref="IsTransientApiFailure"/>.
+    /// </summary>
+    internal static DispatchExceptionKind ClassifyDispatchException(Exception ex) => ex switch
+    {
+        HttpRequestException httpEx when httpEx.StatusCode is
+            System.Net.HttpStatusCode.BadRequest or
+            System.Net.HttpStatusCode.NotFound or
+            System.Net.HttpStatusCode.Conflict => DispatchExceptionKind.ExpectedRace,
+        OperationCanceledException => DispatchExceptionKind.Cancellation,
+        _ => DispatchExceptionKind.UnexpectedFailure
+    };
 
     /// <summary>
     /// Housekeeping step: trigger server-side branch updates on eligible agent:done PRs.
@@ -846,4 +895,19 @@ public sealed partial class PipelineLoopService
 
         return result;
     }
+}
+
+/// <summary>
+/// Classifies the outcome of a <c>PostStatusAsync</c> call in the queue sweep, used by
+/// <see cref="PipelineLoopService.ClassifyDispatchException"/> and
+/// <see cref="PipelineLoopService.DispatchPendingItemAsync"/>.
+/// </summary>
+internal enum DispatchExceptionKind
+{
+    /// <summary>HTTP 400/404/409 — the item was already transitioned by the dispatch loop (expected race).</summary>
+    ExpectedRace,
+    /// <summary><see cref="OperationCanceledException"/> — caller must re-throw to propagate shutdown.</summary>
+    Cancellation,
+    /// <summary>Any other exception — unexpected failure; log at Warning and increment the failed counter.</summary>
+    UnexpectedFailure
 }
