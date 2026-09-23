@@ -66,9 +66,9 @@
                 <table class="monitoring-table">
                     <colgroup>
                         <col style="width: 110px;" />  @* Result *@
-                        <col style="width: 130px;" />  @* Type *@
-                        <col style="width: 130px;" />  @* Initiated by *@
-                        <col />                         @* Run (flexible) *@
+                        <col style="width: 100px;" />  @* Type *@
+                        <col style="width: 100px;" />  @* Initiated by *@
+                        <col style="width: 300px;" />  @* Run *@
                         <col style="width: 100px;" />  @* Duration *@
                         <col style="width: 90px;" />   @* Tokens *@
                         <col style="width: 110px;" />  @* When *@
@@ -198,7 +198,12 @@
                                    here, e.g. @InitiatedByConstants.ToDisplayString(run.InitiatedBy ?? string.Empty, run.RunMode),
                                    or update PipelineRunSummary.InitiatedBy to string? and add an overload/guard in ToDisplayString. *@
                                 <td><span class="cockpit-chip">@InitiatedByConstants.ToDisplayString(run.InitiatedBy, run.RunMode)</span></td>
-                                <td>
+                                @* TODO: text-overflow: ellipsis on a <td> requires table-layout: fixed on the parent table to
+                                   be reliable across browsers. Without table-layout: fixed, the computed column width comes from
+                                   the <col style="width:300px"> hint but max-width: 0 on the <td> is ignored, so text-overflow
+                                   may not truncate and the Run column may still overflow at narrow viewports. Consider adding
+                                   table-layout: fixed to .monitoring-table (or a scoped variant) with accurate colgroup widths. *@
+                                <td style="overflow: hidden; text-overflow: ellipsis; max-width: 0;">
                                     <span style="font-weight: 600;">@(run.RunType == PipelineRunType.Review ? "PR " : "")#@run.IssueIdentifier</span>
                                     <span style="color: var(--text-muted);">@Truncate(run.IssueTitle, 60)</span>
                                 </td>
