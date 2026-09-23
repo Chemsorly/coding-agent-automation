@@ -202,11 +202,7 @@ public class AssignmentEnricher
             PipelineConfiguration = config,
             QualityGateConfigs = resolvedQgcs,
             ReviewerConfigs = resolvedReviewerConfigs,
-            McpServers = DispatchOrchestrationService.MergeMcpServers(profile.McpServers, project.McpServers),
-            // NOTE: [WARNING] MergeMcpServers is called as a static method on DispatchOrchestrationService —
-            // a layering concern. If the method ever acquires side effects or shared state, concurrent
-            // GetAssignment calls from this singleton could produce unexpected results. Consider
-            // extracting this into a standalone static utility or a dedicated service.
+            McpServers = McpServerMerge.Merge(profile.McpServers, project.McpServers),
             ResolvedProfileId = profile.Id,
             AgentProviderConfigId = profile.AgentProviderConfigId,
             ProjectSteeringContent = project.SteeringContent,
@@ -287,7 +283,7 @@ public class AssignmentEnricher
             PipelineConfiguration = preparation.PipelineConfiguration,
             ResolvedProfileId = profile.Id,
             AgentProviderConfigId = profile.AgentProviderConfigId,
-            McpServers = DispatchOrchestrationService.MergeMcpServers(profile.McpServers, project.McpServers),
+            McpServers = McpServerMerge.Merge(profile.McpServers, project.McpServers),
             ProjectSteeringContent = project.SteeringContent,
             RepoSteeringContent = providerConfigs.TryGetProviderConfig(preparation.RepoProviderConfigId)?.SteeringContent,
         };

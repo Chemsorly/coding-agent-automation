@@ -1,5 +1,5 @@
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
-using CodingAgent.Orchestration.Dispatch;
 
 namespace CodingAgent.Web.Services;
 
@@ -36,7 +36,7 @@ public sealed class ChatPromptBuilder : IChatPromptBuilder
         // Merge MCP servers: project-level overrides profile-level.
         // Null project → passthrough profile servers unchanged.
         var mergedMcpServers = parameters.SelectedProject is not null
-            ? DispatchOrchestrationService.MergeMcpServers(
+            ? McpServerMerge.Merge(
                 parameters.ResolvedProfile?.McpServers ?? [],
                 parameters.SelectedProject.McpServers)
             : (parameters.ResolvedProfile?.McpServers ?? []);

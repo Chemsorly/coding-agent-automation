@@ -33,9 +33,4 @@ public sealed class NotificationService
         lock (_lock) { return _entries.ToList(); }
     }
 
-    public void MarkAllRead()
-    {
-        bool changed;
-        lock (_lock) { changed = _unreadCount != 0; _unreadCount = 0; }
-    }
 }
