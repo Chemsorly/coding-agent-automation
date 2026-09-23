@@ -388,4 +388,28 @@ public class PipelineRunSummaryTests
         // Also access .Value to confirm compile-time type (would not compile if property were string)
         _ = summary.IssueIdentifier.Value;
     }
+
+    /// <summary>
+    /// ToSummary must map PipelineRun.HighWaterMark to PipelineRunSummary.LastActiveStep
+    /// so that BuildRunModelFromSummary can restore the correct last-reached step
+    /// for terminal runs without fabricating one from the Failed/Cancelled enum ordinal.
+    /// </summary>
+    [Fact]
+    public void ToSummary_MapsHighWaterMarkToLastActiveStep()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "r1",
+            IssueIdentifier = "42",
+            IssueTitle = "LastActiveStep test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow
+        };
+        run.HighWaterMark = PipelineStep.GeneratingCode;
+
+        var summary = run.ToSummary();
+
+        summary.LastActiveStep.Should().Be(PipelineStep.GeneratingCode);
+    }
 }
