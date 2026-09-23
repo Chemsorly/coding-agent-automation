@@ -124,7 +124,9 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
+                IsExecuting = true,
+                ProcessId = 1,
+                IsProcessAlive = true,
                 // Already 3 minutes silent relative to fake "now"
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-3)
             });
@@ -173,7 +175,9 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
+                IsExecuting = true,
+                ProcessId = 1,
+                IsProcessAlive = true,
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-10)
             });
 
@@ -227,7 +231,9 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
+                IsExecuting = true,
+                ProcessId = 1,
+                IsProcessAlive = true,
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime
             });
 
@@ -311,7 +317,9 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
+                IsExecuting = true,
+                ProcessId = 1,
+                IsProcessAlive = true,
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-3)
             });
 
@@ -364,7 +372,9 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
+                IsExecuting = true,
+                ProcessId = 1,
+                IsProcessAlive = true,
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-10)
             });
 
