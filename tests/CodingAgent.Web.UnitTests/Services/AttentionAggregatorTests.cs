@@ -19,16 +19,16 @@ public class AttentionAggregatorTests
         DateTimeOffset startedAt,
         string? failureReason = null,
         AnalysisGateResult? analysisRecommendation = null) => new()
-    {
-        RunId = Guid.NewGuid().ToString(),
-        IssueIdentifier = issueId,
-        IssueTitle = $"Issue {issueId}",
-        RunType = runType,
-        FinalStep = finalStep,
-        StartedAtOffset = startedAt,
-        FailureReason = failureReason,
-        AnalysisRecommendation = analysisRecommendation
-    };
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = issueId,
+            IssueTitle = $"Issue {issueId}",
+            RunType = runType,
+            FinalStep = finalStep,
+            StartedAtOffset = startedAt,
+            FailureReason = failureReason,
+            AnalysisRecommendation = analysisRecommendation
+        };
 
     private static readonly DateTimeOffset T1 = new(2026, 1, 1, 10, 0, 0, TimeSpan.Zero);
     private static readonly DateTimeOffset T2 = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);

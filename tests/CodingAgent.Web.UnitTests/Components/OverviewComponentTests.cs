@@ -175,7 +175,10 @@ public class OverviewComponentTests : BunitContext
                 It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
-                Items = runs, Page = 1, PageSize = 100, HasMore = false
+                Items = runs,
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
             });
 
         var mockAgents = new Mock<IPipelineApiAgentClient>();
@@ -231,7 +234,10 @@ public class OverviewComponentTests : BunitContext
                 It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
-                Items = runs, Page = 1, PageSize = 100, HasMore = false
+                Items = runs,
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
             });
 
         var mockAgents = new Mock<IPipelineApiAgentClient>();
@@ -253,15 +259,15 @@ public class OverviewComponentTests : BunitContext
         IssueIdentifier issueId,
         DateTimeOffset startedAt,
         string? failureReason = null) => new()
-    {
-        RunId = Guid.NewGuid().ToString(),
-        IssueIdentifier = issueId,
-        IssueTitle = $"Issue {issueId}",
-        RunType = PipelineRunType.Implementation,
-        FinalStep = PipelineStep.Failed,
-        StartedAtOffset = startedAt,
-        FailureReason = failureReason,
-    };
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = issueId,
+            IssueTitle = $"Issue {issueId}",
+            RunType = PipelineRunType.Implementation,
+            FinalStep = PipelineStep.Failed,
+            StartedAtOffset = startedAt,
+            FailureReason = failureReason,
+        };
 
     /// <summary>
     /// Finds the numeric text shown in the attention tile whose label matches
