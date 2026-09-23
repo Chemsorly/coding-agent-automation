@@ -42,14 +42,15 @@ public static class AgentHubServiceCollectionExtensions
             Log.Logger));
 
         services.AddSingleton<IAgentJobLifecycleService>(sp => new AgentJobLifecycleService(
-            sp.GetRequiredService<IAgentHubFacade>(),
-            sp.GetRequiredService<IRunLifecycleManager>(),
-            sp.GetRequiredService<ILabelService>(),
-            sp.GetRequiredService<IHubIssueOperations>(),
-            sp.GetRequiredService<IChangeNotifier>(),
-            sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
-            sp.GetRequiredService<IFeedbackCommentOutbox>(),
-            Log.Logger));
+            new AgentJobLifecycleServiceDependencies(
+                sp.GetRequiredService<IAgentHubFacade>(),
+                sp.GetRequiredService<IRunLifecycleManager>(),
+                sp.GetRequiredService<ILabelService>(),
+                sp.GetRequiredService<IHubIssueOperations>(),
+                sp.GetRequiredService<IChangeNotifier>(),
+                sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
+                sp.GetRequiredService<IFeedbackCommentOutbox>(),
+                Log.Logger)));
 
         services.AddSingleton<IAgentTokenRefreshService>(sp => new AgentTokenRefreshService(
             sp.GetRequiredService<IAgentHubFacade>(),

@@ -6,7 +6,6 @@ using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
-using Microsoft.Extensions.Hosting;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.AgentGateway;
@@ -18,41 +17,36 @@ namespace CodingAgent.AgentGateway;
 /// </summary>
 public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 {
-    private const string FieldActiveJobId = "activeJobId";
-    private const string FieldLastJobCompletedAt = "lastJobCompletedAt";
-    private const string FieldOrphanRestoredAt = "orphanRestoredAt";
-
     private readonly IAgentHubFacade _facade;
     private readonly ILabelService _labelService;
     private readonly IHubIssueOperations _issueOps;
     private readonly IChangeNotifier _changeNotifier;
-    private readonly IHostApplicationLifetime _appLifetime;
+    private readonly Microsoft.Extensions.Hosting.IHostApplicationLifetime _appLifetime;
     private readonly IFeedbackCommentOutbox _outbox;
     private readonly ILogger _logger;
 
     private readonly IJobCompletionStrategy _regularStrategy;
     private readonly IJobCompletionStrategy _consolidationStrategy;
+    private readonly AgentIdleTransitioner _idleTransitioner;
 
-    public AgentJobLifecycleService( // NOSONAR S107 — 8 params; grouped into a record would require callers to change
-        IAgentHubFacade facade,
-        IRunLifecycleManager lifecycleManager,
-        ILabelService labelService,
-        IHubIssueOperations issueOps,
-        IChangeNotifier changeNotifier,
-        IHostApplicationLifetime appLifetime,
-        IFeedbackCommentOutbox outbox,
-        ILogger logger)
+    public AgentJobLifecycleService(AgentJobLifecycleServiceDependencies deps)
     {
-        _facade = facade;
-        _labelService = labelService;
-        _issueOps = issueOps;
-        _changeNotifier = changeNotifier;
-        _appLifetime = appLifetime;
-        _outbox = outbox;
-        _logger = logger;
+        // TODO: [WARNING] Add ArgumentNullException.ThrowIfNull(deps) here to produce a clear
+        // ArgumentNullException instead of a NullReferenceException when deps is null.
+        // Consistent with the ThrowIfNull pattern used in other public constructors in this assembly
+        // (e.g. AgentHubFacade, AgentHub). Constructor is public so callers outside the assembly
+        // can reach it. (DotNetSpecialist review finding.)
+        _facade = deps.Facade;
+        _labelService = deps.LabelService;
+        _issueOps = deps.IssueOps;
+        _changeNotifier = deps.ChangeNotifier;
+        _appLifetime = deps.AppLifetime;
+        _outbox = deps.Outbox;
+        _logger = deps.Logger;
 
-        _regularStrategy = new RegularJobCompletionStrategy(facade, lifecycleManager, changeNotifier, logger);
-        _consolidationStrategy = new ConsolidationJobCompletionStrategy(facade, changeNotifier, logger);
+        _regularStrategy = new RegularJobCompletionStrategy(deps.Facade, deps.LifecycleManager, deps.ChangeNotifier, deps.Logger);
+        _consolidationStrategy = new ConsolidationJobCompletionStrategy(deps.Facade, deps.ChangeNotifier, deps.Logger);
+        _idleTransitioner = new AgentIdleTransitioner(deps.Facade, deps.Logger);
         // Strategies are instantiated with new rather than injected via DI. Follow-up work item:
         // register IJobCompletionStrategy implementations (keyed/named) in DI and inject them through
         // the constructor to make AgentJobLifecycleService fully unit-testable at the strategy level.
@@ -130,8 +124,8 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         var now = DateTimeOffset.UtcNow;
         agent.ActiveJobId = null;
         agent.LastJobCompletedAt = now; // Push to back of FIFO queue to prevent same-agent re-dispatch loop
-        _facade.UpdateAgentFieldFireAndForget(agent.AgentId, FieldActiveJobId, null, _logger, "ResetAgentToIdle");
-        _facade.UpdateAgentFieldFireAndForget(agent.AgentId, FieldLastJobCompletedAt, now.ToString("O"), _logger, "ResetAgentToIdle");
+        _facade.UpdateAgentFieldFireAndForget(agent.AgentId, AgentFieldNames.ActiveJobId, null, _logger, "ResetAgentToIdle");
+        _facade.UpdateAgentFieldFireAndForget(agent.AgentId, AgentFieldNames.LastJobCompletedAt, now.ToString("O"), _logger, "ResetAgentToIdle");
         _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
     }
 
@@ -243,28 +237,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // the safe Signal path. Signaling here caused a race condition where the drain
         // service dispatched to the agent before it cleared its local slot, resulting in
         // immediate rejection and permanent work item loss.
-        if (agent is not null)
-        {
-            agent.ActiveJobId = null;
-            agent.OrphanRestoredAt = null;
-            agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
-            _facade.UpdateAgentFieldFireAndForget(agent.AgentId, FieldActiveJobId, null, _logger, "HandleJobCompletedAsync");
-            _facade.UpdateAgentFieldFireAndForget(agent.AgentId, FieldOrphanRestoredAt, null, _logger, "HandleJobCompletedAsync");
-            _facade.UpdateAgentFieldFireAndForget(agent.AgentId, FieldLastJobCompletedAt, DateTimeOffset.UtcNow.ToString("O"), _logger, "HandleJobCompletedAsync");
-            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-        }
-        else if (run?.AgentId is not null)
-        {
-            // Fallback: agent lookup returned null (connection dropped, hash expired) but we know the
-            // AgentId from the run. Attempt to clear agent state to prevent it from being locked in
-            // Busy indefinitely until ReconciliationService.EnforceTimeoutsAsync times it out.
-            var agentId = new AgentId(run.AgentId);
-            _facade.UpdateAgentFieldFireAndForget(agentId, FieldActiveJobId, null, _logger, "HandleJobCompletedAsync (run fallback path)");
-            _facade.TransitionStatus(agentId, AgentStatus.Idle);
-            _logger.Warning(
-                "HandleJobCompletedAsync: agent lookup returned null for job {JobId} (agentId={AgentId}) — clearing state via run fallback to prevent Busy lock",
-                jobId.Value, run.AgentId);
-        }
+        _idleTransitioner.TransitionToIdle(agent, run, jobId.Value);
 
         // Non-fatal post-completion bookkeeping: label swap and feedback comment.
         // These may involve external API calls and can be slow — executed after agent
@@ -325,55 +298,62 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
     private async Task PostCompletionBookkeepingAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload, CancellationToken ct)
     {
-        // ── Durable outbox enqueue (must happen BEFORE cts is created) ──────────────────
-        // Scope: this outbox closes the "pod dies during bookkeeping" window (see prior :395 note).
-        // It does NOT close the "ReportJobCompleted was rejected / never invoked (reconnect race)"
-        // window — there the enqueue below never runs because PostCompletionBookkeepingAsync is
-        // never reached. That window is reduced by Part A's reconnect-gate but not fully closed
-        // by Part B. Fully closing it would require enqueuing on the durable HTTP-primary completion
-        // path (WorkItemEndpoints), where run.Feedback is unavailable; deferred as a follow-up.
-        //
-        // Guard mirrors FeedbackCommentFormatter.FormatComment: only enqueue when
-        // Description is non-null (a null Description would produce no comment body and
-        // create an un-deliverable row that exhausts maxAttempts without ever posting).
-        // Using CancellationToken.None explicitly so this DB write survives ApplicationStopping —
-        // the entire point of the outbox is to persist comments that the cancellable fast path drops.
-        Guid outboxEntryId = Guid.Empty;
-        if (run.Feedback?.Issue?.Description is not null)
-        {
-            var entry = BuildOutboxEntry(run);
-            outboxEntryId = entry.Id;
-            // Enqueue is best-effort: a transient DB failure must not abort the label swap below.
-            // Before this outbox was introduced, PostCompletionBookkeepingAsync performed no DB
-            // writes, so a Postgres blip could not bypass SwapLabelAsync. We preserve that guarantee
-            // by catching and logging any exception from EnqueueAsync rather than propagating it.
-            // If the enqueue fails, the comment is not durable for this run (same behaviour as before
-            // the outbox was introduced), but the label swap proceeds normally.
-            try
-            {
-                await _outbox.EnqueueAsync(entry, CancellationToken.None);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.Warning(ex,
-                    "Job {JobId} failed to enqueue feedback comment outbox row (run={RunId}) — " +
-                    "comment durability is degraded for this run but label swap will proceed",
-                    jobId.Value, entry.RunId);
-                outboxEntryId = Guid.Empty; // don't attempt MarkCompleted if enqueue failed
-            }
-        }
+        // Outbox enqueue must happen BEFORE creating the linked CTS (survives ApplicationStopping).
+        var outboxEntryId = await EnqueueFeedbackOutboxEntryAsync(jobId, run);
 
         // Link the caller's token with the host's ApplicationStopping token.
-        // This ensures bookkeeping is aborted on graceful pod shutdown even when the hub
-        // calls in with CancellationToken.None (the caller-supplied token is not yet meaningful).
-        // When the hub call site passes Context.ConnectionAborted instead of CancellationToken.None,
-        // the ct leg of the linked source will become meaningful (connection-abort cancellation).
-        // Currently only _appLifetime.ApplicationStopping is an effective cancellation source here.
-        // Note: cts is disposed after PostCompletionBookkeepingAsync returns. Both awaited call sites
-        // (SwapLabelAsync and PostIssueFeedbackCommentAsync) pass cts.Token directly and do not store
-        // it beyond their own await scope, so disposal is safe in the current implementation.
+        // Note: cts is disposed after this method returns. Both awaited call sites pass cts.Token
+        // directly and do not store it beyond their own await scope, so disposal is safe here.
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct, _appLifetime.ApplicationStopping);
 
+        await SwapLabelAndPostCommentAsync(jobId, run, payload, outboxEntryId, cts.Token);
+    }
+
+    /// <summary>
+    /// Enqueues a durable feedback comment outbox entry (best-effort, CancellationToken.None).
+    /// Returns the entry ID on success, or <see cref="Guid.Empty"/> if enqueue was skipped or failed.
+    /// </summary>
+    /// <remarks>
+    /// Scope: closes the "pod dies during bookkeeping" window. Does NOT close the "ReportJobCompleted
+    /// was rejected / never invoked (reconnect race)" window — PostCompletionBookkeepingAsync is
+    /// never reached in that case. Fully closing it would require enqueuing on the durable
+    /// HTTP-primary completion path (WorkItemEndpoints), where run.Feedback is unavailable; deferred.
+    /// Guard mirrors FeedbackCommentFormatter.FormatComment: only enqueue when Description is non-null
+    /// (a null Description would produce no comment body and create an un-deliverable outbox row).
+    /// Uses CancellationToken.None so this DB write survives ApplicationStopping — that's the entire
+    /// point of the outbox: to persist comments that the cancellable fast path drops.
+    /// </remarks>
+    private async Task<Guid> EnqueueFeedbackOutboxEntryAsync(JobId jobId, PipelineRun run)
+    {
+        if (run.Feedback?.Issue?.Description is null)
+            return Guid.Empty;
+
+        var entry = BuildOutboxEntry(run);
+        // Enqueue is best-effort: a transient DB failure must not abort the label swap below.
+        // If the enqueue fails, the comment is not durable for this run (same behaviour as before
+        // the outbox was introduced), but the label swap proceeds normally.
+        try
+        {
+            await _outbox.EnqueueAsync(entry, CancellationToken.None);
+            return entry.Id;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex,
+                "Job {JobId} failed to enqueue feedback comment outbox row (run={RunId}) — " +
+                "comment durability is degraded for this run but label swap will proceed",
+                jobId.Value, entry.RunId);
+            return Guid.Empty; // don't attempt MarkCompleted if enqueue failed
+        }
+    }
+
+    /// <summary>
+    /// Swaps the issue label and posts the feedback comment for a completed job.
+    /// Catches <see cref="OperationCanceledException"/> (graceful shutdown / connection abort) —
+    /// OrphanedLabelRecoveryService will correct any stuck label on its next sweep.
+    /// </summary>
+    private async Task SwapLabelAndPostCommentAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload, Guid outboxEntryId, CancellationToken ct)
+    {
         // Swap label based on final outcome (non-fatal).
         // The agent may also attempt a label swap via RequestLabelChange during its own
         // error handling, but that call can race with this handler (run already removed).
@@ -398,19 +378,18 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                     "Job {JobId} ReportJobCompleted swapping label to {Label} for issue {IssueIdentifier} (finalStep={FinalStep}, finalLabel={FinalLabel})",
                     jobId.Value, label, run.IssueIdentifier, payload.FinalStep, payload.FinalLabel ?? "null");
                 var swLabel = Stopwatch.StartNew();
-                await _issueOps.SwapLabelAsync(run, label, cts.Token);
+                await _issueOps.SwapLabelAsync(run, label, ct);
                 _logger.Information("Job {JobId} SwapLabelAsync completed in {ElapsedMs}ms", jobId.Value, swLabel.ElapsedMilliseconds);
             }
 
             // Post issue feedback comment if present (non-fatal)
             var swComment = Stopwatch.StartNew();
-            await _issueOps.PostIssueFeedbackCommentAsync(run, cts.Token);
+            await _issueOps.PostIssueFeedbackCommentAsync(run, ct);
             _logger.Information("Job {JobId} PostIssueFeedbackCommentAsync completed in {ElapsedMs}ms", jobId.Value, swComment.ElapsedMilliseconds);
 
             // Inline fast-path succeeded — mark the outbox row Completed so the relay skips it.
-            // This is best-effort: a transient DB failure here does not undo the already-committed
-            // label swap and comment post. The outbox row remains Pending and FeedbackCommentRelayService
-            // will redeliver the comment (at-least-once). Failing the hub call for this is wrong.
+            // Best-effort: a transient DB failure here does not undo the committed label swap and
+            // comment post. The outbox row stays Pending; FeedbackCommentRelayService will redeliver.
             if (outboxEntryId != Guid.Empty)
             {
                 try
@@ -431,7 +410,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             // OrphanedLabelRecoveryService will correct any stuck agent:in-progress label
             // on its next sweep (default interval: ~30 min).
             // FeedbackCommentRelayService will deliver the feedback comment on its next sweep —
-            // the outbox row was enqueued above with CancellationToken.None before cts was created.
+            // the outbox row was enqueued with CancellationToken.None before cts was created.
             _logger.Information(
                 "PostCompletionBookkeepingAsync cancelled for job {JobId} — OrphanedLabelRecoveryService will handle label cleanup, FeedbackCommentRelayService will deliver the feedback comment",
                 jobId.Value);
@@ -477,7 +456,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
             // Apply step metadata from the agent (carries data from the just-completed step)
             if (metadata is { Count: > 0 })
-                ApplyStepMetadata(run, metadata);
+                StepMetadataApplier.Apply(run, metadata);
 
             // Persist mutated run back to the store (no-op for in-memory; required for Redis).
             _facade.ReplaceRun(run);
@@ -487,107 +466,4 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             _changeNotifier.NotifyChange();
         }
     }
-
-    /// <summary>
-    /// Applies key-value metadata from step transitions to the PipelineRun.
-    /// Keys use a flat naming convention (e.g., "BranchName", "BaselineHealthPassed").
-    /// </summary>
-    internal static void ApplyStepMetadata(PipelineRun run, Dictionary<string, string> metadata)
-    {
-        // Collect code review counts for single-pass atomic update
-        int? pendingCritical = null, pendingWarning = null, pendingSuggestion = null;
-
-        foreach (var (key, value) in metadata)
-        {
-            switch (key)
-            {
-                case "BranchName":
-                    run.BranchName = value;
-                    break;
-                case "BaselineHealthPassed":
-                    run.BaselineHealthPassed = TryParseBool(value);
-                    break;
-                case "AnalysisSkipped":
-                    run.AnalysisSkipped = TryParseBool(value) == true;
-                    break;
-                case "FilesChangedCount":
-                    run.FilesChangedCount = TryParseInt(value) ?? run.FilesChangedCount;
-                    break;
-                case "LinesAdded":
-                    run.LinesAdded = TryParseInt(value) ?? run.LinesAdded;
-                    break;
-                case "LinesRemoved":
-                    run.LinesRemoved = TryParseInt(value) ?? run.LinesRemoved;
-                    break;
-                case "CodeReviewIterationsCompleted":
-                    run.CodeReviewIterationsCompleted = TryParseInt(value) ?? run.CodeReviewIterationsCompleted;
-                    break;
-                case "CodeReviewIterationsTotal":
-                    run.CodeReviewIterationsTotal = TryParseInt(value) ?? run.CodeReviewIterationsTotal;
-                    break;
-                case "CodeReviewIterationInProgress":
-                    run.CodeReviewIterationInProgress = TryParseInt(value) ?? run.CodeReviewIterationInProgress;
-                    break;
-                case "OpenIssuesDownloaded":
-                    run.OpenIssuesDownloaded = TryParseInt(value) ?? run.OpenIssuesDownloaded;
-                    break;
-                case "DecompositionSubIssuesCreated":
-                    run.DecompositionSubIssuesCreated = TryParseInt(value) ?? run.DecompositionSubIssuesCreated;
-                    break;
-                case "DecompositionSubIssuesAttempted":
-                    run.DecompositionSubIssuesAttempted = TryParseInt(value) ?? run.DecompositionSubIssuesAttempted;
-                    break;
-                case "RetryCount":
-                    run.RetryCount = TryParseInt(value) ?? run.RetryCount;
-                    break;
-                case "InfrastructureRetryCount":
-                    run.InfrastructureRetryCount = TryParseInt(value) ?? run.InfrastructureRetryCount;
-                    break;
-                case "TotalTokens":
-                    run.TotalTokens = TryParseLong(value) ?? run.TotalTokens;
-                    break;
-                case "TotalCost":
-                    run.TotalCost = TryParseDecimalInvariant(value) ?? run.TotalCost;
-                    break;
-                case "CodeReviewCriticalCount":
-                    pendingCritical = TryParseInt(value);
-                    break;
-                case "CodeReviewWarningCount":
-                    pendingWarning = TryParseInt(value);
-                    break;
-                case "CodeReviewSuggestionCount":
-                    pendingSuggestion = TryParseInt(value);
-                    break;
-                case "CodeReviewAgentsRun":
-                    run.CodeReviewAgentsRun = value.Split('\x1F', StringSplitOptions.RemoveEmptyEntries);
-                    break;
-                case "PullRequestUrl":
-                    if (!string.IsNullOrEmpty(value))
-                        run.PullRequestUrl = value;
-                    break;
-            }
-        }
-
-        // Apply code review counts atomically in a single call (avoids iteration-order dependency)
-        if (pendingCritical.HasValue || pendingWarning.HasValue || pendingSuggestion.HasValue)
-        {
-            run.SetCodeReviewCounts(
-                pendingCritical ?? run.CodeReviewCriticalCount,
-                pendingWarning ?? run.CodeReviewWarningCount,
-                pendingSuggestion ?? run.CodeReviewSuggestionCount);
-        }
-    }
-
-    private static int? TryParseInt(string value) =>
-        int.TryParse(value, out var n) ? n : null;
-
-    private static long? TryParseLong(string value) =>
-        long.TryParse(value, out var n) ? n : null;
-
-    private static bool? TryParseBool(string value) =>
-        bool.TryParse(value, out var b) ? b : null;
-
-    private static decimal? TryParseDecimalInvariant(string value) =>
-        decimal.TryParse(value, System.Globalization.NumberStyles.Any,
-            System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : null;
 }
