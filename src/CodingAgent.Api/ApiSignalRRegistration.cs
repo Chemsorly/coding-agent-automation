@@ -1,5 +1,7 @@
 using CodingAgent.AgentGateway;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Hosting;
 using Serilog;
 using StackExchange.Redis;
 
@@ -21,9 +23,10 @@ internal static class ApiSignalRRegistration
     /// </summary>
     public static IServiceCollection AddApiSignalR(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IHostEnvironment environment)
     {
-        var signalR = services.AddAgentSignalRServices();
+        var signalR = services.AddAgentSignalRServices(environment);
 
         // ── Optional Redis backplane (Req 5.8) ──────────────────────────────
         var redisConnectionString = configuration.GetValue<string>("SignalR:Redis:ConnectionString");
