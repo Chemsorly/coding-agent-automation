@@ -13,6 +13,14 @@ public sealed class PipelineRunSummary
     public IReadOnlyList<GateOutcome>? QualityGateOutcomes { get; init; }
     public required PipelineStep FinalStep { get; init; }
 
+    /// <summary>
+    /// The highest pipeline step reached before the run entered a terminal state.
+    /// Populated from <see cref="PipelineRun.HighWaterMark"/> in <see cref="PipelineRun.ToSummary"/>.
+    /// Null for runs persisted before this field was introduced — the UI renders no guessed failure
+    /// step in that case. Stored in the JSONB SummaryJson column; no DB migration needed.
+    /// </summary>
+    public PipelineStep? LastActiveStep { get; init; }
+
     [Obsolete("Use StartedAtOffset for timezone-safe comparisons")]
     public DateTime StartedAt { get; init; }
 

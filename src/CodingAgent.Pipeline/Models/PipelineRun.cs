@@ -418,6 +418,7 @@ public sealed partial class PipelineRun
         IssueUrl = IssueUrl,
         QualityGateOutcomes = LatestQualityReport is { } qgReport ? FlattenQualityGates(qgReport) : null,
         FinalStep = finalStepOverride ?? CurrentStep,
+        LastActiveStep = HighWaterMark,
         StartedAt = StartedAt,
         CompletedAt = CompletedAt,
         StartedAtOffset = StartedAtOffset,
