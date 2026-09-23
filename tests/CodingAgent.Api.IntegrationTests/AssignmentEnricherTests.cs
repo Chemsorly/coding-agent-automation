@@ -4,6 +4,7 @@ using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Moq;
 
 namespace CodingAgent.Api.IntegrationTests;
@@ -169,6 +170,19 @@ public sealed class AssignmentEnricherTests
     }
 
     /// <summary>
+    /// Creates a no-op <see cref="IProjectStore"/> mock and a matching
+    /// <see cref="ConsolidationTemplateResolver"/> stub for tests that do not exercise
+    /// the <c>InjectProjectSecretsAsync</c> path.
+    /// </summary>
+    private static (Mock<IProjectStore> Store, ConsolidationTemplateResolver Resolver) MakeProjectStubs()
+    {
+        var mock = new Mock<IProjectStore>();
+        mock.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        mock.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        return (mock, new ConsolidationTemplateResolver(mock.Object));
+    }
+
+    /// <summary>
     /// Creates a <see cref="StubDispatchInfrastructure"/> that returns the given result,
     /// plus a profile store mock and the real <see cref="AssignmentEnricher"/> under test.
     /// </summary>
@@ -186,8 +200,14 @@ public sealed class AssignmentEnricherTests
             .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(profiles ?? [MakeProfile()]);
 
+        var projectStoreMock = new Mock<IProjectStore>();
+        projectStoreMock.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        projectStoreMock.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        var consolidationTemplateResolver = new ConsolidationTemplateResolver(projectStoreMock.Object);
+
         var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, MakeNoOpConsolidationPreparer().Object, Serilog.Log.Logger);
+            infra, profileStoreMock.Object, MakeNoOpConsolidationPreparer().Object,
+            projectStoreMock.Object, consolidationTemplateResolver, Serilog.Log.Logger);
         return (infra, profileStoreMock, enricher);
     }
 
@@ -377,8 +397,10 @@ public sealed class AssignmentEnricherTests
             .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeProfile()]);
 
+        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
         var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, MakeNoOpConsolidationPreparer().Object, Serilog.Log.Logger);
+            infra, profileStoreMock.Object, MakeNoOpConsolidationPreparer().Object,
+            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
 
         // ACT
         var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
@@ -423,8 +445,10 @@ public sealed class AssignmentEnricherTests
             .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeProfile()]);
 
+        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
         var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, MakeNoOpConsolidationPreparer().Object, Serilog.Log.Logger);
+            infra, profileStoreMock.Object, MakeNoOpConsolidationPreparer().Object,
+            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
 
         // ACT
         var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
@@ -450,8 +474,10 @@ public sealed class AssignmentEnricherTests
             .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeProfile()]);
 
+        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
         var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, MakeNoOpConsolidationPreparer().Object, Serilog.Log.Logger);
+            infra, profileStoreMock.Object, MakeNoOpConsolidationPreparer().Object,
+            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
 
         // ACT + ASSERT: exception propagates so the caller can return 503.
         // The old behavior (swallow + return null → degraded 200) is intentionally removed.
@@ -485,8 +511,10 @@ public sealed class AssignmentEnricherTests
             .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeProfile()]);
 
+        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
         var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, MakeNoOpConsolidationPreparer().Object, Serilog.Log.Logger);
+            infra, profileStoreMock.Object, MakeNoOpConsolidationPreparer().Object,
+            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
 
         // ACT + ASSERT: OperationCanceledException propagates (it is excluded from the catch)
         var act = () => enricher.EnrichAsync(identity, project, CancellationToken.None);
@@ -610,8 +638,10 @@ public sealed class AssignmentEnricherTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(preparationResult ?? MakeConsolidationPreparationResult());
 
+        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
         var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, preparerMock.Object, Serilog.Log.Logger);
+            infra, profileStoreMock.Object, preparerMock.Object,
+            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
         return (infra, preparerMock, enricher);
     }
 
@@ -740,8 +770,10 @@ public sealed class AssignmentEnricherTests
                 (type, _, _, _) => capturedType = type)
             .ReturnsAsync(MakeConsolidationPreparationResult());
 
+        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
         var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, preparerMock.Object, Serilog.Log.Logger);
+            infra, profileStoreMock.Object, preparerMock.Object,
+            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
 
         // ACT
         await enricher.EnrichAsync(identity, project, CancellationToken.None);
@@ -778,8 +810,10 @@ public sealed class AssignmentEnricherTests
                 (_, tid, _, _) => capturedTemplateId = tid)
             .ReturnsAsync(MakeConsolidationPreparationResult());
 
+        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
         var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, preparerMock.Object, Serilog.Log.Logger);
+            infra, profileStoreMock.Object, preparerMock.Object,
+            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
 
         // ACT
         await enricher.EnrichAsync(identity, project, CancellationToken.None);
@@ -818,8 +852,10 @@ public sealed class AssignmentEnricherTests
                 (_, tid, _, _) => capturedTemplateId = tid)
             .ReturnsAsync(MakeConsolidationPreparationResult());
 
+        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
         var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, preparerMock.Object, Serilog.Log.Logger);
+            infra, profileStoreMock.Object, preparerMock.Object,
+            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
 
         // ACT
         await enricher.EnrichAsync(identity, project, CancellationToken.None);
@@ -949,8 +985,10 @@ public sealed class AssignmentEnricherTests
             .ReturnsAsync([MakeProfile()]); // only "dotnet" profile
 
         var preparerMock = new Mock<IConsolidationJobPreparationService>();
+        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
         var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, preparerMock.Object, Serilog.Log.Logger);
+            infra, profileStoreMock.Object, preparerMock.Object,
+            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
 
         // ACT
         var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
@@ -992,8 +1030,10 @@ public sealed class AssignmentEnricherTests
             .ThrowsAsync(new InvalidOperationException(
                 "IConsolidationJobPreparationService.PrepareAsync must not be called for implementation tasks."));
 
+        var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
         var enricher = new AssignmentEnricher(
-            infra, profileStoreMock.Object, consolidationPreparerMock.Object, Serilog.Log.Logger);
+            infra, profileStoreMock.Object, consolidationPreparerMock.Object,
+            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
 
         // ACT
         var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
@@ -1220,7 +1260,12 @@ public sealed class AssignmentEnricherOceCancellationTests
                 Enabled = true,
             }]);
 
-        return new AssignmentEnricher(infra, profileStoreMock.Object, new Mock<IConsolidationJobPreparationService>().Object, mockLogger.Object);
+        var noopProjectStore = new Mock<IProjectStore>();
+        noopProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        noopProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        var consolidationTemplateResolver = new ConsolidationTemplateResolver(noopProjectStore.Object);
+        return new AssignmentEnricher(infra, profileStoreMock.Object, new Mock<IConsolidationJobPreparationService>().Object,
+            noopProjectStore.Object, consolidationTemplateResolver, mockLogger.Object);
     }
 
     // ── OCE does not trigger Error log ────────────────────────────────────────────
