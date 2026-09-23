@@ -91,18 +91,20 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 var configs = _mockConfigStore.Object.LoadProviderConfigsAsync(kind, ct).GetAwaiter().GetResult();
                 return Task.FromResult(configs.FirstOrDefault(c => c.Id == id));
             });
-            _mockConfigStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new List<QualityGateConfiguration>
-                {
+        _mockConfigStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<QualityGateConfiguration>
+            {
                     new() { Id = "default", DisplayName = "Default", CompilationCommand = "dotnet", CompilationArguments = ["build"], TestCommand = "dotnet", TestArguments = ["test"], Enabled = true }
-                });
-            _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new List<ReviewerConfiguration>());
+            });
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>());
 
         _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
-                Identifier = "42", Title = "Test Issue", Description = "Test description",
+                Identifier = "42",
+                Title = "Test Issue",
+                Description = "Test description",
                 Labels = Array.Empty<string>()
             });
         _mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -1461,6 +1463,8 @@ public class PipelineOrchestrationServiceTests : IDisposable
     /// </summary>
     private static void WriteAnalysisFile(string workspacePath, string content)
     {
+        // TODO: Replace hardcoded ".agent" with AgentWorkspacePaths.MetadataDirectory so test helpers
+        // stay in sync with production code if the directory name ever changes.
         var dir = Path.Combine(workspacePath, ".agent");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "analysis.md"), content);
@@ -1570,7 +1574,9 @@ public class PipelineOrchestrationServiceTests : IDisposable
         mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
-                Identifier = "42", Title = "Test Issue", Description = "Test description",
+                Identifier = "42",
+                Title = "Test Issue",
+                Description = "Test description",
                 Labels = Array.Empty<string>()
             });
         mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -3162,7 +3168,9 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MergeResult
             {
-                Success = true, HasConflicts = false, ConflictFiles = Array.Empty<string>()
+                Success = true,
+                HasConflicts = false,
+                ConflictFiles = Array.Empty<string>()
             });
 
         _mockRepoProvider.Setup(p => p.UpdatePullRequestAsync(

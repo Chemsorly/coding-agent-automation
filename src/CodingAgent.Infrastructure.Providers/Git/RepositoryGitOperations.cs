@@ -2,6 +2,7 @@ using LibGit2Sharp;
 using System.Diagnostics.CodeAnalysis;
 using Polly;
 using CodingAgent.Infrastructure.Resilience;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using Serilog;
@@ -129,7 +130,7 @@ internal static class RepositoryGitOperations
         StageAllChangedFiles(repo, preStatus);
 
         // Hardcoded: ALWAYS unstage pipeline-injected paths regardless of configured blacklist.
-        var universalHardcoded = new[] { ".agent", ".brain" };
+        var universalHardcoded = new[] { AgentWorkspacePaths.MetadataDirectory, AgentWorkspacePaths.BrainDirectory };
         var hardcodedBlacklist = pipelineInjectedPaths is { Count: > 0 }
             ? universalHardcoded.Concat(pipelineInjectedPaths).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
             : universalHardcoded;

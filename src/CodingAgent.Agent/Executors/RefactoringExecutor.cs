@@ -90,7 +90,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
 
     private async Task TryCloneBrainRepoAsync(IRepositoryProvider brainProvider, string workspacePath, string jobId, CancellationToken ct)
     {
-        var brainPath = Path.Combine(workspacePath, ".brain");
+        var brainPath = Path.Combine(workspacePath, AgentWorkspacePaths.BrainDirectory);
         try
         {
             await brainProvider.CloneAsync(brainPath, ct);

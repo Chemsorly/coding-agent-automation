@@ -562,7 +562,8 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             // path in ChatSessionWatcher which calls CleanupSession("faulted") earlier than the prior code.
             // Fix: wrap CancelAsync() in try/catch(ObjectDisposedException).
             // See review finding: DotNetSpecialist WARNING @ ChatJobDispatcher.cs:551.
-            await entry.WatcherCts.CancelAsync();
+            try { await entry.WatcherCts.CancelAsync(); }
+            catch (ObjectDisposedException) { /* WatcherCts already disposed by CleanupSession on the watcher thread — safe to ignore */ }
             activity?.SetTag(TagOutcome, "force_delete");
             await ForceDeleteAndCleanupAsync(agentId.Value, entry);
         }
