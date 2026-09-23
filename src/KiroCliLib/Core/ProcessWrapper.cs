@@ -172,8 +172,10 @@ public class ProcessWrapper : IProcessWrapper
                         {
                             FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "wsl.exe"),
                             Arguments = "pkill -9 -f kiro-cli",
-                            UseShellExecute = false, CreateNoWindow = true,
-                            RedirectStandardOutput = true, RedirectStandardError = true
+                            UseShellExecute = false,
+                            CreateNoWindow = true,
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true
                         }
                     };
                     killProcess.Start();
