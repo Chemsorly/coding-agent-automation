@@ -127,10 +127,7 @@ public class GitLabResiliencePipelineTests
     [InlineData(HttpStatusCode.Forbidden)]          // 403
     [InlineData(HttpStatusCode.NotFound)]           // 404
     [InlineData(HttpStatusCode.Conflict)]           // 409
-    // TODO [WARNING]: (HttpStatusCode)422 uses the same magic-number cast antipattern that was
-    // eliminated from production code. Replace with HttpStatusCode.UnprocessableEntity (available
-    // in .NET 5+) or HttpStatusCode.UnprocessableContent to be consistent with the enum-based style.
-    [InlineData((HttpStatusCode)422)]               // UnprocessableEntity
+    [InlineData(HttpStatusCode.UnprocessableContent)] // 422
     public async Task NonRetryableStatusCode_PropagatesImmediately_NoRetry(HttpStatusCode statusCode)
     {
         // Arrange
