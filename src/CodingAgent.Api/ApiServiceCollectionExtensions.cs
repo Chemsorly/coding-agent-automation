@@ -297,8 +297,10 @@ public static class ApiServiceCollectionExtensions
         });
         services.AddHttpClient("TokenVending")
             .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
-        services.AddSingleton<ITokenVendingService>(sp =>
+        services.AddSingleton<TokenVendingService>(sp =>
             new TokenVendingService(Log.Logger, sp.GetRequiredService<IHttpClientFactory>()));
+        services.AddSingleton<ITokenVendingService>(sp => sp.GetRequiredService<TokenVendingService>());
+        services.AddHostedService(sp => new TokenCacheHousekeepingService(sp.GetRequiredService<TokenVendingService>(), Log.Logger));
 
         // ── ILabelService ────────────────────────────────────────────────────
         services.AddSingleton<ILabelService>(sp => new LabelService(
@@ -440,11 +442,30 @@ public static class ApiServiceCollectionExtensions
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<ILabelService>(),
             sp.GetRequiredService<DispatchResolutionService>()));
+        // ── ConsolidationTemplateResolver ──────────────────────────────────────
+        // Registered as a standalone singleton so AssignmentEnricher.InjectProjectSecretsAsync
+        // can delegate template-ownership resolution to it (issue #2914), eliminating the
+        // reimplemented loop that previously mirrored its behaviour inline.
+        // Takes only IProjectStore — already registered above as a singleton.
+        services.AddSingleton(sp => new ConsolidationTemplateResolver(
+            sp.GetRequiredService<IProjectStore>()));
         services.AddSingleton(sp => new AssignmentEnricher(
             sp.GetRequiredService<DispatchInfrastructure>(),
             sp.GetRequiredService<IAgentProfileStore>(),
             sp.GetRequiredService<IConsolidationJobPreparationService>(),
+            sp.GetRequiredService<IProjectStore>(),
+            sp.GetRequiredService<ConsolidationTemplateResolver>(),
             Log.Logger));
+        // ── WorkItemStatusTransitionService (issue #2914) ──────────────────────
+        // Encapsulates the compound status-transition orchestration extracted from
+        // WorkItemAgentEndpoints.PostStatus: infra-recovery guard, pre-read idempotency guard,
+        // TransitionDetailedAsync, lifecycle dispatch, and telemetry fire-and-forget.
+        // Placed in CodingAgent.Api (not CodingAgent.Orchestration) to respect the
+        // Orchestration_ShouldNot_ReferenceInfrastructurePersistenceAssembly arch boundary.
+        services.AddSingleton(sp => new WorkItemStatusTransitionService(
+            sp.GetRequiredService<WorkItemTransitionService>(),
+            sp.GetRequiredService<IRunLifecycleManager>(),
+            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
         // Required by ModelFetchJobService and ChatJobDispatcher.
         // IKubernetes is already registered above; only the job client wrapper is missing.
         services.AddSingleton<IKubernetesJobClient>(sp =>

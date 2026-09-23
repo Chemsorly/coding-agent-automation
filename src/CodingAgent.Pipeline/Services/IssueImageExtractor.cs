@@ -94,16 +94,6 @@ public sealed partial class IssueImageExtractor
         return orderedUrls.Select(url => urlToReference[url]).ToList();
     }
 
-    /// <summary>
-    /// Generates the local filename for an image reference at a given index.
-    /// </summary>
-    public static string GetFilename(string sourceIdentifier, ImageSourceKind sourceKind, int index, string url)
-    {
-        var kindPrefix = sourceKind == ImageSourceKind.Issue ? "issue" : "pr";
-        var extension = DetermineExtension(url);
-        return $"{kindPrefix}-{sourceIdentifier}-image-{(index + 1):D3}{extension}";
-    }
-
     private static void ExtractFromMarkdown(
         string markdown,
         ImageSourceType sourceType,
@@ -268,21 +258,6 @@ public sealed partial class IssueImageExtractor
             return true;
 
         return false;
-    }
-
-    /// <summary>
-    /// Determines the file extension for a filename assignment.
-    /// </summary>
-    internal static string DetermineExtension(string url)
-    {
-        var path = GetPathFromUrl(url);
-        var ext = GetExtensionFromPath(path);
-
-        if (!string.IsNullOrEmpty(ext) && AllowedExtensions.Contains(ext))
-            return ext.ToLowerInvariant();
-
-        // Default to .png for extensionless URLs (GitHub asset UUIDs, etc.)
-        return ".png";
     }
 
     /// <summary>

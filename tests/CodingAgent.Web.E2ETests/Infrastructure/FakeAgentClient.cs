@@ -5,9 +5,6 @@ using System.Text;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
-using MessagePack;
-using MessagePack.Formatters;
-using MessagePack.Resolvers;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -475,13 +472,7 @@ public sealed class FakeAgentClient : IAsyncDisposable
 
         _connection = new HubConnectionBuilder()
             .WithUrl($"{serverAddress}{HubRoutes.Agent}?agentId={AgentId}&access_token={derivedToken}")
-            .AddMessagePackProtocol(options =>
-            {
-                options.SerializerOptions = MessagePackSerializerOptions.Standard
-                    .WithResolver(CompositeResolver.Create(
-                        new IMessagePackFormatter[] { new JobIdFormatter(), new AgentIdFormatter() },
-                        new IFormatterResolver[] { ContractlessStandardResolverAllowPrivate.Instance }));
-            })
+            .AddMessagePackProtocol(options => options.SerializerOptions = AgentHubMessagePack.SerializerOptions)
             .Build();
 
         _connection.On<JobAssignmentMessage>("AssignJob", OnAssignJob);

@@ -1,10 +1,7 @@
 using System.Security.Claims;
 using CodingAgent.Infrastructure.Persistence;
-using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Infrastructure.Persistence.Services;
-using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Dispatch;
-using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -50,14 +47,17 @@ public static class WorkItemAgentEndpoints
 
         group.MapPost("/{id:guid}/status",
             async (Guid id, [FromBody] WorkItemStatusRequest request,
-                   [FromServices] WorkItemTransitionService transitionService,
-                   [FromServices] IOrchestratorRunService runService,
-                   [FromServices] IRunLifecycleManager runLifecycleManager,
+                   [FromServices] WorkItemStatusTransitionService statusTransitionService,
+                   // TODO: [WARNING] dbFactory is injected here exclusively for AuthorizeAgentForWorkItemAsync.
+                   // It is NOT forwarded to PostStatus — WorkItemStatusTransitionService holds its own
+                   // IDbContextFactory reference injected at DI registration time. If the singleton's
+                   // registration ever loses its factory reference, this route-level resolve will NOT act
+                   // as a safety net (it is discarded). A comment or rename would clarify the intent.
                    [FromServices] IDbContextFactory<PipelineDbContext> dbFactory,
                    HttpContext httpContext,
                    CancellationToken ct) =>
                 await AuthorizeAgentForWorkItemAsync(httpContext, id, dbFactory, ct)
-                    ?? await PostStatus(id, request, transitionService, runService, runLifecycleManager, dbFactory, ct))
+                    ?? await PostStatus(id, request, statusTransitionService, ct))
             .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(1_048_576)); // 1 MB limit
     }
 
@@ -204,14 +204,21 @@ public static class WorkItemAgentEndpoints
         // Restore a Log.Warning when the enricher is null on the new-schema path (was present before #2172).
 
         var message = JobAssignmentMessageFactory.BuildJobAssignmentMessage(id, request);
+        // Secret injection delegates to AssignmentEnricher.InjectProjectSecretsAsync (issue #2914),
+        // which uses ConsolidationTemplateResolver for the consolidation fallback path rather than
+        // a reimplemented ownership-resolution loop.
+        // projectStore is passed as a fallback so test subclasses of AssignmentEnricher constructed
+        // via the protected logger-only constructor (which set _projectStore = null!) still work.
         // TODO: [WARNING] InjectProjectSecretsAsync is now called unconditionally for all GetAssignment
         // requests, including old-schema requests where request.PayloadSchemaVersion == null. In the
-        // prior code, secret injection was inside the isNewSchema branch. Old-schema callers that log
-        // or persist the full response message will now receive live ProjectSecrets where they did not
-        // before, widening the exposure surface even though the endpoint already requires Operator auth.
-        // Gate this call on request.PayloadSchemaVersion == 1 (new-schema path only), or document the
-        // intentional behavior change so callers are aware secrets are now injected on all paths.
-        message = await InjectProjectSecretsAsync(message, request, projectStore, ct);
+        // prior code, secret injection was inside the isNewSchema branch only. Old-schema callers that
+        // log or persist the full response message now receive live ProjectSecrets where they did not
+        // before, widening the secret exposure surface even though the endpoint already requires Operator
+        // auth. Gate this call on request.PayloadSchemaVersion == 1 (new-schema path only), or explicitly
+        // document the intentional behavior change so operators are aware secrets are now injected on all
+        // paths. (Security review finding — issue #2914.)
+        if (assignmentEnricher is not null)
+            message = await assignmentEnricher.InjectProjectSecretsAsync(message, request, ct, projectStore);
 
         return TypedResults.Ok(message);
     }
@@ -269,93 +276,6 @@ public static class WorkItemAgentEndpoints
     }
 
     /// <summary>
-    /// Injects project secrets into the assignment message at delivery time.
-    /// Secrets are not serialized in the payload for security; they are fetched fresh here.
-    /// <para>
-    /// Two resolution paths:
-    /// <list type="bullet">
-    ///   <item>
-    ///     <term>Direct project lookup</term>
-    ///     <description>
-    ///     When <c>request.ProjectId</c> is non-null, the project is fetched directly via
-    ///     <see cref="IProjectStore.GetProjectByIdAsync"/> and its secrets are injected.
-    ///     </description>
-    ///   </item>
-    ///   <item>
-    ///     <term>Template-ownership fallback (consolidation)</term>
-    ///     <description>
-    ///     When <c>request.ProjectId</c> is null but <c>request.ConsolidationTemplateId</c> is non-null,
-    ///     the owning project is resolved via template membership: iterate enabled projects and find the
-    ///     one whose <see cref="PipelineProject.TemplateIds"/> contains the template ID. Mirrors
-    ///     <see cref="ConsolidationTemplateResolver.ResolveTemplateWithProjectAsync"/>.
-    ///     </description>
-    ///   </item>
-    /// </list>
-    /// </para>
-    /// </summary>
-    private static async Task<JobAssignmentMessage> InjectProjectSecretsAsync(
-        JobAssignmentMessage message,
-        JobDistributionRequest request,
-        IProjectStore projectStore,
-        CancellationToken ct)
-    {
-        if (request.ProjectId.HasValue)
-        {
-            // Direct path: project ID is known — look it up directly.
-            var project = await projectStore.GetProjectByIdAsync(request.ProjectId.Value.ToString(), ct);
-            if (project?.Secrets is { Count: > 0 })
-                return message with { ProjectSecrets = project.Secrets };
-
-            // TODO: Consider restoring a structured Log.Warning (with {ProjectId} and {JobId}) for the
-            // null-project path so operators can correlate silent secret-injection failures at assignment
-            // time. The original diagnostic was removed in this refactor; both "project not found" and
-            // "project exists but has no secrets" now fall through silently.
-            return message;
-        }
-
-        // Consolidation fallback: when ProjectId is null but a ConsolidationTemplateId is set,
-        // resolve the owning project via template membership (project.TemplateIds) and inject
-        // secrets from that project. Global consolidation runs (ConsolidationTemplateId == null)
-        // and non-consolidation null-project items fall through to the unchanged return below.
-        if (!string.IsNullOrEmpty(request.ConsolidationTemplateId))
-        {
-            // TODO: ConsolidationTemplateId originates from the deserialized work-item payload and is
-            // attacker-influenced. The only authorization checks here are Enabled == true and TemplateIds
-            // membership. Consider adding a secondary authorization check (e.g., verify the work item's
-            // initiating identity is permitted to access the resolved project) or documenting that
-            // agent-claimed-item context is sufficient authorization for secret injection.
-            var projects = await projectStore.LoadProjectsAsync(ct);
-            // TODO: The templateLookup.ContainsKey(ConsolidationTemplateId) guard is constant within the
-            // foreach loop — consider hoisting it before the loop to avoid re-evaluating it per enabled
-            // project. If orphaned-TemplateIds detection is not a requirement, LoadAllTemplatesAsync and
-            // the ContainsKey guard can be removed entirely to save one store round-trip.
-            var templateLookup = (await projectStore.LoadAllTemplatesAsync(ct)).ToDictionary(t => t.Id);
-            foreach (var candidate in projects.Where(p => p.Enabled))
-            {
-                if (candidate.TemplateIds.Contains(request.ConsolidationTemplateId)
-                    && templateLookup.ContainsKey(request.ConsolidationTemplateId))
-                {
-                    // TODO: GetProjectByIdAsync(candidate.Id) re-fetches a project already returned by
-                    // LoadProjectsAsync. If LoadProjectsAsync returns full PipelineProject objects
-                    // (including Secrets), candidate.Secrets could be used directly. Document which
-                    // projection strategy LoadProjectsAsync uses, or add a comment explaining why the
-                    // re-fetch is required.
-                    var owningProject = await projectStore.GetProjectByIdAsync(candidate.Id, ct);
-                    if (owningProject?.Secrets is { Count: > 0 })
-                        return message with { ProjectSecrets = owningProject.Secrets };
-                    break; // owning project found but has no secrets — stop looking
-                }
-            }
-        }
-
-        // TODO: When ConsolidationTemplateId is set but no matching enabled project is found (or the
-        // owning project has no secrets), this method silently returns with no log event. Consider
-        // emitting a diagnostic log (Log.Warning with {ConsolidationTemplateId} and {JobId}) when
-        // ConsolidationTemplateId is non-null but no owning project with secrets was found.
-        return message;
-    }
-
-    /// <summary>
     /// Builds a minimal <see cref="PipelineProject"/> stub for work items without a project ID.
     /// Prevents null-ref in <see cref="AssignmentEnricher.EnrichAsync"/> which requires a non-null project.
     /// </summary>
@@ -366,20 +286,46 @@ public static class WorkItemAgentEndpoints
             Name = request.ProjectName ?? string.Empty
         };
 
-    // ── POST /{id}/status — mirror of monolith ────────────────────────────
+    // ── POST /{id}/status ─────────────────────────────────────────────────
 
     /// <summary>
     /// POST /api/work-items/{id}/status
-    /// Validates transition via WorkItemTransitionService, updates in-memory state.
-    /// 200, 400 (invalid transition), or 404.
+    /// Thin shim: delegates all orchestration logic to <see cref="WorkItemStatusTransitionService"/>
+    /// and maps the outcome to an <c>IResult</c>. Keeps the internal static signature and
+    /// <c>awaitTelemetry</c> test seam so that <c>PostStatusIdempotencyTests.cs</c> can continue
+    /// calling this method directly via <c>InternalsVisibleTo</c>.
     /// </summary>
-    // TODO: PostStatus takes WorkItemTransitionService as a concrete type because TransitionDetailedAsync
-    // is not declared on any interface (IWorkItemTransitionService only exposes TransitionIfAsync).
-    // This prevents interface-level mocking of the transition service in tests; callers must use the
-    // concrete class with an in-memory DB. Consider adding TransitionDetailedAsync to an interface
-    // (e.g. IWorkItemTransitionService or a new IWorkItemTransitionDetailedService) so PostStatus can
-    // be tested with pure mocks and to allow future DI substitution.
-    internal static async Task<IResult> PostStatus( // NOSONAR S107 — 8th param is a test-only seam; CA1068 suppressed via attribute below
+    // Suppression: CA1068 — awaitTelemetry is a test-only seam appended after ct intentionally.
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1068", Justification = "Test seam bool appended after ct intentionally")]
+    internal static async Task<IResult> PostStatus(
+        Guid id,
+        WorkItemStatusRequest request,
+        WorkItemStatusTransitionService statusTransitionService,
+        CancellationToken ct = default,
+        bool awaitTelemetry = false)
+    {
+        var outcome = await statusTransitionService.TransitionAsync(id, request, ct, awaitTelemetry);
+
+        return outcome switch
+        {
+            StatusTransitionOutcome.Transitioned => TypedResults.Ok(),
+            StatusTransitionOutcome.AlreadyAtTarget => TypedResults.NoContent(),
+            StatusTransitionOutcome.NotFound => TypedResults.NotFound(),
+            StatusTransitionOutcome.Rejected => TypedResults.BadRequest("Invalid status transition"),
+            _ => TypedResults.StatusCode(StatusCodes.Status500InternalServerError),
+        };
+    }
+
+    // ── Backward-compatibility overload (used by tests that pass the old parameters directly) ──
+
+    /// <summary>
+    /// Backward-compatible overload for <c>PostStatusIdempotencyTests.cs</c>, which constructs
+    /// <see cref="WorkItemTransitionService"/>, <see cref="IOrchestratorRunService"/>, and
+    /// <see cref="IRunLifecycleManager"/> directly. This overload wraps the three dependencies
+    /// into a <see cref="WorkItemStatusTransitionService"/> and forwards to the primary overload.
+    /// </summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1068", Justification = "Test seam bool appended after ct intentionally")]
+    internal static Task<IResult> PostStatus(
         Guid id,
         WorkItemStatusRequest request,
         WorkItemTransitionService transitionService,
@@ -387,261 +333,17 @@ public static class WorkItemAgentEndpoints
         IRunLifecycleManager runLifecycleManager,
         IDbContextFactory<PipelineDbContext>? dbFactory = null,
         CancellationToken ct = default,
-        // Test seam only: when true, the telemetry task is awaited before returning so tests can
-        // assert metric side-effects deterministically. In production the route lambda never passes
-        // this parameter, so it defaults to false and the fire-and-forget path is unchanged.
-        // Suppression: CA1068 (ct not last) and S107 (>7 params) are acceptable here because
-        // this is an internal method with a test-only parameter appended after the conventional
-        // CancellationToken position. Moving the bool before ct would break naming conventions;
-        // splitting into an overload doubles the S107 surface area. The bool is never passed by
-        // production callers.
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1068", Justification = "Test seam bool appended after ct intentionally")]
         bool awaitTelemetry = false)
     {
-        // Infrastructure recovery path (issue #2459): when the agent reports Running, attempt to
-        // recover a Failed/Timeout or Failed/InfrastructureFailure item back to Running before
-        // reaching TransitionDetailedAsync (which would reject Failed→Running as invalid).
-        //
-        // This covers the race where ReconciliationLoop's EnforceTimeoutsAsync timed out the item
-        // while the agent was still executing — the agent's in-flight PostStatus(Running) arrives
-        // after the timeout write and must succeed rather than returning 400.
-        //
-        // TryRecoverFromInfrastructureFailureAsync returns:
-        //   true  — recovery succeeded (or item already at Running) → return 200 immediately.
-        //   false — item not found, wrong state, or non-recoverable FailureReason (AgentError etc.)
-        //           → fall through to TransitionDetailedAsync for normal handling.
-        //
-        // When recovery succeeds, we do NOT call lifecycle events (FailRunAsync / CancelRunAsync)
-        // because the item is transitioning BACK to an active state, not completing — lifecycle
-        // events are only appropriate for terminal transitions below.
-        if (request.Status == WorkItemStatus.Running)
-        {
-            var recovered = await transitionService.TryRecoverFromInfrastructureFailureAsync(
-                id, WorkItemStatus.Running, ct: ct);
-            if (recovered)
-                return TypedResults.Ok();
-            // false → not a recoverable race; fall through to TransitionDetailedAsync.
-        }
-
-        // Pre-read guard: if the incoming status is terminal and the item is already in a
-        // "stronger" terminal state (Cancelled or Succeeded), return Ok silently without calling
-        // TransitionDetailedAsync. This suppresses the "Invalid transition" LogWarning that
-        // TransitionCoreAsync would otherwise emit for Cancelled→Failed, Succeeded→Failed, etc.
-        //
-        // This guard exists because "must NOT emit the warning" requires short-circuiting before
-        // TransitionCoreAsync is entered — a post-read check (after Rejected is returned) cannot
-        // suppress the warning because TransitionCoreAsync emits it before returning Rejected.
-        //
-        // Trade-off: this pre-read fires for ALL terminal incoming requests, including valid
-        // Running→Failed transitions. For those paths GetCurrentStatusAsync returns Running (not
-        // Cancelled/Succeeded), so execution falls through to TransitionDetailedAsync as normal —
-        // no behavior change except for the extra SELECT. The post-read alternative cannot satisfy
-        // the "no warning" acceptance criterion, so the extra read is the required trade-off.
-        //
-        // TODO: Residual TOCTOU race — the guard reads status in one DB round-trip and
-        // TransitionDetailedAsync reads it again in a second. If a concurrent cancellation
-        // transitions the item from Running→Cancelled between the two reads, TransitionDetailedAsync
-        // will see Cancelled→Failed (invalid) and still emit the spurious warning. This race is
-        // narrow (requires a new cancellation to occur within the two-read window for an already-Running
-        // item) and represents a residual frequency reduction rather than full elimination. Closing it
-        // fully would require a database-level serializable transaction or a new TransitionResult value
-        // (e.g. TerminalConflict) returned from TransitionCoreAsync to distinguish "wrong direction"
-        // from "already terminal" without a second read. See issue #2461.
-        //
-        // TODO: If a new terminal WorkItemStatus value is added (e.g. TimedOut), this guard must be
-        // updated to include it or idempotency protection will be missing for that status. There is
-        // no compile-time exhaustiveness check on this pattern match.
-        //
-        // See issue #2461.
-        // TODO: The early-return condition below checks `currentStatus is Cancelled or Succeeded`
-        // but intentionally does NOT include `Failed`. An already-Failed item receiving PostStatus(Failed)
-        // falls through to TransitionDetailedAsync, which returns AlreadyAtTarget → HTTP 200 with no
-        // warning and no lifecycle call — correct behaviour, but via a different code path than
-        // Cancelled→Cancelled and Succeeded→Succeeded. This asymmetry is currently harmless because
-        // AlreadyAtTarget never emits a warning. If TransitionCoreAsync's AlreadyAtTarget handling ever
-        // changes to emit a log entry, Failed→Failed would be affected while the other same-status
-        // combinations would not. Consider including Failed in the guard condition for consistency.
-        // See review finding (DotNetSpecialist) for issue #2461.
-        if (request.Status is WorkItemStatus.Failed or WorkItemStatus.Cancelled or WorkItemStatus.Succeeded)
-        {
-            var currentStatus = await transitionService.GetCurrentStatusAsync(id, ct);
-            if (currentStatus is WorkItemStatus.Cancelled or WorkItemStatus.Succeeded)
-            {
-                // TODO: Narrow deleted-item TOCTOU race — GetCurrentStatusAsync returned Cancelled/Succeeded
-                // so we return Ok() without calling TransitionDetailedAsync. If the WorkItem was
-                // hard-deleted between the GetCurrentStatusAsync read and this return (e.g. in a
-                // test/cleanup scenario), the caller receives HTTP 200 for a now-nonexistent item
-                // rather than 404. The post-read approach (check after Rejected) would not have this
-                // property for the already-terminal case, so this is an accepted trade-off of the
-                // pre-read design. To close it, TransitionDetailedAsync would need to return a
-                // TerminalConflict result type so the endpoint can distinguish "wrong direction" from
-                // "already terminal" without a prior read. See review finding #2 (Correctness) for
-                // issue #2461.
-                return TypedResults.NoContent();
-            }
-            // null  → item not found; fall through so TransitionDetailedAsync returns NotFound.
-            // Any non-terminal current status → fall through for normal processing.
-        }
-
-        var transitionResult = await transitionService.TransitionDetailedAsync(
-            id, request.Status,
-            mutate: entity => ApplyStatusMutation(entity, request),
-            ct: ct);
-
-        if (transitionResult == TransitionResult.NotFound)
-            return TypedResults.NotFound();
-
-        if (transitionResult == TransitionResult.Rejected)
-            return TypedResults.BadRequest("Invalid status transition");
-
-        // Only drive lifecycle events and emit telemetry on an ACTUAL state change.
-        // For idempotent no-ops (AlreadyAtTarget), fall through to Ok() silently.
-        //
-        // FailRunAsync / CancelRunAsync trigger label-swap, dedup-guard, and history writes.
-        // Calling them on a repeated PostStatus (e.g. after a leadership flip that clears the
-        // jobcontroller's reconciledTerminalIds cache) risks double label swaps and spurious
-        // history entries — so they must be gated on TransitionResult.Transitioned, not on
-        // success==true as before (which included AlreadyAtTarget).
-        if (transitionResult == TransitionResult.Transitioned)
-        {
-            // For terminal transitions, drive the run through RunLifecycleManager so history,
-            // label-swap, registry clear, and dedup-guard are all updated — mirrors what
-            // AgentJobLifecycleService does for agent-reported completions. Without this,
-            // infrastructure-killed runs (agent disconnect, reconciliation timeout) never appear
-            // in IPipelineRunHistoryService and WaitForHistoryAsync in E2E tests times out.
-            if (request.Status == WorkItemStatus.Failed)
-            {
-                var failureReason = request.ErrorMessage ?? request.FailureReason ?? "Infrastructure failure";
-                await runLifecycleManager.FailRunAsync(
-                    new RunId(id.ToString()),
-                    failureReason,
-                    ct,
-                    CodingAgent.Pipeline.Models.FailureReason.InfrastructureFailure);
-            }
-            else if (request.Status == WorkItemStatus.Cancelled)
-            {
-                await runLifecycleManager.CancelRunAsync(new RunId(id.ToString()), ct);
-            }
-
-            // Emit telemetry for terminal transitions.
-            // Production path (awaitTelemetry=false): fire-and-forget so the enrichment DB read
-            // does not block the agent's 200 response and a slow/failed read does not surface as a 500.
-            // Test path (awaitTelemetry=true): task is awaited before returning, eliminating the
-            // Task.Delay race that made telemetry-asserting tests flaky on loaded CI hosts.
-            // CancellationToken.None is intentional: this task outlives the HTTP request lifetime;
-            // using the request-scoped ct would cause spurious OperationCanceledException warnings
-            // when ASP.NET Core cancels the token as soon as the response is sent.
-            if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-            {
-                var emitTask = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, CancellationToken.None);
-                if (awaitTelemetry)
-                    await emitTask;
-                else
-                    _ = emitTask;
-            }
-
-            // Real state transition occurred — signal 200 OK to callers.
-            return TypedResults.Ok();
-        }
-
-        // AlreadyAtTarget: idempotent no-op — return 204 No Content to signal that no real
-        // transition occurred. Callers (e.g. HandleJobCompletedAsync) use this to skip telemetry
-        // that would otherwise double-count terminal metrics (issue #2802).
-        // TODO: This 204 path is now reached for ALL no-op status posts (not only the
-        // Cancelled→Failed case targeted by issue #2802). For example, a Failed→Failed repeat-call
-        // bypasses the pre-read guard (which only guards Cancelled/Succeeded) and reaches
-        // AlreadyAtTarget here, also returning 204. This is functionally correct — the caller
-        // skipping LogTerminalStatus for a Failed→Failed no-op is the right behaviour — but note
-        // that the "204 means no-op" contract conflates two distinct semantics when seen from
-        // IPipelineApiWorkItemClient callers: a pre-read guard short-circuit vs. a post-transition
-        // AlreadyAtTarget result. Both map to false from PostStatusAsync. See review finding
-        // (DotNetSpecialist) for issue #2802.
-        return TypedResults.NoContent();
-    }
-
-    // ── Private helpers ───────────────────────────────────────────────────
-
-    private static void ApplyStatusMutation(WorkItemEntity entity, WorkItemStatusRequest request)
-    {
-        if (request.AgentId is not null)
-            entity.AssignedAgentId = request.AgentId;
-
-        if (request.ErrorMessage is not null)
-            entity.ErrorMessage = request.ErrorMessage;
-        else if (request.Status == WorkItemStatus.Failed)
-            entity.ErrorMessage = "Job failed without specific error information";
-
-        if (request.Result is not null)
-            entity.Result = request.Result;
-
-        if (request.BranchName is not null)
-            entity.BranchName = request.BranchName;
-
-        if (request.Status == WorkItemStatus.Failed)
-        {
-            // Enum.TryParse succeeds for numeric string inputs (e.g. "99") even when they don't
-            // correspond to a named FailureReason member. The IsDefined guard rejects such values
-            // so only named members are persisted to entity.FailureReason. (Issue #2667, mirrors
-            // the telemetry path fixed in issue #2341.)
-            if (request.FailureReason is not null
-                && Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason)
-                && Enum.IsDefined(typeof(FailureReason), parsedReason))
-            {
-                entity.FailureReason ??= parsedReason;
-            }
-            else
-            {
-                entity.FailureReason ??= FailureReason.AgentError;
-            }
-        }
-
-        if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-            entity.CompletedAt = DateTimeOffset.UtcNow;
-    }
-
-    private static async Task EmitTerminalStatusTelemetryAsync(
-        Guid id,
-        WorkItemStatusRequest request,
-        IDbContextFactory<PipelineDbContext>? dbFactory,
-        CancellationToken ct = default)
-    {
-        try
-        {
-            TimeSpan? duration = null;
-            if (dbFactory is not null)
-            {
-                await using var db = await dbFactory.CreateDbContextAsync(ct);
-                var item = await db.WorkItems.AsNoTracking()
-                    .Where(w => w.Id == id)
-                    .Select(w => new { w.DispatchedAt, w.CompletedAt })
-                    .FirstOrDefaultAsync(ct);
-                if (item?.DispatchedAt is not null && item.CompletedAt is not null)
-                    duration = item.CompletedAt.Value - item.DispatchedAt.Value;
-            }
-
-            // Enum.TryParse succeeds for numeric string inputs (e.g. "99") even when they don't
-            // correspond to a named FailureReason member, yielding an undefined enum instance that
-            // would become a high-cardinality metric tag. The IsDefined guard rejects such values
-            // so only named members reach the telemetry dimension. (Issue #2341)
-            FailureReason? failureReason = Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason)
-                && Enum.IsDefined(typeof(FailureReason), parsedReason)
-                ? parsedReason
-                : (FailureReason?)null;
-
-            WorkDistributionTelemetry.LogTerminalStatus(
-                id, request.Status, duration, request.AgentId,
-                failureReason);
-        }
-        catch (Exception ex)
-        {
-            // TODO: [WARNING] The SourceContext here is now "WorkItemAgentEndpoints" (renamed from
-            // "WorkItemEndpoints" when the monolith was split). Any alerting rules, log queries, or
-            // dashboards that filter on SourceContext = "WorkItemEndpoints" will silently stop matching
-            // after this refactor. Update any log-based alert conditions or Kibana/Grafana queries that
-            // reference the old class name.
-            Serilog.Log.ForContext("SourceContext", nameof(WorkItemAgentEndpoints))
-                .Warning(ex, "Failed to emit terminal status telemetry for WorkItem {Id}", id);
-        }
+        // TODO: [WARNING] runService is accepted here only to maintain call-site compatibility with
+        // existing tests that pass it by position. It is intentionally discarded — WorkItemStatusTransitionService
+        // does not consume IOrchestratorRunService. Callers passing a non-null runService receive no
+        // indication that the argument has no effect, which could mask a future intent to use it.
+        // If runService is genuinely unused, consider marking the parameter with _ = runService or
+        // adding a #pragma warning disable IDE0060 suppression; if it should be used, wire it through.
+        _ = runService;
+        var svc = new WorkItemStatusTransitionService(transitionService, runLifecycleManager, dbFactory);
+        return PostStatus(id, request, svc, ct, awaitTelemetry);
     }
 }
 
