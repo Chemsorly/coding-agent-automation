@@ -1,3 +1,4 @@
+using System.Net;
 using NGitLab;
 using NGitLab.Models;
 using Serilog;
@@ -119,20 +120,20 @@ public sealed class GitLabValidationService
                 accessLevel,
                 null);
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 401)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.Unauthorized)
         {
             _logger.Warning("GitLab validation failed: invalid credentials for project {ProjectId}", numericProjectId);
             return new GitLabValidationResult(false, null, null,
                 "Invalid access token. Verify the token is correct and has not expired.");
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 404)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             _logger.Warning("GitLab validation failed: project {ProjectId} not found", numericProjectId);
             return new GitLabValidationResult(false, null, null,
                 $"Project {numericProjectId} not found or not accessible. " +
                 "Verify the project ID and that the token has access to this project.");
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 403)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.Forbidden)
         {
             _logger.Warning("GitLab validation failed: insufficient permissions for project {ProjectId}", numericProjectId);
             return new GitLabValidationResult(false, null, null,

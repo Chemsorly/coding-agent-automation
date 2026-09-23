@@ -58,25 +58,49 @@ public partial class QualityGateExecutor
             if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
             {
                 _logger.Information(ex, "Pipeline {RunId} was cancelled during quality gates", run.RunId);
-                run.MarkCompleted();
-                await callbacks.SwapAgentLabel(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
-                callbacks.EmitOutputLine("🚫 Pipeline cancelled");
-                callbacks.TransitionTo(PipelineStep.Cancelled);
-                await callbacks.AddRunToHistoryAsync(run);
+                // TODO: [WARNING] Lambda parameter `ct` shadows the method-level `ct` parameter of
+                // ProceedToQualityGatesAsync. This is intentional — the outer token may already be
+                // cancelled and CancellationToken.None is passed as the argument — but the shadowing
+                // is a latent maintenance hazard. Consider renaming the lambda parameter (e.g., `token`)
+                // to make the shadowing explicit and self-documenting.
+                // TODO: [WARNING] Partial-finalization risk: if SwapAgentLabel throws (e.g., transient
+                // HttpRequestException), run.MarkCompleted() will already have set CompletedAt, but
+                // TransitionTo and AddRunToHistoryAsync will not have been called, leaving the run
+                // half-finalized with the exception swallowed by the finally block. Consider wrapping
+                // swapLabel in a try/catch inside FinalizeRunAsync to ensure TransitionTo and
+                // AddRunToHistoryAsync still execute even when the label swap fails.
+                await FinalizeRunAsync(context, run,
+                    ct => callbacks.SwapAgentLabel(run.IssueIdentifier, AgentLabels.Cancelled, ct),
+                    "🚫 Pipeline cancelled",
+                    PipelineStep.Cancelled,
+                    CancellationToken.None);
             }
         }
         catch (Exception ex)
         {
+            // TODO: [WARNING] Unlike the OperationCanceledException arm, this arm has no guard on
+            // run.CurrentStep. If an inner call (e.g., RunRetryLoopAsync) already set
+            // run.CurrentStep = PipelineStep.Failed and then re-threw, FinalizeRunAsync will be
+            // called a second time — double-calling MarkCompleted, SwapLabelAsync, EmitOutputLine,
+            // TransitionTo, and AddRunToHistoryAsync. Consider adding:
+            //   if (run.CurrentStep is PipelineStep.Failed) return; (or log-and-return)
+            // before setting FailureReason to mirror the guard on the cancellation arm.
             _logger.Error(ex, "Pipeline {RunId} quality gate validation failed", run.RunId);
             run.FailureReason = $"Quality gate validation error: {ex.Message}";
-            run.MarkCompleted();
             _logger.Information(
                 "Pipeline {RunId} QualityGateExecutor swapping label to agent:error for issue {IssueIdentifier} (reason=quality gate validation error)",
                 run.RunId, run.IssueIdentifier);
-            await context.IssueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
-            callbacks.EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
-            callbacks.TransitionTo(PipelineStep.Failed);
-            await callbacks.AddRunToHistoryAsync(run);
+            var failureOutputLine = $"❌ Pipeline failed: {run.FailureReason}";
+            // TODO: [WARNING] Lambda parameter `ct` shadows the method-level `ct` parameter of
+            // ProceedToQualityGatesAsync. See the same note on the cancellation arm above.
+            // TODO: [WARNING] Partial-finalization risk: if SwapLabelAsync throws, MarkCompleted()
+            // will already have been called but TransitionTo and AddRunToHistoryAsync will not run.
+            // See the note on the cancellation arm above for the suggested mitigation.
+            await FinalizeRunAsync(context, run,
+                ct => context.IssueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct),
+                failureOutputLine,
+                PipelineStep.Failed,
+                CancellationToken.None);
         }
         finally
         {
@@ -84,6 +108,37 @@ public partial class QualityGateExecutor
                 qgStopwatch.Elapsed.TotalSeconds,
                 PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
         }
+    }
+
+    /// <summary>
+    /// Shared terminal sequence for both <see cref="ProceedToQualityGatesAsync"/> catch arms:
+    /// marks the run completed, swaps the issue label, emits a UI output line, transitions the
+    /// pipeline step, and records the run in history.
+    /// <para>
+    /// Always called with <see cref="CancellationToken.None"/> — the incoming cancellation token
+    /// may already be cancelled at catch-arm entry, and all finalization calls must complete
+    /// regardless. The <paramref name="ct"/> parameter flows only to the <paramref name="swapLabel"/>
+    /// delegate; <see cref="IPipelineCallbacks.AddRunToHistoryAsync"/> does not accept a token.
+    /// </para>
+    /// </summary>
+    private async Task FinalizeRunAsync(
+        QualityGateContext context,
+        PipelineRun run,
+        Func<CancellationToken, Task> swapLabel,
+        string outputLine,
+        PipelineStep step,
+        CancellationToken ct)
+    {
+        // TODO: [WARNING] The `ct` parameter is only forwarded to the swapLabel delegate;
+        // AddRunToHistoryAsync is called without any cancellation token. This is intentional
+        // (the incoming token may already be cancelled), but if AddRunToHistoryAsync is ever
+        // changed to accept a CancellationToken, the partial propagation gap will be silently
+        // retained. Revisit when that interface changes.
+        run.MarkCompleted();
+        await swapLabel(ct);
+        context.Callbacks.EmitOutputLine(outputLine);
+        context.Callbacks.TransitionTo(step);
+        await context.Callbacks.AddRunToHistoryAsync(run);
     }
 
     /// <summary>

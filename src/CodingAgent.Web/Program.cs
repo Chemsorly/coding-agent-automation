@@ -137,7 +137,7 @@ builder.Services.AddScoped<CodingAgent.Web.Services.BlockedIssuesService>();
 builder.Services.AddScoped<CodingAgent.Web.Services.IChatPromptBuilder, CodingAgent.Web.Services.ChatPromptBuilder>();
 
 // SignalR — hub services with MessagePack protocol and agent authorization filter
-builder.Services.AddSignalRServices();
+builder.Services.AddSignalRServices(builder.Environment);
 
 // Agent API key authentication and authorization
 builder.Services.AddAgentAuthentication(Serilog.Log.Logger);
