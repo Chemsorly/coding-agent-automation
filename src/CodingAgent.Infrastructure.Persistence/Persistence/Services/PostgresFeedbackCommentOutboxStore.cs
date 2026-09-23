@@ -157,23 +157,9 @@ public sealed class PostgresFeedbackCommentOutboxStore : IFeedbackCommentOutbox
         };
 
     /// <summary>
-    /// Returns true when <paramref name="ex"/> represents a unique-constraint violation
-    /// (PostgreSQL SQLSTATE 23505), using the same reflection-based approach as
-    /// <see cref="PostgresPipelineRunHistoryService.IsPrimaryKeyViolation"/> to avoid
-    /// a direct compile-time dependency on the Npgsql assembly from this Services layer.
+    /// Returns true when <paramref name="ex"/> represents a unique-constraint violation.
+    /// Delegates to <see cref="PostgresErrorClassifier.IsUniqueViolation"/>.
     /// </summary>
     private static bool IsUniqueViolation(DbUpdateException ex)
-    {
-        var inner = ex.InnerException;
-        if (inner is not null && inner.GetType().Name == "PostgresException")
-        {
-            var sqlStateProp = inner.GetType().GetProperty("SqlState");
-            if (sqlStateProp?.GetValue(inner) is string sqlState)
-                return sqlState == "23505";
-        }
-
-        // Fallback for EF InMemory (tests) and non-Npgsql drivers.
-        return ex.InnerException?.Message?.Contains("duplicate key", StringComparison.OrdinalIgnoreCase) == true
-            || ex.InnerException?.Message?.Contains("unique constraint", StringComparison.OrdinalIgnoreCase) == true;
-    }
+        => PostgresErrorClassifier.IsUniqueViolation(ex);
 }
