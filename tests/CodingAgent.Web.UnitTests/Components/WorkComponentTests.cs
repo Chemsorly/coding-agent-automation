@@ -383,20 +383,28 @@ public class WorkComponentTests : BunitContext
         _mockWorkItems
             .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakeActiveItem(id, "2231", "Some issue")]);
-        _mockWorkItems
-            .Setup(c => c.PostStatusAsync(id, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
 
         var navMan = Services.GetRequiredService<NavigationManager>();
         var initialUri = navMan.Uri;
         var cut = Render<Work>();
 
+        // TODO: [WARNING] This selector (.btn-cancel-small) is now ambiguous — both the first-click Cancel
+        // button and the "Yes" confirmation button share that CSS class. If DOM order ever changes this
+        // click may target the wrong element. Update to the data-testid selector used in the newer tests:
+        // cut.Find($"[data-testid='cancel-btn-inflight-{id}']").Click();
         var cancelBtn = cut.Find(".btn-cancel-small");
         cancelBtn.Click();
 
         // Clicking Cancel must NOT trigger navigation — stopPropagation prevents the row click.
         navMan.Uri.Should().Be(initialUri,
             "clicking the Cancel button must not propagate to the row @onclick and must not navigate");
+
+        // After confirmation flow is added, the first click only shows the confirmation prompt —
+        // PostStatusAsync must NOT be called at this point.
+        _mockWorkItems.Verify(
+            c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "the first cancel click must show a confirmation prompt, not immediately call PostStatusAsync");
     }
 
     // ── In-flight Initiated by column (issue #2540) ───────────────────────────
@@ -465,6 +473,130 @@ public class WorkComponentTests : BunitContext
     // Overview.razor that: (1) mocks IPipelineApiRunHistoryClient to return an active run, (2) renders
     // Overview, (3) clicks the cockpit-run-row element, and (4) asserts NavigationManager.Uri ends with
     // "runs/{runId}" — matching the pattern of InFlightRow_Click_NavigatesToRunDetailPage above.
+
+    // ── In-flight cancel confirmation (issue #2937) ───────────────────────
+
+    [Fact]
+    public void InFlightCancel_OnFirstClick_ShowsConfirmation_DoesNotCallPostStatus()
+    {
+        var id = Guid.NewGuid();
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakeActiveItem(id, "2937", "Cancel test")]);
+
+        var cut = Render<Work>();
+
+        // First click: opens inline confirmation
+        cut.Find($"[data-testid='cancel-btn-inflight-{id}']").Click();
+
+        // Confirmation UI must be rendered
+        cut.FindAll("[data-testid='cancel-confirm-yes']").Should().HaveCount(1,
+            "the Yes confirmation button must appear after clicking Cancel");
+
+        // PostStatusAsync must NOT have been called yet
+        _mockWorkItems.Verify(
+            c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "PostStatusAsync must not be called on the first click — only after confirmation");
+    }
+
+    [Fact]
+    public async Task InFlightCancel_OnConfirmClick_CallsPostStatusOnce()
+    {
+        var id = Guid.NewGuid();
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakeActiveItem(id, "2937", "Cancel test")]);
+        _mockWorkItems
+            .Setup(c => c.PostStatusAsync(id, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var cut = Render<Work>();
+
+        // Step 1: open confirmation
+        cut.Find($"[data-testid='cancel-btn-inflight-{id}']").Click();
+
+        // Step 2: confirm
+        await cut.InvokeAsync(() =>
+        {
+            cut.Find("[data-testid='cancel-confirm-yes']").Click();
+        });
+
+        // PostStatusAsync must have been called exactly once with Cancelled status
+        _mockWorkItems.Verify(
+            c => c.PostStatusAsync(
+                id,
+                It.Is<WorkItemStatusUpdate>(u => u.Status == nameof(WorkItemStatus.Cancelled)),
+                It.IsAny<CancellationToken>()),
+            Times.Once,
+            "PostStatusAsync must be called exactly once after confirming the cancel");
+    }
+
+    [Fact]
+    public async Task InFlightCancel_OnDismissClick_DoesNotCallPostStatus()
+    {
+        var id = Guid.NewGuid();
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakeActiveItem(id, "2937", "Cancel test")]);
+
+        var cut = Render<Work>();
+
+        // Step 1: open confirmation
+        cut.Find($"[data-testid='cancel-btn-inflight-{id}']").Click();
+
+        // Step 2: dismiss
+        await cut.InvokeAsync(() =>
+        {
+            cut.Find("[data-testid='cancel-confirm-no']").Click();
+        });
+
+        // PostStatusAsync must not have been called
+        _mockWorkItems.Verify(
+            c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "PostStatusAsync must not be called when the user dismisses the confirmation");
+
+        // The original cancel button must be visible again
+        cut.FindAll($"[data-testid='cancel-btn-inflight-{id}']").Should().HaveCount(1,
+            "after dismissal the cancel button must reappear");
+    }
+
+    [Fact]
+    public async Task InFlightCancel_WhenApiThrows_RendersError()
+    {
+        var id = Guid.NewGuid();
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakeActiveItem(id, "2937", "Cancel test")]);
+        _mockWorkItems
+            .Setup(c => c.PostStatusAsync(id, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("test error"));
+
+        var cut = Render<Work>();
+
+        // Step 1: open confirmation
+        cut.Find($"[data-testid='cancel-btn-inflight-{id}']").Click();
+
+        // Step 2: confirm → API throws
+        await cut.InvokeAsync(() =>
+        {
+            cut.Find("[data-testid='cancel-confirm-yes']").Click();
+        });
+
+        // TODO: [WARNING] This assertion checks for "Cancel failed:" anywhere in the full markup, which
+        // could match text in tooltips, other elements, or prior test state in the shared _error field.
+        // Work.razor uses a single _error field for all operations. Consider scoping the assertion to
+        // a row-specific error element if one is added in future, or at minimum assert on a dedicated
+        // data-testid element (like [data-testid='cancel-error']) rather than full markup string search.
+        // Error message must be visible
+        cut.Markup.Should().Contain("Cancel failed:",
+            "a failed cancel must display an error message containing 'Cancel failed:'");
+
+        // Confirmation UI must be dismissed (no longer showing)
+        cut.FindAll("[data-testid='cancel-confirm-yes']").Should().BeEmpty(
+            "the confirmation prompt must be cleared after the cancel attempt, even on failure");
+    }
 
     // ── Provider backlog card (issue #2487) ───────────────────────────────────
 

@@ -1,3 +1,4 @@
+using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
@@ -14,9 +15,13 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// bUnit tests for RunPage verifying that BuildRunModelFromSummary correctly propagates
 /// RunType from the summary to the PipelineRun view model, so the PipelineSidebar renders
 /// the correct phase groups for decomposition runs. See issue #2600.
+/// Also covers cancel confirmation + error visibility (issue #2937).
 /// </summary>
 public class RunPageComponentTests : BunitContext
 {
+    // Class-level mock so cancel tests can configure PostStatusAsync and verify call counts.
+    private readonly Mock<IPipelineApiWorkItemClient> _mockWorkItems = new();
+
     // ── Shared scaffolding ────────────────────────────────────────────────
 
     /// <summary>
@@ -48,11 +53,9 @@ public class RunPageComponentTests : BunitContext
             .Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
 
-        var mockWorkItems = new Mock<IPipelineApiWorkItemClient>();
-
         Services.AddSingleton(mockHub.Object);
         Services.AddSingleton(mockRunHistory.Object);
-        Services.AddSingleton(mockWorkItems.Object);
+        Services.AddSingleton(_mockWorkItems.Object);
         Services.AddSingleton(mockConfigClient.Object);
         Services.AddSingleton(Mock.Of<IConfigurationStore>());
         Services.AddSingleton(new CockpitState());
@@ -138,5 +141,117 @@ public class RunPageComponentTests : BunitContext
         // Negative: implementation-only phases must be hidden by IsHiddenForDecompositionRun
         Assert.Empty(cut.FindAll("[data-testid='phase-analysis']"));
         Assert.Empty(cut.FindAll("[data-testid='phase-code-generation']"));
+    }
+
+    // ── Cancel confirmation + error visibility (issue #2937) ──────────────
+
+    /// <summary>
+    /// Builds a PipelineRunSummary for a live (non-terminal) run.
+    /// _isLive is driven by FinalStep, not CompletedAtOffset — any non-terminal FinalStep
+    /// (not Completed, Failed, or Cancelled) causes RunPage to set _isLive = true.
+    /// </summary>
+    private static PipelineRunSummary MakeLiveSummary()
+    {
+        return new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "2937",
+            IssueTitle = "Cancel confirmation test",
+            FinalStep = PipelineStep.GeneratingCode,   // non-terminal → _isLive = true
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = null,
+        };
+    }
+
+    [Fact]
+    public async Task CancelRun_OnConfirm_CallsPostStatusAsyncOnce()
+    {
+        var summary = MakeLiveSummary();
+        _mockWorkItems
+            .Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        // Open confirmation in the sidebar
+        await cut.InvokeAsync(() =>
+        {
+            cut.Find("[data-testid='cancel-pipeline-btn']").Click();
+        });
+
+        // Confirm
+        await cut.InvokeAsync(() =>
+        {
+            cut.Find("[data-testid='cancel-confirm-yes']").Click();
+        });
+
+        _mockWorkItems.Verify(
+            c => c.PostStatusAsync(
+                // TODO: [WARNING] It.IsAny<Guid>() here is weaker than asserting the exact run GUID.
+                // If Guid.TryParse silently produces the wrong id (e.g. Guid.Empty), this verify would
+                // still pass. Tighten to: Guid.Parse(summary.RunId) once the Verify overload supports it,
+                // or pre-parse the GUID and use It.Is<Guid>(id => id == parsedId).
+                It.IsAny<Guid>(),
+                It.Is<WorkItemStatusUpdate>(u => u.Status == nameof(WorkItemStatus.Cancelled)),
+                It.IsAny<CancellationToken>()),
+            Times.Once,
+            "PostStatusAsync must be called exactly once after confirming the cancel");
+    }
+
+    [Fact]
+    public async Task CancelRun_OnDismiss_DoesNotCallPostStatusAsync()
+    {
+        var summary = MakeLiveSummary();
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        // Open confirmation in the sidebar
+        await cut.InvokeAsync(() =>
+        {
+            cut.Find("[data-testid='cancel-pipeline-btn']").Click();
+        });
+
+        // Dismiss
+        await cut.InvokeAsync(() =>
+        {
+            cut.Find("[data-testid='cancel-confirm-no']").Click();
+        });
+
+        _mockWorkItems.Verify(
+            c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "PostStatusAsync must not be called when the user dismisses the confirmation");
+    }
+
+    [Fact]
+    public async Task CancelRun_WhenApiThrows_RendersErrorMessage()
+    {
+        var summary = MakeLiveSummary();
+        _mockWorkItems
+            .Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("server error"));
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        // Open confirmation in the sidebar
+        await cut.InvokeAsync(() =>
+        {
+            cut.Find("[data-testid='cancel-pipeline-btn']").Click();
+        });
+
+        // Confirm → API throws
+        await cut.InvokeAsync(() =>
+        {
+            cut.Find("[data-testid='cancel-confirm-yes']").Click();
+        });
+
+        // Error message must be visible in the page
+        cut.Markup.Should().Contain("Cancel failed:",
+            "a failed cancel on the Run page must render an error message containing 'Cancel failed:'");
+        Assert.NotNull(cut.Find("[data-testid='cancel-error']"));
     }
 }

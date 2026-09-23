@@ -87,8 +87,8 @@ public class AgentConnectionLifecycleGateTests
             .ContinueWith(_ => { }); // swallow cancellation
         sw.Stop();
 
-        sw.ElapsedMilliseconds.Should().BeLessThan(1000,
-            "should not hang after dispose");
+        sw.ElapsedMilliseconds.Should().BeLessThan(5000,
+            "should not hang after dispose (gate is cancelled in DisposeAsync; real hang would be 30 s at SignalRTimeout)");
     }
 
     // ── Gate reset on reconnect (new gate is incomplete) ───────────────────

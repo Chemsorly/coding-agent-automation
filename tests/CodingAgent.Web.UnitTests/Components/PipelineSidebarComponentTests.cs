@@ -1,6 +1,7 @@
 using Bunit;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Pipeline.Models;
+using Microsoft.AspNetCore.Components;
 
 namespace CodingAgent.Web.UnitTests.Components;
 
@@ -628,5 +629,75 @@ public class PipelineSidebarComponentTests : BunitContext
     // Add a test that: (1) renders with run A (populated breakdown, expand it), (2) calls SetParametersAndRender
     // with run B (a different RunId), and asserts that the cost breakdown collapsible is collapsed (body absent)
     // for the new run. This verifies the reset logic in OnParametersSet.
-}
 
+    // ── Cancel confirmation (issue #2937) ─────────────────────────────────
+
+    [Fact]
+    public void CancelPipelineButton_OnClick_ShowsInlineConfirmation()
+    {
+        var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
+        var cut = Render<PipelineSidebar>(p => p
+            .Add(s => s.Run, run)
+            .Add(s => s.IsRunning, true));
+
+        // Before clicking: the Cancel Pipeline button is shown; confirmation is not
+        Assert.NotNull(cut.Find("[data-testid='cancel-pipeline-btn']"));
+        Assert.Empty(cut.FindAll("[data-testid='cancel-confirm-yes']"));
+
+        cut.Find("[data-testid='cancel-pipeline-btn']").Click();
+
+        // After clicking: confirmation prompt appears; Cancel Pipeline button is gone
+        Assert.NotNull(cut.Find("[data-testid='cancel-confirm-yes']"));
+        Assert.NotNull(cut.Find("[data-testid='cancel-confirm-no']"));
+        Assert.Empty(cut.FindAll("[data-testid='cancel-pipeline-btn']"));
+    }
+
+    [Fact]
+    public async Task CancelPipelineConfirm_InvokesOnCancelCallbackOnce()
+    {
+        var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
+        var cancelInvoked = 0;
+        var cut = Render<PipelineSidebar>(p => p
+            .Add(s => s.Run, run)
+            .Add(s => s.IsRunning, true)
+            .Add(s => s.OnCancel, EventCallback.Factory.Create(this, () => cancelInvoked++)));
+
+        // Open confirmation
+        cut.Find("[data-testid='cancel-pipeline-btn']").Click();
+
+        // Confirm
+        await cut.InvokeAsync(() =>
+        {
+            cut.Find("[data-testid='cancel-confirm-yes']").Click();
+        });
+
+        Assert.Equal(1, cancelInvoked);
+    }
+
+    [Fact]
+    public async Task CancelPipelineDismiss_DoesNotInvokeOnCancelCallback()
+    {
+        var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
+        var cancelInvoked = 0;
+        var cut = Render<PipelineSidebar>(p => p
+            .Add(s => s.Run, run)
+            .Add(s => s.IsRunning, true)
+            .Add(s => s.OnCancel, EventCallback.Factory.Create(this, () => cancelInvoked++)));
+
+        // Open confirmation
+        cut.Find("[data-testid='cancel-pipeline-btn']").Click();
+
+        // Dismiss
+        await cut.InvokeAsync(() =>
+        {
+            cut.Find("[data-testid='cancel-confirm-no']").Click();
+        });
+
+        Assert.Equal(0, cancelInvoked);
+
+        // Cancel Pipeline button is visible again
+        Assert.NotNull(cut.Find("[data-testid='cancel-pipeline-btn']"));
+        Assert.Empty(cut.FindAll("[data-testid='cancel-confirm-yes']"));
+    }
+
+}

@@ -200,6 +200,10 @@
                         <span class="step-badge step-running">@((_liveStep ?? run.FinalStep).ToDisplayName())</span>
                     }
                 </div>
+                @if (!string.IsNullOrEmpty(_cancelError))
+                {
+                    <div class="cockpit-card-pad" style="color: var(--error); font-size: 13px;" role="alert" data-testid="cancel-error">@_cancelError</div>
+                }
                 <div class="cockpit-card-pad">
                     <PipelineSidebar Run="_model" IsRunning="_isLive" MaxRetries="_maxRetries" OnCancel="CancelRunAsync" />
                 </div>
@@ -252,6 +256,8 @@
     // (active runs), then kept live via hub step/snapshot events. Ported from the old AgentMonitoring modal.
     private PipelineRun? _model;
     private int _maxRetries = 3;
+    private bool _cancelRunCancelling;
+    private string? _cancelError;
 
     private static bool IsActive(PipelineRunSummary r)
         => r.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled;
@@ -445,13 +451,34 @@
     // "Cancel Run". The live OnRunCompleted event will flip the view to its terminal state.
     private async Task CancelRunAsync()
     {
+        if (_cancelRunCancelling) return;
         if (!Guid.TryParse(RunId, out var id)) return;
+        _cancelRunCancelling = true;
+        _cancelError = null;
+        // TODO: _cancelRunCancelling is not wired to a disabled/loading state on the "Yes, Cancel" button
+        // in PipelineSidebar. The guard prevents double-posting but gives no visual feedback during the
+        // async call. Consider adding StateHasChanged() here and passing an "isCancelling" parameter to
+        // PipelineSidebar so the confirmation button can be disabled while the request is in flight.
         try
         {
             await WorkItems.PostStatusAsync(id, new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) }, _cts.Token);
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { Serilog.Log.Warning(ex, "RunPage: failed to cancel run {RunId}", RunId); }
+        catch (Exception ex)
+        {
+            // TODO: ex.Message may contain internal infrastructure detail (connection strings, hostnames,
+            // stack excerpts) surfaced by the HTTP client. Consider capping to a generic message plus an
+            // opaque correlation ID, or restricting to the HTTP status code only.
+            _cancelError = $"Cancel failed: {ex.Message}";
+            StateHasChanged();
+            // TODO: StateHasChanged() is called here but not in the finally block. _cancelRunCancelling
+            // resets to false in finally without triggering a re-render, so any "in-progress" visual state
+            // (if added in future) would be stale until the next external render trigger.
+        }
+        finally
+        {
+            _cancelRunCancelling = false;
+        }
     }
 
     // ── Sidebar view-model builders (ported from AgentMonitoring.razor.cs) ──

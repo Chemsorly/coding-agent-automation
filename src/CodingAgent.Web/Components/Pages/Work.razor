@@ -134,13 +134,33 @@
                                     </td>
                                     <td>@(a.DispatchedAt is null ? "—" : Ago(a.DispatchedAt.Value))</td>
                                     <td style="text-align: right;">
-                                        <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
-                                                disabled="@_cancelling.Contains(a.Id)"
-                                                title="Cancel this in-flight run"
-                                                @onclick="() => CancelWorkItemAsync(a.Id)"
-                                                @onclick:stopPropagation="true">
-                                            @(_cancelling.Contains(a.Id) ? "Cancelling…" : "Cancel")
-                                        </button>
+                                        @if (_pendingCancelId == a.Id)
+                                        {
+                                            <span style="font-size: 12px; color: var(--text-muted); margin-right: 4px;">Cancel run #@a.IssueIdentifier?</span>
+                                            <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
+                                                    data-testid="cancel-confirm-yes"
+                                                    @onclick="async () => { _pendingCancelId = null; await CancelWorkItemAsync(a.Id); }"
+                                                    @onclick:stopPropagation="true">
+                                                Yes
+                                            </button>
+                                            <button class="btn-cancel-small"
+                                                    data-testid="cancel-confirm-no"
+                                                    @onclick="() => _pendingCancelId = null"
+                                                    @onclick:stopPropagation="true">
+                                                No
+                                            </button>
+                                        }
+                                        else
+                                        {
+                                            <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
+                                                    disabled="@_cancelling.Contains(a.Id)"
+                                                    title="Cancel this in-flight run"
+                                                    data-testid="cancel-btn-inflight-@a.Id"
+                                                    @onclick="() => _pendingCancelId = a.Id"
+                                                    @onclick:stopPropagation="true">
+                                                @(_cancelling.Contains(a.Id) ? "Cancelling…" : "Cancel")
+                                            </button>
+                                        }
                                     </td>
                                 </tr>
                             }
@@ -306,6 +326,13 @@
     // WorkItem ids with an in-flight cancel request — disables the row's button until it settles.
     private readonly HashSet<Guid> _cancelling = new();
 
+    // When set, shows an inline confirmation row for the given in-flight item instead of calling cancel immediately.
+    // TODO: _pendingCancelId is not cleared when RefreshQuietAsync replaces _active. If the auto-refresh timer
+    // fires while a confirmation is open and the run has completed (gone from _active), the confirmation row
+    // disappears silently and _pendingCancelId is left stale until the component is remounted. Consider clearing
+    // _pendingCancelId inside RefreshQuietAsync or in the list-update path so stale confirmation state is reset.
+    private Guid? _pendingCancelId;
+
     // Provider backlog is a LIVE query (issue provider + dependency checker) — loaded after first render.
     private BacklogResult _backlog = new([], IsTruncated: false);
     private bool _backlogLoading = true;
@@ -369,6 +396,12 @@
     // Cancels an in-flight run or removes a queued item. Both are a WorkItem status transition to
     // Cancelled via the API (PostStatus → RunLifecycleManager.CancelRunAsync) — the same effect as the
     // old monitoring page's "Cancel run" / "Remove from queue". WorkItem.Id == run id.
+    // TODO: the inline @onclick lambda clears _pendingCancelId before awaiting CancelWorkItemAsync.
+    // This means the confirmation prompt is dismissed before the result is known. CancelWorkItemAsync
+    // catches all non-cancellation exceptions and sets _error, so errors still surface. However there
+    // is no equivalent to RunPage's _cancelRunCancelling guard here — a second row's cancel could be
+    // opened while a prior PostStatusAsync is still in flight. If this becomes a concern, add a
+    // per-id "cancelling" guard analogous to _cancelling.Contains(id) and disable the "Yes" button.
     private async Task CancelWorkItemAsync(Guid id)
     {
         if (!_cancelling.Add(id)) return;

@@ -122,7 +122,23 @@
     @if (IsRunning)
     {
         <div class="sidebar-footer">
-            <button class="btn-sidebar-cancel" @onclick="OnCancel" data-testid="cancel-pipeline-btn">Cancel Pipeline</button>
+            @if (_confirming)
+            {
+                <div class="cancel-confirm-row">
+                    <span class="cancel-confirm-text">Cancel run #@Run.IssueIdentifier?</span>
+                    <button class="btn-cancel-small btn-cancel-confirm-yes"
+                            style="color: var(--error); border-color: var(--error);"
+                            data-testid="cancel-confirm-yes"
+                            @onclick="ConfirmCancelAsync">Yes, Cancel</button>
+                    <button class="btn-cancel-small"
+                            data-testid="cancel-confirm-no"
+                            @onclick="DismissCancel">No, Keep Going</button>
+                </div>
+            }
+            else
+            {
+                <button class="btn-sidebar-cancel" @onclick="RequestCancel" data-testid="cancel-pipeline-btn">Cancel Pipeline</button>
+            }
         </div>
     }
 </aside>
@@ -134,7 +150,7 @@
     /// <summary>Whether the pipeline is currently running (controls cancel button visibility).</summary>
     [Parameter] public bool IsRunning { get; set; }
 
-    /// <summary>Callback invoked when the user clicks the cancel button.</summary>
+    /// <summary>Callback invoked when the user has confirmed cancellation. Fires after the "Yes, Cancel" button is clicked.</summary>
     [Parameter] public EventCallback OnCancel { get; set; }
 
     /// <summary>Maximum retry count from pipeline configuration (for QG attempt display).</summary>
@@ -144,6 +160,24 @@
     private string? _lastRunId;
     /// <summary>Tracks whether the cost breakdown collapsible is expanded; persists across re-renders triggered by live state updates.</summary>
     private bool _costBreakdownExpanded;
+
+    /// <summary>True while the inline cancel confirmation prompt is displayed.</summary>
+    // TODO: _confirming is not reset in OnParametersSet when the Run changes. If a new run is set on
+    // the same component instance while _confirming is true (e.g., RunPage auto-refreshes with a new
+    // run after the user has opened the cancel prompt for the prior run), the confirmation prompt will
+    // appear immediately for the new run without the user having clicked anything. Fix: reset _confirming
+    // alongside _costBreakdownExpanded and _expandedSteps in the OnParametersSet run-change block.
+    private bool _confirming;
+
+    private void RequestCancel() => _confirming = true;
+
+    private void DismissCancel() => _confirming = false;
+
+    private async Task ConfirmCancelAsync()
+    {
+        _confirming = false;
+        await OnCancel.InvokeAsync();
+    }
 
     private static readonly PhaseDefinition[] _phases =
     {
