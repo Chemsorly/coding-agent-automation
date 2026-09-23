@@ -211,14 +211,17 @@
             // _recentRuns (non-active) to restore the previous semantic, or update the label to clarify.
             _tokensRecent = items.Sum(r => r.TotalTokens);
 
-            _attnNeedsRefinement = items.Count(r => r.AnalysisRecommendation == AnalysisGateResult.NotReady);
-            // TODO: [WARNING] _attnFailed counts FinalStep == Failed across all fetched items (including
-            // active runs), while _finishedCount/_successRate are computed from _recentRuns (non-active only).
-            // Active runs should never have FinalStep == Failed, but if they momentarily do, a run could be
-            // double-counted. Verify that Attention.razor also uses the full items list (not _recentRuns) for
-            // its failed count so the two pages remain consistent after this pageSize alignment.
-            _attnFailed = items.Count(r => r.FinalStep == PipelineStep.Failed);
-            _attnPlans = items.Count(r => r.RunType == PipelineRunType.DecompositionAnalysis && r.FinalStep == PipelineStep.Completed);
+            // TODO: [WARNING] AttentionAggregator is called with _recentRuns (non-active, client-side
+            // filtered) while Attention.razor calls GetRunHistoryAsync with includeActive: false (server
+            // filtered). Both should be equivalent today, but they use different filtering paths. If the
+            // server's includeActive: false behaviour diverges from the client-side IsActive() predicate
+            // (e.g. a new terminal PipelineStep is added server-side before the client is updated), the
+            // two pages will show different counts. The removed TODO comment was the only signal of this
+            // fragility; tracking it here to ensure future maintainers are aware.
+            var attn = AttentionAggregator.Aggregate(_recentRuns);
+            _attnNeedsRefinement = attn.NeedsRefinement.Count;
+            _attnFailed = attn.FailedRuns.Count;
+            _attnPlans = attn.PlansToApprove.Count;
         }
         catch (OperationCanceledException) { return; }
         catch { }
