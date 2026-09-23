@@ -46,37 +46,33 @@ public sealed class SchedulerLoopEndpointsTests
 
         var result = await SchedulerLoopEndpoints.GetLoopStatus(mockLoop.Object, cache);
 
-        // TODO [WARNING]: This test has a weak assertion — it only verifies the result type is Ok<LoopStatusDto>
-        // but does not assert that the returned DTO reflects the mock loop service's values (isActive: false,
-        // status: "Stopped"). If BuildDto were broken and returned a zero-value or wrong DTO, this test would
-        // still pass. Add field-level assertions matching the pattern in GetLoopStatus_WhenCacheHasValue_ReturnsCachedDto.
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<LoopStatusDto>>();
+        var ok = result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<LoopStatusDto>>().Subject;
+        ok.Value!.IsLoopActive.Should().BeFalse();
+        ok.Value.StatusMessage.Should().Be("Stopped");
     }
 
     [Fact]
     public async Task GetLoopStatus_WhenCacheEmptyAndRedisHasValue_ServesRedisDto()
     {
-        // Simulates the non-leader pod: local cache is empty, but Redis has the leader's snapshot.
-        // TODO [WARNING]: This test does not configure an ILeaderGate mock. The cache is constructed
-        // without a leader gate, so _leaderGate is null and isLeader evaluates to true in ReadAsync.
-        // The local fast-path is taken; because _value is null it falls through to Redis, so the test
-        // passes — but it does not actually exercise the intended non-leader scenario. Pass a
-        // Mock<ILeaderGate> with IsLeader=false to correctly represent a non-leader pod and ensure
-        // the test catches regressions in the _leaderGate is null vs IsLeader==false handling.
-        var redisDto = MakeDto(isActive: true, status: "🔄 Cycle complete. Polling 1 templates every 300s.");
+        // Simulates the non-leader pod: local cache is empty, Redis has the leader's snapshot.
+        // Uses IsLeader=false to correctly exercise the non-leader path in ReadAsync.
+        var redisDto = MakeDto(isActive: true, status: "🔄 Cycle complete. Polling 1 template every 300s.");
         var json = JsonSerializer.Serialize(redisDto, PipelineJsonOptions.Default);
 
         var mockStore = new Mock<IRedisStore>();
         mockStore.Setup(s => s.GetAsync(LoopStatusCache.RedisKey))
             .ReturnsAsync(json);
 
-        var cache = new LoopStatusCache(mockStore.Object);
+        var mockLeader = new Mock<ILeaderGate>();
+        mockLeader.Setup(g => g.IsLeader).Returns(false);
+
+        var cache = new LoopStatusCache(mockStore.Object, mockLeader.Object);
         var mockLoop = MockLoopService(isActive: false, status: "🔄 Loop starting…");
 
         var result = await SchedulerLoopEndpoints.GetLoopStatus(mockLoop.Object, cache);
 
         var ok = result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<LoopStatusDto>>().Subject;
-        ok.Value!.StatusMessage.Should().Be("🔄 Cycle complete. Polling 1 templates every 300s.",
+        ok.Value!.StatusMessage.Should().Be("🔄 Cycle complete. Polling 1 template every 300s.",
             "non-leader pod must serve the Redis snapshot, not its own stale loop service state");
         ok.Value.IsLoopActive.Should().BeTrue();
     }
@@ -85,6 +81,14 @@ public sealed class SchedulerLoopEndpointsTests
     public async Task GetLoopStatus_WhenCacheEmptyAndRedisUnavailable_FallsBackToLoopService()
     {
         // Redis read throws — should fall back to BuildDto(loopService) without throwing.
+        // TODO [WARNING]: This test constructs the cache without an ILeaderGate (_leaderGate is null),
+        // which means it exercises the single-replica / no-leader-gate fallback path, NOT the
+        // multi-replica non-leader Redis-unavailable path. The name "WhenCacheEmptyAndRedisUnavailable"
+        // does not communicate this distinction, which could mislead a maintainer into thinking the
+        // multi-replica case is covered here. The multi-replica non-leader Redis-exception path is
+        // covered by GetLoopStatus_NonLeaderWithRedisException_ReturnsNeutralDto. This test provides
+        // a guard that the no-leader-gate path does NOT accidentally return a neutral DTO; adding a
+        // comment to that effect would make the intent explicit.
         var mockStore = new Mock<IRedisStore>();
         mockStore.Setup(s => s.GetAsync(It.IsAny<string>()))
             .ThrowsAsync(new Exception("Redis connection refused"));
@@ -133,7 +137,7 @@ public sealed class SchedulerLoopEndpointsTests
         // local cache is populated but frozen — ExecuteAsync blocks in the leader-wait loop
         // without running cycles. ReadAsync must skip the stale local value and serve Redis.
         var staleLocalDto = MakeDto(isActive: true, status: "🔄 Loop starting…");
-        var redisDto = MakeDto(isActive: true, status: "🔄 Cycle complete. Polling 1 templates every 300s.");
+        var redisDto = MakeDto(isActive: true, status: "🔄 Cycle complete. Polling 1 template every 300s.");
         var json = JsonSerializer.Serialize(redisDto, PipelineJsonOptions.Default);
 
         var mockStore = new Mock<IRedisStore>();
@@ -151,7 +155,7 @@ public sealed class SchedulerLoopEndpointsTests
         var result = await SchedulerLoopEndpoints.GetLoopStatus(mockLoop.Object, cache);
 
         var ok = result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<LoopStatusDto>>().Subject;
-        ok.Value!.StatusMessage.Should().Be("🔄 Cycle complete. Polling 1 templates every 300s.",
+        ok.Value!.StatusMessage.Should().Be("🔄 Cycle complete. Polling 1 template every 300s.",
             "non-leader pod must serve the Redis snapshot even when its local cache is populated with a stale value");
         ok.Value.IsLoopActive.Should().BeTrue();
 
@@ -188,7 +192,7 @@ public sealed class SchedulerLoopEndpointsTests
                 mockStore.Verify(s => s.SetAsync(
                     LoopStatusCache.RedisKey,
                     It.Is<string>(v => v.Contains("Active")),
-                    It.IsAny<TimeSpan?>(),
+                    It.Is<TimeSpan?>(t => t >= TimeSpan.FromSeconds(300)),
                     It.IsAny<StackExchange.Redis.When>()), Times.Once);
                 break;
             }
@@ -198,17 +202,12 @@ public sealed class SchedulerLoopEndpointsTests
             }
         }
 
-        // TODO [WARNING]: This test does not verify the TTL value passed to SetAsync. RedisTtl is a
-        // non-obvious constant (30s) documented as potentially too short vs. the max poll interval
-        // (300s). A regression setting TTL to zero or null would not be caught here. Change
-        // It.IsAny<TimeSpan?>() to It.Is<TimeSpan?>(t => t > TimeSpan.FromSeconds(0)) or a specific
-        // expected value to guard against accidental TTL removal or truncation.
         mockStore.Verify(s => s.SetAsync(
             LoopStatusCache.RedisKey,
             It.Is<string>(v => v.Contains("Active")),
-            It.IsAny<TimeSpan?>(),
+            It.Is<TimeSpan?>(t => t >= TimeSpan.FromSeconds(300)),
             It.IsAny<StackExchange.Redis.When>()), Times.Once,
-            "Update must publish the serialized LoopStatusDto to Redis");
+            "Update must publish to Redis with a TTL that exceeds the maximum poll interval (300s)");
     }
 
     [Fact]
@@ -224,14 +223,6 @@ public sealed class SchedulerLoopEndpointsTests
 
         var cache = new LoopStatusCache(mockStore.Object);
         var dto = MakeDto(isActive: true, status: "Active");
-
-        // TODO [WARNING]: This test does not actually verify fire-and-forget exception swallowing.
-        // The lambda wraps cache.Update(dto) — which is synchronous — and returns Task.CompletedTask.
-        // NotThrowAsync() only verifies that the synchronous portion doesn't throw, which was already
-        // true before this change. The background Task (fire-and-forget) is never awaited, so a
-        // regression that lets the exception propagate on the thread pool would not be caught here.
-        // To properly test swallowing behavior, await the background task or use an UnobservedTaskException
-        // handler and give the GC time to collect the faulted task.
 
         // Must not throw — Redis failure is fire-and-forget and must be swallowed
         var act = () => { cache.Update(dto); return Task.CompletedTask; };
@@ -446,4 +437,227 @@ public sealed class SchedulerLoopEndpointsTests
 
     private static LoopStatusDto MakeDto(bool isActive, string status) => new(
         isActive, status, null, 0, 0, 0, false, null, 0, 0, [], new Dictionary<string, ConfigStatusSnapshot>());
+
+    // ── New tests: Change A — TTL exceeds max poll interval ─────────────────
+
+    /// <summary>
+    /// Acceptance criterion: both pods return the leader's current statusMessage > 30 s after
+    /// "Cycle complete". The TTL written to Redis must be at least as long as the maximum poll
+    /// interval (300 s) so the key does not expire during the idle DelayOrStop wait.
+    /// </summary>
+    [Fact]
+    public async Task LoopStatusCache_Update_WritesRedisWithTtlGreaterThanMaxPollInterval()
+    {
+        TimeSpan? capturedTtl = null;
+        var mockStore = new Mock<IRedisStore>();
+        mockStore.Setup(s => s.SetAsync(
+                LoopStatusCache.RedisKey,
+                It.IsAny<string>(),
+                It.IsAny<TimeSpan?>(),
+                It.IsAny<StackExchange.Redis.When>()))
+            .Callback<string, string, TimeSpan?, StackExchange.Redis.When>((_, _, ttl, _) => capturedTtl = ttl)
+            .ReturnsAsync(true);
+
+        var cache = new LoopStatusCache(mockStore.Object);
+        cache.Update(MakeDto(isActive: true, status: "Cycle complete"));
+
+        // Poll until the fire-and-forget write completes
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (capturedTtl is null && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+
+        capturedTtl.Should().NotBeNull("TTL must be explicitly set — null means no expiry guard");
+        // TODO [WARNING]: The lower bound here (300s) is lower than the actual RedisTtl constant
+        // (600s). A regression that sets RedisTtl back to, say, 400s would still pass this test.
+        // Consider asserting >= TimeSpan.FromSeconds(600) to lock in the specific 2× safety margin,
+        // or assert equality to TimeSpan.FromSeconds(600) to catch any accidental TTL reduction.
+        // The same applies to the TTL assertion in Update_WhenLeaderAndLoopActive_PublishesToRedis.
+        capturedTtl!.Value.Should().BeGreaterThanOrEqualTo(TimeSpan.FromSeconds(300),
+            "Redis key must survive the full 300s poll interval; the old 30s TTL caused it to expire mid-cycle");
+    }
+
+    // ── New tests: Change B — non-leader write guard ─────────────────────────
+
+    /// <summary>
+    /// Acceptance criterion: a non-leader restart does not overwrite the leader's Redis snapshot.
+    /// Non-leader pods must skip the SetAsync call in Update() while still updating local state.
+    /// </summary>
+    [Fact]
+    public async Task LoopStatusCache_Update_WhenNonLeader_DoesNotWriteToRedis()
+    {
+        var mockStore = new Mock<IRedisStore>();
+        mockStore.Setup(s => s.SetAsync(
+                It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<TimeSpan?>(), It.IsAny<StackExchange.Redis.When>()))
+            .ReturnsAsync(true);
+
+        var mockLeader = new Mock<ILeaderGate>();
+        mockLeader.Setup(g => g.IsLeader).Returns(false);
+
+        var cache = new LoopStatusCache(mockStore.Object, mockLeader.Object);
+        var dto = MakeDto(isActive: true, status: "🔄 Loop starting…");
+
+        cache.Update(dto);
+
+        // TODO [WARNING]: The 100ms delay here is defensive — on the non-leader path, the write
+        // guard returns before any Task is created, so Times.Never is deterministic and the delay
+        // is not strictly needed. However, the 100ms is an arbitrary wall-clock wait: on a very
+        // slow or stressed CI machine a hypothetical async write path could start but not complete
+        // within this window, making the verify non-deterministic. Consider using a
+        // TaskCompletionSource or polling loop (as in WhenLeader_WritesToRedis) for symmetry,
+        // or at minimum add a comment explaining why no async work is created on this path.
+        // Give any potential fire-and-forget a moment to execute
+        await Task.Delay(100);
+
+        // Non-leader must NOT write to Redis
+        mockStore.Verify(s => s.SetAsync(
+            It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<TimeSpan?>(), It.IsAny<StackExchange.Redis.When>()),
+            Times.Never,
+            "non-leader pod must not overwrite the leader's Redis snapshot");
+
+        // Local value must still be updated (Volatile.Write is unconditional)
+        cache.Read()!.StatusMessage.Should().Be("🔄 Loop starting…",
+            "local in-memory snapshot must always be updated regardless of leader status");
+    }
+
+    /// <summary>
+    /// Positive counterpart to WhenNonLeader_DoesNotWriteToRedis: a leader pod must still
+    /// write to Redis. Paired to ensure the non-leader test is not vacuously passing.
+    /// </summary>
+    [Fact]
+    public async Task LoopStatusCache_Update_WhenLeader_WritesToRedis()
+    {
+        var mockStore = new Mock<IRedisStore>();
+        mockStore.Setup(s => s.SetAsync(
+                LoopStatusCache.RedisKey,
+                It.IsAny<string>(),
+                It.IsAny<TimeSpan?>(),
+                It.IsAny<StackExchange.Redis.When>()))
+            .ReturnsAsync(true);
+
+        var mockLeader = new Mock<ILeaderGate>();
+        mockLeader.Setup(g => g.IsLeader).Returns(true);
+
+        var cache = new LoopStatusCache(mockStore.Object, mockLeader.Object);
+        cache.Update(MakeDto(isActive: true, status: "Running"));
+
+        // Poll until the fire-and-forget write completes
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                mockStore.Verify(s => s.SetAsync(
+                    LoopStatusCache.RedisKey, It.IsAny<string>(),
+                    It.IsAny<TimeSpan?>(), It.IsAny<StackExchange.Redis.When>()), Times.Once);
+                break;
+            }
+            catch (MockException) { await Task.Delay(20); }
+        }
+
+        mockStore.Verify(s => s.SetAsync(
+            LoopStatusCache.RedisKey, It.IsAny<string>(),
+            It.IsAny<TimeSpan?>(), It.IsAny<StackExchange.Redis.When>()), Times.Once,
+            "leader pod must write to Redis on Update");
+    }
+
+    // ── New tests: Change C — non-leader fallback returns neutral DTO ────────
+
+    /// <summary>
+    /// Acceptance criterion: non-leader fallback when Redis is empty.
+    /// When the Redis key is missing (expired between cycles), non-leader pods must return
+    /// a neutral DTO rather than falling back to BuildDto(loopService) and serving stale
+    /// "Loop starting…" state.
+    /// </summary>
+    [Fact]
+    public async Task GetLoopStatus_NonLeaderWithEmptyRedis_ReturnsNeutralDto()
+    {
+        var mockStore = new Mock<IRedisStore>();
+        mockStore.Setup(s => s.GetAsync(It.IsAny<string>())).ReturnsAsync((string?)null);
+
+        var mockLeader = new Mock<ILeaderGate>();
+        mockLeader.Setup(g => g.IsLeader).Returns(false);
+
+        var cache = new LoopStatusCache(mockStore.Object, mockLeader.Object);
+        // Simulate stale local state from auto-start on this non-leader pod.
+        // TODO [WARNING]: Update() on a non-leader skips the Redis write but still updates
+        // _value via Volatile.Write. In ReadAsync, the non-leader path unconditionally skips
+        // the local fast-path and goes to Redis, so the stale _value populated here is never
+        // consulted regardless of BuildNeutralDtoIfNonLeader. This means the test does not
+        // directly exercise the scenario where a regressed ReadAsync accidentally reads _value
+        // on a non-leader — it only catches regressions that re-introduce the local fast-path
+        // for non-leaders (removal of the _leaderGate guard in ReadAsync). A complementary
+        // test with _value=null (pod just started, Update never called) would cover the
+        // zero-local-state path explicitly.
+        cache.Update(MakeDto(isActive: true, status: "🔄 Loop starting…"));
+
+        var mockLoop = MockLoopService(isActive: true, status: "🔄 Loop starting…");
+        var result = await SchedulerLoopEndpoints.GetLoopStatus(mockLoop.Object, cache);
+
+        var ok = result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<LoopStatusDto>>().Subject;
+        // Assert the exact neutral DTO message so that any change to BuildNeutralDtoIfNonLeader
+        // (e.g. renaming the message) is caught immediately, rather than relying on a weaker
+        // NotBe or Contain check that could pass accidentally via an unrelated code path.
+        ok.Value!.StatusMessage.Should().Be("⏳ Waiting for leader status…",
+            "non-leader pod must return the exact neutral DTO message when Redis has no value, not its own stale local state");
+        ok.Value.IsLoopActive.Should().BeFalse(
+            "neutral DTO must indicate the loop is not active on this non-leader pod");
+    }
+
+    /// <summary>
+    /// When Redis throws on a non-leader pod (outage), the neutral DTO must also be returned
+    /// rather than falling back to the stale local loop service state.
+    /// </summary>
+    [Fact]
+    public async Task GetLoopStatus_NonLeaderWithRedisException_ReturnsNeutralDto()
+    {
+        var mockStore = new Mock<IRedisStore>();
+        mockStore.Setup(s => s.GetAsync(It.IsAny<string>()))
+            .ThrowsAsync(new Exception("Redis connection refused"));
+
+        var mockLeader = new Mock<ILeaderGate>();
+        mockLeader.Setup(g => g.IsLeader).Returns(false);
+
+        var cache = new LoopStatusCache(mockStore.Object, mockLeader.Object);
+        cache.Update(MakeDto(isActive: true, status: "🔄 Loop starting…"));
+
+        var mockLoop = MockLoopService(isActive: true, status: "🔄 Loop starting…");
+        var result = await SchedulerLoopEndpoints.GetLoopStatus(mockLoop.Object, cache);
+
+        var ok = result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<LoopStatusDto>>().Subject;
+        // Assert the exact neutral DTO message so that any change to BuildNeutralDtoIfNonLeader
+        // is caught immediately, rather than relying on weaker NotBe/Contain checks.
+        ok.Value!.StatusMessage.Should().Be("⏳ Waiting for leader status…",
+            "neutral DTO must be returned on Redis exception for non-leader pods, not the stale local state");
+        ok.Value.IsLoopActive.Should().BeFalse(
+            "neutral DTO must report IsLoopActive=false");
+    }
+
+    /// <summary>
+    /// Guard against accidentally applying the neutral DTO to leader pods:
+    /// when the leader has no local value yet and Redis is empty (first cycle not yet complete),
+    /// GetLoopStatus must still fall back to BuildDto(loopService).
+    /// </summary>
+    [Fact]
+    public async Task GetLoopStatus_LeaderWithEmptyRedisAndNoLocalValue_FallsBackToLoopService()
+    {
+        var mockStore = new Mock<IRedisStore>();
+        mockStore.Setup(s => s.GetAsync(It.IsAny<string>())).ReturnsAsync((string?)null);
+
+        var mockLeader = new Mock<ILeaderGate>();
+        mockLeader.Setup(g => g.IsLeader).Returns(true);
+
+        // Leader with no local value yet (_value is null — first cycle not started)
+        var cache = new LoopStatusCache(mockStore.Object, mockLeader.Object);
+
+        var mockLoop = MockLoopService(isActive: true, status: "🔄 Loop starting…");
+        var result = await SchedulerLoopEndpoints.GetLoopStatus(mockLoop.Object, cache);
+
+        var ok = result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<LoopStatusDto>>().Subject;
+        ok.Value!.StatusMessage.Should().Be("🔄 Loop starting…",
+            "leader must fall back to BuildDto(loopService) during the pre-first-cycle startup window");
+        ok.Value.IsLoopActive.Should().BeTrue(
+            "leader's local loop service state must be reflected in the fallback");
+    }
 }
