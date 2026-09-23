@@ -492,25 +492,9 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     }
 
     /// <summary>
-    /// Detects PK violation exceptions from Npgsql (code 23505) or generic DbUpdateException
-    /// wrapping a unique constraint violation.
+    /// Detects PK violation exceptions from Npgsql (SQLSTATE 23505) or generic message-based
+    /// fallbacks. Delegates to <see cref="PostgresErrorClassifier.IsUniqueViolation"/>.
     /// </summary>
     private static bool IsPrimaryKeyViolation(DbUpdateException ex)
-    {
-        // Npgsql wraps PostgreSQL error 23505 (unique_violation) in a PostgresException.
-        // For in-memory provider (tests), there's no inner Npgsql exception — treat any
-        // DbUpdateException during Add as a potential duplicate.
-        var inner = ex.InnerException;
-        if (inner is not null && inner.GetType().Name == "PostgresException")
-        {
-            // Npgsql PostgresException has a SqlState property
-            var sqlStateProp = inner.GetType().GetProperty("SqlState");
-            if (sqlStateProp?.GetValue(inner) is string sqlState)
-                return sqlState == "23505";
-        }
-
-        // Fallback: treat as PK violation if it's a generic constraint error
-        return ex.InnerException?.Message?.Contains("duplicate key", StringComparison.OrdinalIgnoreCase) == true
-            || ex.InnerException?.Message?.Contains("unique constraint", StringComparison.OrdinalIgnoreCase) == true;
-    }
+        => PostgresErrorClassifier.IsUniqueViolation(ex);
 }

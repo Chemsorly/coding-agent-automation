@@ -1338,11 +1338,13 @@ public sealed class AgentOrphanRecoveryServiceTests
             .Returns(Task.FromException(new InvalidOperationException("Redis down")));
 
         // Wire the Callback before the act so the TCS is signalled as soon as the continuation fires.
-        // Serilog Warning<AgentId, string>(Exception?, string, AgentId, string) — use concrete types.
+        // Serilog Warning<T0,T1,T2>(Exception?, string, T0, T1, T2) — use concrete types.
+        // T0 = string (callerContext), T1 = AgentId, T2 = string (field).
         _logger
             .Setup(l => l.Warning(
                 It.IsAny<Exception>(),
-                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(s => s.Contains("{CallerContext}") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(ctx => ctx.Contains("RestoreConsolidationTracking")),
                 It.IsAny<AgentId>(),
                 It.IsAny<string>()))
             .Callback(() => warningFired.TrySetResult(true));
@@ -1357,10 +1359,14 @@ public sealed class AgentOrphanRecoveryServiceTests
         _logger.Verify(
             l => l.Warning(
                 It.IsAny<Exception>(),
-                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(s => s.Contains("{CallerContext}") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(ctx => ctx.Contains("RestoreConsolidationTracking")),
                 It.IsAny<AgentId>(),
                 It.IsAny<string>()),
-            Times.AtLeastOnce);
+            Times.AtLeastOnce); // TODO [WARNING]: Only one UpdateAgentFieldFireAndForget call exists on this
+                                // code path, so Times.Once would be tighter and detect spurious extra calls.
+                                // Change to Times.Once (keep Times.AtLeastOnce only for DetectAndRestoreOrphans
+                                // which intentionally has two field writes both faulting).
     }
 
     [Fact]
@@ -1383,7 +1389,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         _logger
             .Setup(l => l.Warning(
                 It.IsAny<Exception>(),
-                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(s => s.Contains("{CallerContext}") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(ctx => ctx.Contains("RestorePipelineRun")),
                 It.IsAny<AgentId>(),
                 It.IsAny<string>()))
             .Callback(() => warningFired.TrySetResult(true));
@@ -1394,10 +1401,13 @@ public sealed class AgentOrphanRecoveryServiceTests
         _logger.Verify(
             l => l.Warning(
                 It.IsAny<Exception>(),
-                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(s => s.Contains("{CallerContext}") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(ctx => ctx.Contains("RestorePipelineRun")),
                 It.IsAny<AgentId>(),
                 It.IsAny<string>()),
-            Times.AtLeastOnce);
+            Times.AtLeastOnce); // TODO [WARNING]: Only one UpdateAgentFieldFireAndForget call exists on this
+                                // code path; Times.Once would be stricter. See RestoreConsolidationTracking
+                                // test comment for rationale.
     }
 
     [Fact]
@@ -1434,7 +1444,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         _logger
             .Setup(l => l.Warning(
                 It.IsAny<Exception>(),
-                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(s => s.Contains("{CallerContext}") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(ctx => ctx.Contains("LinkAgentToExistingRun")),
                 It.IsAny<AgentId>(),
                 It.IsAny<string>()))
             .Callback(() => warningFired.TrySetResult(true));
@@ -1445,10 +1456,13 @@ public sealed class AgentOrphanRecoveryServiceTests
         _logger.Verify(
             l => l.Warning(
                 It.IsAny<Exception>(),
-                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(s => s.Contains("{CallerContext}") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(ctx => ctx.Contains("LinkAgentToExistingRun")),
                 It.IsAny<AgentId>(),
                 It.IsAny<string>()),
-            Times.AtLeastOnce);
+            Times.AtLeastOnce); // TODO [WARNING]: Only one UpdateAgentFieldFireAndForget call exists on this
+                                // code path; Times.Once would be stricter. See RestoreConsolidationTracking
+                                // test comment for rationale.
     }
 
     [Fact]
@@ -1484,7 +1498,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         _logger
             .Setup(l => l.Warning(
                 It.IsAny<Exception>(),
-                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(s => s.Contains("{CallerContext}") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(ctx => ctx.Contains("DetectAndRestoreOrphans")),
                 It.IsAny<AgentId>(),
                 It.IsAny<string>()))
             .Callback(() => warningFired.TrySetResult(true));
@@ -1495,7 +1510,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         _logger.Verify(
             l => l.Warning(
                 It.IsAny<Exception>(),
-                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(s => s.Contains("{CallerContext}") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(ctx => ctx.Contains("DetectAndRestoreOrphans")),
                 It.IsAny<AgentId>(),
                 It.IsAny<string>()),
             Times.AtLeastOnce);
@@ -1521,7 +1537,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         _logger
             .Setup(l => l.Warning(
                 It.IsAny<Exception>(),
-                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(s => s.Contains("{CallerContext}") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(ctx => ctx.Contains("HandleCrashRecoveryAsync")),
                 It.IsAny<AgentId>(),
                 It.IsAny<string>()))
             .Callback(() => warningFired.TrySetResult(true));
@@ -1533,9 +1550,12 @@ public sealed class AgentOrphanRecoveryServiceTests
         _logger.Verify(
             l => l.Warning(
                 It.IsAny<Exception>(),
-                It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(s => s.Contains("{CallerContext}") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(ctx => ctx.Contains("HandleCrashRecoveryAsync")),
                 It.IsAny<AgentId>(),
                 It.IsAny<string>()),
-            Times.AtLeastOnce);
+            Times.AtLeastOnce); // TODO [WARNING]: Only one UpdateAgentFieldFireAndForget call exists on this
+                                // code path; Times.Once would be stricter. See RestoreConsolidationTracking
+                                // test comment for rationale.
     }
 }

@@ -1,3 +1,4 @@
+using System.Net;
 using NGitLab;
 using NGitLab.Models;
 using Serilog;
@@ -108,7 +109,7 @@ public partial class GitLabRepositoryProvider
             Log.Information("Triggered server-side rebase for MR !{PrNumber} in project {ProjectId}",
                 prNumber, ProjectId);
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 409)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.Conflict)
         {
             // 409 = GitLab server transaction lock busy — not a git conflict.
             // Re-throw so HousekeepingService.UpdateAsync catches it and increments
@@ -148,7 +149,7 @@ public partial class GitLabRepositoryProvider
             Log.Information("Housekeeping: deleted stale branch {BranchName} in project {ProjectId}",
                 branchName, ProjectId);
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 404)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             // Branch already gone — treat as success (no-op)
             Log.Debug("Housekeeping: branch {BranchName} not found in project {ProjectId} — already deleted",
@@ -183,7 +184,7 @@ public partial class GitLabRepositoryProvider
 
             return mr.WebUrl ?? string.Empty;
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 409)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.Conflict)
         {
             throw new InvalidOperationException(
                 $"A merge request already exists for source branch '{prInfo.BranchName}' " +
@@ -232,7 +233,7 @@ public partial class GitLabRepositoryProvider
                 },
                 "UpdateMergeRequest.Update", ct);
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 404)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             throw new InvalidOperationException(
                 $"Merge request !{pullRequestNumber} not found in project {ProjectId}.", ex);
@@ -383,7 +384,7 @@ public partial class GitLabRepositoryProvider
                 },
                 "RemovePrLabel", ct);
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 404)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             // MR not found — treat as no-op
             Log.Warning(ex, "RemovePrLabel: MR !{PrNumber} not found, treating as no-op", prNumber);
@@ -483,7 +484,7 @@ public partial class GitLabRepositoryProvider
                 },
                 "SubmitReview.CreateNote", ct);
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 404)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             throw new InvalidOperationException(
                 $"Merge request !{prNumber} not found in project {ProjectId}.", ex);
@@ -537,7 +538,7 @@ public partial class GitLabRepositoryProvider
                 },
                 "SubmitReview.CreateSummaryNote", ct);
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 404)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             throw new InvalidOperationException(
                 $"Merge request !{prNumber} not found in project {ProjectId}.", ex);
@@ -694,7 +695,7 @@ public partial class GitLabRepositoryProvider
                 },
                 "UpdateReviewComment", ct);
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 404)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             throw new InvalidOperationException(
                 $"Merge request !{prNumber} or note {commentId} not found in project {ProjectId}.", ex);

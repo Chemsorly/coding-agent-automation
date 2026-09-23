@@ -63,6 +63,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             // Note: TrySwapLabelAsync lets OperationCanceledException propagate (unlike the original
             // SwapAgentLabelAsync which caught all exceptions). Unlikely with CancellationToken.None
             // but possible if the internal HttpClient times out.
+            // TODO: [WARNING] TrySwapLabelAsync now returns Task<bool> (true = applied, false = non-fatal
+            // exception swallowed). The bool is intentionally discarded here — this is fire-and-forget.
+            // If diagnostics on swap failures are ever needed, capture and log the result.
             await _labelSwapper.TrySwapLabelAsync(run, AgentLabels.Cancelled, _logger, "PipelineOrchestrationService.CancelPipelineAsync", CancellationToken.None);
         }
 

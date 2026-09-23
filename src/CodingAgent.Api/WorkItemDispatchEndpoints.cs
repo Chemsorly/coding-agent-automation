@@ -14,7 +14,6 @@ using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 using Serilog;
 
 namespace CodingAgent.Api;
@@ -1063,25 +1062,7 @@ public static class WorkItemDispatchEndpoints
     // ── Private helpers ───────────────────────────────────────────────────
 
     internal static bool IsUniqueViolation(Exception ex)
-    {
-        // Postgres path: DbUpdateException wrapping a PostgresException with SQLSTATE 23505
-        if (ex is DbUpdateException { InnerException: PostgresException pg })
-            return pg.SqlState == "23505";
-
-        // Postgres fallback (non-Npgsql drivers) and EF InMemory path.
-        // EF InMemory throws ArgumentException("An item with the same key has already been added")
-        // directly — it is NOT wrapped in DbUpdateException — so we must check the top-level
-        // message as well as the inner exception message.
-        // Note: the EF InMemory phrase is an implementation detail and may change across EF Core versions.
-        var message = ex.Message ?? "";
-        var innerMessage = ex.InnerException?.Message ?? "";
-        return message.Contains("duplicate key", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("unique constraint", StringComparison.OrdinalIgnoreCase)
-            || innerMessage.Contains("duplicate key", StringComparison.OrdinalIgnoreCase)
-            || innerMessage.Contains("unique constraint", StringComparison.OrdinalIgnoreCase)
-            // EF InMemory exact phrase
-            || message.Contains("An item with the same key has already been added", StringComparison.OrdinalIgnoreCase);
-    }
+        => PostgresErrorClassifier.IsUniqueViolation(ex);
 
     /// <summary>
     /// Derives a deterministic RunId string from the work item GUID.

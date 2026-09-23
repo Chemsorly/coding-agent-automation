@@ -19,19 +19,17 @@ public class LabelServiceExtensionsTests
     [Fact]
     public async Task TrySwapLabelAsync_Success_DoesNotThrow()
     {
-        // TODO: The NotThrowAsync assertion is tautological since the mock returns Task.CompletedTask.
-        // The Verify call below provides the real value. Consider removing NotThrowAsync or restructuring.
         _mockLabelService
             .Setup(l => l.SwapLabelAsync(
                 It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
                 It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var act = () => _mockLabelService.Object.TrySwapLabelAsync(
+        var result = await _mockLabelService.Object.TrySwapLabelAsync(
             "provider-1", "org/repo#42", AgentLabels.InProgress,
             LabelTargetKind.Issue, _logger, "TestContext", CancellationToken.None);
 
-        await act.Should().NotThrowAsync();
+        result.Should().BeTrue("the swap completed without exception");
 
         _mockLabelService.Verify(l => l.SwapLabelAsync(
             new ProviderConfigId("provider-1"), "org/repo#42", AgentLabels.InProgress,
@@ -41,19 +39,17 @@ public class LabelServiceExtensionsTests
     [Fact]
     public async Task TrySwapLabelAsync_SwapThrows_DoesNotPropagate()
     {
-        // TODO: Should also verify that ILogger.Warning is invoked with the exception to ensure
-        // the catch block actually logs rather than silently discarding exceptions.
         _mockLabelService
             .Setup(l => l.SwapLabelAsync(
                 It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
                 It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Provider unavailable"));
 
-        var act = () => _mockLabelService.Object.TrySwapLabelAsync(
+        var result = await _mockLabelService.Object.TrySwapLabelAsync(
             "provider-1", "org/repo#42", AgentLabels.Error,
             LabelTargetKind.Issue, _logger, "TestContext", CancellationToken.None);
 
-        await act.Should().NotThrowAsync();
+        result.Should().BeFalse("the exception was swallowed — swap did not apply");
     }
 
     [Fact]
@@ -168,9 +164,10 @@ public class LabelServiceExtensionsTests
             SwallowCancellation = true
         };
 
-        // Must not throw — OCE is swallowed when SwallowCancellation = true
-        var act = () => _mockLabelService.Object.TrySwapLabelAsync(ctx);
-        await act.Should().NotThrowAsync();
+        // Swallowed OCE returns false — swap did not apply.
+        var result = await _mockLabelService.Object.TrySwapLabelAsync(ctx);
+
+        result.Should().BeFalse("the OperationCanceledException was swallowed — swap did not apply");
     }
 
     [Fact]

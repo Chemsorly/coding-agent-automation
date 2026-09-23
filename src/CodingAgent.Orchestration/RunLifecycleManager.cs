@@ -273,6 +273,9 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         var targetKind = runType == PipelineRunType.Review
             ? LabelTargetKind.PullRequest
             : LabelTargetKind.Issue;
+        // TODO: [WARNING] TrySwapLabelAsync now returns Task<bool> (true = applied, false = non-fatal
+        // exception swallowed). The bool is intentionally discarded here — this is fire-and-forget.
+        // If diagnostics on swap failures are ever needed, capture and log the result.
         await _labelService.TrySwapLabelAsync(providerForLabel, issueIdentifier, AgentLabels.InProgress, targetKind, _logger, "RunLifecycleManager", ct);
 
         _logger.Information(
@@ -354,7 +357,12 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
         // Step 3: Swap label — skip for consolidation runs (targetLabel null) or unrecognised status.
         if (targetLabel is not null)
+        {
+            // TODO: [WARNING] TrySwapLabelAsync now returns Task<bool> (true = applied, false = non-fatal
+            // exception swallowed). The bool is intentionally discarded here — this is fire-and-forget.
+            // If diagnostics on swap failures are ever needed, capture and log the result.
             await _labelService.TrySwapLabelAsync(run, targetLabel, _logger, "RunLifecycleManager", ct);
+        }
     }
 
     private async Task TransitionWorkItemAsync(RunId runId, WorkItemStatus status, CancellationToken ct, string? errorMessage = null, FailureReason? failureReason = null)
