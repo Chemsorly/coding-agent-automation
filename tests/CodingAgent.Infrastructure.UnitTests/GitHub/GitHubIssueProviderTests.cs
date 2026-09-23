@@ -172,11 +172,10 @@ public class GitHubIssueProviderTests
     }
 
     /// <summary>
-    /// Characterization test — prerequisite for the long commentId migration.
-    /// Verifies that a numeric comment ID round-trips correctly to the Octokit int parameter.
+    /// Verifies that a numeric comment ID round-trips unchanged to Octokit's long comment-ID parameter.
     /// </summary>
     [Fact]
-    public async Task UpdateCommentAsync_NumericCommentIdRoundTrips_CallsOctokitWithCorrectInt()
+    public async Task UpdateCommentAsync_NumericCommentIdRoundTrips_CallsOctokitWithSameId()
     {
         var mockComments = new Mock<IIssueCommentsClient>();
         _mockIssues.Setup(i => i.Comment).Returns(mockComments.Object);
@@ -211,16 +210,18 @@ public class GitHubIssueProviderTests
     }
 
     [Fact]
-    public async Task UpdateCommentAsync_CommentIdExceedsIntMaxValue_ThrowsOverflowException()
+    public async Task UpdateCommentAsync_CommentIdExceedsIntMaxValue_PassesIdToOctokitUnchanged()
     {
-        // GitHub comment IDs are 64-bit integers and already exceed int.MaxValue in practice.
-        // Octokit's IssueCommentsClient.Update takes int, so UpdateCommentAsync performs a
-        // checked cast. Passing int.MaxValue + 1 must surface as OverflowException so callers
-        // receive a deterministic, diagnosable failure rather than silent ID truncation.
-        var oversizedId = (long)int.MaxValue + 1; // 2_147_483_648L
+        // GitHub comment IDs are 64-bit and routinely exceed int.MaxValue (this value is a real
+        // production decomposition-plan comment ID). Octokit's Update takes a long comment ID,
+        // so the ID must reach it unchanged instead of failing with an OverflowException.
+        const long largeCommentId = 5_792_979_385L;
+        var mockComments = new Mock<IIssueCommentsClient>();
+        _mockIssues.Setup(i => i.Comment).Returns(mockComments.Object);
 
-        var act = () => _provider.UpdateCommentAsync("42", oversizedId, "body", CancellationToken.None);
-        await act.Should().ThrowAsync<OverflowException>();
+        await _provider.UpdateCommentAsync("42", largeCommentId, "body", CancellationToken.None);
+
+        mockComments.Verify(c => c.Update("owner", "repo", largeCommentId, "body"), Times.Once);
     }
 
     [Fact]

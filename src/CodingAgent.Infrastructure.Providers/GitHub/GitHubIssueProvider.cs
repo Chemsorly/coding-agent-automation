@@ -172,16 +172,9 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         ArgumentNullException.ThrowIfNull(body);
         ParseIssueIdentifier(issueIdentifier);
 
-        // GitHub's REST API returns comment IDs as long, but Octokit's Update signature takes int.
-        // IDs > int.MaxValue would overflow; use checked cast to surface this explicitly.
-        // TODO: GitHub comment IDs already exceed int.MaxValue in production. Once Octokit exposes
-        // a long-based overload (or is replaced), remove this cast and pass commentId directly.
-        // Until then, callers receive OverflowException for IDs > 2,147,483,647 — see test
-        // UpdateCommentAsync_CommentIdExceedsIntMaxValue_ThrowsOverflowException.
-        var commentIdInt = checked((int)commentId);
-
+        // GitHub comment IDs exceed int.MaxValue; Octokit's Update takes the ID as long, so pass it through.
         await ExecuteWithResilienceAsync(
-            client => client.Issue.Comment.Update(Owner, Repo, commentIdInt, body),
+            client => client.Issue.Comment.Update(Owner, Repo, commentId, body),
             "UpdateComment", ct);
     }
 
