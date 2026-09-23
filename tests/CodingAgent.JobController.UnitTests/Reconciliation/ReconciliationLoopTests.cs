@@ -905,8 +905,9 @@ public sealed class ReconciliationLoopTests
             resolvedJobName, _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
 
         // Must NOT delete using the ForWorkItem fallback name (caa-agent-{first11hex})
+        var oldFormatName = $"caa-agent-{id:N}"[..21];
         _k8sClient.Verify(c => c.DeleteJobAsync(
-            JobNameFactory.ForWorkItem(id), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+            oldFormatName, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
 
         // Status must still be posted as Failed/Timeout
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -1988,8 +1989,9 @@ public sealed class ReconciliationLoopErrorTests
             resolvedJobName, _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
 
         // Must NOT use the old ForWorkItem format (caa-agent-{first11hex}) — that was the bug
+        var oldFormatName = $"caa-agent-{id:N}"[..21];
         _k8sClient.Verify(c => c.DeleteJobAsync(
-            JobNameFactory.ForWorkItem(id), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+            oldFormatName, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     /// <summary>

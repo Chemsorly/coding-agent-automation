@@ -205,6 +205,9 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // call uses SwallowCancellation=false (the default), so OCE now propagates out of this method into
         // HandleRejectedRunCleanupAsync (called from a finally block in HandleJobRejectedAsync). Verify that
         // propagating OCE here during post-rejection cleanup does not strand agent state.
+        // TODO: [WARNING] TrySwapLabelAsync now returns Task<bool> (true = applied, false = non-fatal
+        // exception swallowed). The bool is intentionally discarded here — this is fire-and-forget.
+        // If diagnostics on swap failures are ever needed, capture and log the result.
         await _labelService.TrySwapLabelAsync(
             run.IssueProviderConfigId, run.IssueIdentifier, AgentLabels.Error, LabelTargetKind.Issue,
             _logger, "AgentJobLifecycleService.PermanentlyFailRejectedRunAsync", ct);

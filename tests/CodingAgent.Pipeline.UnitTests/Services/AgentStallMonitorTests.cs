@@ -94,7 +94,7 @@ public class AgentStallMonitorTests
         fakeTime.Advance(TimeSpan.FromMinutes(1)); // trigger one poll tick
 
         // Wait for the monitor to enqueue the death message
-        await WaitForChatHistoryAsync(_run);
+        await WaitForChatHistoryAsync(_run, fakeTime, TimeSpan.FromMinutes(1));
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
@@ -124,7 +124,9 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
+                IsExecuting = true,
+                ProcessId = 1,
+                IsProcessAlive = true,
                 // Already 3 minutes silent relative to fake "now"
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-3)
             });
@@ -144,7 +146,7 @@ public class AgentStallMonitorTests
         // We need timeSinceLastWarn >= StallWarningInterval=2m, so advance 2m total.
         await YieldToMonitorAsync();
         fakeTime.Advance(TimeSpan.FromMinutes(2)); // poll tick + satisfies timeSinceLastWarn check
-        await WaitForChatHistoryAsync(_run);
+        await WaitForChatHistoryAsync(_run, fakeTime, TimeSpan.FromMinutes(1));
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
@@ -173,7 +175,9 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
+                IsExecuting = true,
+                ProcessId = 1,
+                IsProcessAlive = true,
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-10)
             });
 
@@ -227,7 +231,9 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
+                IsExecuting = true,
+                ProcessId = 1,
+                IsProcessAlive = true,
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime
             });
 
@@ -274,7 +280,7 @@ public class AgentStallMonitorTests
 
         await YieldToMonitorAsync();
         fakeTime.Advance(TimeSpan.FromMinutes(1));
-        await WaitForChatHistoryAsync(_run);
+        await WaitForChatHistoryAsync(_run, fakeTime, TimeSpan.FromMinutes(1));
 
         tcs.SetResult();
         await task;
@@ -311,7 +317,9 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
+                IsExecuting = true,
+                ProcessId = 1,
+                IsProcessAlive = true,
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-3)
             });
 
@@ -364,7 +372,9 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus
             {
-                IsExecuting = true, ProcessId = 1, IsProcessAlive = true,
+                IsExecuting = true,
+                ProcessId = 1,
+                IsProcessAlive = true,
                 LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-10)
             });
 
@@ -450,14 +460,27 @@ public class AgentStallMonitorTests
     /// Waits up to 15 seconds for the monitor to enqueue a ChatHistory entry.
     /// The wait is cheap because the monitor fires immediately after <c>fakeTime.Advance</c>
     /// unblocks its <c>Delay</c> — this loop typically exits on the first or second iteration.
-    /// The 15-second cap (up from 5s) guards against ThreadPool scheduling delays on loaded CI
-    /// runners where the monitor's Task.Run continuation may be queued behind other work items.
+    /// The 15-second cap guards against ThreadPool scheduling delays on loaded CI runners.
+    /// <para>
+    /// When <paramref name="fakeTime"/> and <paramref name="advancePerTick"/> are provided,
+    /// the clock is periodically re-advanced while waiting — recovering from the race where
+    /// the initial <c>fakeTime.Advance</c> fired before the monitor's Task.Run loop had
+    /// registered its first <c>timeProvider.Delay</c>. Mirrors the pattern in
+    /// <see cref="WaitForMetricAsync{T}"/>.
+    /// </para>
     /// </summary>
-    private static async Task WaitForChatHistoryAsync(PipelineRun run)
+    private static async Task WaitForChatHistoryAsync(
+        PipelineRun run,
+        FakeTimeProvider? fakeTime = null,
+        TimeSpan? advancePerTick = null)
     {
         var deadline = DateTime.UtcNow.AddSeconds(15);
         while (run.ChatHistory.IsEmpty && DateTime.UtcNow < deadline)
-            await Task.Delay(5);
+        {
+            await Task.Delay(10);
+            if (run.ChatHistory.IsEmpty && fakeTime is not null && advancePerTick is not null)
+                fakeTime.Advance(advancePerTick.Value);
+        }
     }
 
     /// <summary>

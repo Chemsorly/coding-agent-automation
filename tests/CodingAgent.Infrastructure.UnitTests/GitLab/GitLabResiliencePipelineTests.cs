@@ -127,7 +127,7 @@ public class GitLabResiliencePipelineTests
     [InlineData(HttpStatusCode.Forbidden)]          // 403
     [InlineData(HttpStatusCode.NotFound)]           // 404
     [InlineData(HttpStatusCode.Conflict)]           // 409
-    [InlineData((HttpStatusCode)422)]               // UnprocessableEntity
+    [InlineData(HttpStatusCode.UnprocessableContent)] // 422
     public async Task NonRetryableStatusCode_PropagatesImmediately_NoRetry(HttpStatusCode statusCode)
     {
         // Arrange
