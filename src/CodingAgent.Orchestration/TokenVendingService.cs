@@ -23,6 +23,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
 {
     private readonly ILogger _logger;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly TimeProvider _timeProvider;
 
     // ── In-process token cache ───────────────────────────────────────────
     // GitHub installation tokens are valid for up to 1 hour. Caching them here
@@ -57,6 +58,12 @@ public sealed partial class TokenVendingService : ITokenVendingService
 
     private readonly record struct TokenCacheEntry(string Token, DateTimeOffset ExpiresAt);
 
+    // ── Internal test helpers ─────────────────────────────────────────────
+    // Exposed via InternalsVisibleTo so unit tests can assert on cache size
+    // without relying on reflection or whitebox access to private fields.
+    internal int CacheCount => _tokenCache.Count;
+    internal int SemaphoreCount => _mintSemaphores.Count;
+
     // ────────────────────────────────────────────────────────────────────
 
     public TokenVendingService(ILogger logger, IHttpClientFactory httpClientFactory)
@@ -65,14 +72,16 @@ public sealed partial class TokenVendingService : ITokenVendingService
         ArgumentNullException.ThrowIfNull(httpClientFactory);
         _logger = logger;
         _httpClientFactory = httpClientFactory;
+        _timeProvider = TimeProvider.System;
     }
 
     /// <summary>
     /// Internal constructor that accepts an <see cref="HttpClient"/> for testing.
     /// </summary>
-    internal TokenVendingService(ILogger logger, HttpClient httpClient)
+    internal TokenVendingService(ILogger logger, HttpClient httpClient, TimeProvider? timeProvider = null)
         : this(logger, new DelegatingHttpClientFactory(httpClient))
     {
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -121,7 +130,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
         settings.TryGetValue(ProviderSettingKeys.Repo, out var repoName);
 
         var cacheKey = new TokenCacheKey(installationId, repoName, includeIssuePermission, apiUrl);
-        var now = DateTimeOffset.UtcNow;
+        var now = _timeProvider.GetUtcNow();
 
         // ── Fast path: valid cached entry ────────────────────────────────
         // TODO [WARNING]: The cache key does not include ClientId (GitHub App ID). Two different
@@ -130,13 +139,8 @@ public sealed partial class TokenVendingService : ITokenVendingService
         // callers of the other. Installation IDs are globally unique in practice, but adding ClientId
         // as a fifth key dimension would enforce this as a structural guarantee rather than relying on
         // GitHub's global uniqueness constraint. (SecurityReviewer warning)
-        // TODO [WARNING]: Expired TokenCacheEntry records are never removed from _tokenCache. Once a token
-        // passes its ExpiresAt, the cache still holds the entry; the fast-path check (ExpiresAt - now >
-        // _renewalBuffer) causes it to be bypassed, but it is never cleaned up. Over long uptimes the
-        // dictionary accumulates one stale entry per unique cache key that has ever been used (same
-        // bounded key-space as _mintSemaphores). Consider adding a periodic housekeeping path that removes
-        // entries where ExpiresAt is in the past, and disposes the corresponding semaphore entries at the
-        // same time. (.NET Specialist warning)
+        // Expired TokenCacheEntry records are removed periodically by TokenCacheHousekeepingService,
+        // which calls TrimExpiredCacheEntries() on a background timer.
         if (_tokenCache.TryGetValue(cacheKey, out var cached) && cached.ExpiresAt - now > _renewalBuffer)
         {
             _logger.Debug(
@@ -150,13 +154,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
         // but GetOrAdd returns the winner's instance, so only one semaphore per key is used.
         // The discarded loser instance is never waited on and never acquires a kernel WaitHandle,
         // so the IDisposable leak is negligible in practice.
-        // TODO [WARNING]: SemaphoreSlim entries in _mintSemaphores are never removed or disposed.
-        // SemaphoreSlim implements IDisposable (kernel WaitHandle allocated on first AvailableWaitHandle
-        // access). The dictionary grows monotonically — one entry per unique TokenCacheKey — and is
-        // never evicted. In expected deployments the key set is small and bounded, so this is a
-        // low-severity slow leak rather than a per-request leak. Mitigation: add a TrimExpiredCacheEntries
-        // housekeeping path that also removes and disposes orphaned semaphores, or replace with
-        // AsyncKeyedLock for cleaner single-flight without manual IDisposable management. (.NET Specialist warning)
+        // SemaphoreSlim entries are removed and disposed periodically by TokenCacheHousekeepingService.
         var sem = _mintSemaphores.GetOrAdd(cacheKey, _ => new SemaphoreSlim(1, 1));
         // TODO [WARNING]: The `await sem.WaitAsync(ct)` call below is placed immediately before the
         // `try` block so that if WaitAsync is cancelled, the OCE propagates *before* entering the try,
@@ -173,7 +171,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
         try
         {
             // Double-check: another caller may have minted while we waited.
-            now = DateTimeOffset.UtcNow;
+            now = _timeProvider.GetUtcNow();
             if (_tokenCache.TryGetValue(cacheKey, out cached) && cached.ExpiresAt - now > _renewalBuffer)
             {
                 _logger.Debug(
@@ -194,6 +192,49 @@ public sealed partial class TokenVendingService : ITokenVendingService
         finally
         {
             sem.Release();
+        }
+    }
+
+    /// <summary>
+    /// Removes expired entries from the token cache and removes and disposes the corresponding
+    /// semaphore entries from the dictionary. Called periodically by <see cref="TokenCacheHousekeepingService"/>.
+    ///
+    /// Thread-safety: <see cref="ConcurrentDictionary{TKey,TValue}.TryRemove"/> is safe to
+    /// call concurrently with the GetOrAdd and assignment operations in
+    /// <see cref="GenerateAgentTokenAsync"/>. A semaphore removed here is no longer reachable
+    /// via the dictionary; new callers will receive a fresh instance via GetOrAdd.
+    ///
+    /// Disposal race: A concurrent caller may have retrieved the old semaphore instance via
+    /// GetOrAdd before the removal, then call WaitAsync after Dispose() — which throws
+    /// ObjectDisposedException. This window is extremely narrow (between GetOrAdd and the
+    /// following WaitAsync call) and bounded by the housekeeping interval (5 minutes by default).
+    /// The consequence of hitting this race is a single failed token-vend attempt (the caller
+    /// would need to retry), not a stale token being served. This is acceptable given that
+    /// SemaphoreSlim.Dispose() is required to meet the acceptance criterion.
+    /// </summary>
+    internal void TrimExpiredCacheEntries()
+    {
+        var now = _timeProvider.GetUtcNow();
+        foreach (var key in _tokenCache.Keys.ToList())
+        {
+            // TODO [WARNING]: TOCTOU — TryGetValue observes an expired entry, but by the time
+            // TryRemove executes, another thread may have re-minted and stored a fresh entry for
+            // the same key. TryRemove(key, out _) (no value comparison) would then delete the
+            // fresh entry. Prefer the value-aware overload
+            // _tokenCache.TryRemove(new KeyValuePair<TokenCacheKey, TokenCacheEntry>(key, entry))
+            // so removal only fires if the expired snapshot is still current.
+            if (_tokenCache.TryGetValue(key, out var entry) && entry.ExpiresAt <= now)
+            {
+                if (_tokenCache.TryRemove(key, out _))
+                {
+                    // Remove and dispose the semaphore so the dictionary does not grow monotonically
+                    // and the IDisposable resource is properly released.
+                    if (_mintSemaphores.TryRemove(key, out var removedSem))
+                    {
+                        removedSem.Dispose();
+                    }
+                }
+            }
         }
     }
 

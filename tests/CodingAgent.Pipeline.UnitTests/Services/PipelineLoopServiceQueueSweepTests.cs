@@ -980,4 +980,130 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
         skippedCollector.GetMeasurementSnapshot().Should().ContainSingle(m => m.Value == 1);
         failedCollector.GetMeasurementSnapshot().Should().ContainSingle(m => m.Value == 1);
     }
+
+    // ── FetchPendingBatchAsync characterization: 500-item cap warning ─────────
+
+    [Fact]
+    public async Task SweepPendingWorkItemsAsync_WhenGetPendingReturns500Items_LogsWarning()
+    {
+        // The 500-item cap warning must be emitted when GetPendingAsync returns exactly 500 items.
+        // This characterizes existing behaviour in the fetch phase before FetchPendingBatchAsync
+        // is extracted — ensuring the warning path moves correctly into the new helper.
+        // TODO: [WARNING] The Moq verification below matches only the single-argument Warning(string)
+        // overload. If the log call is ever changed to use a structured argument
+        // (e.g. _logger.Warning("... {Count} ...", 500)) the verification will silently stop
+        // matching because Serilog dispatches to a different overload. Consider switching to a
+        // real log-capture sink or verifying the multi-argument overload to make this robust.
+        var items = Enumerable.Range(0, 500)
+            .Select(i => MakePendingItem(i.ToString(), "ip-1"))
+            .ToList();
+        _sweepClientMock
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(items);
+
+        var svc = CreateService(_sweepClientMock.Object);
+        // All items are in the eligibility set so nothing is cancelled — we only care about the log.
+        var issueEligibility = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            ["ip-1"] = new HashSet<string>(Enumerable.Range(0, 500).Select(i => i.ToString()), StringComparer.Ordinal)
+        };
+
+        await svc.SweepPendingWorkItemsAsync(issueEligibility, EmptyEligibilityMap(), sweepEnabled: true, CancellationToken.None);
+
+        _mockLogger.Verify(
+            l => l.Warning(It.Is<string>(s => s.Contains("500") && s.Contains("QueueSweep"))),
+            Times.Once,
+            "a Warning must be logged when GetPendingAsync returns the maximum 500 items");
+    }
+
+    // ── FetchPendingBatchAsync characterization: OperationCanceledException propagates ─
+
+    // TODO: [WARNING] Missing test: when GetPendingAsync throws a non-cancellation exception,
+    // FetchPendingBatchAsync should return null, SweepPendingWorkItemsAsync should abort the
+    // sweep (no items dispatched, no exception propagated to the caller). Without this test,
+    // a future refactor that removes the `if (pending is null) return;` guard or accidentally
+    // swallows the null signal would not be caught. Add a test similar to
+    // SweepPendingWorkItemsAsync_WhenGetPendingThrowsOperationCanceledException_Propagates but
+    // throwing a generic Exception and asserting no exception propagates and PostStatusAsync
+    // is never called.
+
+    [Fact]
+    public async Task SweepPendingWorkItemsAsync_WhenGetPendingThrowsOperationCanceledException_Propagates()
+    {
+        // OperationCanceledException from GetPendingAsync must propagate — it must NOT be caught
+        // and swallowed by the fetch-phase try/catch. This characterizes the `catch (OperationCanceledException) { throw; }`
+        // arm, which is the highest-risk path when extracting FetchPendingBatchAsync.
+        _sweepClientMock
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException("simulated cancellation"));
+
+        var svc = CreateService(_sweepClientMock.Object);
+        var issueEligibility = EligibilityMap("ip-1");
+
+        var act = () => svc.SweepPendingWorkItemsAsync(issueEligibility, EmptyEligibilityMap(), sweepEnabled: true, CancellationToken.None);
+
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            "OperationCanceledException from GetPendingAsync must propagate, not be caught and swallowed");
+    }
+
+    // ── ClassifyDispatchException unit tests ──────────────────────────────────
+
+    // TODO: [WARNING] Missing test: OperationCanceledException thrown by PostStatusAsync must
+    // propagate out of SweepPendingWorkItemsAsync. ClassifyDispatchException_WhenOperationCanceledException_ReturnsCancellation
+    // only verifies the classifier; it does not verify that DispatchPendingItemAsync actually
+    // executes `throw` on the Cancellation branch. If `case DispatchExceptionKind.Cancellation: throw;`
+    // were changed to `break`, the classifier test would still pass but the OCE would be silently
+    // swallowed. Add a test that sets up PostStatusAsync to throw OperationCanceledException and
+    // asserts the exception propagates from SweepPendingWorkItemsAsync (mirrors
+    // SweepPendingWorkItemsAsync_WhenGetPendingThrowsOperationCanceledException_Propagates for
+    // the dispatch phase).
+
+    [Theory]
+    [InlineData(System.Net.HttpStatusCode.BadRequest)]
+    [InlineData(System.Net.HttpStatusCode.NotFound)]
+    [InlineData(System.Net.HttpStatusCode.Conflict)]
+    public void ClassifyDispatchException_WhenHttpRaceStatusCode_ReturnsExpectedRace(
+        System.Net.HttpStatusCode statusCode)
+    {
+        var ex = new HttpRequestException("race", null, statusCode);
+
+        var result = PipelineLoopService.ClassifyDispatchException(ex);
+
+        result.Should().Be(DispatchExceptionKind.ExpectedRace,
+            $"HTTP {(int)statusCode} is an expected race and must not be counted as a failure");
+    }
+
+    [Fact]
+    public void ClassifyDispatchException_WhenOperationCanceledException_ReturnsCancellation()
+    {
+        var ex = new OperationCanceledException("cancelled");
+
+        var result = PipelineLoopService.ClassifyDispatchException(ex);
+
+        result.Should().Be(DispatchExceptionKind.Cancellation,
+            "OperationCanceledException must be classified as Cancellation so the caller can re-throw");
+    }
+
+    [Fact]
+    public void ClassifyDispatchException_WhenGenericException_ReturnsUnexpectedFailure()
+    {
+        var ex = new InvalidOperationException("unexpected");
+
+        var result = PipelineLoopService.ClassifyDispatchException(ex);
+
+        result.Should().Be(DispatchExceptionKind.UnexpectedFailure,
+            "generic exceptions must be classified as UnexpectedFailure and counted in the failed metric");
+    }
+
+    [Fact]
+    public void ClassifyDispatchException_WhenHttpExceptionWithNon409StatusCode_ReturnsUnexpectedFailure()
+    {
+        // HTTP 500 is NOT an expected race — it must be treated as an unexpected failure.
+        var ex = new HttpRequestException("server error", null, System.Net.HttpStatusCode.InternalServerError);
+
+        var result = PipelineLoopService.ClassifyDispatchException(ex);
+
+        result.Should().Be(DispatchExceptionKind.UnexpectedFailure,
+            "HTTP 500 is not an expected race status and must be counted as an unexpected failure");
+    }
 }

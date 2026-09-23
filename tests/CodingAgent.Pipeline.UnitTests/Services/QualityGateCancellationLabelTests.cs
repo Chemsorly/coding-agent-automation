@@ -66,6 +66,8 @@ public class QualityGateCancellationLabelTests
             .Returns(Task.CompletedTask);
         _mockCallbacks.Setup(c => c.CreatePullRequest(It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRun>()))
+            .Returns(Task.CompletedTask);
 
         // Default: issue ops complete successfully
         _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -79,7 +81,8 @@ public class QualityGateCancellationLabelTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(),
+                It.IsAny<string?>()))
             .ThrowsAsync(new OperationCanceledException());
 
         var context = BuildContext();
@@ -105,7 +108,8 @@ public class QualityGateCancellationLabelTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(),
+                It.IsAny<string?>()))
             .ThrowsAsync(new OperationCanceledException());
 
         var context = BuildContext();
@@ -125,7 +129,8 @@ public class QualityGateCancellationLabelTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(),
+                It.IsAny<string?>()))
             .ThrowsAsync(new OperationCanceledException());
 
         var context = BuildContext();
@@ -186,7 +191,8 @@ public class QualityGateCancellationLabelTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(),
+                It.IsAny<string?>()))
             .ThrowsAsync(new OperationCanceledException());
 
         var context = BuildContext();
@@ -201,6 +207,57 @@ public class QualityGateCancellationLabelTests
 
         // Assert: TransitionTo(Cancelled) is NOT called again
         _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Cancelled), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProceedToQualityGatesAsync_WhenCancelledDuringValidation_CallsAddRunToHistoryAsync()
+    {
+        // TODO: [WARNING] This test and the three other cancellation tests in this class each
+        // duplicate the identical four-line _mockValidator.Setup block inline. If ValidateAsync's
+        // signature changes again (as already happened once in this diff, requiring four independent
+        // updates), all tests must be updated separately rather than in one place. Consider extracting
+        // an ArrangeCancellationScenario() / SetUpCancellationPath() helper that centralises the
+        // validator setup for the cancellation scenario.
+        // Arrange: validator throws OperationCanceledException
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<WorkspacePath>(),
+                It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<string?>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var context = BuildContext();
+
+        // Act
+        await _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
+
+        // Assert: AddRunToHistoryAsync must be called exactly once on the cancellation path
+        _mockCallbacks.Verify(c => c.AddRunToHistoryAsync(_run), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProceedToQualityGatesAsync_WhenCancelledDuringValidation_EmitsCancelledOutputLine()
+    {
+        // Arrange
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<WorkspacePath>(),
+                It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<string?>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var emittedLines = new List<string>();
+        _mockCallbacks.Setup(c => c.EmitOutputLine(It.IsAny<string>()))
+            .Callback<string>(line => emittedLines.Add(line));
+
+        var context = BuildContext();
+
+        // Act
+        await _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
+
+        // Assert: the cancellation output line must have been emitted
+        emittedLines.Should().Contain("🚫 Pipeline cancelled",
+            "the cancellation arm must emit the pipeline cancelled output line");
     }
 
     private QualityGateContext BuildContext(CancellationTokenSource? orchestratorCts = null)

@@ -1,3 +1,4 @@
+using System.Net;
 using NGitLab;
 using NGitLab.Models;
 using Serilog;
@@ -49,7 +50,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
 
             return MapToIssueDetail(issue);
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 404)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             Log.Warning(ex, "Issue with identifier '{Identifier}' not found in project {ProjectId}", identifier, ProjectId);
             throw new InvalidOperationException(
@@ -144,7 +145,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
                 return $"{ApiUrl.TrimEnd('/')}/{PathWithNamespace}/-/issues/{iid}#note_{note.NoteId}";
             return null;
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 404)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             Log.Warning(ex, "Issue with identifier '{Identifier}' not found in project {ProjectId}", identifier, ProjectId);
             throw new InvalidOperationException(
@@ -169,7 +170,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
                 },
                 "UpdateComment", ct);
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 404)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             // Could be either issue not found or note not found
             var message = ex.Message?.Contains("note", StringComparison.OrdinalIgnoreCase) == true
@@ -238,7 +239,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
                 }, ct),
                 "RemoveLabel", ct);
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 404)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             // Issue not found — treat as no-op
         }
@@ -269,7 +270,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
                 }, ct),
                 "CloseIssue", ct);
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 404)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             Log.Warning(ex, "Issue with identifier '{Identifier}' not found in project {ProjectId}", identifier, ProjectId);
             throw new InvalidOperationException(
@@ -318,7 +319,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
 
             return string.Equals(issue.State, "closed", StringComparison.OrdinalIgnoreCase);
         }
-        catch (GitLabException ex) when ((int)ex.StatusCode == 404)
+        catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             Log.Warning("Issue #{IssueIid} not found when checking state in project {ProjectId}", iid, ProjectId);
             return false;
@@ -360,7 +361,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
                         ct),
                     "EnsureAgentLabels", ct);
             }
-            catch (GitLabException ex) when ((int)ex.StatusCode == 409 || (int)ex.StatusCode == 400)
+            catch (GitLabException ex) when (ex.StatusCode is HttpStatusCode.Conflict or HttpStatusCode.BadRequest)
             {
                 // Label already exists — skip (409 Conflict or 400 with "already exists" message)
             }
@@ -437,7 +438,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
                         ct),
                     "EnsureProjectLabel", ct);
             }
-            catch (GitLabException ex) when ((int)ex.StatusCode == 409 || (int)ex.StatusCode == 400)
+            catch (GitLabException ex) when (ex.StatusCode is HttpStatusCode.Conflict or HttpStatusCode.BadRequest)
             {
                 // Label already exists — skip
             }
