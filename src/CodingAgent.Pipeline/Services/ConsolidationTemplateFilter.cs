@@ -35,27 +35,6 @@ public static class ConsolidationTemplateFilter
     }
 
     /// <summary>
-    /// Returns the list of consolidation types supported by the given template.
-    /// Harness suggestions are global (not template-scoped) and are never included here.
-    /// </summary>
-    /// <param name="template">The pipeline job template to check.</param>
-    /// <returns>A list of supported consolidation run types for this template.</returns>
-    public static IReadOnlyList<ConsolidationRunType> GetSupportedTypes(PipelineJobTemplate template)
-    {
-        ArgumentNullException.ThrowIfNull(template);
-
-        var types = new List<ConsolidationRunType>();
-
-        if (SupportsBrainConsolidation(template))
-            types.Add(ConsolidationRunType.BrainConsolidation);
-
-        if (SupportsRefactoringDetection(template))
-            types.Add(ConsolidationRunType.RefactoringDetection);
-
-        return types;
-    }
-
-    /// <summary>
     /// Filters a collection of templates to only those that support the specified consolidation type.
     /// For <see cref="ConsolidationRunType.HarnessSuggestions"/>, returns an empty list
     /// (harness suggestions are global and not template-scoped).
