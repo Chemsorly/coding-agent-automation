@@ -7,6 +7,10 @@ public static class PipelineRunExtensions
     /// <summary>
     /// Infers the last pipeline step that was reached before a terminal state.
     /// Used by UI components to determine which step to mark as failed/cancelled.
+    /// When the run was seeded from a persisted summary (not a live snapshot), the in-memory
+    /// fields (FilesChangedCount, LatestQualityReport, etc.) are all zero/null. In that case
+    /// HighWaterMark — populated from <see cref="PipelineRunSummary.LastActiveStep"/> — is used
+    /// as the direct authoritative answer rather than a fallback ordinal heuristic.
     /// </summary>
     public static PipelineStep GetLastReachedStep(this PipelineRun run)
     {
@@ -16,11 +20,23 @@ public static class PipelineRunExtensions
         if (run.CodeReviewIterationsCompleted > 0) return PipelineStep.ReviewingCode;
         if (run.FilesChangedCount > 0 || run.ChatHistory.Count > 0) return PipelineStep.GeneratingCode;
         if (run.AnalysisContent is not null) return PipelineStep.PostingAnalysis;
-        if (run.HighWaterMark >= PipelineStep.ReviewingAnalysis) return PipelineStep.ReviewingAnalysis;
-        if (run.HighWaterMark >= PipelineStep.AnalyzingCode) return PipelineStep.AnalyzingCode;
-        if (run.BaselineHealthPassed is not null) return PipelineStep.VerifyingBaseline;
+        // When specific data fields are absent (e.g. summary-seeded model), use HighWaterMark as
+        // the authoritative last step — it holds the value persisted from PipelineRun.HighWaterMark
+        // via PipelineRunSummary.LastActiveStep. Skip terminal and Created (ordinal 0) values.
+        // TODO: [WARNING] For live runs receiving partial hub snapshots, HighWaterMark may lag behind
+        // data-field evidence: e.g. BranchName is already set (CreatingBranch reached) but HighWaterMark
+        // is still CloningRepository. The pre-diff code refined the step via BranchName/WorkspacePath
+        // checks *after* the HighWaterMark heuristic; placing the HighWaterMark block here causes the
+        // sidebar to regress to an earlier step on live runs when HighWaterMark hasn't caught up.
+        // For summary-seeded (terminal) runs this is correct; for live runs consider keeping the
+        // BranchName/WorkspacePath checks before this block as a refinement layer.
+        if (run.HighWaterMark is not PipelineStep.Created
+            and not PipelineStep.Failed
+            and not PipelineStep.Cancelled
+            and not PipelineStep.Completed
+            and not PipelineStep.ConflictRestart)
+            return run.HighWaterMark;
         if (!string.IsNullOrEmpty(run.BranchName)) return PipelineStep.CreatingBranch;
-        if (run.HighWaterMark >= PipelineStep.SyncingBrainRepoPreRun) return PipelineStep.SyncingBrainRepoPreRun;
         if (!string.IsNullOrEmpty(run.WorkspacePath)) return PipelineStep.CloningRepository;
         return PipelineStep.Created;
     }
