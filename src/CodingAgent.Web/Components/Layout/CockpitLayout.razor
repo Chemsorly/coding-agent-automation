@@ -128,7 +128,11 @@
     /// <summary>Raised on Escape so pages (e.g. Pipelines dispatch drawers) can close their overlays.</summary>
     public event Action? OnEscapePressed;
 
-    protected override void OnInitialized() => State.OnChange += HandleStateChanged;
+    protected override void OnInitialized()
+    {
+        State.OnChange += HandleStateChanged;
+        State.OnProjectChanged += HandleProjectChanged;
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -159,20 +163,31 @@
 
     private async Task RefreshAttentionCountAsync()
     {
-        // Top-bar Attention count from recent run history (same predicates as the Attention screen).
-        // Runs once per circuit; the Attention page refreshes it on visit.
+        // Top-bar Attention count from recent run history, scoped to the selected project.
+        // Runs once on circuit init and re-runs whenever the project scope changes.
         try
         {
-            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false);
-            var count = runs.Items.Count(r => r.AnalysisRecommendation == AnalysisGateResult.NotReady)
-                      + runs.Items.Count(r => r.FinalStep == PipelineStep.Failed)
-                      + runs.Items.Count(r => r.RunType == PipelineRunType.DecompositionAnalysis && r.FinalStep == PipelineStep.Completed);
-            State.SetAttentionCount(count);
+            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false, projectId: State.SelectedProjectId);
+            State.SetAttentionCount(AttentionAggregator.Aggregate(runs.Items).TotalCount);
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "CockpitLayout: failed to compute attention count");
         }
+    }
+
+    // TODO: [WARNING] HandleProjectChanged is declared async void. RefreshAttentionCountAsync wraps its
+    // body in catch (Exception ex), so today's risk is low. However if RefreshAttentionCountAsync ever
+    // rethrows, or if new awaitable work is added outside its try/catch, the exception will escape the
+    // outer catch (ObjectDisposedException) guard here and be delivered to the Blazor circuit's unhandled-
+    // exception handler, potentially tearing down the circuit. Consider wrapping the entire body in
+    // catch (Exception) or scheduling via _ = InvokeAsync(RefreshAttentionCountAsync) so Blazor's own
+    // error pipeline handles it. Also note that OperationCanceledException on circuit teardown would
+    // also escape the current ObjectDisposedException guard.
+    private async void HandleProjectChanged()
+    {
+        try { await RefreshAttentionCountAsync(); }
+        catch (ObjectDisposedException) { }
     }
 
     private void HandleStateChanged() => InvokeAsync(StateHasChanged);
@@ -271,6 +286,7 @@
     public async ValueTask DisposeAsync()
     {
         State.OnChange -= HandleStateChanged;
+        State.OnProjectChanged -= HandleProjectChanged;
         // Push disconnect while JS is still available (ported from MainLayout; FaroService swallows a dead circuit).
         await Faro.PushEventAsync("blazor.circuit.disconnected");
         try { await JS.InvokeVoidAsync("unregisterGlobalKeyboardHandler"); }

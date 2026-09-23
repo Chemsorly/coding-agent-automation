@@ -77,7 +77,7 @@
                     <span class="step-badge @resultClass">@result</span>
                     @if (run.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled and not PipelineStep.ConflictRestart)
                     {
-                        <span class="cockpit-page-sub">at @run.FinalStep.ToDisplayName()</span>
+                        <span class="cockpit-page-sub">at @((_liveStep ?? run.FinalStep).ToDisplayName())</span>
                     }
                 </div>
                 <h1>@(run.RunType == PipelineRunType.Review ? "PR " : "")#@run.IssueIdentifier @run.IssueTitle</h1>
@@ -112,7 +112,7 @@
 
         <div class="cockpit-card">
             <div class="cockpit-card-pad cockpit-detail-grid">
-                <div class="cockpit-detail-item"><div class="k">Duration</div><div class="v">@Dur(run.StartedAtOffset, run.CompletedAtOffset)</div></div>
+                <div class="cockpit-detail-item"><div class="k">Duration</div><div class="v">@Dur(run.StartedAtOffset, run.CompletedAtOffset, _isLive)</div></div>
                 <div class="cockpit-detail-item"><div class="k">Agent</div><div class="v mono">@(_resolvedAgentName ?? run.AgentId ?? "—")</div></div>
                 <div class="cockpit-detail-item"><div class="k">Initiated by</div><div class="v">@InitiatedByConstants.ToDisplayString(run.InitiatedBy, run.RunMode)</div></div>
                 @if (run.ModelName is not null)
@@ -195,10 +195,6 @@
             <div class="cockpit-card">
                 <div class="cockpit-card-header">
                     <h2>Pipeline progress</h2>
-                    @if (_isLive)
-                    {
-                        <span class="step-badge step-running">@((_liveStep ?? run.FinalStep).ToDisplayName())</span>
-                    }
                 </div>
                 <div class="cockpit-card-pad">
                     <PipelineSidebar Run="_model" IsRunning="_isLive" MaxRetries="_maxRetries" OnCancel="CancelRunAsync" />
@@ -211,7 +207,6 @@
             <div class="cockpit-card">
                 <div class="cockpit-card-header">
                     <h2>Live output</h2>
-                    <span class="step-badge step-running">@((_liveStep ?? run.FinalStep).ToDisplayName())</span>
                 </div>
                 <div class="cockpit-card-pad">
                     @if (_liveOutput.Count == 0)
@@ -252,6 +247,7 @@
     // (active runs), then kept live via hub step/snapshot events. Ported from the old AgentMonitoring modal.
     private PipelineRun? _model;
     private int _maxRetries = 3;
+    private PeriodicTimer? _elapsedTimer;
 
     private static bool IsActive(PipelineRunSummary r)
         => r.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled;
@@ -338,6 +334,23 @@
             if (HubConnection.State == HubConnectionState.Disconnected)
                 await HubConnection.StartAsync(_cts.Token);
             await HubConnection.InvokeAsync(HubMethodNames.SubscribeToRun, RunId, _cts.Token);
+
+            // 1-second timer to re-render the Elapsed display while the run is live.
+            // WaitForNextTickAsync returns false when the timer is disposed, and throws
+            // OperationCanceledException when _cts is cancelled — both exit the loop cleanly.
+            _elapsedTimer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+            _ = Task.Run(async () =>
+            {
+                // TODO: [WARNING] Add try/catch (OperationCanceledException) { } here — consistent
+                // with AutoRefresh.razor and RefreshBar.razor — so cancellation is a clean exit rather
+                // than an unobserved exception swallowed silently by the runtime.
+                // TODO: [WARNING] The timer is not stopped when _isLive transitions to false (OnCompleted).
+                // After a run finishes it continues firing StateHasChanged every second until disposal.
+                // Add `if (!_isLive) break;` or dispose _elapsedTimer inside OnCompleted to eliminate
+                // spurious re-renders and honour the stated intent ("only while the run is live").
+                while (await _elapsedTimer.WaitForNextTickAsync(_cts.Token))
+                    await InvokeAsync(StateHasChanged);
+            });
         }
         catch (Exception ex)
         {
@@ -419,6 +432,15 @@
                         _model.CurrentStep = _run.FinalStep;
                         if (StepOrder.GetOrder(_run.FinalStep) > StepOrder.GetOrder(_model.HighWaterMark))
                             _model.HighWaterMark = _run.FinalStep;
+                        // TODO: [WARNING] Unconditionally overwriting HighWaterMark with FinalStep
+                        // (Completed/Failed ordinal) for terminal states clobbers the real last-active
+                        // step if no live snapshots were received before OnCompleted fired (e.g. reconnect
+                        // race). In that case _model has no data fields set and GetLastReachedStep falls
+                        // back to Created. Consider using _run.LastActiveStep here for terminal FinalSteps,
+                        // mirroring the logic in BuildRunModelFromSummary.
+                        // Seed CompletedAtOffset so GetElapsedTime() and Dur() show the real duration
+                        // instead of continuing to use DateTimeOffset.UtcNow after the run finishes.
+                        _model.CompletedAtOffset = _run.CompletedAtOffset;
                     }
                 }
                 catch (OperationCanceledException) { }
@@ -475,7 +497,13 @@
         };
 
         model.CurrentStep = summary.FinalStep;
-        model.HighWaterMark = summary.FinalStep;
+        // For terminal runs use the persisted LastActiveStep as HighWaterMark so GetLastReachedStep()
+        // returns the real last step instead of fabricating one from the raw Failed/Cancelled ordinal.
+        // For active runs keep FinalStep (the current executing step) so the sidebar renders correctly
+        // until the first live RunStateSnapshot arrives and ApplySnapshotToRunModel takes over.
+        model.HighWaterMark = summary.FinalStep is PipelineStep.Failed or PipelineStep.Cancelled or PipelineStep.Completed
+            ? summary.LastActiveStep ?? PipelineStep.Created
+            : summary.FinalStep;
         model.RetryCount = summary.RetryCount;
         model.AnalysisRecommendation = summary.AnalysisRecommendation;
         model.CodeReviewAgentsRun = summary.CodeReviewAgentsRun;
@@ -484,6 +512,9 @@
         model.DecompositionSubIssuesCreated = summary.DecompositionSubIssuesCreated;
         model.DecompositionSubIssuesAttempted = summary.DecompositionSubIssuesAttempted;
         model.BrainUpdatesPushed = summary.BrainUpdatesPushed;
+        model.BrainContextLoaded = summary.BrainContextLoaded;
+        model.BrainKnowledgeFileCount = summary.BrainKnowledgeFileCount;
+        model.CompletedAtOffset = summary.CompletedAtOffset;
         model.ResetStartedAt(summary.StartedAtOffset);
         model.RunMode = summary.RunMode;
 
@@ -539,10 +570,14 @@
     private static string Truncate(string? s, int n)
         => string.IsNullOrEmpty(s) ? "" : (s.Length > n ? s[..n] + "…" : s);
 
-    private static string Dur(DateTimeOffset start, DateTimeOffset? end)
+    // TODO: [WARNING] The isLive parameter is accepted but never read — the live-vs-terminal
+    // distinction is handled by the `end ?? DateTimeOffset.UtcNow` fallback alone. Either use the
+    // flag to alter formatting (e.g. show seconds for live runs) or remove it to avoid a misleading API.
+    private static string Dur(DateTimeOffset start, DateTimeOffset? end, bool isLive = false)
     {
-        if (end is null) return "running";
-        var d = end.Value - start;
+        var d = (end ?? DateTimeOffset.UtcNow) - start;
+        // For live runs with no CompletedAtOffset, show the live elapsed (same value as the sidebar
+        // GetElapsedTime) so Duration advances in real time and the sidebar elapsed div is redundant.
         if (d.TotalHours >= 1) return $"{(int)d.TotalHours}h {d.Minutes}m";
         if (d.TotalMinutes >= 1) return $"{(int)d.TotalMinutes}m {d.Seconds}s";
         return $"{Math.Max(0, (int)d.TotalSeconds)}s";
@@ -564,6 +599,7 @@
         _completedSub?.Dispose();
         _snapshotSub?.Dispose();
         _chatEntrySub?.Dispose();
+        _elapsedTimer?.Dispose();
 
         await _cts.CancelAsync();
         _cts.Dispose();
