@@ -184,7 +184,7 @@ public sealed partial class PipelineLoopService
 
         if (_stopRequested || ct.IsCancellationRequested) return false;
 
-        lock (_lock) { StatusMessage = $"🔄 Cycle complete. Polling {snapshot.EnabledTemplates.Count} templates every {(int)snapshot.Config.ClosedLoopPollInterval.TotalSeconds}s."; }
+        lock (_lock) { StatusMessage = $"🔄 Cycle complete. Polling {snapshot.EnabledTemplates.Count} {(snapshot.EnabledTemplates.Count == 1 ? "template" : "templates")} every {(int)snapshot.Config.ClosedLoopPollInterval.TotalSeconds}s."; }
         NotifyChange();
         await DelayOrStop(snapshot.Config.ClosedLoopPollInterval, ct);
         return true;

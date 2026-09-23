@@ -193,19 +193,24 @@
             var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false, projectId: State.SelectedProjectId, ct: _cts.Token);
             var items = runs.Items;
 
-            var needsRefinement = items.Where(r => r.AnalysisRecommendation == AnalysisGateResult.NotReady).ToList();
-            var failed = items.Where(r => r.FinalStep == PipelineStep.Failed).ToList();
-            var plans = items.Where(r => r.RunType == PipelineRunType.DecompositionAnalysis && r.FinalStep == PipelineStep.Completed).ToList();
+            // TODO: [WARNING] items is passed directly to AttentionAggregator.Aggregate. The aggregator
+            // docs state "the caller is responsible for passing only non-active runs when that is the
+            // desired scope." GetRunHistoryAsync is called with includeActive: false above, so the server
+            // should already exclude active runs. However, if a run somehow has FinalStep == Failed while
+            // still technically active (race condition or stale state), it could appear in FailedRuns here.
+            // For consistency with Overview.razor, consider applying a client-side IsActive() filter before
+            // passing to Aggregate, or document that includeActive: false is the sole guard.
+            var attn = AttentionAggregator.Aggregate(items);
 
             _sections = new()
             {
-                new("alert-triangle", "#B45309", "var(--warning-bg)", "Needs refinement", needsRefinement,
+                new("alert-triangle", "#B45309", "var(--warning-bg)", "Needs refinement", attn.NeedsRefinement.ToList(),
                     _ => "Confidence gate: scope not ready — refine on the issue"),
-                new("x-circle", "#DC2626", "var(--error-bg)", "Failed runs", failed,
+                new("x-circle", "#DC2626", "var(--error-bg)", "Failed runs", attn.FailedRuns.ToList(),
                     r => string.IsNullOrEmpty(r.FailureReason)
                         ? (r.RetryCount > 0 ? $"Failed after {r.RetryCount} retries" : "Failed")
                         : r.FailureReason),
-                new("puzzle", "#4F46E5", "var(--bg-active)", "Decomposition plans posted", plans,
+                new("puzzle", "#4F46E5", "var(--bg-active)", "Decomposition plans posted", attn.PlansToApprove.ToList(),
                     _ => "Plan posted — approve by adding agent:epic-approved on the issue"),
             };
 
