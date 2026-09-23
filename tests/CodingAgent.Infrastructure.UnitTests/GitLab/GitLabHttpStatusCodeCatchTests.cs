@@ -86,10 +86,10 @@ public class GitLabHttpStatusCodeCatchTests
     {
         var labelClientMock = new Mock<ILabelClient>();
         labelClientMock
-            .Setup(c => c.CreateProjectLabel(It.IsAny<int>(), It.IsAny<ProjectLabelCreate>()))
+            .Setup(c => c.CreateProjectLabel(It.IsAny<long>(), It.IsAny<ProjectLabelCreate>()))
             .Throws(ex);
         labelClientMock
-            .Setup(c => c.ForProject(It.IsAny<int>()))
+            .Setup(c => c.ForProject(It.IsAny<long>()))
             .Returns([]);
 
         var clientMock = new Mock<IGitLabClient>();
@@ -107,7 +107,16 @@ public class GitLabHttpStatusCodeCatchTests
             .Setup(c => c.Create(It.IsAny<ProjectIssueNoteCreate>()))
             .Throws(ex);
 
-        var clientMock = new Mock<IGitLabClient>();
+        // Use MockBehavior.Loose so that GetProjectIssueNoteClient always returns our mock
+        // regardless of how the ProjectId int→long→NGitLab.Models.ProjectId conversion resolves.
+        var clientMock = new Mock<IGitLabClient>(MockBehavior.Loose);
+        clientMock
+            .Setup(c => c.GetProjectIssueNoteClient(It.IsAny<NGitLab.Models.ProjectId>()))
+            .Returns(noteClientMock.Object);
+        // Also set up a catch-all via the indexer returning the same mock for any ProjectId value
+        clientMock
+            .SetupAllProperties();
+        // Re-set GetProjectIssueNoteClient after SetupAllProperties
         clientMock
             .Setup(c => c.GetProjectIssueNoteClient(It.IsAny<NGitLab.Models.ProjectId>()))
             .Returns(noteClientMock.Object);
@@ -125,7 +134,12 @@ public class GitLabHttpStatusCodeCatchTests
             .Setup(c => c.Edit(It.IsAny<ProjectIssueNoteEdit>()))
             .Throws(ex);
 
-        var clientMock = new Mock<IGitLabClient>();
+        var clientMock = new Mock<IGitLabClient>(MockBehavior.Loose);
+        clientMock
+            .Setup(c => c.GetProjectIssueNoteClient(It.IsAny<NGitLab.Models.ProjectId>()))
+            .Returns(noteClientMock.Object);
+        clientMock
+            .SetupAllProperties();
         clientMock
             .Setup(c => c.GetProjectIssueNoteClient(It.IsAny<NGitLab.Models.ProjectId>()))
             .Returns(noteClientMock.Object);
@@ -407,6 +421,109 @@ public class GitLabHttpStatusCodeCatchTests
 
         // Should not throw — 404 on branch delete is treated as already-deleted
         var act = () => provider.DeleteBranchAsync("feature/gone", CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    // ─── GitLabRepositoryProvider.MergeRequests — RemovePrLabelAsync ─────────
+
+    /// <summary>
+    /// RemovePrLabelAsync — NotFound catch (ex.StatusCode == HttpStatusCode.NotFound):
+    /// GitLab returns 404 when the MR doesn't exist. The provider must swallow this
+    /// as a no-op rather than propagating the error.
+    /// Verifies the HttpStatusCode.NotFound catch clause in RemovePrLabelAsync.
+    /// </summary>
+    [Fact]
+    public async Task RemovePrLabelAsync_NotFound_IsNoOp()
+    {
+        var mrClientMock = new Mock<IMergeRequestClient>();
+        mrClientMock
+            .Setup(c => c.Update(It.IsAny<long>(), It.IsAny<MergeRequestUpdate>()))
+            .Throws(NotFoundEx());
+
+        var clientMock = new Mock<IGitLabClient>();
+        clientMock
+            .Setup(c => c.GetMergeRequest(It.IsAny<NGitLab.Models.ProjectId>()))
+            .Returns(mrClientMock.Object);
+
+        var provider = new GitLabRepositoryProvider(clientMock.Object, 1, "main");
+
+        // Should not throw — 404 on RemovePrLabel is treated as no-op
+        var act = () => provider.RemovePrLabelAsync(1, "some-label", CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    // ─── GitLabIssueProvider — EnsureProjectLabelsExistAsync (via AddLabelsAsync) ─
+
+    /// <summary>
+    /// EnsureProjectLabelsExistAsync — Conflict catch (ex.StatusCode is HttpStatusCode.Conflict):
+    /// When project label creation returns 409, the catch clause swallows it (label already exists).
+    /// Verified indirectly through AddLabelsAsync which calls EnsureProjectLabelsExistAsync.
+    /// Verifies the HttpStatusCode.Conflict catch clause in EnsureProjectLabelsExistAsync.
+    /// </summary>
+    [Fact]
+    public async Task AddLabelsAsync_LabelCreationConflict_SilentlySkips()
+    {
+        // Labels.CreateProjectLabel throws 409, Issues.GetAsync and EditAsync succeed
+        var minimalIssue = new Issue { IssueId = 1, Title = "Test", State = "opened", Labels = [] };
+
+        var labelClientMock = new Mock<ILabelClient>();
+        labelClientMock
+            .Setup(c => c.CreateProjectLabel(It.IsAny<long>(), It.IsAny<ProjectLabelCreate>()))
+            .Throws(ConflictEx());
+
+        var issueClientMock = new Mock<IIssueClient>();
+        issueClientMock
+            .Setup(c => c.GetAsync(It.IsAny<long>(), It.IsAny<long>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(minimalIssue);
+        issueClientMock
+            .Setup(c => c.EditAsync(It.IsAny<IssueEdit>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(minimalIssue);
+
+        var clientMock = new Mock<IGitLabClient>();
+        clientMock.Setup(c => c.Labels).Returns(labelClientMock.Object);
+        clientMock.Setup(c => c.Issues).Returns(issueClientMock.Object);
+
+        var provider = new GitLabIssueProvider(clientMock.Object, 1);
+
+        // Should not throw — 409 on EnsureProjectLabelsExistAsync is a no-op
+        var act = () => provider.AddLabelsAsync("1", ["bug"], CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    /// <summary>
+    /// EnsureProjectLabelsExistAsync — BadRequest catch (ex.StatusCode is HttpStatusCode.BadRequest):
+    /// When project label creation returns 400, the catch clause swallows it (label already exists).
+    /// Verifies the HttpStatusCode.BadRequest catch clause in EnsureProjectLabelsExistAsync.
+    /// </summary>
+    [Fact]
+    public async Task AddLabelsAsync_LabelCreationBadRequest_SilentlySkips()
+    {
+        var minimalIssue = new Issue { IssueId = 1, Title = "Test", State = "opened", Labels = [] };
+
+        var labelClientMock = new Mock<ILabelClient>();
+        labelClientMock
+            .Setup(c => c.CreateProjectLabel(It.IsAny<long>(), It.IsAny<ProjectLabelCreate>()))
+            .Throws(BadRequestEx());
+
+        var issueClientMock = new Mock<IIssueClient>();
+        issueClientMock
+            .Setup(c => c.GetAsync(It.IsAny<long>(), It.IsAny<long>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(minimalIssue);
+        issueClientMock
+            .Setup(c => c.EditAsync(It.IsAny<IssueEdit>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(minimalIssue);
+
+        var clientMock = new Mock<IGitLabClient>();
+        clientMock.Setup(c => c.Labels).Returns(labelClientMock.Object);
+        clientMock.Setup(c => c.Issues).Returns(issueClientMock.Object);
+
+        var provider = new GitLabIssueProvider(clientMock.Object, 1);
+
+        // Should not throw — 400 on EnsureProjectLabelsExistAsync is a no-op
+        var act = () => provider.AddLabelsAsync("1", ["bug"], CancellationToken.None);
 
         await act.Should().NotThrowAsync();
     }
