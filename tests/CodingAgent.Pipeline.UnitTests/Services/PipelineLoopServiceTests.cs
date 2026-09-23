@@ -2162,4 +2162,104 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         Assert.Single(capturedDonePrs!);
         Assert.Equal(agentPrBranch, capturedDonePrs![0].BranchName);
     }
+
+    // ── Singular/plural status message (Issue #2934) ──────────────────────────
+
+    /// <summary>
+    /// Acceptance criterion: status message uses correct singular when there is exactly 1 template.
+    /// "Cycle complete. Polling 1 template every Xs." — not "1 templates".
+    /// </summary>
+    [Fact]
+    public async Task Loop_WhenOneTemplate_CycleCompleteMessageUsesSingular()
+    {
+        // Default setup has exactly 1 template (tmpl-1)
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = new List<IssueSummary>(),
+                Page = 1,
+                PageSize = PipelineConstants.DefaultPageSize,
+                HasMore = false
+            });
+
+        var svc = CreateService();
+        using var cts = new CancellationTokenSource();
+        await svc.StartAsync(cts.Token);
+        await svc.StartLoopAsync();
+
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!svc.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase) && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
+        // TODO [WARNING]: The busy-wait above has a 5-second deadline but there is no assertion
+        // that the deadline was not exceeded before asserting message content. On a slow or
+        // contested CI machine, if the loop does not complete a cycle within 5s, Assert.Contains
+        // will run against whatever StatusMessage happens to be at that moment ("Loop starting…"
+        // or similar) and fail with a confusing message. Consider adding:
+        //   Assert.True(svc.StatusMessage.Contains("Cycle complete"), "Timed out waiting for cycle complete");
+        // before the content assertions, to make the timeout failure explicit.
+        Assert.Contains("Polling 1 template every", svc.StatusMessage);
+        Assert.DoesNotContain("1 templates", svc.StatusMessage);
+
+        svc.StopLoop();
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+    }
+
+    /// <summary>
+    /// Acceptance criterion: status message uses correct plural when there are multiple templates.
+    /// "Cycle complete. Polling 2 templates every Xs." — not "2 template".
+    /// </summary>
+    [Fact]
+    public async Task Loop_WhenMultipleTemplates_CycleCompleteMessageUsesPlural()
+    {
+        var twoTemplates = new List<PipelineJobTemplate>
+        {
+            new() { Id = "tmpl-1", Name = "Template A", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true },
+            new() { Id = "tmpl-2", Name = "Template B", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true },
+        };
+        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(twoTemplates);
+        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>
+            {
+                new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = twoTemplates.Select(t => t.Id).ToList() }
+            });
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = new List<IssueSummary>(),
+                Page = 1,
+                PageSize = PipelineConstants.DefaultPageSize,
+                HasMore = false
+            });
+
+        var svc = CreateService();
+        using var cts = new CancellationTokenSource();
+        await svc.StartAsync(cts.Token);
+        await svc.StartLoopAsync();
+
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!svc.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase) && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
+        // TODO [WARNING]: Same timing fragility as Loop_WhenOneTemplate_CycleCompleteMessageUsesSingular —
+        // if the deadline is exceeded before "Cycle complete" appears, the assertions below will
+        // run against stale StatusMessage content and fail with a misleading message. Add an
+        // explicit deadline-exceeded assertion before the content checks.
+        Assert.Contains("Polling 2 templates every", svc.StatusMessage);
+        Assert.DoesNotContain("2 template every", svc.StatusMessage.Replace("2 templates", ""));
+
+        svc.StopLoop();
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+    }
 }

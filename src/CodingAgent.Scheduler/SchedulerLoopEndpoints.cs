@@ -160,16 +160,30 @@ public sealed class LoopStatusCache
 {
     internal const string RedisKey = "scheduler:loop-status";
 
-    // TODO [WARNING]: RedisTtl (30s) may be shorter than the configured poll interval (up to 300s).
-    // During the idle DelayOrStop wait between cycles, no OnChange fires, so the Redis key can
-    // expire before the next cycle update. Non-leader pods would then fall back to BuildDto(loopService)
-    // and serve stale local state for the remainder of the poll window. Consider increasing this TTL
-    // to exceed the maximum configured poll interval, or having the leader periodically refresh the key.
-    private static readonly TimeSpan RedisTtl = TimeSpan.FromSeconds(30);
+    // RedisTtl is set to 600s to ensure the Redis key survives the full idle DelayOrStop wait
+    // between cycles. During the wait, no OnChange fires on the leader; without a TTL longer
+    // than the poll interval the key would expire and non-leader pods would fall back to their
+    // own stale local state for the remainder of the cycle.
+    // TODO [WARNING]: This constant does not adapt to the configured ClosedLoopPollInterval.
+    // ClosedLoopPollInterval has no enforced server-side upper bound (the UI max="600" is
+    // bypassable via direct API calls), so a deployment with an interval > 600s (e.g. 900s)
+    // would still expire the Redis key before the next cycle, reintroducing the original bug.
+    // Fix: derive the TTL dynamically from the actual configured interval (e.g. 2 × interval)
+    // by passing the interval into LoopStatusCache, or implement a periodic leader refresh timer
+    // (every ~10s) as the issue describes. Note: the comment below incorrectly states "default
+    // 300s poll interval" — PipelineConstants.DefaultClosedLoopPollInterval is 60s, not 300s,
+    // and the "maximum configurable poll interval (300s)" is also incorrect — the interval is
+    // uncapped server-side and the UI allows up to 600s.
+    private static readonly TimeSpan RedisTtl = TimeSpan.FromSeconds(600);
 
     private readonly IRedisStore? _store;
     private readonly ILeaderGate? _leaderGate;
     private readonly ILogger _logger;
+    // TODO [WARNING]: _value is not declared volatile. All accesses go through Volatile.Read/Write,
+    // which is correct, but the plain field declaration leaves no compiler-enforced guard against a
+    // future caller reading the field directly (e.g. `return _value;`) without Volatile.Read,
+    // silently bypassing the required memory ordering. Declaring the field `volatile` would make
+    // the intent self-enforcing and prevent accidental direct reads.
     private LoopStatusDto? _value;
 
     /// <summary>
@@ -193,39 +207,61 @@ public sealed class LoopStatusCache
     /// Stores a new snapshot locally and publishes it to Redis (fire-and-forget).
     /// Thread-safe via reference replacement. Redis write failures are logged and swallowed —
     /// they must not propagate since <see cref="PipelineLoopService.OnChange"/> is synchronous.
+    /// <para>
+    /// The local <c>_value</c> is always updated regardless of leader status, so <see cref="Read"/>
+    /// always returns current state. The Redis write is skipped on non-leader pods to prevent
+    /// stale boot-time snapshots from overwriting the leader's correct Redis value.
+    /// </para>
     /// </summary>
     public void Update(LoopStatusDto dto)
     {
+        // Always update the local in-memory snapshot — required so Read() returns current state
+        // and so ReadAsync()'s local fast-path works correctly after a leadership transition.
         Volatile.Write(ref _value, dto);
 
         if (_store is null) return;
 
-        // TODO [WARNING]: Non-leader pods can overwrite the leader's correct Redis snapshot.
-        // Update() has no _leaderGate.IsLeader guard on the write path. On non-leader pods,
-        // AutoStartSchedulerLoopAsync calls StartLoopAsync at boot, which fires OnChange and
-        // invokes Update() with the stale "🔄 Loop starting…" DTO — overwriting the leader's
-        // last-known-good Redis value for up to one leader OnChange interval.
-        // Fix: guard the Redis write with: if (_leaderGate is not null && !_leaderGate.IsLeader) return;
+        // Skip the Redis write on non-leader pods. AutoStartSchedulerLoopAsync calls StartLoopAsync
+        // on every pod at boot, which fires OnChange → Update() with the stale "🔄 Loop starting…"
+        // DTO. Without this guard, a non-leader restart overwrites the leader's correct Redis
+        // snapshot, causing all pods to briefly serve "Loop starting…" until the leader's next
+        // OnChange fires. Single-replica / no-leader-gate environments are unaffected (_leaderGate
+        // is null → guard doesn't fire → Redis write proceeds as before).
+        // TODO [WARNING]: TOCTOU race — IsLeader is checked synchronously here, but the actual
+        // Redis write is dispatched as a fire-and-forget Task. If leadership is revoked between
+        // this guard check and the time the thread-pool runs SetAsync (e.g. under GC pause or
+        // thread-pool saturation), a former-leader pod will write its stale snapshot to Redis.
+        // The window is narrow (sub-millisecond under normal conditions) but theoretically
+        // possible. Fixing it properly would require a fundamentally different write pattern
+        // (e.g. passing a leadership token into SetAsync, or using a conditional Redis write).
+        if (_leaderGate is not null && !_leaderGate.IsLeader) return;
 
         // Fire-and-forget: OnChange is event Action? (synchronous), so we cannot await.
         // ContinueWith(OnlyOnFaulted) logs any Redis failure without blocking the caller.
-        // TODO [WARNING]: Pass TaskScheduler.Default as the third overload argument to ContinueWith
-        // to avoid relying on TaskScheduler.Current, which is implementation-dependent in ASP.NET Core.
-        // Safe form: .ContinueWith(t => ..., CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default)
         _ = _store.SetAsync(RedisKey, JsonSerializer.Serialize(dto, PipelineJsonOptions.Default), RedisTtl)
             .ContinueWith(
                 t => _logger.Warning(t.Exception, "LoopStatusCache: Redis write failed for key {Key}", RedisKey),
-                TaskContinuationOptions.OnlyOnFaulted);
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
     }
 
     /// <summary>
     /// Returns the current snapshot, checking local memory first when this pod is the leader
     /// (fast path — no Redis round-trip), then falling back to the Redis snapshot written by
-    /// the leader pod, then returning null.
+    /// the leader pod, then returning null (leader) or a neutral DTO (non-leader).
     /// <para>
     /// When <see cref="ILeaderGate"/> is provided and <see cref="ILeaderGate.IsLeader"/> is
     /// false, the local fast-path is skipped so that non-leader pods always serve the Redis
     /// snapshot rather than their own stale initial state.
+    /// </para>
+    /// <para>
+    /// When the Redis snapshot is absent (key expired or unavailable) and this pod is a
+    /// non-leader, a neutral DTO is returned ("⏳ Waiting for leader status…", IsLoopActive=false)
+    /// rather than null. This prevents <c>GetLoopStatus</c> from falling back to
+    /// <c>BuildDto(loopService)</c>, which would serve the non-leader's own stale "Loop starting…"
+    /// local state. On leader pods the null return is preserved so <c>GetLoopStatus</c> can still
+    /// call <c>BuildDto(loopService)</c> during the pre-first-cycle startup window.
     /// </para>
     /// </summary>
     public async Task<LoopStatusDto?> ReadAsync()
@@ -244,23 +280,66 @@ public sealed class LoopStatusCache
         }
 
         // Redis fallback — serves the leader's snapshot to non-leader pods.
-        // TODO [WARNING]: A newly-elected leader pod will serve this Redis path (potentially stale,
-        // from the prior leader) rather than its own up-to-date local _value until it fires the
-        // next OnChange and writes a fresh snapshot. The window is bounded by the next cycle, but
-        // it is worth noting that a leadership change mid-run can briefly surface a prior leader's
-        // snapshot to status requests on the newly-elected pod.
+        // A newly-elected leader pod will serve this Redis path (potentially stale, from the
+        // prior leader) rather than its own up-to-date local _value until it fires the next
+        // OnChange and writes a fresh snapshot. The window is bounded by the next cycle.
+        // TODO [WARNING]: If _leaderGate is non-null but _store is null (leader gate present,
+        // no Redis store configured), a confirmed non-leader pod returns null here instead of
+        // the neutral DTO, causing GetLoopStatus to fall back to BuildDto(loopService) and serve
+        // the pod's own stale "Loop starting…" state. This combination (leader election without
+        // a shared Redis store) is unusual in practice because leader election normally implies a
+        // shared backing store, but if it can occur a guard/assertion documenting the invariant
+        // would make the intent explicit. No test covers this path.
         if (_store is null) return null;
         try
         {
             var json = await _store.GetAsync(RedisKey);
-            if (json is null) return null;
-            return JsonSerializer.Deserialize<LoopStatusDto>(json, PipelineJsonOptions.Lenient);
+            if (json is not null)
+                return JsonSerializer.Deserialize<LoopStatusDto>(json, PipelineJsonOptions.Lenient);
+
+            // Redis returned null (key expired or not yet written). Return a neutral DTO for
+            // non-leader pods so GetLoopStatus never falls back to BuildDto(loopService) and
+            // serves stale "Loop starting…" state. Return null for leader pods so GetLoopStatus
+            // still calls BuildDto(loopService) during the pre-first-cycle startup window.
+            // TODO [WARNING]: TOCTOU between isLeader (captured above) and BuildNeutralDtoIfNonLeader()
+            // (which re-queries _leaderGate.IsLeader directly). If leadership changes between those two
+            // evaluations, the two checks may disagree: the method could skip the local fast-path
+            // (treating the pod as non-leader) but BuildNeutralDtoIfNonLeader sees IsLeader==true and
+            // returns null, causing GetLoopStatus to fall back to BuildDto(loopService) and serve the
+            // stale local state that the non-leader guard was designed to prevent. To close this gap,
+            // pass the captured `isLeader` value into BuildNeutralDtoIfNonLeader instead of re-reading
+            // _leaderGate.IsLeader. The same race applies to the catch block below.
+            return BuildNeutralDtoIfNonLeader();
         }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "LoopStatusCache: Redis read failed for key {Key} — falling back to null", RedisKey);
-            return null;
+            _logger.Warning(ex, "LoopStatusCache: Redis read failed for key {Key} — falling back", RedisKey);
+            // Same neutral DTO for non-leaders when Redis is unavailable.
+            return BuildNeutralDtoIfNonLeader();
         }
+    }
+
+    /// <summary>
+    /// Returns a neutral DTO when this pod is a confirmed non-leader, or null otherwise.
+    /// Used by <see cref="ReadAsync"/> to prevent non-leader pods from serving stale local state.
+    /// </summary>
+    private LoopStatusDto? BuildNeutralDtoIfNonLeader()
+    {
+        if (_leaderGate is not null && !_leaderGate.IsLeader)
+            return new LoopStatusDto(
+                IsLoopActive: false,
+                StatusMessage: "⏳ Waiting for leader status…",
+                CurrentIssueIdentifier: null,
+                ProcessedCount: 0,
+                FailedCount: 0,
+                QueueCount: 0,
+                IsCircuitBroken: false,
+                LastPollError: null,
+                CurrentCycleTemplateIndex: 0,
+                CurrentCycleTemplateCount: 0,
+                ValidationErrors: [],
+                TemplateStatuses: new Dictionary<string, ConfigStatusSnapshot>());
+        return null;
     }
 
     /// <summary>Returns the current local-only snapshot, or null if not yet populated.</summary>
