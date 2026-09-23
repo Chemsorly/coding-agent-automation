@@ -38,14 +38,15 @@ public sealed class AgentJobLifecycleServiceCompletionTests
     {
         _appLifetime.SetupGet(l => l.ApplicationStopping).Returns(CancellationToken.None);
         return new AgentJobLifecycleService(
-            _facade.Object,
-            _lifecycleManager.Object,
-            _labelService.Object,
-            _issueOps.Object,
-            _changeNotifier.Object,
-            _appLifetime.Object,
-            _outbox.Object,
-            _logger.Object);
+            new AgentJobLifecycleServiceDependencies(
+                _facade.Object,
+                _lifecycleManager.Object,
+                _labelService.Object,
+                _issueOps.Object,
+                _changeNotifier.Object,
+                _appLifetime.Object,
+                _outbox.Object,
+                _logger.Object));
     }
 
     private static PipelineRun MakeRun(string jobId = "job-1", string? providerConfigId = null) => new()
