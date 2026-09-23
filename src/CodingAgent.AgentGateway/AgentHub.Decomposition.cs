@@ -149,11 +149,15 @@ public sealed partial class AgentHub
         catch (Exception ex)
         {
             // Log at Error so the server-side cause of "Failed to invoke 'RequestGetIssue'"
-            // HubExceptions on the agent is always visible in Grafana — previously only Warning-level
-            // logs were emitted from ResolveIssueProviderForRunAsync, which were easy to miss.
-            // ExecuteWithIssueProviderAsync already logs provider-level exceptions at Error; this
-            // catch captures HubExceptions thrown by ResolveIssueProviderForRunAsync (missing run,
-            // missing provider config) that escape the inner try/catch.
+            // is always visible in Grafana regardless of which failure path produced it.
+            // ExecuteWithIssueProviderAsync logs provider-level exceptions (GitHub API, etc.)
+            // at Error before re-throwing as HubException. This catch handles the remaining paths:
+            // ResolveIssueProviderForRunAsync failures (missing run, missing provider config) that
+            // escape the inner try/catch and arrive here as HubException without prior Error-level
+            // logging — the comment in the previous revision was aspirational, not accurate.
+            _logger.Error(ex,
+                "RequestGetIssue failed for job {JobId}, identifier '{Identifier}'",
+                jobId.Value, SanitizeForLog(identifier));
             throw new HubException(
                 $"RequestGetIssue failed for job {jobId.Value}, identifier '{SanitizeForLog(identifier)}': {ex.Message}", ex);
         }
