@@ -20,6 +20,6 @@ public static class AgentHubMessagePack
     /// <summary>Serializer options shared by both ends of the agent hub connection.</summary>
     public static MessagePackSerializerOptions SerializerOptions { get; } =
         MessagePackSerializerOptions.Standard.WithResolver(CompositeResolver.Create(
-            new IMessagePackFormatter[] { new JobIdFormatter(), new AgentIdFormatter() },
+            new IMessagePackFormatter[] { new JobIdFormatter(), new AgentIdFormatter(), new IssueIdentifierFormatter() },
             new IFormatterResolver[] { ContractlessStandardResolverAllowPrivate.Instance }));
 }
