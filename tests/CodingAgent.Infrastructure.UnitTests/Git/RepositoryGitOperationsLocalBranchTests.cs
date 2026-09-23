@@ -14,8 +14,11 @@ namespace CodingAgent.Infrastructure.UnitTests.Git;
 ///
 /// These cover previously-uncovered lines exposed by PR #2852 which added
 /// <c>RepositoryGitOperations.cs</c> to the diff.
+///
+/// Note: intentionally no [Trait("Category", "Integration")] so these run in CI
+/// under the "Category!=E2E&amp;Category!=Integration" filter and contribute to coverage.
+/// All tests use only local temp git repos — no network I/O.
 /// </summary>
-[Trait("Category", "Integration")]
 public class RepositoryGitOperationsLocalBranchTests : IDisposable
 {
     private readonly string _repoPath;
