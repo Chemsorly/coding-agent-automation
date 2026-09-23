@@ -134,13 +134,7 @@ public sealed class AgentOrphanRecoveryService(
             // RecoverOrphanedStateAsync does not accept a CancellationToken, so this is a structural
             // limitation at the call site. If cancellation support is added to the enclosing method,
             // propagate the token here.
-            _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, activeJob.RunId)
-                .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
-                        "RestoreConsolidationTracking: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
-                        agentId, ActiveJobIdField),
-                    CancellationToken.None,
-                    TaskContinuationOptions.OnlyOnFaulted,
-                    TaskScheduler.Default);
+            _facade.UpdateAgentFieldFireAndForget(agentId, ActiveJobIdField, activeJob.RunId, _logger, "RestoreConsolidationTracking");
         }
 
         _changeNotifier.NotifyChange();
@@ -184,13 +178,7 @@ public sealed class AgentOrphanRecoveryService(
             // RecoverOrphanedStateAsync does not accept a CancellationToken, so this is a structural
             // limitation at the call site. If cancellation support is added to the enclosing method,
             // propagate the token here.
-            _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, activeJob.RunId)
-                .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
-                        "RestorePipelineRun: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
-                        agentId, ActiveJobIdField),
-                    CancellationToken.None,
-                    TaskContinuationOptions.OnlyOnFaulted,
-                    TaskScheduler.Default);
+            _facade.UpdateAgentFieldFireAndForget(agentId, ActiveJobIdField, activeJob.RunId, _logger, "RestorePipelineRun");
         }
 
         _logger.Information(
@@ -294,13 +282,7 @@ public sealed class AgentOrphanRecoveryService(
                 if (trackedEntry.ActiveJobId is null)
                 {
                     trackedEntry.ActiveJobId = activeJob.RunId;
-                    _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, activeJob.RunId)
-                        .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
-                                "LinkAgentToExistingRun: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
-                                agentId, ActiveJobIdField),
-                            CancellationToken.None,
-                            TaskContinuationOptions.OnlyOnFaulted,
-                            TaskScheduler.Default);
+                    _facade.UpdateAgentFieldFireAndForget(agentId, ActiveJobIdField, activeJob.RunId, _logger, "LinkAgentToExistingRun");
                     // Transition to Busy only when we actually wrote the ActiveJobId.
                     // The decision is captured inside the lock so a concurrent disconnect handler
                     // that clears ActiveJobId after lock release cannot cause a spurious Busy
@@ -372,20 +354,8 @@ public sealed class AgentOrphanRecoveryService(
                     // for the full non-atomic read-then-write WARNING. (Correctness WARNING, issue #2616)
                     _facade.SetLocalAgentSnapshotField(agentId, ActiveJobIdField, mostRecent.RunId);
                     _facade.SetLocalAgentSnapshotField(agentId, "orphanRestoredAt", now.ToString("O"));
-                    _ = _facade.UpdateAgentFieldAsync(agentId, ActiveJobIdField, mostRecent.RunId)
-                        .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
-                                "DetectAndRestoreOrphans: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
-                                agentId, ActiveJobIdField),
-                            CancellationToken.None,
-                            TaskContinuationOptions.OnlyOnFaulted,
-                            TaskScheduler.Default);
-                    _ = _facade.UpdateAgentFieldAsync(agentId, "orphanRestoredAt", now.ToString("O"))
-                        .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
-                                "DetectAndRestoreOrphans: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
-                                agentId, "orphanRestoredAt"),
-                            CancellationToken.None,
-                            TaskContinuationOptions.OnlyOnFaulted,
-                            TaskScheduler.Default);
+                    _facade.UpdateAgentFieldFireAndForget(agentId, ActiveJobIdField, mostRecent.RunId, _logger, "DetectAndRestoreOrphans");
+                    _facade.UpdateAgentFieldFireAndForget(agentId, "orphanRestoredAt", now.ToString("O"), _logger, "DetectAndRestoreOrphans");
                     // The decision to call TransitionStatus is captured inside the lock.
                     // This prevents a concurrent disconnect handler from clearing ActiveJobId
                     // between lock release and the TransitionStatus call.
@@ -443,13 +413,7 @@ public sealed class AgentOrphanRecoveryService(
                 // the field cannot produce a null read after the non-null guard below.
                 existingJobId = entry.ActiveJobId;
                 entry.OrphanRestoredAt = DateTimeOffset.UtcNow;
-                _ = _facade.UpdateAgentFieldAsync(agentId, "orphanRestoredAt", DateTimeOffset.UtcNow.ToString("O"))
-                    .ContinueWith(t => _logger.Warning(t.Exception?.Flatten(),
-                            "HandleCrashRecoveryAsync: UpdateAgentFieldAsync failed for agent {AgentId} field '{Field}'",
-                            agentId, "orphanRestoredAt"),
-                        CancellationToken.None,
-                        TaskContinuationOptions.OnlyOnFaulted,
-                        TaskScheduler.Default);
+                _facade.UpdateAgentFieldFireAndForget(agentId, "orphanRestoredAt", DateTimeOffset.UtcNow.ToString("O"), _logger, "HandleCrashRecoveryAsync");
             }
 
             if (existingJobId is not null)
