@@ -100,22 +100,36 @@ public class ProcessWrapperPropertiesAndKillTests : IDisposable
     [Fact]
     public async Task StartAsync_WhenAlreadyRunning_ThrowsInvalidOperationException()
     {
-        // Use 'sleep' to keep the process alive long enough to call StartAsync again.
-        var sleepPath = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sleep";
-        var sleepConfig = new global::KiroCliLib.Configuration.Configuration
+        // Use a shell script that ignores args and sleeps, so the process stays alive.
+        string longRunningPath;
+        if (OperatingSystem.IsWindows())
         {
-            KiroCliPath = sleepPath,
+            longRunningPath = "cmd.exe";
+        }
+        else
+        {
+            longRunningPath = Path.Combine(_workspaceDir, "long-running2.sh");
+            File.WriteAllText(longRunningPath, "#!/bin/sh\nsleep 999\n");
+            File.SetUnixFileMode(longRunningPath,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        }
+
+        var longRunningConfig = new global::KiroCliLib.Configuration.Configuration
+        {
+            KiroCliPath = longRunningPath,
             UseWsl = false
         };
 
-        using var wrapper = new ProcessWrapper(sleepConfig, _logger);
+        using var wrapper = new ProcessWrapper(longRunningConfig, _logger);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
-        // Start in background — will block until cancelled or sleep exits
-        var firstTask = wrapper.StartAsync("2", _workspaceDir, useResume: false, cts.Token);
+        // Start in background — will block until cancelled or process exits
+        var firstTask = wrapper.StartAsync("hello", _workspaceDir, useResume: false, cts.Token);
 
         // Give the process a moment to start
-        await Task.Delay(200, CancellationToken.None);
+        await Task.Delay(300, CancellationToken.None);
 
         // Second call must throw because the process is already running
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -123,7 +137,7 @@ public class ProcessWrapperPropertiesAndKillTests : IDisposable
 
         // Cancel the background task to clean up
         await cts.CancelAsync();
-        try { await firstTask; } catch (OperationCanceledException) { /* expected */ }
+        try { await firstTask; } catch (OperationCanceledException) { /* expected */ } catch { /* killed */ }
     }
 
     // ── Kill() ──────────────────────────────────────────────────────────
@@ -140,26 +154,46 @@ public class ProcessWrapperPropertiesAndKillTests : IDisposable
     [Fact]
     public async Task Kill_WhileProcessIsRunning_StopsProcess()
     {
-        var sleepPath = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sleep";
-        var sleepConfig = new global::KiroCliLib.Configuration.Configuration
+        // Create a shell script that ignores all arguments and sleeps indefinitely.
+        // ProcessWrapper passes kiro-style args (e.g. "chat --no-interactive ...") so
+        // we can't use /bin/sleep directly — it would exit immediately on bad args.
+        // A dedicated wrapper script accepts any $@ and just runs 'sleep 999'.
+        string longRunningPath;
+        if (OperatingSystem.IsWindows())
         {
-            KiroCliPath = sleepPath,
+            longRunningPath = "cmd.exe";
+        }
+        else
+        {
+            longRunningPath = Path.Combine(_workspaceDir, "long-running.sh");
+            File.WriteAllText(longRunningPath, "#!/bin/sh\nsleep 999\n");
+            File.SetUnixFileMode(longRunningPath,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        }
+
+        var longRunningConfig = new global::KiroCliLib.Configuration.Configuration
+        {
+            KiroCliPath = longRunningPath,
             UseWsl = false
         };
 
-        using var wrapper = new ProcessWrapper(sleepConfig, _logger);
+        using var wrapper = new ProcessWrapper(longRunningConfig, _logger);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
-        // Start a long-running sleep in the background
-        var task = wrapper.StartAsync("30", _workspaceDir, useResume: false, cts.Token);
+        // Start the long-running process in the background
+        var task = wrapper.StartAsync("hello", _workspaceDir, useResume: false, cts.Token);
 
-        // Give the process time to start
-        await Task.Delay(200, CancellationToken.None);
+        // Give the process time to start and confirm it's running
+        await Task.Delay(300, CancellationToken.None);
+        wrapper.IsRunning.Should().BeTrue("process should be running before Kill()");
 
-        // Kill it — this covers the Kill() body for a running, non-WSL process
+        // Kill it — this covers Kill() body for a running, non-WSL process
+        // (lines: if _useWsl check, _process.Kill(entireProcessTree), _process.WaitForExit)
         wrapper.Kill();
 
-        // The task should complete (via OperationCanceledException from the Kill/cancel)
+        // The task should complete after Kill
         try { await task; } catch (OperationCanceledException) { /* expected */ } catch { /* process killed */ }
 
         wrapper.IsRunning.Should().BeFalse();
