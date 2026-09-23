@@ -1,8 +1,5 @@
 using CodingAgent.Orchestration.Registry;
-using CodingAgent.Pipeline.Models;
-using MessagePack;
-using MessagePack.Formatters;
-using MessagePack.Resolvers;
+using CodingAgent.Pipeline;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
@@ -13,7 +10,7 @@ namespace CodingAgent.AgentGateway;
 
 /// <summary>
 /// Shared SignalR registration for the AgentHub — called by both the API host and the Web host.
-/// Centralises the MessagePack CompositeResolver formatter list, MaximumReceiveMessageSize,
+/// Centralises the MessagePack protocol registration, MaximumReceiveMessageSize,
 /// AgentAuthorizationFilter hub-filter wiring, and the AgentAuthorizationFilter singleton
 /// registration so the two hosts cannot diverge on wire format or filter configuration.
 /// </summary>
@@ -21,7 +18,7 @@ public static class AgentSignalRServiceCollectionExtensions
 {
     /// <summary>
     /// Adds SignalR with the canonical AgentHub configuration: MessagePack protocol (with
-    /// <see cref="JobIdFormatter"/> and <see cref="AgentIdFormatter"/>), 128 KB message size
+    /// <see cref="AgentHubMessagePack.SerializerOptions"/>), 128 KB message size
     /// cap, and <see cref="AgentAuthorizationFilter"/> installed via <c>AddFilter&lt;T&gt;()</c>.
     /// Also registers <see cref="AgentAuthorizationFilter"/> as a singleton so SignalR can
     /// resolve it by concrete type from the DI container.
@@ -71,19 +68,13 @@ public static class AgentSignalRServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Adds the MessagePack protocol with the canonical formatter resolver used by the AgentHub.
-    /// The resolver includes <see cref="JobIdFormatter"/> and <see cref="AgentIdFormatter"/> so
-    /// strongly-typed ID wrappers are serialised as bare strings on the wire, maintaining
-    /// wire compatibility with all existing clients.
+    /// Adds the MessagePack protocol with <see cref="AgentHubMessagePack.SerializerOptions"/> — the
+    /// serializer configuration the agent also uses — so strongly-typed ID wrappers are serialised
+    /// as bare strings on the wire, maintaining wire compatibility with all existing clients.
     /// </summary>
     public static ISignalRServerBuilder AddAgentSignalRCore(this ISignalRServerBuilder builder)
     {
         return builder.AddMessagePackProtocol(options =>
-        {
-            options.SerializerOptions = MessagePackSerializerOptions.Standard
-                .WithResolver(CompositeResolver.Create(
-                    new IMessagePackFormatter[] { new JobIdFormatter(), new AgentIdFormatter() },
-                    new IFormatterResolver[] { ContractlessStandardResolverAllowPrivate.Instance }));
-        });
+            options.SerializerOptions = AgentHubMessagePack.SerializerOptions);
     }
 }
