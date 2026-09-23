@@ -994,6 +994,133 @@ public sealed class PostStatusIdempotencyTests
             "ApplyStatusMutation must not overwrite an existing BranchName when request.BranchName is null");
     }
 
+    // ── New characterization tests (prerequisites for issue #2914 extraction) ──────
+
+    /// <summary>
+    /// Characterization test for issue #2914 prerequisites.
+    /// PostStatus(Failed) on an already-Failed WorkItem must return 204 No Content via
+    /// <see cref="TransitionResult.AlreadyAtTarget"/> from TransitionDetailedAsync
+    /// (NOT via the pre-read guard, which only short-circuits for Cancelled and Succeeded).
+    /// </summary>
+    [Fact]
+    public async Task WhenItemIsAlreadyFailed_PostStatusFailed_ReturnsNoContentViaAlreadyAtTarget()
+    {
+        // Arrange: seed a Failed item — the pre-read guard does NOT cover this path;
+        // it falls through to TransitionDetailedAsync which returns AlreadyAtTarget.
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Failed,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            failureReason: FailureReason.AgentError);
+        var transitionService = CreateTransitionService(opts);
+        var dbFactory = CreateDbFactory(opts);
+
+        // Strict mock: no lifecycle call should occur on the AlreadyAtTarget path
+        var lifecycleManager = new Mock<IRunLifecycleManager>(MockBehavior.Strict);
+        var runService = new Mock<IOrchestratorRunService>().Object;
+
+        var request = new WorkItemStatusRequest { Status = WorkItemStatus.Failed, ErrorMessage = "Duplicate callback" };
+
+        // Pre-assert: TransitionDetailedAsync returns AlreadyAtTarget for a Failed→Failed call.
+        // This makes the test timing-independent — it proves the guard block is never entered.
+        var preconditionResult = await transitionService.TransitionDetailedAsync(item.Id, WorkItemStatus.Failed);
+        preconditionResult.Should().Be(TransitionResult.AlreadyAtTarget,
+            "seeded item is already Failed — TransitionDetailedAsync must return AlreadyAtTarget for Failed→Failed");
+
+        // Act
+        var result = await WorkItemAgentEndpoints.PostStatus(
+            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory);
+
+        // Assert: 204 No Content (idempotent no-op via AlreadyAtTarget, not via pre-read guard)
+        result.Should().BeOfType<NoContent>(
+            "PostStatus(Failed) on an already-Failed WorkItem must return 204 No Content via AlreadyAtTarget");
+        lifecycleManager.VerifyNoOtherCalls();
+
+        // DB unchanged — AlreadyAtTarget means no write
+        await using var verifyCtx = new TestPipelineDbContext(opts);
+        var persisted = await verifyCtx.WorkItems.FindAsync(item.Id);
+        persisted.Should().NotBeNull();
+        persisted!.Status.Should().Be(WorkItemStatus.Failed, "item must remain Failed");
+    }
+
+    /// <summary>
+    /// Characterization test for issue #2914 prerequisites.
+    /// PostStatus(Running) on a Failed/InfrastructureFailure item must recover via
+    /// TryRecoverFromInfrastructureFailureAsync (mirrors the existing Timeout test but for
+    /// the InfrastructureFailure FailureReason). Covers the path that was only tested for Timeout.
+    /// </summary>
+    [Fact]
+    public async Task WhenItemIsFailedWithInfrastructureFailureReason_PostStatusRunning_RecoversThroughInfrastructureRecovery()
+    {
+        // Arrange
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Failed,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
+            failureReason: FailureReason.InfrastructureFailure);
+        var transitionService = CreateTransitionService(opts);
+        var runService = new Mock<IOrchestratorRunService>().Object;
+        var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
+        var request = new WorkItemStatusRequest { Status = WorkItemStatus.Running };
+
+        // Act
+        var result = await WorkItemAgentEndpoints.PostStatus(
+            item.Id, request, transitionService, runService, lifecycleManager, dbFactory: null);
+
+        // Assert — HTTP 200 confirms the recovery path was taken
+        result.Should().BeOfType<Ok>(
+            "PostStatus(Running) on a Failed/InfrastructureFailure WorkItem must return 200 via infra-recovery");
+
+        // DB read-back is the primary correctness check
+        await using var db = new TestPipelineDbContext(opts);
+        var updated = await db.WorkItems.FindAsync(item.Id);
+        updated.Should().NotBeNull();
+        updated!.Status.Should().Be(WorkItemStatus.Running,
+            "the WorkItem must have transitioned to Running via TryRecoverFromInfrastructureFailureAsync");
+    }
+
+    /// <summary>
+    /// Characterization test for issue #2914 prerequisites.
+    /// On a real terminal transition with a real dbFactory, telemetry emission must not
+    /// null-reference inside the fire-and-forget task. This covers the TODO noted in
+    /// PostStatus_ActualFailedTransition_CallsFailRunAsync (dbFactory was null there).
+    /// </summary>
+    [Fact]
+    public async Task PostStatus_ActualFailedTransition_WithRealDbFactory_DoesNotThrowInTelemetry()
+    {
+        // Arrange: provide a real dbFactory so EmitTerminalStatusTelemetryAsync actually reads DB
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
+        var transitionService = CreateTransitionService(opts);
+        var dbFactory = CreateDbFactory(opts);
+
+        var lifecycleManager = new Mock<IRunLifecycleManager>();
+        lifecycleManager
+            .Setup(m => m.FailRunAsync(
+                It.IsAny<RunId>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<FailureReason?>()))
+            .ReturnsAsync((PipelineRun?)null);
+
+        var runService = new Mock<IOrchestratorRunService>().Object;
+        var request = new WorkItemStatusRequest { Status = WorkItemStatus.Failed, ErrorMessage = "test error" };
+
+        // Act — awaitTelemetry: true so any NRE inside the task surfaces immediately
+        var result = await WorkItemAgentEndpoints.PostStatus(
+            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory,
+            ct: default, awaitTelemetry: true);
+
+        // Assert: no exception thrown, correct result
+        result.Should().BeOfType<Ok>(
+            "Running→Failed transition with a real dbFactory must succeed without NRE in telemetry");
+        lifecycleManager.Verify(
+            m => m.FailRunAsync(
+                It.Is<RunId>(r => r.Value == item.Id.ToString()),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<FailureReason?>()),
+            Times.Once);
+    }
+
     // ── Test Infrastructure ───────────────────────────────────────────────────
 
     /// <summary>

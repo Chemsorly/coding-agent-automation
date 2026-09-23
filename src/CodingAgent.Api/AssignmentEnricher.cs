@@ -24,6 +24,11 @@ namespace CodingAgent.Api;
 /// Issue-provider infrastructure and quality-gate configs are not fetched for consolidation
 /// agents, which do not process issues and have no quality gates.
 /// </para>
+/// <para>
+/// Also owns project-secret injection for the assignment payload via
+/// <see cref="InjectProjectSecretsAsync"/>, which uses <see cref="ConsolidationTemplateResolver"/>
+/// for template-ownership resolution (issue #2914).
+/// </para>
 /// </summary>
 /// <remarks>
 /// Registered as a singleton in the API host. All dependencies are thread-safe singletons.
@@ -34,22 +39,30 @@ public class AssignmentEnricher
     private readonly DispatchInfrastructure _infra;
     private readonly IAgentProfileStore _agentProfileStore;
     private readonly IConsolidationJobPreparationService _consolidationPreparer;
+    private readonly IProjectStore _projectStore;
+    private readonly ConsolidationTemplateResolver _consolidationTemplateResolver;
     private readonly ILogger _logger;
 
     public AssignmentEnricher(
         DispatchInfrastructure infra,
         IAgentProfileStore agentProfileStore,
         IConsolidationJobPreparationService consolidationPreparer,
+        IProjectStore projectStore,
+        ConsolidationTemplateResolver consolidationTemplateResolver,
         ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(infra);
         ArgumentNullException.ThrowIfNull(agentProfileStore);
         ArgumentNullException.ThrowIfNull(consolidationPreparer);
+        ArgumentNullException.ThrowIfNull(projectStore);
+        ArgumentNullException.ThrowIfNull(consolidationTemplateResolver);
         ArgumentNullException.ThrowIfNull(logger);
 
         _infra = infra;
         _agentProfileStore = agentProfileStore;
         _consolidationPreparer = consolidationPreparer;
+        _projectStore = projectStore;
+        _consolidationTemplateResolver = consolidationTemplateResolver;
         _logger = logger;
     }
 
@@ -70,6 +83,16 @@ public class AssignmentEnricher
         _infra = null!;
         _agentProfileStore = null!;
         _consolidationPreparer = consolidationPreparer ?? NoOpConsolidationPreparer.Instance;
+        // TODO: [WARNING] _projectStore and _consolidationTemplateResolver are intentionally null here
+        // because this protected constructor is for test subclasses that override EnrichAsync entirely.
+        // If any such subclass calls InjectProjectSecretsAsync without passing a storeOverride, both
+        // _projectStore and storeOverride will be null, causing secret injection to silently return the
+        // original message with no log event. This is a security-adjacent silent failure: the method
+        // purpose is to inject secrets, but a misconfigured caller gets a no-op with no diagnostic.
+        // Consider adding a Log.Warning inside InjectProjectSecretsAsync when both store paths are null,
+        // or enforcing storeOverride is non-null when called from a null-_projectStore instance.
+        _projectStore = null!;
+        _consolidationTemplateResolver = null!;
         _logger = logger ?? Serilog.Log.Logger;
     }
 
@@ -87,6 +110,11 @@ public class AssignmentEnricher
         _infra = null!;
         _agentProfileStore = agentProfileStore ?? throw new ArgumentNullException(nameof(agentProfileStore));
         _consolidationPreparer = consolidationPreparer ?? NoOpConsolidationPreparer.Instance;
+        // TODO: [WARNING] Same null-store caveat as the logger-only constructor above: _projectStore and
+        // _consolidationTemplateResolver are null here. Any call to InjectProjectSecretsAsync on an
+        // instance built via this constructor without a storeOverride will silently skip secret injection.
+        _projectStore = null!;
+        _consolidationTemplateResolver = null!;
         _logger = logger ?? Serilog.Log.Logger;
     }
 
@@ -287,6 +315,81 @@ public class AssignmentEnricher
             ProjectSteeringContent = project.SteeringContent,
             RepoSteeringContent = providerConfigs.TryGetProviderConfig(preparation.RepoProviderConfigId)?.SteeringContent,
         };
+    }
+
+    /// <summary>
+    /// Injects project secrets into the assignment message at delivery time.
+    /// Secrets are not serialized in the payload for security; they are fetched fresh here.
+    /// <para>
+    /// Two resolution paths:
+    /// <list type="bullet">
+    ///   <item>
+    ///     <term>Direct project lookup</term>
+    ///     <description>
+    ///     When <c>request.ProjectId</c> is non-null, the project is fetched directly via
+    ///     <see cref="IProjectStore.GetProjectByIdAsync"/> and its secrets are injected.
+    ///     </description>
+    ///   </item>
+    ///   <item>
+    ///     <term>Template-ownership fallback (consolidation)</term>
+    ///     <description>
+    ///     When <c>request.ProjectId</c> is null but <c>request.ConsolidationTemplateId</c> is non-null,
+    ///     the owning project is resolved via <see cref="ConsolidationTemplateResolver.ResolveTemplateWithProjectAsync"/>
+    ///     rather than a reimplemented ownership-resolution loop (issue #2914).
+    ///     </description>
+    ///   </item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    internal async Task<JobAssignmentMessage> InjectProjectSecretsAsync(
+        JobAssignmentMessage message,
+        JobDistributionRequest request,
+        CancellationToken ct,
+        IProjectStore? storeOverride = null)
+    {
+        // Use the injected project store, or fall back to the override passed at call time.
+        // The override is needed for test subclasses constructed via the protected logger-only
+        // constructor (e.g. FakeAssignmentEnricher in GetAssignmentTests.cs) that set
+        // _projectStore = null! — passing the store as a parameter preserves testability.
+        var store = _projectStore ?? storeOverride;
+
+        if (request.ProjectId.HasValue)
+        {
+            if (store is null)
+                return message;
+
+            var project = await store.GetProjectByIdAsync(request.ProjectId.Value.ToString(), ct);
+            if (project?.Secrets is { Count: > 0 })
+                return message with { ProjectSecrets = project.Secrets };
+
+            return message;
+        }
+
+        // Consolidation fallback: when ProjectId is null but a ConsolidationTemplateId is set,
+        // resolve the owning project via ConsolidationTemplateResolver (delegates the
+        // ownership-resolution loop that was previously reimplemented inline here — issue #2914).
+        if (!string.IsNullOrEmpty(request.ConsolidationTemplateId))
+        {
+            // Use the injected resolver, or create one from the store if the enricher was
+            // constructed via the protected test-only constructor (which sets both to null).
+            var resolver = _consolidationTemplateResolver
+                ?? (store is not null ? new ConsolidationTemplateResolver(store) : null);
+
+            if (resolver is not null && store is not null)
+            {
+                var (_, _, projectId) = await resolver
+                    .ResolveTemplateWithProjectAsync(new TemplateId(request.ConsolidationTemplateId), ct);
+
+                if (projectId is not null)
+                {
+                    var owningProject = await store.GetProjectByIdAsync(projectId, ct);
+                    if (owningProject?.Secrets is { Count: > 0 })
+                        return message with { ProjectSecrets = owningProject.Secrets };
+                }
+            }
+        }
+
+        return message;
     }
 
     /// <summary>

@@ -1,5 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using MessagePack;
+using MessagePack.Formatters;
 
 namespace CodingAgent.Pipeline.Models;
 
@@ -41,5 +43,29 @@ public readonly record struct IssueIdentifier(string Value)
 
         public override void Write(Utf8JsonWriter writer, IssueIdentifier value, JsonSerializerOptions options)
             => writer.WriteStringValue(value.Value);
+    }
+}
+
+/// <summary>
+/// Custom MessagePack formatter that serializes <see cref="IssueIdentifier"/> as a bare string
+/// on the wire. The agent hub declares issue identifiers as <c>string</c> parameters; without this
+/// formatter, <c>ContractlessStandardResolver</c> would serialize the struct as a map
+/// <c>{"Value":"..."}</c>, which the hub cannot bind, so the call fails before reaching the hub method.
+/// </summary>
+public sealed class IssueIdentifierFormatter : IMessagePackFormatter<IssueIdentifier>
+{
+    public void Serialize(ref MessagePackWriter writer, IssueIdentifier value, MessagePackSerializerOptions options)
+    {
+        if (value.Value is null)
+            throw new MessagePackSerializationException("IssueIdentifier cannot serialize a null Value (e.g., default(IssueIdentifier)).");
+        writer.Write(value.Value);
+    }
+
+    public IssueIdentifier Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
+    {
+        var value = reader.ReadString();
+        if (value is null)
+            throw new MessagePackSerializationException("IssueIdentifier cannot be deserialized from a nil token.");
+        return new(value);
     }
 }

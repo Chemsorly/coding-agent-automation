@@ -2,11 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
-using MessagePack;
-using MessagePack.Formatters;
-using MessagePack.Resolvers;
 using Microsoft.AspNetCore.SignalR.Client;
-using Microsoft.Extensions.DependencyInjection;
 namespace CodingAgent.Agent;
 
 /// <summary>
@@ -111,13 +107,7 @@ public sealed class HubConnectionManager : IHubConnectionManager
             {
                 options.AccessTokenProvider = () => Task.FromResult<string?>(derivedKey);
             })
-            .AddMessagePackProtocol(options =>
-            {
-                options.SerializerOptions = MessagePackSerializerOptions.Standard
-                    .WithResolver(CompositeResolver.Create(
-                        new IMessagePackFormatter[] { new JobIdFormatter(), new AgentIdFormatter() },
-                        new IFormatterResolver[] { ContractlessStandardResolverAllowPrivate.Instance }));
-            })
+            .AddAgentHubProtocol()
             .WithAutomaticReconnect(new InfiniteRetryPolicy())
             .WithServerTimeout(TimeSpan.FromSeconds(60))
             .WithKeepAliveInterval(TimeSpan.FromSeconds(15))
