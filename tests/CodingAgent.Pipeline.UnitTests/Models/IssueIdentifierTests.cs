@@ -1,6 +1,7 @@
 using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgent.Pipeline.Models;
+using MessagePack;
 
 namespace CodingAgent.Pipeline.UnitTests.Models;
 
@@ -166,5 +167,52 @@ public class IssueIdentifierTests
     private sealed record TestRecord
     {
         public required IssueIdentifier IssueIdentifier { get; init; }
+    }
+}
+
+/// <summary>
+/// Tests for the MessagePack formatter that serializes <see cref="IssueIdentifier"/> as a bare string.
+/// They run through <see cref="AgentHubMessagePack.SerializerOptions"/> — the options both ends of the
+/// agent hub connection use — so they also prove the formatter is registered there.
+/// </summary>
+public class IssueIdentifierFormatterTests
+{
+    private static readonly MessagePackSerializerOptions Options = AgentHubMessagePack.SerializerOptions;
+
+    [Fact]
+    public void Serialize_ProducesPlainString_NotMapFormat()
+    {
+        // The hub declares issue identifiers as string parameters; a map ({"Value":"..."}) cannot bind to them.
+        var bytes = MessagePackSerializer.Serialize(new IssueIdentifier("2567"), Options);
+
+        MessagePackSerializer.Deserialize<string>(bytes, Options).Should().Be("2567");
+    }
+
+    [Fact]
+    public void RoundTrip_DeserializesBackToIssueIdentifier()
+    {
+        var original = new IssueIdentifier("owner/repo#42");
+
+        var bytes = MessagePackSerializer.Serialize(original, Options);
+
+        MessagePackSerializer.Deserialize<IssueIdentifier>(bytes, Options).Should().Be(original);
+    }
+
+    [Fact]
+    public void Serialize_DefaultIssueIdentifier_ThrowsMessagePackSerializationException()
+    {
+        var act = () => MessagePackSerializer.Serialize(default(IssueIdentifier), Options);
+
+        act.Should().Throw<MessagePackSerializationException>();
+    }
+
+    [Fact]
+    public void Deserialize_FromNilToken_ThrowsMessagePackSerializationException()
+    {
+        var bytes = MessagePackSerializer.Serialize((string?)null, Options);
+
+        var act = () => MessagePackSerializer.Deserialize<IssueIdentifier>(bytes, Options);
+
+        act.Should().Throw<MessagePackSerializationException>();
     }
 }

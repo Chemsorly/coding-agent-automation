@@ -915,8 +915,8 @@ public partial class LayerBoundaryTests
         var forbiddenPatterns = new[]
         {
             ("AddMessagePackProtocol(", "MessagePack protocol setup must live only in AddAgentSignalRServices (AgentGateway)"),
-            ("CompositeResolver.Create",  "MessagePack formatter list must live only in AddAgentSignalRServices (AgentGateway)"),
-            ("ContractlessStandardResolverAllowPrivate", "MessagePack resolver must live only in AddAgentSignalRServices (AgentGateway)"),
+            ("CompositeResolver.Create",  "MessagePack formatter list must live only in AgentHubMessagePack (Contracts)"),
+            ("ContractlessStandardResolverAllowPrivate", "MessagePack resolver must live only in AgentHubMessagePack (Contracts)"),
             ("new AgentAuthorizationFilter(", "AgentAuthorizationFilter singleton registration must live only in AddAgentSignalRServices (AgentGateway)"),
         };
 
