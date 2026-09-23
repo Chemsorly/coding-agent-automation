@@ -480,6 +480,14 @@ public partial class LayerBoundaryTests
         {
             // ── Category (a): object-initializer / with-expression / DTO-mapping ──
 
+            // AgentFieldNames — const string declaration: not a mutation of a live AgentEntry.
+            // The scanner pattern matches any `ActiveJobId =` expression; this is a `const string`
+            // definition in a constants file, not a field write on an AgentEntry instance.
+            ["AgentFieldNames.cs"] = new(StringComparer.Ordinal)
+            {
+                "internal const string ActiveJobId = \"activeJobId\";",
+            },
+
             // DistributedAgentRegistryService — snapshot object-initializer (BuildSnapshot method):
             // constructs a new AgentEntry snapshot; the object is not yet shared.
             // Also: _localSnapshot update via record `with { ActiveJobId = ... }` in UpdateAgentFieldAsync
@@ -522,8 +530,10 @@ public partial class LayerBoundaryTests
 
             // ── Category (b): intentional off-lock null-clears in job-completion paths ──
 
-            // job-rejection path in AgentJobLifecycleService (two identical call sites)
+            // job-rejection path in AgentJobLifecycleService (ResetAgentToIdle — stays here after extraction)
             ["AgentJobLifecycleService.cs"] = new(StringComparer.Ordinal) { "agent.ActiveJobId = null;" },
+            // job-completion path extracted to AgentIdleTransitioner (TransitionToIdle — issue #2895)
+            ["AgentIdleTransitioner.cs"] = new(StringComparer.Ordinal) { "agent.ActiveJobId = null;" },
             // consolidation-complete path in AgentHub.Consolidation
             ["AgentHub.Consolidation.cs"] = new(StringComparer.Ordinal) { "agent.ActiveJobId = null; // local snapshot update" },
             // duplicate local snapshot clear in HubConsolidationOperations
