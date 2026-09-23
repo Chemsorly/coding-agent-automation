@@ -60,10 +60,10 @@ public sealed class LoopControlTests : E2ETestBase
         var stopCount = await stopBtn.CountAsync();
         Assert.True(stopCount > 0, "Stop Loop button should appear after starting the loop");
 
-        // Assert: loop status bar is visible
-        var statusBar = Page.Locator(".loop-status-bar");
-        var statusBarCount = await statusBar.CountAsync();
-        Assert.True(statusBarCount > 0, "Loop status bar should be visible when loop is active");
+        // Assert: loop status indicator is visible (inline status span shows cycle/processed info)
+        var statusSpan = Page.Locator("span.monitoring-muted:has-text('Processed:')");
+        var statusSpanCount = await statusSpan.CountAsync();
+        Assert.True(statusSpanCount > 0, "Loop status indicator should be visible when loop is active");
 
         // Act: click Stop Loop
         await stopBtn.First.ClickAsync();
