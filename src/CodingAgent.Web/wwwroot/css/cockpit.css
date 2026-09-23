@@ -89,6 +89,46 @@
     font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 }
 
+/* ---- Base link colour (issue #2938) ----------------------------------------
+   Bare <a> elements inside the cockpit inherit the browser UA blue (#0000EE) by
+   default. Override with the design-system accent so all unstyled links look
+   intentional in both light and dark themes.
+
+   Specificity: 0,1,1 — intentionally low so that every named anchor class
+   (.cockpit-nav-link, .cockpit-back, .cockpit-link-chip, .cockpit-pager-btn,
+   .cockpit-link-chip, .runs-link, .first-run-banner-message a, …) continues to
+   win with its own explicit colour declaration.
+   --------------------------------------------------------------------------- */
+.cockpit a {
+    color: var(--accent-light);
+    text-decoration: none;
+}
+.cockpit a:hover {
+    text-decoration: underline;
+}
+
+/* ---- Dispatch-drawer label-filter chips (issue #2938) ----------------------
+   <button> elements do not inherit `color` from their parent (browser default
+   for form controls). The filter chips in the three dispatch drawers are
+   <button class="sidebar-label …"> and therefore render as black text on the
+   dark surface. Force them to use the shell text colour.
+
+   Element-qualified selector (button.sidebar-label) is deliberate: it leaves
+   <span class="sidebar-label"> elements (issue-card label lists, pipeline
+   sidebar, settings sections) untouched so their inherited / label-agent-*
+   semantic colours are not overridden.
+
+   TODO: This rule (specificity 0,2,1) beats the single-class label-agent-* rules
+   (specificity 0,1,0) defined in app.css, so agent-labelled filter chips (e.g.
+   agent:next, agent:error) lose their semantic colour and render as var(--text)
+   instead of green/red/amber/purple. Fix by scoping this rule to neutral chips
+   only — e.g. apply only to .label-inactive chips, or raise the specificity of
+   the label-agent-* rules in app.css to beat (0,2,1). (review finding #2938)
+   --------------------------------------------------------------------------- */
+.cockpit button.sidebar-label {
+    color: var(--text);
+}
+
 /* ---- sidebar --------------------------------------------------------------- */
 .cockpit-sidebar {
     width: 248px;
