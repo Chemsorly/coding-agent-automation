@@ -15,7 +15,10 @@ public static partial class ServiceCollectionExtensions
     {
         services.AddHttpClient("TokenVending")
             .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
-        services.AddSingleton<ITokenVendingService>(sp => new TokenVendingService(Log.Logger, sp.GetRequiredService<IHttpClientFactory>()));
+        services.AddSingleton<TokenVendingService>(sp =>
+            new TokenVendingService(Log.Logger, sp.GetRequiredService<IHttpClientFactory>()));
+        services.AddSingleton<ITokenVendingService>(sp => sp.GetRequiredService<TokenVendingService>());
+        services.AddHostedService(sp => new TokenCacheHousekeepingService(sp.GetRequiredService<TokenVendingService>(), Log.Logger));
 
         services.AddSingleton(sp => new OrchestratorRunService(
             Log.Logger,
