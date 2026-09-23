@@ -25,6 +25,9 @@ public static class SubIssueFileParser
         ArgumentNullException.ThrowIfNull(workspacePath);
         ArgumentNullException.ThrowIfNull(logger);
 
+        // TODO: Replace with AgentWorkspacePaths.SubIssuesDirectory to avoid re-constructing the path
+        // manually. Path.Combine(workspacePath, AgentWorkspacePaths.MetadataDirectory, "sub-issues")
+        // duplicates the constant; if SubIssuesDirectory ever changes, this call site will silently diverge.
         var subIssuesDir = Path.Combine(workspacePath, AgentWorkspacePaths.MetadataDirectory, "sub-issues");
 
         if (!Directory.Exists(subIssuesDir))

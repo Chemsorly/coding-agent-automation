@@ -297,6 +297,10 @@ public static partial class ConsolidationPromptBuilder
     /// </summary>
     public static string BuildRefactoringReviewPrompt()
     {
+        // TODO: Replace ".agent/refactoring-analysis.md" literal in the prompt string below with
+        // a constant once AgentWorkspacePaths gains a RefactoringAnalysisFilePath entry.
+        // The path is agent-facing instruction text so it cannot use string interpolation with a const
+        // inside the verbatim string without first defining the constant.
         return BuildAdversarialReviewPrompt(
             "Refactoring Proposals Review",
             "refactoring proposals",

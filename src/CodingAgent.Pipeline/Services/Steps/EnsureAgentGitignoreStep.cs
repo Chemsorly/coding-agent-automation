@@ -22,7 +22,7 @@ public sealed class EnsureAgentGitignoreStep : IPipelineStep
             ? await File.ReadAllTextAsync(gitignorePath, ct)
             : "";
 
-        var updated = IBrainUpdateService.EnsureGitignoreEntry(content, ".agent/");
+        var updated = IBrainUpdateService.EnsureGitignoreEntry(content, AgentWorkspacePaths.MetadataDirectory + "/");
         if (updated != content)
         {
             await File.WriteAllTextAsync(gitignorePath, updated, ct);

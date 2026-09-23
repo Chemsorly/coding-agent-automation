@@ -1461,6 +1461,8 @@ public class PipelineOrchestrationServiceTests : IDisposable
     /// </summary>
     private static void WriteAnalysisFile(string workspacePath, string content)
     {
+        // TODO: Replace hardcoded ".agent" with AgentWorkspacePaths.MetadataDirectory so test helpers
+        // stay in sync with production code if the directory name ever changes.
         var dir = Path.Combine(workspacePath, ".agent");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "analysis.md"), content);
