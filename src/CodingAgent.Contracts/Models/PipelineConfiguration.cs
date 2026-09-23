@@ -97,14 +97,14 @@ public sealed record PipelineConfiguration
 
     /// <summary>
     /// How long to wait for CI runs to appear before concluding CI never started.
-    /// Triggers a re-push retry instead of burning the full ExternalCiTimeout. Default: 5 minutes.
+    /// Triggers a re-push retry instead of burning the full ExternalCiTimeout. Default: 10 minutes.
     /// </summary>
     [Key(53)]
     [ProjectOverridable(Order = 14)]
     public TimeSpan CiNotStartedTimeout { get; init; } = PipelineConstants.DefaultCiNotStartedTimeout;
 
     /// <summary>
-    /// Maximum re-push retries when CI never starts. Default: 5.
+    /// Maximum re-push retries when CI never starts. Default: 15.
     /// </summary>
     [Key(54)]
     [ProjectOverridable(Order = 15)]
