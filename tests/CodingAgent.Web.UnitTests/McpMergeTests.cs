@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using CodingAgent.Orchestration.Dispatch;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using FsCheck;
 using FsCheck.Fluent;
@@ -9,7 +9,7 @@ using FsCheck.Xunit;
 namespace CodingAgent.Web.UnitTests;
 
 /// <summary>
-/// Unit and property-based tests for <see cref="DispatchOrchestrationService.MergeMcpServers"/>.
+/// Unit and property-based tests for <see cref="McpServerMerge.Merge"/>.
 /// Verifies override, additive, passthrough, case-insensitivity, and determinism/idempotency.
 /// </summary>
 public class McpMergeTests
@@ -32,7 +32,7 @@ public class McpMergeTests
     {
         var profile = new[] { Stdio("context7"), Stdio("web-search") };
 
-        var result = DispatchOrchestrationService.MergeMcpServers(profile, null);
+        var result = McpServerMerge.Merge(profile, null);
 
         result.Should().BeEquivalentTo(profile, opts => opts.WithStrictOrdering(),
             "null project must pass profile through unchanged");
@@ -43,7 +43,7 @@ public class McpMergeTests
     {
         var profile = new[] { Stdio("context7"), Stdio("web-search") };
 
-        var result = DispatchOrchestrationService.MergeMcpServers(profile, []);
+        var result = McpServerMerge.Merge(profile, []);
 
         result.Should().BeEquivalentTo(profile, opts => opts.WithStrictOrdering(),
             "empty project list must pass profile through unchanged");
@@ -52,7 +52,7 @@ public class McpMergeTests
     [Fact]
     public void MergeMcpServers_WhenBothEmpty_ReturnsEmpty()
     {
-        var result = DispatchOrchestrationService.MergeMcpServers([], null);
+        var result = McpServerMerge.Merge([], null);
 
         result.Should().BeEmpty();
     }
@@ -63,7 +63,7 @@ public class McpMergeTests
         var profile = new[] { Stdio("context7"), Stdio("web-search") };
         var project = new[] { Stdio("web-search", disabled: true) };
 
-        var result = DispatchOrchestrationService.MergeMcpServers(profile, project);
+        var result = McpServerMerge.Merge(profile, project);
 
         result.Should().HaveCount(2);
         result.Should().Contain(s => s.Name == "context7" && !s.Disabled);
@@ -76,7 +76,7 @@ public class McpMergeTests
         var profile = new[] { Stdio("context7") };
         var project = new[] { Stdio("sonarqube-mcp") };
 
-        var result = DispatchOrchestrationService.MergeMcpServers(profile, project);
+        var result = McpServerMerge.Merge(profile, project);
 
         result.Should().HaveCount(2);
         result.Select(s => s.Name).Should().Contain("context7");
@@ -89,7 +89,7 @@ public class McpMergeTests
         var profile = new[] { Stdio("Context7") };
         var project = new[] { Stdio("context7", disabled: true) };
 
-        var result = DispatchOrchestrationService.MergeMcpServers(profile, project);
+        var result = McpServerMerge.Merge(profile, project);
 
         result.Should().HaveCount(1);
         result[0].Disabled.Should().BeTrue("project server wins on collision");
@@ -100,7 +100,7 @@ public class McpMergeTests
     {
         var project = new[] { Stdio("custom") };
 
-        var result = DispatchOrchestrationService.MergeMcpServers([], project);
+        var result = McpServerMerge.Merge([], project);
 
         result.Should().HaveCount(1);
         result[0].Name.Should().Be("custom");
@@ -115,7 +115,7 @@ public class McpMergeTests
         var profile = new[] { Stdio("context7"), Stdio("web-search") };
         var project = new[] { Stdio("web-search", disabled: true), Stdio("sonarqube-mcp") };
 
-        var result = DispatchOrchestrationService.MergeMcpServers(profile, project);
+        var result = McpServerMerge.Merge(profile, project);
 
         result.Should().HaveCount(3);
         result.Should().Contain(s => s.Name == "context7" && !s.Disabled);
@@ -131,8 +131,8 @@ public class McpMergeTests
     [Property(MaxTest = 20, Arbitrary = new[] { typeof(McpArbitraries) })]
     public bool MergeMcpServers_IsDeterministic(McpServerConfig[] profileServers, McpServerConfig[] projectServers)
     {
-        var r1 = DispatchOrchestrationService.MergeMcpServers(profileServers, projectServers);
-        var r2 = DispatchOrchestrationService.MergeMcpServers(profileServers, projectServers);
+        var r1 = McpServerMerge.Merge(profileServers, projectServers);
+        var r2 = McpServerMerge.Merge(profileServers, projectServers);
         return r1.SequenceEqual(r2, McpServerConfigComparer.Instance);
     }
 
@@ -152,8 +152,8 @@ public class McpMergeTests
     [Property(MaxTest = 20, Arbitrary = new[] { typeof(McpArbitraries) })]
     public bool MergeMcpServers_IsIdempotent(McpServerConfig[] profileServers, NonEmptyMcpServerConfigArray projectServers)
     {
-        var once = DispatchOrchestrationService.MergeMcpServers(profileServers, projectServers.Value).ToArray();
-        var twice = DispatchOrchestrationService.MergeMcpServers(once, projectServers.Value);
+        var once = McpServerMerge.Merge(profileServers, projectServers.Value).ToArray();
+        var twice = McpServerMerge.Merge(once, projectServers.Value);
         return once.SequenceEqual(twice, McpServerConfigComparer.Instance);
     }
 
