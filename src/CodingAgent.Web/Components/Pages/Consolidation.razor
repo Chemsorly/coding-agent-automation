@@ -183,7 +183,10 @@
                             <th>Started</th>
                             <th>Status</th>
                             <th>Summary</th>
-                            <th>Actions</th>
+                            @if (_anyRunCancellable)
+                            {
+                                <th>Actions</th>
+                            }
                         </tr>
                     </thead>
                     <tbody>
@@ -199,12 +202,15 @@
                                     </span>
                                 </td>
                                 <td class="consolidation-summary-cell" title="@(run.Summary ?? "—")">@(run.Summary ?? "—")</td>
-                                <td>
-                                    @if (run.Status == ConsolidationRunStatus.Queued || run.Status == ConsolidationRunStatus.Pending)
-                                    {
-                                        <button class="btn-cancel-run" @onclick="() => CancelQueuedRun(run.RunId)">Cancel</button>
-                                    }
-                                </td>
+                                @if (_anyRunCancellable)
+                                {
+                                    <td>
+                                        @if (run.Status == ConsolidationRunStatus.Queued || run.Status == ConsolidationRunStatus.Pending)
+                                        {
+                                            <button class="btn-cancel-run" @onclick="() => CancelQueuedRun(run.RunId)">Cancel</button>
+                                        }
+                                    </td>
+                                }
                             </tr>
                         }
                     </tbody>
@@ -272,6 +278,7 @@
     private IReadOnlyList<PipelineJobTemplate> _templates = [];
     private Dictionary<(ConsolidationRunType, string?), ConsolidationRun?> _lastRuns = new();
     private IReadOnlyList<ConsolidationRun> _runHistory = [];
+    private bool _anyRunCancellable;
     private HarnessSuggestions? _harnessSuggestions;
     private string? _statusMessage;
     private bool _statusIsError;
@@ -348,6 +355,14 @@
             Log.Warning(ex, "Failed to load consolidation run history");
             _runHistory = [];
         }
+        _anyRunCancellable = _runHistory.Any(r =>
+            r.Status == ConsolidationRunStatus.Queued ||
+            r.Status == ConsolidationRunStatus.Pending);
+        // TODO: [WARNING] _anyRunCancellable is computed outside the try/catch that loads _runHistory.
+        // This is safe today (the catch sets _runHistory = [] so .Any() returns false), but placing
+        // this computation *inside* the run-history try block (immediately after _runHistory is assigned)
+        // would make the data flow explicit and prevent a future refactor from accidentally computing it
+        // against a partially-initialised list. Move it inside the try block when touching this area.
 
         try
         {

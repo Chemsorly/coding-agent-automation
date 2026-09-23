@@ -23,7 +23,7 @@
     <div class="cockpit-page-header">
         <div class="cockpit-page-titles">
             <h1>Insights</h1>
-            <span class="cockpit-page-sub">Trends across the last @_total run@(_total == 1 ? "" : "s")@(_isTruncated ? " (showing most recent 500 — results may be partial)" : "")</span>
+            <span class="cockpit-page-sub">Trends across the last @_total run@(_total == 1 ? "" : "s")</span>
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
             @* TODO: [WARNING] OnRefresh is wired directly to LoadAsync, which sets _loading = true and
@@ -39,7 +39,7 @@
                Until then, the RefreshBar auto-refresh polling is the only mechanism for background updates. *@
             <label style="display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 13px; border: 1px solid var(--ctl-border); border-radius: 9px; background: var(--surface); font-size: 12.5px; font-weight: 600; color: var(--text-muted);">
                 <span style="font-size: 11px; font-weight: 700; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em;">Time window:</span>
-                <select class="time-window-select" style="font-size: 12px;" @bind="_recentWindowHours" @bind:after="LoadAsync" title="Filter all metrics to runs started within this window" aria-label="Time window">
+                <select class="time-window-select" style="font-size: 12px;" @bind="_recentWindowHours" @bind:after="LoadAsync" title="Filter all metrics to runs started within this window">
                     <option value="1">1h</option>
                     <option value="6">6h</option>
                     <option value="24">24h</option>
@@ -68,7 +68,10 @@
             <div class="cockpit-stat"><span class="cockpit-stat-l">Success rate · @RecentWindowLabel</span><span class="cockpit-stat-v">@_successRate<span style="font-size: 15px; color: var(--text-faint);">%</span></span></div>
             <div class="cockpit-stat"><span class="cockpit-stat-l">Avg cycle time · @RecentWindowLabel</span><span class="cockpit-stat-v">@_avgCycle</span></div>
             <div class="cockpit-stat"><span class="cockpit-stat-l">Retry rate · @RecentWindowLabel</span><span class="cockpit-stat-v">@_retryRate<span style="font-size: 15px; color: var(--text-faint);">%</span></span></div>
-            <div class="cockpit-stat"><span class="cockpit-stat-l">Avg tokens / run · @RecentWindowLabel</span><span class="cockpit-stat-v">@CostFormatter.FormatTokens(_avgTokens)</span></div>
+            @if (_anyRunHasTokens)
+            {
+                <div class="cockpit-stat"><span class="cockpit-stat-l">Avg tokens / run · @RecentWindowLabel</span><span class="cockpit-stat-v">@CostFormatter.FormatTokens(_avgTokens)</span></div>
+            }
         </div>
 
         <div class="cockpit-card cockpit-card-pad">
@@ -83,7 +86,7 @@
             <div style="display: flex; align-items: flex-end; gap: 5px; height: 120px;">
                 @foreach (var day in _days)
                 {
-                    <div style="flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; min-width: 0;" title="@FormatSlotLabel(day.SlotStart) — @day.Total run(s)">
+                    <div style="flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; min-width: 0;" title="@day.Date.ToString("MMM d") — @day.Total run(s)">
                         @if (day.Cancelled > 0) { <div style="height: @Px(day.Cancelled)px; background: var(--text-faint);"></div> }
                         @if (day.Failed > 0) { <div style="height: @Px(day.Failed)px; background: #EF4444;"></div> }
                         @if (day.Completed > 0) { <div style="height: @Px(day.Completed)px; background: #22C55E;"></div> }
@@ -91,12 +94,12 @@
                 }
             </div>
             <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 10.5px; color: var(--text-faint);">
-                <span>@(_days.Count > 0 ? FormatSlotLabel(_days[0].SlotStart) : "")</span>
-                <span>@(_days.Count > 0 ? FormatSlotLabel(_days[^1].SlotStart) : "")</span>
+                <span>@(_days.Count > 0 ? _days[0].Date.ToString("MMM d") : "")</span>
+                <span>@(_days.Count > 0 ? _days[^1].Date.ToString("MMM d") : "")</span>
             </div>
         </div>
 
-        <div class="cockpit-two-col-asymmetric">
+        <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; align-items: start;">
             <!-- outcome mix -->
             <div class="cockpit-card cockpit-card-pad">
                 <h2 style="margin: 0 0 14px; font-size: 15px; font-weight: 700;">Outcome mix</h2>
@@ -136,12 +139,14 @@
             </div>
 
             <!-- cost -->
+            @if (_anyRunHasTokens || _totalCost > 0m)
+            {
             <div class="cockpit-card cockpit-card-pad">
                 <div style="display: flex; align-items: center; justify-content: space-between;">
                     <h2 style="margin: 0; font-size: 15px; font-weight: 700;">Cost</h2>
                     <span style="font-size: 11px; font-weight: 600; color: var(--warning); background: var(--warning-bg); border: 1px solid var(--warning-border); padding: 2px 8px; border-radius: 999px;">OpenCode only</span>
                 </div>
-                <div class="cockpit-two-col" style="margin-top: 14px; gap: 12px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px;">
                     <div><div class="cockpit-stat-l">Total (reported)</div><div style="font-size: 20px; font-weight: 800;">@CostFormatter.FormatCost(_totalCost)</div></div>
                     <div><div class="cockpit-stat-l">Runs with cost</div><div style="font-size: 20px; font-weight: 800;">@_costCoverage%</div></div>
                 </div>
@@ -152,17 +157,14 @@
                     </div>
                 </div>
             </div>
+            }
         </div>
 
         <div class="cockpit-card">
             <div class="cockpit-card-header"><h2>Quality gate failures</h2><span style="font-size: 12px; color: var(--text-muted);">recent runs with gate data</span></div>
-            @if (_runsWithGateData == 0)
+            @if (_gateRanking.Count == 0)
             {
-                <div class="cockpit-empty" style="padding: 24px;">No gate data for runs in this window.</div>
-            }
-            else if (_gateRanking.Count == 0)
-            {
-                <div class="cockpit-empty" style="padding: 24px;">No gate failures in @_runsWithGateData run@(_runsWithGateData == 1 ? "" : "s") with gate data.</div>
+                <div class="cockpit-empty" style="padding: 24px;">No quality-gate failures in the fetched window.</div>
             }
             else
             {
@@ -196,13 +198,12 @@
     private int _successRate, _retryRate, _costCoverage;
     private string _avgCycle = "—";
     private long _avgTokens;
+    private bool _anyRunHasTokens;
     private decimal _totalCost;
     private Dictionary<string, int> _byType = new();
-    private List<TimeBucket> _days = new();
-    private int _maxBucket = 1;
+    private List<DayBucket> _days = new();
+    private int _maxDay = 1;
     private List<GateStat> _gateRanking = new();
-    private int _runsWithGateData;
-    private bool _isTruncated;
 
     // Time window for insights. 0 = all runs (no cutoff). Default 24h.
     private int _recentWindowHours = 24;
@@ -244,74 +245,22 @@
         _error = null;
         _total = 0; _completed = 0; _failed = 0; _cancelled = 0;
         _successRate = 0; _retryRate = 0; _costCoverage = 0;
-        _avgCycle = "—"; _avgTokens = 0; _totalCost = 0;
-        _byType = new(); _days = new(); _maxBucket = 1; _gateRanking = new();
-        _runsWithGateData = 0; _isTruncated = false;
+        _avgCycle = "—"; _avgTokens = 0; _anyRunHasTokens = false; _totalCost = 0;
+        _byType = new(); _days = new(); _maxDay = 1; _gateRanking = new();
         try
         {
-            // Capture a single UTC timestamp so the pre-filter and BuildBuckets use the same clock
-            // snapshot. Two separate UtcNow reads could straddle an hour boundary under slow I/O and
-            // shift every bucket label by a full hour (CRITICAL fix).
-            var now = DateTimeOffset.UtcNow;
-
-            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 500, feedbackOnly: false, includeActive: false, projectId: State.SelectedProjectId, ct: _cts.Token);
+            // TODO: [WARNING] pageSize: 100 caps the history. For wide time windows (e.g. 7d) on busy systems,
+            // runs beyond the first 100 are silently excluded, causing metrics to undercount.
+            // Fix requires either server-side date filtering or paginating until the window boundary is passed.
+            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false, projectId: State.SelectedProjectId, ct: _cts.Token);
             var allItems = runs.Items;
 
-            // Compute the window start using the same truncation logic as InsightsBucketer so the
-            // pre-filter and chart buckets are aligned (CRITICAL fix — the old rolling cutoff
-            // DateTimeOffset.UtcNow.AddHours(-N) did not truncate to the hour, causing the first
-            // hourly bucket to be under-counted by up to one partial hour).
-            DateTimeOffset windowStart;
-            if (_recentWindowHours is 1 or 6 or 24)
-            {
-                // Truncate to the start of the current hour (UTC) — matches BuildHourlyBuckets.
-                var windowEnd = new DateTimeOffset(now.UtcDateTime.Year, now.UtcDateTime.Month,
-                    now.UtcDateTime.Day, now.UtcDateTime.Hour, 0, 0, TimeSpan.Zero);
-                windowStart = windowEnd.AddHours(-_recentWindowHours);
-            }
-            else if (_recentWindowHours == 168)
-            {
-                // Start of today UTC minus 6 days — matches BuildDailyBuckets(dayCount: 7).
-                var todayUtc = new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero);
-                windowStart = todayUtc.AddDays(-6);
-            }
-            else
-            {
-                // "All" window (0): no cutoff — all items are in scope.
-                windowStart = DateTimeOffset.MinValue;
-            }
-
-            // Apply time-window filter using the bucketer-aligned windowStart.
+            // Apply time-window filter if a window is selected (0 = all).
             var items = _recentWindowHours > 0
-                ? allItems.Where(r => r.StartedAtOffset >= windowStart).ToList()
+                ? allItems.Where(r => r.StartedAtOffset >= DateTimeOffset.UtcNow.AddHours(-_recentWindowHours)).ToList()
                 : allItems.ToList();
 
-            // _isTruncated: show the banner only when the fetch cap may have excluded in-window runs.
-            // runs.HasMore means there are older pages; if the oldest fetched item still falls inside
-            // the window, additional in-window runs may exist on subsequent pages (CRITICAL fix — the
-            // old logic used runs.HasMore alone, which triggers for windowed views even when all
-            // in-window runs fit in page 1).
-            // TODO: [WARNING] For narrow windows (1h/6h/24h) on a busy system with >500 runs per day,
-            // the banner may still fire incorrectly because runs.HasMore reflects the global page count,
-            // not per-window coverage. A server-side date-filtered endpoint would make this exact.
-            // TODO: [WARNING] The allItems.Min(r => r.StartedAtOffset) call iterates allItems fully.
-            // The allItems.Count > 0 guard is correct so there is no runtime defect. However, if
-            // allItems is ever changed from a materialized List<T> to an IEnumerable<T> (e.g. by
-            // removing .ToList() on runs.Items), the double enumeration would become a bug. Keep
-            // allItems materialized, or assign the Min to a local variable ahead of this expression.
-            _isTruncated = runs.HasMore && allItems.Count > 0 &&
-                allItems.Min(r => r.StartedAtOffset) >= windowStart;
-
             _total = items.Count;
-            // TODO: [WARNING] Chart-vs-headline divergence for hourly windows. The pre-filter keeps
-            // runs with StartedAtOffset >= windowStart (no upper bound), so runs in the current
-            // partial hour (between windowEnd and now) are counted in _total, _successRate,
-            // _retryRate, etc. But BuildHourlyBuckets only covers [windowStart, windowEnd) where
-            // windowEnd is the start of the current hour — those same runs land in no chart bucket.
-            // The chart bar sum therefore under-reports the headline counts when runs exist in the
-            // current partial hour. Fix: either add a trailing partial-hour bucket in
-            // BuildHourlyBuckets, or exclude partial-hour runs from the headline metrics by
-            // filtering items to r.StartedAtOffset < windowEnd before computing _total.
             if (_total == 0) { _loading = false; return; }
 
             _completed = items.Count(r => r.FinalStep == PipelineStep.Completed);
@@ -326,6 +275,7 @@
             _totalCost = items.Sum(r => r.TotalCost ?? 0m);
 
             _avgTokens = (long)items.Average(r => (double)r.TotalTokens);
+            _anyRunHasTokens = items.Any(r => r.TotalTokens > 0);
 
             var completedWithTime = items
                 .Where(r => r.FinalStep == PipelineStep.Completed && r.CompletedAtOffset is not null)
@@ -336,13 +286,21 @@
 
             _byType = items.GroupBy(r => RunTypeLabel(r.RunType)).ToDictionary(g => g.Key, g => g.Count());
 
-            // Build time-window-aware buckets (hourly for 1h/6h/24h, daily for 7d/All).
-            // Pass the same `now` captured above so the bucketer and pre-filter share one clock snapshot.
-            _days = InsightsBucketer.BuildBuckets(items, _recentWindowHours, now).ToList();
-            _maxBucket = Math.Max(1, _days.Count > 0 ? _days.Max(d => d.Total) : 1);
+            var today = DateTimeOffset.Now.Date;
+            _days = Enumerable.Range(0, 14)
+                .Select(i => today.AddDays(-13 + i))
+                .Select(d =>
+                {
+                    var dayItems = items.Where(r => r.StartedAtOffset.LocalDateTime.Date == d).ToList();
+                    return new DayBucket(DateOnly.FromDateTime(d),
+                        dayItems.Count(r => r.FinalStep == PipelineStep.Completed),
+                        dayItems.Count(r => r.FinalStep == PipelineStep.Failed),
+                        dayItems.Count(r => r.FinalStep == PipelineStep.Cancelled));
+                })
+                .ToList();
+            _maxDay = Math.Max(1, _days.Max(d => d.Total));
 
             // Per-gate failure ranking: flatten each run's gate outcomes, count runs + failures per gate.
-            _runsWithGateData = items.Count(r => r.QualityGateOutcomes is { Count: > 0 });
             var gateStats = new Dictionary<string, (int Total, int Failed)>(StringComparer.Ordinal);
             foreach (var run in items)
             {
@@ -371,22 +329,11 @@
     }
 
     private int Pct(int count) => _total > 0 ? (int)Math.Round(100.0 * count / _total) : 0;
-    private int Px(int count) => (int)Math.Round(110.0 * count / _maxBucket);
+    private int Px(int count) => (int)Math.Round(110.0 * count / _maxDay);
 
-    /// <summary>
-    /// Formats a bucket's SlotStart for x-axis labels and tooltips.
-    /// Hourly windows (1h/6h/24h) use "HH:mm UTC"; daily windows (7d/All) use "MMM d UTC".
-    /// </summary>
-    private string FormatSlotLabel(DateTimeOffset slotStart)
+    private sealed record DayBucket(DateOnly Date, int Completed, int Failed, int Cancelled)
     {
-        // TODO: [WARNING] For the 24h window, the label omits the date component (e.g. "15:00 UTC"),
-        // so x-axis ticks that span two calendar days are ambiguous — the leftmost label is
-        // indistinguishable from the same hour on today's row. Consider including the date on the
-        // first bucket of each calendar-day transition, or at minimum on both axis endpoints.
-        // If the window is hourly we show the time; otherwise show the date.
-        return _recentWindowHours is 1 or 6 or 24
-            ? slotStart.ToString("HH:mm") + " UTC"
-            : slotStart.ToString("MMM d") + " UTC";
+        public int Total => Completed + Failed + Cancelled;
     }
 
     private sealed record GateStat(string GateName, int Total, int Failed);

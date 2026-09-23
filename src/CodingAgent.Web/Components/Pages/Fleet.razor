@@ -150,10 +150,7 @@
                                     <tr class="fleet-detail-row">
                                         <td colspan="5">
                                             <div class="cockpit-detail-grid">
-                                                <div class="cockpit-detail-item"><div class="k">Hostname</div><div class="v mono">@a.Hostname</div></div>
-                                                <div class="cockpit-detail-item"><div class="k">Connection ID</div><div class="v mono">@a.ConnectionId</div></div>
                                                 <div class="cockpit-detail-item"><div class="k">Registered</div><div class="v" title="@Abs(a.RegisteredAt)">@Ago(a.RegisteredAt)</div></div>
-                                                <div class="cockpit-detail-item"><div class="k">Last heartbeat</div><div class="v" title="@Abs(a.LastHeartbeatAt)">@Ago(a.LastHeartbeatAt)</div></div>
                                                 @if (a.BusySince is not null)
                                                 {
                                                     <div class="cockpit-detail-item"><div class="k">Busy since</div><div class="v" title="@Abs(a.BusySince.Value)">@Ago(a.BusySince.Value)</div></div>
@@ -163,23 +160,13 @@
                                                     <div class="cockpit-detail-item">
                                                         <div class="k">Active issue</div>
                                                         <div class="v">
-                                                            @if (!string.IsNullOrEmpty(a.ActiveIssueUrl))
+                                                            @if (!string.IsNullOrEmpty(a.ActiveIssueTitle))
                                                             {
-                                                                @* TODO: Validate that ActiveIssueUrl starts with https:// before rendering as href.
-                                                                   Blazor HTML-encodes attribute values but does NOT strip javascript: URI schemes,
-                                                                   so a malicious/corrupted record could produce a clickable XSS link. *@
-                                                                <a href="@a.ActiveIssueUrl" target="_blank" rel="noopener noreferrer">#@a.ActiveIssueIdentifier</a>
+                                                                <span class="monitoring-muted">@a.ActiveIssueTitle</span>
                                                             }
                                                             else
                                                             {
                                                                 <span class="mono">#@a.ActiveIssueIdentifier</span>
-                                                            }
-                                                            @if (!string.IsNullOrEmpty(a.ActiveIssueTitle))
-                                                            {
-                                                                @* TODO: No test covers truncation of long issue titles (>60 chars) in the expanded detail row.
-                                                                   Add a bUnit or E2E test with an 85+ char title asserting: (a) rendered text ≤ 63 chars,
-                                                                   (b) title attribute contains the full string. *@
-                                                                <span class="monitoring-muted" title="@a.ActiveIssueTitle"> @Truncate(a.ActiveIssueTitle, 60)</span>
                                                             }
                                                         </div>
                                                     </div>
@@ -198,11 +185,7 @@
                                                         @* TODO: Validate that ActivePullRequestUrl starts with https:// before rendering as href.
                                                            Blazor HTML-encodes attribute values but does NOT strip javascript: URI schemes,
                                                            so a malicious/corrupted record could produce a clickable XSS link. *@
-                                                        @* TODO: No test covers the "View PR" link in the expanded detail row. The existing
-                                                           Fleet_BusyAgent_WithPr_ShowsPrLink test only checks the fleet-work-cell icon link,
-                                                           not this expanded row element. Add a test asserting link text is "View PR" and href
-                                                           matches the full URL, so a regression reverting to raw URL text is detected. *@
-                                                        <div class="v"><a href="@a.ActivePullRequestUrl" target="_blank" rel="noopener noreferrer" title="@a.ActivePullRequestUrl">View PR</a></div>
+                                                        <div class="v"><a href="@a.ActivePullRequestUrl" target="_blank" rel="noopener noreferrer">@a.ActivePullRequestUrl</a></div>
                                                     </div>
                                                 }
                                                 @if (!string.IsNullOrEmpty(a.ActiveChatSessionId))
@@ -221,7 +204,6 @@
                                                 {
                                                     <div class="cockpit-detail-item"><div class="k">Orphan restored</div><div class="v" title="@Abs(a.OrphanRestoredAt.Value)">@Ago(a.OrphanRestoredAt.Value)</div></div>
                                                 }
-                                                <div class="cockpit-detail-item"><div class="k">Disabled</div><div class="v">@(a.Disabled ? "Yes — excluded from job selection" : "No")</div></div>
                                             </div>
                                         </td>
                                     </tr>

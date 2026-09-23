@@ -50,15 +50,18 @@
         <div class="cockpit-stat"><span class="cockpit-stat-l">Active</span><span class="cockpit-stat-v">@_activeCount</span></div>
         <div class="cockpit-stat"><span class="cockpit-stat-l">Queue</span><span class="cockpit-stat-v">@_queueCount</span></div>
         <div class="cockpit-stat"><span class="cockpit-stat-l">Agents</span><span class="cockpit-stat-v">@_agentsOnline</span></div>
-        <div class="cockpit-stat"><span class="cockpit-stat-l">Success · last 100</span><span class="cockpit-stat-v">@(_finishedCount > 0 ? $"{_successRate}%" : "—")</span></div>
-        <div class="cockpit-stat"><span class="cockpit-stat-l">Tokens · recent</span><span class="cockpit-stat-v">@CostFormatter.FormatTokens(_tokensRecent)</span></div>
+        <div class="cockpit-stat"><span class="cockpit-stat-l">Success · recent</span><span class="cockpit-stat-v">@(_finishedCount > 0 ? $"{_successRate}%" : "—")</span></div>
+        @if (_anyRunHasTokens)
+        {
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Tokens · recent</span><span class="cockpit-stat-v">@CostFormatter.FormatTokens(_tokensRecent)</span></div>
+        }
     </div>
 
     @if (_attnNeedsRefinement + _attnFailed + _attnPlans > 0)
     {
         <div class="cockpit-card">
             <div class="cockpit-card-header"><h2>Needs attention</h2><a href="attention" style="font-size: 12.5px; font-weight: 600;">View all →</a></div>
-            <div class="cockpit-kpi-3col">
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr);">
                 <a href="attention" style="display: flex; align-items: center; gap: 11px; padding: 14px 18px; border-right: 1px solid var(--hairline); text-decoration: none; color: inherit;">
                     <span style="width: 34px; height: 34px; border-radius: 9px; background: var(--warning-bg); color: var(--warning); display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><Icon Name="alert-triangle" Size="17" /></span>
                     <div><div style="font-size: 18px; font-weight: 800;">@_attnNeedsRefinement</div><div style="font-size: 12px; color: var(--text-muted);">Needs refinement</div></div>
@@ -75,7 +78,7 @@
         </div>
     }
 
-    <div class="cockpit-two-col">
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start;">
         <!-- active runs -->
         <div class="cockpit-card">
             <div class="cockpit-card-header"><h2>Active runs</h2><span style="font-size: 12px; color: var(--text-muted);">@_activeRuns.Count</span></div>
@@ -124,7 +127,7 @@
                     <div class="cockpit-run-row" @onclick="() => OpenRun(run.RunId)">
                         <div style="min-width: 0;">
                             <div style="font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">#@run.IssueIdentifier @run.IssueTitle</div>
-                            <div class="mono" style="font-size: 11px; color: var(--text-muted);">@(run.AgentId ?? "—") · @CostFormatter.FormatTokens(run.TotalTokens)</div>
+                            <div class="mono" style="font-size: 11px; color: var(--text-muted);">@(run.AgentId ?? "—")@(run.TotalTokens > 0 ? " · " + CostFormatter.FormatTokens(run.TotalTokens) : "")</div>
                         </div>
                         <span class="step-badge @cls" style="flex-shrink: 0;">@label</span>
                     </div>
@@ -143,6 +146,7 @@
     private int _finishedCount;
     private int _successRate;
     private long _tokensRecent;
+    private bool _anyRunHasTokens;
     private int _attnNeedsRefinement, _attnFailed, _attnPlans;
     private List<PipelineRunSummary> _activeRuns = new();
     private List<PipelineRunSummary> _recentRuns = new();
@@ -210,18 +214,16 @@
             // included and will visibly jump every 10 s for long-running jobs. Consider summing only
             // _recentRuns (non-active) to restore the previous semantic, or update the label to clarify.
             _tokensRecent = items.Sum(r => r.TotalTokens);
+            _anyRunHasTokens = items.Any(r => r.TotalTokens > 0);
 
-            // TODO: [WARNING] AttentionAggregator is called with _recentRuns (non-active, client-side
-            // filtered) while Attention.razor calls GetRunHistoryAsync with includeActive: false (server
-            // filtered). Both should be equivalent today, but they use different filtering paths. If the
-            // server's includeActive: false behaviour diverges from the client-side IsActive() predicate
-            // (e.g. a new terminal PipelineStep is added server-side before the client is updated), the
-            // two pages will show different counts. The removed TODO comment was the only signal of this
-            // fragility; tracking it here to ensure future maintainers are aware.
-            var attn = AttentionAggregator.Aggregate(_recentRuns);
-            _attnNeedsRefinement = attn.NeedsRefinement.Count;
-            _attnFailed = attn.FailedRuns.Count;
-            _attnPlans = attn.PlansToApprove.Count;
+            _attnNeedsRefinement = items.Count(r => r.AnalysisRecommendation == AnalysisGateResult.NotReady);
+            // TODO: [WARNING] _attnFailed counts FinalStep == Failed across all fetched items (including
+            // active runs), while _finishedCount/_successRate are computed from _recentRuns (non-active only).
+            // Active runs should never have FinalStep == Failed, but if they momentarily do, a run could be
+            // double-counted. Verify that Attention.razor also uses the full items list (not _recentRuns) for
+            // its failed count so the two pages remain consistent after this pageSize alignment.
+            _attnFailed = items.Count(r => r.FinalStep == PipelineStep.Failed);
+            _attnPlans = items.Count(r => r.RunType == PipelineRunType.DecompositionAnalysis && r.FinalStep == PipelineStep.Completed);
         }
         catch (OperationCanceledException) { return; }
         catch { }
