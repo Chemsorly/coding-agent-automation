@@ -6,7 +6,7 @@ using Xunit;
 namespace CodingAgent.Web.UnitTests.Hubs;
 
 /// <summary>
-/// Unit tests for <see cref="AgentJobLifecycleService.ApplyStepMetadata"/> —
+/// Unit tests for <see cref="StepMetadataApplier.Apply"/> —
 /// the internal static method that maps step-metadata key/value pairs to PipelineRun properties.
 /// All tests are pure-logic with no mocks.
 /// </summary>
@@ -357,7 +357,7 @@ public class AgentJobLifecycleServiceApplyMetadataTests
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static void Apply(PipelineRun run, Dictionary<string, string> metadata)
-        => AgentJobLifecycleService.ApplyStepMetadata(run, metadata);
+        => StepMetadataApplier.Apply(run, metadata);
 
     private static PipelineRun MakeRun() => new()
     {
