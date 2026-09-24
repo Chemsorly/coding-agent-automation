@@ -124,6 +124,12 @@ public class AgentCodingStopPendingTests : BunitContext
 
     private static bool GetStopPending(IRenderedComponent<AgentCoding> cut)
     {
+        // TODO: [WARNING] This reads internal component state via private reflection rather than asserting
+        // on observable DOM behaviour. If _stopPending is set but the button's `disabled` attribute is not
+        // propagated (e.g. a missing StateHasChanged call), this helper would return true while the button
+        // is still enabled — a silent false positive. The DOM assertions on the `disabled` attribute present
+        // in the same tests are the meaningful checks; consider removing this helper and relying solely on
+        // DOM assertions for future tests in this class.
         var field = typeof(AgentCoding).GetField(
             "_stopPending",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
@@ -172,12 +178,15 @@ public class AgentCodingStopPendingTests : BunitContext
         tcs.SetResult();
     }
 
-    // ── Test 2: Toast Stop button is disabled while stop is in-flight ─────────
+    // ── Test 2: Inline controls Stop button is disabled while stop is in-flight ─
 
     [Fact]
     public async Task WhenStopLoopClicked_ToastStopButtonBecomesDisabled()
     {
-        // Arrange: ensure toast is visible (IsLoopActive=true, _hideLoopToast=false)
+        // Note: test name preserved for regression history. The toast bar was removed in #2939.
+        // This now verifies the inline Loop Controls section's Stop Loop button is disabled.
+
+        // Arrange: ensure loop is active so the Stop button is shown in the inline section
         var tcs = new TaskCompletionSource();
         _mockSchedulerClient
             .Setup(c => c.StopLoopAsync(It.IsAny<CancellationToken>()))
@@ -189,21 +198,28 @@ public class AgentCodingStopPendingTests : BunitContext
         _ = InvokeStopLoopAsync(cut);
         await cut.InvokeAsync(() => { });
 
-        // Assert: the toast bar's Stop Loop button has disabled attribute
-        var loopStatusBar = cut.Find(".loop-status-bar");
-        var toastStopBtn = loopStatusBar.QuerySelector("button.loop-stop-btn");
-        Assert.NotNull(toastStopBtn);
-        Assert.True(toastStopBtn.HasAttribute("disabled"),
-            "Toast Stop Loop button should be disabled while stop is in-flight");
+        // Assert: the inline Loop Controls section's Stop Loop button has disabled attribute.
+        // The toast bar was removed in issue #2939; there is now only one Stop Loop button.
+        var stopButtons = cut.FindAll("button")
+            .Where(b => b.TextContent.Contains("Stop Loop"))
+            .ToList();
+        Assert.NotEmpty(stopButtons);
+        Assert.All(stopButtons, btn => Assert.True(
+            btn.HasAttribute("disabled"),
+            "The Stop Loop button in the inline controls section must be disabled while stop is in-flight"));
 
         tcs.SetResult();
     }
 
-    // ── Test 3: Animated spinner shown in toast while stop is in-flight ───────
+    // ── Test 3: Stop is in-flight — no toast bar, controls section still works ─
 
     [Fact]
     public async Task WhenStopLoopClicked_AnimatedSpinnerShownInToast()
     {
+        // Note: test name preserved for regression history. The toast bar and its spinner were
+        // removed in issue #2939. This now verifies that _stopPending is true (the underlying
+        // state that gated the spinner) and the Stop Loop button is disabled in the inline section.
+
         // Arrange
         var tcs = new TaskCompletionSource();
         _mockSchedulerClient
@@ -216,14 +232,22 @@ public class AgentCodingStopPendingTests : BunitContext
         _ = InvokeStopLoopAsync(cut);
         await cut.InvokeAsync(() => { });
 
-        // Assert: spinner element is visible in the loop-status-bar
-        var loopStatusBar = cut.Find(".loop-status-bar");
-        // TODO: The assertion below only checks that .loop-stop-spinner exists inside the toast bar;
-        // it does not verify the element is inside .loop-status-text (not the button), nor that it is
-        // not hidden via display:none. Tighten to loopStatusBar.Find(".loop-status-text .loop-stop-spinner")
-        // if the spinner were ever accidentally moved or conditionally hidden.
-        var spinner = loopStatusBar.QuerySelector(".loop-stop-spinner");
-        Assert.NotNull(spinner);
+        // Assert: _stopPending is true (same underlying state that showed the old spinner)
+        // TODO: [WARNING] This reflection assertion tests internal state, not observable DOM behaviour.
+        // If _stopPending is set but StateHasChanged is not called, GetStopPending returns true while the
+        // button is still enabled in the DOM — a silent false positive. The DOM assertion below
+        // (stopButtons.All(b => b.HasAttribute("disabled"))) is the meaningful check; this reflection call
+        // adds no independent value and should be removed in favour of relying solely on DOM assertions.
+        Assert.True(GetStopPending(cut),
+            "_stopPending must be true while the stop is in-flight (same guard as the old spinner)");
+
+        // And the inline Stop Loop button is disabled
+        var stopButtons = cut.FindAll("button")
+            .Where(b => b.TextContent.Contains("Stop Loop"))
+            .ToList();
+        Assert.NotEmpty(stopButtons);
+        Assert.True(stopButtons.All(b => b.HasAttribute("disabled")),
+            "The inline Stop Loop button must be disabled while _stopPending is true");
 
         tcs.SetResult();
     }

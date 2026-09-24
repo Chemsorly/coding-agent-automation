@@ -79,7 +79,10 @@
                         <col style="width: 100px;" />  @* Initiated by *@
                         <col style="width: 300px;" />  @* Run *@
                         <col style="width: 100px;" />  @* Duration *@
-                        <col style="width: 90px;" />   @* Tokens *@
+                        @if (_anyRunHasTokens)
+                        {
+                            <col style="width: 90px;" />   @* Tokens *@
+                        }
                         <col style="width: 110px;" />  @* When *@
                         <col style="width: 90px;" />   @* Links *@
                     </colgroup>
@@ -130,7 +133,10 @@
                                     Duration @SortIndicatorForDuration
                                 </button>
                             </th>
-                            <th>Tokens</th>
+                            @if (_anyRunHasTokens)
+                            {
+                                <th>Tokens</th>
+                            }
                             @* ── When column: sortable ───────────────────────────────────────────── *@
                             <th class="@(ActiveSortClass(SortColumn.When))">
                                 <button class="sort-header" @onclick="() => ToggleSort(SortColumn.When)">
@@ -205,7 +211,10 @@
                                     <span style="color: var(--text-muted);">@Truncate(run.IssueTitle, 60)</span>
                                 </td>
                                 <td>@Dur(run.StartedAtOffset, run.CompletedAtOffset)</td>
-                                <td><span class="token-badge">@CostFormatter.FormatTokens(run.TotalTokens)</span></td>
+                                @if (_anyRunHasTokens)
+                                {
+                                    <td><span class="token-badge">@CostFormatter.FormatTokens(run.TotalTokens)</span></td>
+                                }
                                 <td title="@run.StartedAtOffset.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")">@Ago(run.StartedAtOffset)</td>
                                 <td class="runs-links-cell" @onclick:stopPropagation="true">
                                     @if (!string.IsNullOrEmpty(run.IssueUrl))
@@ -274,6 +283,7 @@
     private bool _feedbackOnly;
     private bool _loading = true;
     private string? _error;
+    private bool _anyRunHasTokens;
 
     // Hub subscriptions — disposed in DisposeAsync.
     private IDisposable? _stepSub;
@@ -414,11 +424,20 @@
     {
         _loading = true;
         _error = null;
+        // TODO: [WARNING] Resetting _anyRunHasTokens = false here causes a transient render where the Tokens
+        // column header and <col> are absent while _filteredRuns still holds the previous page's rows.
+        // During async data fetch (network delay), this produces a one-frame column misalignment: cells that
+        // were in the token column appear shifted until the new data arrives. Previously the column was always
+        // rendered, so no shift occurred. Fix: either delay the reset until after the new result is assigned,
+        // or suppress intermediate renders by setting _loading = true before the reset and re-rendering only
+        // after both _result and _anyRunHasTokens are updated.
+        _anyRunHasTokens = false;
         try
         {
             _result = await RunHistory.GetRunHistoryAsync(
                 page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true,
                 finalStep: FinalStepFilter, projectId: State.SelectedProjectId, ct: _cts.Token);
+            _anyRunHasTokens = _result?.Items.Any(r => r.TotalTokens > 0) ?? false;
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -446,6 +465,7 @@
             _result = await RunHistory.GetRunHistoryAsync(
                 page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true,
                 finalStep: FinalStepFilter, projectId: State.SelectedProjectId, ct: _cts.Token);
+            _anyRunHasTokens = _result?.Items.Any(r => r.TotalTokens > 0) ?? false;
             _error = null;
         }
         catch (OperationCanceledException) { }

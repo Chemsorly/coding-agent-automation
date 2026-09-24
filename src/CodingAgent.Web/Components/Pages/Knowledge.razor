@@ -43,7 +43,7 @@
     {
         <div class="cockpit-stat-strip">
             <div class="cockpit-stat"><span class="cockpit-stat-l">Runs · recent</span><span class="cockpit-stat-v">@_total</span></div>
-            <div class="cockpit-stat"><span class="cockpit-stat-l">Used brain</span><span class="cockpit-stat-v">@_withBrain<span style="font-size: 15px; color: var(--text-faint);"> · @Pct(_withBrain)%</span></span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Used brain</span><span class="cockpit-stat-v">@_withBrain</span></div>
             <div class="cockpit-stat"><span class="cockpit-stat-l">Context loaded</span><span class="cockpit-stat-v">@_ctxLoaded</span></div>
             <div class="cockpit-stat"><span class="cockpit-stat-l">Avg files loaded</span><span class="cockpit-stat-v">@_avgFiles.ToString("0.0")</span></div>
             <div class="cockpit-stat"><span class="cockpit-stat-l">Updates pushed</span><span class="cockpit-stat-v">@_updatesPushed</span></div>
@@ -79,7 +79,7 @@
         <div class="cockpit-card cockpit-card-pad" style="display: flex; gap: 12px; align-items: flex-start; font-size: 12.5px; color: var(--text-muted); line-height: 1.55;">
             <span style="flex-shrink: 0; color: var(--accent);"><Icon Name="info" Size="15" /></span>
             <span>
-                <strong style="color: var(--text);">Per-file impact isn't shown</strong> — "which knowledge file lifts outcomes / what's stale or never loaded" needs the agent to record the specific brain files that enter each run's context, then join to the outcome. Only the per-run <em>counts</em> above are recorded today, so nothing per-file is fabricated. <a href="pipelines">Pipelines</a> consolidates the brain via Brain Consolidation.
+                <strong style="color: var(--text);">Per-file impact isn't shown</strong> — per-file attribution is not tracked; only overall run outcomes are compared. <a href="/consolidation">Consolidation</a> runs brain consolidation to keep the knowledge base up to date.
             </span>
         </div>
     }

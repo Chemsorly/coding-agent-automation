@@ -183,7 +183,10 @@
                             <th>Started</th>
                             <th>Status</th>
                             <th>Summary</th>
-                            <th>Actions</th>
+                            @if (_anyRunCancellable)
+                            {
+                                <th>Actions</th>
+                            }
                         </tr>
                     </thead>
                     <tbody>
@@ -199,12 +202,15 @@
                                     </span>
                                 </td>
                                 <td class="consolidation-summary-cell" title="@(run.Summary ?? "—")">@(run.Summary ?? "—")</td>
-                                <td>
-                                    @if (run.Status == ConsolidationRunStatus.Queued || run.Status == ConsolidationRunStatus.Pending)
-                                    {
-                                        <button class="btn-cancel-run" @onclick="() => CancelQueuedRun(run.RunId)">Cancel</button>
-                                    }
-                                </td>
+                                @if (_anyRunCancellable)
+                                {
+                                    <td>
+                                        @if (run.Status == ConsolidationRunStatus.Queued || run.Status == ConsolidationRunStatus.Pending)
+                                        {
+                                            <button class="btn-cancel-run" @onclick="() => CancelQueuedRun(run.RunId)">Cancel</button>
+                                        }
+                                    </td>
+                                }
                             </tr>
                         }
                     </tbody>
@@ -272,6 +278,7 @@
     private IReadOnlyList<PipelineJobTemplate> _templates = [];
     private Dictionary<(ConsolidationRunType, string?), ConsolidationRun?> _lastRuns = new();
     private IReadOnlyList<ConsolidationRun> _runHistory = [];
+    private bool _anyRunCancellable;
     private HarnessSuggestions? _harnessSuggestions;
     private string? _statusMessage;
     private bool _statusIsError;
@@ -342,11 +349,15 @@
             // Null-coalesce: this section is embedded in the Pipelines page, so a null return
             // (e.g. a service that doesn't honour the non-null contract) must not NRE the render.
             _runHistory = await ConsolidationService.GetRunHistoryAsync(CancellationToken.None) ?? [];
+            _anyRunCancellable = _runHistory.Any(r =>
+                r.Status == ConsolidationRunStatus.Queued ||
+                r.Status == ConsolidationRunStatus.Pending);
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to load consolidation run history");
             _runHistory = [];
+            _anyRunCancellable = false;
         }
 
         try
@@ -494,6 +505,11 @@
             _statusIsError = false;
             await LoadDataAsync();
         }
+        // TODO: [WARNING] When cancelled is false (run was not found or already completed server-side),
+        // LoadDataAsync is not called, so _anyRunCancellable retains its previous value. If the UI shows
+        // a Cancel button for a run that is no longer cancellable due to a status race, the Actions column
+        // and button will remain visible after the failed attempt until the next background refresh.
+        // Fix: call LoadDataAsync() unconditionally, or at minimum refresh _anyRunCancellable here.
     }
 
     // TODO(WARNING): This method is `async void`. If LoadDataAsync (or InvokeAsync itself) throws
