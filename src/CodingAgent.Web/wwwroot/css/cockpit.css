@@ -518,3 +518,139 @@
     font-size: 12px !important; font-weight: 600; color: var(--text) !important;
     border-bottom-color: var(--ctl-border) !important;
 }
+
+
+/* ============================================================================
+   Responsive layout — issue #2946
+   Three breakpoints:
+     ≤1024px  sidebar collapses to icon rail
+     ≤768px   top bar hides secondary elements (search, project switcher)
+     ≤640px   sidebar becomes overlay drawer behind hamburger button;
+              page padding tightened; page-header wraps; multi-col grids collapse
+   Desktop (≥1280px) is untouched — the widest breakpoint is max-width: 1024px.
+   ============================================================================ */
+
+/* ---- New elements: hamburger button, sidebar backdrop, responsive grid classes ---- */
+
+/* Hamburger button — hidden at desktop, shown at ≤640px */
+.cockpit-hamburger {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 36px; height: 36px;
+    border: 1px solid var(--ctl-border); border-radius: 9px;
+    background: var(--surface); color: var(--text);
+    cursor: pointer; flex-shrink: 0;
+}
+.cockpit-hamburger:hover { background: var(--bg-hover); color: var(--accent); }
+
+/* Sidebar backdrop — hidden by default; shown only at ≤640px when sidebar is open.
+   TODO [WARNING]: The backdrop element is rendered conditionally in Razor (@if (_sidebarOpen)),
+   so at 641–1024px if _sidebarOpen is somehow true (e.g. user resizes after opening on mobile),
+   the backdrop DOM node would be present but have display:none from this base rule — the click-to-
+   close handler would silently not fire. If the hamburger button ever becomes accessible at tablet
+   widths, consider making backdrop visibility driven by Razor state (always render it, hide via
+   inline style or a C# class binding) rather than relying on the CSS media query to hide it. */
+.cockpit-sidebar-backdrop {
+    display: none;
+    position: fixed; inset: 0; z-index: 199;
+    background: rgba(0, 0, 0, 0.4);
+}
+
+/* Named responsive grid classes for inline layouts in Overview.razor and Insights.razor.
+   These replace hardcoded style attributes so media queries can target them. */
+.cockpit-kpi-3col {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+}
+.cockpit-two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: start;
+}
+.cockpit-two-col-asymmetric {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 16px;
+    align-items: start;
+}
+
+/* ---- Breakpoint 1 — Tablet icon rail (≤1024px) ---- */
+@media (max-width: 1024px) {
+    .cockpit-sidebar {
+        width: 60px;
+        min-width: 60px;
+    }
+    .cockpit-brand-text { display: none; }
+    .cockpit-nav-text { display: none; }
+    .cockpit-nav-group { display: none; }
+    .cockpit-nav-sep { display: none; }
+    .cockpit-theme-toggle span { display: none; }
+    .cockpit-nav-link { justify-content: center; gap: 0; padding: 11px; }
+    .cockpit-brand { justify-content: center; padding: 12px; }
+}
+
+/* ---- Breakpoint 2 — Tablet top bar (≤768px) ---- */
+@media (max-width: 768px) {
+    .cockpit-search { display: none; }
+    .cockpit-project-switcher { display: none; }
+    .cockpit-topbar { padding: 0 14px; gap: 10px; }
+}
+
+/* ---- Breakpoint 3 — Mobile overlay drawer + page chrome (≤640px) ---- */
+@media (max-width: 640px) {
+    /* Sidebar becomes a fixed overlay drawer, hidden off-screen to the left */
+    .cockpit-sidebar {
+        position: fixed;
+        top: 0; left: -248px;
+        height: 100vh;
+        z-index: 200;
+        width: 248px; min-width: 248px;
+        transition: left 0.22s ease;
+    }
+    /* When open, slide in from the left */
+    .cockpit-sidebar.is-open {
+        left: 0;
+    }
+    /* Restore full text labels inside the open overlay drawer */
+    .cockpit-sidebar.is-open .cockpit-brand-text { display: flex; }
+    .cockpit-sidebar.is-open .cockpit-nav-text { display: block; }
+    .cockpit-sidebar.is-open .cockpit-nav-group { display: block; }
+    .cockpit-sidebar.is-open .cockpit-nav-sep { display: block; }
+    .cockpit-sidebar.is-open .cockpit-nav-link { justify-content: flex-start; gap: 11px; padding: 9px 11px; }
+    .cockpit-sidebar.is-open .cockpit-brand { justify-content: flex-start; padding: 12px 18px; }
+    .cockpit-sidebar.is-open .cockpit-theme-toggle span { display: inline; }
+
+    /* Show hamburger button and backdrop */
+    .cockpit-hamburger { display: inline-flex; }
+    /* TODO [WARNING]: The backdrop is set to display:block unconditionally here, but the element
+       is only in the DOM when _sidebarOpen=true (Razor @if). Between 641px and 1024px the backdrop
+       element may be present-but-invisible if _sidebarOpen gets stuck true (e.g. after a resize).
+       See the base .cockpit-sidebar-backdrop rule above for the full discussion. */
+    .cockpit-sidebar-backdrop { display: block; }
+
+    /* Tighten top bar */
+    .cockpit-topbar { padding: 0 12px; gap: 8px; }
+
+    /* Prevent page scroll behind the open sidebar */
+    /* TODO [WARNING]: .cockpit.sidebar-open sets overflow:hidden only at ≤640px. The C# _sidebarOpen
+       state and sidebar-open root class are not viewport-gated in Razor. If the user opens the sidebar
+       on mobile and then resizes to a wider viewport, _sidebarOpen remains true but the overflow:hidden
+       and overlay CSS no longer apply — the state is visually invisible but the class stays on the root
+       element. Consider resetting _sidebarOpen to false on a JS resize event, or accepting this as a
+       rare edge case that self-heals on next navigation. */
+    .cockpit.sidebar-open { overflow: hidden; }
+
+    /* Reduce page padding so cards have more horizontal room */
+    .cockpit-page { padding: 14px 12px 28px; }
+
+    /* Page headers must wrap when title + actions exceed the narrow content area */
+    .cockpit-page-header { flex-wrap: wrap; }
+
+    /* Collapse multi-column grids to single column */
+    .cockpit-kpi-3col { grid-template-columns: 1fr !important; }
+    .cockpit-two-col { grid-template-columns: 1fr !important; }
+    .cockpit-two-col-asymmetric { grid-template-columns: 1fr !important; }
+    .cockpit-findings { grid-template-columns: 1fr; }
+}

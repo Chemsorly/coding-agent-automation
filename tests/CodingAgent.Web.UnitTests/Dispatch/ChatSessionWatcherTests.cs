@@ -350,10 +350,24 @@ public class ChatSessionWatcherTests
         jobClientMock.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [] });
 
+        // Use a short idle timeout so pollInterval = Math.Min(10, Math.Max(1, 3/3)) = 1s
+        // This keeps the test fast — the watcher polls every 1s and retries promptly.
+        var watcher = CreateWatcher(
+            jobClientMock.Object,
+            options: CreateOptions(idleTimeoutSeconds: 3, gracePeriod: 1));
+        using var cts = new CancellationTokenSource();
+        var entry = CreateEntry(cts: cts);
+
         var callCount = 0;
         jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
             .Returns(() =>
             {
+                // Refresh heartbeat on every poll so CI slowness cannot expire the 3s idle window
+                // before the second ReadJobAsync call. Without this, slow CI agents can delay the
+                // watcher loop long enough that idle-kill fires first, keeping callCount at 1.
+                System.Threading.Interlocked.Exchange(
+                    ref entry.LastClientHeartbeatTicks,
+                    DateTimeOffset.UtcNow.UtcTicks);
                 callCount++;
                 if (callCount == 1)
                     throw new HttpRequestException("transient error");
@@ -365,18 +379,6 @@ public class ChatSessionWatcherTests
                     }
                 });
             });
-
-        // Use a short idle timeout so pollInterval = Math.Min(10, Math.Max(1, 3/3)) = 1s
-        // This keeps the test fast — the watcher polls every 1s and retries promptly.
-        var watcher = CreateWatcher(
-            jobClientMock.Object,
-            options: CreateOptions(idleTimeoutSeconds: 3, gracePeriod: 1));
-        using var cts = new CancellationTokenSource();
-        var entry = CreateEntry(cts: cts);
-        // Keep heartbeat fresh so idle-kill doesn't fire first
-        System.Threading.Interlocked.Exchange(
-            ref entry.LastClientHeartbeatTicks,
-            DateTimeOffset.UtcNow.UtcTicks);
 
         var cleanupCallCount = 0;
         string? firstCleanupOutcome = null;
