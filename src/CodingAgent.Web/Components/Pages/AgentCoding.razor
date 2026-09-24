@@ -17,23 +17,6 @@
 
     @* ═══ Overlay toast stack ═══ *@
     <div class="agent-toast-stack">
-        @if (LoopService.IsLoopActive && !_hideLoopToast)
-        {
-            <div class="agent-summary-bar loop-status-bar">
-                @if (_stopPending)
-                {
-                    <span class="loop-status-text">
-                        <span class="loop-stop-spinner"></span>Stopping…
-                    </span>
-                }
-                else
-                {
-                    <span class="loop-status-text">@LoopService.StatusMessage</span>
-                }
-                <button class="btn-cancel loop-stop-btn" @onclick="StopLoop" disabled="@_stopPending">⏹ Stop Loop</button>
-            </div>
-        }
-
         @if (LoopService.IsCircuitBroken)
         {
             <div class="agent-summary-bar" style="background: var(--bg-error); color: var(--error); border-color: var(--error);">
