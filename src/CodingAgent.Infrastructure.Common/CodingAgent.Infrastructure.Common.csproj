@@ -24,6 +24,7 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
     <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" />
     <PackageReference Include="Microsoft.Extensions.Resilience" />
+    <PackageReference Include="OpenTelemetry" />
     <PackageReference Include="OpenTelemetry.Api" />
     <PackageReference Include="Serilog" />
     <PackageReference Include="Serilog.AspNetCore" />
