@@ -27,13 +27,6 @@ public readonly record struct BranchName(string Value)
         return new(value);
     }
 
-    // TODO: default(BranchName).Value is null, so this implicit conversion silently returns null for a
-    // default struct. The documented mitigation (ArgumentException.ThrowIfNullOrEmpty(branchName.Value) in
-    // each provider implementation) only protects call sites that read .Value directly; any implicit
-    // conversion at a downstream string-accepting API (e.g. RepositoryGitOperations) bypasses that guard
-    // and will pass null without throwing. If stricter protection is needed, guard here too:
-    //   public static implicit operator string(BranchName branchName) {
-    //       ArgumentException.ThrowIfNullOrEmpty(branchName.Value); return branchName.Value; }
     public static implicit operator string(BranchName branchName) => branchName.Value;
 
     public override string ToString() => Value;
