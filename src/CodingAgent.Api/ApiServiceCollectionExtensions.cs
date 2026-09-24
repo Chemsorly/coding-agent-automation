@@ -232,14 +232,12 @@ public static class ApiServiceCollectionExtensions
     /// <see cref="ChatJobDispatcher"/> registration lambda — the three consumers of the
     /// Redis-or-in-memory selection pattern.
     /// </summary>
-    // TODO [WARNING]: This helper creates a new RedisStore (and calls mux.GetDatabase()) every
-    // time it is called. All three current call sites are inside AddSingleton factory lambdas
-    // (executed once at first resolution), so the immediate risk is low. However, the method's
-    // internal static visibility makes accidental request-scoped use easy — each such call would
-    // silently allocate an additional IDatabase handle from the multiplexer's connection pool.
-    // Consider renaming to CreateRedisStoreForSingleton or adding an XML note explicitly
-    // restricting use to DI singleton-factory lambdas only.
-    // See review finding [WARNING] ApiServiceCollectionExtensions.cs:235 (DotNetSpecialist review).
+    /// <remarks>
+    /// Only call this inside <c>AddSingleton</c> factory lambdas — each call creates a new
+    /// <see cref="CodingAgent.Orchestration.Redis.RedisStore"/> (and calls
+    /// <c>mux.GetDatabase()</c>), so request-scoped use would silently allocate extra
+    /// <c>IDatabase</c> handles from the multiplexer's connection pool.
+    /// </remarks>
     internal static CodingAgent.Orchestration.Redis.IRedisStore? ResolveRedisStoreOrNull(
         IServiceProvider sp)
     {
@@ -261,15 +259,9 @@ public static class ApiServiceCollectionExtensions
     internal static Func<string, string, CancellationToken, Task<bool>>
         CreateIsIssueDistributedDelegate(IDbContextFactory<PipelineDbContext> dbFactory)
     {
-        // TODO [WARNING]: DefaultRestartDedupCooldown is captured here at factory-creation time
-        // (i.e. at first container resolution), not at delegate-invocation time. The DateTimeOffset
-        // arithmetic inside the delegate runs at invocation time, which is correct. However, if
-        // DefaultRestartDedupCooldown is ever changed from a static readonly/const to a value backed
-        // by runtime configuration, the delegate will silently use the startup-time value for the
-        // entire process lifetime, ignoring any config change. Passing the cooldown as a method
-        // parameter (or reading it from IConfiguration inside the delegate) would make the lifetime
-        // contract explicit.
-        // See review finding [WARNING] ApiServiceCollectionExtensions.cs:248 (DotNetSpecialist review).
+        // DefaultRestartDedupCooldown is a static readonly constant captured at factory-creation
+        // time — correct for the current implementation. If it ever becomes a runtime-configurable
+        // value, pass it as a parameter so the lifetime contract is explicit.
         var cooldown = PipelineConstants.DefaultRestartDedupCooldown;
         return async (issueId, providerConfigId, ct) =>
         {
@@ -303,10 +295,10 @@ public static class ApiServiceCollectionExtensions
         AddOrchestrationCore(services, config);
         AddTokenVending(services);
         AddLabelServices(services);
-        AddLifecycleAndConsolidation(services, config);
+        AddLifecycleAndConsolidation(services);
         AddKubernetes(services);
         AddDispatch(services);
-        AddChatDispatch(services, config);
+        AddChatDispatch(services);
 
         return services;
     }
@@ -408,7 +400,7 @@ public static class ApiServiceCollectionExtensions
     /// <c>IProjectWorkspaceManager</c>). The Web host's <c>AddConsolidationServices</c> uses a
     /// 9-argument overload. These are intentionally different — do NOT unify them.
     /// </summary>
-    private static void AddLifecycleAndConsolidation(IServiceCollection services, IConfiguration config)
+    private static void AddLifecycleAndConsolidation(IServiceCollection services)
     {
         // ── PipelineRunLifecycleService — implements IChangeNotifier + IChatNotifier ──
         services.AddSingleton<PipelineRunLifecycleService>(sp => new PipelineRunLifecycleService(
@@ -687,7 +679,7 @@ public static class ApiServiceCollectionExtensions
     /// service, and the IChatJobDispatcher forwarding registration.
     /// Calls <see cref="ResolveRedisStoreOrNull"/> — the third consumer of the shared helper.
     /// </summary>
-    private static void AddChatDispatch(IServiceCollection services, IConfiguration config)
+    private static void AddChatDispatch(IServiceCollection services)
     {
         // ── WorkItemMetricsBackgroundService ──────────────────────────────────────────────────
         // Spec 047: Removed from API hosted services — replaced by WorkItemCountsService in
