@@ -14,15 +14,11 @@ public class BranchNameTests
     }
 
     [Fact]
-    // TODO: This assertion uses Throw<ArgumentNullException>(), but ArgumentException.ThrowIfNullOrEmpty
-    // throws ArgumentException (not the derived ArgumentNullException) for a null input on .NET 7+.
-    // On .NET 8 this test fails because AwesomeAssertions Throw<T> does exact-type matching.
-    // Fix: change Throw<ArgumentNullException>() to Throw<ArgumentException>() to match the actual throw.
-    public void ImplicitConversion_FromNull_ThrowsArgumentNullException()
+    public void ImplicitConversion_FromNull_ThrowsArgumentException()
     {
         var act = () => { BranchName branch = (string)null!; };
 
-        act.Should().Throw<ArgumentNullException>();
+        act.Should().Throw<ArgumentException>();
     }
 
     [Fact]
@@ -44,11 +40,6 @@ public class BranchNameTests
     }
 
     [Fact]
-    // TODO: This test constructs BranchName directly via new BranchName("feature/bar"), which bypasses
-    // the validated implicit operator. The assertion is behaviourally identical to
-    // ImplicitConversion_ToString_ReturnsValue. Consider replacing it with a test that asserts
-    // something unique about the direct-constructor path — e.g. that new BranchName(null) does NOT
-    // throw (documenting the expected default/direct-construction semantics noted in the class remarks).
     public void ToString_ReturnsInnerValue()
     {
         var branch = new BranchName("feature/bar");
