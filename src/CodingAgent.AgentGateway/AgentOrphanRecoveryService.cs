@@ -1,5 +1,6 @@
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using Serilog.Events;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.AgentGateway;
@@ -383,7 +384,21 @@ public sealed class AgentOrphanRecoveryService(
 
                 _facade.TransitionStatus(agentId, AgentStatus.Busy);
 
-                _logger.Warning(
+                // Log at Information for a normal first-registration (run has not progressed
+                // beyond initial analysis), and at Warning for a mid-run re-registration where
+                // the agent was actively working (issue #2956).
+                // NOTE: OrphanRestoredAt is NOT a valid discriminator here — it is set above on
+                // this very call. The CurrentStep of the orphaned run is the correct signal.
+                // TODO: [WARNING] The boundary `<= AnalyzingCode` includes early setup steps
+                // (CloningRepository=1, SyncingBrainRepoPreRun=2, CreatingBranch=3, VerifyingBaseline=4)
+                // which are past initial dispatch. A run at step 4 that crashed logs at Information
+                // instead of Warning. In practice the 77 noisy Warnings were all genuine first-starts,
+                // so the current boundary is directionally correct for the common path. Tighten if
+                // setup-step crashes become a diagnostic concern.
+                var logLevel = mostRecent.CurrentStep <= PipelineStep.AnalyzingCode
+                    ? LogEventLevel.Information
+                    : LogEventLevel.Warning;
+                _logger.Write(logLevel,
                     "Agent {AgentId} re-registered without active job but orchestrator tracks {OrphanCount} orphaned run(s). " +
                     "Restoring run {RunId} (issue {IssueIdentifier}) as active — ReconciliationService will time out the run if agent does not resume.",
                     agentId, orphanedRuns.Count, mostRecent.RunId, mostRecent.IssueIdentifier);

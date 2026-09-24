@@ -39,7 +39,8 @@ public class ChatJobExecutorTests : IDisposable
             Func<Task>? signalAgentReady = null,
             bool isOpenCodeProvider = false,
             bool isChatMode = false,
-            TimeSpan? chatGracePeriod = null)
+            TimeSpan? chatGracePeriod = null,
+            Func<System.Diagnostics.ProcessStartInfo, System.Diagnostics.Process?>? processStarter = null)
     {
         var mockLogger = logger ?? new Mock<Serilog.ILogger>().Object;
         var mockOrchestrator = orchestrator ?? new Mock<KiroCliLib.Core.IKiroCliOrchestrator>().Object;
@@ -53,7 +54,7 @@ public class ChatJobExecutorTests : IDisposable
         var lifecycle = new AgentConnectionLifecycle(hm, hmFactory, signalRReporter, slotManager,
             new AgentId("test-chat"), lifetime, mockLogger);
 
-        var handler = new ChatJobExecutor(new ChatJobExecutorDependencies(
+        var deps = new ChatJobExecutorDependencies(
             lifecycle, slotManager, mockOrchestrator,
             Mock.Of<System.Net.Http.IHttpClientFactory>(),
             lifetime,
@@ -66,7 +67,13 @@ public class ChatJobExecutorTests : IDisposable
             // small value; "waits for the chat task" tests keep the default so the handler stays in
             // its wait when they assert on it.
             ChatTaskCompletionGracePeriod = chatGracePeriod ?? TimeSpan.FromSeconds(10)
-        });
+        };
+
+        // Override the process starter seam when provided (e.g. to capture PSI in OTEL tests)
+        if (processStarter is not null)
+            deps = deps with { ProcessStarter = processStarter };
+
+        var handler = new ChatJobExecutor(deps);
 
         return (handler, slotManager, lifecycle);
     }
@@ -517,7 +524,9 @@ public class ChatJobExecutorTests : IDisposable
             await File.WriteAllTextAsync(scriptPath, $"#!/bin/sh\necho '{validJson}'\nexit 0\n");
             using var chmod = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
-                FileName = "chmod", Arguments = $"+x {scriptPath}", UseShellExecute = false
+                FileName = "chmod",
+                Arguments = $"+x {scriptPath}",
+                UseShellExecute = false
             });
             if (chmod is not null) await chmod.WaitForExitAsync();
 
@@ -563,6 +572,42 @@ public class ChatJobExecutorTests : IDisposable
         var (handler, _, _) = CreateHandler();
         var act = async () => await handler.ReportChatCompletedAsync("sess-2", 1, "some error");
         await act.Should().NotThrowAsync("ReportChatCompletedAsync must swallow hub exceptions even with error payload");
+    }
+
+    // ── OTEL env-var stripping ────────────────────────────────────────────
+
+    [Fact]
+    public async Task HandleFetchModelsAsync_DoesNotPassOtelEnvVarsToChildProcess()
+    {
+        // Arrange: set OTEL vars in the parent process so they land in the PSI copy
+        const string otelKey = "OTEL_EXPORTER_OTLP_HEADERS";
+        var previous = Environment.GetEnvironmentVariable(otelKey);
+        Environment.SetEnvironmentVariable(otelKey, "Authorization=Bearer secret-token");
+        try
+        {
+            // Inject a custom process starter delegate that captures the PSI and returns null
+            // (simulating a failed launch — HandleFetchModelsAsync handles null gracefully).
+            System.Diagnostics.ProcessStartInfo? captured = null;
+            Func<System.Diagnostics.ProcessStartInfo, System.Diagnostics.Process?> captureStarter =
+                psi => { captured = psi; return null; };
+
+            var (handler, _, _) = CreateHandler(processStarter: captureStarter);
+            var request = new FetchModelsRequest { RequestId = "otel-test" };
+
+            // Act — must not throw even when process is null
+            await handler.HandleFetchModelsAsync(request);
+
+            // Assert
+            captured.Should().NotBeNull("process starter must have been called");
+            captured!.Environment.ContainsKey(otelKey).Should().BeFalse(
+                "OTEL vars must be stripped from PSI before it reaches the process starter");
+            // Non-telemetry key survives (proves the method ran, not a no-op)
+            captured.Environment.ContainsKey("PATH").Should().BeTrue();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(otelKey, previous);
+        }
     }
 
     // ── Source-scan: CancellationToken.None with intentional comments ─────

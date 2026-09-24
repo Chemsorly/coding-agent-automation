@@ -330,6 +330,128 @@ public class AgentProviderFactoryTests
         act.Should().Throw<ArgumentException>().WithMessage("*token*");
     }
 
+    // ── GitLab repository provider ───────────────────────────────────────
+
+    [Fact]
+    public void CreateRepositoryProvider_GitLab_ValidConfig_ReturnsProvider()
+    {
+        var factory = CreateFactory();
+        var config = new ProviderConfig
+        {
+            Id = "repo-gitlab-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitLab",
+            DisplayName = "Test GitLab",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://gitlab.com",
+                [ProviderSettingKeys.Token] = "glpat-fake-token",
+                [ProviderSettingKeys.ProjectId] = "42"
+            }
+        };
+
+        var provider = factory.CreateRepositoryProvider(config);
+        provider.Should().NotBeNull();
+        provider.Should().BeAssignableTo<IRepositoryProvider>();
+    }
+
+    /// <summary>
+    /// Characterization test: ParseProjectId runs BEFORE the orchestratorProxy branch in
+    /// CreateGitLabRepositoryProvider. When a proxy is present and projectId is non-numeric,
+    /// ArgumentException is thrown before the proxy branch is evaluated.
+    /// </summary>
+    [Fact]
+    public void CreateRepositoryProvider_GitLab_WithProxy_InvalidProjectId_ThrowsArgumentException()
+    {
+        using var proxy = CreateTestProxy();
+        var factory = CreateFactory(orchestratorProxy: proxy);
+        var config = new ProviderConfig
+        {
+            Id = "repo-gitlab-2",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitLab",
+            DisplayName = "Test GitLab",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://gitlab.com",
+                [ProviderSettingKeys.ProjectId] = "not-a-number"
+            }
+        };
+
+        var act = () => factory.CreateRepositoryProvider(config);
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("*not-a-number*");
+    }
+
+    [Fact]
+    public void CreateRepositoryProvider_GitLab_NoProxy_InvalidProjectId_ThrowsArgumentException()
+    {
+        var factory = CreateFactory(orchestratorProxy: null);
+        var config = new ProviderConfig
+        {
+            Id = "repo-gitlab-3",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitLab",
+            DisplayName = "Test GitLab",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://gitlab.com",
+                [ProviderSettingKeys.ProjectId] = "not-a-number"
+            }
+        };
+
+        var act = () => factory.CreateRepositoryProvider(config);
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("*not-a-number*");
+    }
+
+    // ── GitLab pipeline provider ─────────────────────────────────────────
+
+    [Fact]
+    public async Task CreatePipelineProviderAsync_GitLab_ValidConfig_ReturnsProvider()
+    {
+        var factory = CreateFactory();
+        var config = new ProviderConfig
+        {
+            Id = "pipeline-gitlab-1",
+            Kind = ProviderKind.Pipeline,
+            ProviderType = "GitLab",
+            DisplayName = "Test GitLab Pipeline",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://gitlab.com",
+                [ProviderSettingKeys.Token] = "glpat-fake-token",
+                [ProviderSettingKeys.ProjectId] = "42"
+            }
+        };
+
+        var provider = await factory.CreatePipelineProviderAsync(config, CancellationToken.None);
+        provider.Should().NotBeNull();
+        provider.Should().BeAssignableTo<IPipelineProvider>();
+    }
+
+    [Fact]
+    public async Task CreatePipelineProviderAsync_GitLab_InvalidProjectId_ThrowsArgumentException()
+    {
+        var factory = CreateFactory();
+        var config = new ProviderConfig
+        {
+            Id = "pipeline-gitlab-2",
+            Kind = ProviderKind.Pipeline,
+            ProviderType = "GitLab",
+            DisplayName = "Test GitLab Pipeline",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://gitlab.com",
+                [ProviderSettingKeys.ProjectId] = "not-a-number"
+            }
+        };
+
+        var act = () => factory.CreatePipelineProviderAsync(config, CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("*not-a-number*");
+    }
+
     private static ProviderConfig CreateProviderConfig(ProviderKind kind, string providerType) => new()
     {
         Id = "test-id",
