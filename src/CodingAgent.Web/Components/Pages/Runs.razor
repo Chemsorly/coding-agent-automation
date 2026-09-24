@@ -16,11 +16,16 @@
 @*
     Runs — the list behind the Run Page (see docs/frontend-redesign-handoff.md).
     Data: IPipelineApiRunHistoryClient.GetRunHistoryAsync → PagedResult<PipelineRunSummary>.
-    Consolidation runs are PipelineRunType.Consolidation and appear here folded in.
+    Consolidation runs are excluded from run history until #2567 lands; they are not
+    displayed here and are not offered as filter options.
 
     Issue #2328: Removed Agent column; added Links column (issue URL + PR URL);
     added sortable headers (Result, Type, Duration, When — client-side, current page);
-    added Result and Type filter dropdowns; sort state persisted in URL query param.
+    added Type filter dropdown; sort state persisted in URL query param.
+    Issue #2941: Removed duplicate Result column filter (outcome tabs are the single
+    outcome control); added client-filter empty-state with Clear filters action;
+    fixed pager count to reflect filtered rows; removed dead consolidation filter options;
+    fixed aria-selected to lowercase; added aria-label to Feedback only checkbox.
 *@
 
 <PageTitle>Runs - Coding Agent</PageTitle>
@@ -29,20 +34,20 @@
     <div class="cockpit-page-header">
         <div class="cockpit-page-titles">
             <h1>Runs</h1>
-            <span class="cockpit-page-sub">Every dispatch — implementation, review, decomposition, and consolidation</span>
+            <span class="cockpit-page-sub">Every dispatch — implementation, review, and decomposition</span>
         </div>
         <RefreshBar OnRefresh="RefreshQuietAsync" StorageKey="autoRefresh.runs" />
     </div>
 
     <div class="cockpit-toolbar">
         <div class="cockpit-segmented" role="tablist" aria-label="Filter runs by outcome">
-            <button class="cockpit-seg-btn @(_outcome == OutcomeFilter.All ? "is-active" : "")" role="tab" aria-selected="@(_outcome == OutcomeFilter.All)" @onclick="() => SetOutcome(OutcomeFilter.All)">All</button>
-            <button class="cockpit-seg-btn @(_outcome == OutcomeFilter.Completed ? "is-active" : "")" role="tab" aria-selected="@(_outcome == OutcomeFilter.Completed)" @onclick="() => SetOutcome(OutcomeFilter.Completed)">Completed</button>
-            <button class="cockpit-seg-btn @(_outcome == OutcomeFilter.Failed ? "is-active" : "")" role="tab" aria-selected="@(_outcome == OutcomeFilter.Failed)" @onclick="() => SetOutcome(OutcomeFilter.Failed)">Failed</button>
-            <button class="cockpit-seg-btn @(_outcome == OutcomeFilter.Cancelled ? "is-active" : "")" role="tab" aria-selected="@(_outcome == OutcomeFilter.Cancelled)" @onclick="() => SetOutcome(OutcomeFilter.Cancelled)">Cancelled</button>
+            <button class="cockpit-seg-btn @(_outcome == OutcomeFilter.All ? "is-active" : "")" role="tab" aria-selected="@(_outcome == OutcomeFilter.All ? "true" : "false")" @onclick="() => SetOutcome(OutcomeFilter.All)">All</button>
+            <button class="cockpit-seg-btn @(_outcome == OutcomeFilter.Completed ? "is-active" : "")" role="tab" aria-selected="@(_outcome == OutcomeFilter.Completed ? "true" : "false")" @onclick="() => SetOutcome(OutcomeFilter.Completed)">Completed</button>
+            <button class="cockpit-seg-btn @(_outcome == OutcomeFilter.Failed ? "is-active" : "")" role="tab" aria-selected="@(_outcome == OutcomeFilter.Failed ? "true" : "false")" @onclick="() => SetOutcome(OutcomeFilter.Failed)">Failed</button>
+            <button class="cockpit-seg-btn @(_outcome == OutcomeFilter.Cancelled ? "is-active" : "")" role="tab" aria-selected="@(_outcome == OutcomeFilter.Cancelled ? "true" : "false")" @onclick="() => SetOutcome(OutcomeFilter.Cancelled)">Cancelled</button>
         </div>
         <label class="cockpit-filter-toggle @(_feedbackOnly ? "is-on" : "")">
-            <input type="checkbox" checked="@_feedbackOnly" @onchange="ToggleFeedbackOnly" />
+            <input type="checkbox" aria-label="Feedback only" checked="@_feedbackOnly" @onchange="ToggleFeedbackOnly" />
             Feedback only
         </label>
     </div>
@@ -60,6 +65,10 @@
         {
             <div class="cockpit-empty">No @(_outcome == OutcomeFilter.All ? "" : _outcome.ToString().ToLowerInvariant() + " ")runs@(_feedbackOnly ? " with feedback" : "") yet.</div>
         }
+        else if (_filteredRuns.Count == 0)
+        {
+            <div class="cockpit-empty">No runs match the current filters. <button class="cockpit-link-btn" @onclick="ResetClientFilters">Clear filters</button></div>
+        }
         else
         {
             <div class="monitoring-table-wrap">
@@ -76,20 +85,11 @@
                     </colgroup>
                     <thead>
                         <tr>
-                            @* ── Result column: sortable + filter ───────────────────────────────── *@
+                            @* ── Result column: sortable only (filter removed — outcome tabs are the single outcome control) ── *@
                             <th class="@(ActiveSortClass(SortColumn.Result))">
                                 <button class="sort-header" @onclick="() => ToggleSort(SortColumn.Result)">
                                     Result @SortIndicatorForResult
                                 </button>
-                                <select class="column-filter" aria-label="Filter by Result"
-                                        value="@_resultFilter"
-                                        @onchange="e => _resultFilter = e.Value?.ToString() ?? string.Empty">
-                                    <option value="">All</option>
-                                    <option value="Completed">Completed</option>
-                                    <option value="Failed">Failed</option>
-                                    <option value="Cancelled">Cancelled</option>
-                                    <option value="Running">Running</option>
-                                </select>
                             </th>
                             @* ── Type column: sortable + filter ─────────────────────────────────── *@
                             <th class="@(ActiveSortClass(SortColumn.Type))">
@@ -98,32 +98,29 @@
                                 </button>
                                 <select class="column-filter" aria-label="Filter by Type"
                                         value="@_typeFilter"
-                                        @onchange="e => _typeFilter = e.Value?.ToString() ?? string.Empty">
+                                        @onchange="e => SetTypeFilter(e.Value?.ToString() ?? string.Empty)">
                                     <option value="">All</option>
                                     <option value="Implementation">Implementation</option>
                                     <option value="Review">Review</option>
                                     <option value="Decomposition">Decomposition</option>
-                                    <option value="Consolidation">Consolidation</option>
                                 </select>
                             </th>
                             @* ── Initiated by column: filter only (not sortable) ────────────────── *@
                             @* TODO: [WARNING] Using value="@_initiatedByFilter" + @onchange is not the idiomatic Blazor two-way binding
                                form. If _initiatedByFilter is reset programmatically, the <select> element's displayed value will not
                                update in all rendering scenarios. The safe idiomatic alternative is @bind-value="@_initiatedByFilter"
-                               @bind-value:event="onchange". This is consistent with how the existing _resultFilter and _typeFilter
-                               dropdowns are implemented, so it is not a regression introduced here, but the same latent risk applies. *@
+                               @bind-value:event="onchange". This is consistent with how the existing _typeFilter dropdown is
+                               implemented, so it is not a regression introduced here, but the same latent risk applies. *@
                             <th>
                                 Initiated by
                                 <select class="column-filter" aria-label="Filter by Initiated by"
                                         value="@_initiatedByFilter"
-                                        @onchange="e => _initiatedByFilter = e.Value?.ToString() ?? string.Empty">
+                                        @onchange="e => SetInitiatedByFilter(e.Value?.ToString() ?? string.Empty)">
                                     <option value="">All</option>
                                     <option value="@InitiatedByConstants.LoopIssue">@InitiatedByConstants.LoopIssue</option>
                                     <option value="@InitiatedByConstants.LoopReview">@InitiatedByConstants.LoopReview</option>
                                     <option value="@InitiatedByConstants.LoopDecomposition">@InitiatedByConstants.LoopDecomposition</option>
                                     <option value="@InitiatedByConstants.Manual">@InitiatedByConstants.Manual</option>
-                                    <option value="@InitiatedByConstants.ConsolidationManual">@InitiatedByConstants.ConsolidationManual</option>
-                                    <option value="@InitiatedByConstants.ConsolidationAuto">@InitiatedByConstants.ConsolidationAuto</option>
                                 </select>
                             </th>
                             <th>Run</th>
@@ -144,7 +141,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var run in FilteredSortedRuns())
+                        @foreach (var run in _filteredRuns)
                         {
                             var resultLabel = run.FinalStep switch
                             {
@@ -242,11 +239,12 @@
     </div>
 
     <div class="cockpit-pager">
-        @* TODO: The pager "N shown" count uses _result.Items.Count (unfiltered page), but the table body renders
-           FilteredSortedRuns(). When a Result/Type filter is active the two numbers disagree — e.g. 25 shown
-           in pager while only 5 rows are visible. Consider deriving the count from FilteredSortedRuns().Count()
-           or displaying a separate "X of N" hint when a filter is active. *@
-        <span class="cockpit-pager-info">Page @_page@(_result is { Items.Count: > 0 } ? $" · {_result.Items.Count} shown" : "")</span>
+        <span class="cockpit-pager-info">Page @_page@(
+            _result is { Items.Count: > 0 }
+                ? (_filteredRuns.Count != _result.Items.Count
+                    ? $" · {_filteredRuns.Count} of {_result.Items.Count} on this page"
+                    : $" · {_filteredRuns.Count} shown")
+                : "")</span>
         <div class="cockpit-pager-buttons">
             <button class="cockpit-pager-btn" disabled="@(_page <= 1 || _loading)" @onclick="PrevPage">
                 <Icon Name="chevrons-left" Size="14" /> Prev
@@ -263,6 +261,15 @@
 
     private readonly CancellationTokenSource _cts = new();
     private PagedResult<PipelineRunSummary>? _result;
+
+    /// <summary>
+    /// The current page's runs after applying client-side Type/InitiatedBy filters and sort.
+    /// Recomputed whenever <see cref="_result"/>, <see cref="_typeFilter"/>,
+    /// <see cref="_initiatedByFilter"/>, or sort state changes. Used by both the table body
+    /// and the pager (which lives outside the if/else block and needs component-level state).
+    /// </summary>
+    private List<PipelineRunSummary> _filteredRuns = [];
+
     private int _page = 1;
     private bool _feedbackOnly;
     private bool _loading = true;
@@ -283,7 +290,6 @@
 
     // ── Column filter state (client-side, not URL-persisted) ─────────────────
 
-    private string _resultFilter = "";
     private string _typeFilter = "";
     private string _initiatedByFilter = "";
 
@@ -422,6 +428,13 @@
         finally
         {
             _loading = false;
+            // TODO: If GetRunHistoryAsync throws (non-cancellation), _result retains its previous
+            // value. On the first load _result is null and _filteredRuns correctly becomes [].
+            // On subsequent failed refreshes, _filteredRuns is recomputed from the stale _result,
+            // which means the pager count and table rows will reflect the previous successful load
+            // rather than clearly indicating an error state. This is not a regression, but the
+            // pager count now also reads from _filteredRuns, so the inconsistency is more visible.
+            _filteredRuns = FilteredSortedRuns().ToList();
         }
     }
 
@@ -437,6 +450,10 @@
         }
         catch (OperationCanceledException) { }
         catch { /* keep the current page until the next tick */ }
+        finally
+        {
+            _filteredRuns = FilteredSortedRuns().ToList();
+        }
     }
 
     private async Task ToggleFeedbackOnly(ChangeEventArgs e)
@@ -460,6 +477,33 @@
         await LoadAsync();
     }
 
+    // ── Client-side filter helpers ────────────────────────────────────────────
+
+    // TODO: These helpers mutate _filteredRuns synchronously without calling StateHasChanged.
+    // This is safe today because they are only invoked from @onchange / @onclick Blazor event
+    // handlers, which trigger an implicit re-render after returning. If any of these helpers are
+    // ever called from an async path (after an await), Blazor will not automatically re-render
+    // and the UI will silently show stale data. Should that happen, call StateHasChanged() after
+    // computing _filteredRuns. ToggleSort has the same pattern for the same reason.
+    private void SetTypeFilter(string value)
+    {
+        _typeFilter = value;
+        _filteredRuns = FilteredSortedRuns().ToList();
+    }
+
+    private void SetInitiatedByFilter(string value)
+    {
+        _initiatedByFilter = value;
+        _filteredRuns = FilteredSortedRuns().ToList();
+    }
+
+    private void ResetClientFilters()
+    {
+        _typeFilter = "";
+        _initiatedByFilter = "";
+        _filteredRuns = FilteredSortedRuns().ToList();
+    }
+
     // ── Sort ─────────────────────────────────────────────────────────────────
 
     private void ToggleSort(SortColumn col)
@@ -473,6 +517,7 @@
             _sortAsc = col != SortColumn.When;
         }
         PersistSortToUrl();
+        _filteredRuns = FilteredSortedRuns().ToList();
     }
 
     private void PersistSortToUrl()
@@ -487,19 +532,11 @@
 
     private IEnumerable<PipelineRunSummary> FilteredSortedRuns()
     {
-        // TODO: This method is called directly in the @foreach, so it runs on every render cycle
-        // (including the 12-second auto-refresh tick and any StateHasChanged call). Each invocation
-        // allocates a new LINQ chain and enumerates _result.Items. For PageSize=25 this is low-cost,
-        // but if PageSize grows, consider caching the result in a field invalidated on sort/filter
-        // state changes to avoid unnecessary work on unrelated re-renders.
         if (_result is null) return [];
 
         IEnumerable<PipelineRunSummary> items = _result.Items;
 
         // ── Client-side column filters ────────────────────────────────────────
-        if (!string.IsNullOrEmpty(_resultFilter))
-            items = items.Where(r => ResultLabel(r) == _resultFilter);
-
         if (!string.IsNullOrEmpty(_typeFilter))
             items = items.Where(r => RunTypeLabel(r) == _typeFilter);
 
