@@ -156,7 +156,9 @@ public sealed class LoopControlTests : E2ETestBase
         await Page.WaitForSelectorAsync("button:has-text('Stop Loop')", new() { Timeout = 5_000 });
 
         // Act: toggle the template's enabled state
-        var toggleSwitch = Page.Locator(".toggle-switch input[type='checkbox']").First;
+        // The hidden input is not directly clickable (opacity:0, width/height:0);
+        // click the visible .toggle-slider instead, which is how the toggle works.
+        var toggleSwitch = Page.Locator(".toggle-switch .toggle-slider").First;
         await toggleSwitch.ClickAsync();
 
         // Wait for the "next cycle" indicator to appear

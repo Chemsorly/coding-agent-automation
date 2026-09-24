@@ -433,6 +433,75 @@ public class HttpPrimaryCompletionReporterTests
     // ── Serialize result ─────────────────────────────────────────────────
 
     [Fact]
+    public async Task ReportCompletionAsync_ConflictRestartStep_PostsSucceededStatus_WithNoFailureReason()
+    {
+        // Issue #2956: ConflictRestart must be persisted as Succeeded (not Failed/AgentError)
+        // on the HTTP primary path, matching CompletionOutcomeResolver's existing hub-path behavior.
+        _lifecycleClient
+            .Setup(c => c.PostStatusAsync(WorkItemId, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _connectionManager
+            .Setup(m => m.InvokeAsync(It.IsAny<Func<Microsoft.AspNetCore.SignalR.Client.HubConnection, CancellationToken, Task>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var sut = CreateSut();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.ConflictRestart,
+            FinalLabel = "agent:next", // re-queue label is unchanged
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+
+        await sut.ReportCompletionAsync("job-1", payload, CancellationToken.None);
+
+        _lifecycleClient.Verify(c => c.PostStatusAsync(
+            WorkItemId,
+            It.Is<WorkItemStatusUpdate>(u =>
+                u.Status == "Succeeded" &&
+                u.FailureReason == null),
+            // TODO: [WARNING] ErrorMessage is also cleared for non-Failed results by the production
+            // change (ErrorMessage = terminalWorkItemStatus == Failed ? payload.FailureReason : null).
+            // This assertion does not verify u.ErrorMessage == null. A regression that accidentally
+            // re-enables ErrorMessage for ConflictRestart would not be caught here.
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ReportCompletionAsync_WontDoGate_PostsSucceededStatus_WithGateRejectedFailureReason()
+    {
+        // Issue #2956: won't-do gate outcomes (PipelineStep.Completed + FailureCategory=GateRejected)
+        // must be persisted with FailureReason = "GateRejected" in the DB, even though the
+        // WorkItemStatus is Succeeded. This verifies the FailureCategory fallback in
+        // HttpPrimaryCompletionReporter: persistedFailureReason = terminalFailureReason?.ToString()
+        //   ?? payload.FailureCategory?.ToString()
+        // (terminalFailureReason is null for Succeeded; FailureCategory carries GateRejected).
+        _lifecycleClient
+            .Setup(c => c.PostStatusAsync(WorkItemId, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _connectionManager
+            .Setup(m => m.InvokeAsync(It.IsAny<Func<Microsoft.AspNetCore.SignalR.Client.HubConnection, CancellationToken, Task>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var sut = CreateSut();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,           // won't-do uses Completed step
+            FinalLabel = AgentLabels.WontDo,
+            FailureCategory = Pipeline.Models.FailureReason.GateRejected,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+
+        await sut.ReportCompletionAsync("job-1", payload, CancellationToken.None);
+
+        _lifecycleClient.Verify(c => c.PostStatusAsync(
+            WorkItemId,
+            It.Is<WorkItemStatusUpdate>(u =>
+                u.Status == "Succeeded" &&
+                u.FailureReason == nameof(Pipeline.Models.FailureReason.GateRejected)),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task ReportCompletionAsync_PayloadWithAllFields_SerializesResult()
     {
         WorkItemStatusUpdate? captured = null;

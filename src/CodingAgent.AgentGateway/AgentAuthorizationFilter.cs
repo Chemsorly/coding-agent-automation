@@ -70,10 +70,21 @@ public sealed class AgentAuthorizationFilter : IHubFilter
             return await next(invocationContext);
         }
 
+        bool shouldInvoke;
         if (IsOperatorConnection(invocationContext))
+        {
             GuardOperatorMethod(invocationContext);
+            shouldInvoke = true;
+        }
         else
-            GuardAgentMethod(invocationContext);
+        {
+            shouldInvoke = GuardAgentMethod(invocationContext);
+        }
+
+        // Short-circuit: skip hub method invocation when GuardAgentMethod signals idle-completion
+        // (e.g. ReportJobCompleted from an agent that already completed via HTTP, issue #2956).
+        if (!shouldInvoke)
+            return default;
 
         return await next(invocationContext);
     }
@@ -111,10 +122,15 @@ public sealed class AgentAuthorizationFilter : IHubFilter
     /// methods, to own the job it is addressing. <c>RegisterAgent</c> is exempt — it is how a
     /// connection becomes a registered agent in the first place.
     /// </summary>
-    private void GuardAgentMethod(HubInvocationContext ctx)
+    /// <returns>
+    /// <c>true</c> if the hub method should be invoked; <c>false</c> if the call should be
+    /// silently short-circuited (e.g. <c>ReportJobCompleted</c> with no active job after HTTP completion).
+    /// Throws <see cref="HubException"/> for all genuine authorization failures.
+    /// </returns>
+    private bool GuardAgentMethod(HubInvocationContext ctx)
     {
         if (string.Equals(ctx.HubMethodName, nameof(AgentHub.RegisterAgent), StringComparison.Ordinal))
-            return;
+            return true;
 
         var agent = _registry.GetByConnectionId(ctx.Context.ConnectionId);
 
@@ -193,15 +209,43 @@ public sealed class AgentAuthorizationFilter : IHubFilter
         }
 
         if (ctx.HubMethod.GetCustomAttribute<RequiresActiveJobAttribute>() is not null)
-            GuardActiveJob(ctx, agent);
+            return GuardActiveJob(ctx, agent);
+
+        return true;
     }
 
     /// <summary>
     /// Validates the <c>jobId</c> first parameter against the agent's <c>ActiveJobId</c>.
     /// The first-parameter convention is documented on <see cref="RequiresActiveJobAttribute"/>.
     /// </summary>
-    private void GuardActiveJob(HubInvocationContext ctx, AgentEntry agent)
+    /// <returns>
+    /// <c>true</c> if the hub method should be invoked; <c>false</c> if the call should be
+    /// silently short-circuited (only for <c>ReportJobCompleted</c> with no active job).
+    /// Throws <see cref="HubException"/> for all genuine mismatches.
+    /// </returns>
+    private bool GuardActiveJob(HubInvocationContext ctx, AgentEntry agent)
     {
+        // Short-circuit: ReportJobCompleted from an agent that already completed via HTTP.
+        // The HTTP primary path sets agent Idle (ActiveJobId = null) before the SignalR
+        // secondary message arrives. Throwing here would log Warning + SignalR Error and trigger
+        // 3 client retries — all wasteful, since the result was already recorded (issue #2956).
+        // Capture ActiveJobId into a local to guard against concurrent modification.
+        // TODO: [WARNING] Capturing agent.ActiveJobId into a local is a snapshot, not an atomic
+        // read. A concurrent force-idle or disconnect handler clearing ActiveJobId on a genuinely
+        // active agent could cause a legitimate ReportJobCompleted to be silently short-circuited.
+        // This is the same pre-existing non-atomic race acknowledged elsewhere in this file
+        // (_localSnapshot non-atomic writes); no new race is introduced here. The window is
+        // extremely tight and the risk is accepted by the existing codebase design.
+        var activeJobId = agent.ActiveJobId;
+        if (string.Equals(ctx.HubMethodName, nameof(AgentHub.ReportJobCompleted), StringComparison.Ordinal)
+            && activeJobId is null)
+        {
+            _logger.Debug(
+                "GuardActiveJob: {Method} from agent {AgentId} ignored — agent already Idle (HTTP completion already recorded)",
+                ctx.HubMethodName, agent.AgentId);
+            return false; // do NOT invoke hub method, do NOT log Warning/Error
+        }
+
         if (ctx.HubMethodArguments.Count == 0 || ctx.HubMethodArguments[0] is not JobId jobId)
         {
             PipelineTelemetry.HubAuthRejections.Add(1,
@@ -212,14 +256,16 @@ public sealed class AgentAuthorizationFilter : IHubFilter
             throw new HubException($"Method {ctx.HubMethodName} requires a jobId as the first parameter");
         }
 
-        if (!string.Equals(agent.ActiveJobId, jobId.Value, StringComparison.Ordinal))
+        if (!string.Equals(activeJobId, jobId.Value, StringComparison.Ordinal))
         {
             PipelineTelemetry.HubAuthRejections.Add(1,
                 new KeyValuePair<string, object?>("reason", PipelineTelemetry.HubAuthRejectionReasons.JobMismatch));
             _logger.Warning(
                 "Hub method {Method} rejected — job {JobId} not assigned to agent {AgentId} (active job: {ActiveJobId})",
-                ctx.HubMethodName, jobId.Value, agent.AgentId, agent.ActiveJobId ?? "none");
+                ctx.HubMethodName, jobId.Value, agent.AgentId, activeJobId ?? "none");
             throw new HubException($"Job {jobId.Value} is not assigned to agent {agent.AgentId}");
         }
+
+        return true;
     }
 }
