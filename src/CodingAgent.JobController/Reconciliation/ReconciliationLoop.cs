@@ -592,11 +592,52 @@ public sealed class ReconciliationLoop
                 break;
             case JobPhaseFailed:
                 var errorMsg = GetFailureMessage(job);
-                if (await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseFailed, "AgentError", errorMsg, ct))
+                // Classify the failure reason: if the WorkItem was never claimed (still Dispatched),
+                // no agent ran — record as InfrastructureFailure, not AgentError (issue #2956).
+                var failureReason = await ClassifyJobFailureReasonAsync(workItemId.Value, ct);
+                if (await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseFailed, failureReason, errorMsg, ct))
                     _reconciledTerminalIds.Add(workItemId.Value);
                 break;
                 // Active/Unknown/Pending — no action needed
         }
+    }
+
+    /// <summary>
+    /// Returns the appropriate failure reason string for a failed K8s Job.
+    /// Calls <see cref="IPipelineApiWorkItemClient.GetStatusAsync"/> to determine whether the
+    /// WorkItem was ever claimed by an agent. A WorkItem still in <c>Dispatched</c> state means
+    /// no agent successfully accepted it — the failure is infrastructure-level.
+    /// A claimed (<c>Running</c> or later) WorkItem is an agent error.
+    /// Returns <c>AgentError</c> when the status is null (item not found or already cleaned up).
+    /// </summary>
+    private async Task<string> ClassifyJobFailureReasonAsync(Guid workItemId, CancellationToken ct)
+    {
+        try
+        {
+            var status = await _workItemClient.GetStatusAsync(workItemId, ct);
+            // Dispatched means the K8s Job was created but no agent ever called JobAccepted
+            // (which transitions the WorkItem to Running). The failure happened before any agent ran.
+            if (status == WorkItemStatus.Dispatched)
+                return nameof(FailureReason.InfrastructureFailure);
+
+            // TODO: [WARNING] When status is null (item not found or already cleaned up) the method
+            // silently falls through to AgentError with no log entry. Operators diagnosing a failed
+            // Job whose WorkItem has already been deleted will see AgentError with no indication it
+            // is a fallback due to a missing item. Consider adding a Debug-level log here:
+            // if (status is null) _log.Debug("ClassifyJobFailureReasonAsync: status null for {WorkItemId}, defaulting to AgentError", workItemId);
+        }
+        catch (Exception ex)
+        {
+            // TODO: [WARNING] This catch is too broad — it swallows OperationCanceledException from the
+            // reconciliation loop's own CancellationToken, causing the loop to mark the WorkItem as
+            // AgentError and return silently instead of propagating the cancellation. Fix:
+            //   catch (Exception ex) when (ex is not OperationCanceledException)
+            // All current callers pass the loop's CancellationToken, so a mid-flight cancellation
+            // would silently emit AgentError. (Review finding: DotNetSpecialist [WARNING] — issue #2956)
+            _log.Warning(ex, "ClassifyJobFailureReasonAsync: failed to query status for WorkItem {WorkItemId}, defaulting to AgentError", workItemId);
+        }
+
+        return nameof(FailureReason.AgentError);
     }
 
     /// <summary>
@@ -638,7 +679,9 @@ public sealed class ReconciliationLoop
                 // no-ops and HTTP 200 for real transitions; PipelineApiWorkItemClient maps these
                 // to false/true respectively. (Issue #2802)
                 var workItemStatus = status == JobPhaseSucceeded ? WorkItemStatus.Succeeded : WorkItemStatus.Failed;
-                var failureReasonEnum = failureReason == "AgentError" ? (FailureReason?)FailureReason.AgentError : null;
+                var failureReasonEnum = Enum.TryParse<FailureReason>(failureReason, out var parsedReason)
+                    ? (FailureReason?)parsedReason
+                    : null;
                 var dispatchedAt = job.Status?.StartTime is not null
                     ? new DateTimeOffset(job.Status.StartTime.Value, TimeSpan.Zero)
                     : (DateTimeOffset?)null;

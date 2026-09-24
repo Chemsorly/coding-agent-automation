@@ -95,6 +95,9 @@ public sealed class ReconciliationLoopTests
             .ReturnsAsync(new V1JobList { Items = [job] });
         _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
+        // WorkItem was claimed: Running → failure is an AgentError (issue #2956)
+        _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WorkItemStatus.Running);
 
         var loop = CreateLoop();
         await loop.ReconcileOnceAsync(CancellationToken.None);
@@ -109,6 +112,64 @@ public sealed class ReconciliationLoopTests
         _k8sClient.Verify(c => c.DeleteJobAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    /// <summary>
+    /// Issue #2956: a K8s Job that failed before any agent claimed it (WorkItem still Dispatched)
+    /// must be recorded as InfrastructureFailure, not AgentError.
+    /// </summary>
+    [Fact]
+    public async Task WhenJobFails_AndWorkItemNeverClaimed_ShouldPost_InfrastructureFailure()
+    {
+        var jobName = JobNameFor(ItemId);
+        var job = MakeJob(jobName, ItemId, failed: true);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        // WorkItem was never claimed: still Dispatched → infrastructure failure
+        _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WorkItemStatus.Dispatched);
+
+        var loop = CreateLoop();
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "InfrastructureFailure"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Issue #2956: when GetStatusAsync fails, the fallback must still be AgentError (safe default).
+    /// </summary>
+    [Fact]
+    public async Task WhenJobFails_AndGetStatusThrows_FallsBackTo_AgentError()
+    {
+        var jobName = JobNameFor(ItemId);
+        var job = MakeJob(jobName, ItemId, failed: true);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        // GetStatusAsync throws — must fall back to AgentError
+        _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("network error"));
+
+        var loop = CreateLoop();
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "AgentError"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+    // TODO: [WARNING] ClassifyJobFailureReasonAsync only checks status == Dispatched; all other
+    // statuses (Running, Failed, Succeeded, null) fall through to AgentError. There is no test
+    // for the boundary where GetStatusAsync returns a terminal status (e.g. WorkItemStatus.Failed
+    // or WorkItemStatus.Succeeded — item already cleaned up via another path) to confirm the
+    // fallthrough to AgentError is intentional and not a missed classification case.
 
     // ─── Timeout enforcement ──────────────────────────────────────────────────
 
