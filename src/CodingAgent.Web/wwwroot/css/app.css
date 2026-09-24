@@ -101,7 +101,8 @@ select option { background: var(--surface); color: var(--text); }
 .sidebar-link:hover { background: var(--surface-alt); color: var(--text); }
 .sidebar-link.active { background: var(--surface-alt); color: var(--accent-light); border-left-color: var(--accent); }
 .sidebar-icon { width: 24px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; }
-.sidebar-label { overflow: hidden; text-overflow: ellipsis; }
+/* Buttons do not inherit color, so set it explicitly for label chips used as <button>. */
+.sidebar-label { overflow: hidden; text-overflow: ellipsis; color: var(--text); }
 .sidebar-loop-indicator { flex-shrink: 0; display: inline-flex; align-items: center; }
 .sidebar-bottom-actions {
     margin-top: auto; display: flex; border-top: 1px solid var(--border);

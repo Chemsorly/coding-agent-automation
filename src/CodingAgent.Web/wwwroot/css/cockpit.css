@@ -89,6 +89,60 @@
     font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 }
 
+/* ---- Base link color for the cockpit shell --------------------------------- */
+/* Use :where() to keep specificity at 0-0-1 so any class on a link overrides. */
+:where(.cockpit) a {
+    color: var(--accent-light);
+    text-decoration: none;
+}
+:where(.cockpit) a:hover {
+    text-decoration: underline;
+}
+
+/* ---- Toggle switch — shared rule so all child components can use it --------- */
+/* The scoped .toggle-switch in AgentCoding.razor.css only applies to AgentCoding
+   itself because Blazor scoped CSS does not cross component boundaries. Moving
+   this rule here (a global stylesheet) makes it available in TemplateTableSection,
+   PipelineLoopSection, QualityGateConfigSection, and ReviewerConfigSection too.
+   The scoped copies in *.razor.css remain as-is (they are harmless duplicates). */
+:where(.cockpit, .settings-page, .agent-coding-page) .toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+    vertical-align: middle;
+}
+:where(.cockpit, .settings-page, .agent-coding-page) .toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+:where(.cockpit, .settings-page, .agent-coding-page) .toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background: var(--surface-alt);
+    border-radius: 20px;
+    transition: background 0.2s;
+}
+:where(.cockpit, .settings-page, .agent-coding-page) .toggle-slider::before {
+    content: "";
+    position: absolute;
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.2s;
+}
+:where(.cockpit, .settings-page, .agent-coding-page) .toggle-switch input:checked + .toggle-slider {
+    background: var(--success);
+}
+:where(.cockpit, .settings-page, .agent-coding-page) .toggle-switch input:checked + .toggle-slider::before {
+    transform: translateX(16px);
+}
+
 /* ---- sidebar --------------------------------------------------------------- */
 .cockpit-sidebar {
     width: 248px;
