@@ -19,9 +19,7 @@ public partial class AgentCoding : IDisposable
     private string? _errorMessage;
     private string? _successMessage;
     private bool _showAgentSummary = true;
-    private bool _hideLoopToast;
     private bool _stopPending;
-    private string? _lastLoopStatus;
     private bool _disposed;
 
     // Template Table UI State
@@ -586,13 +584,6 @@ public partial class AgentCoding : IDisposable
         catch (ObjectDisposedException) { }
     }
 
-    private async Task AutoDismissLoopToast()
-    {
-        await Task.Delay(5000, CancellationToken.None);
-        try { await InvokeAsync(() => { if (_disposed) return; _hideLoopToast = true; StateHasChanged(); }); }
-        catch (ObjectDisposedException) { }
-    }
-
     // ── Event Handlers ──
 
     private async void HandleStateChanged()
@@ -613,15 +604,6 @@ public partial class AgentCoding : IDisposable
                 // but should be revisited if a dedicated IsStopPending DTO field is ever added (#2369).
                 if (!LoopService.IsLoopActive)
                     _stopPending = false;
-                var currentStatus = LoopService.StatusMessage;
-                if (currentStatus != _lastLoopStatus)
-                {
-                    _lastLoopStatus = currentStatus;
-                    if (currentStatus.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase))
-                        _ = AutoDismissLoopToast();
-                    else
-                        _hideLoopToast = false;
-                }
                 StateHasChanged();
             });
         }

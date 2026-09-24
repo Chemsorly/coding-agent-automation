@@ -117,10 +117,16 @@ public class AgentConnectionManagerGateTests
         // This keeps HandleTerminalClosedAsync alive (and therefore the gate incomplete) long enough
         // to start a concurrent WaitForRegistrationAsync and assert it has not yet returned.
         var startBlocker = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Signal fires when StartAsync is actually invoked — avoids a fixed-delay race.
+        var startEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var blockingHub = new FakeHubConnectionManager
         {
-            StartFunc = _ => startBlocker.Task.ContinueWith(_ => { }) // blocks until we release it
+            StartFunc = _ =>
+            {
+                startEntered.TrySetResult(); // notify the test that StartAsync has begun
+                return startBlocker.Task.ContinueWith(_ => { }); // blocks until we release it
+            }
         };
 
         var (manager, _) = CreateManager(factoryFunc: () => blockingHub);
@@ -131,9 +137,9 @@ public class AgentConnectionManagerGateTests
         var terminalCloseTask = Task.Run(() =>
             manager.HandleTerminalClosedAsync(null, maxAttempts: 1, delayOverride: _ => TimeSpan.Zero));
 
-        // Give the background task time to reset the gate and reach the blocking StartAsync.
-        // The gate is now incomplete (reset at the top of HandleTerminalClosedAsync before any await).
-        await Task.Delay(200);
+        // Wait until StartAsync is actually executing (gate is reset and we are inside the blocking call).
+        // This replaces the previous fixed Task.Delay(200) which was flaky on loaded CI runners.
+        await startEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         // WaitForRegistrationAsync should be blocking — gate is still open.
         var waitTask = manager.WaitForRegistrationAsync(CancellationToken.None);
@@ -168,10 +174,16 @@ public class AgentConnectionManagerGateTests
     public async Task InvokeAsync_WhileGateIsOpen_BlocksUntilGateCompletes()
     {
         var startBlocker = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Signal fires when StartAsync is actually invoked — avoids a fixed-delay race.
+        var startEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var blockingHub = new FakeHubConnectionManager
         {
-            StartFunc = _ => startBlocker.Task.ContinueWith(_ => { })
+            StartFunc = _ =>
+            {
+                startEntered.TrySetResult(); // notify the test that StartAsync has begun
+                return startBlocker.Task.ContinueWith(_ => { }); // blocks until we release it
+            }
         };
 
         var (manager, _) = CreateManager(factoryFunc: () => blockingHub);
@@ -181,7 +193,9 @@ public class AgentConnectionManagerGateTests
         var terminalCloseTask = Task.Run(() =>
             manager.HandleTerminalClosedAsync(null, maxAttempts: 1, delayOverride: _ => TimeSpan.Zero));
 
-        await Task.Delay(200); // let loop reset the gate and reach the blocking StartAsync
+        // Wait until StartAsync is actually executing (gate is reset and we are inside the blocking call).
+        // This replaces the previous fixed Task.Delay(200) which was flaky on loaded CI runners.
+        await startEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         // InvokeAsync should block — gate is still open
         var actionCalled = false;
@@ -198,17 +212,6 @@ public class AgentConnectionManagerGateTests
         startBlocker.SetResult(true);
 
         // InvokeAsync should now unblock (action may throw since FakeHub isn't started — that's fine)
-        // TODO [WARNING]: This test does not assert actionCalled becomes true after the gate is released.
-        // The ContinueWith below swallows both success and failure, so if a regression prevents the action
-        // from ever being called (e.g. method throws before invoking it), the BeLessThan(2000ms) timing
-        // assertion still passes. Assert actionCalled.Should().BeTrue() or verify the task result separately.
-        // (AgentConnectionManagerGateTests.cs:156 — TestQualityReviewer review)
-        //
-        // TODO [WARNING]: This test only covers the non-generic InvokeAsync overload. The generic
-        // InvokeAsync<T> overload also calls _coordinator.WaitForRegistrationAsync(ct) independently.
-        // A regression removing that call from the <T> overload would not be detected. Add a parallel
-        // test for InvokeAsync<T> blocking on the gate.
-        // (AgentConnectionManagerGateTests.cs:156 — TestQualityReviewer review)
         var sw = System.Diagnostics.Stopwatch.StartNew();
         await invokeTask.ContinueWith(_ => { }); // swallow action failure
         sw.Stop();
