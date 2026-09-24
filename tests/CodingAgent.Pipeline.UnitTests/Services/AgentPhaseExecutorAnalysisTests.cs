@@ -513,6 +513,47 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
             m.Tags.Contains(new KeyValuePair<string, object?>("outcome", "ready")));
     }
 
+    // --- Gate FailureCategory tests (issue #2956) ---
+
+    /// <summary>
+    /// Needs-refinement gate must set run.FailureCategory = GateRejected so the HTTP reporter
+    /// persists GateRejected (not AgentError) via BuildCompletionPayload.FailureCategory.
+    /// </summary>
+    [Fact]
+    public async Task HandleNotReadyGate_SetsRunFailureCategoryToGateRejected()
+    {
+        SetupAgentWithValidAnalysis("not_ready", blockingIssues: new[] { "Needs more detail" });
+
+        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
+
+        // TODO: [WARNING] This only asserts the in-memory run.FailureCategory value. The acceptance
+        // criterion is "needs-refinement gate outcomes are persisted with the new gate FailureReason,
+        // not AgentError". A bug in BuildCompletionPayload that ignores run.FailureCategory (e.g.,
+        // using a different field) would not be caught here. For full coverage, add a test in
+        // HttpPrimaryCompletionReporterTests that passes a payload with FailureCategory=GateRejected
+        // and asserts FailureReason="GateRejected" is posted. See ReportCompletionAsync_GateRejected_
+        // PayloadCategory_PersistsGateRejectedFailureReason (already added in issue #2956 follow-up).
+        // (Review finding: TestQualityReviewer [WARNING] — issue #2956)
+        _run.FailureCategory.Should().Be(FailureReason.GateRejected,
+            "needs-refinement gate must categorise the run as GateRejected, not AgentError");
+    }
+
+    /// <summary>
+    /// Won't-do gate must set run.FailureCategory = GateRejected. Won't-do uses
+    /// PipelineStep.Completed (Succeeded status); HttpPrimaryCompletionReporter persists
+    /// GateRejected via the payload.FailureCategory fallback (issue #2956).
+    /// </summary>
+    [Fact]
+    public async Task HandleWontDoGate_SetsRunFailureCategoryToGateRejected()
+    {
+        SetupAgentWithValidAnalysis("wont_do");
+
+        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
+
+        _run.FailureCategory.Should().Be(FailureReason.GateRejected,
+            "won't-do gate must categorise the run as GateRejected; HTTP reporter persists it via FailureCategory fallback");
+    }
+
     private AgentPhaseContext BuildContext()
     {
         return new AgentPhaseContext

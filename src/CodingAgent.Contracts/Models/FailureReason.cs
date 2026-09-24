@@ -21,5 +21,8 @@ public enum FailureReason
     ExitCodeFailure,
 
     /// <summary>All quality gate retries were exhausted; run finalized as draft PR.</summary>
-    QualityGateExhausted
+    QualityGateExhausted,
+
+    /// <summary>Analysis gate rejected the issue (needs-refinement or won't-do). Not an agent error.</summary>
+    GateRejected
 }

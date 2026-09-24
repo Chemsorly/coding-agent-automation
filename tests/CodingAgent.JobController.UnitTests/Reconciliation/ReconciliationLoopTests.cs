@@ -95,6 +95,9 @@ public sealed class ReconciliationLoopTests
             .ReturnsAsync(new V1JobList { Items = [job] });
         _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
+        // WorkItem was claimed: Running → failure is an AgentError (issue #2956)
+        _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WorkItemStatus.Running);
 
         var loop = CreateLoop();
         await loop.ReconcileOnceAsync(CancellationToken.None);
@@ -109,6 +112,64 @@ public sealed class ReconciliationLoopTests
         _k8sClient.Verify(c => c.DeleteJobAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    /// <summary>
+    /// Issue #2956: a K8s Job that failed before any agent claimed it (WorkItem still Dispatched)
+    /// must be recorded as InfrastructureFailure, not AgentError.
+    /// </summary>
+    [Fact]
+    public async Task WhenJobFails_AndWorkItemNeverClaimed_ShouldPost_InfrastructureFailure()
+    {
+        var jobName = JobNameFor(ItemId);
+        var job = MakeJob(jobName, ItemId, failed: true);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        // WorkItem was never claimed: still Dispatched → infrastructure failure
+        _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WorkItemStatus.Dispatched);
+
+        var loop = CreateLoop();
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "InfrastructureFailure"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Issue #2956: when GetStatusAsync fails, the fallback must still be AgentError (safe default).
+    /// </summary>
+    [Fact]
+    public async Task WhenJobFails_AndGetStatusThrows_FallsBackTo_AgentError()
+    {
+        var jobName = JobNameFor(ItemId);
+        var job = MakeJob(jobName, ItemId, failed: true);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        // GetStatusAsync throws — must fall back to AgentError
+        _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("network error"));
+
+        var loop = CreateLoop();
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "AgentError"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+    // TODO: [WARNING] ClassifyJobFailureReasonAsync only checks status == Dispatched; all other
+    // statuses (Running, Failed, Succeeded, null) fall through to AgentError. There is no test
+    // for the boundary where GetStatusAsync returns a terminal status (e.g. WorkItemStatus.Failed
+    // or WorkItemStatus.Succeeded — item already cleaned up via another path) to confirm the
+    // fallthrough to AgentError is intentional and not a missed classification case.
 
     // ─── Timeout enforcement ──────────────────────────────────────────────────
 
@@ -535,8 +596,10 @@ public sealed class ReconciliationLoopTests
     [Fact]
     public async Task WhenOrphanJobFound_ShouldDeleteJob_NoStatusPost()
     {
-        // K8s Job exists but no work item ID matches any active item
-        var orphanJob = MakeJob("caa-agent-orphan000000", workItemId: null, active: true);
+        // K8s Job exists but no work item ID matches any active item.
+        // Give it an old CreationTimestamp so the retention window doesn't protect it.
+        var orphanJob = MakeJob("caa-agent-orphan000000", workItemId: null, active: true,
+            createdAt: DateTime.UtcNow.AddSeconds(-700)); // older than 600s retention window
 
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [orphanJob] });
@@ -560,8 +623,10 @@ public sealed class ReconciliationLoopTests
     public async Task WhenStaleTerminalWorkItem_ShouldDeleteJob_NoStatusPost()
     {
         var jobName = JobNameFor(ItemId);
-        // Succeeded job that is old — stale retention
-        var staleJob = MakeJob(jobName, ItemId, succeeded: true);
+        // Succeeded job that is old — stale retention. Give it an old startTime so the
+        // retention window doesn't protect it from orphan cleanup.
+        var staleJob = MakeJob(jobName, ItemId, succeeded: true,
+            startTime: DateTime.UtcNow.AddSeconds(-700)); // older than 600s retention window
 
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [staleJob] });
@@ -729,7 +794,10 @@ public sealed class ReconciliationLoopTests
         bool succeeded = false,
         bool failed = false,
         bool active = false,
-        string? pvcName = null)
+        string? pvcName = null,
+        DateTime? createdAt = null,
+        DateTime? startTime = null,
+        DateTime? completionTime = null)
     {
         var labels = new Dictionary<string, string>
         {
@@ -740,11 +808,11 @@ public sealed class ReconciliationLoopTests
 
         V1JobStatus status;
         if (succeeded)
-            status = new V1JobStatus { Succeeded = 1, Conditions = [new V1JobCondition { Type = "Complete", Status = "True" }] };
+            status = new V1JobStatus { Succeeded = 1, Conditions = [new V1JobCondition { Type = "Complete", Status = "True" }], CompletionTime = completionTime, StartTime = startTime };
         else if (failed)
-            status = new V1JobStatus { Failed = 1, Conditions = [new V1JobCondition { Type = "Failed", Status = "True" }] };
+            status = new V1JobStatus { Failed = 1, Conditions = [new V1JobCondition { Type = "Failed", Status = "True" }], CompletionTime = completionTime, StartTime = startTime };
         else
-            status = new V1JobStatus { Active = active ? 1 : 0 };
+            status = new V1JobStatus { Active = active ? 1 : 0, StartTime = startTime, CompletionTime = completionTime };
 
         var volumes = new List<V1Volume>();
         if (pvcName is not null)
@@ -758,7 +826,7 @@ public sealed class ReconciliationLoopTests
 
         return new V1Job
         {
-            Metadata = new V1ObjectMeta { Name = name, Labels = labels },
+            Metadata = new V1ObjectMeta { Name = name, Labels = labels, CreationTimestamp = createdAt },
             Spec = new V1JobSpec
             {
                 Template = new V1PodTemplateSpec
@@ -795,9 +863,11 @@ public sealed class ReconciliationLoopTests
     [Fact]
     public async Task CleanupOrphans_WhenMixedChatAndOrphanJobs_ShouldOnlyDeleteOrphan()
     {
-        // One chat job (must survive) + one orphaned impl job (must be deleted)
+        // One chat job (must survive) + one orphaned impl job (must be deleted).
+        // Give the orphan an old CreationTimestamp so the retention window doesn't protect it.
         var chatJob = MakeChatJob("caa-chat-aabbccdd", sessionId: Guid.NewGuid());
-        var orphanJob = MakeJob("caa-agent-orphan000000", workItemId: null, active: true);
+        var orphanJob = MakeJob("caa-agent-orphan000000", workItemId: null, active: true,
+            createdAt: DateTime.UtcNow.AddSeconds(-700)); // older than 600s retention window
 
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [chatJob, orphanJob] });
@@ -837,12 +907,304 @@ public sealed class ReconciliationLoopTests
         };
     }
 
+    // ─── Orphan retention window: CreationTimestamp anchor (Issue #2950) ──────
+
+    /// <summary>
+    /// AC (#2950 regression test): a brand-new Job with no StartTime/CompletionTime and
+    /// a CreationTimestamp within 600s must NOT be deleted, even when its WorkItem is not
+    /// in the active set (Pending → Dispatched commit has not yet completed).
+    /// </summary>
+    [Fact]
+    public async Task CleanupOrphans_FreshJob_NoStartTime_WorkItemNotActive_IsNotDeleted()
+    {
+        var id = Guid.NewGuid();
+        var jobName = $"caa-{id:N}"[..12];
+        // Job created 5s ago — well within the 600s retention window. No StartTime yet.
+        var freshJob = MakeJob(jobName, id, active: true,
+            createdAt: DateTime.UtcNow.AddSeconds(-5));
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [freshJob] });
+
+        // WorkItem is not in the active set yet (Pending → Dispatched commit still in flight)
+        // TODO: tighten the first argument to It.Is<int>(n => n == 0) to pin the specific
+        // GetActiveAsync(0, ...) calling convention used by CleanupOrphansAsync; using
+        // It.IsAny<int>() would vacuously match if the cutoff argument ever changed.
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var loop = CreateLoop();
+        await loop.CleanupOrphansAsync(CancellationToken.None);
+
+        // Must NOT be deleted — the CreationTimestamp protects it within the 600s window
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// AC: a Job with no StartTime/CompletionTime and a CreationTimestamp older than 600s
+    /// must still be deleted (genuinely orphaned and never started).
+    /// </summary>
+    [Fact]
+    public async Task CleanupOrphans_NoStartTime_CreationTimestampOlderThan600s_IsDeleted()
+    {
+        var id = Guid.NewGuid();
+        var jobName = $"caa-{id:N}"[..12];
+        // Job created 700s ago with no StartTime — genuinely stuck/orphaned
+        var stuckJob = MakeJob(jobName, id, active: false,
+            createdAt: DateTime.UtcNow.AddSeconds(-700));
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [stuckJob] });
+
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var loop = CreateLoop();
+        await loop.CleanupOrphansAsync(CancellationToken.None);
+
+        // Must be deleted — older than the retention window and has no timestamps
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            jobName, _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// AC: a Job with no timestamps at all (no CreationTimestamp, no StartTime, no CompletionTime)
+    /// must be deleted immediately — no anchor available.
+    /// </summary>
+    [Fact]
+    public async Task CleanupOrphans_NoTimestampsAtAll_IsDeleted()
+    {
+        var id = Guid.NewGuid();
+        var jobName = $"caa-{id:N}"[..12];
+        // Job with no timestamps at all (hand-built object)
+        var noTimestampJob = MakeJob(jobName, id, active: false);
+        // Ensure no CreationTimestamp is set (null by default in MakeJob)
+        // TODO: the explicit null assignment below is redundant because MakeJob already defaults
+        // createdAt to null; it can be removed once the intent is clear from the constructor call alone.
+        noTimestampJob.Metadata!.CreationTimestamp = null;
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [noTimestampJob] });
+
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var loop = CreateLoop();
+        await loop.CleanupOrphansAsync(CancellationToken.None);
+
+        // Must be deleted — no anchor available
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            jobName, _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// AC: a Job with a CompletionTime within 600s is protected (existing behaviour unchanged).
+    /// </summary>
+    [Fact]
+    public async Task CleanupOrphans_CompletionTimeWithin600s_IsNotDeleted()
+    {
+        var id = Guid.NewGuid();
+        var jobName = $"caa-{id:N}"[..12];
+        var recentlyCompletedJob = MakeJob(jobName, id, succeeded: true,
+            completionTime: DateTime.UtcNow.AddSeconds(-100)); // only 100s ago
+        // TODO: a real succeeded K8s Job always has a StartTime; pass a consistent startTime here
+        // (e.g. DateTime.UtcNow.AddSeconds(-200)) so the test builds a valid job shape and does not
+        // silently over-test the fallback evaluation order if it ever changes.
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [recentlyCompletedJob] });
+
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var loop = CreateLoop();
+        await loop.CleanupOrphansAsync(CancellationToken.None);
+
+        // CompletionTime is recent — must not be deleted yet
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// AC: a Job with a CompletionTime older than 600s is deleted (existing behaviour unchanged).
+    /// </summary>
+    [Fact]
+    public async Task CleanupOrphans_CompletionTimeOlderThan600s_IsDeleted()
+    {
+        var id = Guid.NewGuid();
+        var jobName = $"caa-{id:N}"[..12];
+        var oldCompletedJob = MakeJob(jobName, id, succeeded: true,
+            completionTime: DateTime.UtcNow.AddSeconds(-700)); // 700s ago, past the window
+        // TODO: a real succeeded K8s Job always has a StartTime; pass a consistent startTime here
+        // (e.g. DateTime.UtcNow.AddSeconds(-800)) so the test builds a valid job shape and does not
+        // silently over-test the fallback evaluation order if it ever changes.
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [oldCompletedJob] });
+
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var loop = CreateLoop();
+        await loop.CleanupOrphansAsync(CancellationToken.None);
+
+        // CompletionTime is old enough — must be deleted
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            jobName, _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// AC: a running Job (StartTime > 600s ago) whose WorkItem is terminal (not in active set)
+    /// must be deleted. This is the PVC-release path — the DB frees the RWO PVC at the terminal
+    /// transition, so the next kiro run needs that pod gone.
+    /// </summary>
+    [Fact]
+    public async Task CleanupOrphans_RunningJob_StartTimeOlderThan600s_TerminalWorkItem_IsDeleted()
+    {
+        var id = Guid.NewGuid();
+        var jobName = $"caa-{id:N}"[..12];
+        // Running job (no CompletionTime) but StartTime is old — WorkItem already terminal in DB
+        var staleRunningJob = MakeJob(jobName, id, active: true,
+            startTime: DateTime.UtcNow.AddSeconds(-700)); // started 700s ago
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [staleRunningJob] });
+
+        // WorkItem is terminal (e.g. Succeeded/Failed/Cancelled) — not in active set
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var loop = CreateLoop();
+        await loop.CleanupOrphansAsync(CancellationToken.None);
+
+        // StartTime is old enough and WorkItem is gone — must be deleted (PVC release)
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            jobName, _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// AC: a fresh model-fetch Job (no caa/work-item-id label) with a recent CreationTimestamp
+    /// is NOT deleted (protected by the CreationTimestamp retention window, not by chat-job guard).
+    /// </summary>
+    [Fact]
+    public async Task CleanupOrphans_FreshModelFetchJob_NoWorkItemId_IsNotDeleted()
+    {
+        // Model-fetch jobs carry managed-by=caa-orchestrator but no caa/work-item-id.
+        // They are not chat jobs either (no caa/chat-session-id).
+        // A fresh one must be protected by the CreationTimestamp retention window.
+        var modelFetchJob = MakeJob("caa-model-fetch-abc", workItemId: null, active: true,
+            createdAt: DateTime.UtcNow.AddSeconds(-5)); // fresh
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [modelFetchJob] });
+
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var loop = CreateLoop();
+        await loop.CleanupOrphansAsync(CancellationToken.None);
+
+        // Fresh model-fetch job — must not be deleted
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// AC: two consecutive sweeps — a fresh Job is protected on the first sweep (active set empty),
+    /// and still not deleted on the second sweep after the WorkItem appears as Dispatched.
+    /// </summary>
+    [Fact]
+    public async Task CleanupOrphans_TwoCycles_FreshJobProtectedThenDispatchedActive_IsNeverDeleted()
+    {
+        var id = Guid.NewGuid();
+        var jobName = $"caa-{id:N}"[..12];
+        // Job created 5s ago — within the 600s window
+        var freshJob = MakeJob(jobName, id, active: true,
+            createdAt: DateTime.UtcNow.AddSeconds(-5));
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [freshJob] });
+
+        // Cycle 1: active set is empty (WorkItem still Pending)
+        _workItemClient.SetupSequence(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([])   // first sweep — Pending, not yet active
+            .ReturnsAsync(      // second sweep — WorkItem now Dispatched
+            [
+                new ActiveWorkItemDto
+                {
+                    Id = id,
+                    Status = WorkItemStatus.Dispatched,
+                    DispatchedAt = DateTimeOffset.UtcNow,
+                    AgentSelector = "dotnet",
+                    IssueIdentifier = "owner/repo#1"
+                }
+            ]);
+
+        var loop = CreateLoop();
+        await loop.CleanupOrphansAsync(CancellationToken.None); // sweep 1 — protected by CreationTimestamp
+        await loop.CleanupOrphansAsync(CancellationToken.None); // sweep 2 — protected by active set
+        // TODO: the second sweep is also protected by the 600s CreationTimestamp window (job is only
+        // ~5s old), so this test does not isolate the active-set protection path. To truly exercise
+        // sweep-2-via-active-set, a variant is needed where the job's CreationTimestamp is old enough
+        // to lose retention protection but the WorkItem is returned as Dispatched in the active set.
+
+        // Job must never be deleted across either sweep
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// AC: the dispatched-timeout path posts FailureReason = "Timeout" (not "DispatchTimeout"),
+    /// matching the sibling timeout path and how it is persisted in WorkItemTransitionService.
+    /// </summary>
+    [Fact]
+    public async Task EnforceDispatchedTimeout_PostsFailureReason_Timeout_NotDispatchTimeout()
+    {
+        var id = Guid.NewGuid();
+        var dispatchedItem = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Dispatched,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatPodConnectTimeoutSeconds + 1)),
+            AgentSelector = "dotnet10,opencode",
+            IssueIdentifier = "owner/repo#1"
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dispatchedItem]);
+
+        // No K8s Job exists
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [] });
+
+        _workItemClient.Setup(c => c.PostStatusAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var loop = CreateLoop();
+        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+
+        // Must use "Timeout" (nameof(FailureReason.Timeout)), NOT "DispatchTimeout"
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u =>
+                u.Status == "Failed" && u.FailureReason == "Timeout"),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // Must NOT use "DispatchTimeout" — it is not a defined FailureReason member
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(),
+            It.Is<WorkItemStatusUpdate>(u => u.FailureReason == "DispatchTimeout"),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     // ─── Dispatched timeout lower-boundary guard ──────────────────────────────
 
     [Fact]
     public async Task WhenDispatchedItemBelowConnectTimeout_ShouldNotCallPostStatusAsync()
     {
-        // WorkItem in Dispatched state for LESS than chatPodConnectTimeoutSeconds — must NOT fire.
         // Guards against an off-by-one that fires for any Dispatched item regardless of age.
 
         // GetActiveAsync with chatPodConnectTimeoutSeconds returns empty (the item hasn't exceeded the threshold)
@@ -1086,10 +1448,10 @@ public sealed class ReconciliationLoopTests
         var loop = CreateLoop();
         await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
 
-        // Item is genuinely orphaned — must be marked Failed/DispatchTimeout
+        // Item is genuinely orphaned — must be marked Failed/Timeout
         _workItemClient.Verify(c => c.PostStatusAsync(
             id,
-            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "DispatchTimeout"),
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -1802,7 +2164,9 @@ public sealed class ReconciliationLoopErrorTests
     [Fact]
     public async Task CleanupOrphans_WhenDeleteJobThrows_DoesNotPropagate()
     {
-        var orphanJob = MakeJob("caa-agent-orphan000000", workItemId: null, active: true);
+        // Give the orphan an old CreationTimestamp so the retention window doesn't protect it.
+        var orphanJob = MakeJob("caa-agent-orphan000000", workItemId: null, active: true,
+            createdAt: DateTime.UtcNow.AddSeconds(-700));
 
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [orphanJob] });
@@ -1885,7 +2249,10 @@ public sealed class ReconciliationLoopErrorTests
         bool succeeded = false,
         bool failed = false,
         bool active = false,
-        string? pvcName = null)
+        string? pvcName = null,
+        DateTime? createdAt = null,
+        DateTime? startTime = null,
+        DateTime? completionTime = null)
     {
         var labels = new Dictionary<string, string>
         {
@@ -1896,11 +2263,11 @@ public sealed class ReconciliationLoopErrorTests
 
         V1JobStatus status;
         if (succeeded)
-            status = new V1JobStatus { Succeeded = 1, Conditions = [new V1JobCondition { Type = "Complete", Status = "True" }] };
+            status = new V1JobStatus { Succeeded = 1, Conditions = [new V1JobCondition { Type = "Complete", Status = "True" }], CompletionTime = completionTime, StartTime = startTime };
         else if (failed)
-            status = new V1JobStatus { Failed = 1, Conditions = [new V1JobCondition { Type = "Failed", Status = "True" }] };
+            status = new V1JobStatus { Failed = 1, Conditions = [new V1JobCondition { Type = "Failed", Status = "True" }], CompletionTime = completionTime, StartTime = startTime };
         else
-            status = new V1JobStatus { Active = active ? 1 : 0 };
+            status = new V1JobStatus { Active = active ? 1 : 0, StartTime = startTime, CompletionTime = completionTime };
 
         var volumes = new List<V1Volume>();
         if (pvcName is not null)
@@ -1914,7 +2281,7 @@ public sealed class ReconciliationLoopErrorTests
 
         return new V1Job
         {
-            Metadata = new V1ObjectMeta { Name = name, Labels = labels },
+            Metadata = new V1ObjectMeta { Name = name, Labels = labels, CreationTimestamp = createdAt },
             Spec = new V1JobSpec
             {
                 Template = new V1PodTemplateSpec
@@ -2102,7 +2469,7 @@ public sealed class ReconciliationLoopErrorTests
         // null Items treated as empty → no live job found → item is orphaned → must be marked Failed
         _workItemClient.Verify(c => c.PostStatusAsync(
             id,
-            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "DispatchTimeout"),
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 

@@ -399,6 +399,99 @@ public class WorkComponentTests : BunitContext
             "clicking the Cancel button must not propagate to the row @onclick and must not navigate");
     }
 
+    // ── In-flight cancel confirmation (issue #2937) ───────────────────────────
+
+    /// <summary>
+    /// Clicking "Cancel" on an in-flight run must show a confirmation prompt (not immediately cancel).
+    /// The confirm/Yes and dismiss/No buttons must appear; PostStatusAsync must NOT be called yet.
+    /// </summary>
+    // TODO: [WARNING] This test does not assert that the original cancel-btn-{id} is hidden once
+    // the confirmation is shown. A regression that renders both simultaneously would pass this test.
+    // Consider adding: Assert.Empty(cut.FindAll($"[data-testid='cancel-btn-{id}']")) after the
+    // confirmation buttons are asserted.
+    [Fact]
+    public void InFlightCancel_ClickCancel_ShowsConfirmation_AndDoesNotCallPostStatus()
+    {
+        var id = Guid.NewGuid();
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakeActiveItem(id, "2937", "Live run")]);
+
+        var cut = Render<Work>();
+
+        // Click the initial "Cancel" button
+        cut.Find($"[data-testid='cancel-btn-{id}']").Click();
+
+        // Confirm and dismiss buttons must appear
+        Assert.NotEmpty(cut.FindAll($"[data-testid='confirm-cancel-btn-{id}']"));
+        Assert.NotEmpty(cut.FindAll($"[data-testid='dismiss-cancel-btn-{id}']"));
+
+        // PostStatusAsync must NOT have been called yet
+        _mockWorkItems.Verify(
+            c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "PostStatusAsync must not be called when only the Cancel button is clicked");
+    }
+
+    /// <summary>
+    /// Clicking "Yes" after the confirmation prompt must call PostStatusAsync once with the correct id.
+    /// </summary>
+    [Fact]
+    public async Task InFlightCancel_ClickConfirm_CallsPostStatusOnce()
+    {
+        var id = Guid.NewGuid();
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakeActiveItem(id, "2937", "Live run")]);
+        _mockWorkItems
+            .Setup(c => c.PostStatusAsync(id, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var cut = Render<Work>();
+
+        // Open the confirmation
+        await cut.InvokeAsync(() => cut.Find($"[data-testid='cancel-btn-{id}']").Click());
+
+        // Click Yes (confirm)
+        await cut.InvokeAsync(() => cut.Find($"[data-testid='confirm-cancel-btn-{id}']").Click());
+
+        _mockWorkItems.Verify(
+            c => c.PostStatusAsync(id, It.Is<WorkItemStatusUpdate>(u => u.Status == "Cancelled"), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "PostStatusAsync must be called exactly once with Cancelled after confirming");
+    }
+
+    /// <summary>
+    /// Clicking "No" (dismiss) after the confirmation prompt must hide the confirmation and NOT call PostStatusAsync.
+    /// </summary>
+    [Fact]
+    public void InFlightCancel_ClickDismiss_HidesConfirmation_AndDoesNotCallPostStatus()
+    {
+        var id = Guid.NewGuid();
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakeActiveItem(id, "2937", "Live run")]);
+
+        var cut = Render<Work>();
+
+        // Open the confirmation
+        cut.Find($"[data-testid='cancel-btn-{id}']").Click();
+
+        // Dismiss
+        cut.Find($"[data-testid='dismiss-cancel-btn-{id}']").Click();
+
+        // Confirm and dismiss buttons must be gone; the initial Cancel button must be back
+        Assert.Empty(cut.FindAll($"[data-testid='confirm-cancel-btn-{id}']"));
+        Assert.Empty(cut.FindAll($"[data-testid='dismiss-cancel-btn-{id}']"));
+        Assert.NotEmpty(cut.FindAll($"[data-testid='cancel-btn-{id}']"));
+
+        // PostStatusAsync must not have been called
+        _mockWorkItems.Verify(
+            c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "PostStatusAsync must not be called when the dismiss button is clicked");
+    }
+
     // ── In-flight Initiated by column (issue #2540) ───────────────────────────
 
     [Fact]

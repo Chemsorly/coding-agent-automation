@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using CodingAgent.AgentGateway;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 
 namespace CodingAgent.Web.UnitTests.Hubs;
@@ -119,6 +119,8 @@ public class CompletionOutcomeResolverTests
     [InlineData(FailureReason.AgentError)]
     [InlineData(FailureReason.TokenRefreshFailure)]
     [InlineData(FailureReason.ExitCodeFailure)]
+    [InlineData(FailureReason.QualityGateExhausted)]
+    [InlineData(FailureReason.GateRejected)]
     public void Failed_step_with_explicit_category_propagates_it(FailureReason category)
     {
         var (_, _, failureReason) = CompletionOutcomeResolver.Resolve(
