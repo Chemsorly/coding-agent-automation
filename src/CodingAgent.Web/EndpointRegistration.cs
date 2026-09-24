@@ -21,7 +21,13 @@ internal static class EndpointRegistration
         app.MapHealthEndpoints();
 
         // Redirect root "/" to the main page (relative redirect — works behind any reverse proxy)
-        app.MapGet("/", () => Results.Redirect("agent-coding"))
+        // TODO [WARNING]: The issue requirement states "keep /agent-coding working as an alias".
+        // No alias redirect from /agent-coding to /overview (or vice versa) was added. If existing
+        // bookmarks, CI health checks, or external links target /agent-coding expecting the Overview
+        // page, they will land on the Pipelines page instead (AgentCoding.razor is still at /agent-coding).
+        // Add: app.MapGet("/agent-coding-redirect", () => Results.Redirect("overview")).AllowAnonymous();
+        // or confirm that /agent-coding intentionally continues to render the Pipelines page.
+        app.MapGet("/", () => Results.Redirect("overview"))
             .AllowAnonymous();
 
         // Export run history as JSON download

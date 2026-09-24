@@ -17,8 +17,13 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// - Removal of the Agent column (issue #2328)
 /// - Links column with issue URL and PR URL (issue #2328)
 /// - Sortable column headers (issue #2328)
-/// - Result and Type filter dropdowns (issue #2328)
+/// - Type and Initiated-by filter dropdowns; Result dropdown removed (issue #2941)
 /// - Sort state reflected in URL (issue #2328)
+/// - Client-filter empty-state with Clear filters action (issue #2941)
+/// - Pager count reflects filtered rows (issue #2941)
+/// - Consolidation filter options removed (issue #2941)
+/// - aria-selected lowercase on outcome tabs (issue #2941)
+/// - Feedback only checkbox accessible name (issue #2941)
 /// </summary>
 public class RunsPageComponentTests : BunitContext
 {
@@ -348,34 +353,23 @@ public class RunsPageComponentTests : BunitContext
             "Duration must become the active sort column after clicking it");
     }
 
-    // ── 12. Result filter dropdown narrows the displayed rows ────────────────
+    // ── 12. Result filter dropdown is absent (replaced by outcome tabs — issue #2941) ──────────
 
     [Fact]
-    public async Task RunsTable_ResultFilter_NarrowsDisplayedRows()
+    public void RunsTable_NoResultFilterDropdown_Present()
     {
-        var completedRun = MakeSummary("r1", step: PipelineStep.Completed, issueIdentifier: "10");
-        var failedRun = MakeSummary("r2", step: PipelineStep.Failed, issueIdentifier: "20");
-
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
                 It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(OnePage(completedRun, failedRun));
+            .ReturnsAsync(OnePage(MakeSummary("r1")));
 
         var cut = Render<Runs>();
 
-        // Both rows initially visible
-        cut.FindAll(".monitoring-table tbody tr").Count.Should().Be(2);
-
-        // Find the Result filter select and change it to "Failed"
-        var resultFilter = cut.Find("select.column-filter[aria-label='Filter by Result']");
-        await cut.InvokeAsync(() => resultFilter.Change("Failed"));
-
-        // Only the failed run should be shown
-        var visibleRows = cut.FindAll(".monitoring-table tbody tr");
-        visibleRows.Count.Should().Be(1, "filtering by Failed should show only 1 row");
-        visibleRows[0].TextContent.Should().Contain("#20",
-            "the visible row should be the failed run");
+        // The Result column dropdown was removed in issue #2941 — outcome tabs are the single outcome control.
+        var resultFilters = cut.FindAll("select.column-filter[aria-label='Filter by Result']");
+        resultFilters.Should().BeEmpty(
+            "the Result column filter dropdown must not exist; outcome tabs are the single outcome control");
     }
 
     // ── 13. Type filter dropdown narrows the displayed rows ──────────────────
@@ -413,8 +407,8 @@ public class RunsPageComponentTests : BunitContext
     [Fact]
     public async Task RunsTable_ClearingFilter_RestoresAllRows()
     {
-        var run1 = MakeSummary("r1", step: PipelineStep.Completed, issueIdentifier: "1");
-        var run2 = MakeSummary("r2", step: PipelineStep.Failed, issueIdentifier: "2");
+        var run1 = MakeSummary("r1", runType: PipelineRunType.Implementation, issueIdentifier: "1");
+        var run2 = MakeSummary("r2", runType: PipelineRunType.Review, issueIdentifier: "2");
 
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
@@ -424,14 +418,15 @@ public class RunsPageComponentTests : BunitContext
 
         var cut = Render<Runs>();
 
-        var resultFilter = cut.Find("select.column-filter[aria-label='Filter by Result']");
-        await cut.InvokeAsync(() => resultFilter.Change("Failed"));
+        // Filter by Review — only one row visible
+        var typeFilter = cut.Find("select.column-filter[aria-label='Filter by Type']");
+        await cut.InvokeAsync(() => typeFilter.Change("Review"));
         cut.FindAll(".monitoring-table tbody tr").Count.Should().Be(1);
 
-        // Clear filter (value = "")
-        await cut.InvokeAsync(() => resultFilter.Change(""));
+        // Clear filter (value = "") — all rows must be restored
+        await cut.InvokeAsync(() => typeFilter.Change(""));
         cut.FindAll(".monitoring-table tbody tr").Count.Should().Be(2,
-            "clearing the filter should restore all rows");
+            "clearing the Type filter should restore all rows");
     }
 
     // ── 15. Sort direction indicator icon present in active column ────────────
@@ -464,12 +459,12 @@ public class RunsPageComponentTests : BunitContext
         newIndicator.Should().NotBeNull("sort indicator must persist in the newly active column");
     }
 
-    // ── 16. Empty state shows when filtered results are empty ─────────────────
+    // ── 16. Empty state shown with message and Clear filters button when filter eliminates all rows ──
 
     [Fact]
     public async Task RunsTable_FilterEmptyState_WhenNoRowsMatchFilter()
     {
-        var completedRun = MakeSummary("r1", step: PipelineStep.Completed, issueIdentifier: "10");
+        var completedRun = MakeSummary("r1", runType: PipelineRunType.Implementation, issueIdentifier: "10");
 
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
@@ -479,19 +474,23 @@ public class RunsPageComponentTests : BunitContext
 
         var cut = Render<Runs>();
 
-        // Filter by Failed — no matches
-        var resultFilter = cut.Find("select.column-filter[aria-label='Filter by Result']");
-        await cut.InvokeAsync(() => resultFilter.Change("Failed"));
+        // Filter by Review — no matches
+        var typeFilter = cut.Find("select.column-filter[aria-label='Filter by Type']");
+        await cut.InvokeAsync(() => typeFilter.Change("Review"));
 
-        // Should show no rows and a message
-        var rows = cut.FindAll(".monitoring-table tbody tr");
-        rows.Should().BeEmpty("filter producing no matches should show zero rows");
+        // The table must not be present (replaced by the cockpit-empty message)
+        cut.FindAll(".monitoring-table").Should().BeEmpty(
+            "when client filter produces zero rows the table must be replaced by the empty-state message");
 
-        // The table should still render the headers (no cockpit-empty for filter)
-        // TODO: When zero rows match the client-side filter, the table renders a silent empty <tbody>
-        // with no user-visible message. A "no runs match this filter" hint would improve usability.
-        var tableHeaders = cut.FindAll(".monitoring-table thead th");
-        tableHeaders.Count.Should().BeGreaterThan(0, "table headers remain when filter is active");
+        // A cockpit-empty message must appear with the expected text
+        var emptyState = cut.Find(".cockpit-empty");
+        emptyState.TextContent.Should().Contain("No runs match the current filters",
+            "the empty-state message must tell the user no runs match");
+
+        // A 'Clear filters' button must be present inside the empty-state
+        var clearBtn = emptyState.QuerySelector("button");
+        clearBtn.Should().NotBeNull("a 'Clear filters' button must be present in the empty-state");
+        clearBtn!.TextContent.Should().Contain("Clear filters");
     }
 
     // ── 17. Sort state written to URL on header click (AC6) ───────────────────
@@ -709,8 +708,8 @@ public class RunsPageComponentTests : BunitContext
     [Fact]
     public async Task RunsTable_InitiatedByFilter_NarrowsDisplayedRows()
     {
-        var loopRun  = MakeSummary("r1", initiatedBy: "loop:issue",  issueIdentifier: "1");
-        var manualRun = MakeSummary("r2", initiatedBy: "manual",     issueIdentifier: "2");
+        var loopRun = MakeSummary("r1", initiatedBy: "loop:issue", issueIdentifier: "1");
+        var manualRun = MakeSummary("r2", initiatedBy: "manual", issueIdentifier: "2");
 
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
@@ -737,8 +736,8 @@ public class RunsPageComponentTests : BunitContext
     [Fact]
     public async Task RunsTable_ClearingInitiatedByFilter_RestoresAllRows()
     {
-        var loopRun   = MakeSummary("r1", initiatedBy: "loop:issue", issueIdentifier: "1");
-        var manualRun = MakeSummary("r2", initiatedBy: "manual",     issueIdentifier: "2");
+        var loopRun = MakeSummary("r1", initiatedBy: "loop:issue", issueIdentifier: "1");
+        var manualRun = MakeSummary("r2", initiatedBy: "manual", issueIdentifier: "2");
 
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
@@ -824,5 +823,257 @@ public class RunsPageComponentTests : BunitContext
         await cut.InvokeAsync(() => row.Click());
         nav.Uri.Should().EndWith($"runs/{runId}",
             "clicking an implementation row must navigate to the run detail page");
+    }
+
+    // ── Issue #2941 — new tests ────────────────────────────────────────────────
+
+    // 26. Client filter empty-state is shown when filter eliminates all rows
+    // TODO: This test is nearly identical to test 16 (RunsTable_FilterEmptyState_WhenNoRowsMatchFilter).
+    // Both set up one Implementation run, apply the Review type filter, and assert the same
+    // postconditions (no table, cockpit-empty message, Clear-filters button). The two tests should
+    // be consolidated into a single parameterized test or merged to reduce maintenance burden.
+    [Fact]
+    public async Task RunsTable_FilterEmptyState_ShownWhenClientFilterEliminatesAllRows()
+    {
+        var implRun = MakeSummary("r1", runType: PipelineRunType.Implementation, issueIdentifier: "1");
+
+        _mockRunHistory
+            .Setup(c => c.GetRunHistoryAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(OnePage(implRun));
+
+        var cut = Render<Runs>();
+
+        // Apply Type filter "Review" — zero matches for an Implementation run
+        var typeFilter = cut.Find("select.column-filter[aria-label='Filter by Type']");
+        await cut.InvokeAsync(() => typeFilter.Change("Review"));
+
+        // Table must be replaced by cockpit-empty message
+        cut.FindAll(".monitoring-table").Should().BeEmpty(
+            "table must not be rendered when client filter matches nothing");
+        var emptyState = cut.Find(".cockpit-empty");
+        emptyState.TextContent.Should().Contain("No runs match the current filters");
+        emptyState.QuerySelector("button").Should().NotBeNull("Clear filters button must be present");
+    }
+
+    // 27. Clear filters button restores the rows
+    [Fact]
+    public async Task RunsTable_ClearFiltersButton_ResetsFiltersAndRestoresRows()
+    {
+        var implRun = MakeSummary("r1", runType: PipelineRunType.Implementation, issueIdentifier: "1");
+
+        _mockRunHistory
+            .Setup(c => c.GetRunHistoryAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(OnePage(implRun));
+
+        var cut = Render<Runs>();
+
+        // Drive to the empty-state
+        var typeFilter = cut.Find("select.column-filter[aria-label='Filter by Type']");
+        await cut.InvokeAsync(() => typeFilter.Change("Review"));
+        cut.FindAll(".monitoring-table").Should().BeEmpty();
+
+        // Click the Clear filters button
+        await cut.InvokeAsync(() =>
+        {
+            var clearBtn = cut.Find(".cockpit-empty button");
+            clearBtn.Click();
+        });
+
+        // The row must be visible again
+        cut.FindAll(".monitoring-table tbody tr").Count.Should().Be(1,
+            "clicking Clear filters must restore the row");
+    }
+
+    // 28. Pager shows 'N of M on this page' when client filter reduces count
+    [Fact]
+    public async Task RunsTable_PagerCount_ReflectsFilteredRowCount()
+    {
+        var implRun = MakeSummary("r1", runType: PipelineRunType.Implementation, issueIdentifier: "1");
+        var reviewRun = MakeSummary("r2", runType: PipelineRunType.Review, issueIdentifier: "2");
+
+        _mockRunHistory
+            .Setup(c => c.GetRunHistoryAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(OnePage(implRun, reviewRun));
+
+        var cut = Render<Runs>();
+
+        // Apply Type filter "Review" — one of two rows visible
+        var typeFilter = cut.Find("select.column-filter[aria-label='Filter by Type']");
+        await cut.InvokeAsync(() => typeFilter.Change("Review"));
+
+        var pagerInfo = cut.Find(".cockpit-pager-info");
+        pagerInfo.TextContent.Should().Contain("1 of 2 on this page",
+            "pager must show filtered count when a client filter is active");
+    }
+
+    // 29. Pager shows 'N shown' when no client filter is active
+    [Fact]
+    public void RunsTable_PagerCount_ShowsTotal_WhenNoFilterActive()
+    {
+        var run1 = MakeSummary("r1", runType: PipelineRunType.Implementation, issueIdentifier: "1");
+        var run2 = MakeSummary("r2", runType: PipelineRunType.Review, issueIdentifier: "2");
+
+        _mockRunHistory
+            .Setup(c => c.GetRunHistoryAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(OnePage(run1, run2));
+
+        var cut = Render<Runs>();
+
+        var pagerInfo = cut.Find(".cockpit-pager-info");
+        pagerInfo.TextContent.Should().Contain("2 shown",
+            "pager must show total count when no client filter is active");
+    }
+
+    // 30. Pager shows '0 of M on this page' when client filter eliminates all rows (empty-state path)
+    // TODO: This test asserts the exact string "0 of 2 on this page", which depends on the current
+    // pager expression emitting that format when _filteredRuns.Count == 0. If the production code
+    // is later changed to suppress the pager info entirely when the empty-state is displayed, this
+    // test will fail spuriously. Additionally, this test exercises the same filter/pager code path
+    // as test 28; the only new aspect being tested is the zero-filtered-rows value. Consider
+    // consolidating tests 28 and 30 or making the pager assertion less brittle.
+    [Fact]
+    public async Task RunsTable_PagerCount_ZeroShown_WhenFilterEliminatesAll()
+    {
+        var run1 = MakeSummary("r1", runType: PipelineRunType.Implementation, issueIdentifier: "1");
+        var run2 = MakeSummary("r2", runType: PipelineRunType.Implementation, issueIdentifier: "2");
+
+        _mockRunHistory
+            .Setup(c => c.GetRunHistoryAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(OnePage(run1, run2));
+
+        var cut = Render<Runs>();
+
+        // Apply Type filter "Review" — zero matches
+        var typeFilter = cut.Find("select.column-filter[aria-label='Filter by Type']");
+        await cut.InvokeAsync(() => typeFilter.Change("Review"));
+
+        // Empty-state must be shown
+        cut.FindAll(".monitoring-table").Should().BeEmpty();
+
+        // Pager must correctly say "0 of 2 on this page" (not "2 shown")
+        var pagerInfo = cut.Find(".cockpit-pager-info");
+        pagerInfo.TextContent.Should().Contain("0 of 2 on this page",
+            "pager must show '0 of 2 on this page' when filter eliminates all rows");
+    }
+
+    // 31. Type filter does not offer 'Consolidation' (excluded until #2567)
+    [Fact]
+    public void RunsTable_TypeFilter_DoesNotOfferConsolidation()
+    {
+        // TODO(#2567): remove or invert this test when consolidation runs appear in history.
+        _mockRunHistory
+            .Setup(c => c.GetRunHistoryAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(OnePage(MakeSummary("r1")));
+
+        var cut = Render<Runs>();
+
+        var typeSelect = cut.Find("select.column-filter[aria-label='Filter by Type']");
+        var options = typeSelect.QuerySelectorAll("option");
+        options.Should().NotContain(o => o.GetAttribute("value") == "Consolidation",
+            "Consolidation must not be offered as a filter option until consolidation runs appear in history (#2567)");
+    }
+
+    // 32. Initiated by filter does not offer consolidation options (excluded until #2567)
+    [Fact]
+    public void RunsTable_InitiatedByFilter_DoesNotOfferConsolidationOptions()
+    {
+        // TODO(#2567): remove or invert this test when consolidation runs appear in history.
+        _mockRunHistory
+            .Setup(c => c.GetRunHistoryAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(OnePage(MakeSummary("r1")));
+
+        var cut = Render<Runs>();
+
+        var initiatedBySelect = cut.Find("select.column-filter[aria-label='Filter by Initiated by']");
+        var options = initiatedBySelect.QuerySelectorAll("option");
+        options.Should().NotContain(o => o.GetAttribute("value") == "consolidation:manual",
+            "consolidation:manual must not be offered as an option until consolidation runs appear in history");
+        options.Should().NotContain(o => o.GetAttribute("value") == "consolidation:auto",
+            "consolidation:auto must not be offered as an option until consolidation runs appear in history");
+    }
+
+    // 33. Active outcome tab exposes aria-selected="true" (lowercase)
+    // TODO: This test uses OnePage() (no runs), so clicking the Failed tab triggers a server reload
+    // that returns an empty page and renders the "no runs yet" empty state. The aria-selected
+    // attribute is still set on the tab element, so the assertion passes, but the test never
+    // exercises the path where a tab is active and rows are present. A more discriminating setup
+    // would provide at least one Failed-step run so that SetOutcome, the server call, and the
+    // subsequent table render all participate in the same test scenario.
+    [Fact]
+    public async Task RunsTable_OutcomeTabs_AriaSelectedTrue_OnActiveTab()
+    {
+        _mockRunHistory
+            .Setup(c => c.GetRunHistoryAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(OnePage());
+
+        var cut = Render<Runs>();
+
+        // Click the Failed tab to make it active
+        var failedBtn = cut.FindAll("[role='tab']").First(b => b.TextContent.Trim() == "Failed");
+        await cut.InvokeAsync(() => failedBtn.Click());
+
+        // Re-query after the state change
+        var activeTab = cut.FindAll("[role='tab']").First(b => b.TextContent.Trim() == "Failed");
+        activeTab.GetAttribute("aria-selected").Should().Be("true",
+            "aria-selected must be the lowercase string 'true' on the active tab");
+    }
+
+    // 34. Inactive outcome tabs expose aria-selected="false" (lowercase)
+    [Fact]
+    public void RunsTable_OutcomeTabs_AriaSelectedFalse_OnInactiveTabs()
+    {
+        _mockRunHistory
+            .Setup(c => c.GetRunHistoryAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(OnePage());
+
+        var cut = Render<Runs>();
+
+        // Default: All tab is active
+        var allTab = cut.FindAll("[role='tab']").First(b => b.TextContent.Trim() == "All");
+        allTab.GetAttribute("aria-selected").Should().Be("true",
+            "All tab must have aria-selected='true' on initial render");
+
+        // All other tabs must have aria-selected="false"
+        var inactiveTabs = cut.FindAll("[role='tab']").Where(b => b.TextContent.Trim() != "All");
+        foreach (var tab in inactiveTabs)
+        {
+            tab.GetAttribute("aria-selected").Should().Be("false",
+                $"inactive tab '{tab.TextContent.Trim()}' must have aria-selected='false'");
+        }
+    }
+
+    // 35. Feedback only checkbox has accessible name 'Feedback only' via aria-label
+    [Fact]
+    public void RunsTable_FeedbackOnlyCheckbox_HasCorrectAccessibleName()
+    {
+        _mockRunHistory
+            .Setup(c => c.GetRunHistoryAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(OnePage());
+
+        var cut = Render<Runs>();
+
+        var checkbox = cut.Find("input[type='checkbox']");
+        checkbox.GetAttribute("aria-label").Should().Be("Feedback only",
+            "the Feedback only checkbox must carry aria-label='Feedback only' for assistive technology");
     }
 }
