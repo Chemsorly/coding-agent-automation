@@ -53,7 +53,10 @@
                                 <th title="Active features — click to configure">Features</th>
                                 <th>Enabled</th>
                                 <th>Status</th>
-                                <th>Actions</th>
+                                @if (!IsLoopActive)
+                                {
+                                    <th>Actions</th>
+                                }
                             </tr>
                         </thead>
                         <tbody>
@@ -136,10 +139,10 @@
                                             <span class="monitoring-muted">—</span>
                                         }
                                     </td>
+                                    @if (!IsLoopActive)
+                                    {
                                     <td>
-                                        @if (!IsLoopActive)
-                                        {
-                                            <div style="display: flex; gap: 4px; align-items: center;">
+                                        <div style="display: flex; gap: 4px; align-items: center;">
                                                 <button class="btn-delete" @onclick="() => OnConfirmRemove.InvokeAsync(template)">Remove</button>
                                                 @if (Projects.Count > 1)
                                                 {
@@ -166,15 +169,15 @@
                                                     </div>
                                                 }
                                             </div>
-                                        }
                                     </td>
+                                    }
                                 </tr>
 
                                 @* Inline feature configuration row — shown when badge bar is clicked *@
                                 @if (isExpanded)
                                 {
                                     <tr class="feature-config-row">
-                                        <td colspan="9">
+                                        <td colspan="@_columnCount">
                                             <div class="feature-config-panel">
                                                 <span class="feature-config-label">Features for <strong>@template.Name</strong>:</span>
                                                 <div class="feature-config-toggles">
@@ -232,7 +235,7 @@
                                 @if (_expandedPreviewTemplateId == template.Id)
                                 {
                                     <tr class="label-preview-row">
-                                        <td colspan="9">
+                                        <td colspan="@_columnCount">
                                             <LabelPreviewInline Preview="previewLabels" />
                                         </td>
                                     </tr>
