@@ -138,4 +138,45 @@ public sealed class PipelineRunSummary
     /// Use this to correlate outcome metrics back to a specific harness deployment.
     /// </summary>
     public string? HarnessVersion { get; init; }
+
+    /// <summary>
+    /// Last N lines of agent output captured at run completion.
+    /// Null for runs completed before this field was introduced, or when the run produced no output.
+    /// Stored in the JSONB SummaryJson column; no DB migration needed.
+    /// N is governed by <see cref="PipelineConstants.OutputTailCapacity"/>.
+    /// </summary>
+    public IReadOnlyList<string>? OutputTail { get; init; }
+
+    /// <summary>
+    /// Issue provider config ID used for this run.
+    /// Null for runs persisted before this field was introduced.
+    /// Required to construct a re-dispatch <see cref="JobDistributionRequest"/> from the run page.
+    /// Stored in the JSONB SummaryJson column; no DB migration needed.
+    /// NOTE: The PipelineRunEntity also has an IssueProviderConfigId column, but that column is used
+    /// as a consolidation-run sentinel (set to ConsolidationConstants.ProviderConfigId for consolidation
+    /// runs, null otherwise). This summary field is independent and stores the actual provider config ID.
+    /// </summary>
+    public string? IssueProviderConfigId { get; init; }
+
+    /// <summary>
+    /// Repository provider config ID used for this run.
+    /// Null for runs persisted before this field was introduced.
+    /// Required to construct a re-dispatch <see cref="JobDistributionRequest"/> from the run page.
+    /// Stored in the JSONB SummaryJson column; no DB migration needed.
+    /// </summary>
+    public string? RepoProviderConfigId { get; init; }
+
+    /// <summary>
+    /// Brain provider config ID used for this run, or null if no brain repo was configured.
+    /// Null for runs persisted before this field was introduced.
+    /// Stored in the JSONB SummaryJson column; no DB migration needed.
+    /// </summary>
+    public string? BrainProviderConfigId { get; init; }
+
+    /// <summary>
+    /// Pipeline (CI) provider config ID used for this run, or null if no pipeline provider was configured.
+    /// Null for runs persisted before this field was introduced.
+    /// Stored in the JSONB SummaryJson column; no DB migration needed.
+    /// </summary>
+    public string? PipelineProviderConfigId { get; init; }
 }

@@ -220,6 +220,80 @@
                 </div>
             </div>
         }
+        else if (run.OutputTail is { Count: > 0 } outputTail)
+        {
+            <div class="cockpit-card" data-testid="output-tail-card">
+                <div class="cockpit-card-header">
+                    <h2>Agent output <span style="font-size: 12px; font-weight: 400; color: var(--text-muted);">(last @outputTail.Count lines)</span></h2>
+                </div>
+                <div class="cockpit-card-pad">
+                    @* TODO: [WARNING] Rendering via @string.Join produces a single concatenated string expression.
+                       Blazor HTML-encodes plain @string expressions so this is currently safe, but the join pattern
+                       makes it easy to accidentally introduce a MarkupString cast later (stored XSS from agent output).
+                       Consider switching to @foreach over individual lines to make the safe-rendering intent explicit. *@
+                    <pre class="run-live-log">@string.Join("\n", outputTail)</pre>
+                </div>
+            </div>
+        }
+
+        @* Re-dispatch — available for terminal Implementation runs when provider IDs are present. *@
+        @if (CanRedispatch(run))
+        {
+            <div class="cockpit-card" data-testid="redispatch-card">
+                <div class="cockpit-card-pad">
+                    @if (_redispatchSuccess)
+                    {
+                        <div class="agent-detail-confirm" style="background: var(--success-bg, #e6f4ea); border-color: var(--success-border, #81c784);">
+                            <span style="color: var(--success-text, #2e7d32);">✓ Re-dispatched successfully.</span>
+                            <a href="work" style="margin-left: 8px; font-size: 13px;">View work queue →</a>
+                        </div>
+                    }
+                    else if (_redispatchError is not null)
+                    {
+                        @* TODO: [WARNING] _redispatchError is populated directly from ex.Message and rendered
+                           into the DOM. Blazor HTML-encodes the value so there is no XSS risk, but exception
+                           messages from HttpRequestException can include HTTP response bodies which may contain
+                           PII (e.g. connection strings or credentials from a misconfigured upstream). If this
+                           becomes a concern, consider logging ex.Message and showing a generic error with a
+                           correlation ID instead. *@
+                        <div class="summary-failure-callout" role="alert">
+                            <Icon Name="alert-triangle" Size="14" /> Re-dispatch failed: @_redispatchError
+                        </div>
+                    }
+
+                    @if (!_redispatchSuccess)
+                    {
+                        @if (!_showRedispatchConfirm)
+                        {
+                            <button class="btn-primary" data-testid="redispatch-btn"
+                                    @onclick="() => _showRedispatchConfirm = true"
+                                    disabled="@_redispatchInProgress">
+                                <Icon Name="refresh-cw" Size="14" /> Re-dispatch
+                            </button>
+                        }
+                        else
+                        {
+                            <div class="agent-detail-confirm">
+                                <p>Re-dispatch issue <strong>#@run.IssueIdentifier</strong> as a new Implementation run?</p>
+                                <p style="font-size: 12.5px; color: var(--text-muted);">
+                                    Note: labels on the issue (e.g. <code>agent:failed</code>) are not cleared automatically.
+                                    Clear them on the issue tracker if needed before re-dispatching.
+                                </p>
+                                <div class="confirm-buttons">
+                                    <button class="btn-danger" data-testid="redispatch-confirm-btn"
+                                            @onclick="RedispatchAsync"
+                                            disabled="@_redispatchInProgress">
+                                        @if (_redispatchInProgress) { <span>Dispatching…</span> } else { <span>Confirm re-dispatch</span> }
+                                    </button>
+                                    <button class="btn-cancel" @onclick="() => _showRedispatchConfirm = false"
+                                            disabled="@_redispatchInProgress">Cancel</button>
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        }
 
         <FeedbackSection Feedback="run.Feedback" />
     }
@@ -248,6 +322,12 @@
     private PipelineRun? _model;
     private int _maxRetries = 3;
     private PeriodicTimer? _elapsedTimer;
+
+    // Re-dispatch state
+    private bool _showRedispatchConfirm;
+    private bool _redispatchInProgress;
+    private bool _redispatchSuccess;
+    private string? _redispatchError;
 
     private static bool IsActive(PipelineRunSummary r)
         => r.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled;
@@ -474,6 +554,73 @@
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { Serilog.Log.Warning(ex, "RunPage: failed to cancel run {RunId}", RunId); }
+    }
+
+    // Returns true when the re-dispatch button should be visible: terminal Implementation run
+    // with provider IDs available (new runs) — old runs without provider IDs get no button.
+    // ConflictRestart is included because it is also a permanent dead-end for the operator.
+    // TODO: [WARNING] Confirm that ConflictRestart is always a permanent terminal state. If the pipeline
+    // can continue from ConflictRestart in some flows, this condition would show the re-dispatch button
+    // for a run that is not actually dead-ended, misleading the operator. See issue #2948 review.
+    private static bool CanRedispatch(PipelineRunSummary run)
+        => run.RunType == PipelineRunType.Implementation
+        && run.FinalStep is PipelineStep.Failed or PipelineStep.Cancelled or PipelineStep.ConflictRestart
+        && !string.IsNullOrEmpty(run.IssueProviderConfigId)
+        && !string.IsNullOrEmpty(run.RepoProviderConfigId);
+
+    // Dispatches a new Implementation work item for the same issue.
+    // Uses PayloadSchemaVersion = 1 (minimal identity payload) so AssignmentEnricher fetches
+    // fresh config (template, quality gates, reviewers) at assignment time — the same path
+    // used by the existing dispatch drawers after issue #2171.
+    // Note: this does NOT clear provider labels (e.g. agent:failed). The confirmation dialog
+    // informs the operator to clear them manually if needed.
+    private async Task RedispatchAsync()
+    {
+        if (_run is null || !CanRedispatch(_run)) return;
+        // TODO: [WARNING] No double-dispatch prevention across page reloads. _redispatchSuccess prevents
+        // a second dispatch within the same page lifetime, but reloading the page resets all state and
+        // re-shows the button even if a dispatch was already submitted for this run. A user who hits F5
+        // after dispatching will see the button again and could submit a duplicate. Consider querying
+        // active work items for the same issue to suppress the button if one is already queued/running.
+        _redispatchInProgress = true;
+        _redispatchError = null;
+        StateHasChanged();
+        try
+        {
+            // TODO: [WARNING] _run is captured by field reference below. In Blazor's single-threaded
+            // renderer this is safe in practice, but a concurrent hub update that sets _run = null
+            // between the CanRedispatch guard above and the property accesses here would produce a
+            // NullReferenceException. Consider capturing `var run = _run` before the guard and using
+            // that local throughout this method to avoid the fragile re-read of the field.
+            var request = new JobDistributionRequest
+            {
+                IssueIdentifier = _run.IssueIdentifier,
+                IssueProviderConfigId = _run.IssueProviderConfigId!,
+                RepoProviderConfigId = _run.RepoProviderConfigId!,
+                BrainProviderConfigId = _run.BrainProviderConfigId,
+                PipelineProviderConfigId = _run.PipelineProviderConfigId,
+                InitiatedBy = InitiatedByConstants.Manual,
+                TaskType = WorkItemTaskType.Implementation,
+                AgentSelector = "",
+                TimeoutSeconds = 0,
+                RunType = PipelineRunType.Implementation,
+                PayloadSchemaVersion = 1,
+            };
+            await WorkItems.DispatchAsync(request, _cts.Token);
+            _redispatchSuccess = true;
+            _showRedispatchConfirm = false;
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _redispatchError = ex.Message;
+            Serilog.Log.Warning(ex, "RunPage: failed to re-dispatch run {RunId}", RunId);
+        }
+        finally
+        {
+            _redispatchInProgress = false;
+        }
+        StateHasChanged();
     }
 
     // ── Sidebar view-model builders (ported from AgentMonitoring.razor.cs) ──
