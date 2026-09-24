@@ -419,7 +419,7 @@ public class QualityGateExecutorCiPollingTests
         _mockRepoProvider.Setup(r => r.CommitAllAsync(
                 It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
-        _mockRepoProvider.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockRepoProvider.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("sha-head-abc");
@@ -491,7 +491,7 @@ public class QualityGateExecutorGuardTests
                 It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
         _mockRepoProvider.Setup(r => r.PushBranchAsync(
-                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(
                 It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
@@ -739,7 +739,7 @@ public class QualityGateExecutorBranchMovedCancellationTests
                 It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
         _mockRepoProvider.Setup(r => r.PushBranchAsync(
-                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockCallbacks.Setup(c => c.CreateDraftPrIfNotExists(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -1044,7 +1044,7 @@ public class QualityGateExecutorCiNotStartedPriorShaTests
         // vacuously. Add the allowEmpty overload to match QualityGateExecutorCiNotStartedExhaustionTests
         // for consistency and correctness. (#2317)
         _mockRepoProvider.Setup(r => r.PushBranchAsync(
-                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(
                 It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
@@ -1197,7 +1197,7 @@ public class QualityGateExecutorCiNotStartedExhaustionTests
                 true, It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
         _mockRepoProvider.Setup(r => r.PushBranchAsync(
-                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(
                 It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))

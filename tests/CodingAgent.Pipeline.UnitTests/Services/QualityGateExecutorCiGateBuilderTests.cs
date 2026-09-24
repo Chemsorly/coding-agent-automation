@@ -308,7 +308,7 @@ public class QualityGateExecutorCiGateBuilderTests
                 It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
         mockRepoProvider.Setup(r => r.PushBranchAsync(
-                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(
                 It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
@@ -409,7 +409,7 @@ public class QualityGateExecutorCiGateBuilderTests
             .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>)
             .ThrowsAsync(new InvalidOperationException("No changes to commit"));
         mockRepoProvider.Setup(r => r.PushBranchAsync(
-                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(
                 It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))

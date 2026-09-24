@@ -113,19 +113,19 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
     }
 
     /// <inheritdoc />
-    public Task<string> CreateBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct)
+    public Task<string> CreateBranchAsync(WorkspacePath workspacePath, BranchName branchName, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
-        ArgumentNullException.ThrowIfNull(branchName);
+        ArgumentException.ThrowIfNullOrEmpty(branchName.Value);
 
         return Task.Run(() => RepositoryGitOperations.CreateBranch(workspacePath, branchName), ct);
     }
 
     /// <inheritdoc />
-    public Task CheckoutRemoteBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct)
+    public Task CheckoutRemoteBranchAsync(WorkspacePath workspacePath, BranchName branchName, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
-        ArgumentNullException.ThrowIfNull(branchName);
+        ArgumentException.ThrowIfNullOrEmpty(branchName.Value);
 
         return Task.Run(() => RepositoryGitOperations.CheckoutRemoteBranch(workspacePath, branchName), ct);
     }
@@ -149,17 +149,17 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
     /// <inheritdoc />
     // Requires a live git remote — not unit-testable; core retry logic covered via PushWithTokenFactory tests.
     [ExcludeFromCodeCoverage]
-    public Task PushBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct)
+    public Task PushBranchAsync(WorkspacePath workspacePath, BranchName branchName, CancellationToken ct)
         => PushBranchAsync(workspacePath, branchName, forcePush: false, ct);
 
     /// <inheritdoc />
     // Token factory passed so each Polly retry fetches a fresh token (GitLab tokens can also
     // be dynamically vended; stale tokens cause 403s in long pipeline runs).
     [ExcludeFromCodeCoverage]
-    public Task PushBranchAsync(WorkspacePath workspacePath, string branchName, bool forcePush, CancellationToken ct)
+    public Task PushBranchAsync(WorkspacePath workspacePath, BranchName branchName, bool forcePush, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
-        ArgumentNullException.ThrowIfNull(branchName);
+        ArgumentException.ThrowIfNullOrEmpty(branchName.Value);
 
         return Task.Run(async () =>
         {

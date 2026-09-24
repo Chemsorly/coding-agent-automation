@@ -464,10 +464,10 @@ public class CiPollingCoordinatorTests
                 true, It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
         _mockRepoProvider.Setup(r => r.PushBranchAsync(
-                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(r => r.PushBranchAsync(
-                It.IsAny<WorkspacePath>(), It.IsAny<string>(), true, It.IsAny<CancellationToken>()))
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), true, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(
                 It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))

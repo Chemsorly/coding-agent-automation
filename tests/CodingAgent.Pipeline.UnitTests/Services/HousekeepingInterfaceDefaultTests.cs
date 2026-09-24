@@ -17,10 +17,10 @@ public class HousekeepingInterfaceDefaultTests
         public string RepositoryFullName => "owner/repo";
 
         public Task CloneAsync(WorkspacePath workspacePath, CancellationToken ct) => Task.CompletedTask;
-        public Task<string> CreateBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct) => Task.FromResult(string.Empty);
+        public Task<string> CreateBranchAsync(WorkspacePath workspacePath, BranchName branchName, CancellationToken ct) => Task.FromResult(string.Empty);
         public Task<IReadOnlyList<string>> CommitAllAsync(WorkspacePath workspacePath, string message, IReadOnlyList<string>? blacklistedPaths, CancellationToken ct, IReadOnlyList<string>? pipelineInjectedPaths = null) => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
         public Task<IReadOnlyList<string>> CommitAllAsync(WorkspacePath workspacePath, string message, IReadOnlyList<string>? blacklistedPaths, bool allowEmpty, CancellationToken ct, IReadOnlyList<string>? pipelineInjectedPaths = null) => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
-        public Task PushBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct) => Task.CompletedTask;
+        public Task PushBranchAsync(WorkspacePath workspacePath, BranchName branchName, CancellationToken ct) => Task.CompletedTask;
         public Task<string> CreatePullRequestAsync(PullRequestInfo prInfo, CancellationToken ct) => Task.FromResult(string.Empty);
         public Task<string> GetHeadCommitShaAsync(WorkspacePath workspacePath, CancellationToken ct) => Task.FromResult(string.Empty);
         public Task<bool> HasCommitsAheadAsync(WorkspacePath workspacePath, CancellationToken ct) => Task.FromResult(false);
