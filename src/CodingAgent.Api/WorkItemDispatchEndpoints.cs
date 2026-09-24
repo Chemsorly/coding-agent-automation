@@ -342,15 +342,13 @@ public static class WorkItemDispatchEndpoints
                 $"Work item {id} is not in Pending state (current status: {postLockCheck?.Status}).");
         }
 
-        // Build concurrency map inside the lock with normalised keys.
+        // Build the concurrency snapshot and PVC availability result via the shared preamble.
+        // IMPORTANT: this call must remain inside the advisory lock, after the post-lock status
+        // re-check. The lock-ordering constraint is: acquire lock → re-check status → preamble.
         // NOTE: do NOT use DispatchStateBuilder.BuildStateAsync here — it does NOT normalise
-        // keys (uses raw x.Selector). Follow the DispatchWorkItem pattern (NormalizeLabels on
-        // each key) so active items stored by any path are counted correctly.
-        var concurrencyBySelector = await dispatchService.BuildConcurrencySnapshotAsync(db, ct);
-
-        // Query PVC availability.
-        var pvcPool = lifecycle.GetPvcPool();
-        var pvcResult = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, pvcPool, ct);
+        // keys (uses raw x.Selector). BuildDispatchPreambleAsync uses NormalizeLabels on each key
+        // so active items stored by any path are counted correctly.
+        var (concurrencyBySelector, pvcResult) = await dispatchService.BuildDispatchPreambleAsync(db, lifecycle, ct);
         // Emit credential-pool gauge BEFORE the PVC gate so the metric is always updated
         // whenever the PVC query runs (including on PVC-exhaustion 503).
         // Deliberate exception to the BuildStateAsync restriction: this endpoint is the
@@ -387,7 +385,7 @@ public static class WorkItemDispatchEndpoints
             : normalizedSelector;
         var sanitizedEffectiveSelector = CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(effectiveSelector);
 
-        // Build the projection for the shared dispatch helper.
+        // Build the projection for the shared dispatch helper (issue #2988).
         // TODO [WARNING]: When the profile fallback resolves the template, projection.AgentSelector is
         // set to normalizedSelector (e.g. "dotnet"), not to the template's canonical labels (e.g. "dotnet,kiro").
         // FinalizeDispatchAsync will increment concurrencyBySelector["dotnet"] rather than ["dotnet,kiro"].
@@ -396,18 +394,16 @@ public static class WorkItemDispatchEndpoints
         // allow over-dispatch when maxConcurrent is tight. The same gap exists in FinalizeDispatchAsync
         // (see its // TODO: Use effectiveSelector comment). Fix both together when the effectiveSelector
         // propagation is resolved.
-        var projection = new PendingWorkItemProjection
-        {
-            Id = id,
-            AgentSelector = normalizedSelector,
-            CreatedAt = quickCheck.CreatedAt,
-            TimeoutSeconds = quickCheck.TimeoutSeconds,
-            TaskType = quickCheck.TaskType,
-            ProjectId = quickCheck.ProjectId,
-            IssueIdentifier = quickCheck.IssueIdentifier,
-            IssueProviderConfigId = quickCheck.IssueProviderConfigId,
-            PriorityWeight = quickCheck.PriorityWeight
-        };
+        var projection = DispatchWorkItemService.BuildProjectionFromQuickCheck(
+            id: id,
+            normalizedSelector: normalizedSelector,
+            createdAt: quickCheck.CreatedAt,
+            timeoutSeconds: quickCheck.TimeoutSeconds,
+            taskType: quickCheck.TaskType,
+            projectId: quickCheck.ProjectId,
+            issueIdentifier: quickCheck.IssueIdentifier,
+            issueProviderConfigId: quickCheck.IssueProviderConfigId,
+            priorityWeight: quickCheck.PriorityWeight);
 
         // Gate + context construction + lifecycle execution via shared helper (issue #2890).
         // ExpectedInitialStatus is Pending (the default) — this item already exists as Pending;
@@ -486,10 +482,8 @@ public static class WorkItemDispatchEndpoints
 
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
-        // Build concurrency map (dispatched/running items by selector)
-        var concurrencyBySelector = await dispatchService.BuildConcurrencySnapshotAsync(db, ct);
-
-        // Query PVC availability.
+        // Build the concurrency snapshot and PVC availability result via the shared preamble.
+        // NOTE: No PvcPoolExhaustions counter here — that metric belongs exclusively to DispatchPendingWorkItem.
         // TODO [WARNING]: This PVC availability snapshot is taken OUTSIDE _pvcSelectLock. Two concurrent
         // requests can both observe availablePvcs.Count > 0, pass the gate, create their Dispatched rows,
         // and both enter ExecuteDispatchLifecycleAsync. SelectPvcAsync (inside the lock) dequeues from
@@ -505,11 +499,9 @@ public static class WorkItemDispatchEndpoints
         // See docs/architecture/concurrency-model.md — "PVC Dispatch Race in Multi-Replica Deployments".
         // A distributed lock (Postgres advisory lock) would be required to guarantee the one-200/one-503
         // invariant across replicas.
-        var pvcPool = lifecycle.GetPvcPool();
-        var pvcResult = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, pvcPool, ct);
+        var (concurrencyBySelector, pvcResult) = await dispatchService.BuildDispatchPreambleAsync(db, lifecycle, ct);
 
         // Normalize and sanitize the selector for the gate check and log messages.
-        // NOTE: No PvcPoolExhaustions counter here — that metric belongs exclusively to DispatchPendingWorkItem.
         var normalizedReqSelector = JobTemplateStore.NormalizeLabels(request.AgentSelector ?? "");
         var sanitizedReqSelector = CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(request.AgentSelector);
 
@@ -583,19 +575,8 @@ public static class WorkItemDispatchEndpoints
         if (run is not null)
             runService.AddRun(run);
 
-        // Projection for the shared dispatch helper (issue #2890).
-        var projection = new PendingWorkItemProjection
-        {
-            Id = workItemId,
-            AgentSelector = entity.AgentSelector,
-            CreatedAt = entity.CreatedAt,
-            TimeoutSeconds = entity.TimeoutSeconds,
-            TaskType = entity.TaskType,
-            ProjectId = entity.ProjectId,
-            IssueIdentifier = entity.IssueIdentifier,
-            IssueProviderConfigId = entity.IssueProviderConfigId,
-            PriorityWeight = entity.PriorityWeight
-        };
+        // Build the projection for the shared dispatch helper (issue #2988).
+        var projection = DispatchWorkItemService.BuildProjectionFromEntity(entity);
 
         // Gate + context construction + lifecycle execution via shared helper (issue #2890).
         // ExpectedInitialStatus is Dispatched — the WorkItem was created directly as Dispatched
