@@ -46,7 +46,17 @@ public sealed class WorkPage
     public async Task WaitForInFlightAsync(string issueIdentifier, int timeoutMs = 15_000)
         => await InFlightRow(issueIdentifier).First.WaitForAsync(new() { Timeout = timeoutMs });
 
-    /// <summary>Clicks the Cancel button on the in-flight row for the given issue.</summary>
+    /// <summary>
+    /// Cancels the in-flight run for the given issue. Clicks the initial "Cancel" button to open
+    /// the confirmation dialog, then clicks "Yes" to confirm — matching the two-step confirmation
+    /// UI introduced to prevent accidental single-click cancellations.
+    /// </summary>
     public async Task CancelInFlightAsync(string issueIdentifier)
-        => await InFlightRow(issueIdentifier).GetByRole(AriaRole.Button).ClickAsync();
+    {
+        var row = InFlightRow(issueIdentifier);
+        // Step 1: click the initial "Cancel" button to open the confirmation prompt.
+        await row.GetByRole(AriaRole.Button, new() { Name = "Cancel" }).ClickAsync();
+        // Step 2: click "Yes" to confirm the cancellation.
+        await row.GetByRole(AriaRole.Button, new() { Name = "Yes" }).ClickAsync();
+    }
 }
