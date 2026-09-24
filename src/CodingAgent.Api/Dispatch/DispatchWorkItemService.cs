@@ -23,6 +23,11 @@ namespace CodingAgent.Api.Dispatch;
 /// Extracted from <c>WorkItemDispatchEndpoints.cs</c> (issue #2743) to eliminate the
 /// duplicated concurrency-map query, gate block, entity-construction, and unique-violation
 /// fallback that previously appeared independently in each handler.
+/// Further extraction (issue #2988): <see cref="BuildDispatchPreambleAsync"/> composes the
+/// snapshot + PVC queries into one call;
+/// <see cref="BuildProjectionFromEntity"/> and <see cref="BuildProjectionFromQuickCheck"/>
+/// centralise the <see cref="CodingAgent.Orchestration.Dispatch.PendingWorkItemProjection"/>
+/// initializer that was duplicated in both handlers.
 /// </para>
 ///
 /// <para>
@@ -95,6 +100,122 @@ internal sealed class DispatchWorkItemService
         }
         return result;
     }
+
+    // ── Dispatch preamble ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds the dispatch preamble shared by <c>DispatchPendingWorkItem</c> and
+    /// <c>DispatchWorkItem</c>: the concurrency snapshot and the PVC availability result (issue #2988).
+    ///
+    /// <para>
+    /// Composes <see cref="BuildConcurrencySnapshotAsync"/> with
+    /// <see cref="DispatchLifecycleService.GetPvcPool"/> and
+    /// <see cref="DispatchLifecycleService.QueryAvailablePvcsAsync"/> into a single call,
+    /// eliminating the three-line preamble that was duplicated in both handlers.
+    /// </para>
+    ///
+    /// <para>
+    /// <strong>Caller responsibilities (not absorbed here):</strong>
+    /// <list type="bullet">
+    ///   <item>
+    ///     <c>DispatchPendingWorkItem</c>: call this method <em>inside</em> the advisory lock,
+    ///     after the post-lock status re-check. The lock-ordering constraint cannot be enforced
+    ///     by this method — it is the caller's responsibility.
+    ///   </item>
+    ///   <item>
+    ///     <c>DispatchPendingWorkItem</c>: emit
+    ///     <c>WorkDistributionTelemetry.UpdateCredentialPoolMetrics</c> immediately after this
+    ///     call, using <c>pvcResult.AvailablePvcs.Count</c> and <c>pvcResult.ClaimedCount</c>
+    ///     from the returned tuple. That metric belongs exclusively to the
+    ///     <c>DispatchPendingWorkItem</c> path and must NOT be absorbed here.
+    ///   </item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    /// <param name="db">Caller-owned open <see cref="PipelineDbContext"/>. Must be the same
+    /// context used for any subsequent calls on this request (e.g. the advisory-locked context
+    /// in <c>DispatchPendingWorkItem</c>).</param>
+    /// <param name="lifecycle">The <see cref="DispatchLifecycleService"/> singleton that owns
+    /// the PVC pool configuration.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>
+    /// A tuple of the concurrency snapshot (from <see cref="BuildConcurrencySnapshotAsync"/>)
+    /// and the PVC availability result (from
+    /// <see cref="DispatchLifecycleService.QueryAvailablePvcsAsync"/>).
+    /// </returns>
+    internal async Task<(Dictionary<string, int> concurrencyBySelector, PvcAvailabilityResult pvcResult)>
+        BuildDispatchPreambleAsync(PipelineDbContext db, DispatchLifecycleService lifecycle, CancellationToken ct)
+    {
+        var concurrencyBySelector = await BuildConcurrencySnapshotAsync(db, ct);
+        var pvcPool = lifecycle.GetPvcPool();
+        var pvcResult = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, pvcPool, ct);
+        return (concurrencyBySelector, pvcResult);
+    }
+
+    // ── Projection factories ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds a <see cref="PendingWorkItemProjection"/> from a <see cref="WorkItemEntity"/>.
+    /// Used by <c>DispatchWorkItem</c>, which creates an entity directly as Dispatched and then
+    /// constructs the projection from that entity (issue #2988).
+    /// </summary>
+    /// <param name="entity">The already-persisted <see cref="WorkItemEntity"/>.</param>
+    internal static PendingWorkItemProjection BuildProjectionFromEntity(WorkItemEntity entity) =>
+        new PendingWorkItemProjection
+        {
+            Id = entity.Id,
+            AgentSelector = entity.AgentSelector,
+            CreatedAt = entity.CreatedAt,
+            TimeoutSeconds = entity.TimeoutSeconds,
+            TaskType = entity.TaskType,
+            ProjectId = entity.ProjectId,
+            IssueIdentifier = entity.IssueIdentifier,
+            IssueProviderConfigId = entity.IssueProviderConfigId,
+            PriorityWeight = entity.PriorityWeight
+        };
+
+    /// <summary>
+    /// Builds a <see cref="PendingWorkItemProjection"/> from the individual fields sourced from
+    /// the anonymous DB projection used in <c>DispatchPendingWorkItem</c>'s fast-path query
+    /// (issue #2988).
+    ///
+    /// <para>
+    /// The anonymous type (<c>new { w.Id, w.AgentSelector, … }</c>) cannot be named as a
+    /// method parameter, so each field is passed explicitly. Use named arguments at the call
+    /// site for legibility.
+    /// </para>
+    ///
+    /// <para>
+    /// <strong>Profile-fallback note:</strong> <paramref name="normalizedSelector"/> is the
+    /// partial normalized form (e.g. <c>"dotnet"</c>), NOT the canonical selector resolved by
+    /// the profile fallback (e.g. <c>"dotnet,kiro"</c>). This matches the existing behavior
+    /// and the documented TODO in <c>DispatchPendingWorkItem</c>. Do NOT pass
+    /// <c>effectiveSelector</c> here — that would silently change the behavior and break
+    /// Tests 18 and 19 which characterize the current state.
+    /// </para>
+    /// </summary>
+    internal static PendingWorkItemProjection BuildProjectionFromQuickCheck(
+        Guid id,
+        string normalizedSelector,
+        DateTimeOffset createdAt,
+        int timeoutSeconds,
+        WorkItemTaskType taskType,
+        Guid? projectId,
+        string? issueIdentifier,
+        string? issueProviderConfigId,
+        int priorityWeight) =>
+        new PendingWorkItemProjection
+        {
+            Id = id,
+            AgentSelector = normalizedSelector,
+            CreatedAt = createdAt,
+            TimeoutSeconds = timeoutSeconds,
+            TaskType = taskType,
+            ProjectId = projectId,
+            IssueIdentifier = issueIdentifier,
+            IssueProviderConfigId = issueProviderConfigId,
+            PriorityWeight = priorityWeight
+        };
 
     // ── Gate block ───────────────────────────────────────────────────────────
 

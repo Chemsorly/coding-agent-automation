@@ -142,9 +142,15 @@ public class HostBootstrapStartupIdentityTests : IDisposable
     {
         HostBootstrap.LogStartupIdentity("Scheduler", "coding-agent-scheduler", "1.2.3");
 
-        var events = _sink.Events;
-        Assert.Single(events);
-        var evt = events[0];
+        // Filter to only the startup-identity event — concurrent tests in the same assembly that
+        // use the static Log.Logger (e.g. ResiliencePipelineFactoryTests retry scenarios) can
+        // emit Warning events into this sink. We assert on exactly one startup event rather than
+        // Assert.Single(all events) to avoid flakiness from that unrelated log noise.
+        var startupEvents = _sink.Events
+            .Where(e => e.MessageTemplate.Text.Contains("starting:"))
+            .ToList();
+        Assert.Single(startupEvents);
+        var evt = startupEvents[0];
         Assert.Equal(LogEventLevel.Information, evt.Level);
         Assert.True(
             evt.Properties.TryGetValue("ServiceLabel", out var labelProp) &&

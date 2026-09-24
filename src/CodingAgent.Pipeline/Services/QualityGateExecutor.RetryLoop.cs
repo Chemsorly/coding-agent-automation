@@ -78,13 +78,12 @@ public partial class QualityGateExecutor
         }
         catch (Exception ex)
         {
-            // TODO: [WARNING] Unlike the OperationCanceledException arm, this arm has no guard on
-            // run.CurrentStep. If an inner call (e.g., RunRetryLoopAsync) already set
-            // run.CurrentStep = PipelineStep.Failed and then re-threw, FinalizeRunAsync will be
-            // called a second time — double-calling MarkCompleted, SwapLabelAsync, EmitOutputLine,
-            // TransitionTo, and AddRunToHistoryAsync. Consider adding:
-            //   if (run.CurrentStep is PipelineStep.Failed) return; (or log-and-return)
-            // before setting FailureReason to mirror the guard on the cancellation arm.
+            // TODO: [WARNING] The guard only checks Failed and Cancelled. Other terminal states
+            // (e.g. ConflictRestart) are not included. If a future inner call sets CurrentStep to
+            // another terminal value and then throws a non-OCE exception, FinalizeRunAsync will
+            // still be re-entered. Consider extending the guard to cover all terminal states, or
+            // replace the explicit list with a helper method like run.IsTerminal().
+            if (run.CurrentStep is PipelineStep.Failed or PipelineStep.Cancelled) return;
             _logger.Error(ex, "Pipeline {RunId} quality gate validation failed", run.RunId);
             run.FailureReason = $"Quality gate validation error: {ex.Message}";
             _logger.Information(

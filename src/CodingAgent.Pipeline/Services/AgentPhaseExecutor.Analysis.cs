@@ -407,6 +407,10 @@ public partial class AgentPhaseExecutor
         catch (Exception ex) when (ex is not OperationCanceledException)
         { _logger.Warning(ex, "Pipeline {RunId} failed to post not-ready comment", run.RunId); }
 
+        // Set GateRejected BEFORE FailPhaseAsync so BuildCompletionPayload (called from
+        // PipelineExecutionOutcome.Completed path in LocalPipelineExecutor) picks it up.
+        // This prevents the HTTP reporter from defaulting to AgentError (issue #2956).
+        run.FailureCategory = FailureReason.GateRejected;
         return await FailPhaseAsync(new FailPhaseRequest(
             run,
             $"Analysis gate: needs refinement — {assessment.Reason ?? "issue not ready"}",
@@ -429,6 +433,14 @@ public partial class AgentPhaseExecutor
         catch (Exception ex) when (ex is not OperationCanceledException)
         { _logger.Warning(ex, "Pipeline {RunId} failed to post won't-do comment", run.RunId); }
 
+        // Set GateRejected for consistent in-memory and DB categorisation (issue #2956).
+        // Won't-do uses PipelineStep.Completed → HttpPrimaryCompletionReporter maps this to
+        // WorkItemStatus.Succeeded. The reporter persists FailureReason via
+        // payload.FailureCategory?.ToString() (fallback from the resolver) so GateRejected IS
+        // written to the DB for won't-do rows even though status is Succeeded.
+        // HasAgentErrorSince only queries Status == Failed && FailureReason == AgentError, so
+        // writing GateRejected on a Succeeded row is harmless for that check.
+        run.FailureCategory = FailureReason.GateRejected;
         return await FailPhaseAsync(new FailPhaseRequest(
             run,
             $"Analysis gate: won't do — {assessment.Reason ?? "no code changes needed"}",
