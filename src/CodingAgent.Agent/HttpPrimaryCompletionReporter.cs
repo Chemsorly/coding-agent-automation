@@ -82,22 +82,36 @@ public sealed class HttpPrimaryCompletionReporter : IJobCompletionReporter
         }
 
         // Primary channel: HTTP POST terminal status (durable)
-        var terminalStatus = payload.FinalStep switch
+        // Use CompletionOutcomeResolver (shared with the SignalR secondary path) so that
+        // ConflictRestart and other non-error terminal steps are mapped correctly (issue #2956).
+        var (terminalWorkItemStatus, _, terminalFailureReason) = CompletionOutcomeResolver.Resolve(
+            payload.FinalStep,
+            payload.FailureReason,
+            payload.FailureCategory,
+            "agent completion via HTTP");
+
+        var terminalStatus = terminalWorkItemStatus switch
         {
-            PipelineStep.Completed => "Succeeded",
-            PipelineStep.Cancelled => "Cancelled",
+            WorkItemStatus.Succeeded => "Succeeded",
+            WorkItemStatus.Cancelled => "Cancelled",
             _ => "Failed"
         };
+
+        // Persist FailureReason from the resolver for Failed outcomes, OR from payload.FailureCategory
+        // for non-Failed outcomes that still carry a structured category (e.g. won't-do gate:
+        // status=Succeeded + FailureCategory=GateRejected). This satisfies the AC that won't-do
+        // gate outcomes are persisted with GateRejected, not null (issue #2956).
+        // ConflictRestart and normal Completed runs have FailureCategory = null so they remain null.
+        var persistedFailureReason = terminalFailureReason?.ToString()
+            ?? payload.FailureCategory?.ToString();
 
         var terminalUpdate = new WorkItemStatusUpdate
         {
             Status = terminalStatus,
             AgentId = _agentId.Value,
             Result = SerializeResult(payload),
-            ErrorMessage = payload.FailureReason,
-            FailureReason = terminalStatus == "Failed"
-                ? (payload.FailureCategory?.ToString() ?? nameof(Pipeline.Models.FailureReason.AgentError))
-                : null
+            ErrorMessage = terminalWorkItemStatus == WorkItemStatus.Failed ? payload.FailureReason : null,
+            FailureReason = persistedFailureReason
         };
 
         // TODO: CancellationToken.None is passed here (pre-existing pattern) instead of `ct`. If `ct` is cancelled

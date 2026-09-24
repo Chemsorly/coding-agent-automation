@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using ILogger = Serilog.ILogger;
