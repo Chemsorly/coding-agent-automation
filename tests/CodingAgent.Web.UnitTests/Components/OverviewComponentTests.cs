@@ -144,6 +144,35 @@ public class OverviewComponentTests : BunitContext
         valueText.Should().NotContain("/", "the Agents stat card must not show a denominator");
     }
 
+    // ── Success-rate label ────────────────────────────────────────────────
+
+    /// <summary>
+    /// The success-rate stat card must show "Success · last 100" (not "Success · recent").
+    /// This guards the label against regression — Overview fetches a fixed pageSize: 100 with no
+    /// time filter, so the label must accurately state the data window.
+    /// </summary>
+    [Fact]
+    public void SuccessRateStatCard_ShowsLastHundredLabel()
+    {
+        var mockAgents = new Mock<IPipelineApiAgentClient>();
+        mockAgents.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentEntryDto>());
+
+        RegisterOverviewServices(mockAgents);
+
+        var cut = Render<Overview>();
+
+        var statCards = cut.FindAll(".cockpit-stat");
+        var successCard = statCards.FirstOrDefault(card =>
+        {
+            var label = card.QuerySelector(".cockpit-stat-l");
+            return label?.TextContent.Trim() == "Success · last 100";
+        });
+
+        successCard.Should().NotBeNull(
+            "the success-rate stat card must use the label 'Success · last 100' to accurately state its data window");
+    }
+
     // ── Attention tile de-duplication tests (issue #2935) ─────────────────
 
     // TODO: [WARNING] The de-duplication tests below only cover the FailedRuns tile for Implementation

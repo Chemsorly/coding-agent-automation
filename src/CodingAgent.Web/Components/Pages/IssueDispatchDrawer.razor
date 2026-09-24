@@ -3,7 +3,7 @@
 @inherits DispatchDrawerBase<IssueSummary>
 
 <div class="dispatch-drawer-overlay @(IsOpen ? "open" : "")" @onclick="Close"></div>
-<aside class="dispatch-drawer @(IsOpen ? "open" : "")">
+<aside class="dispatch-drawer @(IsOpen ? "open" : "")" @attributes="@(IsOpen ? null : new Dictionary<string,object>{{"inert",""}})">
     @if (HeaderPrefix != null) { @HeaderPrefix }
     <div class="agent-detail-header">
         <h3>Browse Issues</h3>

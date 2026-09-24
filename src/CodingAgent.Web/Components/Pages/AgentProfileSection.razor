@@ -24,6 +24,19 @@
     {
         <div class="monitoring-table-wrap">
             <table class="monitoring-table">
+                <colgroup>
+                    <col style="width: 180px;" />  @* Display Name *@
+                    <col style="width: 220px;" />  @* Match Labels *@
+                    <col style="width: 160px;" />  @* Agent Provider *@
+                    <col style="width: 70px;" />   @* Enabled *@
+                    <col style="width: 70px;" />   @* Priority *@
+                    <col style="width: 60px;" />   @* MCP *@
+                    @if (IsKubernetesMode)
+                    {
+                        <col style="width: 80px;" />  @* Template *@
+                    }
+                    <col style="width: 100px;" />  @* Actions *@
+                </colgroup>
                 <thead>
                     <tr>
                         <th>Display Name</th>
@@ -50,7 +63,7 @@
                                     <span class="badge-default">DEFAULT</span>
                                 }
                             </td>
-                            <td>
+                            <td class="match-labels-cell">
                                 @if (profile.MatchLabels.Count > 0)
                                 {
                                     @foreach (var label in profile.MatchLabels)

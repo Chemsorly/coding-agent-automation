@@ -35,11 +35,11 @@ public sealed class SettingsPage
     {
         // Tree nodes are inside collapsible groups. If the node isn't visible,
         // expand all collapsed groups first.
-        var node = _page.Locator($"div.tree-node:has-text('{nodeText}')").First;
+        var node = _page.Locator($".tree-node:has-text('{nodeText}')").First;
         if (!await node.IsVisibleAsync())
         {
             // Click all collapsed group headers to expand them
-            var headers = _page.Locator("div.tree-group-header[aria-expanded='false']");
+            var headers = _page.Locator(".tree-group-header[aria-expanded='false']");
             var count = await headers.CountAsync();
             for (var i = 0; i < count; i++)
             {
@@ -50,8 +50,8 @@ public sealed class SettingsPage
 
         await node.ClickAsync();
 
-        // Wait for the node to become active (confirms Blazor processed the click)
-        await _page.WaitForSelectorAsync($"div.tree-node.active:has-text('{nodeText}')",
+        // Wait for the node to become active (confirms navigation processed)
+        await _page.WaitForSelectorAsync($".tree-node.active:has-text('{nodeText}')",
             new() { Timeout = 5_000 });
 
         // Allow Blazor Server to render the new content panel
