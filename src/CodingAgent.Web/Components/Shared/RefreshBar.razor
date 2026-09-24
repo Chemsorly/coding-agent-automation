@@ -39,7 +39,8 @@
         <select class="time-window-select refresh-bar-select"
                 value="@_intervalSeconds"
                 @onchange="HandleIntervalChanged"
-                title="Auto-refresh interval">
+                title="Auto-refresh interval"
+                aria-label="Auto-refresh interval">
             @foreach (var (sec, label) in Intervals)
             {
                 <option value="@sec">@label</option>

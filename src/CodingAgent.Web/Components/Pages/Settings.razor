@@ -17,6 +17,7 @@
 @inject GitLabValidationService GitLabValidator
 @inject IProviderFactory ProviderFactory
 @inject NotificationService NotificationService
+@inject NavigationManager NavigationManager
 
 <PageTitle>Settings - Coding Agent</PageTitle>
 
@@ -26,8 +27,7 @@
     </header>
 
     <div class="settings-layout">
-        <SettingsTreeNav @ref="_treeNav" SelectedNode="@_selectedNode"
-                         OnNodeSelected="SelectNode" />
+        <SettingsTreeNav @ref="_treeNav" />
 
         <div class="settings-content">
             <InlineStatus Message="@_statusMessage" IsError="@_isError" OnDismissed="ClearStatus" />
@@ -191,12 +191,50 @@
     private string? _statusMessage;
     private bool _isError;
 
+    /// <summary>
+    /// Returns true if <paramref name="section"/> is a recognised SettingsNodes constant.
+    /// ProjectDetail nodes have the form "project-detail:{id}" and are allowed when the prefix matches.
+    /// </summary>
+    private static bool IsKnownSection(string section) =>
+        section == SettingsNodes.ProvidersIssue ||
+        section == SettingsNodes.ProvidersRepository ||
+        section == SettingsNodes.ProvidersAgent ||
+        section == SettingsNodes.ProvidersPipeline ||
+        section == SettingsNodes.PipelineGeneral ||
+        section == SettingsNodes.PipelineLoop ||
+        section == SettingsNodes.PipelinePrompts ||
+        section == SettingsNodes.PipelineImplementation ||
+        section == SettingsNodes.PipelineReview ||
+        section == SettingsNodes.PipelineDecomposition ||
+        section == SettingsNodes.PipelineConsolidation ||
+        section == SettingsNodes.PipelineAdvanced ||
+        section == SettingsNodes.AgentProfiles ||
+        section == SettingsNodes.QualityGateConfigs ||
+        section == SettingsNodes.ReviewerConfigs ||
+        section == SettingsNodes.Projects ||
+        section == SettingsNodes.ConfigImportExport ||
+        section.StartsWith(SettingsNodes.ProjectDetail + ":", StringComparison.Ordinal);
+
     protected override async Task OnInitializedAsync()
     {
-        // TODO: Validate SectionFromQuery against known SettingsNodes values; fall back to default if unrecognized
-        if (!string.IsNullOrEmpty(SectionFromQuery))
+        if (!string.IsNullOrEmpty(SectionFromQuery) && IsKnownSection(SectionFromQuery))
             _selectedNode = SectionFromQuery;
         await LoadAllData();
+    }
+
+    protected override Task OnParametersSetAsync()
+    {
+        // Pick up section changes from URL navigation (Back/Forward, NavLink clicks).
+        // OnInitializedAsync does not re-run for in-app navigation — this override does.
+        // TODO [WARNING]: OnParametersSetAsync fires on every parameter change, including immediately
+        // after OnInitializedAsync on the initial render, so it may set _selectedNode a second time
+        // redundantly. If any future code path inside LoadAllData (or a lifecycle callback) modifies
+        // _selectedNode, this override will silently overwrite that value. To avoid this, consider
+        // tracking whether _selectedNode has already been initialised from the query string and
+        // skipping the assignment on the first-render pass.
+        if (!string.IsNullOrEmpty(SectionFromQuery) && IsKnownSection(SectionFromQuery))
+            _selectedNode = SectionFromQuery;
+        return Task.CompletedTask;
     }
 
     private async Task LoadAllData()
@@ -317,7 +355,8 @@
 
     private async Task NavigateToProjectDetail(string projectId)
     {
-        _selectedNode = $"{SettingsNodes.ProjectDetail}:{projectId}";
+        var nodeId = $"{SettingsNodes.ProjectDetail}:{projectId}";
+        NavigationManager.NavigateTo($"settings?section={Uri.EscapeDataString(nodeId)}");
         if (_treeNav is not null)
             await _treeNav.RefreshProjectsAsync();
     }
