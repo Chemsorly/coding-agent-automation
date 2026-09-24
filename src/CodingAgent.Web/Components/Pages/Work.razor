@@ -195,6 +195,7 @@
                                                max="1000"
                                                value="@p.PriorityWeight"
                                                title="Edit priority (0–1000)"
+                                               aria-label="@($"Priority weight for {p.Id}")"
                                                @onchange="async e => {
                                                    if (int.TryParse(e.Value?.ToString(), out var w) && w >= 0 && w <= 1000)
                                                        await SetPriorityAsync(p.Id, w);
