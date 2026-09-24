@@ -571,4 +571,139 @@ public class RunPageComponentTests : BunitContext
         Assert.NotNull(errorCallout);
         Assert.Contains("Re-dispatch failed", errorCallout.TextContent);
     }
+
+    // ── Issue #2937: RunPage cancel confirmation ──────────────────────────────
+
+    /// <summary>
+    /// Helper to build a minimal active (in-flight) PipelineRunSummary for cancel tests.
+    /// FinalStep = AnalyzingCode (not a terminal step) so _isLive becomes true and the sidebar's
+    /// cancel button is rendered.
+    /// </summary>
+    private static PipelineRunSummary MakeActiveSummary(string runId)
+        => new PipelineRunSummary
+        {
+            RunId = runId,
+            IssueIdentifier = "2937",
+            IssueTitle = "Active run cancel test",
+            FinalStep = PipelineStep.AnalyzingCode,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = null,
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+        };
+
+    /// <summary>
+    /// On an active run, clicking "Cancel Pipeline" in the sidebar must show the confirmation
+    /// prompt; PostStatusAsync must NOT be called until "Yes, cancel" is clicked.
+    /// </summary>
+    // TODO: [WARNING] This test does not assert that the original cancel-pipeline-btn is hidden
+    // once the confirmation section is shown. A regression rendering both simultaneously would
+    // pass this test. Consider adding: Assert.Empty(cut.FindAll("[data-testid='cancel-pipeline-btn']"))
+    // after the confirmation section appears.
+    [Fact]
+    public void CancelRun_ClickCancelPipeline_ShowsConfirmation_NoCancelYet()
+    {
+        var runId = Guid.NewGuid().ToString();
+        var mockWorkItems = new Mock<IPipelineApiWorkItemClient>();
+        RegisterServices(MakeActiveSummary(runId), mockWorkItems);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, runId));
+
+        // The "Cancel Pipeline" button is rendered by PipelineSidebar when IsRunning=true
+        cut.Find("[data-testid='cancel-pipeline-btn']").Click();
+
+        // Confirmation section must appear; Yes/No buttons visible
+        Assert.NotEmpty(cut.FindAll("[data-testid='cancel-pipeline-confirm-section']"));
+        Assert.NotEmpty(cut.FindAll("[data-testid='confirm-cancel-pipeline-btn']"));
+        Assert.NotEmpty(cut.FindAll("[data-testid='dismiss-cancel-pipeline-btn']"));
+
+        // PostStatusAsync must NOT have been called yet
+        mockWorkItems.Verify(
+            w => w.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    /// <summary>
+    /// Clicking "Yes, cancel" after the confirmation must call PostStatusAsync once with Cancelled.
+    /// </summary>
+    [Fact]
+    public async Task CancelRun_ClickConfirm_CallsPostStatusOnce()
+    {
+        var runId = Guid.NewGuid().ToString();
+        var mockWorkItems = new Mock<IPipelineApiWorkItemClient>();
+        mockWorkItems
+            .Setup(w => w.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        RegisterServices(MakeActiveSummary(runId), mockWorkItems);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, runId));
+
+        // Show the confirmation
+        await cut.InvokeAsync(() => cut.Find("[data-testid='cancel-pipeline-btn']").Click());
+
+        // Confirm
+        await cut.InvokeAsync(() => cut.Find("[data-testid='confirm-cancel-pipeline-btn']").Click());
+
+        mockWorkItems.Verify(
+            w => w.PostStatusAsync(
+                It.Is<Guid>(g => g.ToString() == runId),
+                It.Is<WorkItemStatusUpdate>(u => u.Status == "Cancelled"),
+                It.IsAny<CancellationToken>()),
+            Times.Once,
+            "PostStatusAsync must be called exactly once with Cancelled after confirming");
+    }
+
+    /// <summary>
+    /// Clicking "No" (dismiss) must hide the confirmation and NOT call PostStatusAsync.
+    /// </summary>
+    [Fact]
+    public void CancelRun_ClickDismiss_HidesConfirmation_NoCancelCalled()
+    {
+        var runId = Guid.NewGuid().ToString();
+        var mockWorkItems = new Mock<IPipelineApiWorkItemClient>();
+        RegisterServices(MakeActiveSummary(runId), mockWorkItems);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, runId));
+
+        cut.Find("[data-testid='cancel-pipeline-btn']").Click();
+
+        // Dismiss
+        cut.Find("[data-testid='dismiss-cancel-pipeline-btn']").Click();
+
+        // Confirmation section must be gone; Cancel Pipeline button back
+        Assert.Empty(cut.FindAll("[data-testid='cancel-pipeline-confirm-section']"));
+        Assert.NotEmpty(cut.FindAll("[data-testid='cancel-pipeline-btn']"));
+
+        // PostStatusAsync must not have been called
+        mockWorkItems.Verify(
+            w => w.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    /// <summary>
+    /// When PostStatusAsync throws, an error callout must be rendered on the RunPage.
+    /// </summary>
+    [Fact]
+    public async Task CancelRun_PostStatusFails_ShowsErrorCallout()
+    {
+        var runId = Guid.NewGuid().ToString();
+        var mockWorkItems = new Mock<IPipelineApiWorkItemClient>();
+        mockWorkItems
+            .Setup(w => w.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new System.Net.Http.HttpRequestException("503 Service Unavailable"));
+        RegisterServices(MakeActiveSummary(runId), mockWorkItems);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, runId));
+
+        await cut.InvokeAsync(() => cut.Find("[data-testid='cancel-pipeline-btn']").Click());
+        await cut.InvokeAsync(() => cut.Find("[data-testid='confirm-cancel-pipeline-btn']").Click());
+
+        // Error callout must be visible
+        var callout = cut.Find("[data-testid='cancel-error-callout']");
+        Assert.NotNull(callout);
+        Assert.Contains("Cancel failed", callout.TextContent);
+        Assert.Contains("503 Service Unavailable", callout.TextContent);
+    }
+
 }

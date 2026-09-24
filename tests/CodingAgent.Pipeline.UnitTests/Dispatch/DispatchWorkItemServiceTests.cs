@@ -3,11 +3,15 @@ using CodingAgent.Api;
 using CodingAgent.Api.Dispatch;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
+using CodingAgent.Infrastructure.Persistence.Services;
+using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging;
+using Moq;
 
 namespace CodingAgent.Pipeline.UnitTests.Dispatch;
 
@@ -80,6 +84,33 @@ public sealed class DispatchWorkItemServiceTests
             Payload = "{}"
         });
         await db.SaveChangesAsync();
+    }
+
+    // TODO [WARNING]: CreateLifecycleService constructs its own independent CreateDbFactory(),
+    // so the lifecycle service's internal WorkItemTransitionService queries a completely
+    // separate in-memory database from the one used in test bodies. The PVC availability
+    // query (QueryAvailablePvcsAsync) uses the caller-supplied db argument directly, so
+    // the test currently passes correctly — but the isolation between the two factories
+    // creates a latent confusion that could mask a regression if the plumbing changes.
+    // The lifecycle service's private dbFactory is dead weight here.
+    private DispatchLifecycleService CreateLifecycleService(IReadOnlyList<string>? pvcPool = null)
+    {
+        var dbFactory = CreateDbFactory();
+        var transitionSvc = new WorkItemTransitionService(
+            dbFactory,
+            Mock.Of<ILogger<WorkItemTransitionService>>());
+        var opts = new DispatchServiceOptions
+        {
+            Namespace = "test",
+            OrchestratorUrl = "http://test",
+            AgentApiKeySecretName = "secret",
+            AgentServiceAccountName = "sa",
+            KiroPvcPool = (pvcPool ?? ["pvc-0", "pvc-1"]).ToList()
+        };
+        return new DispatchLifecycleService(
+            Mock.Of<IKubernetesJobClient>(),
+            transitionSvc,
+            opts);
     }
 
     // ── BuildConcurrencySnapshotAsync ─────────────────────────────────────────
@@ -411,6 +442,162 @@ public sealed class DispatchWorkItemServiceTests
         var conflict = (Microsoft.AspNetCore.Http.HttpResults.Conflict<string>)result;
         conflict.Value.Should().Be("A live work item already exists for this issue.",
             "the exact literal must match what callers previously inlined");
+    }
+
+    // ── BuildDispatchPreambleAsync ────────────────────────────────────────────
+
+    /// <summary>
+    /// Verifies that <see cref="DispatchWorkItemService.BuildDispatchPreambleAsync"/> returns
+    /// a concurrency dictionary with the correct active-item counts and a PVC result that
+    /// correctly reflects availability, using the same <see cref="PipelineDbContext"/> for both
+    /// inner calls.
+    /// </summary>
+    [Fact]
+    public async Task BuildDispatchPreambleAsync_ReturnsConcurrencySnapshotAndPvcResult()
+    {
+        // Arrange: seed 2 active items for "kiro,dotnet" and one active item claiming "pvc-0"
+        var dbFactory = CreateDbFactory();
+        await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, "kiro,dotnet");
+        await SeedWorkItemAsync(dbFactory, WorkItemStatus.Running, "kiro,dotnet");
+        // This active item claims "pvc-0", leaving only "pvc-1" available from the pool ["pvc-0","pvc-1"]
+        await using (var seedDb = await dbFactory.CreateDbContextAsync())
+        {
+            seedDb.WorkItems.Add(new WorkItemEntity
+            {
+                Id = Guid.NewGuid(),
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = $"pvc-holder-{Guid.NewGuid():N}",
+                IssueProviderConfigId = "prov-1",
+                Status = WorkItemStatus.Dispatched,
+                AgentSelector = "kiro,dotnet",
+                TimeoutSeconds = 3600,
+                CreatedAt = DateTimeOffset.UtcNow,
+                Payload = "{}",
+                ClaimedPvcName = "pvc-0"
+            });
+            await seedDb.SaveChangesAsync();
+        }
+
+        var svc = CreateService(maxConcurrent: 5);
+        var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0", "pvc-1"]);
+
+        await using var db = await dbFactory.CreateDbContextAsync();
+
+        // Act
+        var (concurrencyBySelector, pvcResult) = await svc.BuildDispatchPreambleAsync(db, lifecycle, CancellationToken.None);
+
+        // Assert — concurrency snapshot
+        var normalizedSelector = JobTemplateStore.NormalizeLabels("kiro,dotnet");
+        concurrencyBySelector.Should().ContainKey(normalizedSelector);
+        // 2 seeded + 1 pvc-holder = 3 active items for "kiro,dotnet"
+        // TODO [WARNING]: "2 unseeded" in the original comment was a typo — the items are seeded
+        // (via SeedWorkItemAsync). Additionally, there is no assertion on the total number of keys
+        // in concurrencyBySelector. If the implementation accidentally emits both raw and normalized
+        // keys (a double-count bug), this assertion would still pass while a phantom extra key existed.
+        // Add: concurrencyBySelector.Should().HaveCount(1) to close the gap.
+        concurrencyBySelector[normalizedSelector].Should().Be(3,
+            "3 Dispatched/Running items exist for kiro,dotnet");
+
+        // Assert — PVC result: "pvc-0" is claimed, "pvc-1" is available
+        // TODO [WARNING]: No complementary test exists for the fully-claimed case (all PVCs have
+        // active ClaimedPvcName entries). A regression in QueryAvailablePvcsAsync returning a
+        // non-empty list when all PVCs are claimed would flow silently past this test.
+        // TODO [WARNING]: There is no assertion that both inner queries (BuildConcurrencySnapshotAsync
+        // and QueryAvailablePvcsAsync) execute on the same PipelineDbContext instance that was passed
+        // in. The XML doc on BuildDispatchPreambleAsync states "must be the same context used for any
+        // subsequent calls on this request" — this guarantee is untested.
+        pvcResult.AvailablePvcs.Should().HaveCount(1,
+            "pvc-0 is claimed; only pvc-1 is available");
+        pvcResult.AvailablePvcs.Should().Contain("pvc-1");
+        pvcResult.ClaimedCount.Should().Be(1, "one PVC (pvc-0) is claimed");
+    }
+
+    // ── BuildProjectionFromEntity ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Verifies that <see cref="DispatchWorkItemService.BuildProjectionFromEntity"/> maps all 9
+    /// fields of <see cref="PendingWorkItemProjection"/> correctly from a <see cref="WorkItemEntity"/>.
+    /// </summary>
+    [Fact]
+    public void BuildProjectionFromEntity_MapsAllFieldsCorrectly()
+    {
+        // Arrange: a WorkItemEntity with distinctive values for every mapped field
+        var id = Guid.NewGuid();
+        var projectId = Guid.NewGuid();
+        var createdAt = new DateTimeOffset(2025, 6, 15, 10, 30, 0, TimeSpan.Zero);
+        var entity = new WorkItemEntity
+        {
+            Id = id,
+            AgentSelector = "dotnet,kiro",
+            CreatedAt = createdAt,
+            TimeoutSeconds = 7200,
+            TaskType = WorkItemTaskType.Review,
+            ProjectId = projectId,
+            IssueIdentifier = "GH-42",
+            IssueProviderConfigId = "provider-abc",
+            PriorityWeight = 100,
+            // Additional fields on WorkItemEntity that must NOT affect the projection
+            Status = WorkItemStatus.Dispatched,
+            Payload = "{}"
+        };
+
+        // Act
+        var projection = DispatchWorkItemService.BuildProjectionFromEntity(entity);
+
+        // Assert: all 9 fields mapped correctly
+        projection.Id.Should().Be(id, "Id must come from entity.Id");
+        projection.AgentSelector.Should().Be("dotnet,kiro", "AgentSelector must come from entity.AgentSelector");
+        projection.CreatedAt.Should().Be(createdAt, "CreatedAt must come from entity.CreatedAt");
+        projection.TimeoutSeconds.Should().Be(7200, "TimeoutSeconds must come from entity.TimeoutSeconds");
+        projection.TaskType.Should().Be(WorkItemTaskType.Review, "TaskType must come from entity.TaskType");
+        projection.ProjectId.Should().Be(projectId, "ProjectId must come from entity.ProjectId");
+        projection.IssueIdentifier.Should().Be("GH-42", "IssueIdentifier must come from entity.IssueIdentifier");
+        projection.IssueProviderConfigId.Should().Be("provider-abc", "IssueProviderConfigId must come from entity.IssueProviderConfigId");
+        projection.PriorityWeight.Should().Be(100, "PriorityWeight must come from entity.PriorityWeight");
+    }
+
+    // ── BuildProjectionFromQuickCheck ─────────────────────────────────────────
+
+    /// <summary>
+    /// Verifies that <see cref="DispatchWorkItemService.BuildProjectionFromQuickCheck"/> maps all 9
+    /// explicit parameters to the correct <see cref="PendingWorkItemProjection"/> fields.
+    /// </summary>
+    [Fact]
+    public void BuildProjectionFromQuickCheck_MapsAllFieldsCorrectly()
+    {
+        // Arrange: distinctive values for each of the 9 parameters
+        var id = Guid.NewGuid();
+        var projectId = Guid.NewGuid();
+        var createdAt = new DateTimeOffset(2025, 3, 10, 8, 0, 0, TimeSpan.Zero);
+        const string normalizedSelector = "dotnet,kiro";
+        const int timeoutSeconds = 3600;
+        const WorkItemTaskType taskType = WorkItemTaskType.Implementation;
+        const string issueIdentifier = "GH-99";
+        const string issueProviderConfigId = "prov-xyz";
+        const int priorityWeight = 50;
+
+        // Act
+        var projection = DispatchWorkItemService.BuildProjectionFromQuickCheck(
+            id: id,
+            normalizedSelector: normalizedSelector,
+            createdAt: createdAt,
+            timeoutSeconds: timeoutSeconds,
+            taskType: taskType,
+            projectId: projectId,
+            issueIdentifier: issueIdentifier,
+            issueProviderConfigId: issueProviderConfigId,
+            priorityWeight: priorityWeight);
+
+        // Assert: all 9 fields mapped correctly
+        projection.Id.Should().Be(id);
+        projection.AgentSelector.Should().Be(normalizedSelector, "AgentSelector must come from normalizedSelector parameter");
+        projection.CreatedAt.Should().Be(createdAt);
+        projection.TimeoutSeconds.Should().Be(timeoutSeconds);
+        projection.TaskType.Should().Be(taskType);
+        projection.ProjectId.Should().Be(projectId);
+        projection.IssueIdentifier.Should().Be(issueIdentifier);
+        projection.IssueProviderConfigId.Should().Be(issueProviderConfigId);
+        projection.PriorityWeight.Should().Be(priorityWeight);
     }
 }
 
