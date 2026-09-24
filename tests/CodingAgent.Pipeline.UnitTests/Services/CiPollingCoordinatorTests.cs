@@ -513,27 +513,27 @@ public class CiPollingCoordinatorTests
         PipelineRun run,
         int ciNotStartedMaxRetries = 1,
         int maxInfraRetries = 0) => new()
-    {
-        Run = run,
-        Config = new PipelineConfiguration
         {
-            AgentTimeout = TimeSpan.FromMinutes(10),
-            MaxRetries = 0,
-            MaxInfrastructureRetries = maxInfraRetries,
-            ExternalCiTimeout = TimeSpan.FromMinutes(5),
-            CiNotStartedTimeout = TimeSpan.FromMilliseconds(50),
-            CiNotStartedMaxRetries = ciNotStartedMaxRetries,
-            ExternalCiPollInterval = TimeSpan.FromMilliseconds(50),
-            StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromHours(1)
-        },
-        AgentProvider = new Mock<IAgentProvider>().Object,
-        IssueOps = _mockIssueOps.Object,
-        Callbacks = _mockCallbacks.Object,
-        RepoProvider = _mockRepoProvider.Object,
-        PipelineProvider = _mockPipelineProvider.Object,
-        QualityGateConfigs = new List<QualityGateConfiguration>()
-    };
+            Run = run,
+            Config = new PipelineConfiguration
+            {
+                AgentTimeout = TimeSpan.FromMinutes(10),
+                MaxRetries = 0,
+                MaxInfrastructureRetries = maxInfraRetries,
+                ExternalCiTimeout = TimeSpan.FromMinutes(5),
+                CiNotStartedTimeout = TimeSpan.FromMilliseconds(50),
+                CiNotStartedMaxRetries = ciNotStartedMaxRetries,
+                ExternalCiPollInterval = TimeSpan.FromMilliseconds(50),
+                StallPollInterval = TimeSpan.FromMilliseconds(50),
+                StallWarningInterval = TimeSpan.FromHours(1)
+            },
+            AgentProvider = new Mock<IAgentProvider>().Object,
+            IssueOps = _mockIssueOps.Object,
+            Callbacks = _mockCallbacks.Object,
+            RepoProvider = _mockRepoProvider.Object,
+            PipelineProvider = _mockPipelineProvider.Object,
+            QualityGateConfigs = new List<QualityGateConfiguration>()
+        };
 
     // ── Issue #2954: PR state checks in CI polling loop ───────────────────────
 

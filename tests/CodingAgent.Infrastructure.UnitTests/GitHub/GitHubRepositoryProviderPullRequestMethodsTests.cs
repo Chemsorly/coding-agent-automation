@@ -565,22 +565,22 @@ public class GitHubRepositoryProviderPullRequestMethodsTests : WireMockTestBase
 
     private static object BuildDetailedPR(int number, string headRef, bool draft,
         string? body = "PR body", string state = "open") => new
-    {
-        id = number * 100,
-        number,
-        html_url = $"https://github.com/{Owner}/{Repo}/pull/{number}",
-        state,
-        title = $"Update feature",
-        body,
-        draft,
-        node_id = $"PR_node_{number}",
-        user = new { login = "testuser", id = 1 },
-        labels = Array.Empty<object>(),
-        head = new { @ref = headRef, sha = "abc123" },
-        @base = new { @ref = "main", sha = "def456" },
-        created_at = "2026-01-01T00:00:00Z",
-        updated_at = "2026-01-01T00:00:00Z"
-    };
+        {
+            id = number * 100,
+            number,
+            html_url = $"https://github.com/{Owner}/{Repo}/pull/{number}",
+            state,
+            title = $"Update feature",
+            body,
+            draft,
+            node_id = $"PR_node_{number}",
+            user = new { login = "testuser", id = 1 },
+            labels = Array.Empty<object>(),
+            head = new { @ref = headRef, sha = "abc123" },
+            @base = new { @ref = "main", sha = "def456" },
+            created_at = "2026-01-01T00:00:00Z",
+            updated_at = "2026-01-01T00:00:00Z"
+        };
 
     /// <summary>
     /// Builds a PR JSON object for GetPullRequestStateAsync tests.
@@ -610,21 +610,21 @@ public class GitHubRepositoryProviderPullRequestMethodsTests : WireMockTestBase
 
     private static object BuildDetailedPRWithTitle(int number, string headRef, bool draft,
         string title, string? body) => new
-    {
-        id = number * 100,
-        number,
-        html_url = $"https://github.com/{Owner}/{Repo}/pull/{number}",
-        state = "open",
-        title,
-        body,
-        draft,
-        node_id = $"PR_node_{number}",
-        user = new { login = "testuser", id = 1 },
-        head = new { @ref = headRef, sha = "abc123" },
-        @base = new { @ref = "main", sha = "def456" },
-        created_at = "2026-01-01T00:00:00Z",
-        updated_at = "2026-01-01T00:00:00Z"
-    };
+        {
+            id = number * 100,
+            number,
+            html_url = $"https://github.com/{Owner}/{Repo}/pull/{number}",
+            state = "open",
+            title,
+            body,
+            draft,
+            node_id = $"PR_node_{number}",
+            user = new { login = "testuser", id = 1 },
+            head = new { @ref = headRef, sha = "abc123" },
+            @base = new { @ref = "main", sha = "def456" },
+            created_at = "2026-01-01T00:00:00Z",
+            updated_at = "2026-01-01T00:00:00Z"
+        };
 
     private static object BuildIssueWithPr(int number, string headRef, string? label = null)
     {
