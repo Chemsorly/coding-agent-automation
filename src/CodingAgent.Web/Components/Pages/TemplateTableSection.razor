@@ -26,7 +26,23 @@
                     }
                 </div>
                 <div class="monitoring-table-wrap">
+                    @* TODO: All 9 columns have fixed widths (total ~1120px). With .monitoring-table { width: 100% }
+                       and no flexible column, the browser distributes widths proportionally when the wrapper is
+                       narrower than 1120px — this may still produce a horizontal scrollbar at 1280x800 where the
+                       wrapper is ~1100px. Consider making the Name column flexible (no fixed width) so the table
+                       can compress below 1120px without overflowing. *@
                     <table class="monitoring-table">
+                        <colgroup>
+                            <col style="width: 200px;" />  @* Name *@
+                            <col style="width: 150px;" />  @* Issue Provider *@
+                            <col style="width: 150px;" />  @* Repo Provider *@
+                            <col style="width: 80px;" />   @* Brain *@
+                            <col style="width: 80px;" />   @* CI *@
+                            <col style="width: 160px;" />  @* Features *@
+                            <col style="width: 80px;" />   @* Enabled *@
+                            <col style="width: 100px;" />  @* Status *@
+                            <col style="width: 120px;" />  @* Actions *@
+                        </colgroup>
                         <thead>
                             <tr>
                                 <th>Name</th>

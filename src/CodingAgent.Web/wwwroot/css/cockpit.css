@@ -347,7 +347,7 @@
 
 .cockpit-detail-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px 24px; }
 .cockpit-detail-grid .k { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-faint); }
-.cockpit-detail-grid .v { font-size: 14px; font-weight: 600; color: var(--text); margin-top: 2px; }
+.cockpit-detail-grid .v { font-size: 14px; font-weight: 600; color: var(--text); margin-top: 2px; min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .cockpit-detail-item { min-width: 0; }
 
 .cockpit-empty { padding: 40px 20px; text-align: center; color: var(--text-muted); font-size: 13.5px; }
@@ -461,7 +461,11 @@
 
 /* Links cell: prevent row click propagation visually; flex layout for icon links. */
 .cockpit .runs-links-cell { display: flex; align-items: center; gap: 5px; overflow: visible; white-space: nowrap; }
-.cockpit .fleet-work-cell { display: flex; align-items: center; gap: 5px; overflow: visible; white-space: nowrap; }
+/* TODO: text-overflow: ellipsis on a flex container does not truncate flex item text — it only applies to block
+   elements with overflow: hidden and white-space: nowrap. Child <span> or <a> elements inside .fleet-work-cell
+   that contain long text need their own overflow: hidden; text-overflow: ellipsis; min-width: 0; white-space: nowrap
+   for ellipsis to appear. The current rule may not visually truncate the active issue title in the summary row. */
+.cockpit .fleet-work-cell { display: flex; align-items: center; gap: 5px; overflow: hidden; white-space: nowrap; max-width: 300px; text-overflow: ellipsis; }
 .cockpit .runs-link {
     display: inline-flex;
     align-items: center;
