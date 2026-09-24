@@ -304,4 +304,76 @@ public sealed class LabelServiceTests
 
         result.Should().BeFalse();
     }
+
+    // ── SwapIssueLabelAsync — currentLabels filtering (AC3) ───────────────
+
+    [Fact]
+    public async Task SwapLabelAsync_IssuePath_WhenIssueHasOneAgentLabel_OnlyRemovesThatLabel()
+    {
+        // Arrange: issue has only agent:in-progress.
+        var config = MakeConfig("github", ProviderKind.Issue);
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync("github", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider.Setup(p => p.GetIssueAsync(new IssueIdentifier("GH-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "GH-1", Title = "T", Description = "D",
+                Labels = new[] { AgentLabels.InProgress }
+            });
+        mockProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockProvider.Setup(p => p.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        _providerFactory.Setup(f => f.CreateIssueProvider(config)).Returns(mockProvider.Object);
+
+        // Act
+        await _sut.SwapLabelAsync(
+            new ProviderConfigId("github"), new IssueIdentifier("GH-1"),
+            AgentLabels.Done, LabelTargetKind.Issue, CancellationToken.None);
+
+        // Assert: only agent:in-progress is removed (the one label actually on the issue).
+        mockProvider.Verify(
+            p => p.RemoveLabelAsync(new IssueIdentifier("GH-1"), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            Times.Once);
+        // No other agent:* label should have been removed.
+        mockProvider.Verify(
+            p => p.RemoveLabelAsync(new IssueIdentifier("GH-1"), It.Is<string>(l => l != AgentLabels.InProgress), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task SwapLabelAsync_IssuePath_WhenGetIssueAsyncFails_FallsBackToFullSweep()
+    {
+        // Arrange: GetIssueAsync throws — must fall back to removing all labels.
+        var config = MakeConfig("github", ProviderKind.Issue);
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync("github", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("API unavailable"));
+        mockProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockProvider.Setup(p => p.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        _providerFactory.Setup(f => f.CreateIssueProvider(config)).Returns(mockProvider.Object);
+
+        // Act — must not throw
+        await _sut.SwapLabelAsync(
+            new ProviderConfigId("github"), new IssueIdentifier("GH-1"),
+            AgentLabels.Done, LabelTargetKind.Issue, CancellationToken.None);
+
+        // Assert: full sweep — all labels except the new one are removed.
+        mockProvider.Verify(
+            p => p.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(AgentLabels.All.Count - 1));
+        // The add still fires.
+        mockProvider.Verify(
+            p => p.AddLabelAsync(new IssueIdentifier("GH-1"), AgentLabels.Done, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
 }
