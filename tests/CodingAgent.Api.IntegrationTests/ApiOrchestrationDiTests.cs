@@ -345,7 +345,7 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = false });
     }
 
-    private DelegatingDbContextFactory BuildInMemoryDbFactory(string? dbName = null)
+    private static DelegatingDbContextFactory BuildInMemoryDbFactory(string? dbName = null)
     {
         var name = dbName ?? $"ApiOrchestrationDi-{Guid.NewGuid():N}";
         return new DelegatingDbContextFactory(name);
