@@ -356,7 +356,7 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
         string issueProviderConfigId,
         WorkItemStatus status,
         DateTimeOffset? completedAt)
-        => new WorkItemEntity
+        => new()
         {
             Id = Guid.NewGuid(),
             TaskType = WorkItemTaskType.Implementation,
@@ -372,10 +372,9 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
 
     // ── Minimal InMemory DbContext factory ───────────────────────────────────────
 
-    private sealed class DelegatingDbContextFactory : IDbContextFactory<PipelineDbContext>
+    private sealed class DelegatingDbContextFactory(string dbName) : IDbContextFactory<PipelineDbContext>
     {
-        private readonly string _dbName;
-        public DelegatingDbContextFactory(string dbName) => _dbName = dbName;
+        private readonly string _dbName = dbName;
 
         public PipelineDbContext CreateDbContext()
         {
@@ -390,10 +389,8 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
             => Task.FromResult(CreateDbContext());
     }
 
-    private sealed class DiTestPipelineDbContext : PipelineDbContext
+    private sealed class DiTestPipelineDbContext(DbContextOptions<PipelineDbContext> options) : PipelineDbContext(options)
     {
-        public DiTestPipelineDbContext(DbContextOptions<PipelineDbContext> options) : base(options) { }
-
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
