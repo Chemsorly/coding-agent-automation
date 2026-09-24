@@ -121,7 +121,24 @@
     @if (IsRunning)
     {
         <div class="sidebar-footer">
-            <button class="btn-sidebar-cancel" @onclick="OnCancel" data-testid="cancel-pipeline-btn">Cancel Pipeline</button>
+            @if (_showCancelConfirm)
+            {
+                <div class="agent-detail-confirm" data-testid="cancel-pipeline-confirm-section">
+                    <p>Cancel this run?</p>
+                    <div class="confirm-buttons">
+                        <button class="btn-delete" data-testid="confirm-cancel-pipeline-btn"
+                                @onclick="OnCancel">Yes, cancel</button>
+                        <button class="btn-cancel" data-testid="dismiss-cancel-pipeline-btn"
+                                @onclick="() => _showCancelConfirm = false">No</button>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <button class="btn-delete" style="font-size: 13px; padding: 6px 14px;"
+                        @onclick="() => _showCancelConfirm = true"
+                        data-testid="cancel-pipeline-btn">Cancel Pipeline</button>
+            }
         </div>
     }
 </aside>
@@ -143,6 +160,8 @@
     private string? _lastRunId;
     /// <summary>Tracks whether the cost breakdown collapsible is expanded; persists across re-renders triggered by live state updates.</summary>
     private bool _costBreakdownExpanded;
+    /// <summary>Controls the inline cancel confirmation prompt in the sidebar footer.</summary>
+    private bool _showCancelConfirm;
 
     private static readonly PhaseDefinition[] _phases =
     {
@@ -200,6 +219,7 @@
         {
             _expandedSteps.Clear();
             _costBreakdownExpanded = false;
+            _showCancelConfirm = false;
             _lastRunId = Run.RunId;
         }
     }
