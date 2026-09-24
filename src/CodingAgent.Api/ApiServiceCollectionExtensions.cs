@@ -594,30 +594,9 @@ public static class ApiServiceCollectionExtensions
         // fetch fresh provider configs, steering, QGs, and issue context at assignment time.
         // Cache disabled on IConfigurationStore (registered above) so every GetAssignment
         // call sees the latest steering and QG config from the DB.
-        // NOTE: [WARNING] ProfileResolver, QualityGateResolver, and ReviewerResolver may also be
-        // registered by the Orchestration host's DI container with a different lifetime or config.
-        // If both registrations coexist in the same IServiceCollection, GetRequiredService resolves
-        // the last-registered one — the API-registered instance may differ from the one Orchestration
-        // uses, causing inconsistent profile/QG resolution for the same labels.
-        // NOTE: [WARNING] These three types are registered as singletons here. Verify that their
-        // constructor dependencies (e.g., IConfigurationStore) are also registered as singletons
-        // in this host — if any dependency is scoped or transient, DI will silently capture a single
-        // instance for the lifetime of the process (captive dependency), sharing DB context state
-        // across concurrent requests and causing hard-to-reproduce data corruption.
-        services.AddSingleton<ProfileResolver>();
-        services.AddSingleton<QualityGateResolver>();
-        services.AddSingleton<ReviewerResolver>();
-        services.AddSingleton(sp => new DispatchResolutionService(
-            sp.GetRequiredService<ProfileResolver>(),
-            sp.GetRequiredService<QualityGateResolver>(),
-            sp.GetRequiredService<ReviewerResolver>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IConfigurationStore>(),
-            Log.Logger));
-        services.AddSingleton(sp => new DispatchInfrastructure(
-            sp.GetRequiredService<ITokenVendingService>(),
-            sp.GetRequiredService<IProviderFactory>(),
-            sp.GetRequiredService<ILabelService>(),
-            sp.GetRequiredService<DispatchResolutionService>()));
+        // The API host does not have a IPipelineApiWorkItemClient in this host,
+        // so includeWorkItemClient is false (workItemClient = null).
+        services.AddDispatchResolutionServices(includeWorkItemClient: false);
 
         // ── ConsolidationTemplateResolver ──────────────────────────────────────
         // Registered as a standalone singleton so AssignmentEnricher.InjectProjectSecretsAsync
