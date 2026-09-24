@@ -39,7 +39,7 @@
                Until then, the RefreshBar auto-refresh polling is the only mechanism for background updates. *@
             <label style="display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 13px; border: 1px solid var(--ctl-border); border-radius: 9px; background: var(--surface); font-size: 12.5px; font-weight: 600; color: var(--text-muted);">
                 <span style="font-size: 11px; font-weight: 700; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em;">Time window:</span>
-                <select class="time-window-select" style="font-size: 12px;" @bind="_recentWindowHours" @bind:after="LoadAsync" title="Filter all metrics to runs started within this window">
+                <select class="time-window-select" style="font-size: 12px;" @bind="_recentWindowHours" @bind:after="LoadAsync" title="Filter all metrics to runs started within this window" aria-label="Time window">
                     <option value="1">1h</option>
                     <option value="6">6h</option>
                     <option value="24">24h</option>
@@ -96,7 +96,7 @@
             </div>
         </div>
 
-        <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; align-items: start;">
+        <div class="cockpit-two-col-asymmetric">
             <!-- outcome mix -->
             <div class="cockpit-card cockpit-card-pad">
                 <h2 style="margin: 0 0 14px; font-size: 15px; font-weight: 700;">Outcome mix</h2>
@@ -141,7 +141,7 @@
                     <h2 style="margin: 0; font-size: 15px; font-weight: 700;">Cost</h2>
                     <span style="font-size: 11px; font-weight: 600; color: var(--warning); background: var(--warning-bg); border: 1px solid var(--warning-border); padding: 2px 8px; border-radius: 999px;">OpenCode only</span>
                 </div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px;">
+                <div class="cockpit-two-col" style="margin-top: 14px; gap: 12px;">
                     <div><div class="cockpit-stat-l">Total (reported)</div><div style="font-size: 20px; font-weight: 800;">@CostFormatter.FormatCost(_totalCost)</div></div>
                     <div><div class="cockpit-stat-l">Runs with cost</div><div style="font-size: 20px; font-weight: 800;">@_costCoverage%</div></div>
                 </div>

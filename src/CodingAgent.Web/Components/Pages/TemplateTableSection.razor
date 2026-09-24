@@ -82,6 +82,7 @@
                                     <td>
                                         <label class="toggle-switch">
                                             <input type="checkbox" checked="@template.Enabled"
+                                                   aria-label="@($"Enable {template.Name}")"
                                                    @onchange="e => OnToggleEnabled.InvokeAsync((template, (bool)(e.Value ?? false)))" />
                                             <span class="toggle-slider"></span>
                                         </label>
@@ -164,6 +165,7 @@
                                                     <label class="feature-config-toggle">
                                                         <label class="toggle-switch">
                                                             <input type="checkbox" checked="@template.ImplementationEnabled"
+                                                                   aria-label="@($"Enable Implementation for {template.Name}")"
                                                                    @onchange="e => OnToggleImplementation.InvokeAsync((template, (bool)(e.Value ?? false)))" />
                                                             <span class="toggle-slider"></span>
                                                         </label>
@@ -172,6 +174,7 @@
                                                     <label class="feature-config-toggle">
                                                         <label class="toggle-switch">
                                                             <input type="checkbox" checked="@template.ReviewEnabled"
+                                                                   aria-label="@($"Enable PR Review for {template.Name}")"
                                                                    @onchange="e => OnToggleReview.InvokeAsync((template, (bool)(e.Value ?? false)))" />
                                                             <span class="toggle-slider"></span>
                                                         </label>
@@ -180,6 +183,7 @@
                                                     <label class="feature-config-toggle">
                                                         <label class="toggle-switch">
                                                             <input type="checkbox" checked="@template.DecompositionEnabled"
+                                                                   aria-label="@($"Enable Decomposition for {template.Name}")"
                                                                    @onchange="e => OnToggleDecomposition.InvokeAsync((template, (bool)(e.Value ?? false)))" />
                                                             <span class="toggle-slider"></span>
                                                         </label>
@@ -188,6 +192,7 @@
                                                     <label class="feature-config-toggle">
                                                         <label class="toggle-switch">
                                                             <input type="checkbox" checked="@template.HousekeepingEnabled"
+                                                                   aria-label="@($"Enable Housekeeping for {template.Name}")"
                                                                    @onchange="e => OnToggleHousekeeping.InvokeAsync((template, (bool)(e.Value ?? false)))" />
                                                             <span class="toggle-slider"></span>
                                                         </label>
@@ -196,6 +201,7 @@
                                                     <label class="feature-config-toggle">
                                                         <label class="toggle-switch">
                                                             <input type="checkbox" checked="@template.HousekeepingBranchCleanupEnabled"
+                                                                   aria-label="@($"Enable Branch Cleanup for {template.Name}")"
                                                                    @onchange="e => OnToggleBranchCleanup.InvokeAsync((template, (bool)(e.Value ?? false)))" />
                                                             <span class="toggle-slider"></span>
                                                         </label>
