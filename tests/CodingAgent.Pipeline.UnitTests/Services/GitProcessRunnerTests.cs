@@ -49,13 +49,11 @@ public class GitProcessRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_Timeout_ThrowsTimeoutException()
     {
-        // Use a command that will hang — git fetch on a non-existent remote with no timeout escape
-        // Instead, use a pre-cancelled token to simulate timeout behavior
+        // Use a pre-cancelled token to simulate timeout/cancellation behavior.
+        // Cancel() is called directly (not CancelAfter) to guarantee the token is
+        // already cancelled before RunAsync is invoked, avoiding a race condition.
         using var cts = new CancellationTokenSource();
-        cts.CancelAfter(TimeSpan.FromMilliseconds(1));
-
-        // Allow the cancellation to trigger before starting
-        await Task.Delay(50);
+        cts.Cancel();
 
         var act = () => GitProcessRunner.RunAsync(_tempDir, "init", cts.Token);
 

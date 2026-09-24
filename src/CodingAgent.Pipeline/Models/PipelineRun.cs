@@ -456,7 +456,12 @@ public sealed partial class PipelineRun
         DecompositionSource = DecompositionSource,
         AgentProviderConfigId = AgentProviderConfigId,
         BranchName = BranchName,
-        HarnessVersion = HarnessVersion
+        HarnessVersion = HarnessVersion,
+        OutputTail = OutputLines.IsEmpty ? null : OutputLines.TakeLast(PipelineConstants.OutputTailCapacity).ToList(),
+        IssueProviderConfigId = IssueProviderConfigId,
+        RepoProviderConfigId = RepoProviderConfigId,
+        BrainProviderConfigId = BrainProviderConfigId,
+        PipelineProviderConfigId = PipelineProviderConfigId
     };
     #pragma warning restore CS0618
 

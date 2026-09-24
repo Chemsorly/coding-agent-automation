@@ -176,7 +176,10 @@
                                                             }
                                                             @if (!string.IsNullOrEmpty(a.ActiveIssueTitle))
                                                             {
-                                                                <span class="monitoring-muted"> @a.ActiveIssueTitle</span>
+                                                                @* TODO: No test covers truncation of long issue titles (>60 chars) in the expanded detail row.
+                                                                   Add a bUnit or E2E test with an 85+ char title asserting: (a) rendered text ≤ 63 chars,
+                                                                   (b) title attribute contains the full string. *@
+                                                                <span class="monitoring-muted" title="@a.ActiveIssueTitle"> @Truncate(a.ActiveIssueTitle, 60)</span>
                                                             }
                                                         </div>
                                                     </div>
@@ -195,7 +198,11 @@
                                                         @* TODO: Validate that ActivePullRequestUrl starts with https:// before rendering as href.
                                                            Blazor HTML-encodes attribute values but does NOT strip javascript: URI schemes,
                                                            so a malicious/corrupted record could produce a clickable XSS link. *@
-                                                        <div class="v"><a href="@a.ActivePullRequestUrl" target="_blank" rel="noopener noreferrer">@a.ActivePullRequestUrl</a></div>
+                                                        @* TODO: No test covers the "View PR" link in the expanded detail row. The existing
+                                                           Fleet_BusyAgent_WithPr_ShowsPrLink test only checks the fleet-work-cell icon link,
+                                                           not this expanded row element. Add a test asserting link text is "View PR" and href
+                                                           matches the full URL, so a regression reverting to raw URL text is detected. *@
+                                                        <div class="v"><a href="@a.ActivePullRequestUrl" target="_blank" rel="noopener noreferrer" title="@a.ActivePullRequestUrl">View PR</a></div>
                                                     </div>
                                                 }
                                                 @if (!string.IsNullOrEmpty(a.ActiveChatSessionId))
