@@ -524,7 +524,9 @@ public class ChatJobExecutorTests : IDisposable
             await File.WriteAllTextAsync(scriptPath, $"#!/bin/sh\necho '{validJson}'\nexit 0\n");
             using var chmod = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
-                FileName = "chmod", Arguments = $"+x {scriptPath}", UseShellExecute = false
+                FileName = "chmod",
+                Arguments = $"+x {scriptPath}",
+                UseShellExecute = false
             });
             if (chmod is not null) await chmod.WaitForExitAsync();
 
