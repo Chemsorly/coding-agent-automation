@@ -175,11 +175,6 @@ public class ProviderFactory : IProviderFactory
     /// </summary>
     internal static int ParseProjectId(ProviderConfig config)
     {
-        // TODO: config.Settings[ProjectId] throws KeyNotFoundException if the key is absent, not
-        // ArgumentException. All call sites should call ValidateRequiredSettings(config, ProjectId)
-        // before reaching this helper. If a direct call skips that guard, the failure mode differs
-        // from the documented/tested contract. Consider adding a TryGetValue guard here to
-        // normalise the exception type for the missing-key case.
         var projectIdStr = config.Settings[ProviderSettingKeys.ProjectId];
         if (!int.TryParse(projectIdStr, out var projectId))
             throw new ArgumentException(

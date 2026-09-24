@@ -360,12 +360,6 @@ public class AgentProviderFactoryTests
     /// CreateGitLabRepositoryProvider. When a proxy is present and projectId is non-numeric,
     /// ArgumentException is thrown before the proxy branch is evaluated.
     /// </summary>
-    // TODO: The WithProxy and NoProxy variants below exercise the same code path (ParseProjectId
-    // is unconditional). Consider merging them into a single test, or add a distinct scenario that
-    // exercises proxy-specific behaviour to justify the two separate tests.
-    // TODO: Neither test covers the missing-key case (ProjectId absent from Settings entirely).
-    // ValidateRequiredSettings now guards that path, but a test with no ProjectId key would confirm
-    // ArgumentException (not KeyNotFoundException) is thrown for a missing key.
     [Fact]
     public void CreateRepositoryProvider_GitLab_WithProxy_InvalidProjectId_ThrowsArgumentException()
     {
@@ -437,10 +431,6 @@ public class AgentProviderFactoryTests
     }
 
     [Fact]
-    // TODO: This test covers a non-numeric ProjectId value, but not the missing-key case
-    // (ProjectId absent from Settings entirely). ValidateRequiredSettings now guards that path;
-    // a companion test with no ProjectId key would confirm ArgumentException is thrown for a
-    // missing key rather than KeyNotFoundException from the raw dictionary indexer in ParseProjectId.
     public async Task CreatePipelineProviderAsync_GitLab_InvalidProjectId_ThrowsArgumentException()
     {
         var factory = CreateFactory();

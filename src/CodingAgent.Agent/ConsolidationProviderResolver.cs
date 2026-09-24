@@ -263,25 +263,18 @@ internal sealed class ConsolidationProviderResolver
         // includeIssuePermission = true for RefactoringDetection, so the repo token already
         // carries issues:write scope — no separate ProviderKind.Issue path exists.
         //
-        // NOTE: owner and repo null-checks above are intentionally evaluated BEFORE this branch.
-        // The proxy path returns early here and skips the token null-check below, but
-        // GitHubConnectionInfo construction still requires non-null owner and repo. Any future
-        // refactor that moves this branch earlier (before the owner/repo guards) would construct
-        // GitHubConnectionInfo with null values. Keep the owner/repo guards above this branch.
-        // TODO [WARNING]: The lambda captures orchestratorProxy by reference. OrchestratorProxy
+        // TODO: The lambda captures orchestratorProxy by reference. OrchestratorProxy
         // is IDisposable and is owned by LocalConsolidationExecutor, which disposes it after the
         // consolidation run completes. If issue-creation retries in RefactoringExecutor.CreateIssuesAsync
         // outlive the proxy's disposal, the delegate will invoke a disposed object. This widens the
         // same risk that already exists on the repo provider closure. Consider passing a scoped refresh
         // func with a clear lifetime boundary rather than closing over the proxy directly.
-        // (Correctness / DotNetSpecialist)
-        // TODO [WARNING]: includeIssuePermission: true is only honored for GitHub App-backed repo
+        // TODO: includeIssuePermission: true is only honored for GitHub App-backed repo
         // providers (those with privateKeyBase64). If the repo provider is PAT/static-token
         // configured (no privateKeyBase64), AgentTokenRefreshService.VendTokenAsync will silently
         // ignore the flag and return the static token unchanged — no issues:write guarantee.
         // RefactoringDetection is expected to always use a GitHub App, but if it is ever enabled
         // for a PAT-only repo provider the 403 will still occur after token expiry.
-        // (Correctness Review)
         if (orchestratorProxy is not null)
             return new GitHubIssueProvider(connection,
                 refreshCt => orchestratorProxy.RequestTokenRefreshAsync(ProviderKind.Repository, refreshCt, includeIssuePermission: true));
