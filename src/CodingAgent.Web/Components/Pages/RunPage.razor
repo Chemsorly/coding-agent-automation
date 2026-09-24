@@ -199,6 +199,20 @@
                 <div class="cockpit-card-pad">
                     <PipelineSidebar Run="_model" IsRunning="_isLive" MaxRetries="_maxRetries" OnCancel="CancelRunAsync" />
                 </div>
+                @if (_cancelling)
+                {
+                    <div class="cockpit-card-pad" style="border-top: 1px solid var(--hairline);">
+                        <span class="monitoring-muted" style="font-size: 13px;">Cancelling…</span>
+                    </div>
+                }
+                @if (_cancelError is not null)
+                {
+                    <div class="cockpit-card-pad" style="border-top: 1px solid var(--hairline);">
+                        <div class="summary-failure-callout" role="alert" data-testid="cancel-error-callout">
+                            <Icon Name="alert-triangle" Size="14" /> Cancel failed: @_cancelError
+                        </div>
+                    </div>
+                }
             </div>
         }
 
@@ -328,6 +342,18 @@
     private bool _redispatchInProgress;
     private bool _redispatchSuccess;
     private string? _redispatchError;
+
+    // Cancel state — mirrors the re-dispatch confirm pattern
+    // TODO: [WARNING] No double-submit guard: if the sidebar's confirmation is re-opened and
+    // "Yes, cancel" is clicked a second time before the first PostStatusAsync completes, two
+    // parallel API calls can be issued. Work.razor prevents this with `if (!_cancelling.Add(id)) return`.
+    // Add an early-return guard here: `if (_cancelling) return;` before setting _cancelling = true.
+    private bool _cancelling;
+    // TODO: [WARNING] ex.Message from a caught Exception is rendered directly in the cancel-error-callout.
+    // While Blazor HTML-encodes the value (no XSS risk), HttpRequestException messages can contain
+    // server-supplied content (hostnames, stack traces, etc.). Consider normalising to a generic
+    // user-facing message and logging the full ex.Message server-side only.
+    private string? _cancelError;
 
     private static bool IsActive(PipelineRunSummary r)
         => r.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled;
@@ -548,12 +574,32 @@
     private async Task CancelRunAsync()
     {
         if (!Guid.TryParse(RunId, out var id)) return;
+        _cancelling = true;
+        _cancelError = null;
+        // TODO: [WARNING] This pre-try StateHasChanged() runs synchronously before the first await
+        // and is unnecessary — Blazor batches re-renders and the trailing call after finally is
+        // sufficient. Removing it eliminates a narrow disposal-race surface: if _cts is cancelled
+        // by a concurrent navigation/disposal, this call executes on a potentially detached component.
+        StateHasChanged();
         try
         {
             await WorkItems.PostStatusAsync(id, new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) }, _cts.Token);
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { Serilog.Log.Warning(ex, "RunPage: failed to cancel run {RunId}", RunId); }
+        catch (Exception ex)
+        {
+            _cancelError = ex.Message;
+            Serilog.Log.Warning(ex, "RunPage: failed to cancel run {RunId}", RunId);
+        }
+        finally
+        {
+            _cancelling = false;
+        }
+        // TODO: [WARNING] This trailing StateHasChanged() executes after an awaited call. If the
+        // component was disposed (user navigated away) while PostStatusAsync was in flight, _cts
+        // is cancelled and the component is detached. Wrap in InvokeAsync with a disposal guard,
+        // consistent with the InvokeAsync pattern used in hub callbacks elsewhere in this file.
+        StateHasChanged();
     }
 
     // Returns true when the re-dispatch button should be visible: terminal Implementation run
