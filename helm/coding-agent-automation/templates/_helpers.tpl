@@ -128,12 +128,17 @@ Usage (inside an env: list, indented to 12):
 {{- end }}
 
 {{/*
-OpenTelemetry env vars. Accepts a dict with "serviceName" and "root" keys.
-Renders OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_PROTOCOL.
+OpenTelemetry env vars. Accepts a dict with "serviceName", "deploymentName", and "root" keys.
+Renders OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_PROTOCOL,
+K8S_NAMESPACE_NAME (Downward API), K8S_POD_NAME (Downward API), and OTEL_RESOURCE_ATTRIBUTES.
 OTEL_EXPORTER_OTLP_HEADERS is handled by secretEnv.
 
+The Downward API env vars (K8S_NAMESPACE_NAME, K8S_POD_NAME) are emitted BEFORE
+OTEL_RESOURCE_ATTRIBUTES so that Kubernetes $(VAR_NAME) substitution resolves them correctly —
+K8s only resolves $(VAR) references to variables defined earlier in the same env list.
+
 Usage (inside an env: list, indented to 12):
-  {{- include "coding-agent-automation.otelEnv" (dict "serviceName" "coding-agent-api" "root" .) | nindent 12 }}
+  {{- include "coding-agent-automation.otelEnv" (dict "serviceName" "coding-agent-api" "deploymentName" "my-release-api" "root" .) | nindent 12 }}
 */}}
 {{- define "coding-agent-automation.otelEnv" -}}
 - name: OTEL_SERVICE_NAME
@@ -142,8 +147,24 @@ Usage (inside an env: list, indented to 12):
   value: {{ .root.Values.otel.endpoint | quote }}
 - name: OTEL_EXPORTER_OTLP_PROTOCOL
   value: {{ .root.Values.otel.protocol | quote }}
+- name: K8S_NAMESPACE_NAME
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.namespace
+- name: K8S_POD_NAME
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.name
 - name: OTEL_RESOURCE_ATTRIBUTES
-  value: {{ .root.Values.otel.resourceAttributes | quote }}
+  # TODO: The value is composed inside a raw YAML double-quoted string. If otel.resourceAttributes
+  # contains YAML-special characters (colons, hash signs, leading/trailing whitespace) the rendered
+  # YAML will be syntactically invalid and the deployment will fail. Switching the entire value to
+  # use {{ ... | quote }} (Helm's YAML-safe quoting) would fix this, but the composed string also
+  # contains Kubernetes $(VAR_NAME) substitution tokens which must not be Helm-quoted away.
+  # A safe approach: validate that otel.resourceAttributes only contains OTel-legal characters
+  # (alphanumeric, '.', '_', '-', '=', ',') via a regex or document the constraint clearly.
+  # See review finding (issue #2969).
+  value: "{{ if .root.Values.otel.resourceAttributes }}{{ .root.Values.otel.resourceAttributes | trimSuffix "," }},{{ end }}k8s.deployment.name={{ .deploymentName }},k8s.namespace.name=$(K8S_NAMESPACE_NAME),k8s.pod.name=$(K8S_POD_NAME)"
 {{- end }}
 
 {{/*

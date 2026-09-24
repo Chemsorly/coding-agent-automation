@@ -520,7 +520,7 @@ public sealed class JobSpecBuilderAdditionalTests
     }
 
     [Fact]
-    public void Build_WhenOtelVarsNotSet_NoOptionalOtelEnvVars()
+    public void Build_WhenOtelVarsNotSet_NoOptionalOtelEndpointAndProtocol()
     {
         var origEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
         var origProtocol = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_PROTOCOL");
@@ -539,12 +539,50 @@ public sealed class JobSpecBuilderAdditionalTests
             var env = job.Spec.Template.Spec.Containers[0].Env;
             env.Should().NotContain(e => e.Name == "OTEL_EXPORTER_OTLP_ENDPOINT");
             env.Should().NotContain(e => e.Name == "OTEL_EXPORTER_OTLP_PROTOCOL");
-            env.Should().NotContain(e => e.Name == "OTEL_RESOURCE_ATTRIBUTES");
+            // OTEL_RESOURCE_ATTRIBUTES is always set (service.instance.id + k8s attrs are unconditional)
+            env.Should().Contain(e => e.Name == "OTEL_RESOURCE_ATTRIBUTES");
         }
         finally
         {
             Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT", origEndpoint);
             Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_PROTOCOL", origProtocol);
+            Environment.SetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES", origAttrs);
+        }
+    }
+
+    [Fact]
+    public void Build_SetsOtelServiceNameToStableWorkerName()
+    {
+        // OTEL_SERVICE_NAME is always "coding-agent-worker" — not per-job.
+        var template = GenericTemplate();
+        var ctx = BaseCtx() with { JobName = "caa-test-job" };
+
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var env = job.Spec.Template.Spec.Containers[0].Env;
+        env.Should().Contain(e => e.Name == "OTEL_SERVICE_NAME" && e.Value == "coding-agent-worker");
+    }
+
+    [Fact]
+    public void Build_SetsServiceInstanceIdAndJobNameInResourceAttributes()
+    {
+        var origAttrs = Environment.GetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES");
+        try
+        {
+            Environment.SetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES", null);
+            var template = GenericTemplate();
+            var ctx = BaseCtx() with { JobName = "caa-test-job" };
+
+            var job = JobSpecBuilder.Build(template, ctx);
+
+            var env = job.Spec.Template.Spec.Containers[0].Env;
+            var attrsEntry = env.FirstOrDefault(e => e.Name == "OTEL_RESOURCE_ATTRIBUTES");
+            attrsEntry.Should().NotBeNull("OTEL_RESOURCE_ATTRIBUTES must always be set");
+            attrsEntry!.Value.Should().Contain("service.instance.id=caa-test-job");
+            attrsEntry.Value.Should().Contain("k8s.job.name=caa-test-job");
+        }
+        finally
+        {
             Environment.SetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES", origAttrs);
         }
     }
