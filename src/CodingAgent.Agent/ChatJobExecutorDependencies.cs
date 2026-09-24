@@ -24,4 +24,13 @@ public sealed record ChatJobExecutorDependencies(
     /// does not force a real 10s wait.
     /// </summary>
     public TimeSpan ChatTaskCompletionGracePeriod { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Delegate used to start a child process in <see cref="ChatJobExecutor.HandleFetchModelsAsync"/>.
+    /// Defaults to <see cref="System.Diagnostics.Process.Start(System.Diagnostics.ProcessStartInfo)"/>.
+    /// Override in tests to capture the <see cref="System.Diagnostics.ProcessStartInfo"/> passed to the
+    /// process starter and assert that OTEL environment variables have been stripped.
+    /// </summary>
+    public Func<System.Diagnostics.ProcessStartInfo, System.Diagnostics.Process?> ProcessStarter { get; init; }
+        = System.Diagnostics.Process.Start;
 }
