@@ -52,6 +52,14 @@ public static class PipelineConstants
     /// <summary>Number of output lines to include in chat history summaries and log messages.</summary>
     public const int OutputTailLineCount = 10;
 
+    /// <summary>
+    /// Number of output lines to persist in <see cref="PipelineRunSummary.OutputTail"/> for display
+    /// on the run detail page after completion. Distinct from <see cref="OutputTailLineCount"/> which
+    /// is used for agent prompt context (10 lines). 200 is sufficient for operator investigation of
+    /// a failed run without inflating summary storage significantly.
+    /// </summary>
+    public const int OutputTailCapacity = 200;
+
     /// <summary>Fallback text when agent produces no output.</summary>
     public const string NoOutputFallback = "(no output)";
 
