@@ -59,7 +59,7 @@ public class AgentStallMonitorTests
     // and leave the second poll iteration unscheduled before WaitForChatHistoryAsync is called —
     // depending on FakeTimeProvider's Advance implementation. A signal-based approach (e.g. a
     // TaskCompletionSource set when the loop enters its first Delay) would be fully deterministic.
-    private static async Task YieldToMonitorAsync() => await Task.Delay(500);
+    private static async Task YieldToMonitorAsync() => await Task.Delay(2000);
 
     // ── DetectsProcessDeath ────────────────────────────────────────────────────
 

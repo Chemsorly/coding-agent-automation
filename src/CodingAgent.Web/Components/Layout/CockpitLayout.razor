@@ -11,6 +11,7 @@
 @inject IFaroService Faro
 @inject NotificationFaroBridge FaroBridge
 @inject IJSRuntime JS
+@inject NavigationManager Nav
 
 @*
     Cockpit shell — the redesigned frontend's layout (see docs/frontend-redesign-handoff.md).
@@ -19,9 +20,9 @@
     Nav destinations that aren't built yet render inert ("soon"); they light up as their slices land.
 *@
 
-<div class="cockpit">
+<div class="cockpit @(_sidebarOpen ? "sidebar-open" : "")">
 
-    <nav class="cockpit-sidebar" aria-label="Main navigation">
+    <nav class="cockpit-sidebar @(_sidebarOpen ? "is-open" : "")" id="cockpit-nav" aria-label="Main navigation">
         <div class="cockpit-brand">
             <span class="cockpit-brand-mark"><Icon Name="bot" Size="19" /></span>
             <span class="cockpit-brand-text">
@@ -31,44 +32,44 @@
         </div>
 
         <div class="cockpit-nav">
-            <NavLink class="cockpit-nav-link" href="overview" Match="NavLinkMatch.Prefix">
+            <NavLink class="cockpit-nav-link" href="overview" Match="NavLinkMatch.Prefix" aria-label="Overview">
                 <span class="cockpit-nav-icon"><Icon Name="monitor" Size="18" /></span><span class="cockpit-nav-text">Overview</span>
             </NavLink>
-            <NavLink class="cockpit-nav-link" href="work" Match="NavLinkMatch.Prefix">
+            <NavLink class="cockpit-nav-link" href="work" Match="NavLinkMatch.Prefix" aria-label="Work">
                 <span class="cockpit-nav-icon"><Icon Name="clipboard-list" Size="18" /></span><span class="cockpit-nav-text">Work</span>
             </NavLink>
-            <NavLink class="cockpit-nav-link" href="runs" Match="NavLinkMatch.Prefix">
+            <NavLink class="cockpit-nav-link" href="runs" Match="NavLinkMatch.Prefix" aria-label="Runs">
                 <span class="cockpit-nav-icon"><Icon Name="scroll-text" Size="18" /></span><span class="cockpit-nav-text">Runs</span>
             </NavLink>
-            <NavLink class="cockpit-nav-link" href="fleet" Match="NavLinkMatch.Prefix">
+            <NavLink class="cockpit-nav-link" href="fleet" Match="NavLinkMatch.Prefix" aria-label="Fleet">
                 <span class="cockpit-nav-icon"><Icon Name="bot" Size="18" /></span><span class="cockpit-nav-text">Fleet</span>
             </NavLink>
-            <NavLink class="cockpit-nav-link" href="attention" Match="NavLinkMatch.Prefix">
+            <NavLink class="cockpit-nav-link" href="attention" Match="NavLinkMatch.Prefix" aria-label="Attention">
                 <span class="cockpit-nav-icon"><Icon Name="alert-triangle" Size="18" /></span><span class="cockpit-nav-text">Attention</span>
             </NavLink>
-            <NavLink class="cockpit-nav-link" href="insights" Match="NavLinkMatch.Prefix">
+            <NavLink class="cockpit-nav-link" href="insights" Match="NavLinkMatch.Prefix" aria-label="Insights">
                 <span class="cockpit-nav-icon"><Icon Name="bar-chart-2" Size="18" /></span><span class="cockpit-nav-text">Insights</span>
             </NavLink>
-            <NavLink class="cockpit-nav-link" href="pipelines" Match="NavLinkMatch.Prefix">
+            <NavLink class="cockpit-nav-link" href="pipelines" Match="NavLinkMatch.Prefix" aria-label="Pipelines">
                 <span class="cockpit-nav-icon"><Icon Name="refresh-cw" Size="18" /></span><span class="cockpit-nav-text">Pipelines</span>
             </NavLink>
-            <NavLink class="cockpit-nav-link" href="consolidation" Match="NavLinkMatch.Prefix">
+            <NavLink class="cockpit-nav-link" href="consolidation" Match="NavLinkMatch.Prefix" aria-label="Consolidation">
                 <span class="cockpit-nav-icon"><Icon Name="layers" Size="18" /></span>
                 <span class="cockpit-nav-text">Consolidation</span>
             </NavLink>
-            <NavLink class="cockpit-nav-link" href="settings" Match="NavLinkMatch.Prefix">
+            <NavLink class="cockpit-nav-link" href="settings" Match="NavLinkMatch.Prefix" aria-label="Settings">
                 <span class="cockpit-nav-icon"><Icon Name="settings" Size="18" /></span><span class="cockpit-nav-text">Settings</span>
             </NavLink>
 
             <div class="cockpit-nav-sep"></div>
             <span class="cockpit-nav-group">Tools</span>
-            <NavLink class="cockpit-nav-link" href="knowledge" Match="NavLinkMatch.Prefix">
+            <NavLink class="cockpit-nav-link" href="knowledge" Match="NavLinkMatch.Prefix" aria-label="Knowledge">
                 <span class="cockpit-nav-icon"><Icon Name="brain" Size="18" /></span><span class="cockpit-nav-text">Knowledge</span>
             </NavLink>
-            <NavLink class="cockpit-nav-link" href="agent-chat" Match="NavLinkMatch.Prefix">
+            <NavLink class="cockpit-nav-link" href="agent-chat" Match="NavLinkMatch.Prefix" aria-label="Agent Chat">
                 <span class="cockpit-nav-icon"><Icon Name="message-circle" Size="18" /></span><span class="cockpit-nav-text">Agent Chat</span>
             </NavLink>
-            <NavLink class="cockpit-nav-link" href="about" Match="NavLinkMatch.Prefix">
+            <NavLink class="cockpit-nav-link" href="about" Match="NavLinkMatch.Prefix" aria-label="About">
                 <span class="cockpit-nav-icon"><Icon Name="info" Size="18" /></span><span class="cockpit-nav-text">About</span>
             </NavLink>
         </div>
@@ -82,8 +83,17 @@
         </div>
     </nav>
 
+    @if (_sidebarOpen)
+    {
+        <div class="cockpit-sidebar-backdrop" @onclick="CloseSidebar" aria-hidden="true"></div>
+    }
+
     <div class="cockpit-main">
         <div class="cockpit-topbar">
+            <button class="cockpit-hamburger" @onclick="ToggleSidebar" aria-label="Toggle navigation menu" aria-expanded="@_sidebarOpen" aria-controls="cockpit-nav">
+                <Icon Name="menu" Size="20" />
+            </button>
+
             <label class="cockpit-project-switcher" title="Project scope">
                 <svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
                 <select value="@State.SelectedProjectId" @onchange="OnProjectChanged" aria-label="Project scope">
@@ -121,6 +131,9 @@
 @code {
     private IReadOnlyList<PipelineProject> _projects = [];
 
+    // Mobile sidebar overlay state.
+    private bool _sidebarOpen;
+
     // Global keyboard help (ported from the retired MainLayout — the '?' overlay + Escape).
     private DotNetObjectReference<CockpitLayout>? _dotNetRef;
     private bool _showShortcutHelp;
@@ -132,6 +145,16 @@
     {
         State.OnChange += HandleStateChanged;
         State.OnProjectChanged += HandleProjectChanged;
+        // TODO [WARNING]: Nav.LocationChanged is subscribed here (synchronous OnInitialized) but
+        // unsubscribed only in DisposeAsync. If the component is disposed before OnInitializedAsync
+        // completes (rapid navigation), HandleLocationChanged may fire on a partially-initialised or
+        // disposed component. InvokeAsync(StateHasChanged) on a disposed component logs an
+        // ObjectDisposedException (Blazor swallows it, but it is a latent reliability issue).
+        // A disposed-flag guard in HandleLocationChanged would prevent spurious invocations.
+        // Also: NavigationManager is a scoped singleton; if DisposeAsync is never called (circuit
+        // drops abruptly without IAsyncDisposable teardown), the handler keeps the component alive.
+        // A synchronous IDisposable.Dispose fallback would close that leak path.
+        Nav.LocationChanged += HandleLocationChanged;
     }
 
     protected override async Task OnInitializedAsync()
@@ -191,6 +214,41 @@
     }
 
     private void HandleStateChanged() => InvokeAsync(StateHasChanged);
+
+    // ── Mobile sidebar overlay ──────────────────────────────────────────────
+
+    private void ToggleSidebar()
+    {
+        _sidebarOpen = !_sidebarOpen;
+    }
+
+    private void CloseSidebar()
+    {
+        if (_sidebarOpen)
+        {
+            _sidebarOpen = false;
+        }
+    }
+
+    /// <summary>
+    /// Closes the sidebar whenever the user navigates to a new page.
+    /// Subscribed in OnInitialized, unsubscribed in DisposeAsync.
+    /// </summary>
+    private void HandleLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        if (_sidebarOpen)
+        {
+            _sidebarOpen = false;
+            // LocationChanged fires on the NavigationManager thread; must marshal to the render thread.
+            // TODO [WARNING]: InvokeAsync return value is not observed. If the circuit is already disposed
+            // when LocationChanged fires (user navigates away while the component is tearing down),
+            // InvokeAsync may throw ObjectDisposedException as an unobserved faulted task. This is
+            // consistent with the existing HandleStateChanged pattern, but LocationChanged is more likely
+            // to fire during disposal than OnChange. Consider wrapping with try/catch inside the lambda
+            // passed to InvokeAsync, or guarding with an _isDisposed flag set in DisposeAsync.
+            InvokeAsync(StateHasChanged);
+        }
+    }
 
     // Theme follows the app's shared toggle (data-theme + localStorage). App.razor applies the
     // stored theme before Blazor renders; this just syncs the button icon and flips it on click.
@@ -256,7 +314,10 @@
         switch (key)
         {
             case "Escape":
-                if (_showShortcutHelp)
+                // Priority: sidebar open → shortcut help → propagate to pages.
+                if (_sidebarOpen)
+                    _sidebarOpen = false;
+                else if (_showShortcutHelp)
                     _showShortcutHelp = false;
                 else
                     OnEscapePressed?.Invoke();
@@ -287,6 +348,7 @@
     {
         State.OnChange -= HandleStateChanged;
         State.OnProjectChanged -= HandleProjectChanged;
+        Nav.LocationChanged -= HandleLocationChanged;
         // Push disconnect while JS is still available (ported from MainLayout; FaroService swallows a dead circuit).
         await Faro.PushEventAsync("blazor.circuit.disconnected");
         try { await JS.InvokeVoidAsync("unregisterGlobalKeyboardHandler"); }

@@ -158,11 +158,11 @@ public class SettingsPageComponentTests : BunitContext
     [Fact]
     public void Settings_ClickAddRepoProvider_ShowsFormWithBaseBranch()
     {
-        var component = Render<Settings>();
+        // Navigate to Repository Providers section via URL (NavLink sections are URL-driven)
+        var nav = Services.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>();
+        nav.NavigateTo($"http://localhost/settings?section={SettingsNodes.ProvidersRepository}");
 
-        // Navigate to Repository Providers section via tree nav
-        var repoNode = component.FindAll(".tree-node").First(n => n.TextContent.Contains("Repository"));
-        repoNode.Click();
+        var component = Render<Settings>();
 
         var addButton = component.FindAll(".btn-add").First(b => b.TextContent.Contains("Repository"));
         addButton.Click();
@@ -174,11 +174,11 @@ public class SettingsPageComponentTests : BunitContext
     [Fact]
     public void Settings_ClickAddAgentProvider_ShowsFormWithExecutablePath()
     {
-        var component = Render<Settings>();
+        // Navigate to Agent Providers section via URL (NavLink sections are URL-driven)
+        var nav = Services.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>();
+        nav.NavigateTo($"http://localhost/settings?section={SettingsNodes.ProvidersAgent}");
 
-        // Navigate to Agent Providers section via tree nav
-        var agentNode = component.FindAll(".tree-node").First(n => n.TextContent.Contains("Agent"));
-        agentNode.Click();
+        var component = Render<Settings>();
 
         var addButton = component.FindAll(".btn-add").First(b => b.TextContent.Contains("Agent"));
         addButton.Click();
@@ -309,9 +309,15 @@ public class SettingsPageComponentTests : BunitContext
         // Default section is Issue Providers — issue provider is visible
         Assert.Contains("My Issues", component.Markup);
 
-        // Navigate to Repository section to see repo provider
-        var repoNode = component.FindAll(".tree-node").First(n => n.TextContent.Contains("Repository"));
-        repoNode.Click();
+        // Navigate to Repository section to see repo provider — use URL (NavLink sections are URL-driven)
+        // TODO [WARNING]: nav.NavigateTo then Render<Settings>() creates a new component instance (running
+        // OnInitializedAsync) rather than updating the existing mounted component. The scenario "user clicks
+        // a nav link → currently-rendered Settings page updates its section" is therefore untested. To test
+        // that, call nav.NavigateTo on the already-rendered component and assert that `component.Markup`
+        // (the same instance) reflects the new section without a full re-render.
+        var nav = Services.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>();
+        nav.NavigateTo($"http://localhost/settings?section={SettingsNodes.ProvidersRepository}");
+        component = Render<Settings>();
         Assert.Contains("My Repo", component.Markup);
     }
 
@@ -370,5 +376,39 @@ public class SettingsPageComponentTests : BunitContext
 
         Assert.Contains("aria-labelledby=\"configure-labels-title\"", razorContent);
         Assert.Contains("HandleConfigureLabelsKeyDown", razorContent);
+    }
+
+    [Fact]
+    public void Settings_SectionFromQuery_OnInitialized_ShowsCorrectSection()
+    {
+        // Arrange: supply section query param via the NavigationManager URL before rendering
+        // (bUnit forbids passing SupplyParameterFromQuery params via Render<T>() builder)
+        var nav = Services.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>();
+        nav.NavigateTo($"http://localhost/settings?section={SettingsNodes.ProvidersPipeline}");
+
+        var component = Render<Settings>();
+
+        // The Pipeline provider section should be shown, not the default Issue provider section
+        Assert.Contains("Pipeline Provider", component.Markup);
+        Assert.DoesNotContain("+ Add Issue Provider", component.Markup);
+    }
+
+    [Fact]
+    public void Settings_SectionFromQuery_OnParametersSet_UpdatesSection()
+    {
+        // Arrange: render with the default section (Issue Providers)
+        var nav = Services.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>();
+        nav.NavigateTo("http://localhost/settings");
+        var component = Render<Settings>();
+        Assert.Contains("Issue Providers", component.Markup);
+
+        // Act: simulate in-app navigation (Back/Forward/NavLink) by navigating with the bUnit
+        // FakeNavigationManager. bUnit's FakeNavigationManager raises LocationChanged, which Blazor
+        // re-supplies SupplyParameterFromQuery parameters, triggering OnParametersSetAsync on the
+        // already-rendered component instance.
+        nav.NavigateTo($"http://localhost/settings?section={SettingsNodes.ProvidersRepository}");
+
+        // Assert: the displayed section has updated on the same component instance
+        Assert.Contains("Repository Provider", component.Markup);
     }
 }

@@ -3,156 +3,140 @@
 @using CodingAgent.Web.Services
 @inject IPipelineApiConfigClient ConfigClient
 
+@*
+    TODO [WARNING]: NavLink uses Match="NavLinkMatch.All", which requires the full URL (path + query
+    string) to match exactly for the `active` CSS class to be applied. This is correct for the current
+    single-query-param pattern (?section=<value>), but if any additional query parameter is ever
+    appended to the settings URL, all nav items will silently lose the `active` class. Consider
+    switching to a custom active-class strategy (e.g. comparing only the `section` query param in
+    code-behind) if the settings URL is extended in the future.
+*@
 <div class="settings-tree">
     <div class="tree-group">
-        <div class="tree-group-header" @onclick="ToggleProviders" aria-expanded="@_providersExpanded.ToString().ToLower()">
+        <button class="tree-group-header" @onclick="ToggleProviders" aria-expanded="@_providersExpanded.ToString().ToLower()">
             <span class="tree-chevron"><Icon Name="@(_providersExpanded ? "chevron-down" : "chevron-right")" /></span>
             Providers
-        </div>
+        </button>
         @if (_providersExpanded)
         {
             <div class="tree-group-children">
-                <div class="tree-node @(SelectedNode == SettingsNodes.ProvidersIssue ? "active" : "")"
-                     @onclick="() => SelectNode(SettingsNodes.ProvidersIssue)">
+                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.ProvidersIssue}")" Match="NavLinkMatch.All">
                     Issue
-                </div>
-                <div class="tree-node @(SelectedNode == SettingsNodes.ProvidersRepository ? "active" : "")"
-                     @onclick="() => SelectNode(SettingsNodes.ProvidersRepository)">
+                </NavLink>
+                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.ProvidersRepository}")" Match="NavLinkMatch.All">
                     Repository
-                </div>
-                <div class="tree-node @(SelectedNode == SettingsNodes.ProvidersAgent ? "active" : "")"
-                     @onclick="() => SelectNode(SettingsNodes.ProvidersAgent)">
+                </NavLink>
+                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.ProvidersAgent}")" Match="NavLinkMatch.All">
                     Agent
-                </div>
-                <div class="tree-node @(SelectedNode == SettingsNodes.ProvidersPipeline ? "active" : "")"
-                     @onclick="() => SelectNode(SettingsNodes.ProvidersPipeline)">
+                </NavLink>
+                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.ProvidersPipeline}")" Match="NavLinkMatch.All">
                     Pipeline
-                </div>
+                </NavLink>
             </div>
         }
     </div>
 
     <div class="tree-group">
-        <div class="tree-group-header" @onclick="ToggleProjects" aria-expanded="@_projectsExpanded.ToString().ToLower()">
+        <button class="tree-group-header" @onclick="ToggleProjects" aria-expanded="@_projectsExpanded.ToString().ToLower()">
             <span class="tree-chevron"><Icon Name="@(_projectsExpanded ? "chevron-down" : "chevron-right")" /></span>
             Projects
-        </div>
+        </button>
         @if (_projectsExpanded)
         {
             <div class="tree-group-children">
-                <div class="tree-node @(SelectedNode == SettingsNodes.Projects ? "active" : "")"
-                     @onclick="() => SelectNode(SettingsNodes.Projects)">
+                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.Projects}")" Match="NavLinkMatch.All">
                     Manage
-                </div>
+                </NavLink>
                 @foreach (var project in _projects)
                 {
                     var nodeId = $"{SettingsNodes.ProjectDetail}:{project.Id}";
                     var isDefault = project.Id == WellKnownIds.DefaultProjectId;
-                    <div class="tree-node @(SelectedNode == nodeId ? "active" : "")"
-                         @onclick="() => SelectNode(nodeId)">
+                    <NavLink class="tree-node" href="@($"settings?section={Uri.EscapeDataString(nodeId)}")" Match="NavLinkMatch.All">
                         @project.Name
                         @if (isDefault)
                         {
                             <span class="badge-default">default</span>
                         }
-                    </div>
+                    </NavLink>
                 }
             </div>
         }
     </div>
 
     <div class="tree-group">
-        <div class="tree-group-header" @onclick="TogglePipeline" aria-expanded="@_pipelineExpanded.ToString().ToLower()">
+        <button class="tree-group-header" @onclick="TogglePipeline" aria-expanded="@_pipelineExpanded.ToString().ToLower()">
             <span class="tree-chevron"><Icon Name="@(_pipelineExpanded ? "chevron-down" : "chevron-right")" /></span>
             Global Defaults
-        </div>
+        </button>
         @if (_pipelineExpanded)
         {
             <div class="tree-group-children">
-                <div class="tree-node @(SelectedNode == SettingsNodes.PipelineGeneral ? "active" : "")"
-                     @onclick="() => SelectNode(SettingsNodes.PipelineGeneral)">
+                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.PipelineGeneral}")" Match="NavLinkMatch.All">
                     General
-                </div>
-                <div class="tree-node @(SelectedNode == SettingsNodes.PipelineLoop ? "active" : "")"
-                     @onclick="() => SelectNode(SettingsNodes.PipelineLoop)">
+                </NavLink>
+                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.PipelineLoop}")" Match="NavLinkMatch.All">
                     Pipeline Loop
-                </div>
-                <div class="tree-node @(SelectedNode == SettingsNodes.PipelinePrompts ? "active" : "")"
-                     @onclick="() => SelectNode(SettingsNodes.PipelinePrompts)">
+                </NavLink>
+                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.PipelinePrompts}")" Match="NavLinkMatch.All">
                     Prompts
-                </div>
-                <div class="tree-node @(SelectedNode == SettingsNodes.PipelineDecomposition ? "active" : "")"
-                     @onclick="() => SelectNode(SettingsNodes.PipelineDecomposition)">
+                </NavLink>
+                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.PipelineDecomposition}")" Match="NavLinkMatch.All">
                     Decomposition
-                </div>
-                <div class="tree-node @(SelectedNode == SettingsNodes.PipelineImplementation ? "active" : "")"
-                     @onclick="() => SelectNode(SettingsNodes.PipelineImplementation)">
+                </NavLink>
+                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.PipelineImplementation}")" Match="NavLinkMatch.All">
                     Implementation
-                </div>
-                <div class="tree-node @(SelectedNode == SettingsNodes.PipelineReview ? "active" : "")"
-                     @onclick="() => SelectNode(SettingsNodes.PipelineReview)">
+                </NavLink>
+                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.PipelineReview}")" Match="NavLinkMatch.All">
                     Review
-                </div>
-                <div class="tree-node @(SelectedNode == SettingsNodes.PipelineConsolidation ? "active" : "")"
-                     @onclick="() => SelectNode(SettingsNodes.PipelineConsolidation)">
+                </NavLink>
+                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.PipelineConsolidation}")" Match="NavLinkMatch.All">
                     Consolidation
-                </div>
-                <div class="tree-node @(SelectedNode == SettingsNodes.PipelineAdvanced ? "active" : "")"
-                     @onclick="() => SelectNode(SettingsNodes.PipelineAdvanced)">
+                </NavLink>
+                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.PipelineAdvanced}")" Match="NavLinkMatch.All">
                     Advanced
-                </div>
+                </NavLink>
             </div>
         }
     </div>
 
     <div class="tree-group">
-        <div class="tree-group-header" @onclick="ToggleLabelRouting" aria-expanded="@_labelRoutingExpanded.ToString().ToLower()">
+        <button class="tree-group-header" @onclick="ToggleLabelRouting" aria-expanded="@_labelRoutingExpanded.ToString().ToLower()">
             <span class="tree-chevron"><Icon Name="@(_labelRoutingExpanded ? "chevron-down" : "chevron-right")" /></span>
             Label Routing
-        </div>
+        </button>
         @if (_labelRoutingExpanded)
         {
             <div class="tree-group-children">
-                <div class="tree-node @(SelectedNode == SettingsNodes.AgentProfiles ? "active" : "")"
-                     @onclick="() => SelectNode(SettingsNodes.AgentProfiles)">
+                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.AgentProfiles}")" Match="NavLinkMatch.All">
                     Agent Profiles
-                </div>
-                <div class="tree-node @(SelectedNode == SettingsNodes.QualityGateConfigs ? "active" : "")"
-                     @onclick="() => SelectNode(SettingsNodes.QualityGateConfigs)">
+                </NavLink>
+                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.QualityGateConfigs}")" Match="NavLinkMatch.All">
                     Quality Gate Configs
-                </div>
-                <div class="tree-node @(SelectedNode == SettingsNodes.ReviewerConfigs ? "active" : "")"
-                     @onclick="() => SelectNode(SettingsNodes.ReviewerConfigs)">
+                </NavLink>
+                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.ReviewerConfigs}")" Match="NavLinkMatch.All">
                     Reviewer Configs
-                </div>
+                </NavLink>
             </div>
         }
     </div>
 
     <div class="tree-group">
-        <div class="tree-group-header" @onclick="ToggleDataManagement" aria-expanded="@_dataManagementExpanded.ToString().ToLower()">
+        <button class="tree-group-header" @onclick="ToggleDataManagement" aria-expanded="@_dataManagementExpanded.ToString().ToLower()">
             <span class="tree-chevron"><Icon Name="@(_dataManagementExpanded ? "chevron-down" : "chevron-right")" /></span>
             Data Management
-        </div>
+        </button>
         @if (_dataManagementExpanded)
         {
             <div class="tree-group-children">
-                <div class="tree-node @(SelectedNode == SettingsNodes.ConfigImportExport ? "active" : "")"
-                     @onclick="() => SelectNode(SettingsNodes.ConfigImportExport)">
+                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.ConfigImportExport}")" Match="NavLinkMatch.All">
                     Import / Export
-                </div>
+                </NavLink>
             </div>
         }
     </div>
 </div>
 
 @code {
-    [Parameter]
-    public string SelectedNode { get; set; } = string.Empty;
-
-    [Parameter]
-    public EventCallback<string> OnNodeSelected { get; set; }
-
     private bool _providersExpanded = true;
     private bool _projectsExpanded = true;
     private bool _pipelineExpanded = true;
@@ -195,10 +179,5 @@
     private void ToggleDataManagement()
     {
         _dataManagementExpanded = !_dataManagementExpanded;
-    }
-
-    private async Task SelectNode(string nodeId)
-    {
-        await OnNodeSelected.InvokeAsync(nodeId);
     }
 }

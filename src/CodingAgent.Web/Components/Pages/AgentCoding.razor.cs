@@ -41,6 +41,11 @@ public partial class AgentCoding : IDisposable
     private PipelineJobTemplate? _drawerTemplate => PageService.IssueDrawerTemplate;
     private bool _drawerDispatching => PageService.IssueDrawerDispatching;
 
+    // Trigger button references for focus-return on drawer close
+    private ElementReference _issueDrawerTrigger;
+    private ElementReference _prDrawerTrigger;
+    private ElementReference _epicDrawerTrigger;
+
     // PR Drawer UI State
     private bool _prDrawerOpen => PageService.IsPrDrawerOpen;
     private PipelineJobTemplate? _prDrawerTemplate => PageService.PrDrawerTemplate;
@@ -348,7 +353,12 @@ public partial class AgentCoding : IDisposable
         if (error != null) _errorMessage = error;
     }
 
-    private void CloseDrawer() => PageService.CloseIssueDrawer();
+    private async Task CloseDrawer()
+    {
+        PageService.CloseIssueDrawer();
+        if (_issueDrawerTrigger.Id != null)
+            await _issueDrawerTrigger.FocusAsync();
+    }
 
     private async Task DrawerPrevPage()
     {
@@ -421,7 +431,12 @@ public partial class AgentCoding : IDisposable
         if (error != null) _errorMessage = error;
     }
 
-    private void ClosePrDrawer() => PageService.ClosePrDrawer();
+    private async Task ClosePrDrawer()
+    {
+        PageService.ClosePrDrawer();
+        if (_prDrawerTrigger.Id != null)
+            await _prDrawerTrigger.FocusAsync();
+    }
 
     private async Task PrDrawerNextPage()
     {
@@ -479,7 +494,12 @@ public partial class AgentCoding : IDisposable
         if (error != null) _errorMessage = error;
     }
 
-    private void CloseEpicDrawer() => PageService.CloseEpicDrawer();
+    private async Task CloseEpicDrawer()
+    {
+        PageService.CloseEpicDrawer();
+        if (_epicDrawerTrigger.Id != null)
+            await _epicDrawerTrigger.FocusAsync();
+    }
 
     private async Task EpicDrawerNextPage()
     {
