@@ -168,6 +168,28 @@ public static class PipelineTelemetry
         "Stale agent branches deleted (no open PR, inactive issue label)");
 
     /// <summary>
+    /// Counts agent PRs that left the <c>agent:done</c> list (merged or closed without merge).
+    /// Emitted once per PR via <c>HousekeepingService.RecordPrOutcomesAsync</c>.
+    /// Tagged by <c>outcome</c>: <c>merged</c> or <c>closed_unmerged</c>.
+    /// </summary>
+    public static readonly Counter<long> PullRequestsClosed = Meter.CreateCounter<long>(
+        "pipeline.pull_requests.closed", "{pull_request}",
+        "Agent PRs that were merged or closed. Emitted once per PR by the housekeeping service.");
+
+    /// <summary>
+    /// Histogram of time from PR creation to merge, in seconds.
+    /// Only emitted for <c>outcome=merged</c> PRs where <c>PullRequestSummary.CreatedAt</c> is set.
+    /// Uses <c>UtcNow</c> as a proxy for merge time (approximation error ≈ poll interval).
+    /// Buckets: 1h, 4h, 12h, 24h, 48h, 1 week.
+    /// </summary>
+    public static readonly Histogram<double> PullRequestTimeToMerge = Meter.CreateHistogram<double>(
+        "pipeline.pull_requests.time_to_merge", "s", "Time from PR creation to merge in seconds",
+        advice: new InstrumentAdvice<double>
+        {
+            HistogramBucketBoundaries = [3600, 14400, 43200, 86400, 172800, 604800]
+        });
+
+    /// <summary>
     /// Counts re-probe batches fired for PRs whose first mergeability probe returned
     /// <c>unknown</c>. Tagged by <c>repo_provider_id</c>. Each increment represents one
     /// <c>Task.Delay</c> + re-probe pass (i.e. one cycle had at least one Unknown PR).

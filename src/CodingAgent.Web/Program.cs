@@ -2,6 +2,7 @@ using CodingAgent.Web;
 using CodingAgent.Api.Client;
 using CodingAgent.AgentGateway;
 using CodingAgent.Infrastructure;
+using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.Pipeline;
 using CodingAgent.Web.Models;
@@ -164,6 +165,11 @@ app.ValidateShutdownBudget();
 app.ValidateDiWiring();
 app.RegisterObservableGauges();
 app.MapApplicationEndpoints();
+
+// Pre-initialize github.api.requests counter tag combinations so Prometheus increase() works
+// on first increment. Must run after builder.Build() so the MeterProvider is active.
+GitHubTelemetry.PreInitialize();
+
 await app.RunConsolidationStartupAsync();
 
 app.Run();
