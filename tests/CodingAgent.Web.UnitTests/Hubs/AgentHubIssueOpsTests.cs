@@ -270,6 +270,73 @@ public sealed class AgentHubIssueOpsTests
             "gated label must be rejected before the DB fallback is attempted");
     }
 
+    [Fact]
+    public async Task RequestLabelChange_UnknownRun_ProviderFactoryThrowsNotSupportedException_LogsAndDoesNotRethrow()
+    {
+        // Arrange — trigger the DB fallback path (no in-memory run).
+        const string jobId = "job-nse";
+        const string issueIdentifier = "org/repo#77";
+        const string issueProviderConfigId = "ip-cfg-nse";
+
+        _mockFacade.Setup(f => f.GetRun(jobId)).Returns((PipelineRun?)null);
+
+        // Step 2: metadata lookup succeeds so ResolveIssueProviderForRunAsync advances past the
+        // null-metadata guard.
+        // TODO (WARNING — Correctness): This mock satisfies GetWorkItemIssueMetadataAsync for any
+        // call. The production fallback path calls it twice (once inside ResolveIssueProviderForRunAsync
+        // and once in the fallback body itself). In this test CreateIssueProvider throws before the
+        // second call is reached, so only one invocation occurs, but a future refactor that reorders
+        // or removes those calls could allow this setup to silently satisfy both, masking a regression.
+        // Consider constraining to Times(1) or splitting into two explicit setups when the call order
+        // becomes observable in a future test.
+        _mockFacade
+            .Setup(f => f.GetWorkItemIssueMetadataAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((issueIdentifier, issueProviderConfigId));
+
+        // Step 3: provider config resolves successfully so ResolveIssueProviderForRunAsync
+        // reaches CreateIssueProvider.  Without this setup ProviderConfigResolver throws
+        // InvalidOperationException → re-wrapped as HubException → caught by the OLD narrow
+        // catch, making the test pass vacuously against unfixed code.
+        var providerConfig = new ProviderConfig
+        {
+            Id = issueProviderConfigId,
+            Kind = ProviderKind.Issue,
+            DisplayName = "Unsupported Provider",
+            ProviderType = "Unsupported"
+        };
+        _mockFacade
+            .Setup(f => f.GetProviderConfigByIdAsync(issueProviderConfigId, ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(providerConfig);
+
+        // Step 4: CreateIssueProvider throws NotSupportedException — the exception that previously
+        // escaped the catch (HubException) clause and faulted the hub method.
+        _mockFacade
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Throws(new NotSupportedException("Unsupported issue provider type: 'Unsupported'"));
+
+        var hub = CreateHub();
+
+        // Act — must not throw regardless of the NotSupportedException thrown by the factory.
+        await hub.RequestLabelChange(jobId, AgentLabels.Error);
+
+        // Assert — the fallback logged a warning (log-and-continue contract).
+        // The catch body calls: _logger.Warning("RequestLabelChange fallback failed for job {JobId}
+        // (label={Label}): {Message} — label swap skipped", jobId, newLabel, ex.Message)
+        // That resolves to Warning<string,string,string>(string template, string p0, string p1, string p2).
+        // TODO (WARNING — TestQualityReviewer): The assertion below does not pin p0 (jobId) or p1
+        // (newLabel), so it could vacuously pass if an earlier _logger.Warning call using a "fallback"
+        // template were reached due to a mis-configured stub. Strengthen by replacing It.IsAny<string>()
+        // for p0 and p1 with It.Is<string>(s => s == jobId) and It.Is<string>(s => s == AgentLabels.Error).
+        _mockLogger.Verify(
+            l => l.Warning(
+                It.Is<string>(s => s.Contains("fallback failed")),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>()),
+            Times.Once,
+            "fallback must log a Warning when the issue provider factory throws NotSupportedException");
+    }
+
     // ── RequestLabelChange — invalid label ───────────────────────────────
 
     [Fact]
