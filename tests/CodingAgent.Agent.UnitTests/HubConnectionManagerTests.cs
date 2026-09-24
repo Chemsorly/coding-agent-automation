@@ -5,6 +5,8 @@ using CodingAgent.Pipeline.Models;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
+using Microsoft.AspNetCore.Http.Connections;
+using Microsoft.AspNetCore.Http.Connections.Client;
 using Microsoft.AspNetCore.SignalR.Client;
 using Moq;
 
@@ -212,6 +214,70 @@ public class HubConnectionManagerTests : IAsyncDisposable
 
         // Verify round-trip: unescaping the escaped value should return the original agentId
         Uri.UnescapeDataString(escapedAgentId).Should().Be(agentId.Value);
+    }
+
+    // ── Transport / SkipNegotiation tests ───────────────────────────────
+
+    // TODO: Add a symmetric unit test for AgentHubConnection (in CodingAgent.Api.Client) that
+    // reflection-inspects AgentHubConnection._connection using the same technique below, to give
+    // a fast, Kestrel-free guarantee that SkipNegotiation=true and Transports=WebSockets are set
+    // on that client as well. The integration test in HubAndDiTests covers connectivity but cannot
+    // distinguish WebSocket from long-poll in a single-replica test server. (Issue #2970 review)
+
+    /// <summary>
+    /// Verifies that <see cref="HubConnectionManager"/> configures <c>SkipNegotiation=true</c>
+    /// and <c>Transports=WebSockets</c> on the built <see cref="HubConnection"/>.
+    ///
+    /// <b>Why this matters:</b> Without these options the SignalR client performs a negotiate
+    /// round-trip before the WebSocket upgrade. In a multi-replica deployment without session
+    /// affinity, the negotiate POST and the WebSocket upgrade can land on different pods — the
+    /// second pod doesn't know the connection token and returns 404, causing a long-poll fallback.
+    /// <c>SkipNegotiation=true</c> eliminates the negotiate step entirely (Issue #2970).
+    ///
+    /// <b>Verification approach:</b> <see cref="HubConnection"/> does not expose the configured
+    /// transport options via public API. We verify them via reflection on the internal
+    /// <c>HttpConnectionOptions</c> object stored in the connection's <c>_connectionFactory</c>.
+    /// This is two hops of reflection, but both field names (<c>_connectionFactory</c> →
+    /// <c>_httpConnectionOptions</c>) have been stable across SignalR versions and are the only
+    /// practical approach for unit-testing transport configuration without a live server.
+    /// </summary>
+    [Fact]
+    public void Constructor_TransportOptions_SkipNegotiationAndWebSocketsAreSet()
+    {
+        // Arrange & Act
+        var manager = CreateManager("http://localhost:5000", "test-agent", "test-api-key");
+
+        // Extract the HttpConnectionOptions from the built HubConnection via reflection.
+        // Path: HubConnection._connectionFactory (HttpConnectionFactory)
+        //       → HttpConnectionFactory._httpConnectionOptions (HttpConnectionOptions)
+        // TODO: If this test fails with a NullReferenceException rather than a clean assertion
+        // failure, a SignalR package update likely renamed _connectionFactory or _httpConnectionOptions.
+        // Check the SignalR client source for the new field names and update the reflection paths
+        // below. The null-forgiving operators (!) below intentionally trade a descriptive assertion
+        // failure (from .Should().NotBeNull()) for a NullReferenceException if execution continues
+        // past a null guard — convert the null checks to early-return Assert.Fail() calls for
+        // cleaner diagnostics if this becomes a recurring maintenance issue. (Issue #2970 review)
+        var connection = manager.Connection;
+        var factoryField = connection.GetType()
+            .GetField("_connectionFactory", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        factoryField.Should().NotBeNull("HubConnection must have a _connectionFactory field");
+
+        var factory = factoryField!.GetValue(connection);
+        factory.Should().NotBeNull("_connectionFactory must not be null after HubConnectionBuilder.Build()");
+
+        var optionsField = factory!.GetType()
+            .GetField("_httpConnectionOptions", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        optionsField.Should().NotBeNull("HttpConnectionFactory must have a _httpConnectionOptions field");
+
+        var opts = optionsField!.GetValue(factory) as Microsoft.AspNetCore.Http.Connections.Client.HttpConnectionOptions;
+        opts.Should().NotBeNull("_httpConnectionOptions must be a non-null HttpConnectionOptions");
+
+        // Assert: both options must be set for Issue #2970 fix to be effective.
+        opts!.SkipNegotiation.Should().BeTrue(
+            "SkipNegotiation=true eliminates the negotiate round-trip that causes 404s across API replicas");
+        opts.Transports.Should().Be(
+            Microsoft.AspNetCore.Http.Connections.HttpTransportType.WebSockets,
+            "Transports must be WebSockets-only when SkipNegotiation=true (required by SignalR)");
     }
 
     // ── DeriveKey tests ─────────────────────────────────────────────────
