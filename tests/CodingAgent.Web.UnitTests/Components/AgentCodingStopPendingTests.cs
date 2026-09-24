@@ -233,6 +233,11 @@ public class AgentCodingStopPendingTests : BunitContext
         await cut.InvokeAsync(() => { });
 
         // Assert: _stopPending is true (same underlying state that showed the old spinner)
+        // TODO: [WARNING] This reflection assertion tests internal state, not observable DOM behaviour.
+        // If _stopPending is set but StateHasChanged is not called, GetStopPending returns true while the
+        // button is still enabled in the DOM — a silent false positive. The DOM assertion below
+        // (stopButtons.All(b => b.HasAttribute("disabled"))) is the meaningful check; this reflection call
+        // adds no independent value and should be removed in favour of relying solely on DOM assertions.
         Assert.True(GetStopPending(cut),
             "_stopPending must be true while the stop is in-flight (same guard as the old spinner)");
 

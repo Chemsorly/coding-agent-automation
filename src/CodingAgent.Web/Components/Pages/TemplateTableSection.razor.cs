@@ -53,6 +53,12 @@ public partial class TemplateTableSection
     private string? _expandedFeaturesTemplateId;
 
     // Number of columns — 9 when Actions is visible (loop inactive), 8 when hidden (loop active).
+    // TODO: [WARNING] _columnCount is an expression-bodied property that reads the [Parameter] IsLoopActive on
+    // every access. It is currently read twice per render (feature-config colspan and label-preview colspan).
+    // Both reads occur in the same synchronous render pass so there is no race today, but if additional
+    // colspan usages are added, each new call re-evaluates IsLoopActive. Consider caching as a local variable
+    // in the render method, or converting to a computed field updated in OnParametersSet, to make the pattern
+    // explicit and safe for future changes.
     private int _columnCount => IsLoopActive ? 8 : 9;
 
     private void ToggleMoveMenu(string? templateId) =>

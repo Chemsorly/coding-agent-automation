@@ -424,6 +424,13 @@
     {
         _loading = true;
         _error = null;
+        // TODO: [WARNING] Resetting _anyRunHasTokens = false here causes a transient render where the Tokens
+        // column header and <col> are absent while _filteredRuns still holds the previous page's rows.
+        // During async data fetch (network delay), this produces a one-frame column misalignment: cells that
+        // were in the token column appear shifted until the new data arrives. Previously the column was always
+        // rendered, so no shift occurred. Fix: either delay the reset until after the new result is assigned,
+        // or suppress intermediate renders by setting _loading = true before the reset and re-rendering only
+        // after both _result and _anyRunHasTokens are updated.
         _anyRunHasTokens = false;
         try
         {

@@ -103,6 +103,10 @@ public class FleetExpandedRowTests : BunitContext
 
         detailLabels.Should().NotContain("Last heartbeat",
             "Last heartbeat is already shown as a column in the collapsed row and must not appear in the expanded row");
+        // TODO: [WARNING] There is no complementary test verifying that "Last heartbeat" IS present as a
+        // column header in the collapsed row (i.e. the field still exists in the table, just not duplicated
+        // in the detail grid). A future change deleting the column from the row header would not be caught
+        // by any test. Add a test asserting Fleet renders a <th> with text "Last heartbeat" in the table header.
     }
 
     [Fact]

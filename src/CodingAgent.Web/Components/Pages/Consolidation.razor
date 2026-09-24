@@ -505,6 +505,11 @@
             _statusIsError = false;
             await LoadDataAsync();
         }
+        // TODO: [WARNING] When cancelled is false (run was not found or already completed server-side),
+        // LoadDataAsync is not called, so _anyRunCancellable retains its previous value. If the UI shows
+        // a Cancel button for a run that is no longer cancellable due to a status race, the Actions column
+        // and button will remain visible after the failed attempt until the next background refresh.
+        // Fix: call LoadDataAsync() unconditionally, or at minimum refresh _anyRunCancellable here.
     }
 
     // TODO(WARNING): This method is `async void`. If LoadDataAsync (or InvokeAsync itself) throws

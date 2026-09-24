@@ -160,6 +160,11 @@
                                                     <div class="cockpit-detail-item">
                                                         <div class="k">Active issue</div>
                                                         <div class="v">
+                                                            @* TODO: [WARNING] When ActiveIssueTitle is null/empty (operationally valid for older job records),
+                                                               the fallback renders "#<identifier>" as plain text with no link to the issue. The previous code
+                                                               rendered a navigable anchor (with an unvalidated XSS risk noted in the removed TODO). Fix: validate
+                                                               ActiveIssueUrl starts with https://, then render as a link; keep the title span as a supplement.
+                                                               Until then, operators on records without a title lose URL navigation entirely. *@
                                                             @if (!string.IsNullOrEmpty(a.ActiveIssueTitle))
                                                             {
                                                                 <span class="monitoring-muted">@a.ActiveIssueTitle</span>
@@ -185,6 +190,11 @@
                                                         @* TODO: Validate that ActivePullRequestUrl starts with https:// before rendering as href.
                                                            Blazor HTML-encodes attribute values but does NOT strip javascript: URI schemes,
                                                            so a malicious/corrupted record could produce a clickable XSS link. *@
+                                                        @* TODO: [WARNING] The raw URL is used as both href and visible link text, which renders
+                                                           long GitHub PR URLs (e.g. https://github.com/org/repo/pull/12345) verbatim in the cell,
+                                                           causing overflow. The previous version used "View PR" as static text with the URL in
+                                                           a title attribute. Revert to "View PR" with title="@a.ActivePullRequestUrl" for better
+                                                           operator readability, and add the https:// prefix validation required by the TODO above. *@
                                                         <div class="v"><a href="@a.ActivePullRequestUrl" target="_blank" rel="noopener noreferrer">@a.ActivePullRequestUrl</a></div>
                                                     </div>
                                                 }

@@ -50,7 +50,7 @@
         <div class="cockpit-stat"><span class="cockpit-stat-l">Active</span><span class="cockpit-stat-v">@_activeCount</span></div>
         <div class="cockpit-stat"><span class="cockpit-stat-l">Queue</span><span class="cockpit-stat-v">@_queueCount</span></div>
         <div class="cockpit-stat"><span class="cockpit-stat-l">Agents</span><span class="cockpit-stat-v">@_agentsOnline</span></div>
-        <div class="cockpit-stat"><span class="cockpit-stat-l">Success · recent</span><span class="cockpit-stat-v">@(_finishedCount > 0 ? $"{_successRate}%" : "—")</span></div>
+        <div class="cockpit-stat"><span class="cockpit-stat-l">Success · last 100</span><span class="cockpit-stat-v">@(_finishedCount > 0 ? $"{_successRate}%" : "—")</span></div>
         @if (_anyRunHasTokens)
         {
             <div class="cockpit-stat"><span class="cockpit-stat-l">Tokens · recent</span><span class="cockpit-stat-v">@CostFormatter.FormatTokens(_tokensRecent)</span></div>
@@ -216,14 +216,10 @@
             _tokensRecent = items.Sum(r => r.TotalTokens);
             _anyRunHasTokens = items.Any(r => r.TotalTokens > 0);
 
-            _attnNeedsRefinement = items.Count(r => r.AnalysisRecommendation == AnalysisGateResult.NotReady);
-            // TODO: [WARNING] _attnFailed counts FinalStep == Failed across all fetched items (including
-            // active runs), while _finishedCount/_successRate are computed from _recentRuns (non-active only).
-            // Active runs should never have FinalStep == Failed, but if they momentarily do, a run could be
-            // double-counted. Verify that Attention.razor also uses the full items list (not _recentRuns) for
-            // its failed count so the two pages remain consistent after this pageSize alignment.
-            _attnFailed = items.Count(r => r.FinalStep == PipelineStep.Failed);
-            _attnPlans = items.Count(r => r.RunType == PipelineRunType.DecompositionAnalysis && r.FinalStep == PipelineStep.Completed);
+            var attn = AttentionAggregator.Aggregate(_recentRuns);
+            _attnNeedsRefinement = attn.NeedsRefinement.Count;
+            _attnFailed = attn.FailedRuns.Count;
+            _attnPlans = attn.PlansToApprove.Count;
         }
         catch (OperationCanceledException) { return; }
         catch { }

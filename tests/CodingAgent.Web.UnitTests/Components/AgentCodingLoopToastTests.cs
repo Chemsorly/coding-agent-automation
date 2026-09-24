@@ -143,6 +143,10 @@ public class AgentCodingLoopToastTests : BunitContext
         var cut = Render<AgentCoding>();
 
         // The circuit-broken bar is a distinct alert state and must remain in the toast stack
+        // TODO: [WARNING] cut.Markup.Should().Contain("Resume") is a substring match against the entire page.
+        // If any other element on the page ever contains "Resume" (e.g. a template status badge), this test
+        // would pass even if the circuit-broken bar were removed. Assert on the specific circuit-broken bar
+        // element (e.g. a data-testid or the .agent-summary-bar with known error-state styles) instead.
         cut.Markup.Should().Contain("Resume",
             "the circuit-broken bar with Resume button must still render when IsCircuitBroken is true");
     }
@@ -156,6 +160,11 @@ public class AgentCodingLoopToastTests : BunitContext
 
         var cut = Render<AgentCoding>();
 
+        // TODO: [WARNING] FindAll("button") searches all buttons on the page. If the inline loop-controls
+        // section is removed (regression), buttons from the template table or elsewhere that contain "Start Loop"
+        // text could satisfy the predicate, producing a false positive. Scope the search to the loop-controls
+        // container element (e.g. by a specific CSS class on that section) to ensure only the intended region
+        // is queried.
         var startButtons = cut.FindAll("button")
             .Where(b => b.TextContent.Contains("Start Loop"))
             .ToList();

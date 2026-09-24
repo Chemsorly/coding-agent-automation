@@ -256,6 +256,13 @@
             var allItems = runs.Items;
 
             // Apply time-window filter if a window is selected (0 = all).
+            // TODO: [WARNING] The pre-filter uses DateTimeOffset.UtcNow (UTC), while the 14-day chart
+            // bucketing below uses DateTimeOffset.Now.Date (local time) and r.StartedAtOffset.LocalDateTime.Date.
+            // On a server whose local timezone differs from UTC, the two systems disagree on day boundaries.
+            // A run at 23:30 UTC on a UTC+2 server is 01:30 local the next day, so it can appear in the
+            // headline _total (accepted by the UTC filter) but land in a different chart bucket — causing
+            // bar totals to diverge from the headline counts. Fix: use a consistent UTC clock throughout
+            // (DateTimeOffset.UtcNow.Date for today, r.StartedAtOffset.UtcDateTime.Date for bucket assignment).
             var items = _recentWindowHours > 0
                 ? allItems.Where(r => r.StartedAtOffset >= DateTimeOffset.UtcNow.AddHours(-_recentWindowHours)).ToList()
                 : allItems.ToList();
@@ -275,6 +282,11 @@
             _totalCost = items.Sum(r => r.TotalCost ?? 0m);
 
             _avgTokens = (long)items.Average(r => (double)r.TotalTokens);
+            // TODO: [WARNING] _avgTokens is computed unconditionally from all items (including zero-token runs)
+            // even when _anyRunHasTokens ends up false. This is not a runtime defect (the stat tile is guarded),
+            // but if _avgTokens is ever read outside the @if (_anyRunHasTokens) guard (e.g. a tooltip or export),
+            // it will silently return a misleading average of zero-only data. Reorder so _anyRunHasTokens is
+            // checked before computing _avgTokens, or guard the Average call: only compute it when any tokens exist.
             _anyRunHasTokens = items.Any(r => r.TotalTokens > 0);
 
             var completedWithTime = items
@@ -287,6 +299,11 @@
             _byType = items.GroupBy(r => RunTypeLabel(r.RunType)).ToDictionary(g => g.Key, g => g.Count());
 
             var today = DateTimeOffset.Now.Date;
+            // TODO: [WARNING] The chart always generates 14 daily buckets regardless of the selected time window.
+            // For sub-daily windows (1h, 6h, 24h) all buckets except today will show zero, and the x-axis labels
+            // show "MMM d" dates where hourly labels would be far more useful. The removed InsightsBucketer provided
+            // window-aware bucketing (hourly for 1h/6h/24h, daily for 7d/all) — that context-sensitivity was lost.
+            // Fix: restore window-aware bucketing, or at minimum skip bucket generation for sub-daily windows.
             _days = Enumerable.Range(0, 14)
                 .Select(i => today.AddDays(-13 + i))
                 .Select(d =>
