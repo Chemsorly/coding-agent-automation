@@ -155,6 +155,7 @@ Usage (inside an env: list, indented to 12):
   valueFrom:
     fieldRef:
       fieldPath: metadata.name
+{{- $userAttrs := .root.Values.otel.resourceAttributes | trimSuffix "," }}
 - name: OTEL_RESOURCE_ATTRIBUTES
   # TODO: The value is composed inside a raw YAML double-quoted string. If otel.resourceAttributes
   # contains YAML-special characters (colons, hash signs, leading/trailing whitespace) the rendered
@@ -164,7 +165,7 @@ Usage (inside an env: list, indented to 12):
   # A safe approach: validate that otel.resourceAttributes only contains OTel-legal characters
   # (alphanumeric, '.', '_', '-', '=', ',') via a regex or document the constraint clearly.
   # See review finding (issue #2969).
-  value: "{{ if .root.Values.otel.resourceAttributes }}{{ .root.Values.otel.resourceAttributes | trimSuffix `,` }},{{ end }}k8s.deployment.name={{ .deploymentName }},k8s.namespace.name=$(K8S_NAMESPACE_NAME),k8s.pod.name=$(K8S_POD_NAME)"
+  value: "{{ if .root.Values.otel.resourceAttributes }}{{ $userAttrs }},{{ end }}k8s.deployment.name={{ .deploymentName }},k8s.namespace.name=$(K8S_NAMESPACE_NAME),k8s.pod.name=$(K8S_POD_NAME)"
 {{- end }}
 
 {{/*
