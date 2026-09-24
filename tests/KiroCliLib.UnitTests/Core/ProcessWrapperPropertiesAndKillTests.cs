@@ -8,6 +8,15 @@ namespace KiroCliLib.UnitTests.Core;
 /// Tests for <see cref="ProcessWrapper"/> properties (IsRunning, ExitCode, ProcessId,
 /// LastOutputTime) and the Kill() method. These paths were previously uncovered.
 /// </summary>
+/// <remarks>
+/// Placed in the "EnvironmentVariables" collection to prevent parallel execution with
+/// other test classes that mutate the parent process environment via
+/// <see cref="Environment.SetEnvironmentVariable"/>. <see cref="ProcessWrapper.StartAsync"/>
+/// copies the current environment into <see cref="System.Diagnostics.ProcessStartInfo.Environment"/>
+/// when building the child PSI, so concurrent env-var mutations can cause the process to fail
+/// to start or produce incorrect inherited state.
+/// </remarks>
+[Collection("EnvironmentVariables")]
 public class ProcessWrapperPropertiesAndKillTests : IDisposable
 {
     private readonly string _workspaceDir;
