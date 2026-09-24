@@ -160,7 +160,7 @@ Usage (inside an env: list, indented to 12):
   # TODO: The value is composed inside a raw YAML double-quoted string. If otel.resourceAttributes
   # contains YAML-special characters (colons, hash signs, leading/trailing whitespace) the rendered
   # YAML will be syntactically invalid and the deployment will fail. Switching the entire value to
-  # use {{ ... | quote }} (Helm's YAML-safe quoting) would fix this, but the composed string also
+  # use Helm's YAML-safe quoting would fix this, but the composed string also
   # contains Kubernetes $(VAR_NAME) substitution tokens which must not be Helm-quoted away.
   # A safe approach: validate that otel.resourceAttributes only contains OTel-legal characters
   # (alphanumeric, '.', '_', '-', '=', ',') via a regex or document the constraint clearly.
