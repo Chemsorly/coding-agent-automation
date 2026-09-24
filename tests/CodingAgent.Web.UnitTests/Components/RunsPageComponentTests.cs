@@ -708,8 +708,8 @@ public class RunsPageComponentTests : BunitContext
     [Fact]
     public async Task RunsTable_InitiatedByFilter_NarrowsDisplayedRows()
     {
-        var loopRun  = MakeSummary("r1", initiatedBy: "loop:issue",  issueIdentifier: "1");
-        var manualRun = MakeSummary("r2", initiatedBy: "manual",     issueIdentifier: "2");
+        var loopRun = MakeSummary("r1", initiatedBy: "loop:issue", issueIdentifier: "1");
+        var manualRun = MakeSummary("r2", initiatedBy: "manual", issueIdentifier: "2");
 
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
@@ -736,8 +736,8 @@ public class RunsPageComponentTests : BunitContext
     [Fact]
     public async Task RunsTable_ClearingInitiatedByFilter_RestoresAllRows()
     {
-        var loopRun   = MakeSummary("r1", initiatedBy: "loop:issue", issueIdentifier: "1");
-        var manualRun = MakeSummary("r2", initiatedBy: "manual",     issueIdentifier: "2");
+        var loopRun = MakeSummary("r1", initiatedBy: "loop:issue", issueIdentifier: "1");
+        var manualRun = MakeSummary("r2", initiatedBy: "manual", issueIdentifier: "2");
 
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
@@ -892,8 +892,8 @@ public class RunsPageComponentTests : BunitContext
     [Fact]
     public async Task RunsTable_PagerCount_ReflectsFilteredRowCount()
     {
-        var implRun   = MakeSummary("r1", runType: PipelineRunType.Implementation, issueIdentifier: "1");
-        var reviewRun = MakeSummary("r2", runType: PipelineRunType.Review,          issueIdentifier: "2");
+        var implRun = MakeSummary("r1", runType: PipelineRunType.Implementation, issueIdentifier: "1");
+        var reviewRun = MakeSummary("r2", runType: PipelineRunType.Review, issueIdentifier: "2");
 
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
@@ -917,7 +917,7 @@ public class RunsPageComponentTests : BunitContext
     public void RunsTable_PagerCount_ShowsTotal_WhenNoFilterActive()
     {
         var run1 = MakeSummary("r1", runType: PipelineRunType.Implementation, issueIdentifier: "1");
-        var run2 = MakeSummary("r2", runType: PipelineRunType.Review,         issueIdentifier: "2");
+        var run2 = MakeSummary("r2", runType: PipelineRunType.Review, issueIdentifier: "2");
 
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
