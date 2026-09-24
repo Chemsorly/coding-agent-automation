@@ -194,8 +194,10 @@ public class ProcessWrapperPropertiesAndKillTests : IDisposable
         // Start the long-running process in the background
         var task = wrapper.StartAsync("hello", _workspaceDir, useResume: false, cts.Token);
 
-        // Give the process time to start and confirm it's running
-        await Task.Delay(300, CancellationToken.None);
+        // Poll until IsRunning becomes true (or timeout). A fixed delay is flaky under load.
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!wrapper.IsRunning && DateTime.UtcNow < deadline)
+            await Task.Delay(50, CancellationToken.None);
         wrapper.IsRunning.Should().BeTrue("process should be running before Kill()");
 
         // Kill it — this covers Kill() body for a running, non-WSL process

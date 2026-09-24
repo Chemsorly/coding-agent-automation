@@ -88,11 +88,11 @@ public static class ApiServiceCollectionExtensions
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<WorkItemFallbackTransitionService>()));
 
         // ── IWorkItemTransitionStore (Spec 048 Phase 2 — DB isolation) ──────
-        // EF-backed WorkItem operations (retry-count, re-queue, provider-config / issue-metadata
+        // Postgres-backed WorkItem operations (retry-count, re-queue, provider-config / issue-metadata
         // reads, throttled LastProgressAt write) for the SignalR agent hub facade. Wired only here
         // in the API host (the sole DB owner) so CodingAgent.AgentGateway carries no
         // Infrastructure.Persistence reference; the facade degrades to no-ops where it is absent.
-        services.AddSingleton<IWorkItemTransitionStore>(sp => new EfWorkItemTransitionStore(
+        services.AddSingleton<IWorkItemTransitionStore>(sp => new PostgresWorkItemTransitionStore(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<WorkItemTransitionService>()));
 
@@ -124,7 +124,7 @@ public static class ApiServiceCollectionExtensions
             new PostgresHarnessSuggestionStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
 
         // ── IKeyValueStore ──────────────────────────────────────────────────
-        services.AddScoped<IKeyValueStore, EfKeyValueStore>();
+        services.AddScoped<IKeyValueStore, PostgresKeyValueStore>();
 
         // ── IFeedbackCommentOutbox ──────────────────────────────────────────
         // Registered as singleton (not scoped) because AgentJobLifecycleService is a singleton
