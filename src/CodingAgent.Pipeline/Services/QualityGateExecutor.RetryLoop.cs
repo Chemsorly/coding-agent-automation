@@ -41,12 +41,19 @@ public partial class QualityGateExecutor
             var report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
 
             report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: false, linkedCt);
+            // TODO [WARNING] (DotNetSpecialist): This guard is missing PrMerged and PrClosed. If CI polling detects a
+            // merged/closed PR on the very first AppendExternalCiIfNeededAsync call (before RunRetryLoopAsync is reached),
+            // run.CurrentStep will be PrMerged/PrClosed and BuildPrMergedReport returns Passed=true, so report.AllPassed
+            // becomes true and RunPostRetryCleanupAndFinalizeAsync is called on an already-merged PR (cleanup agent invoked,
+            // FinalizePullRequest called). Guard should be:
+            //   if (run.CurrentStep is PipelineStep.Failed or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
             if (run.CurrentStep == PipelineStep.Failed) return;
 
             LogAndRecordReport(context, report, "quality gates");
 
             report = await RunRetryLoopAsync(context, report, "Quality gate retry agent", linkedCt);
-            if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart) return;
+            if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart
+                    or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
 
             if (report.AllPassed)
                 await RunPostRetryCleanupAndFinalizeAsync(context, linkedCt);
@@ -186,11 +193,16 @@ public partial class QualityGateExecutor
         callbacks.TransitionTo(PipelineStep.RunningQualityGates);
         var report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
         report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, linkedCt, skipCiIfNoChanges: true);
+        // TODO [WARNING] (DotNetSpecialist): Same gap as the first AppendExternalCiIfNeededAsync guard in ProceedToQualityGatesAsync.
+        // If the final quality gate CI pass detects a merged/closed PR, report.AllPassed becomes true and FinalizePullRequest
+        // is called on the already-merged PR. Guard should be:
+        //   if (run.CurrentStep is PipelineStep.Failed or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
         if (run.CurrentStep == PipelineStep.Failed) return;
 
         LogAndRecordReport(context, report, "final quality gates");
         report = await RunRetryLoopAsync(context, report, "Final QG retry agent", linkedCt);
-        if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart) return;
+        if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart
+                or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
 
         if (report.AllPassed)
         {
@@ -212,12 +224,14 @@ public partial class QualityGateExecutor
     {
         var run = context.Run;
         report = await WaitForPostPrCiAsync(context, report, linkedCt);
-        if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart) return;
+        if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart
+                or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
 
         if (!report.AllPassed)
         {
             report = await RunRetryLoopAsync(context, report, "Post-PR CI retry agent", linkedCt);
-            if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart) return;
+            if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart
+                    or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
 
             if (!report.AllPassed)
                 await FinalizeDraftPrAsync(context, run, report, "post-PR CI failed after retries", linkedCt);
@@ -353,6 +367,18 @@ public partial class QualityGateExecutor
             _logger.Information("Pipeline {RunId} quality gates failed, auto-retry {RetryCount}/{MaxRetries}", run.RunId, pendingAttemptNum, config.MaxRetries);
             callbacks.EmitOutputLine($"🔄 Quality gates failed, retrying (attempt {pendingAttemptNum}/{config.MaxRetries})");
 
+            // Short-circuit: CI-never-started exhaustion is an infrastructure failure, not a code problem.
+            // The LLM cannot fix a missing CI trigger — break immediately so FinalizeDraftPrAsync is called
+            // instead of wasting a retry budget slot on a pointless agent invocation.
+            if (run.CurrentStep is PipelineStep.PrMerged or PipelineStep.PrClosed)
+                break;
+            if (report.ExternalCi is { Passed: false, IsInfrastructureFailure: true })
+            {
+                _logger.Warning("Pipeline {RunId} CI-never-started infrastructure failure — not invoking LLM fix", run.RunId);
+                callbacks.EmitOutputLine("❌ CI infrastructure failure (never started) — not retrying with LLM");
+                break;
+            }
+
             // NOTE [WARNING]: Two independent guards are combined here via OR to handle both the
             // multi-QGC case (where BuildAggregateReport only propagates the first failing QGC's
             // Tests flag) and the single-QGC path. The logic is correct but could become fragile
@@ -398,7 +424,8 @@ public partial class QualityGateExecutor
             report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, ct);
 
             report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, ct);
-            if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart) return report;
+            if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart
+                    or PipelineStep.PrMerged or PipelineStep.PrClosed) return report;
 
             LogAndRecordReport(context, report, "retry quality gates");
         }

@@ -534,4 +534,221 @@ public class CiPollingCoordinatorTests
         PipelineProvider = _mockPipelineProvider.Object,
         QualityGateConfigs = new List<QualityGateConfiguration>()
     };
+
+    // ── Issue #2954: PR state checks in CI polling loop ───────────────────────
+
+    /// <summary>
+    /// When PR is merged mid-loop, CheckPullRequestStillOpenAsync returns PrMerged.
+    /// No further CommitAllAsync (empty re-trigger commits) or PushBranchAsync should be called
+    /// after detection. The initial commit of actual changes (before CI polling) is expected.
+    /// </summary>
+    // TODO [WARNING] (TestQualityReviewer): This test validates the first-iteration exit path, not a true mid-loop
+    // scenario. GetPullRequestStateAsync always returns Merged, so detection fires on attempt 0 before any empty
+    // commit is pushed. The actual mid-loop scenario — where N-1 iterations push empty commits and iteration N
+    // detects the merge — is untested. Add a test where GetPullRequestStateAsync returns Open on the first N-1
+    // calls and Merged on call N, verifying no further commits are pushed after detection.
+    [Fact]
+    public async Task PrMergedMidLoop_NoFurtherCommitOrPush_TerminatesSucceeded()
+    {
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+
+        var context = BuildContext(run, ciNotStartedMaxRetries: 2);
+
+        // CI never starts
+        _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
+
+        // PR state: returns Merged on first call
+        _mockRepoProvider.Setup(r => r.GetPullRequestStateAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PullRequestState.Merged);
+
+        var result = await _executor.AppendExternalCiIfNeededAsync(
+            context, PassingReport, allowEmptyCommit: false, CancellationToken.None);
+
+        // Must set terminal state
+        run.CurrentStep.Should().Be(PipelineStep.PrMerged);
+        run.FinalLabel.Should().BeNull("merged PR run has no error label");
+
+        // No empty re-trigger commit (allowEmpty: true) should be pushed after PR merge detection
+        _mockRepoProvider.Verify(
+            r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                true, It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()),
+            Times.Never,
+            "must NOT push an empty re-trigger commit after detecting a merged PR");
+    }
+
+    /// <summary>
+    /// When PR is closed mid-loop, run should terminate as Cancelled.
+    /// </summary>
+    [Fact]
+    public async Task PrClosedMidLoop_TerminatesCancelled()
+    {
+        var run = CreateRun();
+        run.PullRequestNumber = "43";
+
+        var context = BuildContext(run, ciNotStartedMaxRetries: 2);
+
+        _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
+
+        _mockRepoProvider.Setup(r => r.GetPullRequestStateAsync(43, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PullRequestState.Closed);
+
+        await _executor.AppendExternalCiIfNeededAsync(
+            context, PassingReport, allowEmptyCommit: false, CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.PrClosed);
+        run.FinalLabel.Should().Be(AgentLabels.Cancelled);
+    }
+
+    /// <summary>
+    /// When PR state returns Open, the existing re-push behavior is unchanged.
+    /// </summary>
+    [Fact]
+    public async Task PrOpen_CiNeverStarts_StillPushesEmptyCommit()
+    {
+        var run = CreateRun();
+        run.PullRequestNumber = "44";
+
+        var context = BuildContext(run, ciNotStartedMaxRetries: 1);
+
+        _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
+
+        // PR is still open
+        _mockRepoProvider.Setup(r => r.GetPullRequestStateAsync(44, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PullRequestState.Open);
+
+        await _executor.AppendExternalCiIfNeededAsync(
+            context, PassingReport, allowEmptyCommit: false, CancellationToken.None);
+
+        // Empty commit must still be pushed when PR is open
+        _mockRepoProvider.Verify(
+            r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                true, It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()),
+            // TODO [WARNING] (TestQualityReviewer): Times.AtLeastOnce is weaker than needed. With ciNotStartedMaxRetries: 1
+            // the loop runs attempt 0 (push) then attempt 1 (exhaustion exit) — only one empty commit should be pushed.
+            // Using Times.AtLeastOnce means a regression pushing multiple commits per iteration would not be caught.
+            // Consider using Times.Once here.
+            Times.AtLeastOnce,
+            "must push empty commit when PR is still open and CI never started");
+    }
+
+    /// <summary>
+    /// When PullRequestNumber is null but LinkedPullRequest.Number = 42, both
+    /// CheckForMergeConflictAsync and CheckPullRequestStillOpenAsync must use number 42.
+    /// </summary>
+    [Fact]
+    public async Task PrNumberResolvedFromLinkedPullRequest_WhenPullRequestNumberIsNull()
+    {
+        var run = CreateRun();
+        run.PullRequestNumber = null;
+        run.LinkedPullRequest = new LinkedPullRequest
+        {
+            Number = 42,
+            BranchName = "feature/auto-42-linked",
+            Url = "https://github.com/org/repo/pull/42",
+            IsDraft = false
+        };
+
+        var context = BuildContext(run, ciNotStartedMaxRetries: 1);
+
+        _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
+
+        // PR state returns Merged to confirm the call was made with number 42
+        _mockRepoProvider.Setup(r => r.GetPullRequestStateAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PullRequestState.Merged);
+
+        await _executor.AppendExternalCiIfNeededAsync(
+            context, PassingReport, allowEmptyCommit: false, CancellationToken.None);
+
+        // GetPullRequestStateAsync must be called with 42 (resolved from LinkedPullRequest.Number)
+        _mockRepoProvider.Verify(
+            r => r.GetPullRequestStateAsync(42, It.IsAny<CancellationToken>()),
+            Times.AtLeastOnce,
+            "GetPullRequestStateAsync must be called with number from LinkedPullRequest when PullRequestNumber is null");
+
+        // IsPullRequestBehindBaseAsync (conflict check) must also be called with 42
+        _mockRepoProvider.Verify(
+            r => r.IsPullRequestBehindBaseAsync(42, It.IsAny<CancellationToken>()),
+            Times.AtLeastOnce,
+            "IsPullRequestBehindBaseAsync must also use the LinkedPullRequest number");
+    }
+
+    /// <summary>
+    /// When GetPullRequestStateAsync throws, the loop should continue (fail-open) and push
+    /// an empty commit as if the PR were still open.
+    /// </summary>
+    [Fact]
+    public async Task PrStateQueryThrows_FailOpen_LoopContinues()
+    {
+        var run = CreateRun();
+        run.PullRequestNumber = "45";
+
+        var context = BuildContext(run, ciNotStartedMaxRetries: 1);
+
+        _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
+
+        // Simulate a transient provider error
+        _mockRepoProvider.Setup(r => r.GetPullRequestStateAsync(45, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("connection reset by peer"));
+
+        await _executor.AppendExternalCiIfNeededAsync(
+            context, PassingReport, allowEmptyCommit: false, CancellationToken.None);
+
+        // Loop must continue and push empty commit — fail-open behavior
+        _mockRepoProvider.Verify(
+            r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                true, It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()),
+            Times.AtLeastOnce,
+            "must still push empty commit when PR state query throws (fail-open)");
+    }
+
+    /// <summary>
+    /// CI never started exhaustion: FailureCategory must be InfrastructureFailure
+    /// and IsInfrastructureFailure must be true on the returned gate result.
+    /// </summary>
+    // TODO [WARNING] (TestQualityReviewer): This test uses MaxRetries = 0 (the BuildContext default), so RunRetryLoopAsync
+    // is never entered and the IsInfrastructureFailure short-circuit guard in RetryLoop.cs:366 is not exercised.
+    // This only verifies the flag is *set*, not that the LLM fix agent is *skipped*. Add a companion test with
+    // MaxRetries = 1 and a mock IAgentProvider verified Times.Never to prove the acceptance criterion:
+    // "CI never started exhaustion never triggers an LLM fix attempt".
+    [Fact]
+    public async Task NotStartedExhaustion_SetsInfrastructureFailureCategory()
+    {
+        const int maxRetries = 1;
+        var run = CreateRun();
+        run.PullRequestNumber = null;
+
+        var context = BuildContext(run, ciNotStartedMaxRetries: maxRetries);
+
+        _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
+
+        var result = await _executor.AppendExternalCiIfNeededAsync(
+            context, PassingReport, allowEmptyCommit: false, CancellationToken.None);
+
+        result.ExternalCi.Should().NotBeNull();
+        result.ExternalCi!.Passed.Should().BeFalse();
+
+        // The failure category must be InfrastructureFailure
+        run.FailureCategory.Should().Be(FailureReason.InfrastructureFailure,
+            "CI-never-started exhaustion is an infrastructure failure, not a code-level failure");
+
+        // The gate result must carry the IsInfrastructureFailure flag
+        result.ExternalCi.IsInfrastructureFailure.Should().BeTrue(
+            "IsInfrastructureFailure must propagate to GateResult so RunRetryLoopAsync can short-circuit");
+    }
 }

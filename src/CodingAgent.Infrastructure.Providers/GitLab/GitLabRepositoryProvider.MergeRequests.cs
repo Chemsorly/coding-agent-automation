@@ -160,6 +160,26 @@ public partial class GitLabRepositoryProvider
     // ─── Merge Request CRUD ──────────────────────────────────────────────────────
 
     /// <inheritdoc />
+    public async Task<PullRequestState> GetPullRequestStateAsync(int pullRequestNumber, CancellationToken ct)
+    {
+        var mr = await ExecuteWithResilienceAsync(
+            client =>
+            {
+                var mrClient = client.GetMergeRequest(ProjectId);
+                return Task.Run(() => mrClient[pullRequestNumber], ct);
+            },
+            "GetPullRequestState", ct);
+
+        // GitLab MR state values: "opened", "closed", "locked" (open), "merged"
+        return mr.State switch
+        {
+            "merged" => PullRequestState.Merged,
+            "closed" => PullRequestState.Closed,
+            _ => PullRequestState.Open   // "opened", "locked", or any unknown future value
+        };
+    }
+
+    /// <inheritdoc />
     public async Task<string> CreatePullRequestAsync(PullRequestInfo prInfo, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(prInfo);

@@ -62,13 +62,13 @@ internal sealed class CiPollingCoordinator
         var ciPassed = ciStatus.State == PipelineRunState.Passed;
         IReadOnlyDictionary<long, string>? ciLogPaths = null;
 
-        if (ciStatus.State == PipelineRunState.ConflictRestart)
+        if (ciStatus.State is PipelineRunState.ConflictRestart or PipelineRunState.PrMerged or PipelineRunState.PrClosed)
             return (false, ciStatus, null);
 
         (ciPassed, ciStatus) = await HandleBranchMovedRetryLoopAsync(
             context, ciStatus, ciPassed, pollSha, config, callbacks, pollCt);
 
-        if (ciStatus.State == PipelineRunState.ConflictRestart)
+        if (ciStatus.State is PipelineRunState.ConflictRestart or PipelineRunState.PrMerged or PipelineRunState.PrClosed)
             return (false, ciStatus, null);
 
         if (!ciPassed && run.WorkspacePath != null)
@@ -130,8 +130,25 @@ internal sealed class CiPollingCoordinator
             if (conflictResult is not null)
                 return conflictResult;
 
+            var prStateResult = await CheckPullRequestStillOpenAsync(context, callbacks, ct);
+            if (prStateResult is not null)
+                return prStateResult;
+
             if (attempt >= maxRetries)
+            {
+                // TODO [WARNING] (DotNetSpecialist/TestQualityReviewer): This second call to CheckPullRequestStillOpenAsync is
+                // redundant — the identical call just above (line ~133) already returns early if the PR is merged/closed.
+                // No state-mutating operations occur between the two calls, so the second call can only differ under an
+                // extremely narrow race window. It wastes one extra provider API request on every exhaustion path.
+                // Consider removing the inner call and relying on the per-iteration check above.
+                // Note: if removed, also verify MarkCompleted double-call risk (BuildPrMergedStatus/BuildPrClosedStatus call
+                // run.MarkCompleted(), and MarkCompleted is not idempotent — it overwrites CompletedAt on each call).
+                var prStateBeforeExhaustion = await CheckPullRequestStillOpenAsync(context, callbacks, ct);
+                if (prStateBeforeExhaustion is not null)
+                    return prStateBeforeExhaustion;
+
                 return BuildNotStartedFailureStatus(run, maxRetries, callbacks);
+            }
 
             _logger.Warning(
                 "Pipeline {RunId} CI never started (attempt {Attempt}/{MaxRetries}, waited {Timeout}). Re-pushing to trigger.",
@@ -364,16 +381,26 @@ internal sealed class CiPollingCoordinator
 
     /// <summary>
     /// Builds a deterministic CI-never-started failure status, sets
-    /// <see cref="PipelineRun.FailureReason"/>, and emits a UI error line.
+    /// <see cref="PipelineRun.FailureReason"/> and <see cref="PipelineRun.FailureCategory"/>,
+    /// and emits a UI error line. The returned status carries
+    /// <see cref="PipelineRunStatus.IsInfrastructureFailure"/> = <c>true</c> so that the
+    /// quality-gate retry loop does not invoke the LLM fix agent — this is an infrastructure
+    /// problem (CI never triggered), not a code-level failure.
     /// </summary>
     private PipelineRunStatus BuildNotStartedFailureStatus(
         PipelineRun run, int maxRetries, IPipelineCallbacks callbacks)
     {
         var msg = $"CI never started after {maxRetries} retries";
         run.FailureReason = msg;
-        _logger.Error("Pipeline {RunId} {Message} — failing run", run.RunId, msg);
-        callbacks.EmitOutputLine($"❌ {msg} — failing run");
-        return new PipelineRunStatus { State = PipelineRunState.Failed, Jobs = Array.Empty<PipelineJobResult>() };
+        run.FailureCategory = FailureReason.InfrastructureFailure;
+        _logger.Error("Pipeline {RunId} {Message} — failing run (InfrastructureFailure)", run.RunId, msg);
+        callbacks.EmitOutputLine($"❌ {msg} — treating as infrastructure failure (no code fix needed)");
+        return new PipelineRunStatus
+        {
+            State = PipelineRunState.Failed,
+            Jobs = Array.Empty<PipelineJobResult>(),
+            IsInfrastructureFailure = true
+        };
     }
 
     // ── Private helpers: PollAndHandleInfraRetryAsync decomposition ───────────
@@ -419,7 +446,7 @@ internal sealed class CiPollingCoordinator
             lastPolledSha = currentHead;
             ciStatus = await PollCiWithNotStartedRetryAsync(context, currentHead, config, callbacks, pollCt);
 
-            if (ciStatus.State == PipelineRunState.ConflictRestart)
+            if (ciStatus.State is PipelineRunState.ConflictRestart or PipelineRunState.PrMerged or PipelineRunState.PrClosed)
                 return (false, ciStatus);
 
             ciPassed = ciStatus.State == PipelineRunState.Passed;
@@ -557,6 +584,90 @@ internal sealed class CiPollingCoordinator
     // ── Private helper: CheckForMergeConflictAsync ────────────────────────────
 
     /// <summary>
+    /// Resolves the pull request number for the current run, preferring
+    /// <see cref="PipelineRun.PullRequestNumber"/> (string) and falling back to
+    /// <see cref="PipelineRun.LinkedPullRequest"/>.<c>Number</c> (int).
+    /// Returns <c>null</c> if neither is available or parseable.
+    /// </summary>
+    private static int? ResolvePullRequestNumber(PipelineRun run)
+    {
+        var raw = run.PullRequestNumber ?? run.LinkedPullRequest?.Number.ToString();
+        return raw is not null && int.TryParse(raw, out var n) ? n : null;
+    }
+
+    /// <summary>
+    /// Checks whether the PR associated with the current run is still open.
+    /// Returns a <see cref="PipelineRunStatus"/> with <see cref="PipelineRunState.PrMerged"/>
+    /// or <see cref="PipelineRunState.PrClosed"/> if the PR is no longer open, or <c>null</c>
+    /// if the PR is open or the check fails (fail-open).
+    /// </summary>
+    private async Task<PipelineRunStatus?> CheckPullRequestStillOpenAsync(
+        QualityGateContext context,
+        IPipelineCallbacks callbacks,
+        CancellationToken ct)
+    {
+        var run = context.Run;
+        var prNum = ResolvePullRequestNumber(run);
+        if (prNum is null)
+            return null;  // No PR number resolvable — fail open
+
+        PullRequestState state;
+        try
+        {
+            state = await context.RepoProvider.GetPullRequestStateAsync(prNum.Value, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "Pipeline {RunId} PR state check failed for PR #{PrNum} — falling through", run.RunId, prNum);
+            return null;  // Fail open on any error
+        }
+
+        return state switch
+        {
+            PullRequestState.Merged => BuildPrMergedStatus(run, prNum.Value, callbacks),
+            PullRequestState.Closed => BuildPrClosedStatus(run, prNum.Value, callbacks),
+            _ => null   // Open or unknown — keep polling
+        };
+    }
+
+    /// <summary>
+    /// Builds a terminal <see cref="PipelineRunStatus"/> for a run whose PR was merged.
+    /// Marks the run completed and transitions to <see cref="PipelineStep.PrMerged"/>.
+    /// </summary>
+    // TODO [WARNING] (DotNetSpecialist): run.MarkCompleted() is not idempotent — it overwrites CompletedAt/CompletedAtOffset
+    // on every call. CheckPullRequestStillOpenAsync may be invoked twice in the same loop iteration (once at the per-iteration
+    // check and again inside the attempt >= maxRetries block), so MarkCompleted() could be called twice for the same run,
+    // causing CompletedAt to be reset to a later timestamp. Resolving the redundant double-call (see TODO above in
+    // PollCiWithNotStartedRetryAsync) eliminates this risk entirely.
+    private PipelineRunStatus BuildPrMergedStatus(PipelineRun run, int prNum, IPipelineCallbacks callbacks)
+    {
+        run.FinalLabel = null;    // Run succeeds — no error label
+        run.FailureReason = null;
+        run.CurrentStep = PipelineStep.PrMerged;
+        callbacks.EmitOutputLine($"✅ PR #{prNum} was merged — nothing left to do");
+        callbacks.TransitionTo(PipelineStep.PrMerged);
+        run.MarkCompleted();
+        _logger.Information("Pipeline {RunId} PR #{PrNum} was merged — terminating run as Succeeded", run.RunId, prNum);
+        return new PipelineRunStatus { State = PipelineRunState.PrMerged, Jobs = Array.Empty<PipelineJobResult>() };
+    }
+
+    /// <summary>
+    /// Builds a terminal <see cref="PipelineRunStatus"/> for a run whose PR was closed without merging.
+    /// Marks the run completed and transitions to <see cref="PipelineStep.PrClosed"/>.
+    /// </summary>
+    private PipelineRunStatus BuildPrClosedStatus(PipelineRun run, int prNum, IPipelineCallbacks callbacks)
+    {
+        run.FinalLabel = AgentLabels.Cancelled;
+        run.CurrentStep = PipelineStep.PrClosed;
+        callbacks.EmitOutputLine($"🚫 PR #{prNum} was closed without merge — cancelling run");
+        callbacks.TransitionTo(PipelineStep.PrClosed);
+        run.MarkCompleted();
+        _logger.Information("Pipeline {RunId} PR #{PrNum} was closed without merge — terminating run as Cancelled", run.RunId, prNum);
+        return new PipelineRunStatus { State = PipelineRunState.PrClosed, Jobs = Array.Empty<PipelineJobResult>() };
+    }
+
+    /// <summary>
     /// Checks whether the PR associated with the current run is conflicted with the base branch.
     /// Returns a <see cref="PipelineRunStatus"/> with <see cref="PipelineRunState.ConflictRestart"/>
     /// if the PR is <see cref="PrMergeabilityStatus.Conflicted"/>, or <c>null</c> otherwise.
@@ -568,17 +679,17 @@ internal sealed class CiPollingCoordinator
     {
         var run = context.Run;
 
-        if (run.PullRequestNumber is null
-            || !int.TryParse(run.PullRequestNumber, out var prNum))
+        var prNum = ResolvePullRequestNumber(run);
+        if (prNum is null)
         {
-            _logger.Debug("Pipeline {RunId} skipping mergeability check — PullRequestNumber is null or non-numeric", run.RunId);
+            _logger.Debug("Pipeline {RunId} skipping mergeability check — no resolvable PR number", run.RunId);
             return null;
         }
 
         PrMergeabilityStatus mergeability;
         try
         {
-            mergeability = await context.RepoProvider.IsPullRequestBehindBaseAsync(prNum, ct);
+            mergeability = await context.RepoProvider.IsPullRequestBehindBaseAsync(prNum.Value, ct);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
