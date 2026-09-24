@@ -3,6 +3,12 @@ using CodingAgent.Pipeline.Services;
 
 namespace CodingAgent.Pipeline.UnitTests;
 
+// TODO: [WARNING] If a future test in this class mutates the process-wide environment
+// (e.g. setting OTEL_* keys to verify that GitProcessRunner.RunAsync strips them, following the
+// pattern used in SetupCommandRunnerTests), it must be decorated with
+// [Collection("EnvironmentVariables")] to prevent parallel execution from causing race conditions
+// with other environment-mutating tests in the same project. The attribute is intentionally omitted
+// here because no such test exists yet, but the omission is flagged as a latent hazard.
 [Trait("Category", "Integration")]
 public class GitProcessRunnerTests : IDisposable
 {

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using KiroCliLib.Core;
 
 namespace CodingAgent.Pipeline.Services;
 
@@ -30,6 +31,7 @@ public static class GitProcessRunner
 
         process.StartInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
         process.StartInfo.Environment["GIT_PAGER"] = "";
+        ChildProcessEnvironment.StripTelemetry(process.StartInfo);
 
         ct.ThrowIfCancellationRequested();
 
