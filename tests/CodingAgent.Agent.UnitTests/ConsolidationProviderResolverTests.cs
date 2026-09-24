@@ -264,7 +264,7 @@ public class ConsolidationProviderResolverTests
         var job = CreateJob(ConsolidationRunType.RefactoringDetection, [repoConfig, agentConfig, issueConfig]);
 
         var act = () => resolver.ResolveRefactoringProvidersAsync(job, CancellationToken.None);
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*accessToken*");
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*accessToken*");
     }
 
     [Fact]
@@ -289,7 +289,7 @@ public class ConsolidationProviderResolverTests
         var job = CreateJob(ConsolidationRunType.RefactoringDetection, [repoConfig, agentConfig, issueConfig]);
 
         var act = () => resolver.ResolveRefactoringProvidersAsync(job, CancellationToken.None);
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*projectId*");
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*projectId*");
     }
 
     [Fact]
@@ -315,7 +315,12 @@ public class ConsolidationProviderResolverTests
         var job = CreateJob(ConsolidationRunType.RefactoringDetection, [repoConfig, agentConfig, issueConfig]);
 
         var act = () => resolver.ResolveRefactoringProvidersAsync(job, CancellationToken.None);
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*projectId*");
+        // TODO: The pattern "*projectId*" matches the substring "invalid projectId" in the
+        // ParseProjectId exception message, but the assertion is fragile: it tests the key name
+        // rather than the bad value. A more discriminating assertion would be
+        // .WithMessage("*not-a-number*") to match the actual invalid value, consistent with the
+        // analogous tests in AgentProviderFactoryTests and GitLabFactoryRegistrationTests.
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*projectId*");
     }
 
     // ── Refactoring — Proxy-based token refresh (issue #2620) ────────────

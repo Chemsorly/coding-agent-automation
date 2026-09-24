@@ -1,3 +1,4 @@
+using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.GitLab;
 using CodingAgent.Pipeline;
@@ -300,27 +301,18 @@ internal sealed class ConsolidationProviderResolver
     private static GitLabIssueProvider CreateGitLabIssueProvider(ProviderConfig issueConfig)
     {
         var apiUrl = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ApiUrl, ProviderSettingKeys.DefaultGitLabApiUrl);
-        var accessToken = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.AccessToken);
-        if (accessToken is null)
-        {
-            Serilog.Log.Error("Issue provider '{DisplayName}' is missing 'accessToken' setting for consolidation", issueConfig.DisplayName);
-            throw new InvalidOperationException(
-                $"Issue provider '{issueConfig.DisplayName}' is missing 'accessToken' setting for consolidation");
-        }
-        var projectIdStr = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId);
-        if (projectIdStr is null)
-        {
-            Serilog.Log.Error("Issue provider '{DisplayName}' is missing 'projectId' setting for consolidation", issueConfig.DisplayName);
-            throw new InvalidOperationException(
-                $"Issue provider '{issueConfig.DisplayName}' is missing 'projectId' setting for consolidation");
-        }
 
-        if (!int.TryParse(projectIdStr, out var projectId))
-        {
-            Serilog.Log.Error("Issue provider '{DisplayName}' has invalid projectId: '{ProjectId}'. Expected a numeric value", issueConfig.DisplayName, projectIdStr);
-            throw new InvalidOperationException(
-                $"Issue provider '{issueConfig.DisplayName}' has invalid projectId: '{projectIdStr}'. Expected a numeric value.");
-        }
+        // Validate required settings through the shared helper (throws ArgumentException with all
+        // missing keys in one message, consistent with ProviderFactory and AgentProviderFactory).
+        ProviderFactory.ValidateRequiredSettings(issueConfig,
+            ProviderSettingKeys.AccessToken,
+            ProviderSettingKeys.ProjectId);
+
+        var accessToken = issueConfig.Settings[ProviderSettingKeys.AccessToken];
+
+        // Parse projectId through the shared helper (throws ArgumentException, consistent with
+        // ProviderFactory.ParseProjectId used by all other GitLab provider construction paths).
+        var projectId = ProviderFactory.ParseProjectId(issueConfig);
 
         return new GitLabIssueProvider(apiUrl, accessToken, projectId);
     }
