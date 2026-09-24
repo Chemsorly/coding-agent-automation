@@ -115,20 +115,7 @@ internal static class InsightsBucketer
         var todayUtc = new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero);
         var windowStart = todayUtc.AddDays(-(dayCount - 1));
 
-        return Enumerable.Range(0, dayCount)
-            .Select(i =>
-            {
-                var slotStart = windowStart.AddDays(i);
-                var slotEnd = slotStart.AddDays(1);
-                var slotItems = items
-                    .Where(r => r.StartedAtOffset >= slotStart && r.StartedAtOffset < slotEnd)
-                    .ToList();
-                return new TimeBucket(slotStart,
-                    slotItems.Count(r => r.FinalStep == PipelineStep.Completed),
-                    slotItems.Count(r => r.FinalStep == PipelineStep.Failed),
-                    slotItems.Count(r => r.FinalStep == PipelineStep.Cancelled));
-            })
-            .ToList();
+        return BuildDailySlots(items, windowStart, dayCount);
     }
 
     private static IReadOnlyList<TimeBucket> BuildAllWindowBuckets(
@@ -163,6 +150,19 @@ internal static class InsightsBucketer
         // If capped, start from the most recent MaxAllWindowBuckets days
         var windowStart = todayUtc.AddDays(-(bucketCount - 1));
 
+        return BuildDailySlots(items, windowStart, bucketCount);
+    }
+
+    /// <summary>
+    /// Builds <paramref name="bucketCount"/> consecutive one-day <see cref="TimeBucket"/> objects
+    /// starting at <paramref name="windowStart"/>. Shared by <see cref="BuildDailyBuckets"/> and
+    /// <see cref="BuildAllWindowBuckets"/> to avoid duplicating the slot-construction loop.
+    /// </summary>
+    private static IReadOnlyList<TimeBucket> BuildDailySlots(
+        IReadOnlyList<PipelineRunSummary> items,
+        DateTimeOffset windowStart,
+        int bucketCount)
+    {
         return Enumerable.Range(0, bucketCount)
             .Select(i =>
             {
