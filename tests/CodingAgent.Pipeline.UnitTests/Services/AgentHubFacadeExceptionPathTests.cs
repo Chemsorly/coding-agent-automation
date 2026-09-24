@@ -67,7 +67,7 @@ public sealed class AgentHubFacadeExceptionPathTests : IDisposable
             var effectiveFactory = dbFactory ?? new ThrowingDbContextFactory();
             var effectiveTransition = transitionService
                 ?? new WorkItemTransitionService(effectiveFactory, NullLogger<WorkItemTransitionService>.Instance);
-            store = new EfWorkItemTransitionStore(effectiveFactory, effectiveTransition);
+            store = new PostgresWorkItemTransitionStore(effectiveFactory, effectiveTransition);
         }
 
         return new AgentHubFacade(new AgentHubFacadeDependencies(
