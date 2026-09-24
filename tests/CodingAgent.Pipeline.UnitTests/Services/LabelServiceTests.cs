@@ -39,10 +39,15 @@ public sealed class LabelServiceTests
     private static PipelineRun MakeRun() =>
         PipelineRun.CreateImplementation(new PipelineRunCreationParams
         {
-            RunId = "r1", IssueIdentifier = "GH-1", IssueTitle = "T",
-            IssueProviderConfigId = "github", RepoProviderConfigId = "repo",
-            AgentId = "a1", AgentProviderConfigId = "kiro",
-            InitiatedBy = "test", StartedAt = DateTimeOffset.UtcNow
+            RunId = "r1",
+            IssueIdentifier = "GH-1",
+            IssueTitle = "T",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "repo",
+            AgentId = "a1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "test",
+            StartedAt = DateTimeOffset.UtcNow
         });
 
     // ── Constructor guards ────────────────────────────────────────────────
@@ -319,7 +324,9 @@ public sealed class LabelServiceTests
         mockProvider.Setup(p => p.GetIssueAsync(new IssueIdentifier("GH-1"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
-                Identifier = "GH-1", Title = "T", Description = "D",
+                Identifier = "GH-1",
+                Title = "T",
+                Description = "D",
                 Labels = new[] { AgentLabels.InProgress }
             });
         mockProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
