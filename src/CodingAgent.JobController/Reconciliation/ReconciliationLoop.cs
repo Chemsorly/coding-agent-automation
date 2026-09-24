@@ -350,8 +350,8 @@ public sealed class ReconciliationLoop
                 await _workItemClient.PostStatusAsync(item.Id, new WorkItemStatusUpdate
                 {
                     Status = nameof(WorkItemStatus.Failed),
-                    ErrorMessage = $"No K8s Job created within {_options.ChatPodConnectTimeoutSeconds}s of dispatch",
-                    FailureReason = "DispatchTimeout"
+                    ErrorMessage = $"No live K8s Job found {_options.ChatPodConnectTimeoutSeconds}s after dispatch",
+                    FailureReason = nameof(FailureReason.Timeout)
                 }, ct);
 
                 WorkDistributionTelemetry.LogTerminalStatus(
@@ -416,18 +416,23 @@ public sealed class ReconciliationLoop
                 ? "no caa/work-item-id label"
                 : $"workItem {workItemId.Value} not in active set (terminal or missing)";
 
-            // Respect a minimum retention window before deleting terminal jobs.
+            // Respect a minimum retention window before deleting orphaned/stale jobs.
             // This lets kubectl logs remain readable after a job completes/fails
             // and prevents the orphan sweep from racing with the K8s TTL controller.
-            // Only delete if the job finished more than LogRetentionSeconds ago (default 10 min),
-            // or if it has no completion time (truly orphaned / never started properly).
+            // A job with no StartTime yet is brand-new (the K8s job controller has not had its
+            // first sync), NOT "never started properly" — its WorkItem may still be committing
+            // Pending → Dispatched. CreationTimestamp covers this window: it is set by the API
+            // server at object-creation time (1s resolution), providing the same 600s protection
+            // as StartTime. Jobs with no timestamps at all (hand-built objects) have no anchor
+            // and are deleted immediately.
             var completionTime = job.Status?.CompletionTime
-                ?? job.Status?.StartTime; // fallback: use start time if no completion recorded
+                ?? job.Status?.StartTime              // fallback: use start time if no completion recorded
+                ?? job.Metadata?.CreationTimestamp;   // fallback: brand-new job whose startTime not yet set
             const int LogRetentionSeconds = 600; // 10 minutes
             if (completionTime.HasValue &&
                 (DateTimeOffset.UtcNow - new DateTimeOffset(completionTime.Value, TimeSpan.Zero)).TotalSeconds < LogRetentionSeconds)
             {
-                _log.Debug("Skipping orphan/stale K8s Job {JobName} — completed {Age}s ago, within {Retention}s retention window",
+                _log.Debug("Skipping orphan/stale K8s Job {JobName} — completed/created {Age}s ago, within {Retention}s retention window",
                     jobName,
                     (int)(DateTimeOffset.UtcNow - new DateTimeOffset(completionTime.Value, TimeSpan.Zero)).TotalSeconds,
                     LogRetentionSeconds);
