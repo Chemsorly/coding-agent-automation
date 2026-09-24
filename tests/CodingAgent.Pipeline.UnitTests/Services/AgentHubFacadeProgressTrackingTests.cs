@@ -56,7 +56,7 @@ public sealed class AgentHubFacadeProgressTrackingTests : IDisposable
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
             NullLogger<AgentHubFacadeDependencies>.Instance,
-            TransitionStore: new EfWorkItemTransitionStore(_dbFactory, transitionService)));
+            TransitionStore: new PostgresWorkItemTransitionStore(_dbFactory, transitionService)));
     }
 
     public void Dispose()

@@ -264,7 +264,7 @@ public class ConsolidationProviderResolverTests
         var job = CreateJob(ConsolidationRunType.RefactoringDetection, [repoConfig, agentConfig, issueConfig]);
 
         var act = () => resolver.ResolveRefactoringProvidersAsync(job, CancellationToken.None);
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*accessToken*");
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*accessToken*");
     }
 
     [Fact]
@@ -289,7 +289,7 @@ public class ConsolidationProviderResolverTests
         var job = CreateJob(ConsolidationRunType.RefactoringDetection, [repoConfig, agentConfig, issueConfig]);
 
         var act = () => resolver.ResolveRefactoringProvidersAsync(job, CancellationToken.None);
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*projectId*");
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*projectId*");
     }
 
     [Fact]
@@ -315,7 +315,7 @@ public class ConsolidationProviderResolverTests
         var job = CreateJob(ConsolidationRunType.RefactoringDetection, [repoConfig, agentConfig, issueConfig]);
 
         var act = () => resolver.ResolveRefactoringProvidersAsync(job, CancellationToken.None);
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*projectId*");
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*projectId*");
     }
 
     // ── Refactoring — Proxy-based token refresh (issue #2620) ────────────
@@ -496,13 +496,9 @@ public class ConsolidationProviderResolverTests
     /// Caller owns the proxy and must dispose it.
     /// </summary>
     /// <remarks>
-    /// TODO [WARNING]: <c>NoOpHttpHandler</c> returns HTTP 200 with an empty body for every
-    /// request, including the SignalR negotiate handshake. This makes the proxy's connection
-    /// state non-deterministic across SignalR client versions: the client may interpret the
-    /// malformed negotiate response differently between releases, causing test failures or
-    /// false passes for unrelated reasons. If tests in this file start failing after a SignalR
-    /// dependency update, switch to a HubConnection stub or a minimal fake negotiate handler
-    /// that returns a valid JSON negotiate response. (TestQualityReviewer / DotNetSpecialist)
+    /// If tests in this file start failing after a SignalR dependency update, switch to a
+    /// HubConnection stub or a minimal fake negotiate handler that returns a valid JSON negotiate
+    /// response.
     /// </remarks>
     private static OrchestratorProxy CreateTestProxyWithSpy(Action? onRefresh)
     {
@@ -531,12 +527,10 @@ public class ConsolidationProviderResolverTests
     /// anti-pattern where a non-IOE exception silently bypasses the assertion.
     /// </summary>
     /// <remarks>
-    /// TODO [WARNING]: This helper only inspects <see cref="InvalidOperationException"/> directly.
-    /// If async infrastructure wraps the IOE in an <see cref="AggregateException"/>, the assertion
-    /// is silently bypassed. <c>Record.ExceptionAsync</c> unwraps <see cref="AggregateException"/>
-    /// to the first inner for async delegates, so this is unlikely in practice, but consider
-    /// adding an <c>AggregateException</c> inner-exception unwrap check if this helper is reused
-    /// in synchronous or task-combinator contexts. (TestQualityReviewer / DotNetSpecialist)
+    /// <c>Record.ExceptionAsync</c> unwraps <see cref="AggregateException"/> to the first inner
+    /// for async delegates, so AggregateException wrapping is unlikely in practice, but consider
+    /// adding an inner-exception unwrap check if this helper is reused in synchronous or
+    /// task-combinator contexts.
     /// </remarks>
     private static void AssertNotTokenConfigError(Exception? ex, string because)
     {

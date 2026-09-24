@@ -8,7 +8,7 @@ namespace CodingAgent.Infrastructure.Persistence.Services;
 /// <summary>
 /// Database-backed implementation of <see cref="IFeedbackCommentOutbox"/>.
 /// Uses a context-per-operation pattern via <see cref="IDbContextFactory{TContext}"/>
-/// (same pattern as <see cref="EfKeyValueStore"/>).
+/// (same pattern as <see cref="PostgresKeyValueStore"/>).
 /// Registered as <c>AddSingleton&lt;IFeedbackCommentOutbox, PostgresFeedbackCommentOutboxStore&gt;()</c>.
 /// </summary>
 /// <remarks>
@@ -16,7 +16,7 @@ namespace CodingAgent.Infrastructure.Persistence.Services;
 /// and never exercise the store logic directly. Behaviours lacking store-level tests include:
 /// MarkFailedAsync AttemptCount increment and Pending→Failed transition at maxAttempts,
 /// GetPendingAsync Status=Pending + AttemptCount&lt;maxAttempts filter, and
-/// EnqueueAsync RunId idempotency. EfKeyValueStoreTests shows the InMemory-backed repo pattern;
+/// EnqueueAsync RunId idempotency. PostgresKeyValueStoreTests shows the InMemory-backed repo pattern;
 /// the RunId idempotency case requires SQLite or DbUpdateException simulation.
 /// </remarks>
 public sealed class PostgresFeedbackCommentOutboxStore : IFeedbackCommentOutbox

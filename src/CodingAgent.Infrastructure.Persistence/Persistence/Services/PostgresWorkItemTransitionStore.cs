@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 namespace CodingAgent.Infrastructure.Persistence.Services;
 
 /// <summary>
-/// EF Core-backed implementation of <see cref="IWorkItemTransitionStore"/> — the direct WorkItem
+/// Postgres-backed implementation of <see cref="IWorkItemTransitionStore"/> — the direct WorkItem
 /// database operations the SignalR agent hub facade needs. Extracted from
 /// <c>AgentHubFacade</c> in Spec 048 Phase 2 so the Hub library no longer references
 /// <c>Infrastructure.Persistence</c>; wired only in the API host (the sole database owner).
@@ -12,7 +12,7 @@ namespace CodingAgent.Infrastructure.Persistence.Services;
 /// concurrency-safe transition primitives); the metadata reads and the throttled progress write
 /// carry the exact logic that previously lived in the facade.
 /// </summary>
-public sealed class EfWorkItemTransitionStore : IWorkItemTransitionStore
+public sealed class PostgresWorkItemTransitionStore : IWorkItemTransitionStore
 {
     /// <summary>
     /// Throttle interval for LastProgressAt DB writes. Only writes when the existing
@@ -23,7 +23,7 @@ public sealed class EfWorkItemTransitionStore : IWorkItemTransitionStore
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly WorkItemTransitionService _transitionService;
 
-    public EfWorkItemTransitionStore(
+    public PostgresWorkItemTransitionStore(
         IDbContextFactory<PipelineDbContext> dbFactory,
         WorkItemTransitionService transitionService)
     {
