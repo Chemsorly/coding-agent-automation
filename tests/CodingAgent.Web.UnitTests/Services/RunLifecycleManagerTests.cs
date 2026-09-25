@@ -578,6 +578,139 @@ public sealed class RunLifecycleManagerTests
         result.CurrentStep.Should().Be(PipelineStep.Cancelled);
     }
 
+    // ── FailRunWithLabelAsync (Issue #3009) ─────────────────────────────
+
+    [Fact]
+    public async Task FailRunWithLabelAsync_WithNeedsRefinementLabel_SwapsLabelToNeedsRefinement()
+    {
+        // Arrange: the HTTP path resolved agent:needs-refinement from request.Result
+        var run = CreateRun("run-needs-refinement", PipelineRunType.Implementation);
+        _runService.AddRun(run);
+
+        // Act
+        var result = await _sut.FailRunWithLabelAsync(
+            "run-needs-refinement",
+            "Analysis gate: issue needs refinement",
+            AgentLabels.NeedsRefinement,
+            CancellationToken.None);
+
+        // Assert: run processed and final label recorded
+        result.Should().NotBeNull();
+        result!.FinalLabel.Should().Be(AgentLabels.NeedsRefinement,
+            "FailRunWithLabelAsync must set run.FinalLabel from resolvedFinalLabel before terminal cleanup");
+        result.CurrentStep.Should().Be(PipelineStep.Failed);
+
+        // Label swap must use agent:needs-refinement, NOT agent:error
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.NeedsRefinement, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once,
+            "FailRunWithLabelAsync must swap to agent:needs-refinement when resolvedFinalLabel is provided");
+
+        // agent:error must NOT be applied
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.Error,
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never,
+            "agent:error must never be applied when resolvedFinalLabel is agent:needs-refinement");
+    }
+
+    [Fact]
+    public async Task FailRunWithLabelAsync_WithNullResolvedLabel_SwapsLabelToError()
+    {
+        // Arrange: caller passes null (no override) → falls back to agent:error
+        var run = CreateRun("run-nulllabel-fail", PipelineRunType.Implementation);
+        _runService.AddRun(run);
+
+        // Act
+        var result = await _sut.FailRunWithLabelAsync(
+            "run-nulllabel-fail",
+            "Infrastructure failure",
+            resolvedFinalLabel: null,
+            CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+
+        // Label swap must be agent:error (standard fallback)
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.Error, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once,
+            "null resolvedFinalLabel must fall back to agent:error");
+
+        // agent:needs-refinement must NOT be applied
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.NeedsRefinement,
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task FailRunWithLabelAsync_ReviewRun_WithNeedsRefinement_UsesRepoProvider()
+    {
+        // Review runs route the label swap via repo provider + PullRequest target
+        var run = CreateRun("run-review-nr", PipelineRunType.Review);
+        run.AgentId = "agent-1";
+        _runService.AddRun(run);
+        RegisterAgent("agent-1");
+
+        // Act
+        var result = await _sut.FailRunWithLabelAsync(
+            "run-review-nr",
+            "Review needs refinement",
+            AgentLabels.NeedsRefinement,
+            CancellationToken.None);
+
+        // Assert: label swap goes to repo provider + PullRequest target for Review runs
+        result.Should().NotBeNull();
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "rp-1", "org/repo#1", AgentLabels.NeedsRefinement, LabelTargetKind.PullRequest,
+            It.IsAny<CancellationToken>()), Times.Once,
+            "Review runs must route the NeedsRefinement label to the repo provider + PullRequest target");
+    }
+
+    [Fact]
+    public async Task FailRunWithLabelAsync_HistoryRow_RecordsFinalLabel()
+    {
+        // The history row must record the resolved FinalLabel, not null.
+        // Verified by asserting that AddRunToHistoryAsync is called with a PipelineRun
+        // whose FinalLabel is set to the resolved value (set BEFORE RunTerminalCleanupAsync).
+        var run = CreateRun("run-history-final-label", PipelineRunType.Implementation);
+        _runService.AddRun(run);
+
+        PipelineRun? capturedRun = null;
+        _mockHistoryService
+            .Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Callback<PipelineRun, CancellationToken>((r, _) => capturedRun = r)
+            .Returns(Task.CompletedTask);
+
+        // Act
+        await _sut.FailRunWithLabelAsync(
+            "run-history-final-label",
+            "needs refinement",
+            AgentLabels.NeedsRefinement,
+            CancellationToken.None);
+
+        // Assert: the run passed to history already has FinalLabel set
+        capturedRun.Should().NotBeNull("AddRunToHistoryAsync must be called");
+        capturedRun!.FinalLabel.Should().Be(AgentLabels.NeedsRefinement,
+            "history row must record the resolved FinalLabel; it is set before RunTerminalCleanupAsync is called");
+    }
+
+    [Fact]
+    public async Task FailRunWithLabelAsync_RunDoesNotExist_ReturnsNull()
+    {
+        // Same null-return contract as FailRunAsync when run is not in memory
+        var result = await _sut.FailRunWithLabelAsync(
+            "ghost-run", "reason", AgentLabels.NeedsRefinement, CancellationToken.None);
+
+        result.Should().BeNull();
+
+        // No side effects
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
+            It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static PipelineRun CreateRun(string runId, PipelineRunType runType)
