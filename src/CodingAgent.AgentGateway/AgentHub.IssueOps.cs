@@ -103,19 +103,11 @@ public sealed partial class AgentHub
     /// <summary>
     /// Fallback label swap for when no in-memory run is found (cross-replica miss).
     /// Resolves the issue provider from the DB WorkItem record and performs the label
-    /// swap directly. Non-fatal: catches and logs HubException if the WorkItem is also
-    /// absent or the provider config cannot be found.
+    /// swap directly. Non-fatal: catches and logs all exceptions except
+    /// <see cref="OperationCanceledException"/> (including <see cref="NotSupportedException"/>
+    /// for unregistered provider types and <see cref="System.Net.Http.HttpRequestException"/>
+    /// from provider network calls).
     /// </summary>
-    // TODO (WARNING — .NET Specialist / Security): catch (HubException) is too narrow.
-    // CreateIssueProvider can throw NotSupportedException (unregistered provider type),
-    // LoadProviderConfigsAsync can throw DbException/HttpRequestException, and
-    // AgentLabelOperations.SwapAsync can propagate HttpRequestException/TaskCanceledException
-    // from the concrete issue provider's AddLabelAsync/RemoveLabelAsync. Any of these escape
-    // the current catch block and surface as an unhandled hub-method exception, contradicting
-    // the stated non-fatal contract. Broaden to:
-    //   catch (Exception ex) when (ex is not OperationCanceledException)
-    // mirroring the pattern in LabelService.SwapLabelAsync. Also add a test where
-    // CreateIssueProvider throws NotSupportedException to lock in the corrected behaviour.
     private async Task RequestLabelChangeFallbackAsync(string jobId, string newLabel)
     {
         // TODO (WARNING — Security): jobId is logged verbatim via structured logging throughout
@@ -200,12 +192,15 @@ public sealed partial class AgentHub
                     issueIdentifier, jobId);
             }
         }
-        catch (HubException ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // The WorkItem is absent, config is missing, or another HubException occurred.
             // Label swap failures are non-fatal — log and continue. The issue may retain
             // a stale label but will not loop: the scheduler will detect agent:error once
             // the run completes via the normal completion path.
+            // Catches HubException (absent WorkItem / missing config), NotSupportedException
+            // (unregistered provider type), HttpRequestException (provider network errors), etc.
+            // OperationCanceledException is intentionally re-raised so the hub method respects
+            // connection-abort cancellation.
             _logger.Warning(
                 "RequestLabelChange fallback failed for job {JobId} (label={Label}): {Message} — label swap skipped",
                 jobId, newLabel, ex.Message);
