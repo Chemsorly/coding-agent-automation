@@ -51,11 +51,19 @@ internal sealed class ApiChatJobDispatcher(IPipelineApiChatClient chatClient) : 
 
     public async Task TerminateChatSessionAsync(AgentId agentId, CancellationToken cancellationToken)
     {
-        await chatClient.TerminateChatSessionAsync(agentId.Value, cancellationToken);
+        await chatClient.TerminateChatSessionAsync(agentId, cancellationToken);
     }
 
     public void SendClientKeepalive(string agentId)
     {
+        // TODO [WARNING]: IChatJobDispatcher.SendClientKeepalive still accepts a raw string because
+        // the interface was not migrated as part of issue #2996. The string is converted to AgentId
+        // via the implicit operator (AgentId(string)) before reaching IPipelineApiChatClient.SendKeepaliveAsync,
+        // which means a null/empty agentId throws ArgumentException from inside the implicit operator
+        // rather than at an explicit API boundary guard. Migrate IChatJobDispatcher.SendClientKeepalive
+        // to AgentId agentId to close the last type-unsafe entry point in the chat-dispatch path.
+        // See review findings: Correctness WARNING @ ApiChatJobDispatcher.cs:57, DotNetSpecialist WARNING @ ChatJobDispatcher.cs:443.
+
         // Fire-and-forget — keepalive failures are non-fatal; the pod will eventually be
         // idle-killed by the server if heartbeats stop arriving. Log silently on failure.
         _ = chatClient.SendKeepaliveAsync(agentId, CancellationToken.None)

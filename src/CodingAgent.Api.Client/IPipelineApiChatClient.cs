@@ -1,3 +1,5 @@
+using CodingAgent.Pipeline.Models;
+
 namespace CodingAgent.Api.Client;
 
 /// <summary>
@@ -27,11 +29,11 @@ public interface IPipelineApiChatClient
     /// Terminates the active chat session for <paramref name="agentId"/>.
     /// Idempotent — no-op when the agent is not known to the API.
     /// </summary>
-    Task TerminateChatSessionAsync(string agentId, CancellationToken ct = default);
+    Task TerminateChatSessionAsync(AgentId agentId, CancellationToken ct = default);
 
     /// <summary>
     /// Sends a keepalive heartbeat for <paramref name="agentId"/>, resetting its idle clock.
     /// Always succeeds — no-op when the session is not found.
     /// </summary>
-    Task SendKeepaliveAsync(string agentId, CancellationToken ct = default);
+    Task SendKeepaliveAsync(AgentId agentId, CancellationToken ct = default);
 }

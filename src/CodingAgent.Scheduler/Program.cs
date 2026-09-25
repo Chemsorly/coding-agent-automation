@@ -96,11 +96,22 @@ builder.Services.AddOpenTelemetry()
     .ConfigureResource(r => r.AddService(
         serviceName: otelServiceName,
         serviceVersion: version))
-    .WithTracing(t => t.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation()
+    .WithTracing(t => t
+        .AddAspNetCoreInstrumentation(opts =>
+            opts.Filter = OtelNoiseFilter.FilterAspNetCoreRequest)
+        .AddHttpClientInstrumentation(opts =>
+        {
+            opts.FilterHttpRequestMessage = OtelNoiseFilter.FilterHttpClientRequest;
+            opts.EnrichWithHttpRequestMessage = OtelNoiseFilter.EnrichHttpClientRequest;
+        })
+        .AddProcessor(new OtelNoiseSpanDropProcessor())
         .AddOtlpExporter())
-    .WithMetrics(m => m.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation()
+    .WithMetrics(m => m
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
         .AddMeter(CodingAgent.Pipeline.Telemetry.WorkDistributionTelemetry.MeterName)
         .AddMeter(CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName)
+        .AddMeter("System.Runtime")
         // Prometheus requires Cumulative temporality; the OTLP exporter defaults to Delta for
         // histograms and counters, which Grafana Cloud silently drops.
         .AddOtlpExporter((_, readerOptions) =>

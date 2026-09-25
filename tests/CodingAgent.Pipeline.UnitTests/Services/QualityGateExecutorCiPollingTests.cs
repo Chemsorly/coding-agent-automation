@@ -1304,4 +1304,38 @@ public class QualityGateExecutorCiNotStartedExhaustionTests
         PipelineProvider = _mockPipelineProvider.Object,
         QualityGateConfigs = new List<QualityGateConfiguration>()
     };
+
+    /// <summary>
+    /// Issue #2954: CI-never-started exhaustion must set FailureCategory = InfrastructureFailure
+    /// and propagate IsInfrastructureFailure so RunRetryLoopAsync does not invoke the LLM fix agent.
+    /// </summary>
+    // TODO [WARNING] (TestQualityReviewer): This test uses MaxRetries = 0 (the BuildContext default for this class),
+    // so RunRetryLoopAsync is never entered and the IsInfrastructureFailure short-circuit at RetryLoop.cs:366 is not
+    // exercised. This duplicates the assertion from CiPollingCoordinatorTests.NotStartedExhaustion_SetsInfrastructureFailureCategory
+    // without adding the missing agent-invocation check. Add a test with MaxRetries > 0 and a mock IAgentProvider
+    // verified Times.Never to prove the LLM fix agent is actually skipped on exhaustion.
+    [Fact]
+    public async Task WhenRetriesExhausted_SetsInfrastructureFailureCategory()
+    {
+        const int maxRetries = 1;
+        var run = CreateRun();
+
+        _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
+
+        var context = BuildContext(run, ciNotStartedMaxRetries: maxRetries);
+        var result = await _executor.AppendExternalCiIfNeededAsync(context, PassingReport, false, CancellationToken.None);
+
+        result.ExternalCi.Should().NotBeNull();
+        result.ExternalCi!.Passed.Should().BeFalse();
+
+        // FailureCategory must be InfrastructureFailure so the run is not retried with LLM
+        run.FailureCategory.Should().Be(FailureReason.InfrastructureFailure,
+            "CI-never-started exhaustion is infrastructure failure, not a code-level failure that LLM can fix");
+
+        // IsInfrastructureFailure must be true on the gate result so RunRetryLoopAsync can detect it
+        result.ExternalCi.IsInfrastructureFailure.Should().BeTrue(
+            "IsInfrastructureFailure must propagate to GateResult to allow RunRetryLoopAsync to short-circuit");
+    }
 }

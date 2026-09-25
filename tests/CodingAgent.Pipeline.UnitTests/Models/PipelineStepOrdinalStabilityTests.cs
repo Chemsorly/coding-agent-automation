@@ -43,26 +43,28 @@ public sealed class PipelineStepOrdinalStabilityTests
     [InlineData(PipelineStep.PostingSummary, 28)]
     [InlineData(PipelineStep.RunningEnvironmentSetup, 29)]
     [InlineData(PipelineStep.ConflictRestart, 30)]
+    [InlineData(PipelineStep.PrMerged, 31)]
+    [InlineData(PipelineStep.PrClosed, 32)]
     public void Member_HasExpectedOrdinal(PipelineStep step, int expectedOrdinal)
     {
         ((int)step).Should().Be(expectedOrdinal);
     }
 
     [Fact]
-    public void EnumHasExactly30Members()
+    public void EnumHasExactly32Members()
     {
         // Guard against adding new members without updating the ordinal stability test.
         // If a new step is added, this test forces the developer to add a corresponding
         // [InlineData] assertion above and verify the wire protocol is not broken.
-        Enum.GetValues<PipelineStep>().Should().HaveCount(30);
+        Enum.GetValues<PipelineStep>().Should().HaveCount(32);
     }
 
     [Fact]
-    public void MaxOrdinalIs30()
+    public void MaxOrdinalIs32()
     {
         // Documents the current maximum ordinal value.
-        // New members MUST use the next sequential value (31, 32, ...).
+        // New members MUST use the next sequential value (33, 34, ...).
         var maxOrdinal = Enum.GetValues<PipelineStep>().Cast<int>().Max();
-        maxOrdinal.Should().Be(30);
+        maxOrdinal.Should().Be(32);
     }
 }
