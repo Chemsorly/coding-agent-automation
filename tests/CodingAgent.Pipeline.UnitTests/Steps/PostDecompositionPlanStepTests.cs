@@ -32,11 +32,14 @@ public class PostDecompositionPlanStepTests : IDisposable
     }
 
     private PipelineStepContext BuildContext(PipelineRun run)
+        => BuildContext(run, maxSubIssues: 10);
+
+    private PipelineStepContext BuildContext(PipelineRun run, int maxSubIssues)
     {
         return new PipelineStepContext
         {
             Run = run,
-            Config = new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" },
+            Config = new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp", MaxDecompositionSubIssues = maxSubIssues },
             RepoProvider = Mock.Of<IRepositoryProvider>(),
             AgentProvider = Mock.Of<IAgentProvider>(),
             BrainProvider = null,
@@ -340,5 +343,206 @@ public class PostDecompositionPlanStepTests : IDisposable
 
         result.Should().NotBeNull();
         result!.Id.Should().Be("3");
+    }
+
+    // ── Cap warning in plan comment ──────────────────────────────────────
+
+    private static string BuildPlanWithSubIssueTable(int rowCount)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("## Strategy");
+        sb.AppendLine();
+        sb.AppendLine("Split the epic into sub-issues.");
+        sb.AppendLine();
+        sb.AppendLine("| # | Title | Scope | Files | Dependencies | Verification |");
+        sb.AppendLine("|---|-------|-------|-------|--------------|--------------|");
+        for (var i = 1; i <= rowCount; i++)
+        {
+            sb.AppendLine($"| {i} | Sub-issue {i} | Scope {i} | 3 | None | Test passes |");
+        }
+        return sb.ToString();
+    }
+
+    [Fact]
+    public void FormatPlanComment_PlanExceedsCap_PrependsCriticalWarning()
+    {
+        var plan = BuildPlanWithSubIssueTable(rowCount: 15);
+
+        var comment = PostDecompositionPlanStep.FormatPlanComment(plan, maxSubIssues: 10);
+
+        comment.Should().StartWith(CommentMarkers.DecompositionPlan);
+        comment.Should().Contain("Cap warning");
+        comment.Should().Contain("15");
+        comment.Should().Contain("10");
+        comment.Should().Contain("Only the first **10**");
+    }
+
+    [Fact]
+    public void FormatPlanComment_PlanAtCap_NoWarning()
+    {
+        var plan = BuildPlanWithSubIssueTable(rowCount: 10);
+
+        var comment = PostDecompositionPlanStep.FormatPlanComment(plan, maxSubIssues: 10);
+
+        comment.Should().StartWith(CommentMarkers.DecompositionPlan);
+        comment.Should().NotContain("Cap warning");
+    }
+
+    [Fact]
+    public void FormatPlanComment_PlanBelowCap_NoWarning()
+    {
+        var plan = BuildPlanWithSubIssueTable(rowCount: 5);
+
+        var comment = PostDecompositionPlanStep.FormatPlanComment(plan, maxSubIssues: 10);
+
+        comment.Should().StartWith(CommentMarkers.DecompositionPlan);
+        comment.Should().NotContain("Cap warning");
+    }
+
+    [Fact]
+    public void FormatPlanComment_NoParsableTable_NoWarning()
+    {
+        // Plan with no markdown table at all — fail-open
+        var plan = "This is a plan without any markdown table.\n\nJust some text.";
+
+        var comment = PostDecompositionPlanStep.FormatPlanComment(plan, maxSubIssues: 5);
+
+        comment.Should().StartWith(CommentMarkers.DecompositionPlan);
+        comment.Should().NotContain("Cap warning");
+        comment.Should().Contain("## 🧩 Decomposition Plan");
+    }
+
+    [Fact]
+    public void FormatPlanComment_TableMissingTitleColumn_NoWarning()
+    {
+        // Table with '#' but no 'Title' column — not the sub-issue table
+        var plan = "| # | Scope | Files |\n|---|-------|-------|\n| 1 | Foo | 3 |";
+
+        var comment = PostDecompositionPlanStep.FormatPlanComment(plan, maxSubIssues: 5);
+
+        comment.Should().NotContain("Cap warning");
+    }
+
+    // ── TryCountSubIssuesInPlan ──────────────────────────────────────────
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(5)]
+    [InlineData(15)]
+    public void TryCountSubIssuesInPlan_ValidTable_ReturnsCorrectCount(int rows)
+    {
+        var plan = BuildPlanWithSubIssueTable(rows);
+
+        var count = PostDecompositionPlanStep.TryCountSubIssuesInPlan(plan);
+
+        count.Should().Be(rows);
+    }
+
+    [Fact]
+    public void TryCountSubIssuesInPlan_NoTable_ReturnsNull()
+    {
+        var plan = "# Plan\n\nNo table here, just text.";
+
+        var count = PostDecompositionPlanStep.TryCountSubIssuesInPlan(plan);
+
+        count.Should().BeNull();
+    }
+
+    [Fact]
+    public void TryCountSubIssuesInPlan_TableMissingHashColumn_ReturnsNull()
+    {
+        // Table with 'Title' but no '#' column
+        var plan = "| Title | Scope |\n|-------|-------|\n| Sub-issue 1 | Scope |";
+
+        var count = PostDecompositionPlanStep.TryCountSubIssuesInPlan(plan);
+
+        count.Should().BeNull();
+    }
+
+    [Fact]
+    public void TryCountSubIssuesInPlan_TableMissingTitleColumn_ReturnsNull()
+    {
+        var plan = "| # | Scope |\n|---|-------|\n| 1 | Scope |";
+
+        var count = PostDecompositionPlanStep.TryCountSubIssuesInPlan(plan);
+
+        count.Should().BeNull();
+    }
+
+    [Fact]
+    public void TryCountSubIssuesInPlan_EmptyPlan_ReturnsNull()
+    {
+        var count = PostDecompositionPlanStep.TryCountSubIssuesInPlan("");
+
+        count.Should().BeNull();
+    }
+
+    [Fact]
+    public void TryCountSubIssuesInPlan_TableWithZeroDataRows_ReturnsZero()
+    {
+        // Valid header + separator but no data rows
+        var plan = "| # | Title | Scope |\n|---|-------|-------|\n";
+
+        var count = PostDecompositionPlanStep.TryCountSubIssuesInPlan(plan);
+
+        count.Should().Be(0);
+        // TODO: There is no integration-level ExecuteAsync test for the off-by-one boundary
+        // (count == cap, i.e. count exactly equals maxSubIssues). FormatPlanComment_PlanAtCap_NoWarning
+        // covers this for the pure formatting helper, but a change from > to >= in the step's call site
+        // would not be caught by any ExecuteAsync-level test. Consider adding:
+        //   ExecuteAsync_PlanExactlyAtCap_CommentHasNoCapWarning (rowCount == cap)
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PlanExceedsCap_CommentIncludesCapWarning()
+    {
+        var plan = BuildPlanWithSubIssueTable(rowCount: 15);
+        WritePlanFile(plan);
+
+        string? capturedBody = null;
+        _issueOps.Setup(x => x.ListCommentsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>());
+        _issueOps.Setup(x => x.PostCommentAsync("42", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<IssueIdentifier, string, CancellationToken>((_, body, _) => capturedBody = body)
+            .ReturnsAsync((string?)null);
+        _issueOps.Setup(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var run = CreateRun();
+        var context = BuildContext(run, maxSubIssues: 10);
+        var step = new PostDecompositionPlanStep();
+
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue);
+        capturedBody.Should().NotBeNull();
+        capturedBody.Should().Contain("Cap warning");
+        capturedBody.Should().Contain("15");
+        capturedBody.Should().Contain("10");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PlanWithinCap_CommentHasNoCapWarning()
+    {
+        var plan = BuildPlanWithSubIssueTable(rowCount: 5);
+        WritePlanFile(plan);
+
+        string? capturedBody = null;
+        _issueOps.Setup(x => x.ListCommentsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>());
+        _issueOps.Setup(x => x.PostCommentAsync("42", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<IssueIdentifier, string, CancellationToken>((_, body, _) => capturedBody = body)
+            .ReturnsAsync((string?)null);
+        _issueOps.Setup(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var run = CreateRun();
+        var context = BuildContext(run, maxSubIssues: 10);
+        var step = new PostDecompositionPlanStep();
+
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue);
+        capturedBody.Should().NotContain("Cap warning");
     }
 }

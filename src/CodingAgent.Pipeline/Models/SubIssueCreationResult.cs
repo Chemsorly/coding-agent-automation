@@ -19,4 +19,12 @@ public sealed record SubIssueCreationResult
 
     /// <summary>Reason for failure, or null if creation succeeded.</summary>
     public string? FailureReason { get; init; }
+
+    /// <summary>
+    /// Whether this proposal was skipped because the configured
+    /// <c>MaxDecompositionSubIssues</c> cap was reached.
+    /// When true, <see cref="Success"/> is false and <see cref="FailureReason"/> names the cap.
+    /// These are NOT counted as failed creations for the purpose of outcome label selection.
+    /// </summary>
+    public bool SkippedByCap { get; init; }
 }
