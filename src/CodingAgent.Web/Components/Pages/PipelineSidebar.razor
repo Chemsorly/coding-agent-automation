@@ -464,6 +464,8 @@
         [PipelineStep.Failed] = 101,
         [PipelineStep.Cancelled] = 102,
         [PipelineStep.ConflictRestart] = 103,
+        [PipelineStep.PrMerged] = 104,
+        [PipelineStep.PrClosed] = 105,
     };
 
     private static int LogicalOrder(PipelineStep step) =>
@@ -482,8 +484,17 @@
         if (current == PipelineStep.ConflictRestart)
             return GetStepStateWhenConflictRestart(step);
 
+        // PrMerged: show steps up to CreatingBranch as completed, and mark PrMerged as a clean success.
+        if (current == PipelineStep.PrMerged)
+            return step == PipelineStep.PrMerged ? StepState.Completed : GetStepStateWhenPrTerminal(step, current);
+
+        // PrClosed: same treatment but ends Cancelled.
+        if (current == PipelineStep.PrClosed)
+            return step == PipelineStep.PrClosed ? StepState.Cancelled : GetStepStateWhenPrTerminal(step, current);
+
         if (current == PipelineStep.Completed)
-            return step is PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled or PipelineStep.ConflictRestart
+            return step is PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled
+                       or PipelineStep.ConflictRestart or PipelineStep.PrMerged or PipelineStep.PrClosed
                 ? StepState.Pending
                 : StepState.Completed;
 
@@ -503,6 +514,14 @@
         var last = GetLastReachedStep();
         if (LogicalOrder(step) < LogicalOrder(last)) return StepState.Completed;
         if (step == last) return StepState.Restarted;
+        return StepState.Pending;
+    }
+
+    private StepState GetStepStateWhenPrTerminal(PipelineStep step, PipelineStep current)
+    {
+        // For PrMerged/PrClosed, show steps up through CreatingBranch as completed.
+        var last = GetLastReachedStep();
+        if (LogicalOrder(step) < LogicalOrder(last)) return StepState.Completed;
         return StepState.Pending;
     }
 

@@ -118,6 +118,24 @@ public partial class GitHubRepositoryProvider
         return pr.HtmlUrl;
     }
 
+    /// <inheritdoc />
+    public async Task<PullRequestState> GetPullRequestStateAsync(int pullRequestNumber, CancellationToken ct)
+    {
+        var pr = await ExecuteWithResilienceAsync(
+            client => client.PullRequest.Get(Owner, Repo, pullRequestNumber),
+            "GetPullRequestState", ct);
+
+        // GitHub uses state="closed" for both merged and closed-without-merge.
+        // The Merged boolean disambiguates the two cases.
+        if (pr.Merged)
+            return PullRequestState.Merged;
+
+        if (pr.State.Value == ItemState.Closed)
+            return PullRequestState.Closed;
+
+        return PullRequestState.Open;
+    }
+
     public async Task<IReadOnlyList<LinkedPullRequest>> GetAgentPullRequestsAsync(
         IssueIdentifier issueIdentifier, CancellationToken ct)
     {
