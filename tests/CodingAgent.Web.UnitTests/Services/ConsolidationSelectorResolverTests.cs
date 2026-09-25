@@ -18,14 +18,14 @@ public sealed class ConsolidationSelectorResolverTests
         string[] matchLabels,
         bool enabled = true,
         int priority = 0) => new()
-    {
-        Id = id,
-        DisplayName = id,
-        AgentProviderConfigId = "agent-cfg",
-        MatchLabels = matchLabels,
-        Enabled = enabled,
-        Priority = priority
-    };
+        {
+            Id = id,
+            DisplayName = id,
+            AgentProviderConfigId = "agent-cfg",
+            MatchLabels = matchLabels,
+            Enabled = enabled,
+            Priority = priority
+        };
 
     private static ProviderConfig MakeRepoConfig(string[]? requiredLabels = null) => new()
     {
@@ -37,9 +37,9 @@ public sealed class ConsolidationSelectorResolverTests
 
     private static PipelineConfiguration MakeConfig(
         string? defaultRequiredAgentLabels = null) => new()
-    {
-        DefaultRequiredAgentLabels = defaultRequiredAgentLabels ?? string.Empty
-    };
+        {
+            DefaultRequiredAgentLabels = defaultRequiredAgentLabels ?? string.Empty
+        };
 
     // ── Step 1: required labels from repoConfig ──────────────────────────
 
