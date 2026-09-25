@@ -8,13 +8,13 @@ namespace CodingAgent.Infrastructure.Persistence.Services;
 /// Database-backed implementation of <see cref="IKeyValueStore"/>.
 /// Stores values as plain strings in the <c>KeyValueStore</c> table.
 /// Uses a context-per-operation pattern via <see cref="IDbContextFactory{TContext}"/>.
-/// Registered as <c>AddScoped&lt;IKeyValueStore, EfKeyValueStore&gt;()</c>.
+/// Registered as <c>AddScoped&lt;IKeyValueStore, PostgresKeyValueStore&gt;()</c>.
 /// </summary>
-public sealed class EfKeyValueStore : IKeyValueStore
+public sealed class PostgresKeyValueStore : IKeyValueStore
 {
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
 
-    public EfKeyValueStore(IDbContextFactory<PipelineDbContext> dbFactory)
+    public PostgresKeyValueStore(IDbContextFactory<PipelineDbContext> dbFactory)
     {
         _dbFactory = dbFactory;
     }

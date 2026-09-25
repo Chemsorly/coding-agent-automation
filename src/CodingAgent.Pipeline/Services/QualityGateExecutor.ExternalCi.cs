@@ -65,8 +65,27 @@ public partial class QualityGateExecutor
             if (ciResult.ciStatus.State == PipelineRunState.ConflictRestart)
                 return BuildConflictRestartReport(context.Run, report, context.Callbacks);
 
+            if (ciResult.ciStatus.State == PipelineRunState.PrMerged)
+                return BuildPrMergedReport(context.Run, report, context.Callbacks);
+
+            if (ciResult.ciStatus.State == PipelineRunState.PrClosed)
+                return BuildPrClosedReport(context.Run, report, context.Callbacks);
+
             ciGate = CiPollingCoordinator.BuildCiGateResult(
                 ciResult.ciPassed, ciResult.ciStatus, ciResult.ciLogPaths, "CI", "External CI", context.Callbacks);
+
+            // Propagate infrastructure failure flag so RunRetryLoopAsync can short-circuit LLM invocation
+            if (ciResult.ciStatus.IsInfrastructureFailure)
+                ciGate = new GateResult
+                {
+                    GateName = ciGate.GateName,
+                    Passed = ciGate.Passed,
+                    Details = ciGate.Details,
+                    TestsFailed = ciGate.TestsFailed,
+                    TestsPassed = ciGate.TestsPassed,
+                    TestsSkipped = ciGate.TestsSkipped,
+                    IsInfrastructureFailure = true
+                };
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -147,6 +166,58 @@ public partial class QualityGateExecutor
                 GateName = "External CI",
                 Passed = false,
                 Details = "Conflict restart — PR conflicted with main; re-dispatched as agent:next"
+            }
+        };
+    }
+
+    /// <summary>
+    /// Handles the PR-merged outcome from CI polling: the PR was already merged, so the run ends
+    /// successfully with no further action. <see cref="PipelineStep.PrMerged"/> is a terminal step
+    /// that maps to <see cref="WorkItemStatus.Succeeded"/> via <c>CompletionOutcomeResolver</c>.
+    /// </summary>
+    // TODO [WARNING] (DotNetSpecialist): `run` and `callbacks` parameters are never used inside this method —
+    // the output line and TransitionTo call were already emitted by BuildPrMergedStatus in CiPollingCoordinator.
+    // Consider removing the unused parameters to make the contract explicit and avoid misleading future callers.
+    private static QualityGateReport BuildPrMergedReport(
+        PipelineRun run, QualityGateReport report, IPipelineCallbacks callbacks)
+    {
+        // run.CurrentStep is already set by BuildPrMergedStatus in CiPollingCoordinator.
+        // This report is returned so ProceedToQualityGatesAsync can detect the terminal step
+        // via the run.CurrentStep guard and return without further processing.
+        return new QualityGateReport
+        {
+            Compilation = report.Compilation,
+            Tests = report.Tests!,
+            ExternalCi = new GateResult
+            {
+                GateName = "External CI",
+                Passed = true,
+                Details = "PR was merged — run ended Succeeded"
+            }
+        };
+    }
+
+    /// <summary>
+    /// Handles the PR-closed outcome from CI polling: the PR was closed without merging, so the
+    /// run ends as Cancelled. <see cref="PipelineStep.PrClosed"/> is a terminal step that maps to
+    /// <see cref="WorkItemStatus.Cancelled"/> via <c>CompletionOutcomeResolver</c>.
+    /// </summary>
+    // TODO [WARNING] (DotNetSpecialist): `run` and `callbacks` parameters are never used inside this method —
+    // the output line and TransitionTo call were already emitted by BuildPrClosedStatus in CiPollingCoordinator.
+    // Consider removing the unused parameters to make the contract explicit and avoid misleading future callers.
+    private static QualityGateReport BuildPrClosedReport(
+        PipelineRun run, QualityGateReport report, IPipelineCallbacks callbacks)
+    {
+        // run.CurrentStep is already set by BuildPrClosedStatus in CiPollingCoordinator.
+        return new QualityGateReport
+        {
+            Compilation = report.Compilation,
+            Tests = report.Tests!,
+            ExternalCi = new GateResult
+            {
+                GateName = "External CI",
+                Passed = false,
+                Details = "PR was closed without merging — run ended Cancelled"
             }
         };
     }

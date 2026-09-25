@@ -204,6 +204,66 @@ public class GitLabFactoryRegistrationTests
     }
 
     #endregion
+
+    #region ParseProjectId characterization tests
+
+    /// <summary>
+    /// Characterization test: ParseProjectId throws ArgumentException for a non-numeric projectId string.
+    /// This pins the error path so that the refactoring (routing AgentProviderFactory and
+    /// ConsolidationProviderResolver through this helper) does not change the exception type.
+    /// </summary>
+    [Fact]
+    public void ParseProjectId_InvalidString_ThrowsArgumentException()
+    {
+        var config = new ProviderConfig
+        {
+            Kind = ProviderKind.Issue,
+            ProviderType = "GitLab",
+            DisplayName = "Test GitLab",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://gitlab.com",
+                [ProviderSettingKeys.AccessToken] = "glpat-fake",
+                [ProviderSettingKeys.ProjectId] = "not-a-number"
+            }
+        };
+
+        var act = () => ProviderFactory.ParseProjectId(config);
+
+        var ex = act.Should().Throw<ArgumentException>().Which;
+        ex.Message.Should().Contain("not-a-number",
+            "the exception message should include the invalid value for diagnosis");
+        ex.ParamName.Should().Be("config");
+    }
+
+    /// <summary>
+    /// Characterization test: CreateIssueProvider throws ArgumentException end-to-end
+    /// when projectId is a non-numeric string, routing through ParseProjectId.
+    /// </summary>
+    [Fact]
+    public void CreateIssueProvider_GitLab_InvalidProjectId_ThrowsArgumentException()
+    {
+        var factory = CreateFactory();
+        var config = new ProviderConfig
+        {
+            Kind = ProviderKind.Issue,
+            ProviderType = "GitLab",
+            DisplayName = "Test GitLab",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://gitlab.com",
+                [ProviderSettingKeys.AccessToken] = "glpat-fake",
+                [ProviderSettingKeys.ProjectId] = "not-a-number"
+            }
+        };
+
+        var act = () => factory.CreateIssueProvider(config);
+
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("*not-a-number*");
+    }
+
+    #endregion
 }
 
 #region Arbitraries for Property 1

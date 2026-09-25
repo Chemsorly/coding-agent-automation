@@ -8,6 +8,7 @@ namespace CodingAgent.Pipeline.UnitTests;
 /// Unit tests for <see cref="SetupCommandRunner"/>.
 /// Uses platform-aware shell commands so the suite runs on both Windows (cmd.exe) and Linux (/bin/bash).
 /// </summary>
+[Collection("EnvironmentVariables")]
 [Trait("Category", "Integration")]
 public class SetupCommandRunnerTests : IDisposable
 {
@@ -268,6 +269,37 @@ public class SetupCommandRunnerTests : IDisposable
         {
             SetupCommandRunner.ShellExecutable.Should().Be("/bin/bash");
             SetupCommandRunner.ShellFlag.Should().Be("-c");
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_DoesNotPassOtelEnvVarsToChildProcess()
+    {
+        // Arrange: set an OTEL var in the parent process so it is inherited into PSI.Environment
+        const string otelKey = "OTEL_SERVICE_NAME";
+        var previous = Environment.GetEnvironmentVariable(otelKey);
+        Environment.SetEnvironmentVariable(otelKey, "coding-agent-worker-test");
+        try
+        {
+            // Command echoes the value of OTEL_SERVICE_NAME to stdout.
+            // After stripping, the child receives an empty/unset value.
+            var result = await SetupCommandRunner.RunAsync(
+                EchoEnvVar(otelKey), "OtelTest", _tempDir, new Dictionary<string, string>(),
+                line => _emittedLines.Add(line), CancellationToken.None);
+
+            result.Success.Should().BeTrue();
+
+            // The emitted output must NOT contain the OTEL value — the child never saw it.
+            // On Linux, `echo $OTEL_SERVICE_NAME` when the var is unset emits an empty line.
+            // On Windows, `echo %OTEL_SERVICE_NAME%` emits the literal "%OTEL_SERVICE_NAME%".
+            // In either case the OTEL value "coding-agent-worker-test" must not appear.
+            _emittedLines.Should().NotContain(
+                line => line.Contains("coding-agent-worker-test"),
+                "OTEL vars must be stripped from the child process environment");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(otelKey, previous);
         }
     }
 }

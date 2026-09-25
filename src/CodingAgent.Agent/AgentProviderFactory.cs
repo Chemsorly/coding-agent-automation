@@ -1,6 +1,7 @@
 using KiroCliLib.Core;
 using CodingAgent.Agent.KiroCli;
 using CodingAgent.Agent.OpenCode;
+using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.GitLab;
 using CodingAgent.Pipeline;
@@ -96,10 +97,15 @@ public sealed class AgentProviderFactory : IProviderFactory
 
     private GitHubRepositoryProvider CreateGitHubRepositoryProvider(ProviderConfig config)
     {
-        var apiUrl = GetRequiredSetting(config, ProviderSettingKeys.ApiUrl);
-        var owner = GetRequiredSetting(config, ProviderSettingKeys.Owner);
-        var repo = GetRequiredSetting(config, ProviderSettingKeys.Repo);
-        var baseBranch = GetRequiredSetting(config, ProviderSettingKeys.BaseBranch);
+        ProviderFactory.ValidateRequiredSettings(config,
+            ProviderSettingKeys.ApiUrl,
+            ProviderSettingKeys.Owner,
+            ProviderSettingKeys.Repo,
+            ProviderSettingKeys.BaseBranch);
+        var apiUrl = config.Settings[ProviderSettingKeys.ApiUrl];
+        var owner = config.Settings[ProviderSettingKeys.Owner];
+        var repo = config.Settings[ProviderSettingKeys.Repo];
+        var baseBranch = config.Settings[ProviderSettingKeys.BaseBranch];
         var connection = new GitHubConnectionInfo(apiUrl, owner, repo);
 
         if (_orchestratorProxy is not null)
@@ -115,8 +121,8 @@ public sealed class AgentProviderFactory : IProviderFactory
             return new GitHubRepositoryProvider(connection, tokenProvider, baseBranch);
         }
 
-        var token = GetRequiredSetting(config, ProviderSettingKeys.Token);
-        return new GitHubRepositoryProvider(connection, token, baseBranch);
+        ProviderFactory.ValidateRequiredSettings(config, ProviderSettingKeys.Token);
+        return new GitHubRepositoryProvider(connection, config.Settings[ProviderSettingKeys.Token], baseBranch);
     }
 
     private KiroCliAgentProvider CreateKiroCliAgentProvider(ProviderConfig config)
@@ -154,9 +160,13 @@ public sealed class AgentProviderFactory : IProviderFactory
 
     private GitHubActionsPipelineProvider CreateGitHubPipelineProvider(ProviderConfig config)
     {
-        var apiUrl = GetRequiredSetting(config, ProviderSettingKeys.ApiUrl);
-        var owner = GetRequiredSetting(config, ProviderSettingKeys.Owner);
-        var repo = GetRequiredSetting(config, ProviderSettingKeys.Repo);
+        ProviderFactory.ValidateRequiredSettings(config,
+            ProviderSettingKeys.ApiUrl,
+            ProviderSettingKeys.Owner,
+            ProviderSettingKeys.Repo);
+        var apiUrl = config.Settings[ProviderSettingKeys.ApiUrl];
+        var owner = config.Settings[ProviderSettingKeys.Owner];
+        var repo = config.Settings[ProviderSettingKeys.Repo];
         var connection = new GitHubConnectionInfo(apiUrl, owner, repo);
 
         if (_orchestratorProxy is not null)
@@ -167,22 +177,18 @@ public sealed class AgentProviderFactory : IProviderFactory
                 connection, tokenProvider, _pipelineConfig.ExternalCiPollInterval);
         }
 
-        var token = GetRequiredSetting(config, ProviderSettingKeys.Token);
+        ProviderFactory.ValidateRequiredSettings(config, ProviderSettingKeys.Token);
         return new GitHubActionsPipelineProvider(
-            connection, token, _pipelineConfig.ExternalCiPollInterval);
+            connection, config.Settings[ProviderSettingKeys.Token], _pipelineConfig.ExternalCiPollInterval);
     }
 
     private GitLabRepositoryProvider CreateGitLabRepositoryProvider(ProviderConfig config)
     {
-        var apiUrl = GetRequiredSetting(config, ProviderSettingKeys.ApiUrl);
-        var projectIdStr = GetRequiredSetting(config, ProviderSettingKeys.ProjectId);
-        if (!int.TryParse(projectIdStr, out var projectId))
-        {
-            Serilog.Log.Error("Provider '{DisplayName}' has invalid projectId: '{ProjectId}'", config.DisplayName, projectIdStr);
-            throw new ArgumentException(
-                $"Provider '{config.DisplayName}' has invalid projectId: '{projectIdStr}'.",
-                nameof(config));
-        }
+        ProviderFactory.ValidateRequiredSettings(config,
+            ProviderSettingKeys.ApiUrl,
+            ProviderSettingKeys.ProjectId);
+        var apiUrl = config.Settings[ProviderSettingKeys.ApiUrl];
+        var projectId = ProviderFactory.ParseProjectId(config);
         var baseBranch = config.Settings.TryGetValue(ProviderSettingKeys.BaseBranch, out var bb)
             && !string.IsNullOrWhiteSpace(bb) ? bb : ProviderSettingKeys.DefaultBaseBranch;
 
@@ -196,21 +202,17 @@ public sealed class AgentProviderFactory : IProviderFactory
             return new GitLabRepositoryProvider(apiUrl, tokenProvider, projectId, baseBranch);
         }
 
-        var token = GetRequiredSetting(config, ProviderSettingKeys.Token);
-        return new GitLabRepositoryProvider(apiUrl, token, projectId, baseBranch);
+        ProviderFactory.ValidateRequiredSettings(config, ProviderSettingKeys.Token);
+        return new GitLabRepositoryProvider(apiUrl, config.Settings[ProviderSettingKeys.Token], projectId, baseBranch);
     }
 
     private GitLabCiPipelineProvider CreateGitLabPipelineProvider(ProviderConfig config)
     {
-        var apiUrl = GetRequiredSetting(config, ProviderSettingKeys.ApiUrl);
-        var projectIdStr = GetRequiredSetting(config, ProviderSettingKeys.ProjectId);
-        if (!int.TryParse(projectIdStr, out var projectId))
-        {
-            Serilog.Log.Error("Provider '{DisplayName}' has invalid projectId: '{ProjectId}'", config.DisplayName, projectIdStr);
-            throw new ArgumentException(
-                $"Provider '{config.DisplayName}' has invalid projectId: '{projectIdStr}'.",
-                nameof(config));
-        }
+        ProviderFactory.ValidateRequiredSettings(config,
+            ProviderSettingKeys.ApiUrl,
+            ProviderSettingKeys.ProjectId);
+        var apiUrl = config.Settings[ProviderSettingKeys.ApiUrl];
+        var projectId = ProviderFactory.ParseProjectId(config);
 
         if (_orchestratorProxy is not null)
         {
@@ -219,18 +221,8 @@ public sealed class AgentProviderFactory : IProviderFactory
             return new GitLabCiPipelineProvider(apiUrl, tokenProvider, projectId, _pipelineConfig.ExternalCiPollInterval);
         }
 
-        var token = GetRequiredSetting(config, ProviderSettingKeys.Token);
-        return new GitLabCiPipelineProvider(apiUrl, token, projectId, _pipelineConfig.ExternalCiPollInterval);
+        ProviderFactory.ValidateRequiredSettings(config, ProviderSettingKeys.Token);
+        return new GitLabCiPipelineProvider(apiUrl, config.Settings[ProviderSettingKeys.Token], projectId, _pipelineConfig.ExternalCiPollInterval);
     }
 
-    private static string GetRequiredSetting(ProviderConfig config, string key)
-    {
-        if (config.Settings.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value))
-            return value;
-
-        Serilog.Log.Error("Provider '{DisplayName}' (type: {ProviderType}) is missing required setting: '{Key}'", config.DisplayName, config.ProviderType, key);
-        throw new ArgumentException(
-            $"Provider '{config.DisplayName}' (type: {config.ProviderType}) is missing required setting: '{key}'",
-            nameof(config));
-    }
 }

@@ -45,6 +45,46 @@ public class GitHubRepositoryProviderPullRequestMethodsTests : WireMockTestBase
         body.Should().Contain("closed", "PATCH body must include state=closed");
     }
 
+    // ── GetPullRequestStateAsync ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetPullRequestStateAsync_OpenPr_ReturnsOpen()
+    {
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/100"),
+            BuildPrForStateQuery(100, state: "open", merged: false));
+
+        await using var provider = CreateProvider();
+        var result = await provider.GetPullRequestStateAsync(100, CancellationToken.None);
+
+        result.Should().Be(PullRequestState.Open);
+    }
+
+    [Fact]
+    public async Task GetPullRequestStateAsync_MergedPr_ReturnsMerged()
+    {
+        // GitHub uses state="closed" + merged=true for merged PRs
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/101"),
+            BuildPrForStateQuery(101, state: "closed", merged: true));
+
+        await using var provider = CreateProvider();
+        var result = await provider.GetPullRequestStateAsync(101, CancellationToken.None);
+
+        result.Should().Be(PullRequestState.Merged);
+    }
+
+    [Fact]
+    public async Task GetPullRequestStateAsync_ClosedWithoutMerge_ReturnsClosed()
+    {
+        // GitHub uses state="closed" + merged=false for closed-without-merge PRs
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/102"),
+            BuildPrForStateQuery(102, state: "closed", merged: false));
+
+        await using var provider = CreateProvider();
+        var result = await provider.GetPullRequestStateAsync(102, CancellationToken.None);
+
+        result.Should().Be(PullRequestState.Closed);
+    }
+
     // ── GetPullRequestBodyAsync ───────────────────────────────────────────────
 
     [Fact]
@@ -525,40 +565,66 @@ public class GitHubRepositoryProviderPullRequestMethodsTests : WireMockTestBase
 
     private static object BuildDetailedPR(int number, string headRef, bool draft,
         string? body = "PR body", string state = "open") => new
+        {
+            id = number * 100,
+            number,
+            html_url = $"https://github.com/{Owner}/{Repo}/pull/{number}",
+            state,
+            title = $"Update feature",
+            body,
+            draft,
+            node_id = $"PR_node_{number}",
+            user = new { login = "testuser", id = 1 },
+            labels = Array.Empty<object>(),
+            head = new { @ref = headRef, sha = "abc123" },
+            @base = new { @ref = "main", sha = "def456" },
+            created_at = "2026-01-01T00:00:00Z",
+            updated_at = "2026-01-01T00:00:00Z"
+        };
+
+    /// <summary>
+    /// Builds a PR JSON object for GetPullRequestStateAsync tests.
+    /// GitHub uses state="closed" + merged=true for merged PRs,
+    /// and state="closed" + merged=false for closed-without-merge PRs.
+    /// </summary>
+    private static object BuildPrForStateQuery(int number, string state, bool merged) => new
     {
         id = number * 100,
         number,
         html_url = $"https://github.com/{Owner}/{Repo}/pull/{number}",
         state,
-        title = $"Update feature",
-        body,
-        draft,
+        title = $"PR #{number}",
+        body = "body",
+        draft = false,
+        merged,
+        // merged_at is required by Octokit when merged=true
+        merged_at = merged ? "2026-09-21T22:30:00Z" : (string?)null,
         node_id = $"PR_node_{number}",
         user = new { login = "testuser", id = 1 },
         labels = Array.Empty<object>(),
-        head = new { @ref = headRef, sha = "abc123" },
+        head = new { @ref = $"feature/pr-{number}", sha = "abc123" },
         @base = new { @ref = "main", sha = "def456" },
         created_at = "2026-01-01T00:00:00Z",
-        updated_at = "2026-01-01T00:00:00Z"
+        updated_at = "2026-09-21T22:30:00Z"
     };
 
     private static object BuildDetailedPRWithTitle(int number, string headRef, bool draft,
         string title, string? body) => new
-    {
-        id = number * 100,
-        number,
-        html_url = $"https://github.com/{Owner}/{Repo}/pull/{number}",
-        state = "open",
-        title,
-        body,
-        draft,
-        node_id = $"PR_node_{number}",
-        user = new { login = "testuser", id = 1 },
-        head = new { @ref = headRef, sha = "abc123" },
-        @base = new { @ref = "main", sha = "def456" },
-        created_at = "2026-01-01T00:00:00Z",
-        updated_at = "2026-01-01T00:00:00Z"
-    };
+        {
+            id = number * 100,
+            number,
+            html_url = $"https://github.com/{Owner}/{Repo}/pull/{number}",
+            state = "open",
+            title,
+            body,
+            draft,
+            node_id = $"PR_node_{number}",
+            user = new { login = "testuser", id = 1 },
+            head = new { @ref = headRef, sha = "abc123" },
+            @base = new { @ref = "main", sha = "def456" },
+            created_at = "2026-01-01T00:00:00Z",
+            updated_at = "2026-01-01T00:00:00Z"
+        };
 
     private static object BuildIssueWithPr(int number, string headRef, string? label = null)
     {
