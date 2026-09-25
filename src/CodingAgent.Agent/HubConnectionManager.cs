@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
+using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.SignalR.Client;
 namespace CodingAgent.Agent;
 
@@ -88,7 +89,8 @@ public sealed class HubConnectionManager : IHubConnectionManager
     /// </summary>
     public HubConnection Connection => _connection;
 
-    public HubConnectionManager(string orchestratorUrl, AgentId agentId, string apiKey, Serilog.ILogger logger)
+    public HubConnectionManager(string orchestratorUrl, AgentId agentId, string apiKey, Serilog.ILogger logger,
+        Func<HttpMessageHandler, HttpMessageHandler>? httpMessageHandlerFactory = null)
     {
         ArgumentNullException.ThrowIfNull(orchestratorUrl);
         ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId));
@@ -101,11 +103,15 @@ public sealed class HubConnectionManager : IHubConnectionManager
         var hubUrl = $"{orchestratorUrl.TrimEnd('/')}{HubRoutes.Agent}?agentId={Uri.EscapeDataString(agentId.Value)}";
 
         _logger.Information("HubConnectionManager: target hub URL = {HubUrl}", hubUrl);
+        _logger.Information("HubConnectionManager: transport = WebSockets (SkipNegotiation=true)");
 
         _connection = new HubConnectionBuilder()
             .WithUrl(hubUrl, options =>
             {
                 options.AccessTokenProvider = () => Task.FromResult<string?>(derivedKey);
+                options.SkipNegotiation = true;
+                options.Transports = HttpTransportType.WebSockets;
+                options.HttpMessageHandlerFactory = httpMessageHandlerFactory;
             })
             .AddAgentHubProtocol()
             .WithAutomaticReconnect(new InfiniteRetryPolicy())
