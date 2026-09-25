@@ -19,6 +19,7 @@ Human-authored intent behind non-obvious design choices. This file is the author
 <!-- Session: 24 | Last run: 2026-09-21 | Decisions added: 5 (conflict rework re-queues agent:done intentional, StaleBranchCleaner double-scan #2880, HousekeepingMaxSlotAgeMinutes dead config #2881, DispatchWorkItemService sanitizedSelector no-opinion, HousekeepingActiveLabels set intentional); issues created: #2880/#2881 -->
 <!-- Session: 25 | Last run: 2026-09-22 | Decisions added: 5 (ChatSessionWatcher idle-kill deadlock no-opinion, RequestGetIssue double-retry intentional, zero-context=InfrastructureFailure intentional, dispatch 503 = next poll cycle, IssueReworkService fail-closed intentional); no bugs found -->
 <!-- Session: 26 | Last run: 2026-09-22 | Decisions added: 3 (PvcPoolExhaustions KISS/DRY no-opinion, advisory lock asymmetry no-opinion, ChatHeartbeatTracker null-tracker no-opinion); issues created: #2883 -->
+<!-- Manual correction 2026-09-25 (not an intent-extraction session): session-25 entries "Zero open-issue context" and "RequestGetIssue double-retry tier" had wrong causes and implementation facts, found in the #2927 RCA; both decisions kept, facts corrected -->
 <!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService razor component decomposition, Faro CSP script-src when CSP added, TimeoutSeconds end-to-end after #2179 -->
 
 ---
@@ -1919,14 +1920,16 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 
 ### Zero open-issue context on decomposition run: InfrastructureFailure, not agent failure
 
-**Date:** 2026-09-22
+**Date:** 2026-09-22 (cause corrected 2026-09-25)
 **Category:** architecture
 
-**Decision:** When `run.OpenIssuesDownloaded == 0` on a `DecompositionAnalysis` or `Decomposition` run, `DecompositionAnalysisStep` treats the missing plan file as `FailureReason.InfrastructureFailure` rather than a generic agent failure. The agent literally cannot produce a decomposition plan without issue context — a zero download count means all `RequestGetIssue` calls silently failed (cross-replica state miss or GitHub API failure). This is the orchestrator's fault, not the agent's. Classifying it as `InfrastructureFailure` preserves the retry budget for real agent failures.
+**Decision:** When `run.OpenIssuesDownloaded == 0` on a `DecompositionAnalysis` or `Decomposition` run, `DecompositionAnalysisStep` treats the missing plan file as `FailureReason.InfrastructureFailure` rather than a generic agent failure. The agent literally cannot produce a decomposition plan without issue context — a zero download count means every `RequestGetIssue` call failed. This is the orchestrator's fault, not the agent's. Classifying it as `InfrastructureFailure` preserves the retry budget for real agent failures.
 
-**Context:** `RequestGetIssue` returns 404 when the hub doesn't have the run registered (cross-replica state miss, most common during rolling deploys). Errors are swallowed per-identifier in the context writer. The `OpenIssuesDownloaded` counter is the trip-wire. Comparable systems (Devin, OpenHands) don't distinguish infrastructure failures from agent failures — everything consumes the retry budget. This system's distinction reflects that context-miss is a known, categorized failure mode.
+**Correction (2026-09-25):** This entry originally blamed a cross-replica state miss ("`RequestGetIssue` returns 404 when the hub doesn't have the run registered"). That was never the observed cause, and the mechanism doesn't exist as described. A hub call has no HTTP status, and `ResolveIssueProviderForRunAsync` falls back to the WorkItem row in the database when the run lookup misses, so a missing run alone doesn't fail the call; it fails only if the WorkItem row is gone too (`No active run or work item found`). From 2026-07-23 (#1570) until #2927 (2026-09-23), every `RequestGetIssue` call failed for one reason: the agent sent `IssueIdentifier` as a MessagePack map while the hub method takes a `string`, so SignalR rejected the call during argument binding, before the hub method ran. The agent saw only `Failed to invoke 'RequestGetIssue' due to an error on the server.`, and the server logged `InvalidHubParameters` at Debug, which the Serilog override for `Microsoft.AspNetCore` (Warning) filters out. The classification decision is unaffected. Causes that can still produce zero context: the provider call failing after its retries, a missing provider config, or a missing WorkItem row.
 
-**Alternatives considered:** Generic failure classification (simpler, but penalizes the agent's retry budget for orchestrator faults), immediate retry on zero context (could loop indefinitely during sustained state-miss; bounded-retry via InfrastructureFailure path is safer).
+**Context:** Errors are swallowed per-identifier in the context writer. The `OpenIssuesDownloaded` counter is the trip-wire. Comparable systems (Devin, OpenHands) don't distinguish infrastructure failures from agent failures — everything consumes the retry budget. This system's distinction reflects that context-miss is a known, categorized failure mode.
+
+**Alternatives considered:** Generic failure classification (simpler, but penalizes the agent's retry budget for orchestrator faults), immediate retry on zero context (could loop indefinitely while the cause persists — the #2927 binding failure was deterministic; bounded-retry via InfrastructureFailure path is safer).
 
 **Reassess when:** `InfrastructureFailure` becomes overloaded with multiple root causes that need different recovery strategies. If so, add more discriminating `FailureReason` variants.
 
@@ -1934,10 +1937,12 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 
 ### RequestGetIssue double-retry tier: intentional resilience, applies to CI waiting loop too
 
-**Date:** 2026-09-22
+**Date:** 2026-09-22 (implementation facts corrected 2026-09-25)
 **Category:** architecture
 
-**Decision:** `AgentHub.Decomposition.cs` and `AgentOrphanRecoveryService` use a second retry tier outside the provider's own `CreateGitHubApiPipeline` retry budget. The outer tier catches exceptions wrapping `"Failed to "` provider errors (thrown by `ExecuteWithIssueProviderAsync` when the provider's inner retry budget is exhausted) and retries with a 2-minute outer timeout. This two-tier approach is intentional: GitHub API blips lasting longer than the inner pipeline's budget exist in production (brief upstream outages, rate-limit surges at the token boundary). The outer tier provides a longer recovery window without requiring the inner retry count to be bloated. The same double-tier resilience pattern should be applied to the CI waiting loop (`PollCiWithNotStartedRetryAsync`) and other infrastructure-failure-mode loops where the provider call may fail transiently after the inner retry budget is exhausted.
+**Decision:** A second retry tier on top of the provider's own `CreateGitHubApiPipeline` retry budget is intentional: GitHub API blips lasting longer than the inner pipeline's budget exist in production (brief upstream outages, rate-limit surges at the token boundary). The outer tier provides a longer recovery window without requiring the inner retry count to be bloated. The same double-tier resilience pattern should be applied to the CI waiting loop (`PollCiWithNotStartedRetryAsync`) and other infrastructure-failure-mode loops where the provider call may fail transiently after the inner retry budget is exhausted.
+
+**Correction (2026-09-25) — the outer tier does not cover provider errors today:** This entry originally said `AgentHub.Decomposition.cs` and `AgentOrphanRecoveryService` implement the outer tier by catching the `"Failed to "` errors thrown by `ExecuteWithIssueProviderAsync`. The outer tier is the agent-side SignalR pipeline (`ResiliencePipelineFactory.CreateSignalRPipeline`, used by `OrchestratorProxy`: 3 retries, 2-minute outer timeout). #2835 added a clause to it that retries any `HubException` whose message starts with `Failed to `. That clause never matches a provider failure. When a hub method throws, SignalR prefixes the text, so the agent receives `An unexpected error occurred invoking '<method>' on the server. HubException: <hub message>`. The only messages that start with `Failed to ` are SignalR's own rejections before the method runs, such as `Failed to invoke '<method>' due to an error on the server.` (argument binding) and `Failed to invoke '<method>' because user is unauthorized`. Those are permanent. Until #2927 the clause retried the `RequestGetIssue` binding failure on every call and then failed anyway. Provider errors therefore get only the inner tier today. Before this pattern is applied to other loops, the predicate has to match what the agent actually receives, or the clause should be removed; that choice is still open.
 
 **Context:** The inner `CreateGitHubApiPipeline` has a short budget (tight retry timing, few attempts). A 2-minute outer timeout caps total retry time so this doesn't delay the agent indefinitely. The pattern follows the same reasoning as the `ExternalCiDuration` / `PollCiWithNotStartedRetryAsync` re-push mechanism: GitHub webhooks and API calls are unreliable enough that application-level resilience is required in addition to provider-level retry.
 
@@ -2143,8 +2148,8 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 - DispatchWorkItemService.ApplyGates sanitization contract — session 24: no-opinion, follow existing value-type pattern if adding new user-controlled parameters
 - Conflict rework and stale-branch label policy — session 24: decisions captured (#2880, #2881 for follow-ups)
 - ChatSessionWatcher idle-kill watcher-self-await — session 25: no-opinion (force-delete path is the invariant; fix acceptable if pursued)
-- RequestGetIssue double-retry tier — session 25: intentional resilience pattern; same policy applies to CI waiting loop
-- Zero open-issue context = InfrastructureFailure — session 25: confirmed correct classification
+- RequestGetIssue double-retry tier — session 25: intentional resilience pattern; same policy applies to CI waiting loop. Corrected 2026-09-25: the implemented outer tier never matches provider errors (see entry)
+- Zero open-issue context = InfrastructureFailure — session 25: confirmed correct classification. Corrected 2026-09-25: the observed cause was the SignalR argument-binding failure fixed in #2927, not a cross-replica state miss
 - Dispatch 503 recovery — session 25: next poll cycle is the retry mechanism; no explicit 503 handler needed
 - IssueReworkService fail-closed on missing active-run data — session 25: confirmed correct; safety over liveness on a polling loop
 - PvcPoolExhaustions counter placement — session 26: no-opinion, follow KISS/DRY — emit from ApplyGates if semantics are "all exhaustion events", leave at call site if Scheduler-only is intentional
@@ -2173,7 +2178,7 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 - RetryErrors transient-enqueue gate: if failure-feedback prompt accuracy degrades, revisit gating Enqueue on RetryOutcome.Retry
 - ProviderConfigId Phase 2: apply if natural opportunity arises (no-opinion, no blocking issue)
 - ChatSessionWatcher idle-kill deadlock: if the watcher self-await TODO is actioned, verify the fix doesn't regress the idempotent CleanupSession CAS gate
-- RequestGetIssue double-retry: verify same pattern applied to CI waiting loop (PollCiWithNotStartedRetryAsync)
+- RequestGetIssue double-retry: the outer tier's `Failed to ` predicate never matches provider errors (corrected 2026-09-25). Decide whether to fix the predicate or remove the clause before applying the pattern to the CI waiting loop (PollCiWithNotStartedRetryAsync)
 
 ---
 

@@ -183,6 +183,39 @@ public sealed class HousekeepingService : IHousekeepingService
         // ── Step 1: Build mergeability map — one call per PR, with re-probe for Unknown ──
         var mergeabilityMap = await BuildMergeabilityMapAsync(repoProvider, repoProviderId, agentDonePrs, repoTag, ct);
 
+        // ── Step 1b: Sweep summary log + metric ──────────────────────────────
+        // Only emitted when there are agent:done PRs; gated to avoid per-tick noise when
+        // the queue is empty. Debug level — fires every poll cycle (~10 s) when active.
+        // The OTel counter (pipeline.housekeeping.pr_evaluated) is the durable signal for
+        // Grafana timeline queries; the log line gives per-sweep snapshots in Loki.
+        if (agentDonePrs.Count > 0)
+        {
+            var behind     = 0;
+            var upToDate   = 0;
+            var conflicted = 0;
+            var blocked    = 0;
+            var unknown    = 0;
+
+            foreach (var status in mergeabilityMap.Values)
+            {
+                switch (status)
+                {
+                    case PrMergeabilityStatus.Behind:     behind++;     break;
+                    case PrMergeabilityStatus.UpToDate:   upToDate++;   break;
+                    case PrMergeabilityStatus.Conflicted: conflicted++; break;
+                    case PrMergeabilityStatus.Blocked:    blocked++;    break;
+                    default:                              unknown++;    break;
+                }
+            }
+
+            _logger.Debug(
+                "HousekeepingService: sweep — {Total} agent:done PR(s): Behind={Behind} UpToDate={UpToDate} Conflicted={Conflicted} Blocked={Blocked} Unknown={Unknown} [{RepoProviderId}]{Truncated}",
+                mergeabilityMap.Count, behind, upToDate, conflicted, blocked, unknown, repoProviderId,
+                wasInputTruncated ? " (input truncated)" : "");
+
+            EmitMergeabilityStatusCounters(behind, upToDate, conflicted, blocked, unknown, repoTag);
+        }
+
         // ── Step 2: Get or create in-flight set ──────────────────────────────
         // TODO: Step 2 was not extracted into a named private method (unlike Steps 1, 3–7).
         // The two statements below are trivial state-initialisation whose results are shared
@@ -550,44 +583,45 @@ public sealed class HousekeepingService : IHousekeepingService
         foreach (var pr in sorted)
         {
             if (inFlight.Count >= limit)
+            {
+                PipelineTelemetry.HousekeepingSlotExhausted.Add(1, repoTag);
                 break;
+            }
 
             if (pr.IsDraft)
             {
-                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
+                // Draft PRs are a content filter, not a policy skip — excluded from the skipped counter.
+                // Already captured in pr_evaluated (drafts still enter the mergeability map as UpToDate).
                 continue;
             }
 
             // Conservative fallback: if active-run branch data was unavailable (Step 4 threw),
             // skip ALL branch updates this cycle — we cannot confirm which branches are safe.
-            // NOTE: The telemetry counter is incremented per-PR but no per-PR log is emitted
-            //   for the conservative-skip path. If the API is down for an extended period (e.g. 30 min),
-            //   operators have no per-PR visibility into which PRs were skipped — only the aggregate
-            //   counter and the single Warning-level log from Step 4. Consider logging PR number and
-            //   branch name here (Debug or Information level) so housekeeping cycles with many
-            //   conservative skips can be diagnosed without ambiguity.
+            // Not counted in the skipped counter — covered by the Step 4 Warning log.
             if (activeRunBranchesUnavailable)
             {
-                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
                 continue;
             }
 
             if (activeRunBranches.Contains(pr.BranchName))
             {
-                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
+                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag,
+                    new KeyValuePair<string, object?>("skip_reason", PipelineTelemetry.HousekeepingSkipReasons.ActiveRun));
                 continue;
             }
 
             if (inFlight.Contains(pr.Number))
             {
-                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
+                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag,
+                    new KeyValuePair<string, object?>("skip_reason", PipelineTelemetry.HousekeepingSkipReasons.InFlight));
                 continue;
             }
 
             var mergeability = mergeabilityMap[pr.Number];
             if (mergeability != PrMergeabilityStatus.Behind)
             {
-                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
+                // Not-behind PRs are a content filter — excluded from the skipped counter.
+                // Distribution already captured by pr_evaluated{mergeability_status}.
                 continue;
             }
 
@@ -600,7 +634,8 @@ public sealed class HousekeepingService : IHousekeepingService
                 _logger.Debug(
                     "HousekeepingService: PR #{PrNumber} is behind but was triggered {Elapsed:F0}m ago (cooldown {Cooldown:F0}m) — skipping to allow other PRs to proceed",
                     pr.Number, (now - lastTriggered).TotalMinutes, triggerCooldown.TotalMinutes);
-                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
+                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag,
+                    new KeyValuePair<string, object?>("skip_reason", PipelineTelemetry.HousekeepingSkipReasons.Cooldown));
                 continue;
             }
 
@@ -638,5 +673,23 @@ public sealed class HousekeepingService : IHousekeepingService
                 "Housekeeping: failed to update branch for PR #{PrNumber} on {RepoProviderId}: {Error}",
                 prNumber, repoProviderId, ex.Message);
         }
+    }
+
+    // ── Step 1b helper ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Emits <c>pipeline.housekeeping.pr_evaluated</c> counter increments for each status
+    /// that has a non-zero count. Uses one <c>Add(N)</c> per status (aggregate, not per-PR)
+    /// to keep the emit loop O(1) regardless of PR count.
+    /// </summary>
+    private static void EmitMergeabilityStatusCounters(
+        int behind, int upToDate, int conflicted, int blocked, int unknown,
+        KeyValuePair<string, object?> repoTag)
+    {
+        if (behind     > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(behind,     repoTag, new KeyValuePair<string, object?>("mergeability_status", "behind"));
+        if (upToDate   > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(upToDate,   repoTag, new KeyValuePair<string, object?>("mergeability_status", "up_to_date"));
+        if (conflicted > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(conflicted, repoTag, new KeyValuePair<string, object?>("mergeability_status", "conflicted"));
+        if (blocked    > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(blocked,    repoTag, new KeyValuePair<string, object?>("mergeability_status", "blocked"));
+        if (unknown    > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(unknown,    repoTag, new KeyValuePair<string, object?>("mergeability_status", "unknown"));
     }
 }

@@ -419,7 +419,7 @@ public sealed partial class PipelineLoopService
                 "(provider {IssueProviderConfigId}) — {ItemKind2} no longer eligible",
                 item.Id, item.TaskType, itemKind, item.IssueIdentifier, item.IssueProviderConfigId, itemKind);
 
-            await DispatchPendingItemAsync(item, itemKind, ct);
+            await DispatchPendingItemAsync(item, ct);
         }
     }
 
@@ -459,10 +459,7 @@ public sealed partial class PipelineLoopService
     /// </list>
     /// On success, increments <see cref="PipelineTelemetry.QueueSweepCancelled"/>.
     /// </summary>
-    // TODO: [WARNING] itemKind parameter is never used inside this method — the ErrorMessage
-    // derives "PR"/"Issue" from item.TaskType inline, duplicating rather than reusing itemKind.
-    // Remove the parameter and update callers once that dead dependency is confirmed safe.
-    private async Task DispatchPendingItemAsync(PendingWorkItemDto item, string itemKind, CancellationToken ct)
+    private async Task DispatchPendingItemAsync(PendingWorkItemDto item, CancellationToken ct)
     {
         try
         {
