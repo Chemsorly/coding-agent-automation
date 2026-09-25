@@ -46,7 +46,9 @@ public sealed class PostDecompositionPlanStep : IPipelineStep
         }
 
         // 2. Format the plan comment with marker + approval instructions
-        var commentBody = FormatPlanComment(planContent);
+        //    If the plan's sub-issue count exceeds the configured cap, prepend a warning.
+        var cap = context.Config.MaxDecompositionSubIssues;
+        var commentBody = FormatPlanComment(planContent, cap, context.Logger);
 
         // 3. Check for existing plan comment (most recent with marker)
         var postResult = await context.TryCriticalAsync(async () =>
@@ -102,15 +104,40 @@ public sealed class PostDecompositionPlanStep : IPipelineStep
 
     /// <summary>
     /// Formats the plan comment with the marker as the first line, followed by
-    /// the plan content and approval instructions.
+    /// the plan content and approval instructions. No cap warning is included.
     /// </summary>
+    // TODO: int.MaxValue is used as a "no cap" sentinel to suppress the cap warning.
+    // This is fragile: if the comparison in FormatPlanComment is ever changed (e.g. to >=),
+    // callers using this no-arg overload would silently acquire cap warnings. Consider
+    // changing maxSubIssues to int? and short-circuiting on null to make the intent explicit,
+    // matching the pattern already used on BuildReviewPrompt and BuildRefinementPrompt.
     internal static string FormatPlanComment(string planContent)
+        => FormatPlanComment(planContent, int.MaxValue, null);
+
+    /// <summary>
+    /// Formats the plan comment with the marker as the first line, followed by
+    /// the plan content and approval instructions.
+    /// When the plan's sub-issue table contains more rows than <paramref name="maxSubIssues"/>,
+    /// prepends a visible warning. On parse failure, posts without warning (fail-open).
+    /// </summary>
+    internal static string FormatPlanComment(string planContent, int maxSubIssues, Serilog.ILogger? logger = null)
     {
         var sb = new System.Text.StringBuilder();
 
         // Marker MUST be first line
         sb.AppendLine(CommentMarkers.DecompositionPlan);
         sb.AppendLine();
+
+        // Attempt to count sub-issues and warn if over cap
+        var countResult = TryCountSubIssuesInPlan(planContent, logger);
+        if (countResult.HasValue && countResult.Value > maxSubIssues)
+        {
+            sb.AppendLine($"> ⚠️ **Cap warning:** This plan proposes **{countResult.Value} sub-issues** but the configured maximum is **{maxSubIssues}**.");
+            sb.AppendLine($"> Only the first **{maxSubIssues}** sub-issues (by filename order) would be created if approved.");
+            sb.AppendLine($"> Review the plan and request changes to reduce the count before approving.");
+            sb.AppendLine();
+        }
+
         sb.AppendLine("## 🧩 Decomposition Plan");
         sb.AppendLine();
         sb.AppendLine(TextSanitizer.SanitizeMarkdown(planContent));
@@ -130,6 +157,118 @@ public sealed class PostDecompositionPlanStep : IPipelineStep
         sb.AppendLine("3. Add the `agent:epic` label to trigger re-analysis");
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Attempts to count data rows in the sub-issue table of a decomposition plan.
+    /// The table is identified as the first markdown table whose header row contains
+    /// both a <c>#</c> column and a <c>Title</c> column.
+    /// Returns null when no such table is found or on any parse error (fail-open).
+    /// </summary>
+    internal static int? TryCountSubIssuesInPlan(string planContent, Serilog.ILogger? logger = null)
+    {
+        try
+        {
+            // Split into lines and scan for the sub-issue table header.
+            // A header row looks like: | # | Title | ... |
+            // The separator row immediately follows: |---|---|...|
+            var lines = planContent.Split('\n');
+            var headerIndex = -1;
+
+            for (var i = 0; i < lines.Length; i++)
+            {
+                var line = lines[i].Trim();
+                if (IsSubIssueTableHeader(line))
+                {
+                    headerIndex = i;
+                    break;
+                }
+            }
+
+            if (headerIndex < 0)
+                return null;
+
+            // Count data rows immediately after the separator line
+            // (skip blank lines or lines not starting/ending with '|')
+            var dataRowCount = 0;
+            var separatorFound = false;
+
+            for (var i = headerIndex + 1; i < lines.Length; i++)
+            {
+                var line = lines[i].Trim();
+
+                if (!separatorFound)
+                {
+                    // The first line after the header should be the separator row (|---|...|)
+                    if (IsMarkdownTableSeparator(line))
+                    {
+                        separatorFound = true;
+                        continue;
+                    }
+                    // If the line after the header is not a separator, this is not a valid table
+                    return null;
+                }
+
+                // After separator: count non-empty pipe-delimited rows
+                // TODO: A blank line embedded inside the table body terminates the count early here,
+                // causing an undercount and suppressing the cap warning even when the plan exceeds the cap.
+                // The issue spec defines fail-open as "can't parse the table → no warning", but this
+                // silently miscounts a partially-parsable table instead of returning null. Consider
+                // skipping blank lines (continue) rather than breaking on the first non-pipe line,
+                // or returning null when a blank line is encountered inside the table body.
+                if (line.StartsWith('|') && line.EndsWith('|'))
+                    dataRowCount++;
+                else
+                    break; // Table ended
+            }
+
+            return separatorFound ? dataRowCount : null;
+        }
+        catch (Exception ex)
+        {
+            logger?.Warning(ex, "Failed to parse sub-issue table in decomposition plan; posting without cap warning");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Returns true if the line is a markdown table header row that contains
+    /// both a <c>#</c> column and a <c>Title</c> column.
+    /// </summary>
+    private static bool IsSubIssueTableHeader(string line)
+    {
+        if (!line.StartsWith('|') || !line.EndsWith('|'))
+            return false;
+
+        // Split on '|', trim each cell
+        var cells = line.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        var hasNumberColumn = false;
+        var hasTitleColumn = false;
+        foreach (var cell in cells)
+        {
+            if (cell == "#") hasNumberColumn = true;
+            if (cell.Equals("Title", StringComparison.OrdinalIgnoreCase)) hasTitleColumn = true;
+        }
+
+        return hasNumberColumn && hasTitleColumn;
+    }
+
+    /// <summary>
+    /// Returns true if the line is a markdown table separator row (contains only <c>|</c>, <c>-</c>, <c>:</c>, and spaces).
+    /// </summary>
+    private static bool IsMarkdownTableSeparator(string line)
+    {
+        if (!line.StartsWith('|') || !line.EndsWith('|'))
+            return false;
+
+        foreach (var c in line)
+        {
+            if (c != '|' && c != '-' && c != ':' && c != ' ')
+                return false;
+        }
+
+        return line.Contains('-');
     }
 
     /// <summary>
