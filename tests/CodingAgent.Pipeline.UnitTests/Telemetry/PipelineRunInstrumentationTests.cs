@@ -167,6 +167,10 @@ public class PipelineRunInstrumentationTests
         instrumentation.MarkFailed(FailureReason.QualityGateExhausted);
         instrumentation.Dispose();
 
+        // TODO: [WARNING] The null branch of MarkFailed is not tested. MarkFailed(null) should be a no-op
+        // that does NOT set the pipeline.failure_reason tag on the activity. A regression that adds a tag
+        // for the null case (e.g. setting "pipeline.failure_reason" to "null" or empty string) would not
+        // be caught. Add a test: MarkFailed_WithNullReason_DoesNotSetFailureReasonTag.
         instrumentation.Activity.Should().NotBeNull();
         instrumentation.Activity!.GetTagItem("pipeline.failure_reason").Should().Be("QualityGateExhausted");
     }

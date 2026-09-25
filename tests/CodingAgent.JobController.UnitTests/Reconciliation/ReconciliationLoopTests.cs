@@ -3462,6 +3462,15 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
     {
         // Issue #2967: pipeline.jobs.* must NOT be emitted from LogTerminalStatus.
         // Run-level metrics are now consolidated in WorkItemStatusTransitionService.
+        // TODO: [WARNING] These assertions are vacuously true. PipelineTelemetry.JobsCompleted,
+        // JobsFailed, and JobDuration were removed from PipelineTelemetry.cs in this diff, so
+        // those instruments no longer exist in the meter. The _pipelineCounters bag listens on
+        // PipelineTelemetry.SourceName — since the instruments are gone, pipeline.jobs.* can
+        // never appear in _pipelineCounters regardless of what LogTerminalStatus does. The delta
+        // will always be 0 no matter how LogTerminalStatus is changed in future.
+        // Fix: also assert that no new entries appear in _recordings (the workdistribution bag)
+        // beyond the two expected workdistribution.workitems_terminated increments, or explicitly
+        // check that the net delta of ALL observed metric names contains no "pipeline.jobs.*" names.
         var completedBefore = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.completed");
         var failedBefore = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
         var durationBefore = _pipelineHistograms.Count(r => r.InstrumentName == "pipeline.jobs.duration");

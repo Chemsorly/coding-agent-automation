@@ -137,6 +137,12 @@ public sealed class RunOutcomeCounterPreInitializationTests
         // Verify that needs_refinement and wont_do use failure_reason=none in pre-initialization.
         // These outcomes arrive with GateRejected in the request, but the outcome derivation
         // forces none — the pre-initialization must match the live emission exactly.
+        // TODO: [WARNING] This test asserts against NonFailureOutcomes, which is a static array
+        // defined in THIS test class — not the production pre-initialization in Program.cs.
+        // The assertions would pass even if Program.PreInitializeMetrics used "gate_rejected" for
+        // these outcomes. To be meaningful, the test must verify the actual labels emitted by the
+        // pre-initialization code path (e.g. via a MeterListener during RunPreInitialization),
+        // not an array defined inside the test file.
         var needsRefinementEntry = NonFailureOutcomes.Should().Contain("needs_refinement");
         var wontDoEntry = NonFailureOutcomes.Should().Contain("wont_do");
 
@@ -152,6 +158,15 @@ public sealed class RunOutcomeCounterPreInitializationTests
     public void PreInitialization_EmitsAdd0_ForAllRunOutcomesCombinations()
     {
         // Verify Add(0) is emitted for all 75 combinations via a MeterListener.
+        // TODO: [WARNING] This test re-executes the pre-initialization logic inline (calls
+        // PipelineTelemetry.RunOutcomes.Add(0, ...) in the test body) rather than delegating
+        // to RunPreInitialization or Program.PreInitializeMetrics. It is therefore partially
+        // tautological: it calls Add(0) itself and then asserts those same calls were observed,
+        // so it would pass even if Program.PreInitializeMetrics were deleted entirely.
+        // The static RunOutcomes counter is shared across the test process; these Add(0) calls
+        // also permanently affect the series-existence state for the live static meter.
+        // To be meaningful, the test should verify that RunPreInitialization (or Program.PreInitializeMetrics)
+        // covers all required combinations — not re-run the logic inline.
         var observed = new ConcurrentBag<(string RunType, string Outcome, string FailureReason)>();
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, l) =>
