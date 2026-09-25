@@ -683,4 +683,36 @@ public sealed class JobSpecBuilderAdditionalTests
         var env = job.Spec.Template.Spec.Containers[0].Env;
         env.Should().Contain(e => e.Name == "ORCHESTRATOR_URL" && e.Value == "http://custom-orch:9090");
     }
+
+    // ── TraceParent env var (issue #2977) ────────────────────────────────────
+
+    /// <summary>
+    /// Acceptance Criterion 1 (issue #2977): the Job built for a WorkItem that has a TraceParent
+    /// carries the TRACEPARENT env var with the exact value from BuildContext.TraceParent.
+    /// </summary>
+    [Fact]
+    public void Build_WhenTraceParentSet_InjectsTraceparentEnvVar()
+    {
+        const string traceParentValue = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        var ctx = BaseCtx() with { TraceParent = traceParentValue };
+
+        var job = JobSpecBuilder.Build(KiroTemplate(), ctx);
+
+        var envVars = job.Spec.Template.Spec.Containers[0].Env;
+        envVars.Should().Contain(e => e.Name == "TRACEPARENT" && e.Value == traceParentValue,
+            "TRACEPARENT env var must be injected with the exact value from BuildContext.TraceParent");
+    }
+
+    [Fact]
+    public void Build_WhenTraceParentNull_DoesNotInjectTraceparentEnvVar()
+    {
+        // BaseCtx() leaves TraceParent null (the property default).
+        var ctx = BaseCtx();
+
+        var job = JobSpecBuilder.Build(KiroTemplate(), ctx);
+
+        var envVars = job.Spec.Template.Spec.Containers[0].Env;
+        envVars.Should().NotContain(e => e.Name == "TRACEPARENT",
+            "TRACEPARENT must not be present when BuildContext.TraceParent is null");
+    }
 }

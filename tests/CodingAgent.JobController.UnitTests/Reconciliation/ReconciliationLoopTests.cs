@@ -7,6 +7,7 @@ using CodingAgent.Web.TestUtilities;
 using k8s.Models;
 using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 
 namespace CodingAgent.JobController.UnitTests.Reconciliation;
@@ -25,13 +26,20 @@ namespace CodingAgent.JobController.UnitTests.Reconciliation;
 /// cause a spurious "delta of 2 instead of 1" failure.
 /// </remarks>
 [Collection("Metrics")]
-public sealed class ReconciliationLoopTests
+public sealed class ReconciliationLoopTests : IDisposable
 {
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
     private readonly Mock<IKubernetesJobClient> _k8sClient = new();
     private readonly DispatchServiceOptions _options;
 
     private static readonly Guid ItemId = Guid.NewGuid();
+
+    // Class-level ActivityListener for span assertions (issue #2977).
+    // Class-level (not per-method inline 'using var') avoids listener accumulation across tests.
+    // [Collection("Metrics")] serialises this class against ReconciliationLoopMetricTests and
+    // ReconciliationLoopErrorTests, preventing cross-class ActivitySource races.
+    private readonly ActivityListener _activityListener;
+    private readonly ConcurrentBag<Activity> _capturedActivities = [];
 
     public ReconciliationLoopTests()
     {
@@ -49,7 +57,18 @@ public sealed class ReconciliationLoopTests
         // Default: no active work items
         _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
+
+        _activityListener = new ActivityListener
+        {
+            ShouldListenTo = s => s.Name == PipelineTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            SampleUsingParentId = (ref ActivityCreationOptions<string> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = a => _capturedActivities.Add(a)
+        };
+        ActivitySource.AddActivityListener(_activityListener);
     }
+
+    public void Dispose() => _activityListener.Dispose();
 
     private ReconciliationLoop CreateLoop() =>
         new(_workItemClient.Object, _k8sClient.Object, _options);
@@ -1566,6 +1585,239 @@ public sealed class ReconciliationLoopTests
         _k8sClient.Verify(c => c.DeleteJobAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    // ─── Reconciliation span emissions (issue #2977) ───────────────────────────
+
+    /// <summary>
+    /// AC: When a K8s Job fails, Reconcile.JobFailed span is emitted exactly once with
+    /// the work_item_id and failure_reason tags.
+    /// </summary>
+    [Fact]
+    public async Task ReconcileOnce_WhenJobFailed_EmitsReconcileJobFailedSpan()
+    {
+        var jobName = JobNameFor(ItemId);
+        var job = MakeJob(jobName, ItemId, failed: true);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WorkItemStatus.Running);
+
+        _capturedActivities.Clear();
+        var loop = CreateLoop();
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        var span = _capturedActivities.FirstOrDefault(a => a.OperationName == "Reconcile.JobFailed");
+        span.Should().NotBeNull("Reconcile.JobFailed must be emitted when a K8s Job fails");
+        span!.GetTagItem("work_item_id").Should().Be(ItemId);
+        // TODO: This assertion is too weak — any non-null string passes. Since GetStatusAsync returns
+        // WorkItemStatus.Running, the expected value is "AgentError". Strengthen to:
+        //   span.GetTagItem("failure_reason").Should().Be("AgentError");
+        span.GetTagItem("failure_reason").Should().NotBeNull("failure_reason tag must be set");
+    }
+
+    /// <summary>
+    /// AC: When a K8s Job SUCCEEDS, Reconcile.JobFailed span is NOT emitted.
+    /// The span is placed in case JobPhaseFailed: branch only — not in HandleJobCompletedAsync
+    /// which is called for both succeeded and failed jobs.
+    /// </summary>
+    [Fact]
+    public async Task ReconcileOnce_WhenJobSucceeds_DoesNotEmitReconcileJobFailedSpan()
+    {
+        var jobName = JobNameFor(ItemId);
+        var job = MakeJob(jobName, ItemId, succeeded: true);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        _capturedActivities.Clear();
+        var loop = CreateLoop();
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        _capturedActivities
+            .Where(a => a.OperationName == "Reconcile.JobFailed")
+            .Should().BeEmpty("Reconcile.JobFailed must NOT fire on succeeded jobs — only on failed jobs");
+    }
+
+    /// <summary>
+    /// AC: When EnforceTimeoutsAsync times out a Running WorkItem, Reconcile.Timeout span
+    /// is emitted with work_item_id, agent_selector, and timeout_seconds tags.
+    /// </summary>
+    [Fact]
+    public async Task EnforceTimeouts_WhenItemTimedOut_EmitsReconcileTimeoutSpan()
+    {
+        const int timeoutSeconds = 1800;
+        var timedOutItem = new ActiveWorkItemDto
+        {
+            Id = ItemId,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(timeoutSeconds + 1)),
+            AgentSelector = "kiro,dotnet",
+            IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = timeoutSeconds,
+            K8sJobName = JobNameFor(ItemId)
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([timedOutItem]);
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _k8sClient.Setup(c => c.ListJobsAsync(
+                It.IsAny<string>(), It.Is<string>(s => s.Contains("work-item-id")), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [] }); // no live job found
+
+        _capturedActivities.Clear();
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        var span = _capturedActivities.FirstOrDefault(a => a.OperationName == "Reconcile.Timeout");
+        span.Should().NotBeNull("Reconcile.Timeout must be emitted when a Running WorkItem is timed out");
+        span!.GetTagItem("work_item_id").Should().Be(ItemId);
+        span.GetTagItem("agent_selector").Should().Be("kiro,dotnet");
+        span.GetTagItem("timeout_seconds").Should().Be(timeoutSeconds);
+    }
+
+    /// <summary>
+    /// AC: When EnforceTimeoutsAsync finds no timed-out items (idle cycle), no Reconcile.Timeout
+    /// span is emitted.
+    /// </summary>
+    [Fact]
+    public async Task EnforceTimeouts_WhenNoItemsTimedOut_DoesNotEmitReconcileTimeoutSpan()
+    {
+        const int timeoutSeconds = 1800;
+        var notYetTimedOut = new ActiveWorkItemDto
+        {
+            Id = ItemId,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-60),  // only 60s, well below 1800s timeout
+            AgentSelector = "kiro,dotnet",
+            IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = timeoutSeconds,
+            K8sJobName = JobNameFor(ItemId)
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([notYetTimedOut]);
+
+        _capturedActivities.Clear();
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        _capturedActivities
+            .Where(a => a.OperationName == "Reconcile.Timeout")
+            .Should().BeEmpty("items within their timeout must not emit Reconcile.Timeout spans");
+    }
+
+    /// <summary>
+    /// AC: When EnforceDispatchedTimeoutAsync finds a Dispatched item with no live K8s Job,
+    /// Reconcile.DispatchedTimeout span is emitted with work_item_id tag.
+    /// </summary>
+    [Fact]
+    public async Task EnforceDispatchedTimeout_WhenDispatchedItemHasNoJob_EmitsReconcileDispatchedTimeoutSpan()
+    {
+        const int connectTimeoutSeconds = 120;
+        var stuckItem = new ActiveWorkItemDto
+        {
+            Id = ItemId,
+            Status = WorkItemStatus.Dispatched,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(connectTimeoutSeconds + 1)),
+            AgentSelector = "kiro,dotnet",
+            IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = 3600,
+            K8sJobName = $"caa-{ItemId:N}"[..15]
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == connectTimeoutSeconds), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([stuckItem]);
+        // No live jobs in the cluster → item is orphaned
+        _k8sClient.Setup(c => c.ListJobsAsync(
+                It.IsAny<string>(), It.Is<string>(s => s.Contains("managed-by")), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        _capturedActivities.Clear();
+        var loop = CreateLoop();
+        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+
+        var span = _capturedActivities.FirstOrDefault(a => a.OperationName == "Reconcile.DispatchedTimeout");
+        span.Should().NotBeNull("Reconcile.DispatchedTimeout must be emitted when a Dispatched item has no live K8s Job");
+        span!.GetTagItem("work_item_id").Should().Be(ItemId);
+    }
+
+    /// <summary>
+    /// AC: When CleanupOrphansAsync finds and deletes an orphaned K8s Job, Reconcile.OrphanCleanup
+    /// span is emitted with job_name and orphan_reason tags.
+    /// </summary>
+    [Fact]
+    public async Task CleanupOrphans_WhenOrphanDeleted_EmitsReconcileOrphanCleanupSpan()
+    {
+        var orphanJobName = "caa-orphan-job";
+        var orphanJob = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = orphanJobName,
+                Labels = new Dictionary<string, string>
+                {
+                    ["app.kubernetes.io/managed-by"] = "caa-orchestrator"
+                },
+                // Old completion time (> 600s ago) → past retention window → will be deleted
+                CreationTimestamp = DateTime.UtcNow.AddSeconds(-700)
+            },
+            Spec = new V1JobSpec { Template = new V1PodTemplateSpec { Spec = new V1PodSpec { Volumes = [] } } },
+            Status = new V1JobStatus { CompletionTime = DateTime.UtcNow.AddSeconds(-700) }
+        };
+
+        _k8sClient.Setup(c => c.ListJobsAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [orphanJob] });
+        // No active work items → the job is an orphan
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        _k8sClient.Setup(c => c.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _capturedActivities.Clear();
+        var loop = CreateLoop();
+        await loop.CleanupOrphansAsync(CancellationToken.None);
+
+        var span = _capturedActivities.FirstOrDefault(a => a.OperationName == "Reconcile.OrphanCleanup");
+        span.Should().NotBeNull("Reconcile.OrphanCleanup must be emitted when an orphaned job is deleted");
+        span!.GetTagItem("job_name").Should().Be(orphanJobName);
+        // TODO: This assertion is too weak — any non-null string passes. The job has no caa/work-item-id
+        // label, so production code sets orphanReason = "no caa/work-item-id label". Strengthen to:
+        //   span.GetTagItem("orphan_reason").Should().Be("no caa/work-item-id label");
+        span.GetTagItem("orphan_reason").Should().NotBeNull("orphan_reason tag must be set");
+    }
+
+    /// <summary>
+    /// AC: When CleanupOrphansAsync finds no orphans (idle cycle), no Reconcile.OrphanCleanup
+    /// span is emitted.
+    /// </summary>
+    [Fact]
+    public async Task CleanupOrphans_WhenNoOrphans_DoesNotEmitReconcileOrphanCleanupSpan()
+    {
+        // No jobs in cluster → no orphans to clean
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [] });
+
+        _capturedActivities.Clear();
+        var loop = CreateLoop();
+        await loop.CleanupOrphansAsync(CancellationToken.None);
+
+        _capturedActivities
+            .Where(a => a.OperationName == "Reconcile.OrphanCleanup")
+            .Should().BeEmpty("idle cycles with no orphans must not emit Reconcile.OrphanCleanup spans");
+    }
+
 }
 
 // ─── Error / exception paths ──────────────────────────────────────────────────

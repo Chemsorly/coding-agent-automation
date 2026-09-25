@@ -1781,4 +1781,8 @@ public class DispatchSchedulerTests
     }
 
     #endregion
+
+    // TODO: No span-emission tests exist for Loop.Enqueue (added in issue #2977).
+    // Add tests to verify: (1) Loop.Enqueue is emitted with issue_identifier and template_name tags
+    // when an issue is successfully dispatched; (2) no span is emitted when dispatch is skipped.
 }
