@@ -3,6 +3,7 @@ using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
+using System.Diagnostics;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Orchestration.Dispatch;
@@ -296,20 +297,22 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     }
 
     /// <summary>
-    /// Parses closing-keyword issue references from the PR title and description, fetches each
-    /// referenced issue from the issue provider, and returns them as <see cref="LinkedIssueContext"/>
-    /// records for inclusion in the dispatch payload.
+    /// Parses closing-keyword and GitHub issue URL references from the PR title and description,
+    /// fetches each referenced issue from the issue provider, and returns them as
+    /// <see cref="LinkedIssueContext"/> records for inclusion in the dispatch payload.
     /// <para>
     /// Uses <see cref="IssueReferenceParser.ParseAllClosingKeywords"/> which covers both GitLab base
     /// forms (<c>Closes/Fixes/Resolves #N</c>) and all GitHub verb forms
     /// (<c>close/closes/closed</c>, <c>fix/fixes/fixed</c>, <c>resolve/resolves/resolved</c> with
-    /// <c>#N</c> or <c>GH-N</c>). Does NOT use <see cref="IssueReferenceParser.ParseIssueReferences"/>
+    /// <c>#N</c> or <c>GH-N</c>), and <see cref="IssueReferenceParser.ParseIssueUrls"/> which
+    /// recognizes full GitHub issue URLs (<c>https://github.com/owner/repo/issues/N</c>).
+    /// Does NOT use <see cref="IssueReferenceParser.ParseIssueReferences"/>
     /// to avoid over-matching standalone <c>#N</c> patterns in inline code and markdown links.
     /// </para>
     /// <para>
     /// Non-fatal: individual <see cref="IIssueProvider.GetIssueAsync"/> failures are caught and
     /// logged as warnings. The dispatch proceeds with whichever issues were successfully fetched.
-    /// Returns an empty list when no closing references are detected or all fetches fail.
+    /// Returns an empty list when no closing references or issue URLs are detected or all fetches fail.
     /// </para>
     /// </summary>
     private async Task<IReadOnlyList<LinkedIssueContext>> FetchLinkedIssueContextsAsync(
@@ -318,26 +321,37 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     {
         // Parse closing-keyword references from title and description using all verb forms
         // (base GitLab forms + all GitHub verb forms including past tense).
-        // PrTitle is required string (non-nullable); PrDescription is string? — ParseAllClosingKeywords
-        // handles both safely via its internal IsNullOrWhiteSpace guard.
-        var issueNumbers = new HashSet<string>(StringComparer.Ordinal);
-        IssueReferenceParser.ParseAllClosingKeywords(reviewRequest.PrTitle, issueNumbers);
-        IssueReferenceParser.ParseAllClosingKeywords(reviewRequest.PrDescription, issueNumbers);
+        // PrTitle is required string (non-nullable); PrDescription is string? — both parsing methods
+        // handle null/empty safely via their internal IsNullOrWhiteSpace guard.
+        var keywordIssueNumbers = new HashSet<string>(StringComparer.Ordinal);
+        IssueReferenceParser.ParseAllClosingKeywords(reviewRequest.PrTitle, keywordIssueNumbers);
+        IssueReferenceParser.ParseAllClosingKeywords(reviewRequest.PrDescription, keywordIssueNumbers);
 
-        if (issueNumbers.Count == 0)
+        // Parse full GitHub issue URLs (https://github.com/owner/repo/issues/N).
+        // Kept separate from keyword numbers so we can tag OTEL counters by source.
+        var urlIssueNumbers = new HashSet<string>(StringComparer.Ordinal);
+        IssueReferenceParser.ParseIssueUrls(reviewRequest.PrTitle, urlIssueNumbers);
+        IssueReferenceParser.ParseIssueUrls(reviewRequest.PrDescription, urlIssueNumbers);
+
+        // Combine both sources for the cap check and fetch loop.
+        // Keyword source wins: numbers already found via keyword are NOT overwritten by URL source.
+        var allIssueNumbers = new HashSet<string>(keywordIssueNumbers, StringComparer.Ordinal);
+        allIssueNumbers.UnionWith(urlIssueNumbers);
+
+        if (allIssueNumbers.Count == 0)
             return Array.Empty<LinkedIssueContext>();
 
         // Cap to prevent latency spikes from adversarial PR descriptions.
         // Note: HashSet iteration order is not deterministic across CLR versions — when
-        // issueNumbers.Count > MaxLinkedIssues, different issues may be fetched on different runs.
-        // Consider sorting issueNumbers before Take(MaxLinkedIssues) to make truncation deterministic,
+        // allIssueNumbers.Count > MaxLinkedIssues, different issues may be fetched on different runs.
+        // Consider sorting allIssueNumbers before Take(MaxLinkedIssues) to make truncation deterministic,
         // and log which issue numbers were dropped.
         const int MaxLinkedIssues = 5;
-        if (issueNumbers.Count > MaxLinkedIssues)
+        if (allIssueNumbers.Count > MaxLinkedIssues)
         {
             _logger.Warning(
-                "FetchLinkedIssueContextsAsync: PR has {Count} closing-keyword references, capping to {Max}",
-                issueNumbers.Count, MaxLinkedIssues);
+                "FetchLinkedIssueContextsAsync: PR has {Count} closing-keyword/URL references, capping to {Max}",
+                allIssueNumbers.Count, MaxLinkedIssues);
         }
 
         // Note: reviewRequest.IssueProviderId.Value is accessed unconditionally here.
@@ -362,7 +376,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         // DispatchInfrastructure.BuildIssueContextAsync pattern.
         await using var issueProvider = _infra.ProviderFactory.CreateIssueProvider(issueConfig);
 
-        foreach (var issueNumber in issueNumbers.Take(MaxLinkedIssues))
+        foreach (var issueNumber in allIssueNumbers.Take(MaxLinkedIssues))
         {
             try
             {
@@ -384,8 +398,36 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                 _logger.Warning(ex,
                     "FetchLinkedIssueContextsAsync: failed to fetch linked issue #{IssueNumber} (non-fatal, skipping)",
                     issueNumber);
+                // TODO: [WARNING] DispatchLinkedIssueFetchFailed emission is not covered by any unit test.
+                // The acceptance criterion requires this counter to be verified. Add a test that injects a
+                // GetIssueAsync failure and asserts the counter increments (e.g. via IMeterFactory or a
+                // metric listener shim consistent with the project's OTEL test infrastructure).
+                PipelineTelemetry.DispatchLinkedIssueFetchFailed.Add(1);
             }
         }
+
+        // Emit resolved counter per source — only when at least one issue was successfully fetched
+        // for that source. keyword wins: a number found by both parsers counts as keyword-sourced.
+        // TODO: [WARNING] Source attribution assumes r.Identifier (from GetIssueAsync) matches the
+        // raw digit string stored in keywordIssueNumbers/urlIssueNumbers. This holds for the GitHub
+        // provider (returns issue.Number.ToString()), but a provider that prefixes identifiers (e.g.
+        // "GH-99", "owner/repo#99") would cause both keywordResolved and urlResolved to be 0, silently
+        // suppressing the counter even when issues were successfully fetched. A more robust approach
+        // would track (issueNumber, source) in a Dictionary<string, string> keyed by the original
+        // request string and look up source by issueNumber at emit time, avoiding the Identifier round-trip.
+        // TODO: [WARNING] DispatchLinkedIssuesResolved is only emitted when count > 0 for a given source.
+        // Absent counters in Prometheus are indistinguishable from unregistered counters, which can
+        // confuse alerting rules using absent(). The docs note this behaviour; operators should be aware
+        // that a zero-emission is not the same as a metric not firing.
+        var keywordResolved = results.Count(r => keywordIssueNumbers.Contains(r.Identifier));
+        var urlResolved = results.Count(r => urlIssueNumbers.Contains(r.Identifier)
+                                              && !keywordIssueNumbers.Contains(r.Identifier));
+        if (keywordResolved > 0)
+            PipelineTelemetry.DispatchLinkedIssuesResolved.Add(keywordResolved,
+                new TagList { new KeyValuePair<string, object?>("source", PipelineTelemetry.LinkedIssueSource.ClosingKeyword) });
+        if (urlResolved > 0)
+            PipelineTelemetry.DispatchLinkedIssuesResolved.Add(urlResolved,
+                new TagList { new KeyValuePair<string, object?>("source", PipelineTelemetry.LinkedIssueSource.IssueUrl) });
 
         return results;
     }

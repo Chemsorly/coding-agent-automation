@@ -208,4 +208,98 @@ public class IssueReferenceParserTests
         IssueReferenceParser.ParseAllClosingKeywords("Fixes #99\nFixed #99", results);
         results.Should().ContainSingle().Which.Should().Be("99");
     }
+
+    // ─── ParseIssueUrls (GitHub issue URL pattern) ──────────────────────────────
+
+    [Fact]
+    public void ParseIssueUrls_NullText_DoesNothing()
+    {
+        var results = new HashSet<string>(StringComparer.Ordinal);
+        IssueReferenceParser.ParseIssueUrls(null, results);
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ParseIssueUrls_EmptyText_DoesNothing()
+    {
+        var results = new HashSet<string>(StringComparer.Ordinal);
+        IssueReferenceParser.ParseIssueUrls("", results);
+        results.Should().BeEmpty();
+        // TODO: [WARNING] Missing test for whitespace-only input (e.g. "   "). IsNullOrWhiteSpace covers
+        // it as a distinct branch from null and "". Add ParseIssueUrls_WhitespaceOnlyText_DoesNothing
+        // consistent with the guard in other ParseAll* methods in this class.
+    }
+
+    [Fact]
+    public void ParseIssueUrls_StandardGitHubIssueUrl_ExtractsNumber()
+    {
+        var results = new HashSet<string>(StringComparer.Ordinal);
+        IssueReferenceParser.ParseIssueUrls("https://github.com/owner/repo/issues/42", results);
+        results.Should().ContainSingle().Which.Should().Be("42");
+    }
+
+    [Fact]
+    public void ParseIssueUrls_IssueUrlEmbeddedInText_ExtractsNumber()
+    {
+        var results = new HashSet<string>(StringComparer.Ordinal);
+        IssueReferenceParser.ParseIssueUrls(
+            "See https://github.com/Chemsorly/coding-agent-automation/issues/99 for context.",
+            results);
+        results.Should().ContainSingle().Which.Should().Be("99");
+    }
+
+    [Fact]
+    public void ParseIssueUrls_PullRequestUrl_DoesNotMatch()
+    {
+        var results = new HashSet<string>(StringComparer.Ordinal);
+        IssueReferenceParser.ParseIssueUrls("https://github.com/owner/repo/pull/42", results);
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ParseIssueUrls_CommitUrl_DoesNotMatch()
+    {
+        var results = new HashSet<string>(StringComparer.Ordinal);
+        IssueReferenceParser.ParseIssueUrls("https://github.com/owner/repo/commit/abc1234567890", results);
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ParseIssueUrls_RawContentUrl_DoesNotMatch()
+    {
+        var results = new HashSet<string>(StringComparer.Ordinal);
+        IssueReferenceParser.ParseIssueUrls("https://raw.githubusercontent.com/owner/repo/main/file.md", results);
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ParseIssueUrls_MultipleUrlsInText_ExtractsAll()
+    {
+        var results = new HashSet<string>(StringComparer.Ordinal);
+        IssueReferenceParser.ParseIssueUrls(
+            "Relates to https://github.com/owner/repo/issues/10 and https://github.com/owner/repo/issues/20.",
+            results);
+        results.Should().BeEquivalentTo(new[] { "10", "20" });
+    }
+
+    [Fact]
+    public void ParseIssueUrls_DeduplicationWithClosingKeyword_SameIssueNumber()
+    {
+        // When both ParseAllClosingKeywords and ParseIssueUrls target the same HashSet,
+        // a number present in both sources is stored only once (HashSet dedup).
+        var results = new HashSet<string>(StringComparer.Ordinal);
+        const string text = "Closes #99\nSee https://github.com/owner/repo/issues/99 for details.";
+        IssueReferenceParser.ParseAllClosingKeywords(text, results);
+        IssueReferenceParser.ParseIssueUrls(text, results);
+        results.Should().ContainSingle().Which.Should().Be("99");
+    }
+
+    [Fact]
+    public void ParseIssueUrls_HttpUrl_Matches()
+    {
+        // The regex uses https?:// so plain http:// must also be matched.
+        var results = new HashSet<string>(StringComparer.Ordinal);
+        IssueReferenceParser.ParseIssueUrls("http://github.com/owner/repo/issues/7", results);
+        results.Should().ContainSingle().Which.Should().Be("7");
+    }
 }
