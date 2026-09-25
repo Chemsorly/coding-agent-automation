@@ -60,8 +60,8 @@ public sealed class DownloadIssueImagesStep : IPipelineStep
             var targetDirectory = Path.Combine(context.Run.WorkspacePath!, AgentWorkspacePaths.MetadataDirectory, "images");
             Directory.CreateDirectory(targetDirectory);
 
-            var gitlabApiUrl = _repoConfig.Settings.GetValueOrDefault("ApiUrl");
-            var gitlabProjectId = _repoConfig.Settings.GetValueOrDefault("ProjectId");
+            var gitlabApiUrl = _repoConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ApiUrl);
+            var gitlabProjectId = _repoConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId);
 
             using var downloadService = new ImageDownloadService(_httpHandler);
             var downloaded = await downloadService.DownloadAllAsync(

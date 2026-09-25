@@ -122,6 +122,35 @@ public static class WorkItemDispatchEndpoints
         try
         {
             await using var db = await dbFactory.CreateDbContextAsync(ct);
+
+            // Pre-check to avoid the EF Error log produced by a Postgres 23505 unique violation
+            // on the happy-path (common re-dispatch of the same RunId or concurrent issue).
+            // The unique-violation catch below remains as the race backstop for concurrent inserts.
+            // (issue #2956)
+            //
+            // TODO: [WARNING] The two pre-check queries are a TOCTOU: a concurrent request can
+            // insert a conflicting row between the AnyAsync calls and SaveChangesAsync, causing
+            // the unique-violation catch to fire anyway. This only affects log-noise suppression,
+            // not correctness (the catch backstop handles it). Additionally, the active-conflict
+            // check reproduces the partial unique index predicate in application code — these can
+            // drift if the index conditions change. Consider whether a single try/catch with a
+            // lighter pre-check (PK only) is sufficient.
+            //
+            // 1. Idempotent PK retry: same RunId was already created → return 201.
+            var existingById = await db.WorkItems.AnyAsync(w => w.Id == workItemId, ct);
+            if (existingById)
+                return TypedResults.Created($"/api/work-items/{workItemId}", workItemId);
+
+            // 2. Active item for the same issue/provider → 409 (partial unique index predicate).
+            var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;
+            var activeConflict = await db.WorkItems.AnyAsync(
+                w => w.IssueIdentifier == entity.IssueIdentifier
+                  && w.IssueProviderConfigId == entity.IssueProviderConfigId
+                  && activeStatuses.Contains(w.Status),
+                ct);
+            if (activeConflict)
+                return DispatchWorkItemService.HandleUniqueViolationFallback();
+
             db.WorkItems.Add(entity);
             await db.SaveChangesAsync(ct);
         }

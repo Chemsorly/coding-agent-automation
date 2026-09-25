@@ -3,12 +3,14 @@ namespace CodingAgent.Pipeline.Models;
 public static class PipelineStepExtensions
 {
     /// <summary>
-    /// Returns true if the step represents a terminal state (Completed, Failed, Cancelled, or ConflictRestart).
+    /// Returns true if the step represents a terminal state (Completed, Failed, Cancelled, ConflictRestart,
+    /// PrMerged, or PrClosed).
     /// Terminal steps are the only valid values for <see cref="PipelineRunSummary.FinalStep"/>
     /// when persisting to history.
     /// </summary>
     public static bool IsTerminal(this PipelineStep step)
-        => step is PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled or PipelineStep.ConflictRestart;
+        => step is PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled
+               or PipelineStep.ConflictRestart or PipelineStep.PrMerged or PipelineStep.PrClosed;
 
     public static string ToDisplayName(this PipelineStep step) => step switch
     {
@@ -42,6 +44,8 @@ public static class PipelineStepExtensions
         PipelineStep.Failed => "Failed",
         PipelineStep.Cancelled => "Cancelled",
         PipelineStep.ConflictRestart => "Conflict Restart",
+        PipelineStep.PrMerged => "PR Merged",
+        PipelineStep.PrClosed => "PR Closed",
         _ => step.ToString()
     };
 }

@@ -29,6 +29,21 @@ public class DownloadIssueImagesStepTests : IDisposable
             => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.NotFound));
     }
 
+    /// <summary>
+    /// Captures the URI of the first outgoing HTTP request and returns 404 so the step
+    /// exercises its graceful-degradation path without downloading anything.
+    /// </summary>
+    private sealed class CapturingHandler : HttpMessageHandler
+    {
+        public Uri? CapturedRequestUri { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            CapturedRequestUri = request.RequestUri;
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.NotFound));
+        }
+    }
+
     public DownloadIssueImagesStepTests()
     {
         _agentProvider.Setup(p => p.SupportsVisionInput).Returns(true);
@@ -318,6 +333,82 @@ public class DownloadIssueImagesStepTests : IDisposable
         }
         finally
         {
+            if (Directory.Exists(run.WorkspacePath!))
+                Directory.Delete(run.WorkspacePath!, recursive: true);
+        }
+    }
+
+    // TODO: Add a complementary negative test verifying that when Settings is populated with the old
+    // PascalCase keys ("ApiUrl", "ProjectId") the relative URL is NOT resolved (CapturedRequestUri
+    // does not match the GitLab API path). Without it, a tautological implementation that accepted
+    // both casings would still pass the positive assertion. (TestQualityReviewer WARNING)
+    [Fact]
+    public async Task ExecuteAsync_GitLabRepoWithRelativeImageUrl_ResolvesApiUrlAndProjectIdFromSettings()
+    {
+        // Arrange: GitLab repo config with camelCase-keyed settings
+        // TODO: Change ProjectId value to something distinct from Identifier/"42" (e.g. "9999") so the
+        // assertion ".../projects/42/..." is sensitive to the correct source. Currently the issue
+        // Identifier is also "42", meaning a bug that read Identifier instead of Settings[ProjectId]
+        // would still pass. (TestQualityReviewer WARNING)
+        var gitLabRepoConfig = new ProviderConfig
+        {
+            DisplayName = "GitLab Repo",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitLab",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.ApiUrl] = "https://gitlab.example.com/api/v4",
+                [ProviderSettingKeys.ProjectId] = "42"
+            }
+        };
+
+        var run = CreateRun();
+        Directory.CreateDirectory(run.WorkspacePath!);
+
+        var capturingHandler = new CapturingHandler();
+        try
+        {
+            var issue = new IssueDetail
+            {
+                Description = "GitLab issue with a relative upload",
+                Identifier = "42",
+                Labels = [],
+                Title = "Test",
+                Images =
+                [
+                    new ImageReference
+                    {
+                        Url = "/uploads/abc123secret/screenshot.png",
+                        AltText = "screenshot",
+                        SourceType = ImageSourceType.Body,
+                        SourceIndex = 0
+                    }
+                ]
+            };
+            var context = BuildContext(run, issue: issue);
+            var step = new DownloadIssueImagesStep(
+                _ => Task.FromResult("gitlab-token"),
+                gitLabRepoConfig,
+                capturingHandler);
+
+            // Act
+            var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+            // Assert: the step resolved ApiUrl and ProjectId from the camelCase-keyed Settings
+            // and constructed the correct GitLab API path before attempting the download.
+            capturingHandler.CapturedRequestUri.Should().NotBeNull(
+                because: "the step must read ApiUrl and ProjectId from Settings to resolve the relative GitLab URL");
+            capturingHandler.CapturedRequestUri!.ToString()
+                .Should().Be("https://gitlab.example.com/api/v4/projects/42/uploads/abc123secret/screenshot.png");
+
+            // Graceful degradation: 404 from handler → empty downloaded list, not a pipeline failure
+            result.Should().Be(StepResult.Continue);
+            context.DownloadedImages.Should().NotBeNull()
+                .And.BeEmpty(because: "the 404 response means no images were successfully downloaded");
+        }
+        finally
+        {
+            capturingHandler.Dispose();
             if (Directory.Exists(run.WorkspacePath!))
                 Directory.Delete(run.WorkspacePath!, recursive: true);
         }

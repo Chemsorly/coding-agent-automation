@@ -1473,4 +1473,95 @@ public sealed class AgentOrphanRecoveryServiceTests
         liveHash.CurrentStep.Should().Be(PipelineStep.GeneratingCode,
             "the live currentStep must not be overwritten by the stale snapshot value");
     }
+
+    // ── DetectAndRestoreOrphans: log-level discrimination (issue #2956) ─────────
+
+    /// <summary>
+    /// Normal first-registration: orphan's CurrentStep at or before AnalyzingCode
+    /// (run was dispatched but agent has not progressed yet) must log at Information, not Warning.
+    /// </summary>
+    [Fact]
+    public async Task DetectAndRestoreOrphans_RunAtInitialStep_LogsAtInformation()
+    {
+        const string agentId = "agent-log-info";
+        const string runId = "orphan-log-info-1";
+
+        var entry = CreateEntry(agentId);
+        var orphanedRun = new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#200",
+            IssueTitle = "Orphan Info",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = agentId,
+            CurrentStep = PipelineStep.AnalyzingCode // at the initial step — first registration
+        };
+
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphanedRun]);
+        _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
+
+        var message = CreateMessage(agentId, activeJob: null);
+        await _service.RecoverOrphanedStateAsync(message, agentId);
+
+        // Verify: Write(Information, ...) was called — not Warning.
+        // The production call passes 4 value args, which C# resolves to the params-array overload
+        // Write(LogEventLevel, string, object[]) — not the nonexistent 6-param signature (issue #2956).
+        _mockLogger.Verify(
+            l => l.Write(
+                Serilog.Events.LogEventLevel.Information,
+                It.Is<string>(s => s.Contains("re-registered without active job")),
+                It.IsAny<object[]>()),
+            Times.Once,
+            "first-registration orphan restore (CurrentStep <= AnalyzingCode) must log at Information");
+        _mockLogger.Verify(
+            l => l.Write(
+                Serilog.Events.LogEventLevel.Warning,
+                It.Is<string>(s => s.Contains("re-registered without active job")),
+                It.IsAny<object[]>()),
+            Times.Never,
+            "first-registration orphan restore must NOT log at Warning");
+    }
+
+    /// <summary>
+    /// Mid-run re-registration: orphan's CurrentStep beyond AnalyzingCode means an agent was
+    /// actively working and something interrupted it — must still log at Warning.
+    /// </summary>
+    [Fact]
+    public async Task DetectAndRestoreOrphans_RunBeyondInitialStep_LogsAtWarning()
+    {
+        const string agentId = "agent-log-warn";
+        const string runId = "orphan-log-warn-1";
+
+        var entry = CreateEntry(agentId);
+        var orphanedRun = new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#201",
+            IssueTitle = "Orphan Warning",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = agentId,
+            CurrentStep = PipelineStep.GeneratingCode // mid-run — agent was actively working
+        };
+
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphanedRun]);
+        _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
+
+        var message = CreateMessage(agentId, activeJob: null);
+        await _service.RecoverOrphanedStateAsync(message, agentId);
+
+        // Verify: Write(Warning, ...) was called.
+        // The production call passes 4 value args, which C# resolves to the params-array overload
+        // Write(LogEventLevel, string, object[]) — not the nonexistent 6-param signature (issue #2956).
+        _mockLogger.Verify(
+            l => l.Write(
+                Serilog.Events.LogEventLevel.Warning,
+                It.Is<string>(s => s.Contains("re-registered without active job")),
+                It.IsAny<object[]>()),
+            Times.Once,
+            "mid-run orphan restore (CurrentStep > AnalyzingCode) must log at Warning");
+    }
 }

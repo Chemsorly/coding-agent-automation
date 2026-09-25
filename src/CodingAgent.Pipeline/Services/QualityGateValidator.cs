@@ -567,6 +567,7 @@ public class QualityGateValidator : IQualityGateValidator
             UseShellExecute = false,
             CreateNoWindow = true
         };
+        ChildProcessEnvironment.StripTelemetry(psi);
 
         using var process = new Process { StartInfo = psi };
         process.Start();

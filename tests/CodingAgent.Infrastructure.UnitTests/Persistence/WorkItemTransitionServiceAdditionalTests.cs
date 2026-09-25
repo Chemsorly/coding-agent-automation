@@ -515,6 +515,28 @@ public class WorkItemTransitionServiceAdditionalTests
         result.Should().BeFalse("InfrastructureFailure must not match AgentError filter");
     }
 
+    /// <summary>
+    /// Issue #2956: GateRejected failures must NOT trigger HasAgentErrorSince.
+    /// Gate rejections are expected outcomes, not agent errors — re-dispatch must not
+    /// force a fresh analysis unnecessarily.
+    /// </summary>
+    [Fact]
+    public async Task HasAgentErrorSinceAsync_ReturnsFalse_WhenFailureReasonIsGateRejected()
+    {
+        var opts = CreateDbOptions();
+        await SeedWorkItemAsync(opts, WorkItemStatus.Failed,
+            failureReason: FailureReason.GateRejected,
+            issueIdentifier: "org/repo#10g", providerConfigId: "ip-g",
+            completedAt: DateTimeOffset.UtcNow);
+        var svc = CreateService(opts);
+
+        var result = await svc.HasAgentErrorSinceAsync(
+            (IssueIdentifier)"org/repo#10g", (ProviderConfigId)"ip-g",
+            DateTimeOffset.UtcNow.AddHours(-1), CancellationToken.None);
+
+        result.Should().BeFalse("GateRejected must not match AgentError filter — gate decisions are expected outcomes, not agent failures");
+    }
+
     [Fact]
     public async Task HasAgentErrorSinceAsync_ReturnsFalse_WhenCompletedBeforeSince()
     {
