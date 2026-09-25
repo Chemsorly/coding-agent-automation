@@ -571,13 +571,6 @@ public class AgentCodingPageComponentTests : BunitContext
 
         // The select element should show the only enabled template as selected value.
         var dispatchSelect = component.Find("[data-testid='template-select']");
-        // TODO: [WARNING] GetAttribute("value") on a <select> reads the HTML attribute set at
-        // render time, not the DOM's live selected value. In bUnit with Blazor @bind-value the
-        // selected option is reflected via selected attribute on the <option>, not on the <select>
-        // itself, so this may return null and the assertion could become a false positive. Replace
-        // with: component.Find("[data-testid='template-select'] option[selected]").GetAttribute("value")
-        // or assert that browse buttons are enabled as the observable outcome instead.
-        // (TestQualityReviewer, issue #2947)
         Assert.Equal("t-1", dispatchSelect.GetAttribute("value"));
 
         // Browse buttons must be enabled (no disabled attribute).
@@ -610,15 +603,58 @@ public class AgentCodingPageComponentTests : BunitContext
 
         // With no saved preference and two enabled templates, _manualDispatchTemplateId stays empty.
         // The deep-link handler must surface an error message instead of silently doing nothing.
-        // TODO: [WARNING] This test only covers the fallback error path. The primary success path
-        // (exactly one enabled template → auto-preselect fires → drawer opens automatically) has
-        // no corresponding test. The acceptance criterion "Browse & dispatch opens the issue drawer
-        // directly" is only partially verified. Add a test that navigates with ?dispatch=issues and
-        // a single enabled template, then asserts the issue drawer is open. (TestQualityReviewer, issue #2947)
         Assert.Contains("Select a pipeline template", component.Markup);
     }
 
-    // ── Template Toggle / Add / Remove ──────────────────────────────────────
+    /// <summary>
+    /// When the user arrives via the "Browse &amp; dispatch" deep-link (?dispatch=issues) and
+    /// exactly one enabled template exists (auto-preselected), the issue drawer must open automatically.
+    /// Acceptance criterion: "Browse &amp; dispatch opens the issue drawer directly."
+    /// </summary>
+    [Fact]
+    public void AgentCoding_DispatchIssuesParam_WithSingleTemplate_OpensIssueDrawer()
+    {
+        // Default setup has exactly one enabled template (t-1), which will be auto-preselected.
+        var nav = Services.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>();
+        nav.NavigateTo("http://localhost/pipelines?dispatch=issues");
+
+        var component = Render<AgentCoding>();
+        var pageService = Services.GetRequiredService<AgentCodingPageService>();
+
+        // The auto-preselect fires, then OnAfterRenderAsync opens the issue drawer automatically.
+        Assert.True(pageService.IsIssueDrawerOpen,
+            "Issue drawer should open automatically when ?dispatch=issues and exactly one template is configured.");
+    }
+
+    /// <summary>
+    /// When the user changes the template dropdown, the component updates its selected template.
+    /// This covers the OnTemplateChanged handler path.
+    /// </summary>
+    [Fact]
+    public async Task AgentCoding_OnTemplateChanged_EnablesBrowseButtons()
+    {
+        // Arrange: set up two templates so auto-preselect does NOT fire
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>
+            {
+                new() { Id = "t-1", Name = "DotNet Repo", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true },
+                new() { Id = "t-2", Name = "Python Repo", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true }
+            });
+
+        var component = Render<AgentCoding>();
+
+        // Before selection: browse buttons are disabled
+        var browseBtn = component.Find("[data-testid='browse-issues-btn']");
+        Assert.True(browseBtn.HasAttribute("disabled"), "Browse button should be disabled before template selection");
+
+        // Act: change the template dropdown to t-1
+        var dispatchSelect = component.Find("[data-testid='template-select']");
+        await component.InvokeAsync(() => dispatchSelect.Change("t-1"));
+
+        // Assert: browse button is now enabled — OnTemplateChanged updated _manualDispatchTemplateId
+        browseBtn = component.Find("[data-testid='browse-issues-btn']");
+        Assert.False(browseBtn.HasAttribute("disabled"), "Browse button should be enabled after template selection");
+    }
 
     [Fact]
     public void AgentCoding_ShowAddForm_ButtonClickShowsForm()
