@@ -405,14 +405,14 @@ public sealed class ApiBackedPipelineRunHistoryServiceTests
     private static PipelineRun MakeRun(
         string? providerConfigId = null,
         PipelineStep step = PipelineStep.Completed) => new()
-    {
-        RunId = Guid.NewGuid().ToString(),
-        IssueIdentifier = "org/repo#1",
-        IssueTitle = "Test",
-        IssueProviderConfigId = providerConfigId ?? "issue-cfg-1",
-        RepoProviderConfigId = "repo-cfg-1",
-        CurrentStep = step
-    };
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = providerConfigId ?? "issue-cfg-1",
+            RepoProviderConfigId = "repo-cfg-1",
+            CurrentStep = step
+        };
 
     private static PipelineRunSummary MakeSummary(string? runId = null) => new()
     {
