@@ -242,7 +242,8 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                     // review/decomposition runs if a brain provider is configured, creating an apparent
                     // asymmetry where pre-run brain metrics exist but post-run metrics are absent.
                     if (run.RunType is PipelineRunType.Review or PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition
-                        && run.CurrentStep is not PipelineStep.Failed and not PipelineStep.Cancelled)
+                        && run.CurrentStep is not PipelineStep.Failed and not PipelineStep.Cancelled
+                               and not PipelineStep.PrMerged and not PipelineStep.PrClosed)
                     {
                         run.MarkCompleted();
                         run.CurrentStep = PipelineStep.Completed;
