@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Threading.RateLimiting;
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
@@ -156,12 +157,23 @@ public sealed class WorkItemDispatchLoop : BackgroundService
             }
 
             DispatchPendingResult result;
+            // Emit a Dispatch.Attempt span for each item dispatched. The span wraps the
+            // dispatch call so the `result` tag is set before the span closes. Per-item only
+            // (idle ticks return early at the pending.Count == 0 guard above — no span emitted).
+            using var dispatchActivity = PipelineTelemetry.ActivitySource.StartActivity("Dispatch.Attempt");
+            dispatchActivity?.SetTag("work_item_id", item.Id);
+            dispatchActivity?.SetTag("agent_selector", item.AgentSelector);
             try
             {
                 result = await _workItemClient.DispatchPendingAsync(item.Id, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
+                // TODO: The `result` tag is never set on the span for cancellation or exception paths —
+                // the `dispatchActivity?.SetTag("result", ...)` line below is skipped when we break here.
+                // The span is therefore emitted without a result tag, making it indistinguishable from a
+                // sampling/null issue. Fix: set dispatchActivity?.SetTag("result", "Cancelled") here (and
+                // "Exception" in the catch below) before breaking.
                 break;
             }
             catch (Exception ex)
@@ -169,8 +181,11 @@ public sealed class WorkItemDispatchLoop : BackgroundService
                 _logger.Warning(ex,
                     "WorkItemDispatchLoop: unexpected error dispatching {WorkItemId} — aborting cycle",
                     item.Id);
+                // TODO: Same as above — set dispatchActivity?.SetTag("result", "Exception") before breaking.
                 break;
             }
+
+            dispatchActivity?.SetTag("result", result.ToString());
 
             switch (result)
             {

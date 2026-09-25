@@ -466,4 +466,8 @@ public class IssueReworkServiceTests
             It.Is<string>(l => l != AgentLabels.Error), It.IsAny<CancellationToken>()), Times.Never,
             "no label other than agent:error should be removed");
     }
+
+    // TODO: No span-emission tests exist for Housekeeping.ConflictRework (added in issue #2977).
+    // Add tests to verify: (1) Housekeeping.ConflictRework is emitted with issue_id and pr_number
+    // tags when an issue is re-queued for rework; (2) no span is emitted when the rework is skipped.
 }

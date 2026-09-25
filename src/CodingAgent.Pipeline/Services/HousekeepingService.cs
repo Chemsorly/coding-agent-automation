@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
@@ -660,6 +661,13 @@ public sealed class HousekeepingService : IHousekeepingService
     {
         try
         {
+            // Emit Housekeeping.BranchUpdate span for each branch update actually triggered.
+            // This fires only when a PR passes all guards in SelectAndTriggerBranchUpdatesAsync —
+            // idle or skipped PRs never reach this method.
+            using var updateActivity = PipelineTelemetry.ActivitySource.StartActivity("Housekeeping.BranchUpdate");
+            updateActivity?.SetTag("pr_number", prNumber);
+            updateActivity?.SetTag("repo_provider_id", repoProviderId);
+
             await repoProvider.UpdatePullRequestBranchAsync(prNumber, CancellationToken.None);
             PipelineTelemetry.HousekeepingSucceeded.Add(1, repoTag);
             _logger.Information(

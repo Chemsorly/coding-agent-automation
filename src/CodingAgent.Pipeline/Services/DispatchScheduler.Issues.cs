@@ -56,6 +56,14 @@ internal sealed partial class DispatchScheduler
             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision",
                 dispatched ? PipelineTelemetry.LoopDecisions.Dispatched : PipelineTelemetry.LoopDecisions.SkippedNoAgent));
 
+            // Emit Loop.Enqueue span only when a WorkItem was actually created — no span on skips.
+            if (dispatched)
+            {
+                using var enqueueActivity = PipelineTelemetry.ActivitySource.StartActivity("Loop.Enqueue");
+                enqueueActivity?.SetTag("issue_identifier", issue.Identifier);
+                enqueueActivity?.SetTag("template_name", template.Name);
+            }
+
             return new DispatchAttemptResult(dispatched);
         }, ctx.RemainingBudget, ctx.GetCurrentIssueIdentifier, stoppingToken, ct);
     }
