@@ -35,7 +35,7 @@ public class ProcessWrapper : IProcessWrapper
     public event EventHandler<string>? OutputReceived;
     public event EventHandler<string>? ErrorReceived;
 
-    public bool IsRunning { get { try { return _process != null && !_process.HasExited; } catch (InvalidOperationException) { return false; } } }
+    public bool IsRunning { get { try { return _process != null && !_process.HasExited; } catch { return false; } } }
     public int? ExitCode => _process?.HasExited == true ? _process.ExitCode : null;
     public int? ProcessId { get { try { return _process?.Id; } catch { return null; } } }
     public DateTime LastOutputTime => _lastOutputTime;
