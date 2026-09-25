@@ -153,7 +153,9 @@ Func<StackExchange.Redis.IConnectionMultiplexer>? dpMultiplexerFactory = string.
     ? null
     : () => StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnectionString);
 builder.Services.AddDataProtectionServices(dpMultiplexerFactory);
-builder.Services.AddApplicationTelemetry(redisConnectionString);
+// dbConnectionString is null — the Web host has no direct PostgreSQL connection.
+// Npgsql tracing is therefore not registered here (no DB spans to export).
+builder.Services.AddApplicationTelemetry(dbConnectionString: null, redisConnectionString);
 
 var app = builder.Build();
 

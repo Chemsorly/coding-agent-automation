@@ -112,6 +112,13 @@ public static class GitHubTelemetry
     /// startup so that rare outcomes (e.g. <c>rate_limited</c>) appear as zero-value series
     /// before the first real increment, enabling Prometheus <c>increase()</c> to work correctly.
     /// </summary>
+    // TODO: There is no compile-time enforcement tying the entries below to the actual operationName
+    // strings passed at each ExecuteWithResilienceAsync call site. A rename at a call site silently
+    // desynchs this list: the pre-initialized zero-value series exists under the old name while real
+    // increments go to the new (unregistered) name, causing Prometheus increase() to miss the first
+    // increment. To detect drift, consider a test that reflects over all ExecuteWithResilienceAsync
+    // call sites (e.g. via Roslyn or a source-file grep) and asserts each operationName literal
+    // appears in AllOperationNames.
     public static readonly string[] AllOperationNames =
     [
         // GitHubProviderBase

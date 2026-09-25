@@ -238,6 +238,14 @@ public class HousekeepingPrOutcomeTests
         var (svc, repo, issues) = Create("merged");
         svc.UtcNow = () => now;
 
+        // TODO: expectedSeconds is computed from DateTimeOffset.UtcNow captured *before* SeedPrInFlight
+        // runs. The seed call involves async execution (mock setups, await ExecAsync) and real clock
+        // time elapses before RecordPrOutcomesAsync is called with the fixed svc.UtcNow value. The
+        // 1.0-second precision tolerance may be insufficient on a slow CI machine. Fix: compute
+        // expectedSeconds from a fixed clock value that is also assigned to svc.UtcNow — both should
+        // use the same DateTimeOffset constant so the expected and actual values are derived
+        // identically regardless of wall-clock time elapsed during the seed step.
+
         var pr = MakePr(104, createdAt);
         var (listener, _, histograms) = CreateMeterListener();
 
@@ -310,6 +318,14 @@ public class HousekeepingPrOutcomeTests
     {
         // PR appears in the list but never gets into in-flight (e.g., it was UpToDate all along).
         // Then on second cycle it's gone. Since it was never in in-flight, no metric fires.
+        // TODO: This test passes trivially because the PR is UpToDate throughout and therefore never
+        // enters the inFlight HashSet. When RecordPrOutcomesAsync iterates inFlight it finds an empty
+        // set, so the assertion holds regardless of whether the guard is the in-flight membership
+        // check or the deduplication check. A future refactor that iterates currentPrNumbers instead
+        // of inFlight would still pass this test, silently breaking the boundary. To make the
+        // test meaningful, verify the mechanism explicitly: confirm that after two cycles inFlight is
+        // empty, for example by re-introducing the PR and asserting that the counter still fires once
+        // (not twice), proving the in-flight guard — not just set emptiness — prevents double-emission.
         var (svc, repo, issues) = Create("merged");
         var pr = MakePr(108, DateTime.UtcNow.AddHours(-1));
         var (listener, counters, _) = CreateMeterListener();
