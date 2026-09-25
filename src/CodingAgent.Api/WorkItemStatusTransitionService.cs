@@ -279,8 +279,8 @@ public sealed partial class WorkItemStatusTransitionService
                             x.w.DispatchedAt,
                             x.w.CompletedAt,
                             x.w.TaskType,
-                            RunType    = pr != null ? pr.RunType : (PipelineRunType?)null,
-                            ProjectId  = pr != null ? pr.ProjectId : null,
+                            RunType = pr != null ? pr.RunType : (PipelineRunType?)null,
+                            ProjectId = pr != null ? pr.ProjectId : null,
                             ProjectName = pr != null ? pr.ProjectName : null
                         })
                     .FirstOrDefaultAsync(ct);
@@ -303,11 +303,11 @@ public sealed partial class WorkItemStatusTransitionService
                     // ToDefaultRunType() which throws UnreachableException for unknown values.
                     var resolvedRunType = row.RunType ?? row.TaskType switch
                     {
-                        WorkItemTaskType.Implementation  => (PipelineRunType?)PipelineRunType.Implementation,
-                        WorkItemTaskType.Review          => PipelineRunType.Review,
-                        WorkItemTaskType.Decomposition   => PipelineRunType.DecompositionAnalysis,
-                        WorkItemTaskType.Consolidation   => PipelineRunType.Consolidation,
-                        _                               => null
+                        WorkItemTaskType.Implementation => (PipelineRunType?)PipelineRunType.Implementation,
+                        WorkItemTaskType.Review => PipelineRunType.Review,
+                        WorkItemTaskType.Decomposition => PipelineRunType.DecompositionAnalysis,
+                        WorkItemTaskType.Consolidation => PipelineRunType.Consolidation,
+                        _ => null
                     };
                     runTypeTag = resolvedRunType.HasValue
                         ? resolvedRunType.Value.ToString().ToLowerInvariant()
