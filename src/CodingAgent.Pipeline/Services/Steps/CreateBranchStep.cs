@@ -1,3 +1,4 @@
+using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
 
@@ -33,6 +34,56 @@ public sealed class CreateBranchStep : IPipelineStep
     private static async Task<StepResult> CheckoutAndMergeAsync(PipelineStepContext context, CancellationToken ct)
     {
         var pr = context.Run.LinkedPullRequest!;
+        var run = context.Run;
+
+        // Check PR state before any git operations — fail-open if state check errors.
+        // This catches rework and Review runs dispatched against a PR that was already merged
+        // or closed while the work item was waiting in the Pending queue.
+        // TODO [WARNING] (Correctness): This guard fires only when context.Run.LinkedPullRequest is not null
+        // (branch point is ExecuteAsync line ~26: LinkedPullRequest == null → CreateNewBranchAsync).
+        // New-issue implementation runs have no LinkedPullRequest and therefore skip this check — which is
+        // correct since they have no associated PR to guard. Any future code path that sets LinkedPullRequest
+        // on a non-rework run would bypass this guard silently. The guard's applicability is scoped to
+        // LinkedPullRequest != null, which correctly covers rework and Review runs as required by #2954.
+        var prNum = pr.Number;
+        PullRequestState prState;
+        try
+        {
+            prState = await context.RepoProvider.GetPullRequestStateAsync(prNum, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // Fail open — if we cannot query the state, proceed with the checkout.
+            // The CI polling loop will detect a merged PR on the first poll iteration.
+            context.Logger.Debug(ex, "Pipeline {RunId} PR state check failed for PR #{PrNum} — continuing with checkout",
+                run.RunId, prNum);
+            prState = PullRequestState.Open;
+        }
+
+        if (prState == PullRequestState.Merged)
+        {
+            context.Callbacks.EmitOutputLine($"✅ PR #{prNum} was already merged — skipping checkout, run ends Succeeded");
+            context.Logger.Information("Pipeline {RunId} PR #{PrNum} already merged at run start — ending Succeeded",
+                run.RunId, prNum);
+            run.CurrentStep = PipelineStep.PrMerged;
+            run.MarkCompleted();
+            context.Callbacks.TransitionTo(PipelineStep.PrMerged);
+            return StepResult.Stop;
+        }
+
+        if (prState == PullRequestState.Closed)
+        {
+            context.Callbacks.EmitOutputLine($"🚫 PR #{prNum} was already closed — skipping checkout, run ends Cancelled");
+            context.Logger.Information("Pipeline {RunId} PR #{PrNum} closed without merge at run start — ending Cancelled",
+                run.RunId, prNum);
+            run.FinalLabel = AgentLabels.Cancelled;
+            run.CurrentStep = PipelineStep.PrClosed;
+            run.MarkCompleted();
+            context.Callbacks.TransitionTo(PipelineStep.PrClosed);
+            return StepResult.Stop;
+        }
+
         var checkoutResult = await context.TryCriticalAsync(async () =>
         {
             await context.RepoProvider.CheckoutRemoteBranchAsync(context.Run.WorkspacePath!, pr.BranchName, ct);

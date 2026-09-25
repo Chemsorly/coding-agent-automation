@@ -53,6 +53,10 @@ public static class CompletionOutcomeResolver
             // ConflictRestart is a clean auto-recovery termination, not a failure.
             // The pipeline re-queues the issue via FinalLabel = agent:next; no human action required.
             PipelineStep.ConflictRestart => WorkItemStatus.Succeeded,
+            // PrMerged: PR was merged while the run was active — work is done, run ends Succeeded.
+            PipelineStep.PrMerged => WorkItemStatus.Succeeded,
+            // PrClosed: PR was closed without merge — run ends Cancelled (no label:error).
+            PipelineStep.PrClosed => WorkItemStatus.Cancelled,
             _ => WorkItemStatus.Failed
         };
 

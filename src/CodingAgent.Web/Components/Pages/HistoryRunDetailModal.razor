@@ -36,6 +36,8 @@
                             PipelineStep.Failed => "Failed",
                             PipelineStep.Cancelled => "Cancelled",
                             PipelineStep.ConflictRestart => "Restarted",
+                            PipelineStep.PrMerged => "Merged",
+                            PipelineStep.PrClosed => "Closed",
                             _ => "Running"
                         };
                         var detailResultClass = Run.FinalStep switch
@@ -44,11 +46,13 @@
                             PipelineStep.Cancelled => "step-cancelled",
                             PipelineStep.Failed => "step-failed",
                             PipelineStep.ConflictRestart => "step-restart",
+                            PipelineStep.PrMerged => "step-completed",
+                            PipelineStep.PrClosed => "step-cancelled",
                             _ => "step-running"
                         };
                     }
                     <span class="step-badge @detailResultClass">@detailResult</span>
-                    @if (Run.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled and not PipelineStep.ConflictRestart)
+                    @if (Run.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled and not PipelineStep.ConflictRestart and not PipelineStep.PrMerged and not PipelineStep.PrClosed)
                     {
                         <span style="font-size: 0.8rem; color: var(--text-muted); margin-left: 6px;">(at @Run.FinalStep.ToDisplayName())</span>
                     }

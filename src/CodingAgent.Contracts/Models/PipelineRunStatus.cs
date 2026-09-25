@@ -11,4 +11,11 @@ public sealed class PipelineRunStatus
     public DateTime? StartedAt { get; init; }
     public DateTime? CompletedAt { get; init; }
     public string? CommitSha { get; init; }
+
+    /// <summary>
+    /// When <c>true</c>, the CI-never-started exhaustion path produced this status.
+    /// The quality gate retry loop must not invoke the LLM fix agent for infrastructure failures —
+    /// there is no code problem to fix; the CI pipeline simply never triggered.
+    /// </summary>
+    public bool IsInfrastructureFailure { get; init; }
 }
