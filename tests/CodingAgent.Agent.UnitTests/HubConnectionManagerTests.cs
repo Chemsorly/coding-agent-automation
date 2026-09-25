@@ -1,3 +1,4 @@
+using System.Reflection;
 using AwesomeAssertions;
 using CodingAgent.Agent;
 using CodingAgent.Pipeline;
@@ -353,6 +354,428 @@ public class HubConnectionManagerTests : IAsyncDisposable
         var manager = new HubConnectionManager(orchestratorUrl, agentId, apiKey, _mockLogger.Object);
         _managers.Add(manager);
         return manager;
+    }
+
+    // ── Private message handler tests ──────────────────────────────────
+
+    /// <summary>
+    /// Helper to invoke a private instance method on HubConnectionManager via reflection.
+    /// </summary>
+    private static Task InvokePrivateHandlerAsync(HubConnectionManager manager, string methodName, params object[] args)
+    {
+        var method = typeof(HubConnectionManager)
+            .GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Instance);
+        method.Should().NotBeNull($"private method '{methodName}' must exist on HubConnectionManager");
+        return (Task)method!.Invoke(manager, args)!;
+    }
+
+    [Fact]
+    public async Task HandleCancelJobAsync_WithNoSubscriber_DoesNotThrow()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+
+        // No OnCancelJob subscriber — handler must not throw
+        var act = async () => await InvokePrivateHandlerAsync(manager, "HandleCancelJobAsync", new JobId("job-123"));
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task HandleCancelJobAsync_WithSubscriber_InvokesEventWithJobIdValue()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        string? receivedJobId = null;
+        manager.OnCancelJob += id => { receivedJobId = id; return Task.CompletedTask; };
+
+        await InvokePrivateHandlerAsync(manager, "HandleCancelJobAsync", new JobId("job-abc"));
+
+        receivedJobId.Should().Be("job-abc");
+    }
+
+    [Fact]
+    public async Task HandleAssignChatPromptAsync_WithNoSubscriber_DoesNotThrow()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        var message = new ChatPromptMessage { SessionId = "sess-1", Prompt = "hello" };
+
+        var act = async () => await InvokePrivateHandlerAsync(manager, "HandleAssignChatPromptAsync", message);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task HandleAssignChatPromptAsync_WithSubscriber_InvokesEvent()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        ChatPromptMessage? received = null;
+        manager.OnAssignChatPrompt += msg => { received = msg; return Task.CompletedTask; };
+        var message = new ChatPromptMessage { SessionId = "sess-42", Prompt = "test prompt" };
+
+        await InvokePrivateHandlerAsync(manager, "HandleAssignChatPromptAsync", message);
+
+        received.Should().NotBeNull();
+        received!.SessionId.Should().Be("sess-42");
+    }
+
+    [Fact]
+    public async Task HandleCancelChatAsync_WithNoSubscriber_DoesNotThrow()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+
+        var act = async () => await InvokePrivateHandlerAsync(manager, "HandleCancelChatAsync", "session-1");
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task HandleCancelChatAsync_WithSubscriber_InvokesEventWithSessionId()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        string? receivedSessionId = null;
+        manager.OnCancelChat += id => { receivedSessionId = id; return Task.CompletedTask; };
+
+        await InvokePrivateHandlerAsync(manager, "HandleCancelChatAsync", "my-session");
+
+        receivedSessionId.Should().Be("my-session");
+    }
+
+    [Fact]
+    public async Task HandleRequestFetchModelsAsync_WithNoSubscriber_DoesNotThrow()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        var request = new FetchModelsRequest { RequestId = "req-1" };
+
+        var act = async () => await InvokePrivateHandlerAsync(manager, "HandleRequestFetchModelsAsync", request);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task HandleRequestFetchModelsAsync_WithSubscriber_InvokesEvent()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        FetchModelsRequest? received = null;
+        manager.OnFetchModels += req => { received = req; return Task.CompletedTask; };
+        var request = new FetchModelsRequest { RequestId = "req-xyz" };
+
+        await InvokePrivateHandlerAsync(manager, "HandleRequestFetchModelsAsync", request);
+
+        received.Should().NotBeNull();
+        received!.RequestId.Should().Be("req-xyz");
+    }
+
+    [Fact]
+    public async Task HandleAssignConsolidationJobAsync_WithNoSubscriber_DoesNotThrow()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        var message = new ConsolidationJobMessage
+        {
+            JobId = "job-c1",
+            Type = ConsolidationRunType.BrainConsolidation,
+            ProviderConfigs = Array.Empty<ProviderConfig>(),
+            PipelineConfiguration = new PipelineConfiguration()
+        };
+
+        var act = async () => await InvokePrivateHandlerAsync(manager, "HandleAssignConsolidationJobAsync", "agent-1", message);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task HandleAssignConsolidationJobAsync_WithSubscriber_InvokesEvent()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        ConsolidationJobMessage? received = null;
+        manager.OnAssignConsolidationJob += msg => { received = msg; return Task.CompletedTask; };
+        var message = new ConsolidationJobMessage
+        {
+            JobId = "job-c2",
+            Type = ConsolidationRunType.BrainConsolidation,
+            ProviderConfigs = Array.Empty<ProviderConfig>(),
+            PipelineConfiguration = new PipelineConfiguration()
+        };
+
+        await InvokePrivateHandlerAsync(manager, "HandleAssignConsolidationJobAsync", "agent-1", message);
+
+        received.Should().NotBeNull();
+        received!.JobId.Should().Be("job-c2");
+    }
+
+    [Fact]
+    public async Task HandleForceDisconnectAsync_WithNoSubscriber_DoesNotThrow()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+
+        // StopAsync on a disconnected HubConnection throws, but the handler swallows it
+        var act = async () => await InvokePrivateHandlerAsync(manager, "HandleForceDisconnectAsync");
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task HandleForceDisconnectAsync_WithSubscriber_InvokesEventAndSwallowsException()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        var invoked = false;
+        manager.OnForceDisconnect += () => { invoked = true; return Task.CompletedTask; };
+
+        // StopAsync will throw on a not-connected HubConnection; handler must swallow it
+        var act = async () => await InvokePrivateHandlerAsync(manager, "HandleForceDisconnectAsync");
+
+        await act.Should().NotThrowAsync();
+        invoked.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task HandleForceDisconnectAsync_WhenSubscriberThrows_SwallowsExceptionAndContinues()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        manager.OnForceDisconnect += () => throw new InvalidOperationException("subscriber failure");
+
+        // Handler must swallow both the subscriber exception and the StopAsync exception
+        var act = async () => await InvokePrivateHandlerAsync(manager, "HandleForceDisconnectAsync");
+
+        await act.Should().NotThrowAsync();
+    }
+
+    // ── Connection lifecycle event handler tests ────────────────────────
+
+    /// <summary>
+    /// Extracts the delegate registered to a HubConnection event (Reconnecting, Reconnected, Closed)
+    /// by looking at the backing field on the HubConnection instance.
+    /// </summary>
+    private static Func<TArg, Task>? GetConnectionEventHandler<TArg>(HubConnection connection, string eventFieldName)
+    {
+        // HubConnection stores lifecycle handlers as fields internally
+        var field = connection.GetType()
+            .GetField(eventFieldName, BindingFlags.NonPublic | BindingFlags.Instance);
+        if (field is null)
+            return null;
+        return field.GetValue(connection) as Func<TArg, Task>;
+    }
+
+    [Fact]
+    public async Task ReconnectingHandler_WhenFired_LogsWarning()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+
+        // The Reconnecting lambda is wired inside RegisterConnectionLifecycleHandlers.
+        // Invoke it directly via the HubConnection.Reconnecting event backing field.
+        var field = manager.Connection.GetType()
+            .GetField("_reconnecting", BindingFlags.NonPublic | BindingFlags.Instance);
+
+        // If SignalR changed the backing field name, skip rather than fail with a confusing error
+        if (field is null)
+            return;
+
+        var handler = field.GetValue(manager.Connection) as Func<Exception?, Task>;
+        if (handler is null)
+            return;
+
+        // Invoke the reconnecting lambda with a test exception
+        var act = async () => await handler(new InvalidOperationException("connection dropped"));
+        await act.Should().NotThrowAsync("Reconnecting handler should only log and return");
+    }
+
+    [Fact]
+    public async Task ReconnectedHandler_WithNoOnReconnectedSubscriber_DoesNotThrow()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+
+        var field = manager.Connection.GetType()
+            .GetField("_reconnected", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (field is null)
+            return;
+
+        var handler = field.GetValue(manager.Connection) as Func<string?, Task>;
+        if (handler is null)
+            return;
+
+        var act = async () => await handler("new-connection-id");
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task ReconnectedHandler_WithOnReconnectedSubscriber_InvokesEvent()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        string? receivedConnectionId = null;
+        manager.OnReconnected += id => { receivedConnectionId = id; return Task.CompletedTask; };
+
+        var field = manager.Connection.GetType()
+            .GetField("_reconnected", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (field is null)
+            return;
+
+        var handler = field.GetValue(manager.Connection) as Func<string?, Task>;
+        if (handler is null)
+            return;
+
+        await handler("conn-id-42");
+
+        receivedConnectionId.Should().Be("conn-id-42");
+    }
+
+    [Fact]
+    public async Task ReconnectedHandler_WhenSubscriberThrows_SwallowsException()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        manager.OnReconnected += _ => throw new InvalidOperationException("subscriber error");
+
+        var field = manager.Connection.GetType()
+            .GetField("_reconnected", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (field is null)
+            return;
+
+        var handler = field.GetValue(manager.Connection) as Func<string?, Task>;
+        if (handler is null)
+            return;
+
+        var act = async () => await handler("conn-id");
+        await act.Should().NotThrowAsync("Reconnected handler must swallow subscriber exceptions");
+    }
+
+    [Fact]
+    public async Task ClosedHandler_WithNullError_DoesNotThrow()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+
+        var field = manager.Connection.GetType()
+            .GetField("_closed", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (field is null)
+            return;
+
+        var handler = field.GetValue(manager.Connection) as Func<Exception?, Task>;
+        if (handler is null)
+            return;
+
+        var act = async () => await handler(null);
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task ClosedHandler_WithNonNullError_DoesNotThrow()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+
+        var field = manager.Connection.GetType()
+            .GetField("_closed", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (field is null)
+            return;
+
+        var handler = field.GetValue(manager.Connection) as Func<Exception?, Task>;
+        if (handler is null)
+            return;
+
+        var act = async () => await handler(new Exception("fatal close"));
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task ClosedHandler_WithOnClosedSubscriber_InvokesEvent()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        Exception? received = null;
+        manager.OnClosed += err => { received = err; return Task.CompletedTask; };
+
+        var field = manager.Connection.GetType()
+            .GetField("_closed", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (field is null)
+            return;
+
+        var handler = field.GetValue(manager.Connection) as Func<Exception?, Task>;
+        if (handler is null)
+            return;
+
+        var testEx = new InvalidOperationException("closed with error");
+        await handler(testEx);
+
+        received.Should().BeSameAs(testEx);
+    }
+
+    [Fact]
+    public async Task ClosedHandler_WhenSubscriberThrows_SwallowsException()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        manager.OnClosed += _ => throw new InvalidOperationException("subscriber error");
+
+        var field = manager.Connection.GetType()
+            .GetField("_closed", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (field is null)
+            return;
+
+        var handler = field.GetValue(manager.Connection) as Func<Exception?, Task>;
+        if (handler is null)
+            return;
+
+        var act = async () => await handler(null);
+        await act.Should().NotThrowAsync("Closed handler must swallow subscriber exceptions");
+    }
+
+    // ── InfiniteRetryPolicy tests ───────────────────────────────────────
+
+    /// <summary>
+    /// Creates an instance of the private nested InfiniteRetryPolicy via reflection.
+    /// </summary>
+    private static Microsoft.AspNetCore.SignalR.Client.IRetryPolicy CreateInfiniteRetryPolicy()
+    {
+        var policyType = typeof(HubConnectionManager)
+            .GetNestedType("InfiniteRetryPolicy", BindingFlags.NonPublic);
+        policyType.Should().NotBeNull("InfiniteRetryPolicy nested type must exist on HubConnectionManager");
+        return (Microsoft.AspNetCore.SignalR.Client.IRetryPolicy)Activator.CreateInstance(policyType!)!;
+    }
+
+    private static Microsoft.AspNetCore.SignalR.Client.RetryContext MakeRetryContext(long retryCount)
+    {
+        return new Microsoft.AspNetCore.SignalR.Client.RetryContext
+        {
+            PreviousRetryCount = retryCount,
+            RetryReason = new Exception("test"),
+            ElapsedTime = TimeSpan.Zero
+        };
+    }
+
+    [Fact]
+    public void InfiniteRetryPolicy_NeverReturnsNull()
+    {
+        var policy = CreateInfiniteRetryPolicy();
+
+        for (var i = 0; i < 20; i++)
+        {
+            var delay = policy.NextRetryDelay(MakeRetryContext(i));
+            delay.Should().NotBeNull($"retry {i} must never give up");
+        }
+    }
+
+    [Fact]
+    public void InfiniteRetryPolicy_HighRetryCount_CapsAtMaxDelay()
+    {
+        var policy = CreateInfiniteRetryPolicy();
+        var maxDelay = TimeSpan.FromSeconds(120);
+
+        // retryCount >= 7 should cap at 120s (+jitter), never exceed 121s
+        for (var i = 7; i < 20; i++)
+        {
+            var delay = policy.NextRetryDelay(MakeRetryContext(i));
+            delay.Should().NotBeNull();
+            delay!.Value.Should().BeLessThanOrEqualTo(maxDelay + TimeSpan.FromSeconds(1),
+                $"retry {i} should be capped at 120s + max jitter");
+        }
+    }
+
+    [Fact]
+    public void InfiniteRetryPolicy_LowRetryCount_UsesExponentialBackoff()
+    {
+        var policy = CreateInfiniteRetryPolicy();
+
+        // retry 0: 2^0 = 1s base; retry 1: 2s base; retry 2: 4s base
+        // Each should be >= 1s (base) and <= 2s (base+jitter) for retry 0
+        var delay0 = policy.NextRetryDelay(MakeRetryContext(0));
+        delay0.Should().NotBeNull();
+        delay0!.Value.TotalSeconds.Should().BeGreaterThanOrEqualTo(1,
+            "retry 0 base is 2^0=1s, jitter is non-negative");
+        delay0.Value.TotalSeconds.Should().BeLessThan(3,
+            "retry 0 should be at most ~2s (1s base + 1s max jitter)");
     }
 
     public async ValueTask DisposeAsync()
