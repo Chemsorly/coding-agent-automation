@@ -331,10 +331,11 @@ public class HousekeepingServiceSweepSummaryMetricTests
         CreateListener()
     {
         var measurements = new List<(long Value, string Status, string RepoId)>();
+        _ = PipelineTelemetry.Meter; // pre-touch: ensure all instruments are registered before Start()
         var listener = new MeterListener();
-        listener.InstrumentPublished += (instrument, l) =>
+        listener.InstrumentPublished = (instrument, l) =>
         {
-            if (instrument.Name == "pipeline.housekeeping.pr_evaluated")
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
                 l.EnableMeasurementEvents(instrument);
         };
         listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
@@ -528,10 +529,11 @@ public class HousekeepingServiceSweepSummaryMetricTests
         CreateSkippedListener()
     {
         var measurements = new List<(long Value, string Reason, string RepoId)>();
+        _ = PipelineTelemetry.Meter; // pre-touch: ensure all instruments are registered before Start()
         var listener = new MeterListener();
-        listener.InstrumentPublished += (instrument, l) =>
+        listener.InstrumentPublished = (instrument, l) =>
         {
-            if (instrument.Name == "pipeline.housekeeping.skipped")
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
                 l.EnableMeasurementEvents(instrument);
         };
         listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
@@ -553,10 +555,19 @@ public class HousekeepingServiceSweepSummaryMetricTests
     private static (MeterListener Listener, List<string> Fires) CreateSlotExhaustedListener()
     {
         var fires = new List<string>(); // repo_provider_id per increment
+        // Pre-touch the static meter so all instruments (including slot_exhausted) are registered
+        // before listener.Start() is called. Without this, on a fresh test process where
+        // PipelineTelemetry hasn't been initialised yet, instruments are created during ExecAsync
+        // on a thread-pool continuation, and the InstrumentPublished/EnableMeasurementEvents path
+        // can race against the first Add call on Linux CI runners.
+        _ = PipelineTelemetry.Meter;
         var listener = new MeterListener();
-        listener.InstrumentPublished += (instrument, l) =>
+        // Match all CodingAgent.Pipeline instruments (same pattern as HousekeepingPrOutcomeTests)
+        // rather than a name-exact filter, so the callback is registered before any Add fires
+        // regardless of static-initialisation order.
+        listener.InstrumentPublished = (instrument, l) =>
         {
-            if (instrument.Name == "pipeline.housekeeping.slot_exhausted")
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
                 l.EnableMeasurementEvents(instrument);
         };
         listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
