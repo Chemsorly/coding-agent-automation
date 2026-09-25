@@ -36,6 +36,7 @@ public sealed class DispatchLifecycleServiceSecretTests : IDisposable
 {
     private readonly string _dbName = $"secret-test-{Guid.NewGuid():N}";
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
+    private readonly string? _savedAgentApiKey;
 
     // Test secrets injected via prepareVariant — bypasses LoadProjectSecretsAsync.
     private static readonly Dictionary<string, string> TestSecrets = new()
@@ -56,6 +57,14 @@ public sealed class DispatchLifecycleServiceSecretTests : IDisposable
         // delays. See: DotNetSpecialist / TestQualityReviewer [WARNING] findings.
         DispatchLifecycleService.TestRetryDelayOverride = TimeSpan.Zero;
 
+        // Set AGENT_API_KEY for the entire class lifetime (all tests) rather than per-test.
+        // Per-test try/finally is racy when xUnit runs test CLASSES in parallel: another class's
+        // Dispose() can reset the env var between this class's SetEnvironmentVariable call and the
+        // DeriveAgentKey read inside ExecuteDispatchLifecycleAsync. Holding the value for the full
+        // class lifetime narrows the race window to class-level rather than test-level.
+        _savedAgentApiKey = Environment.GetEnvironmentVariable("AGENT_API_KEY");
+        Environment.SetEnvironmentVariable("AGENT_API_KEY", "test-master-key");
+
         var opts = new DbContextOptionsBuilder<PipelineDbContext>()
             .UseInMemoryDatabase(_dbName)
             .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
@@ -72,6 +81,9 @@ public sealed class DispatchLifecycleServiceSecretTests : IDisposable
         // previous value in the constructor and restore it here (save-and-restore pattern).
         // See: TestQualityReviewer [WARNING] — TestRetryDelayOverride save/restore.
         DispatchLifecycleService.TestRetryDelayOverride = null;
+
+        // Restore AGENT_API_KEY to the value it had before this class ran.
+        Environment.SetEnvironmentVariable("AGENT_API_KEY", _savedAgentApiKey);
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────────────────────────
@@ -180,50 +192,41 @@ public sealed class DispatchLifecycleServiceSecretTests : IDisposable
     public async Task PerJobSecret_AlwaysCreatedBeforeJob_OwnerReferencePatchedAfterJobCreation()
     {
         // Arrange
-        var originalKey = Environment.GetEnvironmentVariable("AGENT_API_KEY");
-        try
-        {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", "test-master-key");
-            var entity = await SeedPendingWorkItemAsync();
-            var callOrder = new List<string>();
+        var entity = await SeedPendingWorkItemAsync();
+        var callOrder = new List<string>();
 
-            var k8sMock = new Mock<IKubernetesJobClient>(MockBehavior.Strict);
-            k8sMock
-                .Setup(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .Callback<V1Secret, string, CancellationToken>((_, _, _) => callOrder.Add("CreateSecret"))
-                .Returns(Task.CompletedTask);
-            k8sMock
-                .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .Callback<V1Job, string, CancellationToken>((_, _, _) => callOrder.Add("CreateJob"))
-                .Returns(Task.CompletedTask);
-            k8sMock
-                .Setup(k => k.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .Callback<string, string, CancellationToken>((_, _, _) => callOrder.Add("ReadJob"))
-                .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Uid = "uid-test-1" } });
-            k8sMock
-                .Setup(k => k.PatchSecretOwnerReferenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<V1OwnerReference>(), It.IsAny<CancellationToken>()))
-                .Callback<string, string, V1OwnerReference, CancellationToken>((_, _, _, _) => callOrder.Add("PatchSecret"))
-                .Returns(Task.CompletedTask);
+        var k8sMock = new Mock<IKubernetesJobClient>(MockBehavior.Strict);
+        k8sMock
+            .Setup(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<V1Secret, string, CancellationToken>((_, _, _) => callOrder.Add("CreateSecret"))
+            .Returns(Task.CompletedTask);
+        k8sMock
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((_, _, _) => callOrder.Add("CreateJob"))
+            .Returns(Task.CompletedTask);
+        k8sMock
+            .Setup(k => k.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, CancellationToken>((_, _, _) => callOrder.Add("ReadJob"))
+            .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Uid = "uid-test-1" } });
+        k8sMock
+            .Setup(k => k.PatchSecretOwnerReferenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<V1OwnerReference>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, V1OwnerReference, CancellationToken>((_, _, _, _) => callOrder.Add("PatchSecret"))
+            .Returns(Task.CompletedTask);
 
-            // Act
-            await RunDispatchAsync(entity, k8sMock.Object, TestSecrets);
+        // Act
+        await RunDispatchAsync(entity, k8sMock.Object, TestSecrets);
 
-            // Assert: correct operation ordering
-            k8sMock.Verify(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
-            k8sMock.Verify(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
-            k8sMock.Verify(k => k.PatchSecretOwnerReferenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<V1OwnerReference>(), It.IsAny<CancellationToken>()), Times.Once);
-            callOrder.Should().ContainInOrder("CreateSecret", "CreateJob");
-            callOrder.Should().ContainInOrder("CreateJob", "PatchSecret");
-            // PatchSecret must come after CreateJob — OwnerReference requires Job UID which is only available post-creation.
-            var createJobIdx = callOrder.IndexOf("CreateJob");
-            var patchSecretIdx = callOrder.IndexOf("PatchSecret");
-            patchSecretIdx.Should().BeGreaterThan(createJobIdx,
-                "OwnerReference must be patched AFTER the Job is created (Job UID only available post-creation)");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", originalKey);
-        }
+        // Assert: correct operation ordering
+        k8sMock.Verify(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        k8sMock.Verify(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        k8sMock.Verify(k => k.PatchSecretOwnerReferenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<V1OwnerReference>(), It.IsAny<CancellationToken>()), Times.Once);
+        callOrder.Should().ContainInOrder("CreateSecret", "CreateJob");
+        callOrder.Should().ContainInOrder("CreateJob", "PatchSecret");
+        // PatchSecret must come after CreateJob — OwnerReference requires Job UID which is only available post-creation.
+        var createJobIdx = callOrder.IndexOf("CreateJob");
+        var patchSecretIdx = callOrder.IndexOf("PatchSecret");
+        patchSecretIdx.Should().BeGreaterThan(createJobIdx,
+            "OwnerReference must be patched AFTER the Job is created (Job UID only available post-creation)");
     }
 
     // ── Test 2: per-job Secret always contains agent-api-key entry ────────────────────────────
@@ -237,44 +240,35 @@ public sealed class DispatchLifecycleServiceSecretTests : IDisposable
     public async Task PerJobSecret_AlwaysContainsAgentApiKey_ProjectSecretsAreMerged()
     {
         // Arrange
-        var originalKey = Environment.GetEnvironmentVariable("AGENT_API_KEY");
-        try
-        {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", "test-master-key");
-            var entity = await SeedPendingWorkItemAsync();
+        var entity = await SeedPendingWorkItemAsync();
 
-            var k8sMock = new Mock<IKubernetesJobClient>(MockBehavior.Strict);
-            V1Secret? capturedSecret = null;
-            k8sMock
-                .Setup(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .Callback<V1Secret, string, CancellationToken>((s, _, _) => capturedSecret = s)
-                .Returns(Task.CompletedTask);
-            k8sMock
-                .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
-            k8sMock
-                .Setup(k => k.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Uid = "uid-test-2" } });
-            k8sMock
-                .Setup(k => k.PatchSecretOwnerReferenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<V1OwnerReference>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
+        var k8sMock = new Mock<IKubernetesJobClient>(MockBehavior.Strict);
+        V1Secret? capturedSecret = null;
+        k8sMock
+            .Setup(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<V1Secret, string, CancellationToken>((s, _, _) => capturedSecret = s)
+            .Returns(Task.CompletedTask);
+        k8sMock
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        k8sMock
+            .Setup(k => k.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Uid = "uid-test-2" } });
+        k8sMock
+            .Setup(k => k.PatchSecretOwnerReferenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<V1OwnerReference>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
-            // Act: pass TestSecrets (project secrets: API_KEY + DB_PASS)
-            await RunDispatchAsync(entity, k8sMock.Object, TestSecrets);
+        // Act: pass TestSecrets (project secrets: API_KEY + DB_PASS)
+        await RunDispatchAsync(entity, k8sMock.Object, TestSecrets);
 
-            // Assert: Secret contains the per-job agent key AND all project secrets
-            capturedSecret.Should().NotBeNull();
-            capturedSecret!.StringData.Should().ContainKey("agent-api-key",
-                "the per-job Secret must always contain the pre-vended agent API key");
-            capturedSecret.StringData.Should().ContainKey("API_KEY",
-                "project secrets must be merged into the same per-job Secret");
-            capturedSecret.StringData.Should().ContainKey("DB_PASS",
-                "project secrets must be merged into the same per-job Secret");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", originalKey);
-        }
+        // Assert: Secret contains the per-job agent key AND all project secrets
+        capturedSecret.Should().NotBeNull();
+        capturedSecret!.StringData.Should().ContainKey("agent-api-key",
+            "the per-job Secret must always contain the pre-vended agent API key");
+        capturedSecret.StringData.Should().ContainKey("API_KEY",
+            "project secrets must be merged into the same per-job Secret");
+        capturedSecret.StringData.Should().ContainKey("DB_PASS",
+            "project secrets must be merged into the same per-job Secret");
     }
 
     // ── Test 3: Secret created without OwnerReference (Job does not exist yet) ──────────────────
@@ -288,45 +282,36 @@ public sealed class DispatchLifecycleServiceSecretTests : IDisposable
     public async Task PerJobSecret_CreatedWithoutOwnerReference_JobCreatedAfterward()
     {
         // Arrange
-        var originalKey = Environment.GetEnvironmentVariable("AGENT_API_KEY");
-        try
-        {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", "test-master-key");
-            var entity = await SeedPendingWorkItemAsync();
+        var entity = await SeedPendingWorkItemAsync();
 
-            var k8sMock = new Mock<IKubernetesJobClient>(MockBehavior.Strict);
-            V1Secret? capturedSecret = null;
-            k8sMock
-                .Setup(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .Callback<V1Secret, string, CancellationToken>((s, _, _) => capturedSecret = s)
-                .Returns(Task.CompletedTask);
-            k8sMock
-                .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
-            k8sMock
-                .Setup(k => k.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Uid = "uid-test-3" } });
-            k8sMock
-                .Setup(k => k.PatchSecretOwnerReferenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<V1OwnerReference>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
+        var k8sMock = new Mock<IKubernetesJobClient>(MockBehavior.Strict);
+        V1Secret? capturedSecret = null;
+        k8sMock
+            .Setup(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<V1Secret, string, CancellationToken>((s, _, _) => capturedSecret = s)
+            .Returns(Task.CompletedTask);
+        k8sMock
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        k8sMock
+            .Setup(k => k.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Uid = "uid-test-3" } });
+        k8sMock
+            .Setup(k => k.PatchSecretOwnerReferenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<V1OwnerReference>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
-            // Act
-            await RunDispatchAsync(entity, k8sMock.Object, TestSecrets);
+        // Act
+        await RunDispatchAsync(entity, k8sMock.Object, TestSecrets);
 
-            // Assert: Secret has no OwnerReference AT CREATION TIME (Job UID unknown at creation time)
-            // The OwnerReference is patched afterward by PatchSecretOwnerReferenceAfterJobAsync.
-            capturedSecret.Should().NotBeNull();
-            var ownerRefs = capturedSecret!.Metadata.OwnerReferences;
-            (ownerRefs is null || ownerRefs.Count == 0).Should().BeTrue(
-                "Secret is created before the Job, so no OwnerReference UID is available yet — it is patched in a subsequent call");
-            var hasEmptyUid = ownerRefs?.Any(r => string.IsNullOrEmpty(r.Uid)) ?? false;
-            hasEmptyUid.Should().BeFalse(
-                "OwnerReference.Uid must never be set to an empty string");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", originalKey);
-        }
+        // Assert: Secret has no OwnerReference AT CREATION TIME (Job UID unknown at creation time)
+        // The OwnerReference is patched afterward by PatchSecretOwnerReferenceAfterJobAsync.
+        capturedSecret.Should().NotBeNull();
+        var ownerRefs = capturedSecret!.Metadata.OwnerReferences;
+        (ownerRefs is null || ownerRefs.Count == 0).Should().BeTrue(
+            "Secret is created before the Job, so no OwnerReference UID is available yet — it is patched in a subsequent call");
+        var hasEmptyUid = ownerRefs?.Any(r => string.IsNullOrEmpty(r.Uid)) ?? false;
+        hasEmptyUid.Should().BeFalse(
+            "OwnerReference.Uid must never be set to an empty string");
     }
 
     // ── Test 4: 409 on Secret creation → idempotent retry, Job still created ─────────────────
@@ -340,41 +325,32 @@ public sealed class DispatchLifecycleServiceSecretTests : IDisposable
     public async Task WhenSecretAlreadyExists_409Conflict_DispatchProceedsAndJobIsCreated()
     {
         // Arrange
-        var originalKey = Environment.GetEnvironmentVariable("AGENT_API_KEY");
-        try
-        {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", "test-master-key");
-            var entity = await SeedPendingWorkItemAsync();
+        var entity = await SeedPendingWorkItemAsync();
 
-            var k8sMock = new Mock<IKubernetesJobClient>(MockBehavior.Strict);
-            k8sMock
-                .Setup(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .ThrowsAsync(new HttpOperationException("already exists")
-                {
-                    Response = new HttpResponseMessageWrapper(
-                        new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.Conflict), "")
-                });
-            k8sMock
-                .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
-            k8sMock
-                .Setup(k => k.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Uid = "uid-test-4" } });
-            k8sMock
-                .Setup(k => k.PatchSecretOwnerReferenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<V1OwnerReference>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
+        var k8sMock = new Mock<IKubernetesJobClient>(MockBehavior.Strict);
+        k8sMock
+            .Setup(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpOperationException("already exists")
+            {
+                Response = new HttpResponseMessageWrapper(
+                    new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.Conflict), "")
+            });
+        k8sMock
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        k8sMock
+            .Setup(k => k.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Uid = "uid-test-4" } });
+        k8sMock
+            .Setup(k => k.PatchSecretOwnerReferenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<V1OwnerReference>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
-            // Act — should not throw; 409 on Secret is idempotent
-            await RunDispatchAsync(entity, k8sMock.Object, TestSecrets);
+        // Act — should not throw; 409 on Secret is idempotent
+        await RunDispatchAsync(entity, k8sMock.Object, TestSecrets);
 
-            // Assert: Job was still created despite the 409 on the Secret
-            k8sMock.Verify(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once,
-                "Job must still be created when the Secret already exists (idempotent dispatch)");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", originalKey);
-        }
+        // Assert: Job was still created despite the 409 on the Secret
+        k8sMock.Verify(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once,
+            "Job must still be created when the Secret already exists (idempotent dispatch)");
     }
 
     // ── Test 5: null projectSecrets → Secret IS always created (per-job agent key) ────────────
@@ -389,69 +365,60 @@ public sealed class DispatchLifecycleServiceSecretTests : IDisposable
     public async Task WhenProjectSecretsIsNull_PerJobAgentKeySecretIsStillCreated()
     {
         // Arrange
-        var originalKey = Environment.GetEnvironmentVariable("AGENT_API_KEY");
-        try
-        {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", "test-master-key");
-            var entity = await SeedPendingWorkItemAsync();
+        var entity = await SeedPendingWorkItemAsync();
 
-            var callOrder = new List<string>();
+        var callOrder = new List<string>();
 
-            var k8sMock = new Mock<IKubernetesJobClient>(MockBehavior.Strict);
+        var k8sMock = new Mock<IKubernetesJobClient>(MockBehavior.Strict);
 
-            // Single CreateSecretAsync setup — captures secret AND records call order.
-            // A previous version had two Setup calls (first was silently shadowed by the second
-            // in Moq). Fixed: one Setup that does both — avoids the shadow and removes the
-            // mistaken ReadJobAsync setup that would have hidden any accidental call to ReadJobAsync.
-            V1Secret? capturedSecret = null;
-            k8sMock
-                .Setup(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .Callback<V1Secret, string, CancellationToken>((s, _, _) => { capturedSecret = s; callOrder.Add("CreateSecret"); })
-                .Returns(Task.CompletedTask);
+        // Single CreateSecretAsync setup — captures secret AND records call order.
+        // A previous version had two Setup calls (first was silently shadowed by the second
+        // in Moq). Fixed: one Setup that does both — avoids the shadow and removes the
+        // mistaken ReadJobAsync setup that would have hidden any accidental call to ReadJobAsync.
+        V1Secret? capturedSecret = null;
+        k8sMock
+            .Setup(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<V1Secret, string, CancellationToken>((s, _, _) => { capturedSecret = s; callOrder.Add("CreateSecret"); })
+            .Returns(Task.CompletedTask);
 
-            k8sMock
-                .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .Callback<V1Job, string, CancellationToken>((_, _, _) => callOrder.Add("CreateJob"))
-                .Returns(Task.CompletedTask);
+        k8sMock
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((_, _, _) => callOrder.Add("CreateJob"))
+            .Returns(Task.CompletedTask);
 
-            // ReadJobAsync is NOT set up — MockBehavior.Strict will throw if it is called,
-            // ensuring we detect any accidental invocation of the retired GetJobUidAsync path.
-            // PatchSecretOwnerReferenceAsync IS set up (required for the post-Job OwnerRef patch).
-            // TODO [WARNING]: The comment above is self-contradicting — ReadJobAsync IS set up below.
-            // The comment is vestigial from a previous draft where ReadJobAsync was not expected to be
-            // called. PatchSecretOwnerReferenceAfterJobAsync calls GetJobUidAsync, which calls ReadJobAsync,
-            // so it must be set up. Remove the "ReadJobAsync is NOT set up" comment above to avoid
-            // confusing future readers. See: TestQualityReviewer [WARNING] — Test 5 contradicting comment.
-            k8sMock
-                .Setup(k => k.PatchSecretOwnerReferenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<V1OwnerReference>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
+        // ReadJobAsync is NOT set up — MockBehavior.Strict will throw if it is called,
+        // ensuring we detect any accidental invocation of the retired GetJobUidAsync path.
+        // PatchSecretOwnerReferenceAsync IS set up (required for the post-Job OwnerRef patch).
+        // TODO [WARNING]: The comment above is self-contradicting — ReadJobAsync IS set up below.
+        // The comment is vestigial from a previous draft where ReadJobAsync was not expected to be
+        // called. PatchSecretOwnerReferenceAfterJobAsync calls GetJobUidAsync, which calls ReadJobAsync,
+        // so it must be set up. Remove the "ReadJobAsync is NOT set up" comment above to avoid
+        // confusing future readers. See: TestQualityReviewer [WARNING] — Test 5 contradicting comment.
+        k8sMock
+            .Setup(k => k.PatchSecretOwnerReferenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<V1OwnerReference>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
-            // ReadJobAsync must be set up because PatchSecretOwnerReferenceAfterJobAsync calls
-            // GetJobUidAsync, which reads the Job UID before issuing the ownerReference patch.
-            k8sMock
-                .Setup(k => k.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Uid = "uid-123" } });
+        // ReadJobAsync must be set up because PatchSecretOwnerReferenceAfterJobAsync calls
+        // GetJobUidAsync, which reads the Job UID before issuing the ownerReference patch.
+        k8sMock
+            .Setup(k => k.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Uid = "uid-123" } });
 
-            // Act: null projectSecrets — but the per-job agent key must still be created
-            await RunDispatchAsync(entity, k8sMock.Object, projectSecrets: null);
+        // Act: null projectSecrets — but the per-job agent key must still be created
+        await RunDispatchAsync(entity, k8sMock.Object, projectSecrets: null);
 
-            // Assert: Secret was created (always for work-item pods)
-            k8sMock.Verify(
-                k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-                Times.Once,
-                "CreateSecretAsync must always be called for work-item pods to store the per-job agent key");
+        // Assert: Secret was created (always for work-item pods)
+        k8sMock.Verify(
+            k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "CreateSecretAsync must always be called for work-item pods to store the per-job agent key");
 
-            capturedSecret.Should().NotBeNull();
-            capturedSecret!.StringData.Should().ContainKey("agent-api-key",
-                "the per-job Secret must always contain the agent-api-key entry");
+        capturedSecret.Should().NotBeNull();
+        capturedSecret!.StringData.Should().ContainKey("agent-api-key",
+            "the per-job Secret must always contain the agent-api-key entry");
 
-            // Ordering: Secret must be created BEFORE the Job
-            callOrder.Should().ContainInOrder("CreateSecret", "CreateJob");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", originalKey);
-        }
+        // Ordering: Secret must be created BEFORE the Job
+        callOrder.Should().ContainInOrder("CreateSecret", "CreateJob");
     }
 
     // ── Test 6: per-job agent key value matches DeriveAgentKey output ──────────────────────────
@@ -465,63 +432,61 @@ public sealed class DispatchLifecycleServiceSecretTests : IDisposable
     [Fact]
     public async Task PerJobAgentKeySecret_ContainsCorrectHmacValue_AndIsCreatedBeforeJob()
     {
-        // Arrange
-        const string masterKey = "test-master-for-key-derivation";
-        var originalKey = Environment.GetEnvironmentVariable("AGENT_API_KEY");
-        try
-        {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", masterKey);
-            var entity = await SeedPendingWorkItemAsync();
-            var expectedJobName = DispatchLifecycleService.GenerateJobName(entity.Id);
-            var expectedAgentKey = DispatchLifecycleService.DeriveAgentKey(expectedJobName);
-            var expectedSecretName = $"caa-secrets-{entity.Id.ToString("N")[..8]}";
+        // Arrange — the class constructor sets AGENT_API_KEY = "test-master-key".
+        // Compute the expected HMAC independently using the same derivation algorithm so
+        // the assertion is not tautological (doesn't just call DeriveAgentKey again).
+        var entity = await SeedPendingWorkItemAsync();
+        var expectedJobName = DispatchLifecycleService.GenerateJobName(entity.Id);
 
-            var callOrder = new List<string>();
-            V1Secret? capturedSecret = null;
+        // Independently compute HMAC-SHA256("test-master-key", jobName) to verify the stored value.
+        using var hmac = new System.Security.Cryptography.HMACSHA256(
+            System.Text.Encoding.UTF8.GetBytes("test-master-key"));
+        var hashBytes = hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(expectedJobName));
+        var expectedAgentKey = Convert.ToHexString(hashBytes).ToLowerInvariant();
 
-            var k8sMock = new Mock<IKubernetesJobClient>(MockBehavior.Strict);
-            k8sMock
-                .Setup(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .Callback<V1Secret, string, CancellationToken>((s, _, _) => { capturedSecret = s; callOrder.Add("CreateSecret"); })
-                .Returns(Task.CompletedTask);
-            k8sMock
-                .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .Callback<V1Job, string, CancellationToken>((_, _, _) => callOrder.Add("CreateJob"))
-                .Returns(Task.CompletedTask);
-            k8sMock
-                .Setup(k => k.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Uid = "uid-456" } });
-            k8sMock
-                .Setup(k => k.PatchSecretOwnerReferenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<V1OwnerReference>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
+        var expectedSecretName = $"caa-secrets-{entity.Id.ToString("N")[..8]}";
 
-            // Act
-            await RunDispatchAsync(entity, k8sMock.Object, projectSecrets: null);
+        var callOrder = new List<string>();
+        V1Secret? capturedSecret = null;
 
-            // Assert: secret name follows naming convention
-            capturedSecret.Should().NotBeNull();
-            capturedSecret!.Metadata.Name.Should().Be(expectedSecretName,
-                "per-job Secret name must follow caa-secrets-{workItemId[..8]} convention");
+        var k8sMock = new Mock<IKubernetesJobClient>(MockBehavior.Strict);
+        k8sMock
+            .Setup(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<V1Secret, string, CancellationToken>((s, _, _) => { capturedSecret = s; callOrder.Add("CreateSecret"); })
+            .Returns(Task.CompletedTask);
+        k8sMock
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((_, _, _) => callOrder.Add("CreateJob"))
+            .Returns(Task.CompletedTask);
+        k8sMock
+            .Setup(k => k.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Uid = "uid-456" } });
+        k8sMock
+            .Setup(k => k.PatchSecretOwnerReferenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<V1OwnerReference>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
-            // Assert: agent-api-key value equals HMAC(master, jobName)
-            capturedSecret.StringData.Should().ContainKey("agent-api-key");
-            capturedSecret.StringData["agent-api-key"].Should().Be(expectedAgentKey,
-                "the stored key must equal HMAC-SHA256(masterKey, jobName) — the same value AgentApiKeyAuthHandler derives for validation");
+        // Act
+        await RunDispatchAsync(entity, k8sMock.Object, projectSecrets: null);
 
-            // Assert: Secret created BEFORE Job
-            callOrder.Should().ContainInOrder("CreateSecret", "CreateJob");
+        // Assert: secret name follows naming convention
+        capturedSecret.Should().NotBeNull();
+        capturedSecret!.Metadata.Name.Should().Be(expectedSecretName,
+            "per-job Secret name must follow caa-secrets-{workItemId[..8]} convention");
 
-            // Assert: the job spec references DerivedKeySecretName (no master key mount)
-            k8sMock.Verify(k => k.CreateJobAsync(
-                It.Is<V1Job>(j => j.Spec.Template.Spec.Volumes == null ||
-                    !j.Spec.Template.Spec.Volumes.Any(v => v.Name == "agent-api-key")),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once,
-                "the K8s Job must not mount the master agent-api-key Secret volume");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("AGENT_API_KEY", originalKey);
-        }
+        // Assert: agent-api-key value equals HMAC(master, jobName)
+        capturedSecret.StringData.Should().ContainKey("agent-api-key");
+        capturedSecret.StringData["agent-api-key"].Should().Be(expectedAgentKey,
+            "the stored key must equal HMAC-SHA256(masterKey, jobName) — the same value AgentApiKeyAuthHandler derives for validation");
+
+        // Assert: Secret created BEFORE Job
+        callOrder.Should().ContainInOrder("CreateSecret", "CreateJob");
+
+        // Assert: the job spec references DerivedKeySecretName (no master key mount)
+        k8sMock.Verify(k => k.CreateJobAsync(
+            It.Is<V1Job>(j => j.Spec.Template.Spec.Volumes == null ||
+                !j.Spec.Template.Spec.Volumes.Any(v => v.Name == "agent-api-key")),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once,
+            "the K8s Job must not mount the master agent-api-key Secret volume");
     }
 
     // ── Test infrastructure ──────────────────────────────────────────────────────────────────────
