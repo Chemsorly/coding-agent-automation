@@ -27,8 +27,15 @@ public sealed class PostDecompositionSummaryStep : IPipelineStep
 
         var results = context.Run.SubIssueResults;
 
-        // Determine outcome: zero attempted or all failed → error; otherwise → done
-        var attempted = results.Count;
+        // Determine outcome: exclude cap-skipped entries from all counts so they don't affect the outcome label.
+        // Cap-skipped entries represent proposals not attempted due to the MaxDecompositionSubIssues cap —
+        // they are not failures. If zero non-skipped sub-issues were attempted, or all failed → error.
+        var attempted = results.Count(r => !r.SkippedByCap);
+        // TODO: 'succeeded' is not filtered for cap-skipped entries. Cap-skipped entries always have
+        // Success = false (enforced in CreateSubIssuesStep), so this is correct today. However, if a future
+        // code path constructs a SubIssueCreationResult with both SkippedByCap = true and Success = true,
+        // 'succeeded' would over-count while 'attempted' under-counts, making 'failed = attempted - succeeded'
+        // go negative with no guard. Consider: results.Count(r => !r.SkippedByCap && r.Success)
         var succeeded = results.Count(r => r.Success);
         var failed = attempted - succeeded;
         var allFailed = attempted == 0 || succeeded == 0;
@@ -112,7 +119,9 @@ public sealed class PostDecompositionSummaryStep : IPipelineStep
         for (var i = 0; i < results.Count; i++)
         {
             var result = results[i];
-            var status = result.Success ? "✅ Created" : "❌ Failed";
+            var status = result.SkippedByCap
+                ? "⏭️ Not created (cap)"
+                : result.Success ? "✅ Created" : "❌ Failed";
             var link = result.Success && result.Url is not null
                 ? $"[#{result.Identifier}]({result.Url})"
                 : result.FailureReason ?? "Unknown error";

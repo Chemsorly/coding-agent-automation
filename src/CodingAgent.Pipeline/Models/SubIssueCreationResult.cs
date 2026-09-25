@@ -19,4 +19,12 @@ public sealed record SubIssueCreationResult
 
     /// <summary>Reason for failure, or null if creation succeeded.</summary>
     public string? FailureReason { get; init; }
+
+    /// <summary>
+    /// True when this entry represents a proposal that was not attempted because the plan
+    /// exceeded <c>MaxDecompositionSubIssues</c>. These entries are recorded for visibility
+    /// in the summary comment but are not counted as failed creations — they do not affect
+    /// the <c>allFailed</c> outcome label logic.
+    /// </summary>
+    public bool SkippedByCap { get; init; }
 }

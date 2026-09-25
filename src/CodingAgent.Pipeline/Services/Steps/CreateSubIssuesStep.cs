@@ -68,12 +68,15 @@ public sealed class CreateSubIssuesStep : IPipelineStep
         var cappedProposals = proposals.Count > cap
             ? proposals.Take(cap).ToList()
             : proposals;
+        var skippedProposals = proposals.Count > cap
+            ? proposals.Skip(cap).ToList()
+            : [];
 
         if (proposals.Count > cap)
         {
             context.Logger.Information(
-                "Sub-issue cap enforced: {Total} proposals found, processing first {Cap} alphabetically",
-                proposals.Count, cap);
+                "Sub-issue cap enforced: {Total} proposals found, processing first {Cap} alphabetically; {Skipped} will be recorded as not created",
+                proposals.Count, cap, skippedProposals.Count);
         }
 
         // 4. Create linked CancellationTokenSource with 5-minute timeout
@@ -116,8 +119,20 @@ public sealed class CreateSubIssuesStep : IPipelineStep
             }
         }
 
-        // 12. Store results on context for summary step
-        context.Run.SubIssueResults = results;
+        // 12. Store results on context for summary step.
+        // Cap-skipped entries are appended after real results for visibility in the summary,
+        // but are excluded from the attempted/created counters so allFailed logic is unaffected.
+        var capSkippedResults = skippedProposals
+            .Select(p => new SubIssueCreationResult
+            {
+                Title = p.Title,
+                Success = false,
+                SkippedByCap = true,
+                FailureReason = $"Not created: plan exceeded the {cap} sub-issue cap"
+            })
+            .ToList();
+
+        context.Run.SubIssueResults = [.. results, .. capSkippedResults];
         context.Run.DecompositionSubIssuesAttempted = results.Count;
         context.Run.DecompositionSubIssuesCreated = results.Count(r => r.Success);
 

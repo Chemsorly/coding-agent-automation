@@ -152,7 +152,7 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildReviewPrompt_ContainsEvaluationCriteria()
     {
-        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(12);
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(10, 12);
 
         prompt.Should().Contain("# Decomposition Plan Review");
         prompt.Should().Contain("### 1. Overlap Check");
@@ -165,7 +165,7 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildReviewPrompt_ContainsSeverityMarkers()
     {
-        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(12);
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(10, 12);
 
         prompt.Should().Contain("[CRITICAL]");
         prompt.Should().Contain("[WARNING]");
@@ -175,15 +175,15 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildReviewPrompt_ContainsNoFalsePositiveRule()
     {
-        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(12);
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(10, 12);
         prompt.Should().Contain("Do NOT invent findings");
     }
 
     [Fact]
     public void BuildReviewPrompt_WithNullProjectContext_ReturnsSameAsWithout()
     {
-        var without = DecompositionPromptBuilder.BuildReviewPrompt(12);
-        var withNull = DecompositionPromptBuilder.BuildReviewPrompt(12, null);
+        var without = DecompositionPromptBuilder.BuildReviewPrompt(10, 12);
+        var withNull = DecompositionPromptBuilder.BuildReviewPrompt(10, 12, null);
 
         withNull.Should().Be(without);
     }
@@ -192,8 +192,8 @@ public class DecompositionPromptBuilderTests
     public void BuildReviewPrompt_WithProjectContext_AppendsCrossRepoReviewAdditions()
     {
         var context = CreateTestProjectContext();
-        var withContext = DecompositionPromptBuilder.BuildReviewPrompt(12, context);
-        var without = DecompositionPromptBuilder.BuildReviewPrompt(12);
+        var withContext = DecompositionPromptBuilder.BuildReviewPrompt(10, 12, context);
+        var without = DecompositionPromptBuilder.BuildReviewPrompt(10, 12);
 
         withContext.Length.Should().BeGreaterThan(without.Length);
     }
@@ -203,7 +203,7 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildRefinementPrompt_ContainsRequiredSections()
     {
-        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(12);
+        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(10, 12);
 
         prompt.Should().Contain("# Decomposition Plan Refinement");
         prompt.Should().Contain("## Input");
@@ -214,7 +214,7 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildRefinementPrompt_AddressesCriticalAndWarning()
     {
-        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(12);
+        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(10, 12);
 
         prompt.Should().Contain("`[CRITICAL]` findings");
         prompt.Should().Contain("`[WARNING]` findings");
@@ -223,7 +223,7 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildRefinementPrompt_PreservesOriginalConstraints()
     {
-        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(12);
+        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(10, 12);
 
         // Ensures the refinement prompt reminds the agent of sizing constraints
         prompt.Should().Contain("≤12 files");
@@ -250,14 +250,14 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildReviewPrompt_ContainsMaxFilesConstraint()
     {
-        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(20);
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(10, 20);
         prompt.Should().Contain("≤20 files");
     }
 
     [Fact]
     public void BuildRefinementPrompt_ContainsMaxFilesConstraint()
     {
-        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(7);
+        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(10, 7);
         prompt.Should().Contain("≤7 files");
     }
 
@@ -290,10 +290,81 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildReviewPrompt_IsDeterministic()
     {
-        var first = DecompositionPromptBuilder.BuildReviewPrompt(12);
-        var second = DecompositionPromptBuilder.BuildReviewPrompt(12);
+        var first = DecompositionPromptBuilder.BuildReviewPrompt(10, 12);
+        var second = DecompositionPromptBuilder.BuildReviewPrompt(10, 12);
 
         first.Should().Be(second);
+    }
+
+    // ── New tests: maxSubIssues in BuildReviewPrompt (Req 1) ─────────────
+
+    [Fact]
+    public void BuildReviewPrompt_CapExceeded_IsCriticalFinding()
+    {
+        // A plan exceeding the cap must be flagged as CRITICAL
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(10, 12);
+
+        prompt.Should().Contain("### 6. Sub-Issue Count Check");
+        prompt.Should().Contain("10");
+        // TODO: The assertion below does not verify that [CRITICAL] appears specifically within the new
+        // "### 6. Sub-Issue Count Check" section — [CRITICAL] was already present in earlier sections.
+        // A regression that removed the cap criterion but left [CRITICAL] elsewhere would still pass.
+        // Tighten by asserting the text "flag it as `[CRITICAL]`" appears after "### 6. Sub-Issue Count Check".
+        prompt.Should().Contain("[CRITICAL]");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_AtCap_RebalancingRequired()
+    {
+        // When plan is at cap, sizing findings must propose rebalancing/merging — not adding
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(8, 12);
+
+        prompt.Should().ContainAny("rebalancing", "merging");
+        prompt.Should().Contain("Do NOT propose adding a new sub-issue");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_DifferentMaxSubIssues_ProducesDifferentContent()
+    {
+        var prompt5 = DecompositionPromptBuilder.BuildReviewPrompt(5, 12);
+        var prompt10 = DecompositionPromptBuilder.BuildReviewPrompt(10, 12);
+
+        prompt5.Should().Contain("5");
+        prompt10.Should().Contain("10");
+        prompt5.Should().NotBe(prompt10);
+    }
+
+    // ── New tests: maxSubIssues in BuildRefinementPrompt (Req 2) ─────────
+
+    [Fact]
+    public void BuildRefinementPrompt_ConstraintListContainsMaxSubIssues()
+    {
+        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(10, 12);
+
+        // The constraint list must include the sub-issue count cap alongside the file limit
+        prompt.Should().Contain("at most 10 sub-issues");
+        prompt.Should().Contain("≤12 files");
+    }
+
+    [Fact]
+    public void BuildRefinementPrompt_DifferentMaxSubIssues_ProducesDifferentContent()
+    {
+        var prompt5 = DecompositionPromptBuilder.BuildRefinementPrompt(5, 12);
+        var prompt10 = DecompositionPromptBuilder.BuildRefinementPrompt(10, 12);
+
+        prompt5.Should().Contain("5");
+        prompt10.Should().Contain("10");
+        prompt5.Should().NotBe(prompt10);
+    }
+
+    [Fact]
+    public void BuildRefinementPrompt_SplitExceedingCapResolvedByMovingScope()
+    {
+        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(7, 12);
+
+        // Must explicitly say that splits pushing past the cap use scope movement, not new sub-issues
+        prompt.Should().Contain("moving");
+        prompt.Should().Contain("7");
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

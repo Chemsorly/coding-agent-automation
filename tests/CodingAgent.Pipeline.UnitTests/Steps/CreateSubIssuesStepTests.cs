@@ -200,7 +200,7 @@ public class CreateSubIssuesStepTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_CapEnforced_ProcessesOnlyFirstN()
     {
-        // Write 7 sub-issue files but cap is 5
+        // Write 7 sub-issue files but cap is 5 → 5 created + 2 cap-skipped recorded
         for (var i = 1; i <= 7; i++)
             WriteSubIssueFile($"{i:D2}-issue-{i}.json", $"Issue {i}", $"Body {i}");
 
@@ -215,8 +215,27 @@ public class CreateSubIssuesStepTests : IDisposable
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
         result.Should().Be(StepResult.Continue);
-        run.SubIssueResults.Should().HaveCount(5);
+
+        // 5 created + 2 cap-skipped = 7 total
+        run.SubIssueResults.Should().HaveCount(7);
+
+        // Counters count only real attempts, not cap-skipped entries
         run.DecompositionSubIssuesAttempted.Should().Be(5);
+        run.DecompositionSubIssuesCreated.Should().Be(5);
+
+        // Cap-skipped entries are at the end and have SkippedByCap = true
+        var skipped = run.SubIssueResults.Where(r => r.SkippedByCap).ToList();
+        skipped.Should().HaveCount(2);
+        skipped.Should().AllSatisfy(r =>
+        {
+            r.Success.Should().BeFalse();
+            r.SkippedByCap.Should().BeTrue();
+            r.FailureReason.Should().NotBeNullOrEmpty();
+            r.FailureReason.Should().Contain("5"); // cap value mentioned in reason
+        });
+
+        // Non-skipped entries were successfully created
+        run.SubIssueResults.Where(r => !r.SkippedByCap).Should().AllSatisfy(r => r.Success.Should().BeTrue());
     }
 
     [Fact]

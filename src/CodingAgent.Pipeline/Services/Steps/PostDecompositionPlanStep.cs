@@ -45,8 +45,29 @@ public sealed class PostDecompositionPlanStep : IPipelineStep
             return StepResult.Stop;
         }
 
+        // 2a. Check whether the plan's sub-issue table exceeds the cap and emit a warning if so.
+        string? warningPreamble = null;
+        var cap = context.Config.MaxDecompositionSubIssues;
+        var subIssueCount = TryCountPlanSubIssues(planContent);
+        if (subIssueCount.HasValue)
+        {
+            if (subIssueCount.Value > cap)
+            {
+                warningPreamble =
+                    $"> ⚠️ **Warning: this plan contains {subIssueCount.Value} sub-issues but the cap is {cap}.**\n" +
+                    $"> Only the first {cap} sub-issues will be created when this plan is approved.\n" +
+                    $"> Please revise the plan so it proposes at most {cap} sub-issues before approving.";
+            }
+        }
+        else
+        {
+            context.Logger.Information(
+                "Could not parse sub-issue table in decomposition plan for run {RunId} — skipping cap warning",
+                context.Run.RunId);
+        }
+
         // 2. Format the plan comment with marker + approval instructions
-        var commentBody = FormatPlanComment(planContent);
+        var commentBody = FormatPlanComment(planContent, warningPreamble);
 
         // 3. Check for existing plan comment (most recent with marker)
         var postResult = await context.TryCriticalAsync(async () =>
@@ -102,15 +123,22 @@ public sealed class PostDecompositionPlanStep : IPipelineStep
 
     /// <summary>
     /// Formats the plan comment with the marker as the first line, followed by
-    /// the plan content and approval instructions.
+    /// an optional warning preamble, the plan content, and approval instructions.
     /// </summary>
-    internal static string FormatPlanComment(string planContent)
+    internal static string FormatPlanComment(string planContent, string? warningPreamble = null)
     {
         var sb = new System.Text.StringBuilder();
 
         // Marker MUST be first line
         sb.AppendLine(CommentMarkers.DecompositionPlan);
         sb.AppendLine();
+
+        if (warningPreamble is not null)
+        {
+            sb.AppendLine(warningPreamble);
+            sb.AppendLine();
+        }
+
         sb.AppendLine("## 🧩 Decomposition Plan");
         sb.AppendLine();
         sb.AppendLine(TextSanitizer.SanitizeMarkdown(planContent));
@@ -130,6 +158,76 @@ public sealed class PostDecompositionPlanStep : IPipelineStep
         sb.AppendLine("3. Add the `agent:epic` label to trigger re-analysis");
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Counts the data rows in the first markdown table whose header row contains
+    /// both a <c>#</c> column and a <c>Title</c> column (the structure mandated by the
+    /// decomposition analysis prompt).
+    /// Returns <c>null</c> when no matching table is found (fail-open; caller proceeds without warning).
+    /// </summary>
+    internal static int? TryCountPlanSubIssues(string planContent)
+    {
+        // TODO: planContent.Split('\n') does not normalise CRLF line endings. On Windows or when the plan
+        // file is written with CRLF endings each line carries a trailing '\r', which can cause blank/'\r'-only
+        // lines to be misidentified as empty rows and terminate counting early, potentially under-counting
+        // sub-issues mid-table. Follow the established pattern in PullRequestFinalizationService (ReplaceLineEndings("\n"))
+        // and replace with: planContent.ReplaceLineEndings("\n").Split('\n')
+        var lines = planContent.Split('\n');
+        var headerIndex = -1;
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            if (!line.TrimStart().StartsWith('|'))
+                continue;
+
+            // Split by '|', trim each token, ignore empty tokens at edges
+            var tokens = line.Split('|')
+                .Select(t => t.Trim())
+                .Where(t => t.Length > 0)
+                .ToArray();
+
+            // Must have both '#' and 'Title' as column header tokens (case-insensitive)
+            var hasHash = tokens.Any(t => string.Equals(t, "#", StringComparison.OrdinalIgnoreCase));
+            var hasTitle = tokens.Any(t => string.Equals(t, "Title", StringComparison.OrdinalIgnoreCase));
+
+            if (hasHash && hasTitle)
+            {
+                headerIndex = i;
+                break;
+            }
+        }
+
+        if (headerIndex < 0)
+            return null;
+
+        // Skip the separator row (contains |---|)
+        var dataStart = headerIndex + 1;
+        if (dataStart < lines.Length && lines[dataStart].Contains("---"))
+            dataStart++;
+
+        // Count data rows: lines starting with '|' that are not separator rows
+        var count = 0;
+        for (var i = dataStart; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            if (string.IsNullOrWhiteSpace(line))
+                break;
+            if (!line.TrimStart().StartsWith('|'))
+                break;
+            // Skip separator rows (e.g. |---|---|)
+            // TODO: line.Contains("---") is a substring match that will also match data rows whose cell
+            // content includes three or more hyphens (e.g. "N/A --- see below", "YYYY-MM-DD---format").
+            // Such rows are silently skipped, causing an undercount and potentially suppressing the cap
+            // warning. Use a structural separator check instead: verify that every non-empty token between
+            // pipes consists only of '-', ':', and whitespace (i.e. a real markdown separator row).
+            if (line.Contains("---"))
+                continue;
+            count++;
+        }
+
+        return count;
     }
 
     /// <summary>

@@ -239,10 +239,12 @@ public static class DecompositionPromptBuilder
 
     /// <summary>
     /// Builds the adversarial review prompt for plan validation.
-    /// Instructs the reviewer to validate the decomposition plan against quality criteria.
+    /// Instructs the reviewer to validate the decomposition plan against quality criteria,
+    /// including the sub-issue count cap.
     /// </summary>
+    /// <param name="maxSubIssues">Maximum number of sub-issues allowed in the plan.</param>
     /// <param name="maxFiles">Maximum files a single sub-issue may create or modify.</param>
-    public static string BuildReviewPrompt(int maxFiles)
+    public static string BuildReviewPrompt(int maxSubIssues, int maxFiles)
     {
         var sb = new StringBuilder();
 
@@ -295,6 +297,16 @@ public static class DecompositionPromptBuilder
         sb.AppendLine("Verify that all proposed sub-issue titles are unique (case-insensitive comparison).");
         sb.AppendLine("Flag duplicate titles as `[CRITICAL]`.");
         sb.AppendLine();
+        sb.AppendLine("### 6. Sub-Issue Count Check");
+        sb.AppendLine();
+        sb.AppendLine($"The plan must propose **at most {maxSubIssues} sub-issues**. Count the rows in the sub-issue table.");
+        sb.AppendLine($"If the plan proposes more than {maxSubIssues} sub-issues, flag it as `[CRITICAL]`.");
+        sb.AppendLine();
+        sb.AppendLine($"If the plan is **already at the cap of {maxSubIssues}**, any sizing finding that would normally");
+        sb.AppendLine("be resolved by splitting a sub-issue into two MUST instead be resolved by moving scope between");
+        sb.AppendLine("existing sub-issues (rebalancing or merging). Do NOT propose adding a new sub-issue when the");
+        sb.AppendLine("plan is at the cap — that would make the cap violation worse.");
+        sb.AppendLine();
 
         // Output
         sb.AppendLine("## Output");
@@ -323,11 +335,12 @@ public static class DecompositionPromptBuilder
     /// When project context is present, appends validation rules for targetRepository values.
     /// When project context is null, returns the standard review prompt (backward compatible).
     /// </summary>
+    /// <param name="maxSubIssues">Maximum number of sub-issues allowed in the plan.</param>
     /// <param name="maxFiles">Maximum files a single sub-issue may create or modify.</param>
     /// <param name="projectContext">Project context for cross-repo decomposition, or null for single-repo decomposition.</param>
-    public static string BuildReviewPrompt(int maxFiles, DecompositionProjectContext? projectContext)
+    public static string BuildReviewPrompt(int maxSubIssues, int maxFiles, DecompositionProjectContext? projectContext)
     {
-        var prompt = BuildReviewPrompt(maxFiles);
+        var prompt = BuildReviewPrompt(maxSubIssues, maxFiles);
 
         if (projectContext is null)
             return prompt;
@@ -337,10 +350,12 @@ public static class DecompositionPromptBuilder
 
     /// <summary>
     /// Builds the refinement prompt sent back to the generator after review findings.
-    /// Instructs the generator to address CRITICAL and WARNING findings.
+    /// Instructs the generator to address CRITICAL and WARNING findings while respecting
+    /// both the file limit and the sub-issue count cap.
     /// </summary>
+    /// <param name="maxSubIssues">Maximum number of sub-issues allowed in the plan.</param>
     /// <param name="maxFiles">Maximum files a single sub-issue may create or modify.</param>
-    public static string BuildRefinementPrompt(int maxFiles)
+    public static string BuildRefinementPrompt(int maxSubIssues, int maxFiles)
     {
         var sb = new StringBuilder();
 
@@ -373,11 +388,16 @@ public static class DecompositionPromptBuilder
         sb.AppendLine("Ensure the updated plan still satisfies all original constraints:");
         sb.AppendLine();
         sb.AppendLine($"- Each sub-issue creates or modifies ≤{maxFiles} files");
+        sb.AppendLine($"- The plan proposes at most {maxSubIssues} sub-issues");
         sb.AppendLine("- Each sub-issue has exactly one verification criterion");
         sb.AppendLine("- Each sub-issue is completable in one agent run");
         sb.AppendLine("- Dependencies point backward (no cycles)");
         sb.AppendLine("- No overlap with existing open issues");
         sb.AppendLine("- All sub-issue titles are unique");
+        sb.AppendLine();
+        sb.AppendLine($"The sub-issue count limit ({maxSubIssues}) is equally binding as the file limit.");
+        sb.AppendLine($"A split that would push the plan past {maxSubIssues} sub-issues MUST be resolved by moving");
+        sb.AppendLine("scope between existing sub-issues instead — not by adding a new one.");
         sb.AppendLine();
         sb.AppendLine("Do NOT create any source code files. Only update the decomposition plan.");
 

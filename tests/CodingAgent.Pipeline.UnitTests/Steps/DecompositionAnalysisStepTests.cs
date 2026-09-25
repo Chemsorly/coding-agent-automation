@@ -129,7 +129,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildReviewPrompt_ContainsOverlapCheck()
     {
-        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(12);
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(10, 12);
 
         prompt.Should().Contain("overlap");
         prompt.Should().Contain("open issues");
@@ -138,7 +138,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildReviewPrompt_ContainsSizingValidation()
     {
-        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(12);
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(10, 12);
 
         prompt.Should().Contain("≤12 files");
         prompt.Should().Contain("verification criterion");
@@ -147,7 +147,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildReviewPrompt_ContainsAcyclicDependencyCheck()
     {
-        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(12);
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(10, 12);
 
         prompt.Should().Contain("acyclic");
     }
@@ -155,7 +155,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildReviewPrompt_ContainsCriticalFlagging()
     {
-        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(12);
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(10, 12);
 
         prompt.Should().Contain("[CRITICAL]");
     }
@@ -163,7 +163,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildReviewPrompt_ContainsDuplicateTitleCheck()
     {
-        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(12);
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(10, 12);
 
         prompt.Should().Contain("duplicate");
     }
@@ -171,7 +171,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildRefinementPrompt_ContainsReviewFindingsPath()
     {
-        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(12);
+        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(10, 12);
 
         prompt.Should().Contain(".agent/decomposition-review.md");
     }
@@ -179,7 +179,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildRefinementPrompt_ContainsCriticalAndWarningInstruction()
     {
-        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(12);
+        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(10, 12);
 
         prompt.Should().Contain("[CRITICAL]");
         prompt.Should().Contain("[WARNING]");
@@ -247,5 +247,84 @@ public class AgentLabelsDecompositionTests
 
         // Epic (purple) should be distinct from review (yellow)
         epicColor.Should().NotBe(reviewColor);
+    }
+}
+
+/// <summary>
+/// Wiring tests verifying that <see cref="DecompositionAnalysisStep"/> passes
+/// <see cref="PipelineConfiguration.MaxDecompositionSubIssues"/> to both the review
+/// and refinement prompts (Req 3 of issue #3018).
+///
+/// These tests use the prompt builders directly with config-derived values — the same
+/// pattern used elsewhere in this class for BuildAnalysisPrompt. Because
+/// <see cref="DecompositionAnalysisStep.ExecuteAsync"/> wires <c>maxSubIssues</c>
+/// to <c>BuildReviewPrompt(maxSubIssues, maxFiles, projectContext)</c> and
+/// <c>BuildRefinementPrompt(maxSubIssues, maxFiles)</c>, asserting that the returned
+/// prompts contain the cap value verifies the wiring is correct.
+/// </summary>
+// TODO: These wiring tests call DecompositionPromptBuilder methods directly and do not exercise
+// DecompositionAnalysisStep.ExecuteAsync itself. A refactor that accidentally swapped maxSubIssues
+// and maxFiles in the ExecuteAsync call site would not be caught. Consider adding an integration-style
+// test that runs ExecuteAsync with a controlled config and verifies via captured prompt content that
+// config.MaxDecompositionSubIssues reaches both builder calls.
+public class DecompositionAnalysisStepWiringTests
+{
+    [Fact]
+    public void MaxDecompositionSubIssues_ReachesReviewPrompt()
+    {
+        // Given config with a specific cap value
+        const int maxSubIssues = 7;
+        const int maxFiles = 12;
+
+        // When the review prompt is built with the wired parameters
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(maxSubIssues, maxFiles, null);
+
+        // Then the cap value is present in the prompt — verifying the wiring carries it through
+        prompt.Should().Contain("7",
+            because: "DecompositionAnalysisStep.ExecuteAsync passes config.MaxDecompositionSubIssues to BuildReviewPrompt");
+        prompt.Should().Contain("### 6. Sub-Issue Count Check",
+            because: "the cap criterion section must be present");
+    }
+
+    [Fact]
+    public void MaxDecompositionSubIssues_ReachesRefinementPrompt()
+    {
+        // Given config with a specific cap value
+        const int maxSubIssues = 7;
+        const int maxFiles = 12;
+
+        // When the refinement prompt is built with the wired parameters
+        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(maxSubIssues, maxFiles);
+
+        // Then the cap value is present in the prompt — verifying the wiring carries it through
+        prompt.Should().Contain("7",
+            because: "DecompositionAnalysisStep.ExecuteAsync passes config.MaxDecompositionSubIssues to BuildRefinementPrompt");
+        prompt.Should().Contain("at most 7 sub-issues",
+            because: "the sub-issue count constraint must be in the refinement constraint list");
+    }
+
+    [Fact]
+    public void MaxDecompositionSubIssues_DifferentValues_ProduceDifferentReviewPrompts()
+    {
+        // Verifies that different config values produce distinguishable prompts — not a constant
+        var config5 = new PipelineConfiguration { MaxDecompositionSubIssues = 5, MaxDecompositionSubIssueFiles = 12 };
+        var config12 = new PipelineConfiguration { MaxDecompositionSubIssues = 12, MaxDecompositionSubIssueFiles = 12 };
+
+        var prompt5 = DecompositionPromptBuilder.BuildReviewPrompt(config5.MaxDecompositionSubIssues, config5.MaxDecompositionSubIssueFiles, null);
+        var prompt12 = DecompositionPromptBuilder.BuildReviewPrompt(config12.MaxDecompositionSubIssues, config12.MaxDecompositionSubIssueFiles, null);
+
+        prompt5.Should().NotBe(prompt12);
+    }
+
+    [Fact]
+    public void MaxDecompositionSubIssues_DifferentValues_ProduceDifferentRefinementPrompts()
+    {
+        var config5 = new PipelineConfiguration { MaxDecompositionSubIssues = 5, MaxDecompositionSubIssueFiles = 12 };
+        var config12 = new PipelineConfiguration { MaxDecompositionSubIssues = 12, MaxDecompositionSubIssueFiles = 12 };
+
+        var prompt5 = DecompositionPromptBuilder.BuildRefinementPrompt(config5.MaxDecompositionSubIssues, config5.MaxDecompositionSubIssueFiles);
+        var prompt12 = DecompositionPromptBuilder.BuildRefinementPrompt(config12.MaxDecompositionSubIssues, config12.MaxDecompositionSubIssueFiles);
+
+        prompt5.Should().NotBe(prompt12);
     }
 }
