@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using KiroCliLib.Core;
 
 namespace CodingAgent.Pipeline.Services;
 
@@ -73,6 +74,12 @@ public static class SetupCommandRunner
             };
             psi.ArgumentList.Add(ShellFlag);
             psi.ArgumentList.Add(command);
+
+            // Strip OTEL vars before injecting secrets so that child processes cannot
+            // read the OTLP write token and test hosts do not export telemetry to production.
+            // Must come before secret injection so that deliberately-named secrets (e.g. a
+            // secret called OTEL_*) are not accidentally removed.
+            ChildProcessEnvironment.StripTelemetry(psi);
 
             // Inject secrets as environment variables into the child process
             foreach (var (key, value) in environmentSecrets)

@@ -348,6 +348,11 @@ public sealed class AgentJobLifecycleServiceTests
         var run = MakeRun("job-1");
 
         _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()));
+        // CompleteRunAsync must return the run (non-null) so runWasAlive=true → label swap fires
+        _lifecycle.Setup(l => l.CompleteRunAsync(
+            "job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<FailureReason?>())).ReturnsAsync(run);
         _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.Error, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
@@ -366,6 +371,11 @@ public sealed class AgentJobLifecycleServiceTests
         var run = MakeRun("job-1");
 
         _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()));
+        // CompleteRunAsync must return the run (non-null) so runWasAlive=true → label swap fires
+        _lifecycle.Setup(l => l.CompleteRunAsync(
+            "job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<FailureReason?>())).ReturnsAsync(run);
         _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.Done, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
@@ -384,6 +394,11 @@ public sealed class AgentJobLifecycleServiceTests
         var run = MakeRun("job-1");
 
         _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()));
+        // CompleteRunAsync must return the run (non-null) so runWasAlive=true → label swap fires
+        _lifecycle.Setup(l => l.CompleteRunAsync(
+            "job-1", WorkItemStatus.Cancelled, It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<FailureReason?>())).ReturnsAsync(run);
         _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.Cancelled, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
@@ -402,6 +417,11 @@ public sealed class AgentJobLifecycleServiceTests
         var run = MakeRun("job-1");
 
         _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()));
+        // CompleteRunAsync must return the run (non-null) so runWasAlive=true → label swap fires
+        _lifecycle.Setup(l => l.CompleteRunAsync(
+            "job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<FailureReason?>())).ReturnsAsync(run);
         _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.Error, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
@@ -421,6 +441,11 @@ public sealed class AgentJobLifecycleServiceTests
         var run = MakeRun("job-1");
 
         _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()));
+        // CompleteRunAsync must return the run (non-null) so runWasAlive=true → label swap fires
+        _lifecycle.Setup(l => l.CompleteRunAsync(
+            "job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<FailureReason?>())).ReturnsAsync(run);
         _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.Done, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 

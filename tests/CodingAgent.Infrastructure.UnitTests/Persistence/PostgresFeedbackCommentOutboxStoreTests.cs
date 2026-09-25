@@ -10,7 +10,7 @@ namespace CodingAgent.Infrastructure.UnitTests.Persistence;
 
 /// <summary>
 /// Unit tests for <see cref="PostgresFeedbackCommentOutboxStore"/>.
-/// Uses InMemory EF Core — same pattern as <see cref="EfKeyValueStoreTests"/>.
+/// Uses InMemory EF Core — same pattern as <see cref="PostgresKeyValueStoreTests"/>.
 ///
 /// Note: RunId uniqueness is enforced by the database-level unique index which InMemory does not
 /// honour; the duplicate-insert idempotency path is therefore not exercised here.

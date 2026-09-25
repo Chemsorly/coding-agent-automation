@@ -226,13 +226,40 @@ public sealed class LabelService : ILabelService
 
         await using var issueProvider = _providerFactory.CreateIssueProvider(issueConfig);
 
+        // Fetch the issue's current labels so the remove phase only targets labels that are
+        // actually present, eliminating the DELETE 404s that fire when all AgentLabels.All
+        // entries are removed unconditionally. On any fetch failure, currentLabels stays null
+        // and SwapAsync falls back to the full sweep (Requirement #2: a failed read must never
+        // leave stale labels behind).
+        IReadOnlyList<string>? currentLabels = null;
+        try
+        {
+            var issueDetail = await issueProvider.GetIssueAsync(issueIdentifier, ct);
+            currentLabels = issueDetail.Labels;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // TODO (WARNING): An OperationCanceledException caused by an HTTP timeout (e.g.
+            // TaskCanceledException wrapping a timeout) will be re-thrown here rather than
+            // falling back to the full sweep, aborting the swap entirely. This matches existing
+            // patterns in the codebase and is correct for true cancellation, but a network
+            // timeout surfaced as OperationCanceledException will silently skip the swap.
+            // Consider inspecting ex.CancellationToken or catching TaskCanceledException
+            // separately if timeout-triggered fallback is desired. See issue #2971.
+            _logger.Warning(ex,
+                "LabelService: failed to fetch current labels for issue {IssueIdentifier} — falling back to full label sweep",
+                issueIdentifier);
+        }
+
         await AgentLabelOperations.SwapAsync(
             (label, c) => issueProvider.RemoveLabelAsync(issueIdentifier, label, c),
             (label, c) => issueProvider.AddLabelAsync(issueIdentifier, label, c),
             newLabel,
             ct,
             identifier: issueIdentifier,
-            throwOnRemoveExhaustion: throwOnRemoveExhaustion);
+            throwOnRemoveExhaustion: throwOnRemoveExhaustion,
+            currentLabels: currentLabels);
     }
 
     /// <summary>
@@ -264,6 +291,13 @@ public sealed class LabelService : ILabelService
 
         await using var repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig);
 
+        // TODO (WARNING): SwapPrLabelAsync does not fetch the PR's current labels before calling
+        // SwapAsync, so PR label swaps still iterate all of AgentLabels.All unconditionally and
+        // emit a DELETE 404 for every label that isn't present. The SwapIssueLabelAsync path above
+        // was fixed with a GetIssueAsync prefetch; apply the same pattern here using
+        // repoProvider.GetPullRequestLabelsAsync (or equivalent) to fetch current PR labels and
+        // pass them as currentLabels. Tempo data (AgentHub/ReportJobCompleted spans) confirms this
+        // path also contributes to the observed 404s. See issue #2971.
         await AgentLabelOperations.SwapAsync(
             (label, c) => repoProvider.RemovePrLabelAsync(prNumber, label, c),
             (label, c) => repoProvider.AddPrLabelAsync(prNumber, label, c),

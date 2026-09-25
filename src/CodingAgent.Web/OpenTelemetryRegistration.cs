@@ -1,3 +1,4 @@
+using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Pipeline.Telemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -64,6 +65,10 @@ internal static class OpenTelemetryRegistration
                 // AddMeter after AddOtlpExporter is fine — both operate on the same
                 // MeterProviderBuilder, so this meter is exported with Cumulative temporality too.
                 m.AddMeter(WorkDistributionTelemetry.MeterName);
+
+                // GitHub-facing metrics (github.api.requests counter, github.rate_limit.remaining gauge).
+                // Not registered in the agent — agent pods must not emit these series.
+                m.AddMeter(GitHubTelemetry.MeterName);
             });
 
         return services;

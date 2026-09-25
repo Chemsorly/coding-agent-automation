@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.SignalR.Client;
 
 namespace CodingAgent.Api.Client;
@@ -49,6 +50,8 @@ public sealed class AgentHubConnection : IAgentHubConnection
             .WithUrl(hubUrl, opts =>
             {
                 opts.AccessTokenProvider = () => Task.FromResult<string?>(apiKey);
+                opts.SkipNegotiation = true;
+                opts.Transports = HttpTransportType.WebSockets;
             })
             .WithAutomaticReconnect(new InfiniteRetryPolicy())
             .Build();

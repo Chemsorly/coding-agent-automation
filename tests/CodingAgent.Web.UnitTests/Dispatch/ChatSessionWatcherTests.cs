@@ -100,7 +100,7 @@ public class ChatSessionWatcherTests
         // The cleanup callback mirrors CleanupSession's CAS gate: only the first call is recorded.
         // The finally block in WatchJobUntilTerminalAsync always calls cleanup (idempotent in production
         // because CleanupSession has a Interlocked.CompareExchange gate).
-        Action<string, ChatJobDispatcher.WatcherEntry, string, string> cleanup = (aid, e, sel, outcome) =>
+        Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string> cleanup = (aid, e, sel, outcome) =>
         {
             cleanupCallCount++;
             if (cleanupCallCount == 1)
@@ -224,7 +224,7 @@ public class ChatSessionWatcherTests
         // Tracker returns (Available=false, null) — simulating a Redis fault.
         // ChatHeartbeatTracker.TryGetRedisHeartbeatAsync catches Redis exceptions and returns (false, null).
         // The watcher receives this and skips idle-kill for the cycle.
-        redisMock.Setup(r => r.TryGetRedisHeartbeatAsync(It.IsAny<string>(), It.IsAny<string>()))
+        redisMock.Setup(r => r.TryGetRedisHeartbeatAsync(It.IsAny<string>(), It.IsAny<AgentId>()))
             .ReturnsAsync((false, (DateTimeOffset?)null));
 
         // With Redis faulting, the watcher skips idle-kill and loops.
@@ -321,7 +321,7 @@ public class ChatSessionWatcherTests
         var cleanupCallCount = 0;
         // First call throws (simulates a fault in a cleanup side-effect like metric recording).
         // The finally block then calls cleanup again.
-        Action<string, ChatJobDispatcher.WatcherEntry, string, string> faultingCleanup = (_, _, _, _) =>
+        Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string> faultingCleanup = (_, _, _, _) =>
         {
             cleanupCallCount++;
             if (cleanupCallCount == 1)

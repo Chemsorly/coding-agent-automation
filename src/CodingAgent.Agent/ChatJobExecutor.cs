@@ -31,6 +31,7 @@ public sealed class ChatJobExecutor
     private readonly bool _isChatMode;
     private readonly TimeSpan _chatTaskCompletionGracePeriod;
     private readonly Serilog.ILogger _logger;
+    private readonly Func<System.Diagnostics.ProcessStartInfo, System.Diagnostics.Process?> _processStarter;
 
     public ChatJobExecutor(ChatJobExecutorDependencies deps)
     {
@@ -53,6 +54,7 @@ public sealed class ChatJobExecutor
         _isChatMode = deps.IsChatMode;
         _chatTaskCompletionGracePeriod = deps.ChatTaskCompletionGracePeriod;
         _logger = deps.Logger;
+        _processStarter = deps.ProcessStarter;
     }
 
     public async Task HandleChatPromptAsync(ChatPromptMessage message)
@@ -335,8 +337,9 @@ public sealed class ChatJobExecutor
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            ChildProcessEnvironment.StripTelemetry(psi);
 
-            using var process = System.Diagnostics.Process.Start(psi);
+            using var process = _processStarter(psi);
             if (process is null)
             {
                 await ReportFetchModelsError(request.RequestId, "Failed to start kiro-cli process.");

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq.Expressions;
 using System.Text.Json;
 using CodingAgent.Api.Dispatch;
 using CodingAgent.Infrastructure.Locking;
@@ -809,16 +810,14 @@ public static class WorkItemDispatchEndpoints
 
         // Check existence to differentiate 404 from 409
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var item = await db.WorkItems.AsNoTracking()
-            .Where(w => w.Id == id)
-            .Select(w => new { w.Status })
-            .FirstOrDefaultAsync(ct);
+        var (item, notFound) = await LoadProjectionOrNotFoundAsync(
+            db, id, w => new { w.Status }, ct);
 
-        if (item is null)
-            return TypedResults.NotFound();
+        if (notFound is not null)
+            return notFound;
 
         // Item exists but is in wrong state (e.g. Pending/Running/Succeeded)
-        return TypedResults.Conflict($"Cannot requeue work item in status '{item.Status}'.");
+        return TypedResults.Conflict($"Cannot requeue work item in status '{item!.Status}'.");
     }
 
     // ── POST /{id}/label-swap ─────────────────────────────────────────────
@@ -847,18 +846,18 @@ public static class WorkItemDispatchEndpoints
         CancellationToken ct)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var item = await db.WorkItems
-            .AsNoTracking()
-            .Where(w => w.Id == id)
-            .Select(w => new { w.IssueProviderConfigId, w.IssueIdentifier, w.TaskType, w.Payload })
-            .FirstOrDefaultAsync(ct);
+        var (item, notFound) = await LoadProjectionOrNotFoundAsync(
+            db, id, w => new { w.IssueProviderConfigId, w.IssueIdentifier, w.TaskType, w.Payload }, ct);
 
-        if (item is null)
-            return TypedResults.NotFound();
+        if (notFound is not null)
+            return notFound;
+
+        // item is guaranteed non-null: LoadProjectionOrNotFoundAsync returns notFound=null iff Value != null.
+        var workItem = item!;
 
         if (labelSwapService is not null)
         {
-            var isReview = item.TaskType == WorkItemTaskType.Review;
+            var isReview = workItem.TaskType == WorkItemTaskType.Review;
             var targetKind = isReview ? LabelTargetKind.PullRequest : LabelTargetKind.Issue;
 
             // A PR label swap must go through the *repository* provider — SwapPrLabelAsync resolves
@@ -867,11 +866,11 @@ public static class WorkItemDispatchEndpoints
             // JobDistributionRequest payload (same source the assignment endpoint reads), so pull
             // it from there. Passing the issue config id would make the repo lookup miss and the
             // swap silently no-op, which is why review PRs never got the in-progress marker.
-            var providerConfigIdValue = item.IssueProviderConfigId;
-            if (isReview && item.Payload is not null)
+            var providerConfigIdValue = workItem.IssueProviderConfigId;
+            if (isReview && workItem.Payload is not null)
             {
                 var payload = JsonSerializer.Deserialize<JobDistributionRequest>(
-                    item.Payload, PipelineJsonOptions.Default);
+                    workItem.Payload, PipelineJsonOptions.Default);
                 if (!string.IsNullOrEmpty(payload?.RepoProviderConfigId))
                     providerConfigIdValue = payload.RepoProviderConfigId;
             }
@@ -879,7 +878,7 @@ public static class WorkItemDispatchEndpoints
             await labelSwapService.SwapLabelWithRetryAsync(
                 id,
                 new ProviderConfigId(providerConfigIdValue),
-                new IssueIdentifier(item.IssueIdentifier),
+                new IssueIdentifier(workItem.IssueIdentifier),
                 targetKind,
                 ct);
         }
@@ -903,14 +902,13 @@ public static class WorkItemDispatchEndpoints
         CancellationToken ct)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var item = await db.WorkItems
-            .Where(w => w.Id == id)
-            .FirstOrDefaultAsync(ct);
+        var (item, notFound) = await LoadProjectionOrNotFoundAsync(
+            db, id, w => w, ct, noTracking: false);
 
-        if (item is null)
-            return TypedResults.NotFound();
+        if (notFound is not null)
+            return notFound;
 
-        item.LastProgressAt = request.Timestamp;
+        item!.LastProgressAt = request.Timestamp;
         await db.SaveChangesAsync(ct);
 
         return TypedResults.Ok();
@@ -930,13 +928,12 @@ public static class WorkItemDispatchEndpoints
         CancellationToken ct)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var jobName = await db.WorkItems
-            .AsNoTracking()
-            .Where(w => w.Id == id)
-            .Select(w => w.K8sJobName)
-            .FirstOrDefaultAsync(ct);
+        var (jobName, notFound) = await LoadProjectionOrNotFoundAsync(
+            db, id, w => w.K8sJobName, ct);
 
-        if (string.IsNullOrEmpty(jobName))
+        // notFound covers two cases: (a) no row exists, (b) row exists but K8sJobName is null.
+        // string.IsNullOrEmpty additionally catches an empty-string K8sJobName on an existing row.
+        if (notFound is not null || string.IsNullOrEmpty(jobName))
             return TypedResults.NotFound();
 
         return TypedResults.Ok(new { jobName });
@@ -959,7 +956,12 @@ public static class WorkItemDispatchEndpoints
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
-        var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;
+        // TODO: recentTerminalCutoff is still recomputed inline here and in GetActiveIdentifiers.
+        // The activeStatuses local was removed (now inside WhereActiveOrRecentlyTerminal), but the
+        // cutoff DateTimeOffset calculation remains in both callers. Consider moving the cutoff
+        // computation into WhereActiveOrRecentlyTerminal (e.g. as an overload that accepts a
+        // TimeSpan or reads PipelineConstants directly) so the "active or recently terminal"
+        // semantics are fully self-contained in one place.
         var recentTerminalCutoff = DateTimeOffset.UtcNow - PipelineConstants.DefaultRestartDedupCooldown;
 
         // Single query evaluates both conditions at the same database snapshot, eliminating
@@ -970,12 +972,10 @@ public static class WorkItemDispatchEndpoints
         // isDistributed = false.
         var isDistributed = await db.WorkItems
             .AsNoTracking()
-            .AnyAsync(w =>
-                w.IssueIdentifier == issueIdentifier &&
-                w.IssueProviderConfigId == issueProviderConfigId &&
-                (activeStatuses.Contains(w.Status) ||
-                 (w.CompletedAt != null && w.CompletedAt >= recentTerminalCutoff)),
-                ct);
+            .Where(w => w.IssueIdentifier == issueIdentifier &&
+                        w.IssueProviderConfigId == issueProviderConfigId)
+            .WhereActiveOrRecentlyTerminal(recentTerminalCutoff)
+            .AnyAsync(ct);
 
         return TypedResults.Ok(new { isDistributed });
     }
@@ -995,34 +995,25 @@ public static class WorkItemDispatchEndpoints
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
-        var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;
+        // TODO: recentTerminalCutoff is still recomputed inline here and in GetIsDistributed.
+        // The activeStatuses local was removed (now inside WhereActiveOrRecentlyTerminal), but the
+        // cutoff DateTimeOffset calculation remains in both callers. Consider moving the cutoff
+        // computation into WhereActiveOrRecentlyTerminal (e.g. as an overload that accepts a
+        // TimeSpan or reads PipelineConstants directly) so the "active or recently terminal"
+        // semantics are fully self-contained in one place.
         var recentTerminalCutoff = DateTimeOffset.UtcNow - PipelineConstants.DefaultRestartDedupCooldown;
 
-        // TODO: GetActiveIdentifiers issues two sequential ToListAsync round-trips with the same
-        // TOCTOU window that was fixed in GetIsDistributed (see issue #2668). A WorkItem that
-        // transitions between the two queries can produce a false negative for the active-identifier
-        // check. Consider consolidating into a single query with an OR predicate (same pattern as
-        // GetIsDistributed) to eliminate the window. The impact is lower here because
-        // GetActiveIdentifiers is a bulk read used for polling, not a per-issue dedup guard.
-        var activePairs = await db.WorkItems
+        // Single query with WhereActiveOrRecentlyTerminal eliminates the TOCTOU window that existed
+        // when active and recently-terminal pairs were fetched in two sequential ToListAsync calls.
+        // A WorkItem that transitioned between the two queries could produce a false negative.
+        // Distinct() deduplicates pairs that appear under both the active-status and the
+        // recently-terminal branch (e.g. an active item that also has CompletedAt set).
+        var result = await db.WorkItems
             .AsNoTracking()
-            .Where(w => activeStatuses.Contains(w.Status))
-            .Select(w => new { w.IssueIdentifier, w.IssueProviderConfigId })
-            .ToListAsync(ct);
-
-        var recentTerminalPairs = await db.WorkItems
-            .AsNoTracking()
-            .Where(w => !activeStatuses.Contains(w.Status) &&
-                        w.CompletedAt != null &&
-                        w.CompletedAt >= recentTerminalCutoff)
-            .Select(w => new { w.IssueIdentifier, w.IssueProviderConfigId })
-            .ToListAsync(ct);
-
-        var result = activePairs
-            .Concat(recentTerminalPairs)
-            .Select(p => new ActiveIdentifierDto(p.IssueIdentifier, p.IssueProviderConfigId))
+            .WhereActiveOrRecentlyTerminal(recentTerminalCutoff)
+            .Select(w => new ActiveIdentifierDto(w.IssueIdentifier, w.IssueProviderConfigId))
             .Distinct()
-            .ToList();
+            .ToListAsync(ct);
 
         return TypedResults.Ok((IReadOnlyList<ActiveIdentifierDto>)result);
     }
@@ -1073,6 +1064,57 @@ public static class WorkItemDispatchEndpoints
 
     internal static bool IsUniqueViolation(Exception ex)
         => PostgresErrorClassifier.IsUniqueViolation(ex);
+
+    /// <summary>
+    /// Projects a single <see cref="WorkItemEntity"/> row by its <paramref name="id"/> using the
+    /// supplied <paramref name="selector"/>, returning <c>(Value, null)</c> when the row exists or
+    /// <c>(null, TypedResults.NotFound())</c> when it does not.
+    /// </summary>
+    /// <typeparam name="T">The projected type. Must be a reference type (class, record, or string) so
+    /// that <c>null</c> reliably signals absence. Anonymous types and named record types satisfy
+    /// this constraint. Nullable variants (e.g. <c>string?</c>) are also accepted.</typeparam>
+    /// <param name="db">An open <see cref="PipelineDbContext"/> scoped to the current request.</param>
+    /// <param name="id">The work item GUID to look up.</param>
+    /// <param name="selector">EF Core-translatable projection expression.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <param name="noTracking">
+    /// When <c>true</c> (default), applies <see cref="EntityFrameworkQueryableExtensions.AsNoTracking{T}(IQueryable{T})"/>.
+    /// Pass <c>false</c> when the caller needs a tracked entity (e.g. for subsequent mutation).
+    /// </param>
+    /// <returns>
+    /// A tuple where either <c>Value</c> is non-null (row found) or <c>NotFound</c> is non-null
+    /// (row absent). Exactly one of the two fields is non-null.
+    /// </returns>
+    private static async Task<(T? Value, IResult? NotFound)> LoadProjectionOrNotFoundAsync<T>(
+        PipelineDbContext db,
+        Guid id,
+        Expression<Func<WorkItemEntity, T>> selector,
+        CancellationToken ct,
+        bool noTracking = true)
+        where T : class?
+    {
+        // TODO: The null sentinel used to detect row-absence is unreliable when T is a nullable
+        // reference type (e.g. string?) and the projected column value is null on an existing row.
+        // In that case FirstOrDefaultAsync returns null even though the row exists, causing the
+        // helper to return (null, NotFound()) — both tuple fields are null — which violates the
+        // documented contract ("Exactly one of the two fields is non-null"). Callers that rely on
+        // only the notFound guard (rather than also checking Value) will incorrectly treat the
+        // populated-but-null row as absent. The current GetK8sJobName call site handles this with
+        // a secondary string.IsNullOrEmpty check, but future callers of this helper are at risk.
+        // Consider restricting the constraint to `where T : class` (non-nullable) or adding an
+        // explicit caveat to the XML doc and the return value.
+        var query = noTracking
+            ? db.WorkItems.AsNoTracking().Where(w => w.Id == id)
+            : db.WorkItems.Where(w => w.Id == id);
+
+        var value = await query
+            .Select(selector)
+            .FirstOrDefaultAsync(ct);
+
+        return value is null
+            ? (default, TypedResults.NotFound())
+            : (value, null);
+    }
 
     /// <summary>
     /// Derives a deterministic RunId string from the work item GUID.

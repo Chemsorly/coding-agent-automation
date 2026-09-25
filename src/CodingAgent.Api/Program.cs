@@ -1,6 +1,7 @@
 using CodingAgent.Api;
 using CodingAgent.AgentGateway;
 using CodingAgent.Infrastructure;
+using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Pipeline;
@@ -120,6 +121,9 @@ builder.Services.AddOpenTelemetry()
          // RegisterApiObservableGauges(). Without this AddMeter those gauges are created
          // on the meter but the meter is not subscribed — measurements are silently dropped.
          .AddMeter(PipelineTelemetry.SourceName)
+         // GitHub-facing metrics (github.api.requests counter, github.rate_limit.remaining gauge).
+         // Not registered in the agent — agent pods must not emit these series.
+         .AddMeter(GitHubTelemetry.MeterName)
          // Prometheus requires Cumulative temporality; the OTLP exporter defaults to Delta for
          // histograms and counters, which Grafana Cloud silently drops. Matches the monolith.
          .AddOtlpExporter((_, readerOptions) =>
@@ -135,6 +139,10 @@ await app.RunApiMigrationsAsync(builder.Configuration);
 
 app.MapApiHealthEndpoints();
 app.RegisterApiObservableGauges();
+
+// Pre-initialize github.api.requests counter tag combinations so Prometheus increase() works
+// on first increment. Must run after builder.Build() so the MeterProvider is active.
+GitHubTelemetry.PreInitialize();
 
 // Log every 4xx/5xx response as a structured Serilog event. This runs under the Serilog
 // category (not Microsoft.AspNetCore), so it is NOT suppressed by the Warning override in

@@ -249,12 +249,56 @@ public static class JobSpecBuilder
             }
         });
 
-        var otelResourceAttrs = Environment.GetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES");
-        if (!string.IsNullOrEmpty(otelResourceAttrs))
-            envVars.Add(new V1EnvVar { Name = "OTEL_RESOURCE_ATTRIBUTES", Value = otelResourceAttrs });
+        // Stable service name for all agent pods — run identity lives in service.instance.id, not service.name.
+        // TODO: OTEL_SERVICE_NAME is added unconditionally without checking whether it already exists in
+        // envVars. Kubernetes uses the first occurrence when there are duplicates, so a future change that
+        // forwards OTEL_SERVICE_NAME from the parent env earlier in this list would silently override this
+        // value. Same risk applies to K8S_NAMESPACE_NAME, K8S_POD_NAME, and OTEL_RESOURCE_ATTRIBUTES.
+        // Consider guarding with: if (!envVars.Any(e => e.Name == "OTEL_SERVICE_NAME")) ...
+        // See review finding (issue #2969).
+        envVars.Add(new V1EnvVar { Name = "OTEL_SERVICE_NAME", Value = "coding-agent-worker" });
 
-        // Per-job service name for trace/metric attribution
-        envVars.Add(new V1EnvVar { Name = "OTEL_SERVICE_NAME", Value = $"coding-agent-worker-{ctx.JobName}" });
+        // Downward API: expose namespace and pod name so OTEL_RESOURCE_ATTRIBUTES can reference them
+        // via $(K8S_NAMESPACE_NAME) / $(K8S_POD_NAME) Kubernetes env-var substitution.
+        // These MUST be added before OTEL_RESOURCE_ATTRIBUTES — K8s only resolves $(VAR) references
+        // to variables that appear earlier in the same env list.
+        envVars.Add(new V1EnvVar
+        {
+            Name = "K8S_NAMESPACE_NAME",
+            ValueFrom = new V1EnvVarSource
+            {
+                FieldRef = new V1ObjectFieldSelector { FieldPath = "metadata.namespace" }
+            }
+        });
+        envVars.Add(new V1EnvVar
+        {
+            Name = "K8S_POD_NAME",
+            ValueFrom = new V1EnvVarSource
+            {
+                FieldRef = new V1ObjectFieldSelector { FieldPath = "metadata.name" }
+            }
+        });
+
+        // Compose OTEL_RESOURCE_ATTRIBUTES: start from any inherited parent value (trim trailing comma
+        // to avoid double-comma), then append per-job identity and Kubernetes attributes.
+        // OTEL_RESOURCE_ATTRIBUTES is always set (even when parent is empty) because service.instance.id
+        // and k8s.job.name are unconditionally needed for per-run attribution.
+        var otelResourceAttrs = Environment.GetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES");
+        var resourceAttrsBase = string.IsNullOrEmpty(otelResourceAttrs)
+            ? string.Empty
+            : otelResourceAttrs.TrimEnd(',') + ",";
+        // TODO: ctx.JobName is interpolated directly without validation. A malformed job name
+        // containing a comma or equals sign would inject spurious key-value pairs into
+        // OTEL_RESOURCE_ATTRIBUTES (e.g. "foo,service.name=evil" → attacker-chosen service.name).
+        // Kubernetes DNS label rules (alphanumeric + '-', ≤63 chars) naturally prevent this, but
+        // the safety relies entirely on callers enforcing the naming convention. Consider adding an
+        // explicit assertion here (e.g. Regex.IsMatch(ctx.JobName, @"^[a-z0-9\-]{1,63}$")) or at
+        // minimum documenting the assumed invariant. See review finding (issue #2969).
+        envVars.Add(new V1EnvVar
+        {
+            Name = "OTEL_RESOURCE_ATTRIBUTES",
+            Value = $"{resourceAttrsBase}service.instance.id={ctx.JobName},k8s.job.name={ctx.JobName},k8s.namespace.name=$(K8S_NAMESPACE_NAME),k8s.pod.name=$(K8S_POD_NAME)"
+        });
 
         // Propagate the originating W3C traceparent so the worker's spans attach to the upstream
         // API trace rather than starting a disconnected root trace.

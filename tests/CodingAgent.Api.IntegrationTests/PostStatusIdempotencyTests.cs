@@ -319,16 +319,19 @@ public sealed class PostStatusIdempotencyTests
     [Fact]
     public async Task PostStatus_ActualFailedTransition_CallsFailRunAsync()
     {
-        // Arrange: Running → Failed is a real transition; FailRunAsync must be invoked
+        // Arrange: Running → Failed is a real transition; FailRunWithLabelAsync must be invoked
+        // (the service now calls FailRunWithLabelAsync instead of FailRunAsync — the new overload
+        // that also accepts a resolvedFinalLabel from request.Result; null when no Result is provided)
         var opts = CreateDbOptions();
         var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
         var transitionService = CreateTransitionService(opts);
 
         var lifecycleManager = new Mock<IRunLifecycleManager>();
         lifecycleManager
-            .Setup(m => m.FailRunAsync(
+            .Setup(m => m.FailRunWithLabelAsync(
                 It.IsAny<RunId>(),
                 It.IsAny<string>(),
+                It.IsAny<string?>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<FailureReason?>()))
             .ReturnsAsync((PipelineRun?)null);
@@ -347,11 +350,12 @@ public sealed class PostStatusIdempotencyTests
         await WorkItemAgentEndpoints.PostStatus(
             item.Id, request, transitionService, runService, lifecycleManager.Object, null);
 
-        // Assert
+        // Assert: FailRunWithLabelAsync called with resolvedFinalLabel=null (no request.Result provided)
         lifecycleManager.Verify(
-            m => m.FailRunAsync(
+            m => m.FailRunWithLabelAsync(
                 It.Is<RunId>(r => r.Value == item.Id.ToString()),
                 It.IsAny<string>(),
+                (string?)null,
                 It.IsAny<CancellationToken>(),
                 It.IsAny<FailureReason?>()),
             Times.Once,
@@ -1094,9 +1098,10 @@ public sealed class PostStatusIdempotencyTests
 
         var lifecycleManager = new Mock<IRunLifecycleManager>();
         lifecycleManager
-            .Setup(m => m.FailRunAsync(
+            .Setup(m => m.FailRunWithLabelAsync(
                 It.IsAny<RunId>(),
                 It.IsAny<string>(),
+                It.IsAny<string?>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<FailureReason?>()))
             .ReturnsAsync((PipelineRun?)null);
@@ -1113,9 +1118,10 @@ public sealed class PostStatusIdempotencyTests
         result.Should().BeOfType<Ok>(
             "Running→Failed transition with a real dbFactory must succeed without NRE in telemetry");
         lifecycleManager.Verify(
-            m => m.FailRunAsync(
+            m => m.FailRunWithLabelAsync(
                 It.Is<RunId>(r => r.Value == item.Id.ToString()),
                 It.IsAny<string>(),
+                It.IsAny<string?>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<FailureReason?>()),
             Times.Once);

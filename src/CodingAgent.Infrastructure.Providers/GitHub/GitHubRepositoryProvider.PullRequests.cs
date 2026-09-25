@@ -118,6 +118,24 @@ public partial class GitHubRepositoryProvider
         return pr.HtmlUrl;
     }
 
+    /// <inheritdoc />
+    public async Task<PullRequestState> GetPullRequestStateAsync(int pullRequestNumber, CancellationToken ct)
+    {
+        var pr = await ExecuteWithResilienceAsync(
+            client => client.PullRequest.Get(Owner, Repo, pullRequestNumber),
+            "GetPullRequestState", ct);
+
+        // GitHub uses state="closed" for both merged and closed-without-merge.
+        // The Merged boolean disambiguates the two cases.
+        if (pr.Merged)
+            return PullRequestState.Merged;
+
+        if (pr.State.Value == ItemState.Closed)
+            return PullRequestState.Closed;
+
+        return PullRequestState.Open;
+    }
+
     public async Task<IReadOnlyList<LinkedPullRequest>> GetAgentPullRequestsAsync(
         IssueIdentifier issueIdentifier, CancellationToken ct)
     {
@@ -259,6 +277,12 @@ public partial class GitHubRepositoryProvider
                     if (pr.Draft)
                     {
                         var client = await GetClientAsync(ct);
+                        // TODO: This GraphQL mutation is issued directly via client.Connection.Post, bypassing
+                        // ExecuteWithResilienceAsync. Consequently: (1) github.api.requests is not emitted for
+                        // this call, and (2) github.rate_limit.remaining{resource=graphql} is never updated here
+                        // (isGraphQL=true is never passed anywhere in production). To fix, wrap GraphQL mutations
+                        // in ExecuteWithResilienceAsync with isGraphQL:true. Blocked by the lack of a
+                        // CancellationToken overload on IConnection.Post in the current Octokit version.
                         var graphqlBody = $"{{\"query\":\"mutation {{ markPullRequestReadyForReview(input: {{pullRequestId: \\\"{pr.NodeId}\\\"}}) {{ pullRequest {{ isDraft }} }} }}\"}}";
                         await client.Connection.Post<object>(DeriveGraphQlUri(), graphqlBody, "application/json", "application/json"); // NOSONAR S8949 — Octokit IConnection.Post has no CancellationToken overload
                         Log.Information("Marked PR #{PrNumber} as ready for review", pullRequestNumber);
@@ -287,6 +311,12 @@ public partial class GitHubRepositoryProvider
                     if (!pr.Draft)
                     {
                         var client = await GetClientAsync(ct);
+                        // TODO: This GraphQL mutation is issued directly via client.Connection.Post, bypassing
+                        // ExecuteWithResilienceAsync. Consequently: (1) github.api.requests is not emitted for
+                        // this call, and (2) github.rate_limit.remaining{resource=graphql} is never updated here
+                        // (isGraphQL=true is never passed anywhere in production). To fix, wrap GraphQL mutations
+                        // in ExecuteWithResilienceAsync with isGraphQL:true. Blocked by the lack of a
+                        // CancellationToken overload on IConnection.Post in the current Octokit version.
                         // TODO: pr.NodeId is embedded via string interpolation without JSON escaping. GitHub-issued
                         // node IDs are safe in practice, but a proper JSON serializer or GraphQL variable binding
                         // should be used here (and in the markPullRequestReadyForReview branch above) to eliminate
@@ -625,6 +655,36 @@ public partial class GitHubRepositoryProvider
         }
 
         return SharedPrOperations.FinalizeConversationComments(results);
+    }
+
+    /// <inheritdoc />
+    public async Task<bool?> GetPullRequestMergedStateAsync(int prNumber, CancellationToken ct)
+    {
+        try
+        {
+            var pr = await ExecuteWithResilienceAsync(
+                client => client.PullRequest.Get(Owner, Repo, prNumber),
+                "GetPullRequestMergedState", ct);
+            // pr.Merged is true if the PR was merged; false if closed without merging.
+            return pr.Merged;
+        }
+        catch (Octokit.NotFoundException)
+        {
+            // PR not found — cannot determine outcome.
+            // TODO: Note that NotFoundException is caught INSIDE the Polly lambda in
+            // ExecuteWithResilienceAsync and records outcome=not_found on github.api.requests before
+            // propagating. This outer catch then swallows it and returns null (outcome unknown).
+            // The telemetry counter for GetPullRequestMergedState/not_found will therefore include
+            // PRs that were simply deleted (404), which may inflate that outcome bucket. This is an
+            // observability note rather than a correctness bug — the housekeeping path handles it
+            // correctly — but keep in mind when interpreting the not_found rate for this operation.
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Warning(ex, "HousekeepingService: failed to determine merged state for PR #{PrNumber} — skipping metric", prNumber);
+            return null;
+        }
     }
 
     // ── DTOs for raw IConnection.Get<T> calls ────────────────────────────────
