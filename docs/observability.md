@@ -225,6 +225,14 @@ The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetr
 
 ## Traces
 
+<!-- TODO: [WARNING] The "Span Noise Filters" section (covering OtelNoiseFilter wiring for AspNetCore
+     request filtering, Kubernetes API server filtering, outbound span name enrichment, and
+     OtelNoiseSpanDropProcessor) was removed in issue #2967. None of the OtelNoiseFilter source code
+     was changed — the section was removed as unrelated cleanup. The section documented production code
+     that reduces ~70% of raw daily span volume. Operators configuring OTLP or debugging high span
+     volumes will no longer find this guidance. Restore the section (see git history of this file
+     before the #2967 merge) or move it to a separate observability-internals doc. -->
+
 All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans marked with † are emitted from both the orchestrator (`PipelineOrchestrationService`) and the agent worker (`LocalPipelineExecutor`).
 
 ### Trace Hierarchy
@@ -362,6 +370,21 @@ Telemetry is exported via OTLP. The OpenTelemetry SDK reads configuration from s
 ### Service Names
 
 Agent pods emit telemetry with `service.name` derived from the agent image and labels.
+
+<!-- TODO: [WARNING] The coding-agent-worker row was removed from this table in issue #2967.
+     Agent pods (K8s Jobs) still emit ExecutePipeline spans via PipelineRunInstrumentation.
+     Operators querying Tempo for agent-pod spans by service.name or service.instance.id (set to the
+     K8s Job name) will find the documented guidance gone. Re-add the row:
+     | coding-agent-worker | Agent pods (K8s Jobs) | — | Set unconditionally by JobSpecBuilder; per-run identity in service.instance.id (= Job name) in OTEL_RESOURCE_ATTRIBUTES |
+     Also restore the "Run identity in service.instance.id" callout that was removed. -->
+
+<!-- TODO: [WARNING] The API service.name default was changed from coding-agent-api to coding-agent-web in this
+     table without a breaking-change notice for operators who followed the earlier migration (issue pre-#2969)
+     and updated their dashboards from coding-agent-web to coding-agent-api. Those operators will now get wrong
+     results if they kept the coding-agent-api filter. Add a breaking-change callout here analogous to the one
+     that was removed: "⚠️ Breaking change: the API's default service.name reverted from coding-agent-api to
+     coding-agent-web. If you updated Grafana dashboards/alerts to coding-agent-api based on the previous
+     notice, update them back to coding-agent-web (or use a regex that matches both)." -->
 
 | `service.name` | Component | Port | How configured |
 |----------------|-----------|------|----------------|

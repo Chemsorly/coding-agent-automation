@@ -145,19 +145,17 @@ public sealed partial class WorkItemStatusTransitionService
             if (request.Status == WorkItemStatus.Failed)
             {
                 var failureReason = request.ErrorMessage ?? request.FailureReason ?? "Infrastructure failure";
-                // TODO: [WARNING] FailRunAsync is always called with the hardcoded enum value
-                // FailureReason.InfrastructureFailure regardless of what the agent reported in
-                // request.FailureReason. ApplyStatusMutation persists the agent-supplied reason to the
-                // DB entity (e.g. AgentError), but the lifecycle manager always sees InfrastructureFailure.
-                // Any downstream logic in IRunLifecycleManager.FailRunAsync that branches on the
-                // failure-reason parameter (label-swap rules, alerting, etc.) will misbehave for
-                // non-infrastructure failures. This behaviour was present in the original PostStatus
-                // inline code and is preserved here unchanged. Consider parsing request.FailureReason
-                // with the same IsDefined guard used in ApplyStatusMutation and passing the result to
-                // FailRunAsync instead of the hardcoded constant.
-                await _runLifecycleManager.FailRunAsync(
+
+                // Resolve the FinalLabel from the payload, allowing only agent:needs-refinement
+                // on the HTTP Failed path. All other values (including agent:error, agent:wont-do,
+                // any disallowed label, or absent payload) fall back to null — which causes
+                // RunLifecycleManager to use its default agent:error label.
+                string? resolvedFinalLabel = ResolveAllowedFinalLabelFromPayload(request.Result);
+
+                await _runLifecycleManager.FailRunWithLabelAsync(
                     new RunId(id.ToString()),
                     failureReason,
+                    resolvedFinalLabel,
                     ct,
                     CodingAgent.Pipeline.Models.FailureReason.InfrastructureFailure);
             }
@@ -316,6 +314,13 @@ public sealed partial class WorkItemStatusTransitionService
             }
 
             // Prefer the typed FailureCategory from the payload; fall back to the string field.
+            // TODO: [WARNING] PipelineJsonOptions.Default is strict (PascalCase, case-sensitive). If agents
+            // serialize JobCompletionPayload in camelCase, the deserialization will silently produce a null
+            // payload — all payload-derived signals (PullRequestUrl, IsDraftPr, AnalysisRecommendation,
+            // FailureCategory) will be lost and outcome derivation falls back to status-based heuristics
+            // (e.g. 'succeeded' instead of 'pr_created'). The previous call site used PipelineJsonOptions.Lenient
+            // (case-insensitive) to handle camelCase. Switch to PipelineJsonOptions.Lenient here unless it
+            // has been confirmed that all agents exclusively use PascalCase serialization.
             JobCompletionPayload? payload = null;
             if (request.Result is not null)
             {
@@ -339,6 +344,15 @@ public sealed partial class WorkItemStatusTransitionService
             }
 
             // Build typed failureReason from FailureCategory (payload) first, then string field.
+            // TODO: [WARNING] The payload?.FailureCategory path does not apply an Enum.IsDefined guard,
+            // unlike the string-field fallback path below. If an agent sends an out-of-range numeric value
+            // for FailureCategory (e.g. {"FailureCategory": 99}), JsonSerializer deserializes it to an
+            // undefined FailureReason enum instance. That undefined instance then reaches PascalToSnakeCaseTag
+            // via failureReason.Value.ToString(), producing a non-snake-case numeric string (e.g. "99") as the
+            // failure_reason metric tag — creating a high-cardinality uninitialized series and defeating the
+            // IsDefined guard on the string-field path. Fix: add
+            // `if (failureReason.HasValue && !Enum.IsDefined(typeof(FailureReason), failureReason.Value)) failureReason = null;`
+            // after this assignment.
             FailureReason? failureReason = payload?.FailureCategory;
             if (!failureReason.HasValue
                 && Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason)
@@ -462,6 +476,43 @@ public sealed partial class WorkItemStatusTransitionService
             PipelineTelemetry.RunDuration.Record(duration.Value.TotalSeconds,
                 new KeyValuePair<string, object?>("run_type", runTypeTag),
                 new KeyValuePair<string, object?>("outcome", outcome));
+        }
+    }
+
+    /// <summary>
+    /// Tries to deserialize <paramref name="resultJson"/> as a <see cref="JobCompletionPayload"/>
+    /// and returns the <c>FinalLabel</c> field if and only if it is
+    /// <see cref="AgentLabels.NeedsRefinement"/>. Returns <c>null</c> in all other cases:
+    /// absent or malformed payload, or any other label value.
+    /// </summary>
+    /// <remarks>
+    /// Only <see cref="AgentLabels.NeedsRefinement"/> is a valid override label on the HTTP
+    /// <c>Failed</c> path. All other values fall back to the <c>agent:error</c> default that
+    /// <see cref="IRunLifecycleManager.FailRunWithLabelAsync"/> applies when
+    /// <c>resolvedFinalLabel</c> is null.
+    /// </remarks>
+    private static string? ResolveAllowedFinalLabelFromPayload(string? resultJson)
+    {
+        if (string.IsNullOrEmpty(resultJson))
+            return null;
+
+        try
+        {
+            var payload = JsonSerializer.Deserialize<JobCompletionPayload>(
+                resultJson, PipelineJsonOptions.Default);
+            return payload?.FinalLabel == AgentLabels.NeedsRefinement
+                ? AgentLabels.NeedsRefinement
+                : null;
+        }
+        catch (JsonException)
+        {
+            // TODO: [WARNING] This catch is silent — ILogger was removed from WorkItemStatusTransitionService
+            // in issue #2967 (the constructor no longer accepts it). A malformed or camelCase Result JSON from
+            // an agent is swallowed here with no log output, making agent serialization regressions invisible
+            // to operators. Consider injecting ILogger<WorkItemStatusTransitionService> (Microsoft.Extensions.Logging,
+            // not Serilog static) and logging at Warning level here (include WorkItem ID, not raw JSON content).
+            // Malformed payload — treat as absent; caller uses null (agent:error fallback).
+            return null;
         }
     }
 
