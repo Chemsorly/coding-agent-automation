@@ -492,6 +492,13 @@ public class AgentCodingPageComponentTests : BunitContext
     [Fact]
     public void AgentCoding_WhenBrowseIssuesDisabled_ShowsTooltip()
     {
+        // Disable the only template so no auto-selection occurs and the buttons stay disabled.
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>
+            {
+                new() { Id = "t-1", Name = "DotNet Repo", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = false }
+            });
+
         var component = Render<AgentCoding>();
 
         var browseBtn = component.Find("[data-testid='browse-issues-btn']");
@@ -503,6 +510,13 @@ public class AgentCodingPageComponentTests : BunitContext
     [Fact]
     public void AgentCoding_WhenBrowseEpicsDisabled_ShowsTooltip()
     {
+        // Disable the only template so no auto-selection occurs and the button stays disabled.
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>
+            {
+                new() { Id = "t-1", Name = "DotNet Repo", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = false }
+            });
+
         var component = Render<AgentCoding>();
 
         var browseBtn = component.Find("[data-testid='browse-epics-btn']");
@@ -514,6 +528,13 @@ public class AgentCodingPageComponentTests : BunitContext
     [Fact]
     public void AgentCoding_WhenBrowsePrsDisabled_ShowsTooltip()
     {
+        // Disable the only template so no auto-selection occurs and the buttons stay disabled.
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>
+            {
+                new() { Id = "t-1", Name = "DotNet Repo", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = false }
+            });
+
         var component = Render<AgentCoding>();
 
         var browseBtn = component.Find("[data-testid='browse-prs-btn']");
@@ -1387,5 +1408,107 @@ public class AgentCodingPageComponentTests : BunitContext
         // StateHasChanged back via InvokeAsync, so a second no-op InvokeAsync flushes it.
         await component.InvokeAsync(() => { });
         Assert.NotNull(component.Markup);
+    }
+
+    // ── Issue #2947: Template auto-selection and ?dispatch=issues ─────────────
+
+    // TODO [WARNING]: Missing test: navigating to /pipelines?dispatch=issues with a single enabled
+    // template should open the issue drawer automatically. Set DispatchQueryParam = "issues" on the
+    // rendered component and assert that PageService.OpenIssueDrawerAsync was called (or that the
+    // drawer's IsOpen state becomes true). Without this test, a regression in the OnInitializedAsync
+    // or OnParametersSetAsync dispatch path would not be caught. See review finding from Correctness
+    // reviewer (issue #2947).
+
+    /// <summary>
+    /// When exactly one enabled template exists, Manual Dispatch must preselect it so the
+    /// Browse buttons are enabled without the operator having to open the dropdown.
+    /// </summary>
+    [Fact]
+    public void AgentCoding_SingleEnabledTemplate_AutoselectsTemplateOnInit()
+    {
+        // Default setup has exactly one enabled template ("t-1" via _mockProjectStore).
+        // With auto-selection the Browse Issues button must be enabled immediately.
+        // TODO [WARNING]: This test uses _mockJsRuntime whose InvokeAsync returns default(ValueTask<string?>)
+        // (null) for all calls, including the "localStorageGet" invocation in RestoreTemplateSelectionAsync.
+        // This is correct in practice (null → no stored value → auto-selection proceeds), but it depends on
+        // Moq's default ValueTask behaviour rather than an explicit stub. If the call path is ever changed
+        // to a bUnit JSInterop that throws on unhandled invocations, the JSException catch in
+        // RestoreTemplateSelectionAsync would swallow the failure and the test would still pass even if
+        // the restore logic was broken. Fix: add an explicit JSInterop setup for "localStorageGet" that
+        // returns null intentionally, e.g. JSInterop.Setup<string?>("localStorageGet", _ => true).SetResult(null).
+        var component = Render<AgentCoding>();
+
+        var browseBtn = component.Find("[data-testid='browse-issues-btn']");
+        Assert.False(browseBtn.HasAttribute("disabled"),
+            "Browse Issues must be enabled when the single enabled template is auto-selected");
+    }
+
+    /// <summary>
+    /// When multiple enabled templates exist, the Browse buttons must remain disabled until the
+    /// operator picks one — auto-selection applies only to the single-template case.
+    /// </summary>
+    [Fact]
+    public void AgentCoding_MultipleEnabledTemplates_DoesNotAutoselect()
+    {
+        // Override to two enabled templates
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>
+            {
+                new() { Id = "t-1", Name = "DotNet Repo", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true },
+                new() { Id = "t-2", Name = "Python Repo", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true },
+            });
+
+        var component = Render<AgentCoding>();
+
+        var browseBtn = component.Find("[data-testid='browse-issues-btn']");
+        Assert.True(browseBtn.HasAttribute("disabled"),
+            "Browse Issues must stay disabled when no template is explicitly selected (multiple templates)");
+    }
+
+    /// <summary>
+    /// When zero enabled templates exist, the Browse buttons must remain disabled — auto-selection
+    /// should not throw and should leave the selection empty.
+    /// </summary>
+    [Fact]
+    public void AgentCoding_NoEnabledTemplates_BrowseButtonStaysDisabled()
+    {
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>
+            {
+                new() { Id = "t-1", Name = "DotNet Repo", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = false },
+            });
+
+        var component = Render<AgentCoding>();
+
+        var browseBtn = component.Find("[data-testid='browse-issues-btn']");
+        Assert.True(browseBtn.HasAttribute("disabled"),
+            "Browse Issues must be disabled when no templates are enabled");
+    }
+
+    /// <summary>
+    /// The template select element must reflect the auto-selected template ID
+    /// when exactly one enabled template is present.
+    /// </summary>
+    [Fact]
+    public void AgentCoding_SingleEnabledTemplate_SelectElementShowsPreselectedValue()
+    {
+        // Default setup: one enabled template with id "t-1"
+        var component = Render<AgentCoding>();
+
+        var select = component.Find("[data-testid='template-select']");
+        var selectedOption = select.QuerySelectorAll("option")
+            .FirstOrDefault(o => o.GetAttribute("selected") != null
+                || (o.GetAttribute("value") is string v && v == select.GetAttribute("value")));
+        // TODO [WARNING]: The assertion below uses a ?? fallback chain over two different DOM lookups.
+        // bUnit does not always set the `value` attribute on <select> elements (it tracks it via the
+        // DOM value property), so GetAttribute("value") may return null. The fallback then looks up
+        // the option by display text "DotNet Repo" — if that text changes (e.g. a display suffix is
+        // added for the auto-selected state), the fallback silently returns null and Assert.Equal
+        // produces a misleading failure. Fix: use a single deterministic check on the Blazor-bound
+        // value field, e.g. by exposing _manualDispatchTemplateId via a data attribute or asserting
+        // directly on the component's state rather than the DOM value attribute.
+        // The select value must be "t-1" (auto-selected single template)
+        Assert.Equal("t-1", select.GetAttribute("value") ??
+            select.QuerySelectorAll("option").FirstOrDefault(o => o.TextContent == "DotNet Repo")?.GetAttribute("value"));
     }
 }

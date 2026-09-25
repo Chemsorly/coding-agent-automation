@@ -164,7 +164,13 @@ public class ProcessWrapper : IProcessWrapper
     /// </remarks>
     public void Kill()
     {
-        if (_process == null || _process.HasExited) return;
+        // _process.HasExited can throw InvalidOperationException on Linux when the process
+        // handle has already been released (e.g. second Kill() call from Dispose() after
+        // the process already exited). Treat any such exception as "already exited".
+        if (_process == null) return;
+        var process = _process;
+        try { if (process.HasExited) return; }
+        catch (InvalidOperationException) { return; }
         try
         {
             if (_useWsl)
@@ -189,8 +195,8 @@ public class ProcessWrapper : IProcessWrapper
                 }
                 catch (Exception ex) { _logger.Warning(ex, "Failed to kill WSL kiro-cli processes"); }
             }
-            _process.Kill(entireProcessTree: true);
-            _process.WaitForExit(ProcessKillTimeoutMs);
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit(ProcessKillTimeoutMs);
         }
         catch (Exception ex) { _logger.Error(ex, "Error killing Kiro CLI process"); }
     }

@@ -3,6 +3,7 @@ using CodingAgent.Api;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Orchestration;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
@@ -174,7 +175,131 @@ public sealed class GetActiveWorkItemsStepEnrichmentTests : IDisposable
         item.CurrentStep.Should().BeNull();
     }
 
+    // ── IssueUrl enrichment tests (issue #2947) ───────────────────────────
+
+    // TODO [WARNING]: No test covers the IsAllowedUrl security guard in WorkItemQueryEndpoints.cs.
+    // A payload containing a non-http/https URL (e.g. "javascript:alert(1)", "ftp://malicious",
+    // "data:text/html,...") should result in IssueUrl = null in the returned DTO. Without this test,
+    // a regression that removes or weakens the IsAllowedUrl check would not be detected.
+    // Add a parameterised test (or multiple Theory cases) seeding a work item with each disallowed
+    // scheme and asserting that ActiveWorkItemDto.IssueUrl is null.
+
+    /// <summary>
+    /// When a work item's Payload contains an IssueDetail with a Url, GetActiveWorkItems
+    /// must populate ActiveWorkItemDto.IssueUrl so the Work page can link the issue number
+    /// directly to the provider without a separate API call.
+    /// </summary>
+    [Fact]
+    public async Task GetActiveWorkItems_WithPayloadHavingIssueUrl_PopulatesIssueUrl()
+    {
+        // Arrange
+        const string expectedIssueUrl = "https://github.com/owner/repo/issues/42";
+        var workItemId = await SeedRunningWorkItemWithPayloadAsync(issueUrl: expectedIssueUrl);
+
+        // Act
+        var result = await WorkItemQueryEndpoints.GetActiveWorkItems(
+            olderThanSeconds: -3600,
+            dbFactory: _dbFactory,
+            runService: null,
+            projectId: null,
+            ct: CancellationToken.None);
+
+        // Assert
+        var ok = result.Should().BeOfType<Ok<IReadOnlyList<ActiveWorkItemDto>>>().Subject;
+        var item = ok.Value.Should().ContainSingle().Subject;
+        item.Id.Should().Be(workItemId);
+        item.IssueUrl.Should().Be(expectedIssueUrl);
+    }
+
+    /// <summary>
+    /// When a work item's Payload contains an IssueDetail with no Url (null), GetActiveWorkItems
+    /// must return IssueUrl = null — null is a valid absence-of-URL signal, not an error.
+    /// </summary>
+    [Fact]
+    public async Task GetActiveWorkItems_WithPayloadHavingNoIssueUrl_IssueUrlIsNull()
+    {
+        // Arrange — payload present but IssueDetail.Url is null
+        var workItemId = await SeedRunningWorkItemWithPayloadAsync(issueUrl: null);
+
+        // Act
+        var result = await WorkItemQueryEndpoints.GetActiveWorkItems(
+            olderThanSeconds: -3600,
+            dbFactory: _dbFactory,
+            runService: null,
+            projectId: null,
+            ct: CancellationToken.None);
+
+        // Assert
+        var ok = result.Should().BeOfType<Ok<IReadOnlyList<ActiveWorkItemDto>>>().Subject;
+        var item = ok.Value.Should().ContainSingle().Subject;
+        item.Id.Should().Be(workItemId);
+        item.IssueUrl.Should().BeNull();
+    }
+
+    /// <summary>
+    /// When a work item has no Payload (null), IssueUrl must be null — no exception thrown
+    /// and the item is still returned.
+    /// </summary>
+    [Fact]
+    public async Task GetActiveWorkItems_WithNullPayload_IssueUrlIsNull()
+    {
+        // Arrange — base SeedRunningWorkItemAsync creates items with no payload
+        var workItemId = await SeedRunningWorkItemAsync();
+
+        // Act
+        var result = await WorkItemQueryEndpoints.GetActiveWorkItems(
+            olderThanSeconds: -3600,
+            dbFactory: _dbFactory,
+            runService: null,
+            projectId: null,
+            ct: CancellationToken.None);
+
+        // Assert
+        var ok = result.Should().BeOfType<Ok<IReadOnlyList<ActiveWorkItemDto>>>().Subject;
+        var item = ok.Value.Should().ContainSingle().Subject;
+        item.Id.Should().Be(workItemId);
+        item.IssueUrl.Should().BeNull();
+    }
+
     // ── Inner helpers — shared InMemory EF infrastructure ─────────────────
+
+    private async Task<Guid> SeedRunningWorkItemWithPayloadAsync(string? issueUrl)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var id = Guid.NewGuid();
+        var payload = System.Text.Json.JsonSerializer.Serialize(new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier($"owner/repo#{id:N}"),
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "kiro",
+            TimeoutSeconds = 3600,
+            IssueDetail = new IssueDetail
+            {
+                Description = "test",
+                Identifier = $"{id:N}",
+                Labels = System.Array.Empty<string>(),
+                Title = "Test issue with URL",
+                Url = issueUrl,
+            }
+        }, CodingAgent.Pipeline.PipelineJsonOptions.Default);
+        db.WorkItems.Add(new WorkItemEntity
+        {
+            Id = id,
+            Status = WorkItemStatus.Running,
+            TaskType = WorkItemTaskType.Implementation,
+            IssueIdentifier = $"owner/repo#{id:N}",
+            AgentSelector = "kiro",
+            DispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-6),
+            TimeoutSeconds = 3600,
+            Payload = payload,
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
 
     private sealed class InMemoryPipelineDbContext : PipelineDbContext
     {

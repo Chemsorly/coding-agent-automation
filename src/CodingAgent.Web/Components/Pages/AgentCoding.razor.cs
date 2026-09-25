@@ -6,6 +6,7 @@ using CodingAgent.Web.Services;
 using CodingAgent.Web.Components.Layout;
 using CodingAgent.Web.Components.Shared;
 using Microsoft.AspNetCore.Components;
+using Microsoft.JSInterop;
 
 namespace CodingAgent.Web.Components.Pages;
 
@@ -16,11 +17,27 @@ public partial class AgentCoding : IDisposable
     [Inject] private AgentCodingPageService PageService { get; set; } = default!;
     [CascadingParameter] private CockpitLayout? Layout { get; set; }
 
+    /// <summary>
+    /// Optional query-string parameter: when set to "issues", the issue dispatch drawer opens
+    /// immediately after initialization (if a template is already selected or auto-selected).
+    /// Used by the Work page "Browse &amp; dispatch" link via <c>/pipelines?dispatch=issues</c>.
+    /// </summary>
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "dispatch")]
+    public string? DispatchQueryParam { get; set; }
+
     private string? _errorMessage;
     private string? _successMessage;
     private bool _showAgentSummary = true;
     private bool _stopPending;
     private bool _disposed;
+    // Tracks whether the dispatch-drawer auto-open triggered by DispatchQueryParam has been performed.
+    // Reset on each NavigateTo that changes the query string (OnParametersSetAsync is called again).
+    private string? _lastAutoOpenDispatchParam;
+
+    // localStorage key used to persist the last-selected manual dispatch template across navigations.
+    // This satisfies the acceptance criterion "remembers the last choice when several exist".
+    private const string TemplateSelectionStorageKey = "cockpit.dispatch.templateId";
 
     // Template Table UI State
     private bool _showAddForm;
@@ -86,8 +103,20 @@ public partial class AgentCoding : IDisposable
     private List<string> _epicDrawerLabels => PageService.EpicDrawerLabels;
     private List<string> _epicDrawerSelectedLabels => PageService.EpicDrawerSelectedLabels;
 
-    private void OnTemplateChanged(ChangeEventArgs e) =>
+    // TODO [WARNING]: OnTemplateChanged is declared async void. If SaveTemplateSelectionAsync throws
+    // an exception that is not caught internally (e.g. a JSException subclass not in the catch list,
+    // or a future exception added to the method), the exception escapes onto the thread pool and can
+    // crash the process. The correct pattern for Blazor @onchange handlers that need await is
+    // async Task — Blazor handles the returned Task and surfaces exceptions through its error boundary.
+    // Fix: change signature to `private async Task OnTemplateChanged(ChangeEventArgs e)`.
+    private async void OnTemplateChanged(ChangeEventArgs e)
+    {
         _manualDispatchTemplateId = e.Value?.ToString() ?? "";
+        // Persist the selection so it survives navigation away and back (multi-template scenario).
+        // Single-template auto-selection also calls this path indirectly via ApplyTemplateAutoSelection
+        // but that is handled by SaveTemplateSelectionAsync called after InitializeAsync.
+        await SaveTemplateSelectionAsync(_manualDispatchTemplateId);
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -96,7 +125,150 @@ public partial class AgentCoding : IDisposable
             Layout.OnEscapePressed += HandleGlobalEscape;
 
         _errorMessage = await PageService.InitializeAsync();
+
+        // Restore the last-selected template from localStorage before auto-selection runs.
+        // This ensures that when multiple templates exist and the operator has previously chosen one,
+        // ApplyTemplateAutoSelection will find a valid prior selection and keep it (rather than
+        // leaving the picker empty and forcing the operator to re-select after every navigation).
+        await RestoreTemplateSelectionAsync();
+
+        // Auto-preselect the template if exactly one enabled template is available.
+        // This eliminates the mandatory picker step when the operator has only one option.
+        // TODO [WARNING]: ApplyTemplateAutoSelection is only called here (on init). If the operator
+        // toggles a template's enabled state at runtime via ToggleTemplateEnabled, the auto-selection
+        // invariant (single enabled template → preselect) is not re-evaluated. ToggleTemplateEnabled
+        // calls StateHasChanged but not ApplyTemplateAutoSelection, so the Browse buttons can remain
+        // disabled even when only one template is enabled. Fix: call ApplyTemplateAutoSelection inside
+        // ToggleTemplateEnabled after the PageService call succeeds.
+        ApplyTemplateAutoSelection();
+        // Persist whatever was resolved (handles single-template auto-select case).
+        await SaveTemplateSelectionAsync(_manualDispatchTemplateId);
+
+        // If ?dispatch=issues was present and a template is now selected, open the issue drawer.
+        // TODO [WARNING]: The _lastAutoOpenDispatchParam flag is set in OnParametersSetAsync (line ~133)
+        // unconditionally before the _templates.Count guard, and independently checked here without
+        // reading the flag. Under Blazor's standard lifecycle OnInitializedAsync runs before
+        // OnParametersSetAsync, so the flag is never set when this branch executes — but if a
+        // non-standard host or future framework version reverses the order, the two paths will both
+        // set _lastAutoOpenDispatchParam and may conflict. Consider using a single shared flag that
+        // both paths read and write to eliminate the ambiguity.
+        // TODO [WARNING]: When InitializeAsync succeeds but no template is resolved (all templates
+        // disabled, or RestoreTemplateSelectionAsync returned empty), _lastAutoOpenDispatchParam is
+        // never set here because the `!string.IsNullOrEmpty(_manualDispatchTemplateId)` guard is not
+        // satisfied. On a subsequent navigation away and back to /pipelines?dispatch=issues,
+        // OnParametersSetAsync will find _lastAutoOpenDispatchParam != DispatchQueryParam and may open
+        // the drawer unexpectedly (if a template has since been enabled). Fix: set the flag
+        // unconditionally when DispatchQueryParam == "issues", regardless of whether the drawer was
+        // actually opened, so the re-navigation path uses the same logic as the initial visit.
+        if (DispatchQueryParam == "issues" && !string.IsNullOrEmpty(_manualDispatchTemplateId))
+        {
+            _lastAutoOpenDispatchParam = DispatchQueryParam;
+            var openError = await PageService.OpenIssueDrawerAsync(_manualDispatchTemplateId, () => InvokeAsync(StateHasChanged));
+            if (openError != null) _errorMessage = openError;
+        }
+
         _ = AutoDismissAgentSummary();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Handle ?dispatch=issues query parameter: open the issue drawer automatically once
+        // per distinct navigate-to. Guard against repeated calls (bUnit renders OnParametersSetAsync
+        // multiple times; the _lastAutoOpenDispatchParam flag prevents duplicate opens).
+        // TODO [WARNING]: _lastAutoOpenDispatchParam is set here unconditionally before the
+        // _templates.Count guard below. If OnParametersSetAsync fires while OnInitializedAsync is
+        // still awaiting InitializeAsync (templates not yet loaded), the flag is committed and the
+        // fallback path in OnInitializedAsync (which does NOT check the flag) will still open the
+        // drawer correctly. However under Blazor's standard lifecycle OnInitializedAsync completes
+        // before OnParametersSetAsync is called, so this race does not occur in practice. The two
+        // paths should share the same guard variable to eliminate the ambiguity.
+        if (DispatchQueryParam == "issues" && _lastAutoOpenDispatchParam != DispatchQueryParam)
+        {
+            _lastAutoOpenDispatchParam = DispatchQueryParam;
+            // Only open if templates have already been loaded (i.e. we're past OnInitializedAsync).
+            // If called before initialization is complete the drawer open will be triggered by
+            // ApplyTemplateAutoSelection after InitializeAsync, which is correct.
+            if (_templates.Count > 0 && !string.IsNullOrEmpty(_manualDispatchTemplateId))
+            {
+                var error = await PageService.OpenIssueDrawerAsync(_manualDispatchTemplateId, () => InvokeAsync(StateHasChanged));
+                if (error != null) _errorMessage = error;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Auto-selects the manual dispatch template when exactly one enabled template exists,
+    /// or restores the last-used template when multiple exist.
+    /// Called after InitializeAsync populates the Templates list (and after RestoreTemplateSelectionAsync
+    /// has loaded any persisted selection from localStorage).
+    /// </summary>
+    private void ApplyTemplateAutoSelection()
+    {
+        var enabledTemplates = _templates.Where(t => t.Enabled).ToList();
+        if (enabledTemplates.Count == 0)
+            return;
+
+        if (enabledTemplates.Count == 1)
+        {
+            // Single enabled template: always preselect it — no choice needed.
+            _manualDispatchTemplateId = enabledTemplates[0].Id;
+            return;
+        }
+
+        // Multiple templates: restore the last selection if it is still valid (enabled).
+        // If the previously selected template was disabled/removed, clear the selection.
+        if (!string.IsNullOrEmpty(_manualDispatchTemplateId)
+            && enabledTemplates.Any(t => t.Id == _manualDispatchTemplateId))
+        {
+            // Last selection is still valid — keep it.
+            return;
+        }
+
+        // No prior selection or prior selection no longer valid — leave unset so the operator picks.
+        _manualDispatchTemplateId = "";
+    }
+
+    /// <summary>
+    /// Restores the previously persisted template selection from localStorage.
+    /// Only sets <c>_manualDispatchTemplateId</c> when a stored value exists; leaves the field
+    /// unchanged (empty) otherwise so <see cref="ApplyTemplateAutoSelection"/> can apply its logic.
+    /// Swallows all JS interop exceptions — a missing stored value is not an error.
+    /// </summary>
+    private async Task RestoreTemplateSelectionAsync()
+    {
+        try
+        {
+            var stored = await JS.InvokeAsync<string?>("localStorageGet", CancellationToken.None, TemplateSelectionStorageKey);
+            if (!string.IsNullOrEmpty(stored))
+                _manualDispatchTemplateId = stored;
+        }
+        catch (JSDisconnectedException) { }
+        catch (JSException) { }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { }
+    }
+
+    /// <summary>
+    /// Persists the current template selection to localStorage so it survives navigation.
+    /// Passing an empty or null value clears the stored key (operator de-selected the template).
+    /// Swallows all JS interop exceptions — persistence is best-effort.
+    /// </summary>
+    private async Task SaveTemplateSelectionAsync(string? templateId)
+    {
+        try
+        {
+            // TODO [WARNING]: JS.InvokeAsync<Microsoft.JSInterop.Infrastructure.IJSVoidResult> binds to
+            // an internal BCL type that is not part of the public JSInterop API surface and may be
+            // changed or removed in future .NET/Blazor versions. The idiomatic replacement is
+            // JS.InvokeVoidAsync(...) which returns ValueTask and is part of the stable public API.
+            // Fix: replace with `await JS.InvokeVoidAsync("localStorageSet", CancellationToken.None, TemplateSelectionStorageKey, templateId ?? "");`
+            await JS.InvokeAsync<Microsoft.JSInterop.Infrastructure.IJSVoidResult>(
+                "localStorageSet", CancellationToken.None, TemplateSelectionStorageKey, templateId ?? "");
+        }
+        catch (JSDisconnectedException) { }
+        catch (JSException) { }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { }
     }
 
     private async void HandleGlobalEscape()

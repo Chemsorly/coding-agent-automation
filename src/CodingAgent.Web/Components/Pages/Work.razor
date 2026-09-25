@@ -27,7 +27,7 @@
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
             <RefreshBar OnRefresh="RefreshQuietAsync" StorageKey="autoRefresh.work" />
-            <a href="pipelines" class="cockpit-pager-btn" style="text-decoration: none;">
+            <a href="pipelines?dispatch=issues" class="cockpit-pager-btn" style="text-decoration: none;">
                 <Icon Name="search" Size="14" /> Browse &amp; dispatch
             </a>
         </div>
@@ -101,7 +101,20 @@
                             {
                                 <tr class="monitoring-row-clickable" @onclick="() => OpenRun(a.Id)">
                                     <td>
-                                        <span class="monitoring-mono" style="font-weight: 600;">#@a.IssueIdentifier</span>
+                                        @if (!string.IsNullOrEmpty(a.IssueUrl))
+                                        {
+                                            @* TODO [WARNING]: rel="noreferrer" should be added alongside rel="noopener" for
+                                               cross-origin target="_blank" links (suppresses Referer header in addition to
+                                               preventing opener access). Same pattern applies to RunPage.razor links rail. *@
+                                            <a href="@a.IssueUrl" target="_blank" rel="noopener"
+                                               class="monitoring-mono" style="font-weight: 600;"
+                                               title="Open issue in provider"
+                                               @onclick:stopPropagation="true">#@a.IssueIdentifier ↗</a>
+                                        }
+                                        else
+                                        {
+                                            <span class="monitoring-mono" style="font-weight: 600;">#@a.IssueIdentifier</span>
+                                        }
                                         @if (!string.IsNullOrEmpty(a.IssueTitle))
                                         {
                                             @(" ")<!-- space between number and title, matching Queue/ProviderBacklog pattern -->

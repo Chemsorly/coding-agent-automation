@@ -185,6 +185,13 @@ public static class WorkItemQueryEndpoints
             WorkItemPayload.TryDeserialize(w.Payload, out var req);
             var issueTitle = req?.IssueDetail?.Title;
             var initiatedBy = req?.InitiatedBy;
+            // TODO [WARNING]: IssueUrl is rendered as an href anchor in Work.razor. A malicious or
+            // compromised payload entry storing a "javascript:" URI would execute script in the
+            // operator's browser when clicked. Blazor does not strip "javascript:" from href attributes
+            // set via Razor interpolation. Restrict to http/https here so any non-HTTP URL stored in
+            // the payload is never surfaced as a clickable link.
+            var rawIssueUrl = req?.IssueDetail?.Url;
+            var issueUrl = IsAllowedUrl(rawIssueUrl) ? rawIssueUrl : null;
             return new ActiveWorkItemDto
             {
                 Id = w.Id,
@@ -196,7 +203,8 @@ public static class WorkItemQueryEndpoints
                 K8sJobName = w.K8sJobName,
                 TimeoutSeconds = w.TimeoutSeconds,
                 IssueTitle = issueTitle,
-                InitiatedBy = initiatedBy
+                InitiatedBy = initiatedBy,
+                IssueUrl = issueUrl
             };
             // TODO [WARNING]: ct is available and used in the SQL phase (ToListAsync(ct)) but is not
             // propagated to this in-memory LINQ loop. Under normal payload sizes this is harmless because
@@ -322,5 +330,17 @@ public static class WorkItemQueryEndpoints
             return TypedResults.NotFound();
 
         return TypedResults.Ok(new { status });
+    }
+
+    /// <summary>
+    /// Returns true when <paramref name="url"/> is a non-null, absolute URI with an http or https
+    /// scheme. Used to strip unsafe URLs (e.g. <c>javascript:</c>) from payload data before they
+    /// are surfaced as anchor hrefs in the UI.
+    /// </summary>
+    private static bool IsAllowedUrl(string? url)
+    {
+        if (string.IsNullOrEmpty(url)) return false;
+        return Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
     }
 }

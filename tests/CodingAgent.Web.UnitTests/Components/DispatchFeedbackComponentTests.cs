@@ -218,6 +218,15 @@ public class DispatchFeedbackComponentTests : BunitContext
     [Fact]
     public void BrowseIssues_DisabledWhenNoTemplateSelected()
     {
+        // Override to have two enabled templates so auto-selection does not apply;
+        // with multiple choices the operator must pick one explicitly.
+        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>
+            {
+                new() { Id = "t-1", Name = "DotNet Repo", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true },
+                new() { Id = "t-2", Name = "Python Repo", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true }
+            });
+
         var component = Render<AgentCoding>();
 
         var browseBtn = component.FindAll("button").First(b => b.TextContent.Contains("Browse Issues"));

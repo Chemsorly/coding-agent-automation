@@ -706,4 +706,102 @@ public class RunPageComponentTests : BunitContext
         Assert.Contains("503 Service Unavailable", callout.TextContent);
     }
 
+    // ── Issue #2947: PR link in links rail ────────────────────────────────
+
+    /// <summary>
+    /// When a run summary has a PullRequestUrl, the links rail must contain a "Pull request ↗"
+    /// chip linking to it. This confirms that run.PullRequestUrl is surfaced for ConflictRestart
+    /// and other failure paths that already had a PR when the run ended.
+    /// </summary>
+    [Fact]
+    public void LinksRail_WithPullRequestUrl_ShowsPrChip()
+    {
+        const string prUrl = "https://github.com/owner/repo/pull/123";
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "2947",
+            IssueTitle = "PR link test",
+            FinalStep = PipelineStep.ConflictRestart,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-10),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            PullRequestUrl = prUrl,
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        // The links rail must contain a chip linking to the PR
+        var prChips = cut.FindAll(".cockpit-link-chip")
+            .Where(e => e.TextContent.Contains("Pull request"))
+            .ToList();
+        Assert.Single(prChips);
+        Assert.Equal(prUrl, prChips[0].GetAttribute("href"));
+    }
+
+    /// <summary>
+    /// When a run summary has no PullRequestUrl, the "Pull request ↗" chip must not appear.
+    /// </summary>
+    [Fact]
+    public void LinksRail_WithNoPullRequestUrl_HidesPrChip()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "2947",
+            IssueTitle = "No PR link test",
+            FinalStep = PipelineStep.Failed,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            PullRequestUrl = null,
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        var prChips = cut.FindAll(".cockpit-link-chip")
+            .Where(e => e.TextContent.Contains("Pull request"))
+            .ToList();
+        Assert.Empty(prChips);
+    }
+
+    /// <summary>
+    /// BuildRunModelFromSummary must seed BranchName from the summary so the PipelineSidebar
+    /// can display the branch name in the CreatingBranch step detail without requiring a live
+    /// RunStateSnapshot. Regression guard for issue #2947.
+    /// </summary>
+    [Fact]
+    public void BuildRunModelFromSummary_WithBranchName_SeedsBranchNameOnModel()
+    {
+        const string branchName = "agent/issue-42-fix-login";
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "2947",
+            IssueTitle = "Branch name test",
+            FinalStep = PipelineStep.Failed,
+            LastActiveStep = PipelineStep.CreatingBranch,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            BranchName = branchName,
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        // The branch name must appear in the sidebar's CreatingBranch step detail
+        var creatingBranchStep = cut.Find("#step-CreatingBranch");
+        var detail = creatingBranchStep.QuerySelector(".step-detail-mono");
+        Assert.NotNull(detail);
+        // TODO [WARNING]: The test value "agent/issue-42-fix-login" is 24 characters — well under the
+        // 36-character truncation threshold used in the slice below. The truncation path (branch names
+        // longer than 36 chars) is therefore never exercised by this test. A regression that truncates
+        // or drops branch names longer than 36 characters would not be caught. Add a companion test
+        // with a branch name longer than 36 characters to verify the display is still correct.
+        Assert.Contains(branchName[..Math.Min(36, branchName.Length)], detail.TextContent);
+    }
+
 }

@@ -716,4 +716,90 @@ public class WorkComponentTests : BunitContext
         cut.Markup.Should().Contain("No open issues found",
             "the empty-state message must be shown when no issues are returned");
     }
+
+    // ── Issue #2947: In-flight row issue URL link ────────────────────────────
+
+    /// <summary>
+    /// When an in-flight ActiveWorkItemDto has an IssueUrl, the issue column must render
+    /// an anchor linking to the provider URL so the operator can navigate to the issue directly.
+    /// </summary>
+    [Fact]
+    public void ActiveRow_WithIssueUrl_RendersProviderLink()
+    {
+        const string issueUrl = "https://github.com/owner/repo/issues/42";
+        var activeItem = new ActiveWorkItemDto
+        {
+            Id = Guid.NewGuid(),
+            Status = WorkItemStatus.Running,
+            DispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-6),
+            AgentSelector = "kiro",
+            IssueIdentifier = "42",
+            TimeoutSeconds = 3600,
+            IssueTitle = "Fix the bug",
+            IssueUrl = issueUrl,
+        };
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([activeItem]);
+
+        var cut = Render<Work>();
+
+        // The issue cell must contain an anchor with href = issueUrl
+        var link = cut.FindAll(".monitoring-table td a")
+            .FirstOrDefault(a => a.GetAttribute("href") == issueUrl);
+        Assert.NotNull(link);
+        Assert.Contains("#42", link.TextContent);
+    }
+
+    /// <summary>
+    /// When an in-flight ActiveWorkItemDto has no IssueUrl (null), the issue column must render
+    /// a plain span — no broken anchor, no error.
+    /// </summary>
+    [Fact]
+    public void ActiveRow_WithoutIssueUrl_RendersPlainIssueNumber()
+    {
+        var activeItem = new ActiveWorkItemDto
+        {
+            Id = Guid.NewGuid(),
+            Status = WorkItemStatus.Running,
+            DispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-6),
+            AgentSelector = "kiro",
+            IssueIdentifier = "99",
+            TimeoutSeconds = 3600,
+            IssueUrl = null,
+        };
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([activeItem]);
+
+        var cut = Render<Work>();
+
+        // No provider link anchor must be present for the in-flight row
+        var issueLinks = cut.FindAll(".monitoring-table tbody td a")
+            .Where(a => a.TextContent.Contains("#99"))
+            .ToList();
+        Assert.Empty(issueLinks);
+        // But the plain issue identifier span must still render
+        Assert.Contains("#99", cut.Find(".monitoring-table tbody").TextContent);
+    }
+
+    // ── Issue #2947: "Browse & dispatch" link ────────────────────────────────
+
+    /// <summary>
+    /// The "Browse &amp; dispatch" link in the page header must point to
+    /// /pipelines?dispatch=issues so that navigating to it opens the issue drawer directly.
+    /// </summary>
+    [Fact]
+    public void BrowseAndDispatchLink_PointsToPipelinesWithDispatchParam()
+    {
+        var cut = Render<Work>();
+
+        // Find the "Browse & dispatch" anchor in the page header
+        var link = cut.FindAll("a")
+            .FirstOrDefault(a => a.TextContent.Contains("Browse") && a.TextContent.Contains("dispatch"));
+        Assert.NotNull(link);
+        Assert.Equal("pipelines?dispatch=issues", link!.GetAttribute("href"));
+    }
 }
