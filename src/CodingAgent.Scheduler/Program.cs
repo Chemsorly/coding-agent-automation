@@ -1,4 +1,5 @@
 using CodingAgent.Api.Client;
+using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Scheduler;
@@ -113,12 +114,19 @@ builder.Services.AddOpenTelemetry()
         .AddMeter(CodingAgent.Pipeline.Telemetry.WorkDistributionTelemetry.MeterName)
         .AddMeter(CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName)
         .AddMeter("System.Runtime")
+        // GitHub-facing metrics (github.api.requests counter, github.rate_limit.remaining gauge).
+        // Not registered in the agent — agent pods must not emit these series.
+        .AddMeter(GitHubTelemetry.MeterName)
         // Prometheus requires Cumulative temporality; the OTLP exporter defaults to Delta for
         // histograms and counters, which Grafana Cloud silently drops.
         .AddOtlpExporter((_, readerOptions) =>
             readerOptions.TemporalityPreference = MetricReaderTemporalityPreference.Cumulative));
 
 var app = builder.Build();
+
+// Pre-initialize github.api.requests counter tag combinations so Prometheus increase() works
+// on first increment. Must run after builder.Build() so the MeterProvider is active.
+GitHubTelemetry.PreInitialize();
 
 // ── Health probes ─────────────────────────────────────────────────────────
 // /healthz — startup/liveness, /readyz — readiness, /health — Dockerfile HEALTHCHECK compat.

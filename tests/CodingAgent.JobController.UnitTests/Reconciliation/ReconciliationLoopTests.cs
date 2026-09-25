@@ -1750,6 +1750,10 @@ public sealed class ReconciliationLoopTests : IDisposable
         var span = _capturedActivities.FirstOrDefault(a => a.OperationName == "Reconcile.DispatchedTimeout");
         span.Should().NotBeNull("Reconcile.DispatchedTimeout must be emitted when a Dispatched item has no live K8s Job");
         span!.GetTagItem("work_item_id").Should().Be(ItemId);
+        // TODO: [WARNING] agent_selector tag is set in production code (ReconciliationLoop.cs) but not
+        // asserted here. The item is constructed with AgentSelector = "kiro,dotnet" — add:
+        //   span.GetTagItem("agent_selector").Should().Be("kiro,dotnet");
+        // A regression that drops the agent_selector tag would not be caught without this assertion.
     }
 
     /// <summary>

@@ -1,4 +1,5 @@
 using CodingAgent.Api.Client;
+using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.JobController;
 using CodingAgent.Pipeline.LeaderElection;
@@ -122,6 +123,9 @@ builder.Services.AddOpenTelemetry()
          .AddMeter(PipelineTelemetry.SourceName)
          // .NET runtime metrics (GC, thread pool, CPU, memory) — built-in since .NET 8.
          .AddMeter("System.Runtime")
+         // GitHub-facing metrics (github.api.requests counter, github.rate_limit.remaining gauge).
+         // Not registered in the agent — agent pods must not emit these series.
+         .AddMeter(GitHubTelemetry.MeterName)
          // Prometheus requires Cumulative temporality; the OTLP exporter defaults to Delta for
          // histograms and counters, which Grafana Cloud silently drops.
          .AddOtlpExporter((_, readerOptions) =>
