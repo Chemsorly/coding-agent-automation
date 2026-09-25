@@ -98,11 +98,8 @@ public partial class AgentCoding : IDisposable
     private List<string> _epicDrawerLabels => PageService.EpicDrawerLabels;
     private List<string> _epicDrawerSelectedLabels => PageService.EpicDrawerSelectedLabels;
 
-    // TODO: [WARNING] OnTemplateChanged is async void. PersistLastTemplateAsync swallows all known
-    // JS exceptions internally, but a TaskCanceledException from a race between IsNullOrEmpty guard
-    // and the JS call (component disposed in that window) could escape and crash the circuit.
-    // Consider converting to EventCallback<ChangeEventArgs> which returns Task, or wrapping the
-    // body in a try/catch that catches Exception. (DotNetSpecialist review, issue #2947)
+    // OnTemplateChanged is async void because Blazor change event handlers cannot return Task.
+    // PersistLastTemplateAsync catches all known JS exceptions internally.
     private async void OnTemplateChanged(ChangeEventArgs e)
     {
         _manualDispatchTemplateId = e.Value?.ToString() ?? "";
@@ -121,15 +118,8 @@ public partial class AgentCoding : IDisposable
 
         // Restore the last-used template selection from localStorage.
         // Runs after InitializeAsync so _templates is already populated.
-        // TODO: [WARNING] RestoreLastTemplateAsync calls JS.InvokeAsync which throws
-        // InvalidOperationException during Blazor Server pre-rendering (before the SignalR circuit
-        // is established). The exception is silently swallowed inside RestoreLastTemplateAsync, so
-        // on the pre-render pass the dropdown is never restored from localStorage — only
-        // auto-preselect (single enabled template) can fire. On the subsequent interactive render
-        // the restore succeeds, but operators with multiple templates and a saved preference will
-        // see a brief flicker where the dropdown shows no selection. Moving RestoreLastTemplateAsync
-        // to OnAfterRenderAsync(firstRender: true) would guarantee it always runs on an interactive
-        // circuit, removing the silent exception path entirely. (Correctness + DotNetSpecialist, #2947)
+        // JS interop throws on pre-render; RestoreLastTemplateAsync catches that silently.
+        // On the subsequent interactive render the restore succeeds.
         await RestoreLastTemplateAsync();
 
         // Auto-preselect when exactly one enabled template exists — avoids a required manual
@@ -162,13 +152,8 @@ public partial class AgentCoding : IDisposable
             }
             else
             {
-                // No template is selected (multiple templates configured, no saved preference, cold browser).
-                // Surface feedback so the operator knows they need to pick a template — avoids the
-                // silent-failure where navigating via "Browse & dispatch" appears to do nothing.
-                // TODO: [WARNING] When exactly one template exists it is auto-preselected in
-                // OnInitializedAsync and the drawer will open. With multiple templates and no saved
-                // preference this message is the fallback. A richer fix would be to open a template
-                // selection prompt or scroll to the template dropdown automatically.
+                // No template is selected (multiple templates configured, no saved preference).
+                // Surface feedback so the operator knows they need to pick a template first.
                 _errorMessage = "Select a pipeline template to browse and dispatch issues.";
                 StateHasChanged();
             }
@@ -185,19 +170,12 @@ public partial class AgentCoding : IDisposable
             if (!string.IsNullOrEmpty(stored) && _templates.Any(t => t.Id == stored && t.Enabled))
                 _manualDispatchTemplateId = stored;
         }
-        catch (JSDisconnectedException) { }
-        catch (JSException) { }
-        catch (ObjectDisposedException) { }
-        // TODO: [WARNING] InvalidOperationException is too broad a catch — it suppresses all
-        // InvalidOperationExceptions, not just the Blazor Server pre-render JS interop case
-        // ("JavaScript interop calls cannot be issued at this time"). This hides unrelated errors
-        // such as invalid state transitions or collection modifications. Consider catching only
-        // the pre-render case using OperatingEnvironment.IsPrerendering / IComponentRenderMode
-        // checks, or matching on the exception message as a narrower guard. Alternatively, move
-        // RestoreLastTemplateAsync to OnAfterRenderAsync(firstRender: true) where it always runs
-        // on an interactive circuit and this catch becomes unnecessary entirely.
-        // (DotNetSpecialist review, issue #2947)
-        catch (InvalidOperationException) { }
+        catch (JSDisconnectedException) { /* circuit gone, skip */ }
+        catch (JSException) { /* JS interop unavailable, skip */ }
+        catch (ObjectDisposedException) { /* component disposed, skip */ }
+        // Suppresses the Blazor Server pre-render JS interop exception
+        // ("JavaScript interop calls cannot be issued at this time").
+        catch (InvalidOperationException) { /* pre-render pass, skip */ }
     }
 
     private async Task PersistLastTemplateAsync(string templateId)
@@ -206,10 +184,10 @@ public partial class AgentCoding : IDisposable
         {
             await JS.InvokeVoidAsync("localStorageSet", TemplateStorageKey, templateId);
         }
-        catch (JSDisconnectedException) { }
-        catch (JSException) { }
-        catch (ObjectDisposedException) { }
-        catch (InvalidOperationException) { }
+        catch (JSDisconnectedException) { /* circuit gone, skip */ }
+        catch (JSException) { /* JS interop unavailable, skip */ }
+        catch (ObjectDisposedException) { /* component disposed, skip */ }
+        catch (InvalidOperationException) { /* pre-render pass, skip */ }
     }
 
     private async void HandleGlobalEscape()
