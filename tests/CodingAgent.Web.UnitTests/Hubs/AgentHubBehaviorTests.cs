@@ -139,6 +139,10 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        // CompleteRunAsync must return the run (non-null) so runWasAlive=true → label swap fires
+        _mockLifecycleManager
+            .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync(run);
 
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);
@@ -155,6 +159,10 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        // CompleteRunAsync must return the run (non-null) so runWasAlive=true → label swap fires
+        _mockLifecycleManager
+            .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync(run);
 
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);
@@ -176,6 +184,10 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        // CompleteRunAsync must return the run (non-null) so runWasAlive=true → label swap fires
+        _mockLifecycleManager
+            .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync(run);
 
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);
@@ -197,6 +209,10 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        // CompleteRunAsync must return the run (non-null) so runWasAlive=true → label swap fires
+        _mockLifecycleManager
+            .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync(run);
 
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);

@@ -39,8 +39,8 @@ internal sealed class ConsolidationJobCompletionStrategy : IJobCompletionStrateg
     }
 
     /// <inheritdoc />
-    public async Task ExecuteAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload,
-                                   Activity? activity, CancellationToken ct)
+    public async Task<bool> ExecuteAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload,
+                                         Activity? activity, CancellationToken ct)
     {
         // Skip pipeline history persistence for consolidation runs.
         // Consolidation runs have their own completion path (ReportConsolidationComplete)
@@ -73,5 +73,9 @@ internal sealed class ConsolidationJobCompletionStrategy : IJobCompletionStrateg
         // the notification will observe a stale Busy state. Consider moving NotifyChange to the
         // caller after the agent-idle transition, or accepting the minor ordering difference.
         _changeNotifier.NotifyChange();
+
+        // Consolidation runs never race with the HTTP Failed path (they use a separate
+        // completion endpoint), so the run is always considered alive from this strategy's perspective.
+        return true;
     }
 }
