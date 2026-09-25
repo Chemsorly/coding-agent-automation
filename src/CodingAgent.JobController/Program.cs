@@ -95,8 +95,14 @@ builder.Services.AddOpenTelemetry()
         serviceVersion: version))
     .WithTracing(t =>
     {
-        t.AddAspNetCoreInstrumentation()
-         .AddHttpClientInstrumentation()
+        t.AddAspNetCoreInstrumentation(opts =>
+            opts.Filter = OtelNoiseFilter.FilterAspNetCoreRequest)
+         .AddHttpClientInstrumentation(opts =>
+         {
+             opts.FilterHttpRequestMessage = OtelNoiseFilter.FilterHttpClientRequest;
+             opts.EnrichWithHttpRequestMessage = OtelNoiseFilter.EnrichHttpClientRequest;
+         })
+         .AddProcessor(new OtelNoiseSpanDropProcessor())
          .AddOtlpExporter();
     })
     .WithMetrics(m =>
@@ -113,6 +119,8 @@ builder.Services.AddOpenTelemetry()
          // PipelineTelemetry instruments (jobs.completed, jobs.failed, job duration, queue wait, etc.)
          // are recorded via the pipeline library inside the Job Controller process.
          .AddMeter(PipelineTelemetry.SourceName)
+         // .NET runtime metrics (GC, thread pool, CPU, memory) — built-in since .NET 8.
+         .AddMeter("System.Runtime")
          // Prometheus requires Cumulative temporality; the OTLP exporter defaults to Delta for
          // histograms and counters, which Grafana Cloud silently drops.
          .AddOtlpExporter((_, readerOptions) =>
