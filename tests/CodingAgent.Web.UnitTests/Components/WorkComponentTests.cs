@@ -276,7 +276,7 @@ public class WorkComponentTests : BunitContext
 
     // ── Helper: active work item ──────────────────────────────────────────────
 
-    private static ActiveWorkItemDto MakeActiveItem(Guid id, string issueIdentifier = "42", string? issueTitle = null, string? initiatedBy = null) => new()
+    private static ActiveWorkItemDto MakeActiveItem(Guid id, string issueIdentifier = "42", string? issueTitle = null, string? initiatedBy = null, string? issueUrl = null) => new()
     {
         Id = id,
         IssueIdentifier = issueIdentifier,
@@ -285,6 +285,7 @@ public class WorkComponentTests : BunitContext
         AgentSelector = "kiro",
         TimeoutSeconds = 3600,
         IssueTitle = issueTitle,
+        IssueUrl = issueUrl,
         InitiatedBy = initiatedBy
     };
 
@@ -549,6 +550,70 @@ public class WorkComponentTests : BunitContext
         var chips = cut.FindAll(".monitoring-table .cockpit-chip");
         chips.Should().NotContain(c => c.TextContent.Trim() == "loop:issue",
             "no loop:issue chip should be present when InitiatedBy is null");
+    }
+
+    // ── In-flight issue URL link (issue #2947) ────────────────────────────────
+
+    /// <summary>
+    /// When an in-flight row has IssueUrl set, the issue number must be rendered as an anchor tag
+    /// linking to the provider URL. Clicking the link must not trigger row navigation.
+    /// </summary>
+    [Fact]
+    public void InFlightRow_WithIssueUrl_RendersIssueNumberAsLink()
+    {
+        var id = Guid.NewGuid();
+        const string issueUrl = "https://github.com/owner/repo/issues/2947";
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakeActiveItem(id, "2947", "Issue with URL", issueUrl: issueUrl)]);
+
+        var cut = Render<Work>();
+
+        // The issue number must be rendered as an anchor tag with the provider URL.
+        var links = cut.FindAll(".monitoring-table tbody a");
+        links.Should().Contain(a => a.GetAttribute("href") == issueUrl,
+            "the issue number must be a link to the provider when IssueUrl is set");
+        links.Should().Contain(a => a.TextContent.Contains("#2947"),
+            "the link text must include the issue number");
+    }
+
+    /// <summary>
+    /// When an in-flight row has no IssueUrl (null), the issue number must be rendered as a plain
+    /// span (not an anchor), preserving previous behaviour for items without a stored URL.
+    /// </summary>
+    [Fact]
+    public void InFlightRow_WithoutIssueUrl_RendersIssueNumberAsPlainSpan()
+    {
+        var id = Guid.NewGuid();
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakeActiveItem(id, "2947", "No URL issue", issueUrl: null)]);
+
+        var cut = Render<Work>();
+
+        // No anchor tags should link to a provider URL for this row.
+        var monitoringLinks = cut.FindAll(".monitoring-table tbody td a");
+        monitoringLinks.Should().BeEmpty(
+            "without IssueUrl the issue number must render as a plain span, not a link");
+        // The number must still appear as text.
+        cut.Markup.Should().Contain("#2947",
+            "the issue number must still render when IssueUrl is null");
+    }
+
+    // ── Browse & dispatch deep-link (issue #2947) ─────────────────────────────
+
+    /// <summary>
+    /// The "Browse &amp; dispatch" link on the Work page must navigate to
+    /// <c>/pipelines?dispatch=issues</c> so that the Pipelines page opens the issue drawer directly.
+    /// </summary>
+    [Fact]
+    public void WorkPage_BrowseAndDispatchLink_NavigatesToPipelinesWithDispatchParam()
+    {
+        var cut = Render<Work>();
+
+        var link = cut.Find("a.cockpit-pager-btn[href*='pipelines']");
+        link.GetAttribute("href").Should().Contain("dispatch=issues",
+            "the Browse & dispatch link must deep-link to the issue drawer via ?dispatch=issues");
     }
 
     // TODO: [WARNING] Acceptance criterion "Clicking an active run row on the Overview page opens the run

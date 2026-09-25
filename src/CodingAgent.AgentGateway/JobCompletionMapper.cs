@@ -21,7 +21,21 @@ internal static class JobCompletionMapper
         run.CurrentStep = payload.FinalStep;
         run.MarkCompleted(payload.CompletedAt);
         run.FailureReason = payload.FailureReason;
-        run.PullRequestUrl = payload.PullRequestUrl;
+        // Only overwrite PullRequestUrl when the payload carries a value.
+        // For terminal paths like ConflictRestart the agent sends PullRequestUrl = null because it
+        // did not create a PR in that run — but PullRequestOrchestrator may have already set the
+        // URL on the run object in a prior step (e.g. the PR already existed and was conflicted).
+        // Unconditionally assigning null would erase the URL and prevent it from being persisted
+        // via ToSummary → history, making the PR link disappear from the Run page.
+        if (payload.PullRequestUrl != null)
+            run.PullRequestUrl = payload.PullRequestUrl;
+        // TODO: [WARNING] PullRequestNumber and IsDraftPr are unconditionally overwritten from the
+        // payload even when PullRequestUrl is preserved from a prior step. On a ConflictRestart path
+        // the payload has PullRequestNumber = 0 (default), silently resetting the run's existing PR
+        // number while the URL is still preserved — creating an inconsistent state (URL present,
+        // number absent). Apply the same null/default guard as PullRequestUrl: only overwrite
+        // PullRequestNumber when payload.PullRequestNumber != 0 (or use a nullable field).
+        // (Correctness + DotNetSpecialist review, issue #2947)
         run.PullRequestNumber = payload.PullRequestNumber;
         run.IsDraftPr = payload.IsDraftPr;
         run.RetryCount = payload.RetryCount;

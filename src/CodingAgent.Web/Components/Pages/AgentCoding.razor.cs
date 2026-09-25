@@ -6,6 +6,7 @@ using CodingAgent.Web.Services;
 using CodingAgent.Web.Components.Layout;
 using CodingAgent.Web.Components.Shared;
 using Microsoft.AspNetCore.Components;
+using Microsoft.JSInterop;
 
 namespace CodingAgent.Web.Components.Pages;
 
@@ -14,7 +15,18 @@ public partial class AgentCoding : IDisposable
     [Inject] private ILoopStatusService LoopService { get; set; } = default!;
     [Inject] private IAgentRegistryService Registry { get; set; } = default!;
     [Inject] private AgentCodingPageService PageService { get; set; } = default!;
+    [Inject] private IJSRuntime JS { get; set; } = default!;
     [CascadingParameter] private CockpitLayout? Layout { get; set; }
+
+    /// <summary>
+    /// When <c>dispatch=issues</c> is present in the query string, the issue drawer is opened
+    /// automatically after the page finishes loading — implementing the "Browse &amp; dispatch"
+    /// deep-link from the Work page.
+    /// </summary>
+    [SupplyParameterFromQuery(Name = "dispatch")]
+    public string? DispatchParam { get; set; }
+
+    private const string TemplateStorageKey = "manualDispatch.lastTemplateId";
 
     private string? _errorMessage;
     private string? _successMessage;
@@ -86,8 +98,17 @@ public partial class AgentCoding : IDisposable
     private List<string> _epicDrawerLabels => PageService.EpicDrawerLabels;
     private List<string> _epicDrawerSelectedLabels => PageService.EpicDrawerSelectedLabels;
 
-    private void OnTemplateChanged(ChangeEventArgs e) =>
+    // TODO: [WARNING] OnTemplateChanged is async void. PersistLastTemplateAsync swallows all known
+    // JS exceptions internally, but a TaskCanceledException from a race between IsNullOrEmpty guard
+    // and the JS call (component disposed in that window) could escape and crash the circuit.
+    // Consider converting to EventCallback<ChangeEventArgs> which returns Task, or wrapping the
+    // body in a try/catch that catches Exception. (DotNetSpecialist review, issue #2947)
+    private async void OnTemplateChanged(ChangeEventArgs e)
+    {
         _manualDispatchTemplateId = e.Value?.ToString() ?? "";
+        if (!string.IsNullOrEmpty(_manualDispatchTemplateId))
+            await PersistLastTemplateAsync(_manualDispatchTemplateId);
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -97,6 +118,98 @@ public partial class AgentCoding : IDisposable
 
         _errorMessage = await PageService.InitializeAsync();
         _ = AutoDismissAgentSummary();
+
+        // Restore the last-used template selection from localStorage.
+        // Runs after InitializeAsync so _templates is already populated.
+        // TODO: [WARNING] RestoreLastTemplateAsync calls JS.InvokeAsync which throws
+        // InvalidOperationException during Blazor Server pre-rendering (before the SignalR circuit
+        // is established). The exception is silently swallowed inside RestoreLastTemplateAsync, so
+        // on the pre-render pass the dropdown is never restored from localStorage — only
+        // auto-preselect (single enabled template) can fire. On the subsequent interactive render
+        // the restore succeeds, but operators with multiple templates and a saved preference will
+        // see a brief flicker where the dropdown shows no selection. Moving RestoreLastTemplateAsync
+        // to OnAfterRenderAsync(firstRender: true) would guarantee it always runs on an interactive
+        // circuit, removing the silent exception path entirely. (Correctness + DotNetSpecialist, #2947)
+        await RestoreLastTemplateAsync();
+
+        // Auto-preselect when exactly one enabled template exists — avoids a required manual
+        // pick when only one template is configured. Only applied if no saved value exists.
+        if (string.IsNullOrEmpty(_manualDispatchTemplateId))
+        {
+            var enabled = _templates.Where(t => t.Enabled).ToList();
+            if (enabled.Count == 1)
+                _manualDispatchTemplateId = enabled[0].Id;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        // Handle ?dispatch=issues deep-link: open the issue drawer automatically.
+        // Runs after first render so the interactive circuit is established (drawers require it).
+        // NOTE: StateHasChanged() is called only inside the conditional branches, not unconditionally
+        // at the end, to avoid the double-render that would occur since Blazor already schedules a
+        // re-render after an async OnAfterRenderAsync completes. (DotNetSpecialist warning, #2947)
+        if (string.Equals(DispatchParam, "issues", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!string.IsNullOrEmpty(_manualDispatchTemplateId))
+            {
+                var error = await PageService.OpenIssueDrawerAsync(_manualDispatchTemplateId, () => InvokeAsync(StateHasChanged));
+                if (error != null)
+                    _errorMessage = error;
+                StateHasChanged();
+            }
+            else
+            {
+                // No template is selected (multiple templates configured, no saved preference, cold browser).
+                // Surface feedback so the operator knows they need to pick a template — avoids the
+                // silent-failure where navigating via "Browse & dispatch" appears to do nothing.
+                // TODO: [WARNING] When exactly one template exists it is auto-preselected in
+                // OnInitializedAsync and the drawer will open. With multiple templates and no saved
+                // preference this message is the fallback. A richer fix would be to open a template
+                // selection prompt or scroll to the template dropdown automatically.
+                _errorMessage = "Select a pipeline template to browse and dispatch issues.";
+                StateHasChanged();
+            }
+        }
+    }
+
+    // ── Template selection helpers ────────────────────────────────────────
+
+    private async Task RestoreLastTemplateAsync()
+    {
+        try
+        {
+            var stored = await JS.InvokeAsync<string?>("localStorageGet", TemplateStorageKey);
+            if (!string.IsNullOrEmpty(stored) && _templates.Any(t => t.Id == stored && t.Enabled))
+                _manualDispatchTemplateId = stored;
+        }
+        catch (JSDisconnectedException) { }
+        catch (JSException) { }
+        catch (ObjectDisposedException) { }
+        // TODO: [WARNING] InvalidOperationException is too broad a catch — it suppresses all
+        // InvalidOperationExceptions, not just the Blazor Server pre-render JS interop case
+        // ("JavaScript interop calls cannot be issued at this time"). This hides unrelated errors
+        // such as invalid state transitions or collection modifications. Consider catching only
+        // the pre-render case using OperatingEnvironment.IsPrerendering / IComponentRenderMode
+        // checks, or matching on the exception message as a narrower guard. Alternatively, move
+        // RestoreLastTemplateAsync to OnAfterRenderAsync(firstRender: true) where it always runs
+        // on an interactive circuit and this catch becomes unnecessary entirely.
+        // (DotNetSpecialist review, issue #2947)
+        catch (InvalidOperationException) { }
+    }
+
+    private async Task PersistLastTemplateAsync(string templateId)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("localStorageSet", TemplateStorageKey, templateId);
+        }
+        catch (JSDisconnectedException) { }
+        catch (JSException) { }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { }
     }
 
     private async void HandleGlobalEscape()

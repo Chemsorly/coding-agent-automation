@@ -198,4 +198,61 @@ public sealed class JobCompletionMapperTests
 
         run.FinalLabel.Should().BeNull();
     }
+
+    /// <summary>
+    /// When the completion payload has a null PullRequestUrl (e.g. ConflictRestart — no new PR
+    /// was created in this run), any PR URL already set on the run by PullRequestOrchestrator must
+    /// be preserved, not overwritten with null.
+    /// Regression lock for issue #2947: previously Apply() unconditionally assigned
+    /// run.PullRequestUrl = payload.PullRequestUrl, erasing a pre-existing URL.
+    /// </summary>
+    [Fact]
+    public void Apply_NullPullRequestUrlInPayload_PreservesExistingRunUrl()
+    {
+        const string existingPrUrl = "https://github.com/org/repo/pull/42";
+        var run = CreateRun();
+        run.PullRequestUrl = existingPrUrl; // set by PullRequestOrchestrator before agent reports completion
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.ConflictRestart,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PullRequestUrl = null  // ConflictRestart: agent didn't create a PR in this run
+        };
+
+        JobCompletionMapper.Apply(run, payload);
+
+        // The pre-existing URL must survive: it's the conflicted PR that still exists.
+        run.PullRequestUrl.Should().Be(existingPrUrl,
+            "a null PullRequestUrl in the payload must not erase an existing URL on the run");
+        // TODO: [WARNING] The symmetric overwrite case is not tested: run has URL-A, payload carries
+        // URL-B (both non-null) — verify URL-B wins. Also not tested: run has a non-zero
+        // PullRequestNumber that is silently reset to 0 by a ConflictRestart payload. Both are
+        // unspecified by existing tests and could hide a too-narrow or incorrectly applied guard.
+        // (TestQualityReviewer, issue #2947)
+    }
+
+    /// <summary>
+    /// When the completion payload has a non-null PullRequestUrl, it must be applied to the run
+    /// (normal success path).
+    /// </summary>
+    [Fact]
+    public void Apply_NonNullPullRequestUrlInPayload_UpdatesRunUrl()
+    {
+        var run = CreateRun();
+        run.PullRequestUrl = null; // no prior URL
+
+        const string newPrUrl = "https://github.com/org/repo/pull/7";
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PullRequestUrl = newPrUrl
+        };
+
+        JobCompletionMapper.Apply(run, payload);
+
+        run.PullRequestUrl.Should().Be(newPrUrl,
+            "a non-null PullRequestUrl in the payload must overwrite the run's existing (null) URL");
+    }
 }

@@ -35,13 +35,15 @@ public class ProcessWrapper : IProcessWrapper
     public event EventHandler<string>? OutputReceived;
     public event EventHandler<string>? ErrorReceived;
 
-    // TODO [WARNING]: The bare catch below was broadened from catch (InvalidOperationException).
-    // This swallows all exception types including OutOfMemoryException, AccessViolationException, and
-    // ThreadAbortException, which callers may need to observe. Process.HasExited only throws
-    // InvalidOperationException (when the process was not started via Process.Start). Restore
-    // catch (InvalidOperationException) to avoid silently suppressing serious runtime faults.
-    // (review-findings-dotnetspecialist.md, review-findings-securityreviewer.md)
-    public bool IsRunning { get { try { return _process != null && !_process.HasExited; } catch { return false; } } }
+    public bool IsRunning
+    {
+        get
+        {
+            if (_process == null) return false;
+            try { return !_process.HasExited; }
+            catch (InvalidOperationException) { return false; }
+        }
+    }
     public int? ExitCode => _process?.HasExited == true ? _process.ExitCode : null;
     public int? ProcessId { get { try { return _process?.Id; } catch { return null; } } }
     public DateTime LastOutputTime => _lastOutputTime;
