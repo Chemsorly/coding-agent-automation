@@ -45,6 +45,31 @@ public sealed class HousekeepingService : IHousekeepingService
     private readonly ConcurrentDictionary<string, HashSet<int>> _inFlight = new();
 
     /// <summary>
+    /// Tracks PR numbers for which a <c>pipeline.pull_requests.closed</c> metric has already been
+    /// emitted, keyed by <c>repoProviderId</c>. Prevents re-emission across poll cycles.
+    ///
+    /// The inner <c>HashSet&lt;int&gt;</c> is NOT thread-safe, but is safe here because
+    /// <see cref="ExecuteAsync"/> is called sequentially per template — same caveat as
+    /// <see cref="_inFlight"/>. Do not add concurrent access paths without also adding locking.
+    /// </summary>
+    // TODO: _recordedPrOutcomes inner HashSet grows unboundedly — evicted PR numbers are never
+    // removed. On a long-running leader that processes many PRs this is a slow memory leak.
+    // Entries for PRs that have been evicted from inFlight could be removed in EvictInFlightSlots
+    // alongside the corresponding _lastTriggeredAt cleanup.
+    private readonly ConcurrentDictionary<string, HashSet<int>> _recordedPrOutcomes = new();
+
+    /// <summary>
+    /// Caches <c>PullRequestSummary.CreatedAt</c> values for in-flight PRs so that the
+    /// <c>pipeline.pull_requests.time_to_merge</c> histogram can be emitted even after a
+    /// PR has left the <c>agent:done</c> list (and is therefore absent from <c>agentDonePrs</c>
+    /// in the eviction cycle). Updated every poll cycle from the current <c>agentDonePrs</c>.
+    /// </summary>
+    // TODO: _prCreatedAtCache also grows unboundedly — entries for evicted PRs are never removed.
+    // Remove the entry keyed by (repoProviderId, prNumber) after RecordPrOutcomesAsync has finished
+    // processing a PR (either emitted or skipped), mirroring _lastTriggeredAt cleanup in EvictInFlightSlots.
+    private readonly ConcurrentDictionary<(string repoId, int prNumber), DateTime?> _prCreatedAtCache = new();
+
+    /// <summary>
     /// Tracks when each PR last had a branch update triggered, keyed by (repoProviderId, prNumber).
     /// Keyed by repo to prevent cross-repo collisions when the singleton handles multiple repos
     /// (two repos can both have a PR #N — their cooldown entries must not interfere).
@@ -83,6 +108,25 @@ public sealed class HousekeepingService : IHousekeepingService
     /// </summary>
     internal Func<TimeSpan, CancellationToken, Task> ReprobeDelayFunc { get; set; } =
         (delay, ct) => Task.Delay(delay, ct);
+
+    /// <summary>
+    /// Seam for determining whether a PR that left the <c>agent:done</c> list was merged or closed
+    /// without merging. Used by <see cref="RecordPrOutcomesAsync"/> to distinguish
+    /// <c>outcome=merged</c> from <c>outcome=closed_unmerged</c>.
+    ///
+    /// In production: calls <see cref="IPullRequestHousekeepingProvider.GetPullRequestMergedStateAsync"/>.
+    /// In tests: override to return a controlled outcome without an API call.
+    ///
+    /// Returns <c>"merged"</c>, <c>"closed_unmerged"</c>, or <c>null</c> if the outcome cannot
+    /// be determined (metric is skipped for that PR).
+    /// </summary>
+    internal Func<IRepositoryProvider, int, CancellationToken, Task<string?>> GetPrOutcomeAsync { get; set; }
+        = async (provider, prNumber, ct) =>
+        {
+            var isMerged = await provider.GetPullRequestMergedStateAsync(prNumber, ct);
+            if (isMerged is null) return null;
+            return isMerged.Value ? "merged" : "closed_unmerged";
+        };
 
     public HousekeepingService(
         IOrchestratorRunService runService,
@@ -147,8 +191,11 @@ public sealed class HousekeepingService : IHousekeepingService
         // required, extract as e.g. InitializeInFlightState(repoProviderId).
         var inFlight = _inFlight.GetOrAdd(repoProviderId, _ => new HashSet<int>());
 
-        // ── Step 3: Evict resolved in-flight entries ──────────────────────────
+        // ── Step 2.5: Record PR outcome metrics for PRs about to be evicted ─
         var currentPrNumbers = new HashSet<int>(agentDonePrs.Select(p => p.Number));
+        await RecordPrOutcomesAsync(inFlight, currentPrNumbers, repoProvider, repoProviderId, agentDonePrs, now, ct);
+
+        // ── Step 3: Evict resolved in-flight entries ──────────────────────────
         EvictInFlightSlots(inFlight, currentPrNumbers, mergeabilityMap,
             repoProviderId, repoTag, now);
 
@@ -290,6 +337,79 @@ public sealed class HousekeepingService : IHousekeepingService
         }
 
         return mergeabilityMap;
+    }
+
+    // ── Step 2.5 ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Emits <c>pipeline.pull_requests.closed</c> and (for merged PRs)
+    /// <c>pipeline.pull_requests.time_to_merge</c> for in-flight PRs that have disappeared
+    /// from the <c>agent:done</c> list since the previous poll cycle.
+    ///
+    /// Each PR is counted at most once: <see cref="_recordedPrOutcomes"/> prevents re-emission
+    /// across poll cycles on the same leader instance. Leadership changes may cause a new leader
+    /// to re-emit for PRs already counted — acceptable given the cost of persistent storage.
+    ///
+    /// Uses <see cref="UtcNow"/> as a proxy for merge time (approximation error ≈ poll interval).
+    /// </summary>
+    private async Task RecordPrOutcomesAsync(
+        HashSet<int> inFlight,
+        HashSet<int> currentPrNumbers,
+        IRepositoryProvider repoProvider,
+        string repoProviderId,
+        IReadOnlyList<PullRequestSummary> agentDonePrs,
+        DateTimeOffset now,
+        CancellationToken ct)
+    {
+        // Update the CreatedAt cache with all PRs currently in the list.
+        // This must happen BEFORE the eviction check so that PRs still in the list on this cycle
+        // have their CreatedAt stored for use in a future eviction cycle.
+        foreach (var pr in agentDonePrs)
+            _prCreatedAtCache[(repoProviderId, pr.Number)] = pr.CreatedAt;
+
+        var recordedForRepo = _recordedPrOutcomes.GetOrAdd(repoProviderId, _ => new HashSet<int>());
+
+        // TODO: Consider snapshotting inFlight with .ToList() before this loop, as EvictInFlightSlots
+        // does. The current code iterates inFlight directly with an awaited body; while safe today
+        // because ExecuteAsync is called sequentially, a future refactor that adds concurrent access
+        // to _inFlight would cause InvalidOperationException on concurrent modification.
+        foreach (var prNumber in inFlight)
+        {
+            if (currentPrNumbers.Contains(prNumber)) continue;   // still present — not evicted yet
+            if (!recordedForRepo.Add(prNumber)) continue;          // already recorded in a previous cycle
+
+            string? outcome;
+            try
+            {
+                outcome = await GetPrOutcomeAsync(repoProvider, prNumber, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Non-fatal: log and skip this PR for this cycle.
+                // It won't be retried (already added to recordedForRepo) to avoid repeated API calls.
+                // TODO: This permanently suppresses the metric for this PR even on transient failures
+                // (network blip, temporary rate-limit on GetPullRequestMergedState). If a more robust
+                // approach is needed, consider NOT adding to recordedForRepo until outcome is successfully
+                // determined, so a transient failure retries on the next cycle.
+                _logger.Warning(ex,
+                    "HousekeepingService: failed to determine outcome for PR #{PrNumber} in repo {RepoId} — skipping metric",
+                    prNumber, repoProviderId);
+                continue;
+            }
+
+            if (outcome is null) continue; // outcome unknown — skip metric
+
+            PipelineTelemetry.PullRequestsClosed.Add(1,
+                new KeyValuePair<string, object?>("outcome", outcome));
+
+            if (outcome == "merged"
+                && _prCreatedAtCache.TryGetValue((repoProviderId, prNumber), out var createdAt)
+                && createdAt.HasValue)
+            {
+                var seconds = (now - createdAt.Value).TotalSeconds;
+                PipelineTelemetry.PullRequestTimeToMerge.Record(seconds);
+            }
+        }
     }
 
     // ── Step 3 ────────────────────────────────────────────────────────────────

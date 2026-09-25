@@ -6,7 +6,39 @@ See also: [Pipeline Orchestration](pipeline-orchestration.md) for how pipeline s
 
 ## Metrics
 
-All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `PipelineTelemetry.cs` (`src/CodingAgent.Infrastructure.Common/Telemetry/PipelineTelemetry.cs`).
+All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `PipelineTelemetry.cs` (`src/CodingAgent.Infrastructure.Common/Telemetry/PipelineTelemetry.cs`), unless otherwise noted.
+
+### GitHub API Metrics
+
+GitHub-specific metrics are emitted on a dedicated `CodingAgent.GitHub` meter (`GitHubTelemetry.cs` in `src/CodingAgent.Infrastructure.Providers/GitHub/`). This meter is registered in the API, Scheduler, Web, and Job Controller processes, but **not** in agent pods — agent pods must not emit these series.
+
+| Metric | Type | Unit | Tags | Description |
+|--------|------|------|------|-------------|
+| `github.api.requests` | Counter | — | `operation`, `outcome` | GitHub API request attempt outcomes. Emitted **per attempt including retries** |
+| `github.rate_limit.remaining` | ObservableGauge | — | `resource` | Remaining GitHub API rate-limit quota. Only emitted from processes that have made at least one GitHub API call |
+
+**Tag values:**
+- `operation`: provider method name (closed set defined in `GitHubTelemetry.AllOperationNames`)
+- `outcome`: `success` | `not_found` | `rate_limited` | `error`
+- `resource`: `core` (REST API calls) | `graphql` (GraphQL mutations)
+
+### Pipeline Housekeeping Metrics (PR Outcomes)
+
+The following metrics are added alongside the existing `pipeline.housekeeping.*` series:
+
+| Metric | Type | Unit | Tags | Description |
+|--------|------|------|------|-------------|
+| `pipeline.pull_requests.closed` | Counter | — | `outcome` | Agent PRs that were merged or closed. Emitted **once per PR** by the housekeeping service |
+| `pipeline.pull_requests.time_to_merge` | Histogram | seconds | — | Time from PR creation to merge. Buckets: 3600, 14400, 43200, 86400, 172800, 604800 s (1h, 4h, 12h, 24h, 48h, 1 week) |
+
+**Tag values:**
+- `outcome`: `merged` | `closed_unmerged`
+
+`pipeline.pull_requests.time_to_merge` is only emitted for `merged` PRs where `PullRequestSummary.CreatedAt` is set. It uses `UtcNow` as a proxy for merge time; the approximation error is bounded by the housekeeping poll interval (typically 1–5 minutes).
+
+Deduplication: both instruments are emitted at most once per PR per leader instance. Leader changes may cause a re-emit for already-counted PRs (graceful handling would require persistent storage).
+
+### All Pipeline Metrics
 
 | Metric | Type | Unit | Tags | Description |
 |--------|------|------|------|-------------|
@@ -60,6 +92,8 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `pipeline.housekeeping.evicted` | Counter | — | `repo_provider_id` | In-flight entries removed (CI resolved or PR merged/label removed) |
 | `pipeline.housekeeping.conflict_rework_triggered` | Counter | — | `repo_provider_id` | Issues re-queued for rework due to PR merge conflict |
 | `pipeline.housekeeping.branch_deleted` | Counter | — | `repo_provider_id` | Stale agent branches deleted (no open PR, inactive issue label) |
+| `pipeline.pull_requests.closed` | Counter | — | `outcome` | Agent PRs that were merged or closed. Emitted once per PR (deduplicated across poll cycles) |
+| `pipeline.pull_requests.time_to_merge` | Histogram | seconds | — | Time from PR creation to merge. Buckets: 1h, 4h, 12h, 24h, 48h, 1 week. Only emitted for merged PRs |
 | `pipeline.queue_sweep.cancelled` | Counter | — | — | WorkItems cancelled as stale by the queue sweep (issue no longer eligible) |
 | `pipeline.queue_sweep.skipped` | Counter | — | — | WorkItems skipped by the queue sweep (provider not polled, rate-limited, or wrong task type) |
 | `pipeline.queue_sweep.failed` | Counter | — | — | Unexpected failures during the queue sweep (`POST /api/work-items/{id}/status` errors) |
