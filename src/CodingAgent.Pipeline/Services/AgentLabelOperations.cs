@@ -44,6 +44,15 @@ public static class AgentLabelOperations
     /// <see cref="PipelineTelemetry.LabelSwapRemoveExhausted"/>. Intended for unit-test
     /// injection only — production callers should omit this parameter.
     /// </param>
+    /// <param name="currentLabels">
+    /// Optional: the labels currently present on the issue or PR.
+    /// When provided, the remove phase only attempts to remove labels that are actually
+    /// present — eliminating the DELETE 404s that occur when all <see cref="AgentLabels.All"/>
+    /// entries are removed unconditionally. When null (default), falls back to the original
+    /// behavior: attempt removal of every label in <see cref="AgentLabels.All"/> except
+    /// <paramref name="newLabel"/>. The fallback guarantees correctness when the caller
+    /// cannot supply current label state (Requirement #2).
+    /// </param>
     public static async Task SwapAsync(
         Func<string, CancellationToken, Task> removeLabel,
         Func<string, CancellationToken, Task> addLabel,
@@ -53,7 +62,8 @@ public static class AgentLabelOperations
         string? identifier = null,
         ILogger? logger = null,
         bool throwOnRemoveExhaustion = false,
-        Counter<long>? exhaustionCounter = null)
+        Counter<long>? exhaustionCounter = null,
+        IReadOnlyList<string>? currentLabels = null)
     {
         var effectiveLogger = logger ?? Logger;
         var effectiveExhaustionCounter = exhaustionCounter ?? PipelineTelemetry.LabelSwapRemoveExhausted;
@@ -75,6 +85,19 @@ public static class AgentLabelOperations
 
         foreach (var label in AgentLabels.All)
         {
+            // When the caller supplies the issue's current labels, skip any label that is not
+            // actually present — avoids the DELETE 404s from removing labels the issue doesn't have.
+            // When currentLabels is null (fallback path), attempt all labels as before.
+            // TODO (WARNING): This check uses StringComparer.OrdinalIgnoreCase while the
+            // skip-if-new-label guard two lines below uses StringComparison.Ordinal. The
+            // OrdinalIgnoreCase choice is intentional for robustness (GitHub label names are
+            // case-insensitive), but the inconsistency is a latent correctness risk: if newLabel
+            // differs from an AgentLabels.All entry only in casing, the Ordinal guard below will
+            // not fire and the label will be removed instead of skipped. Consider making both
+            // guards use OrdinalIgnoreCase to be consistent. See issue #2971.
+            if (currentLabels is not null && !currentLabels.Contains(label, StringComparer.OrdinalIgnoreCase))
+                continue;
+
             if (string.Equals(label, newLabel, StringComparison.Ordinal))
                 continue;
 
@@ -119,11 +142,25 @@ public static class AgentLabelOperations
     }
 
     /// <summary>Removes all agent labels.</summary>
+    /// <param name="removeLabel">Delegate to remove a label.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <param name="currentLabels">
+    /// Optional: the labels currently present on the issue or PR.
+    /// When provided, only labels that appear in this collection are removed.
+    /// When null (default), all labels in <see cref="AgentLabels.All"/> are removed
+    /// (original behavior, used as fallback when current label state is unavailable).
+    /// </param>
     public static async Task RemoveAllAsync(
         Func<string, CancellationToken, Task> removeLabel,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyList<string>? currentLabels = null)
     {
         foreach (var label in AgentLabels.All)
+        {
+            if (currentLabels is not null && !currentLabels.Contains(label, StringComparer.OrdinalIgnoreCase))
+                continue;
+
             await removeLabel(label, ct);
+        }
     }
 }

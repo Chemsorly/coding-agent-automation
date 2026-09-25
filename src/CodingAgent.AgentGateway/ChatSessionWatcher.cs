@@ -34,7 +34,7 @@ internal interface IChatSessionWatcher
         string jobName,
         ChatJobDispatcher.WatcherEntry entry,
         Func<AgentId, CancellationToken, Task> terminateCallback,
-        Action<string, ChatJobDispatcher.WatcherEntry, string, string> cleanupCallback,
+        Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string> cleanupCallback,
         CancellationToken ct);
 }
 
@@ -68,7 +68,7 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
         string jobName,
         ChatJobDispatcher.WatcherEntry entry,
         Func<AgentId, CancellationToken, Task> terminateCallback,
-        Action<string, ChatJobDispatcher.WatcherEntry, string, string> cleanupCallback,
+        Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string> cleanupCallback,
         CancellationToken ct)
     {
         var selectorEncoded = entry.NormalizedSelector.Replace(',', '_');
@@ -176,7 +176,7 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
         TimeSpan idleTimeout,
         TimeSpan pollInterval,
         Func<AgentId, CancellationToken, Task> terminateCallback,
-        Action<string, ChatJobDispatcher.WatcherEntry, string, string> cleanupCallback,
+        Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string> cleanupCallback,
         CancellationToken ct)
     {
         var idleSince = DateTimeOffset.UtcNow - lastHeartbeat;
@@ -210,7 +210,7 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
         // (identical to the original inline WatchJobUntilTerminalAsync). To fix, the idle-kill path
         // should invoke K8s delete + CleanupSession directly instead of routing through terminate.
         // See review finding: Correctness WARNING @ ChatSessionWatcher.cs:194.
-        await terminateCallback(new AgentId(entry.AgentId), CancellationToken.None).ConfigureAwait(false);
+        await terminateCallback(entry.AgentId, CancellationToken.None).ConfigureAwait(false);
         // CleanupSession is gated by Interlocked.CompareExchange(ref entry.Cleaned, 1, 0),
         // so if force-delete already ran it, this is a safe no-op.
         cleanupCallback(entry.AgentId, entry, selectorEncoded, "shutdown");

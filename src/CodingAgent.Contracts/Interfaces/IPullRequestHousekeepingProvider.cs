@@ -60,4 +60,14 @@ public interface IPullRequestHousekeepingProvider : IAsyncDisposable
     Task DeleteBranchAsync(string branchName, CancellationToken ct)
         => throw new NotSupportedException(
             $"{GetType().Name} does not support DeleteBranchAsync.");
+
+    /// <summary>
+    /// Determines whether a closed or merged pull request was merged (as opposed to simply closed).
+    /// Returns <c>true</c> if the PR was merged, <c>false</c> if it was closed without merging.
+    /// Returns <c>null</c> if the state cannot be determined (e.g., provider does not support this,
+    /// or the PR was not found).
+    /// Default returns null (no-op for providers that don't implement it).
+    /// </summary>
+    Task<bool?> GetPullRequestMergedStateAsync(int prNumber, CancellationToken ct)
+        => Task.FromResult<bool?>(null);
 }

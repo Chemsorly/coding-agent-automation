@@ -160,6 +160,33 @@ public partial class GitLabRepositoryProvider
     // ─── Merge Request CRUD ──────────────────────────────────────────────────────
 
     /// <inheritdoc />
+    public async Task<PullRequestState> GetPullRequestStateAsync(int pullRequestNumber, CancellationToken ct)
+    {
+        var mr = await ExecuteWithResilienceAsync(
+            client =>
+            {
+                var mrClient = client.GetMergeRequest(ProjectId);
+                // TODO [WARNING] (DotNetSpecialist): Task.Run(() => mrClient[pullRequestNumber], ct) wraps a
+                // synchronous indexer in a thread-pool task. This is consistent with the pre-existing pattern
+                // used throughout this provider, but the CancellationToken is not respected for the synchronous
+                // portion — the indexer runs to completion regardless of cancellation. If the underlying GitLab
+                // client call blocks on a network socket, the thread-pool thread is pinned for the duration,
+                // which can cause thread-pool exhaustion under load. This is a pre-existing pattern and advisory
+                // for this provider; the new method introduces it on the CI-poll hot path (called every iteration).
+                return Task.Run(() => mrClient[pullRequestNumber], ct);
+            },
+            "GetPullRequestState", ct);
+
+        // GitLab MR state values: "opened", "closed", "locked" (open), "merged"
+        return mr.State switch
+        {
+            "merged" => PullRequestState.Merged,
+            "closed" => PullRequestState.Closed,
+            _ => PullRequestState.Open   // "opened", "locked", or any unknown future value
+        };
+    }
+
+    /// <inheritdoc />
     public async Task<string> CreatePullRequestAsync(PullRequestInfo prInfo, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(prInfo);

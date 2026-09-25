@@ -48,5 +48,18 @@ public enum PipelineStep
     /// Pipeline restarted automatically via <c>agent:next</c> label swap.
     /// No human action required — re-dispatched run will rebase and re-enter CI.
     /// </summary>
-    ConflictRestart = 30
+    ConflictRestart = 30,
+
+    /// <summary>
+    /// Terminal step: PR was merged while the run was active (during CI polling or at run start).
+    /// Run ends as <see cref="WorkItemStatus.Succeeded"/> — the work is already done.
+    /// No further commits pushed, no LLM invocations.
+    /// </summary>
+    PrMerged = 31,
+
+    /// <summary>
+    /// Terminal step: PR was closed without merging while the run was active (during CI polling or at run start).
+    /// Run ends as <see cref="WorkItemStatus.Cancelled"/>.
+    /// </summary>
+    PrClosed = 32
 }

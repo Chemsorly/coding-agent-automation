@@ -29,6 +29,31 @@ public interface IRunLifecycleManager
     Task<PipelineRun?> FailRunAsync(RunId runId, string failureReason, CancellationToken ct, FailureReason? failureReasonEnum = null);
 
     /// <summary>
+    /// Atomically terminates a run as Failed with a pre-resolved terminal label.
+    /// Identical to <see cref="FailRunAsync(RunId,string,CancellationToken,FailureReason?)"/> except
+    /// that <paramref name="resolvedFinalLabel"/> is assigned to <c>run.FinalLabel</c> before the
+    /// label computation step, overriding the default <c>agent:error</c> fallback.
+    ///
+    /// <para>
+    /// Only <see cref="AgentLabels.NeedsRefinement"/> is a valid value for <paramref name="resolvedFinalLabel"/>
+    /// on the HTTP <c>Failed</c> path. The caller is responsible for validating the allowlist before
+    /// calling this overload; passing <c>null</c> is equivalent to calling the standard overload.
+    /// </para>
+    ///
+    /// Do NOT add an optional parameter to the existing overload instead of this method —
+    /// the existing signature already carries one optional parameter (<c>failureReasonEnum</c>)
+    /// and adding a second would break Moq expression-tree setups (CS0854) in test projects.
+    /// </summary>
+    // TODO: [WARNING] This overload itself carries one optional parameter (failureReasonEnum = null),
+    // which creates the same CS0854 hazard it was introduced to avoid. Any test that sets up
+    // FailRunWithLabelAsync using a Moq Setup expression that omits failureReasonEnum will trigger
+    // CS0854. Existing tests in PostStatusIdempotencyTests.cs and WorkItemStatusTransitionServiceTests.cs
+    // avoid this by passing It.IsAny<FailureReason?>() explicitly, but future callers should do the same.
+    // Consider converting the optional parameter to a parameter object (e.g., FailRunOptions) in a
+    // future cleanup to eliminate the hazard at the interface boundary. See review finding [WARNING] #1.
+    Task<PipelineRun?> FailRunWithLabelAsync(RunId runId, string failureReason, string? resolvedFinalLabel, CancellationToken ct, FailureReason? failureReasonEnum = null);
+
+    /// <summary>
     /// Atomically terminates a run as Completed/Succeeded. Performs in order:
     /// 1. Removes from in-memory active runs
     /// 2. Transitions the DB WorkItem to the given terminal status

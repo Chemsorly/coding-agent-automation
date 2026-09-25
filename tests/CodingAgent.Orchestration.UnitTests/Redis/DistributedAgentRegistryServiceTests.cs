@@ -472,6 +472,17 @@ public sealed class DistributedAgentRegistryServiceTests
     [Fact]
     public void GetAllAgents_ExcludesDeregisteredAgents_AfterDeregister()
     {
+        // TODO [WARNING]: No characterization test verifies that DeregisterAsync and
+        // TransitionStatusAsync use agentId.Value (not agentId.ToString()) as the Redis key segment.
+        // Both methods were migrated from string agentId to AgentId agentId in issue #2996, but the
+        // existing tests only verify behavioral post-conditions (agent absent from result sets), not
+        // the key format used internally. If the agentId.Value dereference were accidentally changed
+        // to agentId.ToString() and ToString() later changed to produce a non-bare-value format (e.g.
+        // the default record struct "AgentId { Value = agent-1 }"), the behavioral tests would still
+        // pass because the key format would be consistent within a single test run. Add a test that
+        // registers an agent, deregisters it, and verifies the specific Redis key "agent:{id}" was
+        // deleted (using FakeRedisStore.GetHash) to explicitly characterize the key format.
+        // See review finding: TestQualityReviewer WARNING @ DistributedAgentRegistryServiceTests.cs (missing characterization tests).
         _sut.Register(Msg("agent-1"), "conn-1");
         _sut.Register(Msg("agent-2"), "conn-2");
         _sut.Deregister(new AgentId("agent-1"));

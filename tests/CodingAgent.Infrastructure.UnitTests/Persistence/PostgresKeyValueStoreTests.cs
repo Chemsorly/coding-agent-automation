@@ -8,16 +8,16 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 namespace CodingAgent.Infrastructure.UnitTests.Persistence;
 
 /// <summary>
-/// Unit tests for <see cref="EfKeyValueStore"/>.
+/// Unit tests for <see cref="PostgresKeyValueStore"/>.
 /// Uses InMemory EF Core — same pattern as <see cref="PostgresLoopStateStoreContractTests"/>.
 /// </summary>
-public class EfKeyValueStoreTests : IDisposable
+public class PostgresKeyValueStoreTests : IDisposable
 {
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
 
-    public EfKeyValueStoreTests()
+    public PostgresKeyValueStoreTests()
     {
-        var dbName = $"EfKeyValueStoreTests-{Guid.NewGuid()}";
+        var dbName = $"PostgresKeyValueStoreTests-{Guid.NewGuid()}";
         _dbOptions = new DbContextOptionsBuilder<PipelineDbContext>()
             .UseInMemoryDatabase(dbName)
             .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
@@ -34,8 +34,8 @@ public class EfKeyValueStoreTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private EfKeyValueStore CreateStore()
-        => new EfKeyValueStore(new EfKeyValueStoreTestDbContextFactory(_dbOptions));
+    private PostgresKeyValueStore CreateStore()
+        => new PostgresKeyValueStore(new PostgresKeyValueStoreTestDbContextFactory(_dbOptions));
 
     // ── GetAsync ─────────────────────────────────────────────────────────
 
@@ -95,10 +95,10 @@ public class EfKeyValueStoreTests : IDisposable
 }
 
 /// <summary>Helper: IDbContextFactory backed by InMemory provider.</summary>
-file class EfKeyValueStoreTestDbContextFactory : IDbContextFactory<PipelineDbContext>
+file class PostgresKeyValueStoreTestDbContextFactory : IDbContextFactory<PipelineDbContext>
 {
     private readonly DbContextOptions<PipelineDbContext> _options;
-    public EfKeyValueStoreTestDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
+    public PostgresKeyValueStoreTestDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
     public PipelineDbContext CreateDbContext() => new(_options);
     public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
         => Task.FromResult(CreateDbContext());

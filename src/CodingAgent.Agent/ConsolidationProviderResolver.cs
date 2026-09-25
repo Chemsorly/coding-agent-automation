@@ -1,3 +1,4 @@
+using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.GitLab;
 using CodingAgent.Pipeline;
@@ -262,25 +263,18 @@ internal sealed class ConsolidationProviderResolver
         // includeIssuePermission = true for RefactoringDetection, so the repo token already
         // carries issues:write scope — no separate ProviderKind.Issue path exists.
         //
-        // NOTE: owner and repo null-checks above are intentionally evaluated BEFORE this branch.
-        // The proxy path returns early here and skips the token null-check below, but
-        // GitHubConnectionInfo construction still requires non-null owner and repo. Any future
-        // refactor that moves this branch earlier (before the owner/repo guards) would construct
-        // GitHubConnectionInfo with null values. Keep the owner/repo guards above this branch.
-        // TODO [WARNING]: The lambda captures orchestratorProxy by reference. OrchestratorProxy
+        // TODO: The lambda captures orchestratorProxy by reference. OrchestratorProxy
         // is IDisposable and is owned by LocalConsolidationExecutor, which disposes it after the
         // consolidation run completes. If issue-creation retries in RefactoringExecutor.CreateIssuesAsync
         // outlive the proxy's disposal, the delegate will invoke a disposed object. This widens the
         // same risk that already exists on the repo provider closure. Consider passing a scoped refresh
         // func with a clear lifetime boundary rather than closing over the proxy directly.
-        // (Correctness / DotNetSpecialist)
-        // TODO [WARNING]: includeIssuePermission: true is only honored for GitHub App-backed repo
+        // TODO: includeIssuePermission: true is only honored for GitHub App-backed repo
         // providers (those with privateKeyBase64). If the repo provider is PAT/static-token
         // configured (no privateKeyBase64), AgentTokenRefreshService.VendTokenAsync will silently
         // ignore the flag and return the static token unchanged — no issues:write guarantee.
         // RefactoringDetection is expected to always use a GitHub App, but if it is ever enabled
         // for a PAT-only repo provider the 403 will still occur after token expiry.
-        // (Correctness Review)
         if (orchestratorProxy is not null)
             return new GitHubIssueProvider(connection,
                 refreshCt => orchestratorProxy.RequestTokenRefreshAsync(ProviderKind.Repository, refreshCt, includeIssuePermission: true));
@@ -300,27 +294,18 @@ internal sealed class ConsolidationProviderResolver
     private static GitLabIssueProvider CreateGitLabIssueProvider(ProviderConfig issueConfig)
     {
         var apiUrl = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ApiUrl, ProviderSettingKeys.DefaultGitLabApiUrl);
-        var accessToken = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.AccessToken);
-        if (accessToken is null)
-        {
-            Serilog.Log.Error("Issue provider '{DisplayName}' is missing 'accessToken' setting for consolidation", issueConfig.DisplayName);
-            throw new InvalidOperationException(
-                $"Issue provider '{issueConfig.DisplayName}' is missing 'accessToken' setting for consolidation");
-        }
-        var projectIdStr = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId);
-        if (projectIdStr is null)
-        {
-            Serilog.Log.Error("Issue provider '{DisplayName}' is missing 'projectId' setting for consolidation", issueConfig.DisplayName);
-            throw new InvalidOperationException(
-                $"Issue provider '{issueConfig.DisplayName}' is missing 'projectId' setting for consolidation");
-        }
 
-        if (!int.TryParse(projectIdStr, out var projectId))
-        {
-            Serilog.Log.Error("Issue provider '{DisplayName}' has invalid projectId: '{ProjectId}'. Expected a numeric value", issueConfig.DisplayName, projectIdStr);
-            throw new InvalidOperationException(
-                $"Issue provider '{issueConfig.DisplayName}' has invalid projectId: '{projectIdStr}'. Expected a numeric value.");
-        }
+        // Validate required settings through the shared helper (throws ArgumentException with all
+        // missing keys in one message, consistent with ProviderFactory and AgentProviderFactory).
+        ProviderFactory.ValidateRequiredSettings(issueConfig,
+            ProviderSettingKeys.AccessToken,
+            ProviderSettingKeys.ProjectId);
+
+        var accessToken = issueConfig.Settings[ProviderSettingKeys.AccessToken];
+
+        // Parse projectId through the shared helper (throws ArgumentException, consistent with
+        // ProviderFactory.ParseProjectId used by all other GitLab provider construction paths).
+        var projectId = ProviderFactory.ParseProjectId(issueConfig);
 
         return new GitLabIssueProvider(apiUrl, accessToken, projectId);
     }

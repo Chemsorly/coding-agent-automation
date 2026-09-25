@@ -50,6 +50,17 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     /// <inheritdoc />
     public async Task<PipelineRun?> FailRunAsync(RunId runId, string failureReason, CancellationToken ct, FailureReason? failureReasonEnum = null)
     {
+        return await FailRunCoreAsync(runId, failureReason, resolvedFinalLabel: null, ct, failureReasonEnum);
+    }
+
+    /// <inheritdoc />
+    public async Task<PipelineRun?> FailRunWithLabelAsync(RunId runId, string failureReason, string? resolvedFinalLabel, CancellationToken ct, FailureReason? failureReasonEnum = null)
+    {
+        return await FailRunCoreAsync(runId, failureReason, resolvedFinalLabel, ct, failureReasonEnum);
+    }
+
+    private async Task<PipelineRun?> FailRunCoreAsync(RunId runId, string failureReason, string? resolvedFinalLabel, CancellationToken ct, FailureReason? failureReasonEnum)
+    {
         ArgumentException.ThrowIfNullOrEmpty(runId.Value);
 
         // Atomic claim: RemoveRun returns null if another thread already processed this run
@@ -80,12 +91,19 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         // 3. Clear agent state
         await ClearAgentStateAsync(run.AgentId);
 
-        // 4. Compute the target label — respect pipeline-determined FinalLabel, fall back to agent:error
+        // 4. Apply the pre-resolved label from the HTTP path (if provided), then compute target label.
+        //    resolvedFinalLabel is set by WorkItemStatusTransitionService when the HTTP POST payload
+        //    carries agent:needs-refinement; it is null for all other callers (timeouts, reconciliation,
+        //    operator cancel). When non-null, it overrides the default agent:error fallback.
+        if (resolvedFinalLabel is not null && AgentLabels.All.Contains(resolvedFinalLabel))
+            run.FinalLabel = resolvedFinalLabel;
+
+        // 5. Compute the target label — respect pipeline-determined FinalLabel, fall back to agent:error
         var errorLabel = run.FinalLabel is not null && AgentLabels.All.Contains(run.FinalLabel)
             ? run.FinalLabel
             : AgentLabels.Error;
 
-        // 5. Shared terminal cleanup: history-persist → span-finalize → label-swap
+        // 6. Shared terminal cleanup: history-persist → span-finalize → label-swap
         // TODO: [WARNING] The non-cancellation branch in RunTerminalCleanupAsync calls FinalizeOrchestratorSpan,
         //       which sets pipeline.agent_id on the span. The original FailRunAsync path did NOT set this tag.
         //       This is additive/harmless telemetry, but is a behavioural delta from the pre-refactor Fail path.
@@ -93,7 +111,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         //       FinalizeOrchestratorSpan or add an explicit pipeline.agent_id assertion to the characterization tests.
         await RunTerminalCleanupAsync(run, errorLabel, WorkItemStatus.Failed, failureReason, isCancellation: false, ct);
 
-        // 6. Delete K8s Job to prevent pod retries consuming backoffLimit (mirrors CancelRunAsync step 6).
+        // 7. Delete K8s Job to prevent pod retries consuming backoffLimit (mirrors CancelRunAsync step 6).
         // Best-effort: if the Job is already gone or K8s is unavailable, the warning is logged by KubernetesJobCleanup.
         if (_jobCleanup is not null)
             await _jobCleanup.TryDeleteJobForRunAsync(runId, ct);

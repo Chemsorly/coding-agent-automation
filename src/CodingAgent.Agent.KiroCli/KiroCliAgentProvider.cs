@@ -177,6 +177,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
             UseShellExecute = false,
             CreateNoWindow = true
         };
+        ChildProcessEnvironment.StripTelemetry(psi);
 
         using var process = _processStarter.Start(psi);
         if (process is null)
@@ -215,6 +216,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            ChildProcessEnvironment.StripTelemetry(psi);
 
             using var process = _processStarter.Start(psi);
             if (process == null) return null;

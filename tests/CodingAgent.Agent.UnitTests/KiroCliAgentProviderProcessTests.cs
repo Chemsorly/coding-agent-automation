@@ -12,6 +12,7 @@ namespace CodingAgent.Agent.UnitTests;
 /// Tests for process-spawning methods in KiroCliAgentProvider via IProcessStarter abstraction.
 /// These tests spawn real /bin/sh processes and only run on Linux/macOS (CI environment).
 /// </summary>
+[Collection("EnvironmentVariables")]
 public class KiroCliAgentProviderProcessTests
 {
     private readonly Mock<IKiroCliOrchestrator> _mockOrchestrator = new();
@@ -219,6 +220,71 @@ public class KiroCliAgentProviderProcessTests
             It.IsAny<Exception>(),
             It.IsAny<string>(),
             It.IsAny<WorkspacePath>()), Times.Once);
+    }
+
+    // ─── OTEL env-var stripping ──────────────────────────────────────────
+
+    /// <summary>
+    /// Uses Moq Callback to capture the ProcessStartInfo before the mock "starts" the process,
+    /// then asserts that ChildProcessEnvironment.StripTelemetry ran before the call.
+    /// The test sets OTEL_* keys in the parent process so they land in the PSI copy.
+    /// </summary>
+    [Fact]
+    public async Task ValidateAsync_DoesNotPassOtelEnvVarsToChildProcess()
+    {
+        const string otelKey = "OTEL_EXPORTER_OTLP_ENDPOINT";
+        var previous = Environment.GetEnvironmentVariable(otelKey);
+        Environment.SetEnvironmentVariable(otelKey, "http://grafana.example.com:4317");
+        try
+        {
+            ProcessStartInfo? captured = null;
+            _mockProcessStarter
+                .Setup(p => p.Start(It.IsAny<ProcessStartInfo>()))
+                .Callback<ProcessStartInfo>(psi => captured = psi)
+                .Returns(() => StartShellProcess(exitCode: 0));
+
+            var provider = CreateProvider();
+            await provider.ValidateAsync(CancellationToken.None);
+
+            captured.Should().NotBeNull("the process starter must have been called");
+            // OTEL key must have been stripped before Start() was called
+            captured!.Environment.ContainsKey(otelKey).Should().BeFalse(
+                "OTEL vars must be stripped before handing PSI to IProcessStarter");
+            // Non-telemetry content is still present (proves strip ran, not a no-op)
+            captured.Environment.ContainsKey("PATH").Should().BeTrue();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(otelKey, previous);
+        }
+    }
+
+    [Fact]
+    public async Task GetLatestSessionIdAsync_DoesNotPassOtelEnvVarsToChildProcess()
+    {
+        const string otelKey = "OTEL_SERVICE_NAME";
+        var previous = Environment.GetEnvironmentVariable(otelKey);
+        Environment.SetEnvironmentVariable(otelKey, "coding-agent-worker-test");
+        try
+        {
+            ProcessStartInfo? captured = null;
+            _mockProcessStarter
+                .Setup(p => p.Start(It.IsAny<ProcessStartInfo>()))
+                .Callback<ProcessStartInfo>(psi => captured = psi)
+                .Returns(() => StartShellProcess(stdout: "session-id-123456789\n", exitCode: 0));
+
+            var provider = CreateProvider();
+            await provider.GetLatestSessionIdAsync("/workspace", CancellationToken.None);
+
+            captured.Should().NotBeNull("the process starter must have been called");
+            captured!.Environment.ContainsKey(otelKey).Should().BeFalse(
+                "OTEL vars must be stripped before handing PSI to IProcessStarter");
+            captured.Environment.ContainsKey("PATH").Should().BeTrue();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(otelKey, previous);
+        }
     }
 
     // ─── GetHealthStatus ─────────────────────────────────────────────────
