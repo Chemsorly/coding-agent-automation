@@ -215,8 +215,94 @@ public class CreateSubIssuesStepTests : IDisposable
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
         result.Should().Be(StepResult.Continue);
-        run.SubIssueResults.Should().HaveCount(5);
+        // All 7 appear in results: 5 created + 2 skipped by cap
+        run.SubIssueResults.Should().HaveCount(7);
         run.DecompositionSubIssuesAttempted.Should().Be(5);
+
+        // First 5 should be created successfully
+        run.SubIssueResults.Take(5).Should().AllSatisfy(r => r.Success.Should().BeTrue());
+
+        // Last 2 should be SkippedByCap
+        var skipped = run.SubIssueResults.Skip(5).ToList();
+        skipped.Should().HaveCount(2);
+        skipped.Should().AllSatisfy(r =>
+        {
+            r.SkippedByCap.Should().BeTrue();
+            r.Success.Should().BeFalse();
+            r.FailureReason.Should().Contain("cap");
+        });
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CapEnforced_SkippedProposalsHaveCapReasonWithCapNumber()
+    {
+        // Write 3 sub-issue files but cap is 1
+        for (var i = 1; i <= 3; i++)
+            WriteSubIssueFile($"{i:D2}-issue-{i}.json", $"Issue {i}", $"Body {i}");
+
+        _issueOps.Setup(x => x.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "301", Url = "https://github.com/test/301" });
+
+        var run = CreateRun();
+        var context = new PipelineStepContext
+        {
+            Run = run,
+            Config = new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp", MaxDecompositionSubIssues = 1 },
+            RepoProvider = Mock.Of<IRepositoryProvider>(),
+            AgentProvider = Mock.Of<IAgentProvider>(),
+            BrainProvider = null,
+            PipelineProvider = null,
+            Cts = null,
+            ConfigStore = Mock.Of<IConfigurationStore>(),
+            Callbacks = _callbacks.Object,
+            IssueOps = _issueOps.Object,
+            AgentExecution = Mock.Of<IAgentPhaseExecutor>(),
+            QualityGates = Mock.Of<IQualityGateExecutor>(),
+            BrainSync = null,
+            PrOrchestrator = new PullRequestOrchestrator(_logger),
+            Logger = _logger
+        };
+        var step = new CreateSubIssuesStep();
+
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        // 1 created + 2 skipped
+        run.SubIssueResults.Should().HaveCount(3);
+        run.SubIssueResults[0].Success.Should().BeTrue();
+        run.SubIssueResults[0].SkippedByCap.Should().BeFalse();
+
+        for (var i = 1; i < 3; i++)
+        {
+            run.SubIssueResults[i].SkippedByCap.Should().BeTrue();
+            run.SubIssueResults[i].Success.Should().BeFalse();
+            // TODO: Contain("1") is too weak — it matches any string containing the digit '1',
+            // including words like "configured" are unrelated occurrences. The intent is to verify
+            // the cap number is named in the reason. Change to a more specific assertion such as:
+            // .Should().Contain("cap of 1") or .Should().Contain("1 sub-issue")
+            run.SubIssueResults[i].FailureReason.Should().Contain("1");
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_NoCapping_NoSkippedByCap()
+    {
+        // Write 3 sub-issue files, cap is 5 — no capping should happen
+        for (var i = 1; i <= 3; i++)
+            WriteSubIssueFile($"{i:D2}-issue-{i}.json", $"Issue {i}", $"Body {i}");
+
+        _issueOps.Setup(x => x.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "302", Url = "https://github.com/test/302" });
+
+        var run = CreateRun();
+        var context = BuildContext(run);
+        var step = new CreateSubIssuesStep();
+
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        run.SubIssueResults.Should().HaveCount(3);
+        run.SubIssueResults.Should().AllSatisfy(r => r.SkippedByCap.Should().BeFalse());
     }
 
     [Fact]

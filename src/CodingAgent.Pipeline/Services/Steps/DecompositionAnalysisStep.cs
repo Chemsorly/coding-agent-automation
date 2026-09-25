@@ -133,8 +133,8 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
         var reviewResult = await AdversarialReviewHelper.ExecuteReviewAsync(
             context.AgentProvider,
             run.WorkspacePath!,
-            DecompositionPromptBuilder.BuildReviewPrompt(maxFiles, context.ProjectContext),
-            DecompositionPromptBuilder.BuildRefinementPrompt(maxFiles),
+            DecompositionPromptBuilder.BuildReviewPrompt(maxFiles, maxSubIssues, context.ProjectContext),
+            DecompositionPromptBuilder.BuildRefinementPrompt(maxFiles, maxSubIssues),
             AgentWorkspacePaths.DecompositionReviewFilePath,
             new AdversarialReviewConfig
             {

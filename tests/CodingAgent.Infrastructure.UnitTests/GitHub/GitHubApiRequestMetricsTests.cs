@@ -18,6 +18,15 @@ namespace CodingAgent.Infrastructure.UnitTests.GitHub;
 /// Key design: the counter is emitted INSIDE the Polly retry lambda, not in the outer
 /// catch blocks, so every attempt (including retried ones) increments the counter.
 /// </summary>
+/// <remarks>
+/// Placed in the <c>GitHubTelemetry</c> collection to serialize with
+/// <see cref="GitHubRateLimitGaugeTests"/>. This class subscribes to all instruments on the
+/// shared <c>CodingAgent.GitHub</c> meter (including the rate-limit observable gauge).
+/// Running concurrently with <c>GitHubRateLimitGaugeTests</c> can cause spurious
+/// <c>RecordObservableInstruments</c> triggers that race on the shared static volatile
+/// rate-limit fields in <see cref="GitHubTelemetry"/>.
+/// </remarks>
+[Collection("GitHubTelemetry")]
 public class GitHubApiRequestMetricsTests : IDisposable
 {
     private const string TestOperation = "TestOperation";
