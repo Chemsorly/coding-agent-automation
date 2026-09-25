@@ -97,21 +97,24 @@ public class OrchestratorExecutePipelineSpanTests : IDisposable
     [Fact]
     public void CreateFromWorkItem_ConsolidationRun_DoesNotStartActivity()
     {
-        // Consolidation runs are tracked via ConsolidationRun, not PipelineRun.
-        // CreateFromWorkItem returns null for consolidation — no span should be started.
-        var request = BuildRequest("run-consolidation", "owner/repo#1", PipelineRunType.Consolidation,
+        // Consolidation runs produce a real PipelineRun (issue #3023) but do NOT get an
+        // OrchestratorActivity span — they return before the StartActivity block.
+        var request = BuildRequest("run-consolidation", "consolidation#1", PipelineRunType.Consolidation,
             taskType: WorkItemTaskType.Consolidation);
         var activityCountBefore = _startedActivities.Count;
 
         var run = PipelineRunFactory.CreateFromWorkItem(Guid.NewGuid(), request);
 
-        run.Should().BeNull();
+        run.Should().NotBeNull("consolidation runs now materialise a PipelineRun (issue #3023)");
+        run!.RunType.Should().Be(PipelineRunType.Consolidation);
+        run.OrchestratorActivity.Should().BeNull("consolidation runs must not start an ExecutePipeline span");
         // No additional activities should have been started for the consolidation run
-        // TODO: Also assert _stoppedActivities did not grow — a span that is started and immediately
-        // disposed would increment _startedActivities and _stoppedActivities but not show as "net new"
-        // in the count delta. Checking both started and stopped counts would make the assertion
-        // unambiguous. See review warning (issue #2255).
         _startedActivities.Count.Should().Be(activityCountBefore);
+        // TODO: Also assert _stoppedActivities.Count.Should().Be(stoppedCountBefore) to catch the case where
+        // a span is started-and-immediately-disposed inside the consolidation branch. A start+dispose would
+        // leave _startedActivities.Count unchanged (net zero delta) while incrementing _stoppedActivities,
+        // so this assertion is needed to close the gap. run.OrchestratorActivity.Should().BeNull() only helps
+        // if the activity reference is assigned to the run field. See review warning (issue #3023).
     }
 
     // ── Terminal transitions stop the span ────────────────────────────────────
