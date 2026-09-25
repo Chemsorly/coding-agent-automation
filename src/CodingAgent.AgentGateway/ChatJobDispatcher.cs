@@ -82,7 +82,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     internal sealed class WatcherEntry
     {
         public Task WatcherTask = Task.CompletedTask; // assigned after construction; see RegisterWatcher
-        public readonly string AgentId;  // dict key; == jobName in production, may differ in tests
+        public readonly AgentId AgentId;  // dict key (.Value); == jobName in production, may differ in tests
         public readonly string JobName;
         public readonly string NormalizedSelector;
         public readonly string? ClaimedPvc;
@@ -102,7 +102,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
         public WatcherEntry(WatcherIdentity identity, DateTimeOffset startedAt, CancellationTokenSource watcherCts)
         {
-            AgentId = identity.AgentId.Value;
+            AgentId = identity.AgentId;
             JobName = identity.JobName;
             NormalizedSelector = identity.NormalizedSelector;
             ClaimedPvc = identity.ClaimedPvc;
@@ -423,19 +423,14 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     /// Updates the in-process local ticks directly (fast path for same-replica checks) and delegates
     /// the Redis write to <see cref="IChatHeartbeatTracker"/> (cross-replica path).
     /// </summary>
-    public void RecordClientHeartbeat(string agentId)
+    public void RecordClientHeartbeat(AgentId agentId)
     {
-        // TODO [WARNING]: agentId is not null-checked here. A null agentId throws
-        // ArgumentNullException from ConcurrentDictionary.TryGetValue(null) rather than
-        // producing a documented idempotent no-op. Add ArgumentNullException.ThrowIfNull(agentId)
-        // or an explicit null early-return, and add a test covering the null case.
-        // See review finding: Correctness WARNING @ ChatJobDispatcher.cs:426.
         var nowTicks = DateTimeOffset.UtcNow.UtcTicks;
 
         // Update local in-process clock (fast path — same replica).
         // Interlocked.Exchange stays here because it operates directly on WatcherEntry.LastClientHeartbeatTicks,
         // an internal field that the tracker has no access to.
-        if (_activeWatchers.TryGetValue(agentId, out var entry))
+        if (_activeWatchers.TryGetValue(agentId.Value, out var entry))
             Interlocked.Exchange(ref entry.LastClientHeartbeatTicks, nowTicks);
 
         // Write to Redis so other replicas' watchers see the heartbeat.
@@ -445,6 +440,15 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     }
 
     // IChatJobDispatcher bridge — routes the interface method to the internal implementation.
+    // TODO [WARNING]: IChatJobDispatcher.SendClientKeepalive(string) was not migrated to AgentId as
+    // part of issue #2996. The implicit (AgentId)(string) conversion here works correctly for valid
+    // non-null/non-empty strings, but a null or empty agentId arriving at this bridge will throw
+    // ArgumentException from inside the implicit operator rather than an explicit guard at the public
+    // boundary. The regex guard in ChatEndpoints prevents null/empty from the HTTP path in practice,
+    // but this is an unintended behavior difference from the removed ArgumentNullException.ThrowIfNull
+    // guards. Migrate IChatJobDispatcher.SendClientKeepalive to AgentId to eliminate the implicit
+    // conversion and make the guard explicit at the interface boundary.
+    // See review findings: DotNetSpecialist WARNING @ ChatJobDispatcher.cs:443, Correctness WARNING @ ApiChatJobDispatcher.cs:57.
     void IChatJobDispatcher.SendClientKeepalive(string agentId) => RecordClientHeartbeat(agentId);
 
     // ─── CleanupSession ───────────────────────────────────────────────────────
@@ -455,12 +459,12 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     /// double-decrement of metrics when both paths race to see a terminal job.
     /// Stays on <see cref="ChatJobDispatcher"/> because it owns <see cref="_activeWatchers"/>.
     /// </summary>
-    internal void CleanupSession(string agentId, WatcherEntry entry, string selectorEncoded, string outcome)
+    internal void CleanupSession(AgentId agentId, WatcherEntry entry, string selectorEncoded, string outcome)
     {
         if (Interlocked.CompareExchange(ref entry.Cleaned, 1, 0) != 0)
             return;
 
-        _activeWatchers.TryRemove(agentId, out _);
+        _activeWatchers.TryRemove(agentId.Value, out _);
 
         var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, selectorEncoded);
         ChatTelemetry.SessionsActive.Add(-1, selectorTag);
@@ -543,7 +547,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
         activity?.SetTag("job_name", entry.JobName);
 
-        await TrySendCancelChatAsync(agentId.Value, entry);
+        await TrySendCancelChatAsync(agentId, entry);
 
         var gracePeriod = TimeSpan.FromSeconds(_options.ChatTerminationGracePeriodSeconds);
         using var graceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -565,11 +569,11 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             try { await entry.WatcherCts.CancelAsync(); }
             catch (ObjectDisposedException) { /* WatcherCts already disposed by CleanupSession on the watcher thread — safe to ignore */ }
             activity?.SetTag(TagOutcome, "force_delete");
-            await ForceDeleteAndCleanupAsync(agentId.Value, entry);
+            await ForceDeleteAndCleanupAsync(agentId, entry);
         }
     }
 
-    private async Task TrySendCancelChatAsync(string agentId, WatcherEntry entry)
+    private async Task TrySendCancelChatAsync(AgentId agentId, WatcherEntry entry)
     {
         if (Interlocked.CompareExchange(ref entry.CancelSent, 1, 0) != 0)
             return;
@@ -602,7 +606,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         }
     }
 
-    private async Task ForceDeleteAndCleanupAsync(string agentId, WatcherEntry entry)
+    private async Task ForceDeleteAndCleanupAsync(AgentId agentId, WatcherEntry entry)
     {
         _logger.Warning(
             "ChatJobDispatcher: grace period expired for {JobName} — force deleting job", entry.JobName);
@@ -618,7 +622,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                 entry.JobName, ex.Message);
         }
 
-        _registry.Deregister(new AgentId(agentId));
+        _registry.Deregister(agentId);
 
         var selectorEncoded = entry.NormalizedSelector.Replace(',', '_');
         CleanupSession(agentId, entry, selectorEncoded, "force_deleted");
@@ -687,7 +691,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     internal Task? TryGetWatcherTask(string agentId)
         => _activeWatchers.TryGetValue(agentId, out var entry) ? entry.WatcherTask : null;
 
-    internal (string AgentId, string JobName, string NormalizedSelector, string? ClaimedPvc)?
+    internal (AgentId AgentId, string JobName, string NormalizedSelector, string? ClaimedPvc)?
         TryGetWatcherFields(string agentId)
     {
         if (!_activeWatchers.TryGetValue(agentId, out var entry))
