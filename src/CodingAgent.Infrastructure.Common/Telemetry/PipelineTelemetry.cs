@@ -274,9 +274,9 @@ public static class PipelineTelemetry
         /// <summary>PR's branch is currently occupied by an active agent run.</summary>
         public const string ActiveRun = "active_run";
         /// <summary>PR already occupies a concurrency slot from a previous trigger (in-flight CI).</summary>
-        public const string InFlight  = "in_flight";
+        public const string InFlight = "in_flight";
         /// <summary>PR was triggered too recently and is within the trigger cooldown window.</summary>
-        public const string Cooldown  = "cooldown";
+        public const string Cooldown = "cooldown";
     }
 
     // Label swap metrics
