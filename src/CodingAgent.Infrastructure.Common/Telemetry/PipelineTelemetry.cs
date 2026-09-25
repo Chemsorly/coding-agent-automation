@@ -168,6 +168,19 @@ public static class PipelineTelemetry
         "Stale agent branches deleted (no open PR, inactive issue label)");
 
     /// <summary>
+    /// Counts agent:done PRs evaluated per housekeeping sweep, tagged by their resolved
+    /// <c>mergeability_status</c> (behind | up_to_date | conflicted | blocked | unknown).
+    /// Emitted once per distinct status value that appears in a sweep's mergeability map,
+    /// using the aggregate count for that status (one <c>Add(N)</c> per status, not one per PR).
+    /// Only emitted when the agent:done PR list is non-empty.
+    /// Pair with the sweep Debug log line for per-sweep snapshots; use rate/sum queries
+    /// for timeline analysis of GitHub mergeability-state distribution over time.
+    /// </summary>
+    public static readonly Counter<long> HousekeepingPrEvaluated = Meter.CreateCounter<long>(
+        "pipeline.housekeeping.pr_evaluated", UnitUpdate,
+        "Agent:done PRs evaluated per housekeeping sweep, tagged by mergeability_status (behind | up_to_date | conflicted | blocked | unknown)");
+
+    /// <summary>
     /// Counts re-probe batches fired for PRs whose first mergeability probe returned
     /// <c>unknown</c>. Tagged by <c>repo_provider_id</c>. Each increment represents one
     /// <c>Task.Delay</c> + re-probe pass (i.e. one cycle had at least one Unknown PR).
