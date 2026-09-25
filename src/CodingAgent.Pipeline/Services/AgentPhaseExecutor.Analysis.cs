@@ -231,7 +231,9 @@ public partial class AgentPhaseExecutor
                 WorkspacePath = run.WorkspacePath!,
                 Timeout = config.AgentTimeout,
                 UseResume = true,
-                ImagePaths = context.DownloadedImages?.Select(d => d.LocalPath).ToList(),
+                ImagePaths = context.Config.EnableNativeImageParts
+                    ? context.DownloadedImages?.Select(d => d.LocalPath).ToList()
+                    : null,
                 EnvironmentVariables = context.InjectedSecrets
             },
             run, config, "Analysis agent", context.Callbacks.NotifyChange, _logger, ct,
