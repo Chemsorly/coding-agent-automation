@@ -39,6 +39,12 @@ public sealed class CreateBranchStep : IPipelineStep
         // Check PR state before any git operations — fail-open if state check errors.
         // This catches rework and Review runs dispatched against a PR that was already merged
         // or closed while the work item was waiting in the Pending queue.
+        // TODO [WARNING] (Correctness): This guard fires only when context.Run.LinkedPullRequest is not null
+        // (branch point is ExecuteAsync line ~26: LinkedPullRequest == null → CreateNewBranchAsync).
+        // New-issue implementation runs have no LinkedPullRequest and therefore skip this check — which is
+        // correct since they have no associated PR to guard. Any future code path that sets LinkedPullRequest
+        // on a non-rework run would bypass this guard silently. The guard's applicability is scoped to
+        // LinkedPullRequest != null, which correctly covers rework and Review runs as required by #2954.
         var prNum = pr.Number;
         PullRequestState prState;
         try

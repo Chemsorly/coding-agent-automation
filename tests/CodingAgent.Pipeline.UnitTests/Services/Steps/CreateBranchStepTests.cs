@@ -71,6 +71,10 @@ public class CreateBranchStepTests
     /// <summary>
     /// Same test for a Review run — the guard must fire for all run types that use CheckoutAndMergeAsync.
     /// </summary>
+    // TODO [WARNING] (TestQualityReviewer): There is no corresponding test for PipelineRunType.Rework.
+    // The acceptance criterion specifically targets "rework and Review runs". If CreateBranchStep ever
+    // branches on RunType, a rework run could slip through. Add a test with PipelineRunType.Rework or
+    // confirm the step does not branch on run type (in which case the existing tests are sufficient).
     [Fact]
     public async Task WhenPrAlreadyMerged_ReviewRun_StopsWithoutCheckout()
     {
@@ -101,6 +105,10 @@ public class CreateBranchStepTests
     /// - Set run.FinalLabel = Cancelled
     /// - Not call CheckoutRemoteBranchAsync
     /// </summary>
+    // TODO [WARNING] (TestQualityReviewer): WhenPrAlreadyClosed_StopsWithoutCheckout_AndSetsPrClosedStep only tests
+    // PipelineRunType.Implementation. There is no corresponding WhenPrAlreadyClosed_ReviewRun_StopsWithoutCheckout test.
+    // Given that WhenPrAlreadyMerged_ReviewRun_StopsWithoutCheckout exists for the merged path, the closed path should
+    // have the same coverage for consistency and to catch any run-type-conditional branching.
     [Fact]
     public async Task WhenPrAlreadyClosed_StopsWithoutCheckout_AndSetsPrClosedStep()
     {

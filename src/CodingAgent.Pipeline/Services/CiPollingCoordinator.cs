@@ -644,6 +644,10 @@ internal sealed class CiPollingCoordinator
     {
         run.FinalLabel = null;    // Run succeeds — no error label
         run.FailureReason = null;
+        // TODO [WARNING] (DotNetSpecialist): run.CurrentStep is mutated before run.MarkCompleted() stamps
+        // CompletedAt. A concurrent reader observing the PipelineRun object between these two lines will see
+        // CurrentStep = PrMerged with CompletedAt = null. Swapping the order (MarkCompleted() first, then
+        // CurrentStep assignment) would close this window. This is consistent with ConflictRestart ordering.
         run.CurrentStep = PipelineStep.PrMerged;
         callbacks.EmitOutputLine($"✅ PR #{prNum} was merged — nothing left to do");
         callbacks.TransitionTo(PipelineStep.PrMerged);
@@ -659,6 +663,8 @@ internal sealed class CiPollingCoordinator
     private PipelineRunStatus BuildPrClosedStatus(PipelineRun run, int prNum, IPipelineCallbacks callbacks)
     {
         run.FinalLabel = AgentLabels.Cancelled;
+        // TODO [WARNING] (DotNetSpecialist): Same ordering concern as BuildPrMergedStatus — CurrentStep is
+        // set before MarkCompleted(), so a concurrent reader sees CurrentStep = PrClosed with CompletedAt = null.
         run.CurrentStep = PipelineStep.PrClosed;
         callbacks.EmitOutputLine($"🚫 PR #{prNum} was closed without merge — cancelling run");
         callbacks.TransitionTo(PipelineStep.PrClosed);

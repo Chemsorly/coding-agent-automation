@@ -41,13 +41,7 @@ public partial class QualityGateExecutor
             var report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
 
             report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: false, linkedCt);
-            // TODO [WARNING] (DotNetSpecialist): This guard is missing PrMerged and PrClosed. If CI polling detects a
-            // merged/closed PR on the very first AppendExternalCiIfNeededAsync call (before RunRetryLoopAsync is reached),
-            // run.CurrentStep will be PrMerged/PrClosed and BuildPrMergedReport returns Passed=true, so report.AllPassed
-            // becomes true and RunPostRetryCleanupAndFinalizeAsync is called on an already-merged PR (cleanup agent invoked,
-            // FinalizePullRequest called). Guard should be:
-            //   if (run.CurrentStep is PipelineStep.Failed or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
-            if (run.CurrentStep == PipelineStep.Failed) return;
+            if (run.CurrentStep is PipelineStep.Failed or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
 
             LogAndRecordReport(context, report, "quality gates");
 
@@ -193,11 +187,7 @@ public partial class QualityGateExecutor
         callbacks.TransitionTo(PipelineStep.RunningQualityGates);
         var report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
         report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, linkedCt, skipCiIfNoChanges: true);
-        // TODO [WARNING] (DotNetSpecialist): Same gap as the first AppendExternalCiIfNeededAsync guard in ProceedToQualityGatesAsync.
-        // If the final quality gate CI pass detects a merged/closed PR, report.AllPassed becomes true and FinalizePullRequest
-        // is called on the already-merged PR. Guard should be:
-        //   if (run.CurrentStep is PipelineStep.Failed or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
-        if (run.CurrentStep == PipelineStep.Failed) return;
+        if (run.CurrentStep is PipelineStep.Failed or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
 
         LogAndRecordReport(context, report, "final quality gates");
         report = await RunRetryLoopAsync(context, report, "Final QG retry agent", linkedCt);
@@ -370,6 +360,12 @@ public partial class QualityGateExecutor
             // Short-circuit: CI-never-started exhaustion is an infrastructure failure, not a code problem.
             // The LLM cannot fix a missing CI trigger — break immediately so FinalizeDraftPrAsync is called
             // instead of wasting a retry budget slot on a pointless agent invocation.
+            // TODO [WARNING] (Correctness): This PrMerged/PrClosed guard is defensive-redundant dead code.
+            // AppendExternalCiIfNeededAsync already sets run.CurrentStep to PrMerged/PrClosed and every
+            // call site immediately checks run.CurrentStep and returns before entering RunRetryLoopAsync.
+            // The guard therefore never fires in practice — RunRetryLoopAsync is never entered with
+            // CurrentStep already set to PrMerged or PrClosed. The active guard is the IsInfrastructureFailure
+            // check below. Consider removing this guard or adding a comment that explains the defensive intent.
             if (run.CurrentStep is PipelineStep.PrMerged or PipelineStep.PrClosed)
                 break;
             if (report.ExternalCi is { Passed: false, IsInfrastructureFailure: true })

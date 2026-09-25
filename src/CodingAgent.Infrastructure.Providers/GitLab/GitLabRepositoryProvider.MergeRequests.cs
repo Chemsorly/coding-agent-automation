@@ -166,6 +166,13 @@ public partial class GitLabRepositoryProvider
             client =>
             {
                 var mrClient = client.GetMergeRequest(ProjectId);
+                // TODO [WARNING] (DotNetSpecialist): Task.Run(() => mrClient[pullRequestNumber], ct) wraps a
+                // synchronous indexer in a thread-pool task. This is consistent with the pre-existing pattern
+                // used throughout this provider, but the CancellationToken is not respected for the synchronous
+                // portion — the indexer runs to completion regardless of cancellation. If the underlying GitLab
+                // client call blocks on a network socket, the thread-pool thread is pinned for the duration,
+                // which can cause thread-pool exhaustion under load. This is a pre-existing pattern and advisory
+                // for this provider; the new method introduces it on the CI-poll hot path (called every iteration).
                 return Task.Run(() => mrClient[pullRequestNumber], ct);
             },
             "GetPullRequestState", ct);
