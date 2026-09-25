@@ -335,4 +335,74 @@ public class GitLabRepositoryProviderAutoUpdateTests
         var provider = new GitLabRepositoryProvider(clientMock.Object, ProjectId, BaseBranch);
         return (provider, clientMock);
     }
+
+    // ── GetPullRequestStateAsync ──────────────────────────────────────────────
+
+    /// <summary>
+    /// GitLab MR with state="opened" must map to PullRequestState.Open.
+    /// </summary>
+    [Fact]
+    public async Task GetPullRequestStateAsync_OpenedMr_ReturnsOpen()
+    {
+        var (provider, _) = CreateProviderWithMrState("opened");
+        var result = await provider.GetPullRequestStateAsync(1, CancellationToken.None);
+        result.Should().Be(PullRequestState.Open);
+    }
+
+    /// <summary>
+    /// GitLab MR with state="merged" must map to PullRequestState.Merged.
+    /// </summary>
+    [Fact]
+    public async Task GetPullRequestStateAsync_MergedMr_ReturnsMerged()
+    {
+        var (provider, _) = CreateProviderWithMrState("merged");
+        var result = await provider.GetPullRequestStateAsync(1, CancellationToken.None);
+        result.Should().Be(PullRequestState.Merged);
+    }
+
+    /// <summary>
+    /// GitLab MR with state="closed" must map to PullRequestState.Closed.
+    /// </summary>
+    [Fact]
+    public async Task GetPullRequestStateAsync_ClosedMr_ReturnsClosed()
+    {
+        var (provider, _) = CreateProviderWithMrState("closed");
+        var result = await provider.GetPullRequestStateAsync(1, CancellationToken.None);
+        result.Should().Be(PullRequestState.Closed);
+    }
+
+    /// <summary>
+    /// GitLab MR with state="locked" (temporarily locked) must map to Open (fail-safe).
+    /// </summary>
+    [Fact]
+    public async Task GetPullRequestStateAsync_LockedMr_ReturnsOpen()
+    {
+        var (provider, _) = CreateProviderWithMrState("locked");
+        var result = await provider.GetPullRequestStateAsync(1, CancellationToken.None);
+        result.Should().Be(PullRequestState.Open, "locked MR is still open — must fail-open");
+    }
+
+    private static (GitLabRepositoryProvider Provider, Mock<IGitLabClient> ClientMock)
+        CreateProviderWithMrState(string state)
+    {
+        var mr = new MergeRequest
+        {
+            Iid = 1,
+            Title = "Test MR",
+            State = state,
+            SourceBranch = "feature/test",
+            TargetBranch = BaseBranch,
+            DetailedMergeStatus = new DynamicEnum<DetailedMergeStatus>(DetailedMergeStatus.Mergeable),
+            HasConflicts = false
+        };
+
+        var mrClientMock = new Mock<IMergeRequestClient>();
+        mrClientMock.Setup(c => c[1L]).Returns(mr);
+
+        var clientMock = new Mock<IGitLabClient>();
+        clientMock.Setup(c => c.GetMergeRequest(ProjectId)).Returns(mrClientMock.Object);
+
+        var provider = new GitLabRepositoryProvider(clientMock.Object, ProjectId, BaseBranch);
+        return (provider, clientMock);
+    }
 }

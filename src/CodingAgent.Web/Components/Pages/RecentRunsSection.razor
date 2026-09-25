@@ -80,6 +80,8 @@
                                             PipelineStep.Failed => "Failed",
                                             PipelineStep.Cancelled => "Cancelled",
                                             PipelineStep.ConflictRestart => "Restarted",
+                                            PipelineStep.PrMerged => "Merged",
+                                            PipelineStep.PrClosed => "Closed",
                                             _ => "Failed"
                                         };
                                         var resultClass = run.FinalStep switch
@@ -87,6 +89,8 @@
                                             PipelineStep.Completed => "step-completed",
                                             PipelineStep.Cancelled => "step-cancelled",
                                             PipelineStep.ConflictRestart => "step-restart",
+                                            PipelineStep.PrMerged => "step-completed",
+                                            PipelineStep.PrClosed => "step-cancelled",
                                             _ => "step-failed"
                                         };
                                     }

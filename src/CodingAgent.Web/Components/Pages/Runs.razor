@@ -154,6 +154,8 @@
                                 PipelineStep.Completed => "Completed",
                                 PipelineStep.Failed => "Failed",
                                 PipelineStep.Cancelled => "Cancelled",
+                                PipelineStep.PrMerged => "Merged",
+                                PipelineStep.PrClosed => "Closed",
                                 _ => "Running"
                             };
                             var resultClass = run.FinalStep switch
@@ -161,6 +163,8 @@
                                 PipelineStep.Completed => "step-completed",
                                 PipelineStep.Cancelled => "step-cancelled",
                                 PipelineStep.Failed => "step-failed",
+                                PipelineStep.PrMerged => "step-completed",
+                                PipelineStep.PrClosed => "step-cancelled",
                                 _ => "step-running"
                             };
                             var runTypeLabel = run.RunType switch

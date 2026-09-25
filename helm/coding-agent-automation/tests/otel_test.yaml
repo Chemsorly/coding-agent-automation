@@ -1,0 +1,214 @@
+# helm unittest suite for OTel service identity (issue #2969).
+# Run with: helm unittest helm/coding-agent-automation
+#
+# Covers the acceptance criteria for Helm template changes:
+#   1. apiServiceName defaults to "coding-agent-api" in the API deployment
+#   2. Explicit apiServiceName value is honored
+#   3. K8S_NAMESPACE_NAME (fieldRef metadata.namespace) is present in all four deployments
+#   4. K8S_POD_NAME (fieldRef metadata.name) is present in all four deployments
+#   5. OTEL_RESOURCE_ATTRIBUTES includes k8s.deployment.name in the three otelEnv deployments
+#   6. OTEL_RESOURCE_ATTRIBUTES references $(K8S_NAMESPACE_NAME) and $(K8S_POD_NAME) for substitution
+#   7. OTEL_RESOURCE_ATTRIBUTES is absent from web-env-configmap.yaml (moved to inline env:)
+#   8. Web deployment carries inline OTEL_RESOURCE_ATTRIBUTES with -web deployment name and k8s substitutions
+
+suite: otel env var rendering
+
+templates:
+  - templates/api-deployment.yaml
+  - templates/scheduler-deployment.yaml
+  - templates/jobcontroller-deployment.yaml
+  - templates/web-deployment.yaml
+  - templates/web-env-configmap.yaml
+
+# Required values to avoid render failures in dependent templates
+set:
+  database.host: "pg-host"
+  database.auth.existingSecret: "my-secret"
+  secrets.agentApiKey: "test-key"
+  api.enabled: true
+  jobController.enabled: true
+  scheduler.enabled: true
+
+tests:
+
+  # ── AC1: apiServiceName default renders as "coding-agent-api" ───────────────
+  - it: API deployment OTEL_SERVICE_NAME defaults to coding-agent-api when apiServiceName is not set
+    template: templates/api-deployment.yaml
+    set:
+      otel.apiServiceName: ""
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_SERVICE_NAME
+            value: "coding-agent-api"
+
+  # ── AC2: Explicit apiServiceName is honored ──────────────────────────────────
+  - it: API deployment OTEL_SERVICE_NAME uses explicit apiServiceName value
+    template: templates/api-deployment.yaml
+    set:
+      otel.apiServiceName: "coding-agent-api"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_SERVICE_NAME
+            value: "coding-agent-api"
+
+  # ── AC3: K8S_NAMESPACE_NAME with fieldRef in API deployment ──────────────────
+  - it: API deployment has K8S_NAMESPACE_NAME env var with fieldRef metadata.namespace
+    template: templates/api-deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: K8S_NAMESPACE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+
+  # ── AC3: K8S_NAMESPACE_NAME with fieldRef in scheduler deployment ─────────────
+  - it: scheduler deployment has K8S_NAMESPACE_NAME env var with fieldRef metadata.namespace
+    template: templates/scheduler-deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: K8S_NAMESPACE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+
+  # ── AC3: K8S_NAMESPACE_NAME with fieldRef in jobcontroller deployment ──────────
+  - it: jobcontroller deployment has K8S_NAMESPACE_NAME env var with fieldRef metadata.namespace
+    template: templates/jobcontroller-deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: K8S_NAMESPACE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+
+  # ── AC3: K8S_NAMESPACE_NAME with fieldRef in web deployment ──────────────────
+  - it: web deployment has K8S_NAMESPACE_NAME env var with fieldRef metadata.namespace
+    template: templates/web-deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: K8S_NAMESPACE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+
+  # ── AC4: K8S_POD_NAME with fieldRef in API deployment ────────────────────────
+  - it: API deployment has K8S_POD_NAME env var with fieldRef metadata.name
+    template: templates/api-deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: K8S_POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+
+  # ── AC4: K8S_POD_NAME with fieldRef in scheduler deployment ──────────────────
+  - it: scheduler deployment has K8S_POD_NAME env var with fieldRef metadata.name
+    template: templates/scheduler-deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: K8S_POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+
+  # ── AC4: K8S_POD_NAME with fieldRef in jobcontroller deployment ───────────────
+  - it: jobcontroller deployment has K8S_POD_NAME env var with fieldRef metadata.name
+    template: templates/jobcontroller-deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: K8S_POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+
+  # ── AC4: K8S_POD_NAME with fieldRef in web deployment ────────────────────────
+  - it: web deployment has K8S_POD_NAME env var with fieldRef metadata.name
+    template: templates/web-deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: K8S_POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+
+  # ── AC5: OTEL_RESOURCE_ATTRIBUTES includes k8s.deployment.name in API ─────────
+  - it: API deployment OTEL_RESOURCE_ATTRIBUTES includes k8s.deployment.name suffix
+    template: templates/api-deployment.yaml
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].env[?(@.name == "OTEL_RESOURCE_ATTRIBUTES")].value
+          pattern: "k8s\\.deployment\\.name=.*-api"
+
+  # ── AC5: OTEL_RESOURCE_ATTRIBUTES includes k8s.deployment.name in scheduler ───
+  - it: scheduler deployment OTEL_RESOURCE_ATTRIBUTES includes k8s.deployment.name suffix
+    template: templates/scheduler-deployment.yaml
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].env[?(@.name == "OTEL_RESOURCE_ATTRIBUTES")].value
+          pattern: "k8s\\.deployment\\.name=.*-scheduler"
+
+  # ── AC5: OTEL_RESOURCE_ATTRIBUTES includes k8s.deployment.name in jobcontroller
+  - it: jobcontroller deployment OTEL_RESOURCE_ATTRIBUTES includes k8s.deployment.name suffix
+    template: templates/jobcontroller-deployment.yaml
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].env[?(@.name == "OTEL_RESOURCE_ATTRIBUTES")].value
+          pattern: "k8s\\.deployment\\.name=.*-jobcontroller"
+
+  # ── AC6: OTEL_RESOURCE_ATTRIBUTES references $(K8S_NAMESPACE_NAME) in API ─────
+  - it: API deployment OTEL_RESOURCE_ATTRIBUTES references K8s substitution tokens
+    template: templates/api-deployment.yaml
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].env[?(@.name == "OTEL_RESOURCE_ATTRIBUTES")].value
+          pattern: "k8s\\.namespace\\.name=\\$\\(K8S_NAMESPACE_NAME\\)"
+      - matchRegex:
+          path: spec.template.spec.containers[0].env[?(@.name == "OTEL_RESOURCE_ATTRIBUTES")].value
+          pattern: "k8s\\.pod\\.name=\\$\\(K8S_POD_NAME\\)"
+
+  # ── AC6: OTEL_RESOURCE_ATTRIBUTES references $(K8S_NAMESPACE_NAME) in web ─────
+  - it: web deployment OTEL_RESOURCE_ATTRIBUTES references K8s substitution tokens
+    template: templates/web-deployment.yaml
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].env[?(@.name == "OTEL_RESOURCE_ATTRIBUTES")].value
+          pattern: "k8s\\.namespace\\.name=\\$\\(K8S_NAMESPACE_NAME\\)"
+      - matchRegex:
+          path: spec.template.spec.containers[0].env[?(@.name == "OTEL_RESOURCE_ATTRIBUTES")].value
+          pattern: "k8s\\.pod\\.name=\\$\\(K8S_POD_NAME\\)"
+
+  # ── AC6: web deployment OTEL_RESOURCE_ATTRIBUTES includes -web deployment name
+  - it: web deployment OTEL_RESOURCE_ATTRIBUTES includes k8s.deployment.name with -web suffix
+    template: templates/web-deployment.yaml
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].env[?(@.name == "OTEL_RESOURCE_ATTRIBUTES")].value
+          pattern: "k8s\\.deployment\\.name=.*-web"
+
+  # ── AC7: OTEL_RESOURCE_ATTRIBUTES absent from web-env-configmap.yaml ──────────
+  # It has been moved to an inline env: entry in web-deployment.yaml to allow $(VAR) substitution.
+  - it: web-env-configmap does not contain OTEL_RESOURCE_ATTRIBUTES key
+    template: templates/web-env-configmap.yaml
+    asserts:
+      - notExists:
+          path: data["OTEL_RESOURCE_ATTRIBUTES"]

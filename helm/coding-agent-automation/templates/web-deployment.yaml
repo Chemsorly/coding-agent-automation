@@ -148,6 +148,9 @@ spec:
             # This is safe in normal helm install/upgrade usage where values.yaml is always loaded.
             - name: Consolidation__UnifiedDispatch__Enabled
               value: {{ $web.consolidation.unifiedDispatch.enabled | quote }}
+            # Downward API: expose namespace and pod name so OTEL_RESOURCE_ATTRIBUTES can reference
+            # them via $(VAR_NAME) substitution. These MUST come before OTEL_RESOURCE_ATTRIBUTES.
+            {{- include "coding-agent-automation.otelEnv" (dict "serviceName" (.Values.otel.webServiceName | default .Values.otel.orchestratorServiceName | default "coding-agent-web") "deploymentName" (printf "%s-web" (include "coding-agent-automation.fullname" .)) "root" .) | nindent 12 }}
           volumeMounts:
             - name: job-templates
               mountPath: /app/config/job-templates.yaml
