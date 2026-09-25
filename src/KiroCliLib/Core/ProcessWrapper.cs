@@ -101,6 +101,11 @@ public class ProcessWrapper : IProcessWrapper
             CreateNoWindow = true
         };
 
+        // Strip OpenTelemetry vars before injecting per-invocation secrets so that
+        // (a) child processes cannot read the OTLP write token, and
+        // (b) quality-gate test hosts do not export spans/metrics to production.
+        ChildProcessEnvironment.StripTelemetry(startInfo);
+
         // Inject per-invocation environment variables into the child process.
         // These are isolated to this process launch and do not affect the parent process.
         if (environmentVariables is { Count: > 0 })
@@ -183,6 +188,7 @@ public class ProcessWrapper : IProcessWrapper
                             RedirectStandardError = true
                         }
                     };
+                    ChildProcessEnvironment.StripTelemetry(killProcess.StartInfo);
                     killProcess.Start();
                     killProcess.WaitForExit(WslKillTimeoutMs);
                 }

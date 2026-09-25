@@ -175,6 +175,72 @@ The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetr
 | `pipeline.db_retention.pipeline_runs_deleted` | Counter | {row} | — | `PipelineRuns` rows deleted by the per-project retention sweep |
 | `pipeline.db_retention.work_items_deleted` | Counter | {row} | — | `WorkItems` rows deleted by the per-project retention sweep |
 
+## Span Noise Filters
+
+About 70% of raw daily span volume is diagnostic noise: health probes, Kubernetes leader-election
+lease calls, UI polling, and chatty SignalR/Blazor callbacks. `OtelNoiseFilter`
+(`src/CodingAgent.Infrastructure.Common/Telemetry/OtelNoiseFilter.cs`, namespace
+`CodingAgent.Infrastructure.Telemetry`) is wired into all four long-lived hosts (Api, Web,
+Scheduler, JobController) to suppress this noise at the SDK level — before spans reach the OTLP
+exporter.
+
+### AspNetCore Request Filter
+
+`OtelNoiseFilter.FilterAspNetCoreRequest` is used as
+`AspNetCoreTraceInstrumentationOptions.Filter`. It drops requests whose path is exactly:
+
+| Path | Noise source |
+|------|-------------|
+| `/healthz` | Kubernetes liveness/startup probes |
+| `/readyz` | Kubernetes readiness probes |
+| `/loop/status` | Web → Scheduler polling (~57k spans/day per endpoint) |
+
+Sub-paths (e.g. `/healthz/detail`) are **kept** — the filter uses exact matching, not a prefix.
+
+### Kubernetes API Server Filter
+
+`OtelNoiseFilter.FilterHttpClientRequest` is used as
+`HttpClientTraceInstrumentationOptions.FilterHttpRequestMessage`. It drops outbound HTTP requests
+to the Kubernetes API server, which generates ~387k leader-election lease spans per day from
+Scheduler and JobController.
+
+Detection order:
+1. If `KUBERNETES_SERVICE_HOST` env var is set (in-cluster), the request's host is compared
+   against it.
+2. Fall back: match the well-known DNS alias `kubernetes.default.svc`.
+
+All other outbound requests are kept.
+
+### Outbound Span Name Enrichment
+
+`OtelNoiseFilter.EnrichHttpClientRequest` is used as
+`HttpClientTraceInstrumentationOptions.EnrichWithHttpRequestMessage`. It renames outbound HTTP
+spans from the uninformative default (`GET`, `POST`) to `"{METHOD} {host}"`, for example:
+
+- `GET api.github.com`
+- `POST coding-agent-api`
+
+No path component is included to keep cardinality bounded.
+
+### Span Drop Processor
+
+`OtelNoiseSpanDropProcessor` (a `BaseProcessor<Activity>` registered via `.AddProcessor(...)`)
+suppresses high-volume, low-signal spans at the SDK level using `OtelNoiseFilter.ShouldDropSpan`.
+Suppressed spans have `IsAllDataRequested` set to `false` and the `Recorded` trace flag cleared,
+so no data is collected and nothing is exported.
+
+Dropped span name patterns:
+
+| Pattern | Noise source | Volume |
+|---------|-------------|--------|
+| `*/Heartbeat` | `AgentHub/Heartbeat` SignalR hub method | ~7k/day |
+| `*/ReportOutputLines` | `AgentHub/ReportOutputLines` SignalR hub method | ~9.6k/day |
+| `*/OnRenderCompleted` | `ComponentHub/OnRenderCompleted` SignalR hub method | ~47k/day |
+| `Circuit *` | Blazor circuit lifecycle (high-cardinality IDs in name) | high |
+| `Event * -> *` | Blazor event callbacks (e.g. `Event onclick -> …<BuildRenderTree>b__0_12`) | high |
+
+Blazor route spans (`Route *`) are explicitly **kept**.
+
 ## Traces
 
 All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans marked with † are emitted from both the orchestrator (`PipelineOrchestrationService`) and the agent worker (`LocalPipelineExecutor`).

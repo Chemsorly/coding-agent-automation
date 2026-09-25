@@ -46,6 +46,14 @@ public sealed partial class OpenCodeAgentProvider
                 else
                 {
                     // stdio (default)
+                    // TODO: [WARNING] filteredEnv strips LLM API-key variables (ExcludedEnvKeys) but does NOT
+                    // strip OTEL_*, TRACEPARENT, or TRACESTATE. These keys are forwarded verbatim as the `env`
+                    // field of the OpenCode MCP stdio config, so any OTEL variables present in the agent pod
+                    // environment (including the OTLP write token in OTEL_EXPORTER_OTLP_HEADERS) reach every
+                    // stdio MCP server child process launched by the OpenCode daemon. This is a parallel
+                    // credential-exposure and data-pollution path to the one fixed in issue #2968. Fix by also
+                    // filtering keys that match the OTEL_ prefix or equal TRACEPARENT/TRACESTATE, or by calling
+                    // ChildProcessEnvironment-equivalent logic on filteredEnv before building McpStdioConfig.
                     var filteredEnv = server.Env
                         .Where(kvp => !ExcludedEnvKeys.Contains(kvp.Key))
                         .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);

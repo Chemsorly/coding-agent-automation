@@ -122,7 +122,7 @@ public sealed class ApiChatJobDispatcherTests
         // synchronously without throwing, even before the underlying HTTP call resolves.
         var mockClient = new Mock<CodingAgent.Api.Client.IPipelineApiChatClient>();
         // Return a completed task so there is no async work to await
-        mockClient.Setup(c => c.SendKeepaliveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockClient.Setup(c => c.SendKeepaliveAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var dispatcher = new CodingAgent.Web.Services.ApiChatJobDispatcher(mockClient.Object);
@@ -136,7 +136,7 @@ public sealed class ApiChatJobDispatcherTests
         // Even when the HTTP client throws synchronously (bad state), SendClientKeepalive
         // must not propagate the exception — it is fire-and-forget.
         var mockClient = new Mock<CodingAgent.Api.Client.IPipelineApiChatClient>();
-        mockClient.Setup(c => c.SendKeepaliveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockClient.Setup(c => c.SendKeepaliveAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new System.Net.Http.HttpRequestException("network error"));
 
         var dispatcher = new CodingAgent.Web.Services.ApiChatJobDispatcher(mockClient.Object);

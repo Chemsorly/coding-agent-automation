@@ -2082,7 +2082,7 @@ public class ChatJobDispatcherTests
 
         var fields = dispatcher.TryGetWatcherFields(capturedAgentId!);
         fields.Should().NotBeNull();
-        fields!.Value.AgentId.Should().Be("agent-id-field",
+        fields!.Value.AgentId.Value.Should().Be("agent-id-field",
             "AgentId must match the registered agent id, not be transposed with another field");
     }
 

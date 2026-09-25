@@ -8,19 +8,19 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 namespace CodingAgent.Pipeline.UnitTests.Services;
 
 /// <summary>
-/// Tests for EfKeyValueStore using in-memory EF Core.
+/// Tests for PostgresKeyValueStore using in-memory EF Core.
 /// Covers: Get (found / not-found), Set (insert / update), Delete (found / not-found).
 /// </summary>
-public sealed class EfKeyValueStoreTests : IDisposable
+public sealed class PostgresKeyValueStoreTests : IDisposable
 {
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly TestDbContextFactory _factory;
-    private readonly EfKeyValueStore _sut;
+    private readonly PostgresKeyValueStore _sut;
 
-    public EfKeyValueStoreTests()
+    public PostgresKeyValueStoreTests()
     {
         _dbOptions = new DbContextOptionsBuilder<PipelineDbContext>()
-            .UseInMemoryDatabase(databaseName: $"EfKeyValueStore-{Guid.NewGuid()}")
+            .UseInMemoryDatabase(databaseName: $"PostgresKeyValueStore-{Guid.NewGuid()}")
             .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
@@ -28,7 +28,7 @@ public sealed class EfKeyValueStoreTests : IDisposable
         ctx.Database.EnsureCreated();
 
         _factory = new TestDbContextFactory(_dbOptions);
-        _sut = new EfKeyValueStore(_factory);
+        _sut = new PostgresKeyValueStore(_factory);
     }
 
     public void Dispose()

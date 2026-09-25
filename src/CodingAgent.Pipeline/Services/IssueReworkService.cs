@@ -150,7 +150,8 @@ public sealed class IssueReworkService : IIssueReworkService
                 newLabel: AgentLabels.Next,
                 ct: ct,
                 expectedCurrentLabel: issue.Labels.FirstOrDefault(l => l.StartsWith("agent:", StringComparison.Ordinal)),
-                identifier: issueIdString);
+                identifier: issueIdString,
+                currentLabels: issue.Labels);
 
             PipelineTelemetry.HousekeepingConflictReworkTriggered.Add(1, repoTag);
             _logger.Information(

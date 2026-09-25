@@ -47,6 +47,17 @@ public interface IPullRequestProvider : IAsyncDisposable
         => Task.CompletedTask;
 
     /// <summary>
+    /// Returns the current open/merged/closed state of a pull request or merge request.
+    /// <para>
+    /// Default implementation returns <see cref="PullRequestState.Open"/> (fail-open), consistent
+    /// with the other default interface methods. Providers that don't override this method will
+    /// never block a run — the polling loop treats an unknown state as "still open".
+    /// </para>
+    /// </summary>
+    Task<PullRequestState> GetPullRequestStateAsync(int pullRequestNumber, CancellationToken ct)
+        => Task.FromResult(PullRequestState.Open);
+
+    /// <summary>
     /// Lists open pull requests with optional label filtering.
     /// When labels is null or empty, returns all open PRs.
     /// Default throws <see cref="NotSupportedException"/>.
