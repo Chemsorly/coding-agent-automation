@@ -13,14 +13,14 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// Unit tests for <see cref="HousekeepingService"/> (spec 040 / conflict-rework / stale-branch-cleanup).
 /// All tests use the synchronous <c>FireAndForget</c> seam and a controlled <c>UtcNow</c> clock.
 /// </summary>
-// TODO: HousekeepingPrOutcomeTests is in [Collection("Metrics")] and its doc comment states that
-// serialization is needed because HousekeepingServiceTests "runs concurrently and emits to the same
-// PipelineTelemetry.Meter". However, this class is NOT in any collection, so xUnit does NOT
-// serialize it against HousekeepingPrOutcomeTests — both classes run in parallel. The stated
-// protection in HousekeepingPrOutcomeTests is inaccurate. In practice this is benign because this
-// class never overrides GetPrOutcomeAsync and its unset IRepositoryProvider mock returns null from
-// GetPullRequestMergedStateAsync, so it does not emit pipeline.pull_requests.closed or time_to_merge.
-// To truly serialize, add [Collection("Metrics")] here, or correct the comment in HousekeepingPrOutcomeTests.
+/// <remarks>
+/// Placed in [Collection("Metrics")] to serialize against all other MeterListener-based test classes
+/// (HousekeepingServiceSweepSummaryMetricTests, HousekeepingPrOutcomeTests, etc.).
+/// This class calls ExecuteAsync with IsPullRequestBehindBaseAsync setups, which triggers
+/// EmitMergeabilityStatusCounters on the global PipelineTelemetry.Meter. Without serialization,
+/// its emissions are captured by MeterListeners in concurrent test classes, causing false failures.
+/// </remarks>
+[Collection("Metrics")]
 public class HousekeepingServiceTests
 {
     private const string RepoId = "rp-1";
