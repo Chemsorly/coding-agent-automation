@@ -273,13 +273,22 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     /// <inheritdoc />
     public bool Deregister(AgentId agentId)
     {
+        // TODO [WARNING]: ArgumentNullException.ThrowIfNull(agentId.Value) guards against default(AgentId)
+        // (where Value is null), which is the correct intent. However, the guard name is misleading now
+        // that the parameter is AgentId: the implicit operator AgentId(string) used at most call sites
+        // throws ArgumentException (not ArgumentNullException) for null/empty strings. This mismatch
+        // between the guard's exception type and the implicit operator's exception type can mislead
+        // future maintainers. Consider replacing with ArgumentException.ThrowIfNullOrEmpty(agentId.Value)
+        // to be consistent with the AgentId constructor invariant, or documenting that this guard is
+        // specifically for the default(AgentId) sentinel case.
+        // See review finding: DotNetSpecialist WARNING @ DistributedAgentRegistryService.cs:276.
         ArgumentNullException.ThrowIfNull(agentId.Value);
         // Fire-and-forget write to Redis.
         // LastDeregisterTask stores the antecedent task for test determinism (allows tests to await
         // DeregisterAsync completing without Thread.Sleep). The error-log ContinueWith is kept as a
         // separate fire-and-forget — same pattern as UpdateHeartbeat — so awaiting LastDeregisterTask
         // does not throw TaskCanceledException on the success path.
-        var deregisterTask = DeregisterAsync(agentId.Value);
+        var deregisterTask = DeregisterAsync(agentId);
         _ = deregisterTask.ContinueWith(t => _logger.Warning(t.Exception,
                 "DeregisterAsync failed for agent {AgentId}", agentId.Value),
                 TaskContinuationOptions.OnlyOnFaulted);
@@ -288,9 +297,9 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         return true; // Optimistic; actual removal is async
     }
 
-    private async Task DeregisterAsync(string agentId)
+    private async Task DeregisterAsync(AgentId agentId)
     {
-        var key = AgentKey(agentId);
+        var key = AgentKey(agentId.Value);
         // Use _localSnapshot to retrieve the ConnectionId for cleanup — avoids a Redis HGETALL
         // on the deregister path. If the snapshot is absent (e.g. agent on another replica),
         // fall back to GetAgentRaw. The TODO below still applies for the cross-replica scenario.
@@ -305,11 +314,11 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // re-registered entry under the stale connection ID. Fix: check _localSnapshot as
         // fallback for ConnectionId when GetAgentRaw returns null.
         string? connectionId = null;
-        if (_localSnapshot.TryGetValue(agentId, out var snap))
+        if (_localSnapshot.TryGetValue(agentId.Value, out var snap))
             connectionId = snap.ConnectionId;
         else
         {
-            var raw = GetAgentRaw(agentId);
+            var raw = GetAgentRaw(agentId.Value);
             connectionId = raw?.ConnectionId;
         }
 
@@ -337,14 +346,14 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // the newly-registered hash while _localSnapshot still holds the entry, causing a resurrection
         // on the next heartbeat. Pre-existing architectural characteristic of fire-and-forget; narrowed
         // (but not eliminated) by _localSnapshot.TryRemove occurring before any await.
-        _localSnapshot.TryRemove(agentId, out _);
+        _localSnapshot.TryRemove(agentId.Value, out _);
 
         // Remove from the all-agents cache so sync read overloads don't return the deregistered agent.
-        RemoveFromAllAgentsCache(agentId);
+        RemoveFromAllAgentsCache(agentId.Value);
 
         await _store.DeleteAsync(key);
-        await _store.SetRemoveAsync(AgentsAllKey, agentId);
-        await _store.SetRemoveAsync(AgentsIdleKey, agentId);
+        await _store.SetRemoveAsync(AgentsAllKey, agentId.Value);
+        await _store.SetRemoveAsync(AgentsIdleKey, agentId.Value);
 
         _logger.Information("Agent {AgentId} deregistered", agentId);
     }
@@ -431,13 +440,13 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     public void TransitionStatus(AgentId agentId, AgentStatus newStatus)
     {
         ArgumentNullException.ThrowIfNull(agentId.Value);
-        _ = TransitionStatusAsync(agentId.Value, newStatus)
+        _ = TransitionStatusAsync(agentId, newStatus)
             .ContinueWith(t => _logger.Warning(t.Exception,
                 "TransitionStatus: Redis write failed for agent {AgentId} → {Status} — status may be stale in registry",
                 agentId.Value, newStatus), TaskContinuationOptions.OnlyOnFaulted);
     }
 
-    private async Task TransitionStatusAsync(string agentId, AgentStatus newStatus)
+    private async Task TransitionStatusAsync(AgentId agentId, AgentStatus newStatus)
     {
         // NOTE: This does NOT acquire a per-agent distributed lock (lock:agent:{id} was never implemented).
         // There is no SelectAgent mechanism in this path — agent selection uses Kubernetes job dispatch,
@@ -447,7 +456,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // This is accepted: ReconciliationService recovers within its reconciliation interval.
         // See concurrency-model.md § "Known gap — no per-agent selection lock" for full context.
 
-        var key = AgentKey(agentId);
+        var key = AgentKey(agentId.Value);
         var existing = await _store.HashGetAllAsync(key);
         if (existing.Length == 0)
         {
@@ -487,9 +496,9 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         await _store.ExpireAsync(key, AgentTtl);
 
         if (newStatus == AgentStatus.Idle)
-            await _store.SetAddAsync(AgentsIdleKey, agentId);
+            await _store.SetAddAsync(AgentsIdleKey, agentId.Value);
         else
-            await _store.SetRemoveAsync(AgentsIdleKey, agentId);
+            await _store.SetRemoveAsync(AgentsIdleKey, agentId.Value);
 
         // Keep the local snapshot in sync so that if TTL fires after this transition, the
         // re-registration in UpdateHeartbeatAsync uses live status rather than the stale
@@ -507,7 +516,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // always return false and spin infinitely. AddOrUpdate avoids the equality comparison.
         // The busySinceValue and disconnectedAtValue computations are inside the factory so that
         // any internal retry by AddOrUpdate under contention uses the current live value.
-        if (_localSnapshot.ContainsKey(agentId))
+        if (_localSnapshot.ContainsKey(agentId.Value))
         {
             // TODO (WARNING issue #2873 review): ContainsKey + AddOrUpdate is not atomic.
             // A concurrent DeregisterAsync can remove the key between ContainsKey and AddOrUpdate,
@@ -525,7 +534,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             // practical risk is low, but the window is real. Full atomicity would require a dedicated
             // per-agent lock around AddOrUpdate+TryRemove, which is out of scope for this fix. (.NET specialist WARNING, issue #2873)
             var committed = _localSnapshot.AddOrUpdate(
-                agentId,
+                agentId.Value,
                 addValueFactory: CreateDeregistrationRaceSentinel,
                 updateValueFactory: (_, current) =>
                 {
@@ -533,7 +542,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
                     var da = newStatus == AgentStatus.Disconnected ? now : (DateTimeOffset?)null;
                     return current with { Status = newStatus, BusySince = bs, DisconnectedAt = da };
                 });
-            if (!RemoveSentinelIfDeregistrationRace(_localSnapshot, agentId, committed,
+            if (!RemoveSentinelIfDeregistrationRace(_localSnapshot, agentId.Value, committed,
                     "TransitionStatusAsync", _logger))
             {
                 // Keep all-agents cache in sync so GetIdleAgents()/GetAllAgents() sync overloads
