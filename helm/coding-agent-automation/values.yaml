@@ -189,16 +189,13 @@ otel:
   # (Legacy alias: orchestratorServiceName is still honored if set — see web-env-configmap.yaml.)
   webServiceName: coding-agent-web
   # OTEL_SERVICE_NAME for the API process.
-  # Defaults to "coding-agent-web" so the API's ExecutePipeline spans appear
-  # under the same service name that the Grafana "Recent Pipeline Traces" panel queries
-  # (rootServiceName="coding-agent-web"). Override to "coding-agent-api" if you
-  # need to distinguish API spans from web (Blazor UI) spans in Tempo.
-  # TODO: This default collapses the API process and the Blazor UI process into the same
-  # service.name in Tempo, making it impossible to distinguish API-origin spans from
-  # web spans. Consider changing the default to "coding-agent-api" and updating
-  # the Grafana panel query to rootServiceName=~"coding-agent-web|coding-agent-api".
-  # See review warning (issue #2255).
-  apiServiceName: coding-agent-web
+  # Set to "coding-agent-api" to distinguish API spans, metrics and logs from the Blazor web process.
+  # The Grafana "Recent Pipeline Traces" panel no longer depends on rootServiceName="coding-agent-web"
+  # (updated in #2966), so changing this default does not break that panel.
+  # ⚠️  Breaking change: upgrading from a previous release will rename API telemetry from
+  # "coding-agent-web" to "coding-agent-api" — update any Grafana dashboards or alerts that
+  # filter on service.name="coding-agent-web" for API traffic.
+  apiServiceName: coding-agent-api
   resourceAttributes: ""
 
 # ── ServiceAccount ───────────────────────────────────────────────────────────

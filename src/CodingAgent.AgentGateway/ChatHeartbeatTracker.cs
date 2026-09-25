@@ -1,5 +1,6 @@
 using CodingAgent.Orchestration.Redis;
 using CodingAgent.Kubernetes;
+using CodingAgent.Pipeline.Models;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Orchestration.Dispatch;
@@ -21,7 +22,7 @@ internal interface IChatHeartbeatTracker
     /// Writes a heartbeat timestamp for <paramref name="agentId"/> to Redis.
     /// Fire-and-forget — failures are logged as warnings but do not throw.
     /// </summary>
-    Task WriteRedisHeartbeatAsync(string agentId);
+    Task WriteRedisHeartbeatAsync(AgentId agentId);
 
     /// <summary>
     /// Reads the cross-replica heartbeat timestamp from Redis.
@@ -29,13 +30,13 @@ internal interface IChatHeartbeatTracker
     /// <c>Heartbeat</c> is <c>null</c> when the key does not exist.
     /// Returns <c>(Available: false, Heartbeat: null)</c> when Redis threw an exception.
     /// </summary>
-    Task<(bool Available, DateTimeOffset? Heartbeat)> TryGetRedisHeartbeatAsync(string jobName, string agentId);
+    Task<(bool Available, DateTimeOffset? Heartbeat)> TryGetRedisHeartbeatAsync(string jobName, AgentId agentId);
 
     /// <summary>
     /// Deletes the heartbeat key for <paramref name="agentId"/> from Redis.
     /// Best-effort — failures are logged as warnings but do not throw.
     /// </summary>
-    Task DeleteRedisHeartbeatAsync(string agentId);
+    Task DeleteRedisHeartbeatAsync(AgentId agentId);
 }
 
 /// <inheritdoc cref="IChatHeartbeatTracker"/>
@@ -56,14 +57,13 @@ internal sealed class ChatHeartbeatTracker : IChatHeartbeatTracker
     }
 
     /// <inheritdoc/>
-    public async Task WriteRedisHeartbeatAsync(string agentId)
+    public async Task WriteRedisHeartbeatAsync(AgentId agentId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
         var ttl = TimeSpan.FromSeconds(_options.ChatIdleTimeoutSeconds * 2);
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         try
         {
-            await _redis.SetAsync(HeartbeatKey(agentId), nowMs.ToString(), ttl).ConfigureAwait(false);
+            await _redis.SetAsync(HeartbeatKey(agentId.Value), nowMs.ToString(), ttl).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -74,12 +74,11 @@ internal sealed class ChatHeartbeatTracker : IChatHeartbeatTracker
 
     /// <inheritdoc/>
     public async Task<(bool Available, DateTimeOffset? Heartbeat)> TryGetRedisHeartbeatAsync(
-        string jobName, string agentId)
+        string jobName, AgentId agentId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
         try
         {
-            var raw = await _redis.GetAsync(HeartbeatKey(agentId)).ConfigureAwait(false);
+            var raw = await _redis.GetAsync(HeartbeatKey(agentId.Value)).ConfigureAwait(false);
             if (raw is not null && long.TryParse(raw, out var ms))
                 return (true, DateTimeOffset.FromUnixTimeMilliseconds(ms));
             // Key does not exist — Redis is available but no heartbeat written yet.
@@ -95,12 +94,11 @@ internal sealed class ChatHeartbeatTracker : IChatHeartbeatTracker
     }
 
     /// <inheritdoc/>
-    public async Task DeleteRedisHeartbeatAsync(string agentId)
+    public async Task DeleteRedisHeartbeatAsync(AgentId agentId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
         try
         {
-            await _redis.DeleteAsync(HeartbeatKey(agentId)).ConfigureAwait(false);
+            await _redis.DeleteAsync(HeartbeatKey(agentId.Value)).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

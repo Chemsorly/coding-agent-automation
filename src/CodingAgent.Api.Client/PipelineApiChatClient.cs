@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using CodingAgent.Pipeline;
+using CodingAgent.Pipeline.Models;
 
 namespace CodingAgent.Api.Client;
 
@@ -37,20 +38,20 @@ internal sealed class PipelineApiChatClient : IPipelineApiChatClient
         return result.AgentId;
     }
 
-    public async Task TerminateChatSessionAsync(string agentId, CancellationToken ct = default)
+    public async Task TerminateChatSessionAsync(AgentId agentId, CancellationToken ct = default)
     {
         var response = await _http.PostAsync(
-            $"/api/chat/{Uri.EscapeDataString(agentId)}/terminate",
+            $"/api/chat/{Uri.EscapeDataString(agentId.Value)}/terminate",
             content: null,
             ct);
 
         response.EnsureSuccessStatusCode();
     }
 
-    public async Task SendKeepaliveAsync(string agentId, CancellationToken ct = default)
+    public async Task SendKeepaliveAsync(AgentId agentId, CancellationToken ct = default)
     {
         var response = await _http.PostAsync(
-            $"/api/chat/{Uri.EscapeDataString(agentId)}/keepalive",
+            $"/api/chat/{Uri.EscapeDataString(agentId.Value)}/keepalive",
             content: null,
             ct);
 

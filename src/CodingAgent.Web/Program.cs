@@ -94,9 +94,6 @@ var apiHubUrl = builder.Configuration.GetValue<string>("PipelineApi:HubUrl")
     ?? $"{apiBaseUrl.TrimEnd('/')}/hubs/agent";
 builder.Services.AddScoped<IAgentHubConnection>(_ => new AgentHubConnection(apiHubUrl, agentApiKey));
 
-// null — monolith has no direct DB access; AddApplicationTelemetry does not include Npgsql tracing.
-var dbConnectionString = (string?)null;
-
 // Bootstrap config for DI registration only — real config is loaded from Pipeline API at runtime.
 // NOTE: ClosedLoopAutoStart defaults to false here; AutoStartPipelineLoopAsync loads the real value from the API.
 var pipelineConfig = new PipelineConfiguration();
@@ -155,7 +152,7 @@ Func<StackExchange.Redis.IConnectionMultiplexer>? dpMultiplexerFactory = string.
     ? null
     : () => StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnectionString);
 builder.Services.AddDataProtectionServices(dpMultiplexerFactory);
-builder.Services.AddApplicationTelemetry(dbConnectionString, redisConnectionString);
+builder.Services.AddApplicationTelemetry(redisConnectionString);
 
 var app = builder.Build();
 

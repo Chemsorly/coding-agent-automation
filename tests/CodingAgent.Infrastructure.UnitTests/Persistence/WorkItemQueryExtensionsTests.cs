@@ -10,9 +10,8 @@ using Microsoft.EntityFrameworkCore;
 namespace CodingAgent.Infrastructure.UnitTests.Persistence;
 
 /// <summary>
-/// Unit tests for <see cref="WorkItemQueryExtensions.WhereActive"/>.
-/// Verifies that the extension correctly filters to Dispatched and Running work items only,
-/// covering all six <see cref="WorkItemStatus"/> enum values.
+/// Unit tests for <see cref="WorkItemQueryExtensions.WhereActive"/> and
+/// <see cref="WorkItemQueryExtensions.WhereActiveOrRecentlyTerminal"/>.
 /// </summary>
 public sealed class WorkItemQueryExtensionsTests : IDisposable
 {
@@ -25,7 +24,7 @@ public sealed class WorkItemQueryExtensionsTests : IDisposable
             .Options;
     }
 
-    // ── Inclusion tests ───────────────────────────────────────────────────
+    // ── WhereActive: Inclusion tests ──────────────────────────────────────
 
     [Fact]
     public async Task WhereActive_IncludesDispatchedItems()
@@ -49,7 +48,7 @@ public sealed class WorkItemQueryExtensionsTests : IDisposable
         results.Should().ContainSingle(w => w.Status == WorkItemStatus.Running);
     }
 
-    // ── Exclusion tests ───────────────────────────────────────────────────
+    // ── WhereActive: Exclusion tests ──────────────────────────────────────
 
     [Fact]
     public async Task WhereActive_ExcludesPendingItems()
@@ -95,7 +94,7 @@ public sealed class WorkItemQueryExtensionsTests : IDisposable
         results.Should().BeEmpty();
     }
 
-    // ── Mixed-set test ────────────────────────────────────────────────────
+    // ── WhereActive: Mixed-set test ───────────────────────────────────────
 
     [Fact]
     public async Task WhereActive_OnlyReturnsActiveFromMixedSet()
@@ -121,7 +120,7 @@ public sealed class WorkItemQueryExtensionsTests : IDisposable
         results.Should().Contain(w => w.Status == WorkItemStatus.Running);
     }
 
-    // ── EF Core translatability ───────────────────────────────────────────
+    // ── WhereActive: EF Core translatability ─────────────────────────────
 
     [Fact]
     public async Task WhereActive_IsEfCoreTranslatable()
@@ -146,7 +145,7 @@ public sealed class WorkItemQueryExtensionsTests : IDisposable
         count.Should().Be(1);
     }
 
-    // ── Property-based test ───────────────────────────────────────────────
+    // ── WhereActive: Property-based test ─────────────────────────────────
 
     /// <summary>
     /// For every <see cref="WorkItemStatus"/> value, <see cref="WorkItemQueryExtensions.WhereActive"/>
@@ -184,16 +183,199 @@ public sealed class WorkItemQueryExtensionsTests : IDisposable
         }
     }
 
+    // ── WhereActiveOrRecentlyTerminal: Active-status inclusion ────────────
+
+    /// <summary>
+    /// All three active statuses (Pending, Dispatched, Running) are included regardless of cutoff.
+    /// </summary>
+    [Theory]
+    [InlineData(WorkItemStatus.Pending)]
+    [InlineData(WorkItemStatus.Dispatched)]
+    [InlineData(WorkItemStatus.Running)]
+    public async Task WhereActiveOrRecentlyTerminal_IncludesActiveStatuses(WorkItemStatus status)
+    {
+        var cutoff = DateTimeOffset.UtcNow.AddMinutes(-5);
+        await SeedAsync(status);
+        await using var db = new InMemoryPipelineDbContext(_options);
+
+        var results = await db.WorkItems
+            .WhereActiveOrRecentlyTerminal(cutoff)
+            .ToListAsync();
+
+        results.Should().ContainSingle(w => w.Status == status);
+    }
+
+    // ── WhereActiveOrRecentlyTerminal: Terminal inside cooldown ───────────
+
+    /// <summary>
+    /// Terminal items with CompletedAt after the cutoff are included.
+    /// </summary>
+    [Theory]
+    [InlineData(WorkItemStatus.Succeeded)]
+    [InlineData(WorkItemStatus.Failed)]
+    [InlineData(WorkItemStatus.Cancelled)]
+    public async Task WhereActiveOrRecentlyTerminal_IncludesTerminalItemsInsideCooldown(WorkItemStatus status)
+    {
+        var cutoff = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var completedAt = DateTimeOffset.UtcNow.AddMinutes(-2); // inside cooldown
+        await SeedAsync(status, completedAt);
+        await using var db = new InMemoryPipelineDbContext(_options);
+
+        var results = await db.WorkItems
+            .WhereActiveOrRecentlyTerminal(cutoff)
+            .ToListAsync();
+
+        results.Should().ContainSingle(w => w.Status == status);
+    }
+
+    /// <summary>
+    /// Terminal items with CompletedAt exactly at the cutoff (inclusive boundary) are included.
+    /// </summary>
+    [Fact]
+    public async Task WhereActiveOrRecentlyTerminal_IncludesTerminalItemAtCutoffBoundary()
+    {
+        var cutoff = DateTimeOffset.UtcNow.AddMinutes(-5);
+        await SeedAsync(WorkItemStatus.Succeeded, completedAt: cutoff);
+        await using var db = new InMemoryPipelineDbContext(_options);
+
+        var results = await db.WorkItems
+            .WhereActiveOrRecentlyTerminal(cutoff)
+            .ToListAsync();
+
+        results.Should().ContainSingle();
+    }
+
+    // ── WhereActiveOrRecentlyTerminal: Terminal outside cooldown ──────────
+
+    /// <summary>
+    /// Terminal items with CompletedAt before the cutoff are excluded.
+    /// </summary>
+    [Theory]
+    [InlineData(WorkItemStatus.Succeeded)]
+    [InlineData(WorkItemStatus.Failed)]
+    [InlineData(WorkItemStatus.Cancelled)]
+    public async Task WhereActiveOrRecentlyTerminal_ExcludesTerminalItemsOutsideCooldown(WorkItemStatus status)
+    {
+        var cutoff = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var completedAt = DateTimeOffset.UtcNow.AddMinutes(-10); // outside cooldown
+        await SeedAsync(status, completedAt);
+        await using var db = new InMemoryPipelineDbContext(_options);
+
+        var results = await db.WorkItems
+            .WhereActiveOrRecentlyTerminal(cutoff)
+            .ToListAsync();
+
+        results.Should().BeEmpty();
+    }
+
+    // ── WhereActiveOrRecentlyTerminal: Terminal with null CompletedAt ─────
+
+    /// <summary>
+    /// Terminal items with a null CompletedAt are excluded — the null guard prevents them
+    /// from being matched by the recently-terminal branch.
+    /// </summary>
+    [Theory]
+    [InlineData(WorkItemStatus.Succeeded)]
+    [InlineData(WorkItemStatus.Failed)]
+    [InlineData(WorkItemStatus.Cancelled)]
+    public async Task WhereActiveOrRecentlyTerminal_ExcludesTerminalItemsWithNullCompletedAt(WorkItemStatus status)
+    {
+        var cutoff = DateTimeOffset.UtcNow.AddMinutes(-5);
+        await SeedAsync(status, completedAt: null);
+        await using var db = new InMemoryPipelineDbContext(_options);
+
+        var results = await db.WorkItems
+            .WhereActiveOrRecentlyTerminal(cutoff)
+            .ToListAsync();
+
+        results.Should().BeEmpty();
+    }
+
+    // ── WhereActiveOrRecentlyTerminal: Mixed-set ──────────────────────────
+
+    [Fact]
+    public async Task WhereActiveOrRecentlyTerminal_OnlyReturnsMatchingFromMixedSet()
+    {
+        var cutoff = DateTimeOffset.UtcNow.AddMinutes(-5);
+
+        await using (var seedDb = new InMemoryPipelineDbContext(_options))
+        {
+            // Active — should be included
+            seedDb.WorkItems.Add(MakeWorkItem(WorkItemStatus.Pending));
+            seedDb.WorkItems.Add(MakeWorkItem(WorkItemStatus.Dispatched));
+            seedDb.WorkItems.Add(MakeWorkItem(WorkItemStatus.Running));
+            // Recently terminal — should be included
+            seedDb.WorkItems.Add(MakeWorkItem(WorkItemStatus.Succeeded, completedAt: DateTimeOffset.UtcNow.AddMinutes(-2)));
+            // Stale terminal — should be excluded
+            seedDb.WorkItems.Add(MakeWorkItem(WorkItemStatus.Failed, completedAt: DateTimeOffset.UtcNow.AddMinutes(-10)));
+            // Terminal with null CompletedAt — should be excluded
+            seedDb.WorkItems.Add(MakeWorkItem(WorkItemStatus.Cancelled, completedAt: null));
+            await seedDb.SaveChangesAsync();
+        }
+
+        await using var db = new InMemoryPipelineDbContext(_options);
+        var results = await db.WorkItems.WhereActiveOrRecentlyTerminal(cutoff).ToListAsync();
+
+        results.Should().HaveCount(4);
+        results.Should().Contain(w => w.Status == WorkItemStatus.Pending);
+        results.Should().Contain(w => w.Status == WorkItemStatus.Dispatched);
+        results.Should().Contain(w => w.Status == WorkItemStatus.Running);
+        results.Should().Contain(w => w.Status == WorkItemStatus.Succeeded);
+    }
+
+    // ── WhereActiveOrRecentlyTerminal: Property-based test ────────────────
+
+    /// <summary>
+    /// Property: for any status + completedAt combination, WhereActiveOrRecentlyTerminal returns
+    /// the item iff it is in an active status OR (terminal AND CompletedAt &gt;= cutoff).
+    /// </summary>
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(WorkItemStatusArbitraries) })]
+    public void WhereActiveOrRecentlyTerminal_MatchesExpectedPredicate_Property(WorkItemStatus status)
+    {
+        var cutoff = DateTimeOffset.UtcNow.AddMinutes(-5);
+        // Use inside-cooldown and outside-cooldown for terminal statuses
+        var completedAtCases = new DateTimeOffset?[]
+        {
+            null,
+            DateTimeOffset.UtcNow.AddMinutes(-2),  // inside cooldown
+            DateTimeOffset.UtcNow.AddMinutes(-10), // outside cooldown
+        };
+
+        foreach (var completedAt in completedAtCases)
+        {
+            var options = new DbContextOptionsBuilder<PipelineDbContext>()
+                .UseInMemoryDatabase(databaseName: $"WhereActiveOrRecentlyTerminal_Prop_{Guid.NewGuid()}")
+                .Options;
+
+            using var db = new InMemoryPipelineDbContext(options);
+            db.WorkItems.Add(MakeWorkItem(status, completedAt));
+            db.SaveChanges();
+
+            var results = db.WorkItems.WhereActiveOrRecentlyTerminal(cutoff).ToList();
+
+            var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;
+            var shouldMatch = activeStatuses.Contains(status) ||
+                              (completedAt.HasValue && completedAt.Value >= cutoff);
+
+            if (shouldMatch && results.Count != 1)
+                throw new Exception(
+                    $"WhereActiveOrRecentlyTerminal should include Status={status}, CompletedAt={completedAt} but returned {results.Count} items.");
+            if (!shouldMatch && results.Count != 0)
+                throw new Exception(
+                    $"WhereActiveOrRecentlyTerminal should exclude Status={status}, CompletedAt={completedAt} but returned {results.Count} items.");
+        }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────
 
-    private async Task SeedAsync(WorkItemStatus status)
+    private async Task SeedAsync(WorkItemStatus status, DateTimeOffset? completedAt = null)
     {
         await using var db = new InMemoryPipelineDbContext(_options);
-        db.WorkItems.Add(MakeWorkItem(status));
+        db.WorkItems.Add(MakeWorkItem(status, completedAt));
         await db.SaveChangesAsync();
     }
 
-    private static WorkItemEntity MakeWorkItem(WorkItemStatus status) => new()
+    private static WorkItemEntity MakeWorkItem(WorkItemStatus status, DateTimeOffset? completedAt = null) => new()
     {
         Id = Guid.NewGuid(),
         IssueIdentifier = $"owner/repo#{(int)status}",
@@ -202,7 +384,8 @@ public sealed class WorkItemQueryExtensionsTests : IDisposable
         TaskType = WorkItemTaskType.Implementation,
         AgentSelector = "kiro,dotnet",
         CreatedAt = DateTimeOffset.UtcNow,
-        Payload = "{}"
+        Payload = "{}",
+        CompletedAt = completedAt
     };
 
     public void Dispose()
