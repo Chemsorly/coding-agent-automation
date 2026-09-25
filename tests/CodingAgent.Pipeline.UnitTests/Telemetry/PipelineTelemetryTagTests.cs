@@ -7,13 +7,13 @@ using CodingAgent.Pipeline.Telemetry;
 namespace CodingAgent.Pipeline.UnitTests;
 
 /// <summary>
-/// Unit tests verifying that pipeline metrics include the run_type and project tags.
+/// Unit tests verifying that pipeline metric tag helpers produce the correct values.
+/// Uses <see cref="PipelineTelemetry.RunOutcomes"/> as the emission vehicle (formerly
+/// <c>JobsDispatched</c>, which was removed in issue #2967).
 /// </summary>
-// TODO: [WARNING] This class is NOT in the [Collection("Metrics")] xUnit collection. ReconciliationLoopTests
-// IS in that collection and uses the same static meter (PipelineTelemetry.JobsDispatched) via MetricCollector.
-// xUnit runs tests in different collections concurrently by default, so measurements emitted by
-// ReconciliationLoopTests may bleed into _capturedTags here, causing spurious assertion failures.
-// Fix: add [Collection("Metrics")] to this class to serialise execution with ReconciliationLoopTests.
+// TODO: [WARNING] This class is NOT in the [Collection("Metrics")] xUnit collection. Tests
+// that emit on the static PipelineTelemetry.Meter may interfere with other metric tests.
+// Fix: add [Collection("Metrics")] to serialise execution with other metric test classes.
 public class PipelineTelemetryTagTests : IDisposable
 {
     private readonly MeterListener _listener = new();
@@ -29,7 +29,7 @@ public class PipelineTelemetryTagTests : IDisposable
 
         _listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, state) =>
         {
-            if (instrument.Name == "pipeline.jobs.dispatched")
+            if (instrument.Name == "pipeline.run.outcomes")
             {
                 foreach (var tag in tags)
                     _capturedTags.Add(tag);
@@ -37,6 +37,9 @@ public class PipelineTelemetryTagTests : IDisposable
         });
 
         _listener.Start();
+        // Warm-up: ensure RunOutcomes is observed before any test assertion.
+        PipelineTelemetry.RunOutcomes.Add(0);
+        _capturedTags.Clear();
     }
 
     public void Dispose() => _listener.Dispose();
@@ -47,16 +50,16 @@ public class PipelineTelemetryTagTests : IDisposable
     [InlineData(PipelineRunType.DecompositionAnalysis, "decompositionanalysis")]
     [InlineData(PipelineRunType.Decomposition, "decomposition")]
     [InlineData(PipelineRunType.Consolidation, "consolidation")]
-    public void JobsDispatched_Add_IncludesRunTypeTag(PipelineRunType runType, string expected)
+    public void RunTypeTag_ProducesCorrectLowercaseValue(PipelineRunType runType, string expected)
     {
-        // Verify the tag helper produces the correct value directly (avoids cross-test interference from static meter)
+        // Verify the tag helper produces the correct value.
         var tag = PipelineTelemetry.RunTypeTag(runType);
         tag.Key.Should().Be("run_type");
         tag.Value.Should().Be(expected);
 
-        // Also verify emission via listener — use snapshot to isolate from concurrent tests
+        // Also verify emission via listener.
         _capturedTags.Clear();
-        PipelineTelemetry.JobsDispatched.Add(1, PipelineTelemetry.RunTypeTag(runType));
+        PipelineTelemetry.RunOutcomes.Add(1, PipelineTelemetry.RunTypeTag(runType));
 
         _capturedTags.Should().Contain(t => t.Key == "run_type" && (string?)t.Value == expected);
     }
@@ -67,7 +70,7 @@ public class PipelineTelemetryTagTests : IDisposable
         var tags = PipelineTelemetry.BuildTags(PipelineRunType.Implementation, "proj-123", "MyProject");
 
         _capturedTags.Clear();
-        PipelineTelemetry.JobsDispatched.Add(1, tags);
+        PipelineTelemetry.RunOutcomes.Add(1, tags);
 
         _capturedTags.Should().Contain(new KeyValuePair<string, object?>("pipeline.project_id", "proj-123"));
         _capturedTags.Should().Contain(new KeyValuePair<string, object?>("pipeline.project_name", "MyProject"));
@@ -79,7 +82,7 @@ public class PipelineTelemetryTagTests : IDisposable
         var tags = PipelineTelemetry.BuildTags(PipelineRunType.Implementation, null, null);
 
         _capturedTags.Clear();
-        PipelineTelemetry.JobsDispatched.Add(1, tags);
+        PipelineTelemetry.RunOutcomes.Add(1, tags);
 
         _capturedTags.Should().Contain(new KeyValuePair<string, object?>("pipeline.project_id", "unknown"));
         _capturedTags.Should().Contain(new KeyValuePair<string, object?>("pipeline.project_name", "unknown"));

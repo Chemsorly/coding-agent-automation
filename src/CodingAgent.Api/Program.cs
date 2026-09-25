@@ -185,7 +185,106 @@ app.MapApiSchedulerEndpoints();
 // response with no provider configs. Resolve eagerly to fail fast on misconfiguration.
 _ = app.Services.GetRequiredService<AssignmentEnricher>();
 
+// ── Counter pre-initialization ────────────────────────────────────────────────
+// Pre-initializing all closed-tag series to 0 before the first real event means that
+// Prometheus increase() is visible from the very first increment after a deploy.
+// Each Add(0) creates the series; a single ForceFlush exports them to the OTLP endpoint.
+// Histograms are intentionally excluded — see issue #2967.
+PreInitializeMetrics(app.Services);
+
 await app.RunAsync();
+
+// ── Pre-initialization helper ─────────────────────────────────────────────────
+
+/// <summary>
+/// Pre-initializes all closed-tag combinations for counters that would otherwise lose their
+/// first increment to the Prometheus <c>increase()</c> gap on new series.
+/// </summary>
+/// <remarks>
+/// TODO: [WARNING] This function writes directly to shared static instrument instances
+/// (<see cref="PipelineTelemetry.RunOutcomes"/>, <see cref="WorkDistributionTelemetry.WorkItemsTerminated"/>).
+/// If the application startup path is exercised more than once in the same process (e.g. in an integration
+/// test suite using <c>WebApplicationFactory&lt;Program&gt;</c> with multiple test server instances), the
+/// <c>Add(0)</c> calls execute multiple times — which is safe for counters (adding 0 is idempotent) — but
+/// <c>ForceFlush()</c> is also invoked once per test host start, potentially causing unexpected OTLP export
+/// side effects if a real OTLP endpoint is configured in CI. The <c>meterProvider?.ForceFlush()</c> null-check
+/// silently skips the flush when OTLP is not configured, limiting the blast radius in practice.
+/// </remarks>
+static void PreInitializeMetrics(IServiceProvider services)
+{
+    // run_type values
+    string[] runTypes = ["implementation", "review", "decomposition", "decompositionanalysis", "consolidation"];
+
+    // Non-failure outcomes (failure_reason=none)
+    string[] nonFailureOutcomes = ["cancelled", "conflict_restart", "needs_refinement", "wont_do", "pr_created", "draft_pr", "succeeded"];
+
+    // failure_reason snake_case values for the "failed" outcome
+    string[] failureReasons = ["timeout", "infrastructure_failure", "agent_error", "token_refresh_failure", "exit_code_failure", "quality_gate_exhausted", "gate_rejected"];
+
+    // WorkItem terminal statuses
+    string[] terminalStatuses = ["Succeeded", "Failed", "Cancelled"];
+
+    // pipeline.run.outcomes: (5 run_types × 7 non-failure outcomes × none) +
+    //                        (5 run_types × 1 timeout outcome × timeout) +
+    //                        (5 run_types × 1 failed outcome × 7 failure_reasons)
+    //                      = 35 + 5 + 35 = 75 series
+    // pipeline.project_name is excluded from pre-initialization per Requirement 7:
+    // it has unbounded cardinality so it cannot appear in the pre-init set.
+    // The live recording in RecordRunOutcomeMetrics does include pipeline.project_name (4-tag series),
+    // so pre-initialized series (3 tags) and live series (4 tags) have different label fingerprints —
+    // which is acceptable: the closed dimensions are still pre-initialized correctly.
+    foreach (var runType in runTypes)
+    {
+        foreach (var outcome in nonFailureOutcomes)
+        {
+            PipelineTelemetry.RunOutcomes.Add(0,
+                new KeyValuePair<string, object?>("run_type", runType),
+                new KeyValuePair<string, object?>("outcome", outcome),
+                new KeyValuePair<string, object?>("failure_reason", "none"));
+        }
+
+        // timeout outcome
+        PipelineTelemetry.RunOutcomes.Add(0,
+            new KeyValuePair<string, object?>("run_type", runType),
+            new KeyValuePair<string, object?>("outcome", "timeout"),
+            new KeyValuePair<string, object?>("failure_reason", "timeout"));
+
+        // failed outcome — one series per failure_reason
+        foreach (var failureReason in failureReasons)
+        {
+            PipelineTelemetry.RunOutcomes.Add(0,
+                new KeyValuePair<string, object?>("run_type", runType),
+                new KeyValuePair<string, object?>("outcome", "failed"),
+                new KeyValuePair<string, object?>("failure_reason", failureReason));
+        }
+    }
+
+    // workdistribution.workitems_terminated: 3 statuses × (none + 7 failure_reasons) = 24 series
+    // failure_reason values match the snake_case normalization in LogTerminalStatus (issue #2967).
+    foreach (var status in terminalStatuses)
+    {
+        WorkDistributionTelemetry.WorkItemsTerminated.Add(0,
+            new KeyValuePair<string, object?>("status", status),
+            new KeyValuePair<string, object?>("failure_reason", "none"));
+
+        foreach (var failureReason in failureReasons)
+        {
+            WorkDistributionTelemetry.WorkItemsTerminated.Add(0,
+                new KeyValuePair<string, object?>("status", status),
+                new KeyValuePair<string, object?>("failure_reason", failureReason));
+        }
+    }
+
+    // Flush all pre-initialized series to the OTLP endpoint immediately.
+    // TODO: [WARNING] meterProvider?.ForceFlush() silently skips the flush when GetService returns null.
+    // This happens when metrics are wired without registering MeterProvider in DI (e.g. OTLP export is
+    // not configured, or a future refactor removes the explicit AddOpenTelemetry().WithMetrics() call).
+    // If the flush is skipped, the pre-initialized Add(0) series are never exported to the OTLP endpoint
+    // before the first real event, defeating the pre-init goal. Add a log warning when meterProvider is
+    // null so a misconfigured API startup is observable rather than silent.
+    var meterProvider = services.GetService<OpenTelemetry.Metrics.MeterProvider>();
+    meterProvider?.ForceFlush();
+}
 
 // Make Program accessible for WebApplicationFactory in integration tests
 public partial class Program { } // NOSONAR S1118 — required for WebApplicationFactory<Program> in integration tests

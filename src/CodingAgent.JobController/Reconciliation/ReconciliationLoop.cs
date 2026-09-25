@@ -243,16 +243,6 @@ public sealed class ReconciliationLoop
 
                 var jobName = await ResolveJobNameAsync(item, ct);
 
-                // TODO: [WARNING] agentId is null when no K8s Job was found via the label-selector path
-                // (jobName == null). Before this fix, the ForWorkItem fallback always produced a
-                // non-null string here. Confirm that WorkDistributionTelemetry.LogTerminalStatus (and
-                // any downstream telemetry sink) tolerates a null agentId without throwing or silently
-                // dropping the record.
-                WorkDistributionTelemetry.LogTerminalStatus(
-                    item.Id, WorkItemStatus.Failed,
-                    duration: null, agentId: jobName,
-                    failureReason: FailureReason.Timeout);
-
                 _agentTimeouts.Add(1,
                     new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
 
@@ -369,11 +359,6 @@ public sealed class ReconciliationLoop
                     ErrorMessage = $"No live K8s Job found {_options.ChatPodConnectTimeoutSeconds}s after dispatch",
                     FailureReason = nameof(FailureReason.Timeout)
                 }, ct);
-
-                WorkDistributionTelemetry.LogTerminalStatus(
-                    item.Id, WorkItemStatus.Failed,
-                    duration: null, agentId: null,
-                    failureReason: FailureReason.Timeout);
             }
             catch (Exception ex)
             {
@@ -722,19 +707,8 @@ public sealed class ReconciliationLoop
                 // callback) to avoid double-counting. PostStatus returns HTTP 204 No Content for
                 // no-ops and HTTP 200 for real transitions; PipelineApiWorkItemClient maps these
                 // to false/true respectively. (Issue #2802)
-                var workItemStatus = status == JobPhaseSucceeded ? WorkItemStatus.Succeeded : WorkItemStatus.Failed;
-                var failureReasonEnum = Enum.TryParse<FailureReason>(failureReason, out var parsedReason)
-                    ? (FailureReason?)parsedReason
-                    : null;
-                var dispatchedAt = job.Status?.StartTime is not null
-                    ? new DateTimeOffset(job.Status.StartTime.Value, TimeSpan.Zero)
-                    : (DateTimeOffset?)null;
-                var completedAt = job.Status?.CompletionTime is not null
-                    ? new DateTimeOffset(job.Status.CompletionTime.Value, TimeSpan.Zero)
-                    : DateTimeOffset.UtcNow;
-                var duration = dispatchedAt.HasValue ? completedAt - dispatchedAt.Value : (TimeSpan?)null;
-                var agentId = job.Metadata?.Name;
-                WorkDistributionTelemetry.LogTerminalStatus(workItemId, workItemStatus, duration, agentId, failureReasonEnum);
+                // Metrics are recorded by the API's WorkItemStatusTransitionService when it
+                // processes the POST above — no metric recording needed here. (Issue #2967)
             }
 
             // Log and mark as succeeded for BOTH transitioned and no-op paths: both represent
