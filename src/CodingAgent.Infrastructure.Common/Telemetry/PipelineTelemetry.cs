@@ -18,14 +18,14 @@ public static class PipelineTelemetry
     // UCUM-style unit annotation constants shared across counter definitions.
     // Defined here to avoid S1192 (repeated string literals) and to make unit
     // semantics explicit at the call site.
-    private const string UnitUpdate    = "{update}";
-    private const string UnitFailure   = "{failure}";
-    private const string UnitItem      = "{item}";
-    private const string UnitSync      = "{sync}";
-    private const string UnitRetry     = "{retry}";
-    private const string UnitJob       = "{job}";
-    private const string UnitEvent     = "{event}";
-    private const string UnitReprobe   = "{reprobe}";
+    private const string UnitUpdate = "{update}";
+    private const string UnitFailure = "{failure}";
+    private const string UnitItem = "{item}";
+    private const string UnitSync = "{sync}";
+    private const string UnitRetry = "{retry}";
+    private const string UnitJob = "{job}";
+    private const string UnitEvent = "{event}";
+    private const string UnitReprobe = "{reprobe}";
 
     public static readonly ActivitySource ActivitySource = new(SourceName);
     public static readonly Meter Meter = new(SourceName);
