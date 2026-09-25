@@ -6,7 +6,39 @@ See also: [Pipeline Orchestration](pipeline-orchestration.md) for how pipeline s
 
 ## Metrics
 
-All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `PipelineTelemetry.cs` (`src/CodingAgent.Infrastructure.Common/Telemetry/PipelineTelemetry.cs`).
+All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `PipelineTelemetry.cs` (`src/CodingAgent.Infrastructure.Common/Telemetry/PipelineTelemetry.cs`), unless otherwise noted.
+
+### GitHub API Metrics
+
+GitHub-specific metrics are emitted on a dedicated `CodingAgent.GitHub` meter (`GitHubTelemetry.cs` in `src/CodingAgent.Infrastructure.Providers/GitHub/`). This meter is registered in the API, Scheduler, Web, and Job Controller processes, but **not** in agent pods — agent pods must not emit these series.
+
+| Metric | Type | Unit | Tags | Description |
+|--------|------|------|------|-------------|
+| `github.api.requests` | Counter | — | `operation`, `outcome` | GitHub API request attempt outcomes. Emitted **per attempt including retries** |
+| `github.rate_limit.remaining` | ObservableGauge | — | `resource` | Remaining GitHub API rate-limit quota. Only emitted from processes that have made at least one GitHub API call |
+
+**Tag values:**
+- `operation`: provider method name (closed set defined in `GitHubTelemetry.AllOperationNames`)
+- `outcome`: `success` | `not_found` | `rate_limited` | `error`
+- `resource`: `core` (REST API calls) | `graphql` (GraphQL mutations)
+
+### Pipeline Housekeeping Metrics (PR Outcomes)
+
+The following metrics are added alongside the existing `pipeline.housekeeping.*` series:
+
+| Metric | Type | Unit | Tags | Description |
+|--------|------|------|------|-------------|
+| `pipeline.pull_requests.closed` | Counter | — | `outcome` | Agent PRs that were merged or closed. Emitted **once per PR** by the housekeeping service |
+| `pipeline.pull_requests.time_to_merge` | Histogram | seconds | — | Time from PR creation to merge. Buckets: 3600, 14400, 43200, 86400, 172800, 604800 s (1h, 4h, 12h, 24h, 48h, 1 week) |
+
+**Tag values:**
+- `outcome`: `merged` | `closed_unmerged`
+
+`pipeline.pull_requests.time_to_merge` is only emitted for `merged` PRs where `PullRequestSummary.CreatedAt` is set. It uses `UtcNow` as a proxy for merge time; the approximation error is bounded by the housekeeping poll interval (typically 1–5 minutes).
+
+Deduplication: both instruments are emitted at most once per PR per leader instance. Leader changes may cause a re-emit for already-counted PRs (graceful handling would require persistent storage).
+
+### All Pipeline Metrics
 
 | Metric | Type | Unit | Tags | Description |
 |--------|------|------|------|-------------|
@@ -60,6 +92,8 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `pipeline.housekeeping.evicted` | Counter | — | `repo_provider_id` | In-flight entries removed (CI resolved or PR merged/label removed) |
 | `pipeline.housekeeping.conflict_rework_triggered` | Counter | — | `repo_provider_id` | Issues re-queued for rework due to PR merge conflict |
 | `pipeline.housekeeping.branch_deleted` | Counter | — | `repo_provider_id` | Stale agent branches deleted (no open PR, inactive issue label) |
+| `pipeline.pull_requests.closed` | Counter | — | `outcome` | Agent PRs that were merged or closed. Emitted once per PR (deduplicated across poll cycles) |
+| `pipeline.pull_requests.time_to_merge` | Histogram | seconds | — | Time from PR creation to merge. Buckets: 1h, 4h, 12h, 24h, 48h, 1 week. Only emitted for merged PRs |
 | `pipeline.queue_sweep.cancelled` | Counter | — | — | WorkItems cancelled as stale by the queue sweep (issue no longer eligible) |
 | `pipeline.queue_sweep.skipped` | Counter | — | — | WorkItems skipped by the queue sweep (provider not polled, rate-limited, or wrong task type) |
 | `pipeline.queue_sweep.failed` | Counter | — | — | Unexpected failures during the queue sweep (`POST /api/work-items/{id}/status` errors) |
@@ -125,7 +159,7 @@ Other histograms (`token_vending.duration`, `quality_gate.duration`, etc.) use t
 
 The `pipeline.jobs.*` metrics (Prometheus: `pipeline_jobs_dispatched_total`, `pipeline_jobs_completed_total`, `pipeline_jobs_failed_total`, `pipeline_jobs_duration_seconds`) are emitted by two sources:
 
-1. **Agent pods** (ephemeral K8s Jobs) — via `PipelineRunInstrumentation.Dispose()`, with rich tags: `run_type`, `pipeline.project_id`, `pipeline.project_name`. These carry `service.name=coding-agent` and provide per-project, per-run-type breakdowns.
+1. **Agent pods** (ephemeral K8s Jobs) — via `PipelineRunInstrumentation.Dispose()`, with rich tags: `run_type`, `pipeline.project_id`, `pipeline.project_name`. These carry `service.name=coding-agent-worker` and provide per-project, per-run-type breakdowns.
 
 2. **Job Controller** (long-lived deployment) — via `WorkDistributionTelemetry.LogTerminalStatus()`, with minimal tags: `status` (and `failure_reason` for failed jobs, in snake_case). These carry `service.name=coding-agent-jobcontroller` and are **not subject to pod-exit flush races**.
 
@@ -151,7 +185,7 @@ The Job Controller-side recordings are not affected by any of the above.
 |----------|--------------------|
 | Alert: jobs completing / failing (reliability critical) | `workdistribution_workitems_terminated_total` (exact counts) |
 | Dashboard: jobs completed over 24h (non-exact OK) | `increase(pipeline_jobs_completed_total[24h])` (sums both emitters) |
-| Dashboard: per-run-type breakdown | `pipeline_jobs_completed_total{service_name="coding-agent"}` |
+| Dashboard: per-run-type breakdown | `pipeline_jobs_completed_total{service_name="coding-agent-worker"}` |
 | Dashboard: job duration percentiles | `pipeline_jobs_duration_seconds` (both emitters contribute) |
 
 ### Work Distribution Metrics
@@ -174,6 +208,72 @@ The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetr
 | `workdistribution.progress_write_failures` | Counter | {failure} | — | Failed `LastProgressAt` DB writes. Sustained non-zero rate means `ReconciliationService` sees stale values and may false-positive timeout agents |
 | `pipeline.db_retention.pipeline_runs_deleted` | Counter | {row} | — | `PipelineRuns` rows deleted by the per-project retention sweep |
 | `pipeline.db_retention.work_items_deleted` | Counter | {row} | — | `WorkItems` rows deleted by the per-project retention sweep |
+
+## Span Noise Filters
+
+About 70% of raw daily span volume is diagnostic noise: health probes, Kubernetes leader-election
+lease calls, UI polling, and chatty SignalR/Blazor callbacks. `OtelNoiseFilter`
+(`src/CodingAgent.Infrastructure.Common/Telemetry/OtelNoiseFilter.cs`, namespace
+`CodingAgent.Infrastructure.Telemetry`) is wired into all four long-lived hosts (Api, Web,
+Scheduler, JobController) to suppress this noise at the SDK level — before spans reach the OTLP
+exporter.
+
+### AspNetCore Request Filter
+
+`OtelNoiseFilter.FilterAspNetCoreRequest` is used as
+`AspNetCoreTraceInstrumentationOptions.Filter`. It drops requests whose path is exactly:
+
+| Path | Noise source |
+|------|-------------|
+| `/healthz` | Kubernetes liveness/startup probes |
+| `/readyz` | Kubernetes readiness probes |
+| `/loop/status` | Web → Scheduler polling (~57k spans/day per endpoint) |
+
+Sub-paths (e.g. `/healthz/detail`) are **kept** — the filter uses exact matching, not a prefix.
+
+### Kubernetes API Server Filter
+
+`OtelNoiseFilter.FilterHttpClientRequest` is used as
+`HttpClientTraceInstrumentationOptions.FilterHttpRequestMessage`. It drops outbound HTTP requests
+to the Kubernetes API server, which generates ~387k leader-election lease spans per day from
+Scheduler and JobController.
+
+Detection order:
+1. If `KUBERNETES_SERVICE_HOST` env var is set (in-cluster), the request's host is compared
+   against it.
+2. Fall back: match the well-known DNS alias `kubernetes.default.svc`.
+
+All other outbound requests are kept.
+
+### Outbound Span Name Enrichment
+
+`OtelNoiseFilter.EnrichHttpClientRequest` is used as
+`HttpClientTraceInstrumentationOptions.EnrichWithHttpRequestMessage`. It renames outbound HTTP
+spans from the uninformative default (`GET`, `POST`) to `"{METHOD} {host}"`, for example:
+
+- `GET api.github.com`
+- `POST coding-agent-api`
+
+No path component is included to keep cardinality bounded.
+
+### Span Drop Processor
+
+`OtelNoiseSpanDropProcessor` (a `BaseProcessor<Activity>` registered via `.AddProcessor(...)`)
+suppresses high-volume, low-signal spans at the SDK level using `OtelNoiseFilter.ShouldDropSpan`.
+Suppressed spans have `IsAllDataRequested` set to `false` and the `Recorded` trace flag cleared,
+so no data is collected and nothing is exported.
+
+Dropped span name patterns:
+
+| Pattern | Noise source | Volume |
+|---------|-------------|--------|
+| `*/Heartbeat` | `AgentHub/Heartbeat` SignalR hub method | ~7k/day |
+| `*/ReportOutputLines` | `AgentHub/ReportOutputLines` SignalR hub method | ~9.6k/day |
+| `*/OnRenderCompleted` | `ComponentHub/OnRenderCompleted` SignalR hub method | ~47k/day |
+| `Circuit *` | Blazor circuit lifecycle (high-cardinality IDs in name) | high |
+| `Event * -> *` | Blazor event callbacks (e.g. `Event onclick -> …<BuildRenderTree>b__0_12`) | high |
+
+Blazor route spans (`Route *`) are explicitly **kept**.
 
 ## Traces
 
@@ -277,11 +377,14 @@ Agent pods emit telemetry with `service.name` derived from the agent image and l
 | `service.name` | Component | Port | How configured |
 |----------------|-----------|------|----------------|
 | `coding-agent-web` | Web service (Blazor UI) | — | Hardcoded at compile time in `OpenTelemetryRegistration.cs`; not overridable via `OTEL_SERVICE_NAME` |
-| `coding-agent-web` *(default)* or override | REST/WebSocket API | Port 8080 | Set via `otel.apiServiceName` in `values.yaml` (default: `coding-agent-web`). Override to `coding-agent-api` to separate API spans from Blazor spans in Tempo — then also update Grafana panel queries. |
+| `coding-agent-api` *(default)* or override | REST/WebSocket API | Port 8080 | Set via `otel.apiServiceName` in `values.yaml` (default: `coding-agent-api`). Override if you need a different name. |
 | `coding-agent-jobcontroller` | Job Controller | Port 8080 | Fixed fallback; overridable via `OTEL_SERVICE_NAME` env var |
 | `coding-agent-scheduler` | Scheduler | Port 8080 | Fixed fallback; overridable via `OTEL_SERVICE_NAME` env var |
+| `coding-agent-worker` | Agent pods (K8s Jobs) | — | Set unconditionally by `JobSpecBuilder`; per-run identity is in `service.instance.id` (= Job name) in `OTEL_RESOURCE_ATTRIBUTES` |
 
-> **Why API defaults to `coding-agent-web`:** The Grafana "Recent Pipeline Traces" panel queries `rootServiceName="coding-agent-web"`. With the API emitting under the same service name, `ExecutePipeline` spans (started by the API when a WorkItem is created) appear in that panel automatically. Override `otel.apiServiceName` to `coding-agent-api` if you want to distinguish API-origin spans from Blazor UI spans; then update the panel query to `rootServiceName=~"coding-agent-web|coding-agent-api"`. See issue #2255.
+> **Run identity in `service.instance.id`:** Agent pods all share the stable `service.name=coding-agent-worker`. The individual run is identified by `service.instance.id` (set to the Kubernetes Job name, e.g. `caa-abcdef12`) in `OTEL_RESOURCE_ATTRIBUTES`. This keeps service cardinality stable — queries no longer need regex to match per-run service names.
+
+> **⚠️ Breaking change (upgrade from pre-2969):** The API's `service.name` changed from `coding-agent-web` to `coding-agent-api`. Update any Grafana dashboards or alerts that filter on `service.name="coding-agent-web"` for API traffic. The "Recent Pipeline Traces" panel is not affected (updated in #2966).
 
 ### Example: Grafana Cloud
 

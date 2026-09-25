@@ -94,7 +94,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             {{- include "coding-agent-automation.signalrEnv" . | nindent 12 }}
-            {{- include "coding-agent-automation.otelEnv" (dict "serviceName" "coding-agent-scheduler" "root" .) | nindent 12 }}
+            {{- include "coding-agent-automation.otelEnv" (dict "serviceName" "coding-agent-scheduler" "deploymentName" (printf "%s-scheduler" (include "coding-agent-automation.fullname" .)) "root" .) | nindent 12 }}
             - name: LOG_LEVEL
               value: {{ .Values.scheduler.env.logLevel | default "Information" | quote }}
             - name: Scheduler__Dispatch__Enabled

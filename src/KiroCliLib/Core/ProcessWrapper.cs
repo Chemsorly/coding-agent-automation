@@ -164,7 +164,9 @@ public class ProcessWrapper : IProcessWrapper
     /// </remarks>
     public void Kill()
     {
-        if (_process == null || _process.HasExited) return;
+        if (_process == null) return;
+        try { if (_process.HasExited) return; }
+        catch (InvalidOperationException) { return; } // process exited between null check and HasExited
         try
         {
             if (_useWsl)

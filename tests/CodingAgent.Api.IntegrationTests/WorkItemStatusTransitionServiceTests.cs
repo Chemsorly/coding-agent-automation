@@ -170,17 +170,18 @@ public sealed class WorkItemStatusTransitionServiceTests
     // ── Lifecycle dispatch ─────────────────────────────────────────────────────
 
     [Fact]
-    public async Task TransitionAsync_Failed_RealTransition_CallsFailRunAsync()
+    public async Task TransitionAsync_Failed_RealTransition_CallsFailRunWithLabelAsync_NullLabel()
     {
-        // Arrange: Running → Failed — a real terminal transition
+        // Arrange: Running → Failed — a real terminal transition (no request.Result → resolvedFinalLabel = null)
         var opts = CreateDbOptions();
         var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
 
         var lifecycleManager = new Mock<IRunLifecycleManager>();
         lifecycleManager
-            .Setup(m => m.FailRunAsync(
+            .Setup(m => m.FailRunWithLabelAsync(
                 It.IsAny<RunId>(),
                 It.IsAny<string>(),
+                It.IsAny<string?>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<FailureReason?>()))
             .ReturnsAsync((PipelineRun?)null);
@@ -193,14 +194,16 @@ public sealed class WorkItemStatusTransitionServiceTests
 
         // Assert
         outcome.Should().Be(StatusTransitionOutcome.Transitioned);
+        // No request.Result → resolvedFinalLabel is null → falls back to agent:error inside RunLifecycleManager
         lifecycleManager.Verify(
-            m => m.FailRunAsync(
+            m => m.FailRunWithLabelAsync(
                 It.Is<RunId>(r => r.Value == item.Id.ToString()),
                 It.IsAny<string>(),
+                (string?)null,
                 It.IsAny<CancellationToken>(),
                 It.Is<FailureReason?>(fr => fr == FailureReason.InfrastructureFailure)),
             Times.Once,
-            "FailRunAsync must be called with InfrastructureFailure on terminal Failed transition");
+            "FailRunWithLabelAsync must be called with resolvedFinalLabel=null when no Result in request");
     }
 
     [Fact]
@@ -332,6 +335,163 @@ public sealed class WorkItemStatusTransitionServiceTests
         var persisted = await verifyCtx.WorkItems.FindAsync(item.Id);
         persisted!.FailureReason.Should().Be(FailureReason.AgentError,
             "a valid named FailureReason must be persisted correctly");
+    }
+
+    // ── FinalLabel resolution from request.Result (Issue #3009) ──────────────
+
+    /// <summary>
+    /// Helper: creates a Running WorkItem in DB, sets up a loose lifecycle mock for
+    /// FailRunWithLabelAsync, creates the service, and runs TransitionAsync with a Failed
+    /// request carrying the given serialized result. Returns (outcome, captured resolvedFinalLabel).
+    /// </summary>
+    private static async Task<(StatusTransitionOutcome outcome, string? capturedLabel)> RunFailedTransitionWithResultAsync(
+        string? resultJson)
+    {
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
+
+        string? capturedLabel = "SENTINEL"; // distinct from null so we know it was set
+        var lifecycleManager = new Mock<IRunLifecycleManager>();
+        lifecycleManager
+            .Setup(m => m.FailRunWithLabelAsync(
+                It.IsAny<RunId>(),
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<FailureReason?>()))
+            .Callback<RunId, string, string?, CancellationToken, FailureReason?>(
+                (_, _, resolvedLabel, _, _) => capturedLabel = resolvedLabel)
+            .ReturnsAsync((PipelineRun?)null);
+
+        var svc = CreateService(opts, lifecycleManager.Object);
+        var request = new WorkItemStatusRequest { Status = WorkItemStatus.Failed, Result = resultJson };
+
+        var outcome = await svc.TransitionAsync(item.Id, request, CancellationToken.None);
+        return (outcome, capturedLabel == "SENTINEL" ? throw new InvalidOperationException("Callback never fired") : capturedLabel);
+    }
+
+    [Fact]
+    public async Task TransitionAsync_Failed_WithNeedsRefinementResult_PassesNeedsRefinementLabel()
+    {
+        // Arrange: request.Result carries FinalLabel = "agent:needs-refinement"
+        var payload = new CodingAgent.Pipeline.Models.JobCompletionPayload
+        {
+            FinalLabel = AgentLabels.NeedsRefinement,
+            FinalStep = CodingAgent.Pipeline.Models.PipelineStep.Failed,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+        var resultJson = System.Text.Json.JsonSerializer.Serialize(payload, CodingAgent.Pipeline.PipelineJsonOptions.Default);
+
+        var (outcome, capturedLabel) = await RunFailedTransitionWithResultAsync(resultJson);
+
+        outcome.Should().Be(StatusTransitionOutcome.Transitioned);
+        capturedLabel.Should().Be(AgentLabels.NeedsRefinement,
+            "agent:needs-refinement is the only allowed label from the Failed HTTP path");
+    }
+
+    [Theory]
+    [InlineData("agent:done")]
+    [InlineData("agent:next")]
+    [InlineData("agent:epic-review")]
+    [InlineData("agent:wont-do")]
+    [InlineData("agent:cancelled")]
+    [InlineData("agent:in-progress")]
+    [InlineData("agent:error")]
+    [InlineData("unknown-label")]
+    public async Task TransitionAsync_Failed_WithNonNeedsRefinementLabel_FallsBackToNull(string disallowedLabel)
+    {
+        // Arrange: any label other than agent:needs-refinement must resolve to null (agent:error fallback)
+        var payload = new CodingAgent.Pipeline.Models.JobCompletionPayload
+        {
+            FinalLabel = disallowedLabel,
+            FinalStep = CodingAgent.Pipeline.Models.PipelineStep.Failed,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+        var resultJson = System.Text.Json.JsonSerializer.Serialize(payload, CodingAgent.Pipeline.PipelineJsonOptions.Default);
+
+        var (outcome, capturedLabel) = await RunFailedTransitionWithResultAsync(resultJson);
+
+        outcome.Should().Be(StatusTransitionOutcome.Transitioned);
+        capturedLabel.Should().BeNull(
+            $"label '{disallowedLabel}' must not be accepted on the Failed HTTP path; resolvedFinalLabel must be null (agent:error fallback)");
+    }
+
+    [Fact]
+    public async Task TransitionAsync_Failed_WithNullResult_PassesNullLabel()
+    {
+        // Arrange: no result payload — resolvedFinalLabel must be null
+        var (outcome, capturedLabel) = await RunFailedTransitionWithResultAsync(resultJson: null);
+
+        outcome.Should().Be(StatusTransitionOutcome.Transitioned);
+        capturedLabel.Should().BeNull("null result → no FinalLabel → agent:error fallback");
+    }
+
+    [Fact]
+    public async Task TransitionAsync_Failed_WithMalformedResult_PassesNullLabel()
+    {
+        // Arrange: JSON that cannot be deserialized as JobCompletionPayload
+        var (outcome, capturedLabel) = await RunFailedTransitionWithResultAsync(resultJson: "not-valid-json{{");
+
+        outcome.Should().Be(StatusTransitionOutcome.Transitioned);
+        capturedLabel.Should().BeNull("malformed JSON → deserialization fails → agent:error fallback");
+    }
+
+    [Fact]
+    public async Task TransitionAsync_Failed_WithEmptyStringResult_PassesNullLabel()
+    {
+        // Arrange: empty string (treated same as null — no payload)
+        var (outcome, capturedLabel) = await RunFailedTransitionWithResultAsync(resultJson: "");
+
+        outcome.Should().Be(StatusTransitionOutcome.Transitioned);
+        capturedLabel.Should().BeNull("empty result string → no FinalLabel → agent:error fallback");
+    }
+
+    // ── Idempotency when item is already Failed (Issue #3009) ─────────────────
+
+    [Fact]
+    // TODO: [WARNING] The test name says "ReturnsRejected" but the assertion is AlreadyAtTarget.
+    // The // Arrange: comment also incorrectly states "TransitionDetailedAsync returns Rejected (not
+    // AlreadyAtTarget, because the pre-read guard only catches Cancelled/Succeeded)" — but the
+    // // Assert: comment and the actual assertion correctly use AlreadyAtTarget. The test name and
+    // arrange-comment need to be reconciled: either TransitionDetailedAsync returns AlreadyAtTarget
+    // for a same-status Failed→Failed transition (in which case the test name is wrong and should be
+    // "ReturnsAlreadyAtTarget"), or it returns Rejected (in which case the assertion is wrong).
+    // Verify against the TransitionDetailedAsync implementation and fix the test name + arrange comment
+    // to match the actual behavior. A wrong name here could mask a future regression where the actual
+    // return value changes. See review finding [WARNING] #5 (TestQualityReviewer).
+    public async Task TransitionAsync_FailedOnAlreadyFailed_ReturnsRejected_NoLifecycleCall()
+    {
+        // Arrange: item already Failed in DB — TransitionDetailedAsync returns Rejected (not AlreadyAtTarget,
+        // because the pre-read guard only catches Cancelled/Succeeded). Lifecycle dispatch is gated on
+        // Transitioned, so FailRunWithLabelAsync must NOT be called.
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Failed,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-5));
+
+        var lifecycleManager = new Mock<IRunLifecycleManager>(MockBehavior.Strict);
+        var svc = CreateService(opts, lifecycleManager.Object);
+
+        var payload = new CodingAgent.Pipeline.Models.JobCompletionPayload
+        {
+            FinalLabel = AgentLabels.NeedsRefinement,
+            FinalStep = CodingAgent.Pipeline.Models.PipelineStep.Failed,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+        var request = new WorkItemStatusRequest
+        {
+            Status = WorkItemStatus.Failed,
+            Result = System.Text.Json.JsonSerializer.Serialize(payload, CodingAgent.Pipeline.PipelineJsonOptions.Default)
+        };
+
+        // Act
+        var outcome = await svc.TransitionAsync(item.Id, request, CancellationToken.None);
+
+        // Assert: Failed→Failed is AlreadyAtTarget (TransitionDetailedAsync returns AlreadyAtTarget for same-status transitions);
+        // lifecycle dispatch is gated on Transitioned, so FailRunWithLabelAsync must NOT be called,
+        // and whatever label the previous transition set is preserved.
+        outcome.Should().Be(StatusTransitionOutcome.AlreadyAtTarget,
+            "TransitionDetailedAsync returns AlreadyAtTarget for a Failed→Failed same-status transition; lifecycle dispatch never fires");
+        lifecycleManager.VerifyNoOtherCalls();
     }
 
     // ── Telemetry emission (via awaitTelemetry seam) ───────────────────────────

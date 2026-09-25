@@ -431,4 +431,39 @@ public class IssueReworkServiceTests
             AgentLabels.Next, It.IsAny<CancellationToken>()), Times.Once,
             "active run on a different branch must not block the swap for this PR");
     }
+
+    // ── currentLabels scoping: only present labels are removed ────────────
+
+    [Fact]
+    public async Task TriggerConflictReworkAsync_ConflictedPr_AgentErrorIssue_OnlyRemovesErrorLabel()
+    {
+        // Issue has only agent:error. The swap must remove only agent:error, not all agent:* labels.
+        var svc = Create();
+        var repo = new Mock<IRepositoryProvider>();
+        repo.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<string>)["42"]);
+
+        var issues = new Mock<IIssueProvider>();
+        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(MakeIssue("42", AgentLabels.Error));
+        issues.Setup(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .Returns(Task.CompletedTask);
+        issues.Setup(i => i.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .Returns(Task.CompletedTask);
+
+        await InvokeAsync(svc, [MakePr(1)], repo, issues,
+            MakeMap((1, PrMergeabilityStatus.Conflicted)));
+
+        // Exactly one remove: agent:error (the only present label, and not the new label agent:next).
+        issues.Verify(i => i.RemoveLabelAsync(
+            It.Is<IssueIdentifier>(id => id.Value == "42"),
+            AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Once,
+            "agent:error is the only label present — must be removed exactly once");
+
+        // No other agent:* label should have been removed.
+        issues.Verify(i => i.RemoveLabelAsync(
+            It.Is<IssueIdentifier>(id => id.Value == "42"),
+            It.Is<string>(l => l != AgentLabels.Error), It.IsAny<CancellationToken>()), Times.Never,
+            "no label other than agent:error should be removed");
+    }
 }

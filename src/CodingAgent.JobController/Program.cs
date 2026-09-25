@@ -1,4 +1,5 @@
 using CodingAgent.Api.Client;
+using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.JobController;
 using CodingAgent.Pipeline.LeaderElection;
@@ -113,6 +114,9 @@ builder.Services.AddOpenTelemetry()
          // PipelineTelemetry instruments (jobs.completed, jobs.failed, job duration, queue wait, etc.)
          // are recorded via the pipeline library inside the Job Controller process.
          .AddMeter(PipelineTelemetry.SourceName)
+         // GitHub-facing metrics (github.api.requests counter, github.rate_limit.remaining gauge).
+         // Not registered in the agent — agent pods must not emit these series.
+         .AddMeter(GitHubTelemetry.MeterName)
          // Prometheus requires Cumulative temporality; the OTLP exporter defaults to Delta for
          // histograms and counters, which Grafana Cloud silently drops.
          .AddOtlpExporter((_, readerOptions) =>
@@ -126,6 +130,10 @@ builder.WebHost.UseUrls("http://+:8080"); // NOSONAR S1075 — port is runtime i
 builder.Services.Configure<HostOptions>(opts => opts.ShutdownTimeout = TimeSpan.FromSeconds(30));
 
 var app = builder.Build();
+
+// Pre-initialize github.api.requests counter tag combinations so Prometheus increase() works
+// on first increment. Must run after builder.Build() so the MeterProvider is active.
+GitHubTelemetry.PreInitialize();
 
 // ── Health probes ─────────────────────────────────────────────────────────────
 app.MapGet("/healthz", () => Results.Ok(new { status = "healthy" }));

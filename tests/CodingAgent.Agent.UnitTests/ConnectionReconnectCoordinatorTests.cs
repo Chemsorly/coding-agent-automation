@@ -304,18 +304,20 @@ public sealed class ConnectionReconnectCoordinatorTests
     [Fact]
     public async Task HandleTerminalClosedAsync_ConcurrentDispose_CASPreventsDoubleOwnership()
     {
-        // Use a blocker so the reconnect loop reaches the CAS point and then we dispose concurrently
+        // Use a blocker so the reconnect loop reaches the CAS point and then we dispose concurrently.
+        // startBlocker holds StartAsync suspended until we signal it.
+        // startEntered is signalled by StartFunc the moment it is entered, so DisposeAsync only runs
+        // after the background task has provably reached the blocking point — no timing heuristics.
         var startBlocker = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var startEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        // TODO [WARNING]: The Task.Delay(200) below is a timing heuristic to ensure the background
-        // reconnect task has reached StartAsync before DisposeAsync is called. On a loaded machine
-        // the background task may not have reached the blocking point yet, making the test scenario
-        // invalid. Replace the fixed delay with a synchronization primitive (e.g. a second
-        // TaskCompletionSource signalled inside StartFunc when it is entered) to guarantee ordering.
-        // (ConnectionReconnectCoordinatorTests.cs:285 — TestQualityReviewer review)
         var blockingHub = new FakeHubConnectionManager
         {
-            StartFunc = _ => startBlocker.Task.ContinueWith(_ => { })
+            StartFunc = _ =>
+            {
+                startEntered.TrySetResult(true); // signal: we are now inside StartAsync
+                return startBlocker.Task.ContinueWith(_ => { });
+            }
         };
 
         var (coordinator, _) = CreateCoordinator(factoryFunc: () => blockingHub);
@@ -326,8 +328,9 @@ public sealed class ConnectionReconnectCoordinatorTests
                 delayOverride: _ => TimeSpan.Zero,
                 appStoppingToken: CancellationToken.None));
 
-        // Let loop reach StartAsync
-        await Task.Delay(200);
+        // Wait until StartFunc has actually been entered before calling DisposeAsync,
+        // guaranteeing the CAS race condition is exercised deterministically.
+        await startEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         // Dispose concurrently — sets _hubManager to null, invalidating the CAS
         await coordinator.DisposeAsync();
