@@ -652,8 +652,8 @@ public sealed class PostStatusIdempotencyTests
         // instrument is shared across all parallel tests, so concurrent emissions from other tests
         // may appear in capturedTags during the 200 ms wait window.
         capturedTags.Should().Contain(
-            "AgentError",
-            "a named FailureReason (\"AgentError\") must pass through IsDefined and reach the metric tag");
+            "agent_error",
+            "a named FailureReason (\"AgentError\") must pass through IsDefined and reach the metric tag as snake_case (issue #2967)");
     }
 
     // ── FailureReason IsDefined guard — DB persistence side (issue #2667) ────
