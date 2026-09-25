@@ -1521,5 +1521,9 @@ public class HousekeepingServiceTests
     // ── TriggerConflictReworkAsync — agent:error as valid rework target ───────
     // This test is now covered by IssueReworkServiceTests.TriggerConflictReworkAsync_ConflictedPr_AgentErrorIssue_SwapsToNext.
     // The delegation from HousekeepingService is tested in ExecuteAsync_ConflictedPr_DelegatesToIssueReworkService.
+
+    // TODO: No span-emission tests exist for Housekeeping.BranchUpdate (added in issue #2977).
+    // Add tests to verify: (1) Housekeeping.BranchUpdate is emitted with pr_number and repo_provider_id
+    // tags when a branch update is triggered; (2) no span is emitted when no PRs qualify for update.
 }
 

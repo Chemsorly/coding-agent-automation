@@ -449,4 +449,8 @@ public class StaleBranchCleanerTests
         repo.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
             "branch with open PR present in agentDonePrs must not be deleted");
     }
+
+    // TODO: No span-emission tests exist for Housekeeping.BranchDelete (added in issue #2977).
+    // Add tests to verify: (1) Housekeeping.BranchDelete is emitted with branch_name and issue_id
+    // tags when a stale branch is deleted; (2) no span is emitted when no branches qualify for deletion.
 }

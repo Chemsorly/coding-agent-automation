@@ -96,8 +96,15 @@ builder.Services.AddOpenTelemetry()
         serviceVersion: version))
     .WithTracing(t =>
     {
-        t.AddAspNetCoreInstrumentation()
-         .AddHttpClientInstrumentation()
+        t.AddSource(PipelineTelemetry.SourceName)
+         .AddAspNetCoreInstrumentation(opts =>
+            opts.Filter = OtelNoiseFilter.FilterAspNetCoreRequest)
+         .AddHttpClientInstrumentation(opts =>
+         {
+             opts.FilterHttpRequestMessage = OtelNoiseFilter.FilterHttpClientRequest;
+             opts.EnrichWithHttpRequestMessage = OtelNoiseFilter.EnrichHttpClientRequest;
+         })
+         .AddProcessor(new OtelNoiseSpanDropProcessor())
          .AddOtlpExporter();
     })
     .WithMetrics(m =>
@@ -114,6 +121,8 @@ builder.Services.AddOpenTelemetry()
          // PipelineTelemetry instruments (jobs.completed, jobs.failed, job duration, queue wait, etc.)
          // are recorded via the pipeline library inside the Job Controller process.
          .AddMeter(PipelineTelemetry.SourceName)
+         // .NET runtime metrics (GC, thread pool, CPU, memory) — built-in since .NET 8.
+         .AddMeter("System.Runtime")
          // GitHub-facing metrics (github.api.requests counter, github.rate_limit.remaining gauge).
          // Not registered in the agent — agent pods must not emit these series.
          .AddMeter(GitHubTelemetry.MeterName)
@@ -130,10 +139,6 @@ builder.WebHost.UseUrls("http://+:8080"); // NOSONAR S1075 — port is runtime i
 builder.Services.Configure<HostOptions>(opts => opts.ShutdownTimeout = TimeSpan.FromSeconds(30));
 
 var app = builder.Build();
-
-// Pre-initialize github.api.requests counter tag combinations so Prometheus increase() works
-// on first increment. Must run after builder.Build() so the MeterProvider is active.
-GitHubTelemetry.PreInitialize();
 
 // ── Health probes ─────────────────────────────────────────────────────────────
 app.MapGet("/healthz", () => Results.Ok(new { status = "healthy" }));
