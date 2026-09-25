@@ -156,8 +156,28 @@ public static class PipelineTelemetry
         "pipeline.housekeeping.succeeded", UnitUpdate, "Server-side branch updates completed successfully");
     public static readonly Counter<long> HousekeepingFailed = Meter.CreateCounter<long>(
         "pipeline.housekeeping.failed", UnitUpdate, "Server-side branch updates that threw an exception");
+    /// <summary>
+    /// PRs that were evaluated as candidates but skipped for a policy reason, tagged by
+    /// <c>skip_reason</c>. Only policy-driven skips are counted here; content filters
+    /// (draft, not-behind) and system-fault paths (active_runs_unavailable) are excluded:
+    /// draft and not-behind are already captured by <see cref="HousekeepingPrEvaluated"/>,
+    /// and active_runs_unavailable is covered by the Step 4 Warning log.
+    /// The concurrency-limit break path is a separate counter: <see cref="HousekeepingSlotExhausted"/>.
+    /// </summary>
     public static readonly Counter<long> HousekeepingSkipped = Meter.CreateCounter<long>(
-        "pipeline.housekeeping.skipped", UnitUpdate, "PRs skipped during candidate selection (not behind, null, draft, active rework, in-flight)");
+        "pipeline.housekeeping.skipped", UnitUpdate,
+        "PRs skipped for policy reasons during candidate selection, tagged by skip_reason (active_run | in_flight | cooldown)");
+
+    /// <summary>
+    /// Fires once per housekeeping cycle where the concurrency slot limit was reached before
+    /// all sorted candidates were evaluated. One increment = one cycle where throughput was
+    /// constrained by the configured <c>effectiveConcurrencyLimit</c>.
+    /// Distinct from <see cref="HousekeepingSkipped"/>: PRs not reached by the loop were never
+    /// evaluated as candidates — they are capacity-starved, not policy-skipped.
+    /// </summary>
+    public static readonly Counter<long> HousekeepingSlotExhausted = Meter.CreateCounter<long>(
+        "pipeline.housekeeping.slot_exhausted", UnitUpdate,
+        "Cycles where the concurrency slot limit was hit before all candidates were evaluated (one increment per cycle, not per PR)");
     public static readonly Counter<long> HousekeepingEvicted = Meter.CreateCounter<long>(
         "pipeline.housekeeping.evicted", UnitUpdate, "In-flight entries removed (CI resolved or PR merged/label removed)");
     public static readonly Counter<long> HousekeepingConflictReworkTriggered = Meter.CreateCounter<long>(
@@ -200,6 +220,21 @@ public static class PipelineTelemetry
     public static readonly Counter<long> HousekeepingReprobeResolved = Meter.CreateCounter<long>(
         "pipeline.housekeeping.reprobe_resolved", UnitReprobe,
         "PRs that resolved to a non-Unknown mergeability state on re-probe (tagged by resolved_state)");
+
+    /// <summary>
+    /// Closed-set <c>skip_reason</c> tag values for <see cref="HousekeepingSkipped"/>.
+    /// Only policy-driven reasons are represented — content filters (draft, not-behind)
+    /// and system faults (active_runs_unavailable) are deliberately excluded.
+    /// </summary>
+    public static class HousekeepingSkipReasons
+    {
+        /// <summary>PR's branch is currently occupied by an active agent run.</summary>
+        public const string ActiveRun = "active_run";
+        /// <summary>PR already occupies a concurrency slot from a previous trigger (in-flight CI).</summary>
+        public const string InFlight  = "in_flight";
+        /// <summary>PR was triggered too recently and is within the trigger cooldown window.</summary>
+        public const string Cooldown  = "cooldown";
+    }
 
     // Label swap metrics
     // TODO: The unit string "{exhaustion}" is inconsistent with the "{item}", "{retry}", "{failure}", "{event}"

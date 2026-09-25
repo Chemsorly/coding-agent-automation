@@ -463,44 +463,45 @@ public sealed class HousekeepingService : IHousekeepingService
         foreach (var pr in sorted)
         {
             if (inFlight.Count >= limit)
+            {
+                PipelineTelemetry.HousekeepingSlotExhausted.Add(1, repoTag);
                 break;
+            }
 
             if (pr.IsDraft)
             {
-                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
+                // Draft PRs are a content filter, not a policy skip — excluded from the skipped counter.
+                // Already captured in pr_evaluated (drafts still enter the mergeability map as UpToDate).
                 continue;
             }
 
             // Conservative fallback: if active-run branch data was unavailable (Step 4 threw),
             // skip ALL branch updates this cycle — we cannot confirm which branches are safe.
-            // NOTE: The telemetry counter is incremented per-PR but no per-PR log is emitted
-            //   for the conservative-skip path. If the API is down for an extended period (e.g. 30 min),
-            //   operators have no per-PR visibility into which PRs were skipped — only the aggregate
-            //   counter and the single Warning-level log from Step 4. Consider logging PR number and
-            //   branch name here (Debug or Information level) so housekeeping cycles with many
-            //   conservative skips can be diagnosed without ambiguity.
+            // Not counted in the skipped counter — covered by the Step 4 Warning log.
             if (activeRunBranchesUnavailable)
             {
-                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
                 continue;
             }
 
             if (activeRunBranches.Contains(pr.BranchName))
             {
-                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
+                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag,
+                    new KeyValuePair<string, object?>("skip_reason", PipelineTelemetry.HousekeepingSkipReasons.ActiveRun));
                 continue;
             }
 
             if (inFlight.Contains(pr.Number))
             {
-                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
+                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag,
+                    new KeyValuePair<string, object?>("skip_reason", PipelineTelemetry.HousekeepingSkipReasons.InFlight));
                 continue;
             }
 
             var mergeability = mergeabilityMap[pr.Number];
             if (mergeability != PrMergeabilityStatus.Behind)
             {
-                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
+                // Not-behind PRs are a content filter — excluded from the skipped counter.
+                // Distribution already captured by pr_evaluated{mergeability_status}.
                 continue;
             }
 
@@ -513,7 +514,8 @@ public sealed class HousekeepingService : IHousekeepingService
                 _logger.Debug(
                     "HousekeepingService: PR #{PrNumber} is behind but was triggered {Elapsed:F0}m ago (cooldown {Cooldown:F0}m) — skipping to allow other PRs to proceed",
                     pr.Number, (now - lastTriggered).TotalMinutes, triggerCooldown.TotalMinutes);
-                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
+                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag,
+                    new KeyValuePair<string, object?>("skip_reason", PipelineTelemetry.HousekeepingSkipReasons.Cooldown));
                 continue;
             }
 
