@@ -104,6 +104,27 @@ public static class PipelineTelemetry
             HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600]
         });
 
+    // Linked issue resolution metrics (dispatch path)
+    public static readonly Counter<long> DispatchLinkedIssuesResolved = Meter.CreateCounter<long>(
+        "pipeline.dispatch.linked_issues.resolved", "{issue}",
+        "Linked issues resolved per dispatch, tagged by source (closing_keyword | issue_url)");
+
+    public static readonly Counter<long> DispatchLinkedIssueFetchFailed = Meter.CreateCounter<long>(
+        "pipeline.dispatch.linked_issues.fetch_failed", "{failure}",
+        "Non-fatal issue fetch failures during linked issue resolution");
+
+    /// <summary>
+    /// Closed-set <c>source</c> tag values for <see cref="DispatchLinkedIssuesResolved"/>.
+    /// Using a closed constant set prevents unbounded label cardinality.
+    /// </summary>
+    public static class LinkedIssueSource
+    {
+        /// <summary>Issue number was found via a closing keyword (e.g. <c>Closes #N</c>, <c>Fixes #N</c>).</summary>
+        public const string ClosingKeyword = "closing_keyword";
+        /// <summary>Issue number was found via a full GitHub issue URL (<c>https://github.com/owner/repo/issues/N</c>).</summary>
+        public const string IssueUrl = "issue_url";
+    }
+
     public static readonly Counter<long> ConsolidationJobsExpired = Meter.CreateCounter<long>(
         "consolidation.jobs.expired", UnitJob, "Consolidation jobs expired from queue");
 

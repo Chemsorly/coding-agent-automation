@@ -488,10 +488,13 @@ Each repository provider implements its own extraction logic:
 
 #### Recognized Patterns (GitHub)
 
-- `#N` — issue number reference
-- `owner/repo#N` — cross-repository reference
-- `GH-N` — GitHub shorthand
-- Closing keywords: `closes #N`, `fixes #N`, `resolves #N` (case-insensitive)
+The patterns below apply at dispatch time, parsed by `FetchLinkedIssueContextsAsync` in `DispatchOrchestrationService`. Not all patterns are used in all contexts — see notes on each entry.
+
+- Closing keywords: `closes #N`, `fixes #N`, `resolves #N` (and all verb forms: `close`, `fixed`, `closed`, `resolve`, `resolved`) — recognized by `ParseAllClosingKeywords`
+- `https://github.com/owner/repo/issues/N` — full GitHub issue URL (HTTP or HTTPS, optional `www.` prefix) — recognized by `ParseIssueUrls`; recognized at dispatch time by `FetchLinkedIssueContextsAsync`
+- `#N` — simple issue number reference — recognized by `ExtractLinkedIssuesStep` (agent-side) but **not** used at dispatch time to avoid false positives on markdown prose
+- `owner/repo#N` — cross-repository reference — recognized by `ExtractLinkedIssuesStep` only
+- `GH-N` — GitHub shorthand — recognized by `ExtractLinkedIssuesStep` only
 
 #### How Context is Provided
 
@@ -505,7 +508,16 @@ When no linked issue is found, the review proceeds normally using PR metadata (t
 
 #### Multiple Issues
 
-When multiple issue references are found, ALL are retrieved and written as separate files. The review agent infers which issue(s) are most relevant based on the PR title, description, and diff.
+When multiple issue references are found, ALL are retrieved and written as separate files. The review agent infers which issue(s) are most relevant based on the PR title, description, and diff. At most 5 linked issues are fetched per dispatch (cap applied to the combined set of keyword + URL references).
+
+#### Observability
+
+| Metric | Description | Tags |
+|--------|-------------|------|
+| `pipeline.dispatch.linked_issues.resolved` | Issues successfully fetched per dispatch, emitted after the fetch loop | `source=closing_keyword\|issue_url` |
+| `pipeline.dispatch.linked_issues.fetch_failed` | Non-fatal `GetIssueAsync` failures per issue number | (none) |
+
+`source` values are a closed set defined in `PipelineTelemetry.LinkedIssueSource`: `closing_keyword` for issues found via closing-keyword forms, `issue_url` for issues found via GitHub issue URLs. Only emitted when count > 0 for a given source.
 
 ### Review Findings Format
 
