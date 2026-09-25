@@ -16,7 +16,7 @@ namespace CodingAgent.Scheduler.UnitTests;
 /// The <see cref="TimingTestCollection"/> serializes all timing-sensitive tests to avoid
 /// thread-pool starvation on loaded CI hosts.
 /// </summary>
-[Collection("SchedulerTiming")]
+[Collection("Metrics")]
 public sealed class LoopWatchdogServiceTests
 {
     private readonly Mock<IPipelineLoopService> _mockLoopService;

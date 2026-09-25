@@ -33,7 +33,7 @@ namespace CodingAgent.Scheduler.UnitTests;
 ///   <item>Precedence resolution, idempotency, Defense 3 guard, agent:generated coexistence.</item>
 /// </list>
 /// </summary>
-[Collection("SchedulerTiming")]
+[Collection("Metrics")]
 public sealed class OrphanedLabelRecoveryServiceTests
 {
     private readonly Mock<IOrchestratorRunService> _mockRunService = new();
