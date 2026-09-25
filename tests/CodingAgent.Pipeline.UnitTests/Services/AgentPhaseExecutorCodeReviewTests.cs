@@ -503,6 +503,138 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
         _run.CodeReviewIterationsCompleted.Should().Be(1);
     }
 
+    [Fact]
+    public async Task CodeReview_EnableNativeImagePartsTrue_ImagePathsPassedToReviewAgent()
+    {
+        // Arrange: non-null DownloadedImages + EnableNativeImageParts = true → ImagePaths must be forwarded
+        var testImage = new DownloadedImage
+        {
+            LocalPath = "/tmp/img.png",
+            LocalFilename = "img.png",
+            Reference = new ImageReference
+            {
+                Url = "https://example.com/img.png",
+                AltText = "test",
+                SourceType = ImageSourceType.Body,
+                SourceIndex = 0
+            },
+            FileSizeBytes = 1024,
+            MimeType = "image/png"
+        };
+
+        // Capture only the first ExecuteAsync call (the review agent).
+        // Subsequent calls go to GenerateReviewSummarySafeAsync which has no ImagePaths.
+        // TODO: [WARNING] This test only asserts on call #1. If the orchestrator adds a pre-review step in future,
+        // capturedRequest will point to the wrong call and the assertion will silently pass on an unintended request.
+        // Consider adding callCount.Should().BeGreaterThanOrEqualTo(1) and/or pinning the expected total call count.
+        AgentRequest? capturedRequest = null;
+        var callCount = 0;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    capturedRequest = req;
+                    WriteFindingsFile("correctness", "");
+                }
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        var config = _config with
+        {
+            EnableNativeImageParts = true,
+            CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = null }
+        };
+
+        var context = new AgentPhaseContext
+        {
+            Run = _run,
+            Config = config,
+            AgentProvider = _mockAgent.Object,
+            IssueOps = _mockIssueOps.Object,
+            Callbacks = _mockCallbacks.Object,
+            OrchestratorCts = null,
+            Issue = new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "Test requirements", AcceptanceCriteria = new[] { "AC1", "AC2" } },
+            DownloadedImages = new[] { testImage }
+        };
+
+        // Act
+        await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers("Correctness"));
+
+        // Assert: flag true → images forwarded to review agent (first call)
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.ImagePaths.Should().NotBeNull();
+        capturedRequest.ImagePaths.Should().Contain("/tmp/img.png");
+    }
+
+    [Fact]
+    public async Task CodeReview_EnableNativeImagePartsFalse_ImagePathsIsNullForReviewAgent()
+    {
+        // Arrange: non-null DownloadedImages + EnableNativeImageParts = false → ImagePaths must be null
+        var testImage = new DownloadedImage
+        {
+            LocalPath = "/tmp/img.png",
+            LocalFilename = "img.png",
+            Reference = new ImageReference
+            {
+                Url = "https://example.com/img.png",
+                AltText = "test",
+                SourceType = ImageSourceType.Body,
+                SourceIndex = 0
+            },
+            FileSizeBytes = 1024,
+            MimeType = "image/png"
+        };
+
+        // TODO: [WARNING] capturedRequest is captured on call #1. If the orchestrator ever inserts a call before the
+        // review agent (e.g. a context-loading step), this captures the wrong request and the null assertion below
+        // would silently pass on an unintended call. Add callCount.Should().BeGreaterThanOrEqualTo(1) after Act to
+        // confirm the callback fired, and consider pinning the expected total call count.
+        AgentRequest? capturedRequest = null;
+        var callCount = 0;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    capturedRequest = req;
+                    WriteFindingsFile("correctness", "");
+                }
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        var config = _config with
+        {
+            EnableNativeImageParts = false,
+            CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = null }
+        };
+
+        var context = new AgentPhaseContext
+        {
+            Run = _run,
+            Config = config,
+            AgentProvider = _mockAgent.Object,
+            IssueOps = _mockIssueOps.Object,
+            Callbacks = _mockCallbacks.Object,
+            OrchestratorCts = null,
+            Issue = new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "Test requirements", AcceptanceCriteria = new[] { "AC1", "AC2" } },
+            DownloadedImages = new[] { testImage }
+        };
+
+        // Act
+        await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers("Correctness"));
+
+        // Assert: flag false → ImagePaths suppressed, but context.DownloadedImages untouched
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.ImagePaths.Should().BeNull();
+        context.DownloadedImages.Should().NotBeNull("context.DownloadedImages must remain populated when EnableNativeImageParts = false");
+        context.DownloadedImages!.Should().Contain(testImage);
+    }
+
     private AgentPhaseContext BuildContext(PipelineConfiguration? config = null)
     {
         return new AgentPhaseContext

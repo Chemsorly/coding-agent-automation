@@ -154,7 +154,7 @@ Issue and PR bodies can contain embedded images (screenshots, diagrams). The pip
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `enableIssueImageExtraction` | true | Master switch for image extraction from issue/PR bodies |
-| `enableNativeImageParts` | true | Send downloaded images as native image parts to the agent API (requires vision-capable model) |
+| `enableNativeImageParts` | true | When false, downloaded images are not forwarded as native parts to the agent API; images are still downloaded for prompt-text references when `enableIssueImageExtraction` is true |
 | `maxIssueImages` | 10 | Maximum images extracted per issue/PR |
 | `maxImageSizeBytes` | 5242880 | Maximum size in bytes for a single downloaded image (5 MB) |
 | `maxTotalImageSizeBytes` | 20971520 | Maximum total bytes for all downloaded images combined (20 MB) |
