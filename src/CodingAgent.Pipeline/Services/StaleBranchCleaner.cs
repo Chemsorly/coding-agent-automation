@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
@@ -167,6 +168,17 @@ public sealed class StaleBranchCleaner : IStaleBranchCleaner
             // Safe to delete
             try
             {
+                // Emit Housekeeping.BranchDelete span for each branch actually deleted.
+                // Only fires when the branch passes all guards and deletion is attempted.
+                // TODO: The span is currently closed before DeleteBranchAsync is awaited (using block ends
+                // after the two SetTag calls). The span records ~0 duration and cannot reflect a deletion
+                // failure. Fix: move DeleteBranchAsync inside the using block, or switch to `using var`
+                // statement form so the span stays alive until the end of the try block.
+                using (var deleteActivity = PipelineTelemetry.ActivitySource.StartActivity("Housekeeping.BranchDelete"))
+                {
+                    deleteActivity?.SetTag("branch_name", branchName);
+                    deleteActivity?.SetTag("issue_id", issueId);
+                }
                 await repoProvider.DeleteBranchAsync(branchName, ct);
                 PipelineTelemetry.HousekeepingBranchDeleted.Add(1, repoTag);
                 _logger.Information(

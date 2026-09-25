@@ -6,6 +6,7 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
 using k8s.Models;
 using Serilog;
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Net;
 
@@ -225,6 +226,14 @@ public sealed class ReconciliationLoop
 
             try
             {
+                // Emit a Reconcile.Timeout span for each item that is actually timed out.
+                // Spans only fire when enforcement happens — idle cycles with no timed-out items
+                // never reach this path (all items are skipped by the guards above).
+                using var timeoutActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.Timeout");
+                timeoutActivity?.SetTag("work_item_id", item.Id);
+                timeoutActivity?.SetTag("agent_selector", item.AgentSelector ?? "");
+                timeoutActivity?.SetTag("timeout_seconds", item.TimeoutSeconds);
+
                 await _workItemClient.PostStatusAsync(item.Id, new WorkItemStatusUpdate
                 {
                     Status = nameof(WorkItemStatus.Failed),
@@ -347,6 +356,13 @@ public sealed class ReconciliationLoop
 
             try
             {
+                // Emit a Reconcile.DispatchedTimeout span for each Dispatched item with no live Job.
+                // Distinct from Reconcile.Timeout (Running items) to avoid ambiguity in Tempo queries.
+                // Spans only fire when actual work happens — idle cycles return early above.
+                using var dispatchedTimeoutActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.DispatchedTimeout");
+                dispatchedTimeoutActivity?.SetTag("work_item_id", item.Id);
+                dispatchedTimeoutActivity?.SetTag("agent_selector", item.AgentSelector ?? "");
+
                 await _workItemClient.PostStatusAsync(item.Id, new WorkItemStatusUpdate
                 {
                     Status = nameof(WorkItemStatus.Failed),
@@ -440,6 +456,17 @@ public sealed class ReconciliationLoop
             }
 
             _log.Information("Deleting orphan/stale K8s Job {JobName} (reason={OrphanReason})", jobName, orphanReason);
+            // Emit Reconcile.OrphanCleanup per job actually deleted (not per idle cycle iteration).
+            // TODO: The span is currently closed before SafeDeleteJobAsync runs (using block ends before the await).
+            // The span therefore records ~0 duration and cannot reflect a deletion failure.
+            // Fix: move SafeDeleteJobAsync inside the using block, or switch to `using var` statement form.
+            using (var orphanActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.OrphanCleanup"))
+            {
+                orphanActivity?.SetTag("job_name", jobName);
+                orphanActivity?.SetTag("orphan_reason", orphanReason);
+                if (workItemId.HasValue)
+                    orphanActivity?.SetTag("work_item_id", workItemId.Value);
+            }
             await SafeDeleteJobAsync(jobName, ct);
         }
     }
@@ -600,6 +627,18 @@ public sealed class ReconciliationLoop
                 // Classify the failure reason: if the WorkItem was never claimed (still Dispatched),
                 // no agent ran — record as InfrastructureFailure, not AgentError (issue #2956).
                 var failureReason = await ClassifyJobFailureReasonAsync(workItemId.Value, ct);
+                // Emit Reconcile.JobFailed ONLY for the failed path (not for Succeeded).
+                // Placed here in case JobPhaseFailed: rather than inside HandleJobCompletedAsync
+                // because HandleJobCompletedAsync is called for both Succeeded and Failed phases.
+                // TODO: The span is currently closed before HandleJobCompletedAsync runs (using block ends
+                // after the two SetTag calls). The span records ~0 duration and cannot reflect a failure in
+                // HandleJobCompletedAsync. Fix: switch to `using var jobFailedActivity = ...` statement form
+                // so the span stays active until the end of the case arm (including HandleJobCompletedAsync).
+                using (var jobFailedActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.JobFailed"))
+                {
+                    jobFailedActivity?.SetTag("work_item_id", workItemId.Value);
+                    jobFailedActivity?.SetTag("failure_reason", failureReason);
+                }
                 if (await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseFailed, failureReason, errorMsg, ct))
                     _reconciledTerminalIds.Add(workItemId.Value);
                 break;

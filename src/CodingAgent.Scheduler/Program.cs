@@ -97,11 +97,23 @@ builder.Services.AddOpenTelemetry()
     .ConfigureResource(r => r.AddService(
         serviceName: otelServiceName,
         serviceVersion: version))
-    .WithTracing(t => t.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation()
+    .WithTracing(t => t
+        .AddSource(CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName)
+        .AddAspNetCoreInstrumentation(opts =>
+            opts.Filter = OtelNoiseFilter.FilterAspNetCoreRequest)
+        .AddHttpClientInstrumentation(opts =>
+        {
+            opts.FilterHttpRequestMessage = OtelNoiseFilter.FilterHttpClientRequest;
+            opts.EnrichWithHttpRequestMessage = OtelNoiseFilter.EnrichHttpClientRequest;
+        })
+        .AddProcessor(new OtelNoiseSpanDropProcessor())
         .AddOtlpExporter())
-    .WithMetrics(m => m.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation()
+    .WithMetrics(m => m
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
         .AddMeter(CodingAgent.Pipeline.Telemetry.WorkDistributionTelemetry.MeterName)
         .AddMeter(CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName)
+        .AddMeter("System.Runtime")
         // GitHub-facing metrics (github.api.requests counter, github.rate_limit.remaining gauge).
         // Not registered in the agent — agent pods must not emit these series.
         .AddMeter(GitHubTelemetry.MeterName)
@@ -112,6 +124,10 @@ builder.Services.AddOpenTelemetry()
 
 var app = builder.Build();
 
+// Pre-initialize github.api.requests counter tag combinations so Prometheus increase() works
+// on first increment. Must run after builder.Build() so the MeterProvider is active.
+GitHubTelemetry.PreInitialize();
+
 // ── Health probes ─────────────────────────────────────────────────────────
 // /healthz — startup/liveness, /readyz — readiness, /health — Dockerfile HEALTHCHECK compat.
 // Endpoint lambdas live in SchedulerHealthEndpoints so tests can call the same method
@@ -120,10 +136,6 @@ app.MapSchedulerHealthEndpoints();
 
 // ── Loop control endpoints ────────────────────────────────────────────────
 app.MapSchedulerLoopEndpoints();
-
-// Pre-initialize github.api.requests counter tag combinations so Prometheus increase() works
-// on first increment. Must run after builder.Build() so the MeterProvider is active.
-GitHubTelemetry.PreInitialize();
 
 // ── Auto-start pipeline loop if configured ────────────────────────────────
 await app.AutoStartSchedulerLoopAsync();

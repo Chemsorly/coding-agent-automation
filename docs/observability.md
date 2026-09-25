@@ -279,6 +279,47 @@ Blazor route spans (`Route *`) are explicitly **kept**.
 
 All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans marked with † are emitted from both the orchestrator (`PipelineOrchestrationService`) and the agent worker (`LocalPipelineExecutor`).
 
+### Trace Hierarchy
+
+Each agent run's spans are connected to the API request that created the WorkItem. The linkage is:
+
+```
+POST /api/work-items (API request span)
+└── WorkItemAgent.Execute (K8s agent pod)
+    ├── CloneRepository
+    ├── AnalyzeIssue
+    ├── GenerateCode
+    ├── RunQualityGates
+    └── CreatePullRequest
+```
+
+This is achieved by capturing the W3C `traceparent` from the API request span at WorkItem creation time (`WorkItemDispatchEndpoints.cs`, `DispatchWorkItemService.cs`), storing it in `WorkItemEntity.TraceParent`, and injecting it as the `TRACEPARENT` environment variable in the K8s Job (`DispatchLifecycleService.CreateK8sJobAsync` → `JobSpecBuilder.Build`). The agent process restores this context in `WorkItemAgentService.ExecuteAsync` and starts `WorkItemAgent.Execute` as a child.
+
+### Scheduler Spans
+
+The Scheduler and Web (closed-loop) processes emit spans only when actual work occurs — idle ticks produce no spans. The `CodingAgent.Pipeline` ActivitySource is registered in both the Scheduler and JobController OTel tracing configuration via `.AddSource(PipelineTelemetry.SourceName)`.
+
+| Span Name | Tags | Emitter |
+|-----------|------|---------|
+| `Dispatch.Attempt` | `work_item_id`, `agent_selector`, `result` | `WorkItemDispatchLoop.PollAndDispatchAsync` — one span per item dispatched; result is `Dispatched`, `PermanentRejection`, or `Transient` |
+| `Loop.Enqueue` | `issue_identifier`, `template_name` | `DispatchScheduler.DispatchIssueRoundAsync` — one span per issue successfully dispatched by the closed-loop (fires in the Web process) |
+| `Housekeeping.BranchUpdate` | `pr_number`, `repo_provider_id` | `HousekeepingService.UpdateAsync` — one span per PR branch update triggered |
+| `Housekeeping.ConflictRework` | `issue_id`, `pr_number` | `IssueReworkService.TrySwapIssueToNextAsync` — one span per issue re-queued for rework due to merge conflict |
+| `Housekeeping.BranchDelete` | `branch_name`, `issue_id` | `StaleBranchCleaner` — one span per stale agent branch deleted |
+
+### JobController Spans
+
+| Span Name | Tags | Emitter |
+|-----------|------|---------|
+| `Reconcile.JobFailed` | `work_item_id`, `failure_reason` | `ReconciliationLoop.HandleJobAsync` `case JobPhaseFailed:` branch — one span per K8s Job failure reconciled (NOT emitted for succeeded jobs) |
+| `Reconcile.Timeout` | `work_item_id`, `agent_selector`, `timeout_seconds` | `ReconciliationLoop.EnforceTimeoutsAsync` — one span per Running WorkItem timed out |
+| `Reconcile.DispatchedTimeout` | `work_item_id`, `agent_selector` | `ReconciliationLoop.EnforceDispatchedTimeoutAsync` — one span per Dispatched WorkItem with no live K8s Job timed out |
+| `Reconcile.OrphanCleanup` | `job_name`, `orphan_reason`, `work_item_id`* | `ReconciliationLoop.CleanupOrphansAsync` — one span per orphaned K8s Job deleted |
+
+\* `work_item_id` is only set when the `caa/work-item-id` label is present on the job.
+
+### Pipeline Spans
+
 | Span Name | Tags | Emitter |
 |-----------|------|---------|
 | `ExecutePipeline` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.final_step`, `pipeline.agent_id`* | Top-level span wrapping the full pipeline execution |
@@ -313,7 +354,7 @@ All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans mark
 | `TokenVending.GenerateToken` | — | Token generation HTTP call |
 | `Agent.ReceiveJob` | `job_id`, `run_type` | Agent job receipt and acceptance/rejection decision |
 | `Agent.ReportCompletion` | `job_id`, `success` | Reporting job completion to orchestrator |
-| `WorkItemAgent.Execute` | `work_item_id`, `agent_id` | Top-level span for K8s work-item agent lifecycle (connect, execute, report) |
+| `WorkItemAgent.Execute` | `work_item_id`, `agent_id` | Top-level span for K8s work-item agent lifecycle (connect, execute, report). Parent is the API request that created the WorkItem (via TRACEPARENT env var). |
 | `ExecuteConsolidation` | `pipeline.run_id`, `pipeline.consolidation_type` | Top-level span wrapping a consolidation run (brain, refactoring, or harness) |
 | `BrainConsolidation.Clone` | `pipeline.run_id` | Brain repo clone during consolidation |
 | `BrainConsolidation.AgentExecution` | `pipeline.run_id` | Main agent LLM call for brain consolidation |

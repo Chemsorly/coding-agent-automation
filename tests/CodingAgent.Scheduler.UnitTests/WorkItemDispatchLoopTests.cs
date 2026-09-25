@@ -2,8 +2,11 @@ using AwesomeAssertions;
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Scheduler.Services;
 using Moq;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using Xunit;
 using ILogger = Serilog.ILogger;
 
@@ -15,11 +18,19 @@ namespace CodingAgent.Scheduler.UnitTests;
 /// All tests are in the SchedulerTiming collection to serialize against other PeriodicTimer tests.
 /// </summary>
 [Collection("SchedulerTiming")]
-public sealed class WorkItemDispatchLoopTests
+public sealed class WorkItemDispatchLoopTests : IDisposable
 {
     private readonly Mock<IPipelineApiWorkItemClient> _mockClient;
     private readonly Mock<ILeaderGate> _mockLeaderGate;
     private readonly Mock<ILogger> _mockLogger;
+
+    // Class-level ActivityListener: captures all Dispatch.Attempt spans across test methods.
+    // Class-level (not per-method) avoids listener accumulation when multiple tests run within
+    // the same class — inline 'using var' listeners register globally and can bleed across methods.
+    // The [Collection("SchedulerTiming")] attribute serialises this class against all other
+    // timing-sensitive scheduler tests, preventing cross-class ActivitySource races.
+    private readonly ActivityListener _activityListener;
+    private readonly ConcurrentBag<Activity> _capturedActivities = [];
 
     public WorkItemDispatchLoopTests()
     {
@@ -30,7 +41,23 @@ public sealed class WorkItemDispatchLoopTests
             .Returns(_mockLogger.Object);
         _mockLogger.Setup(l => l.ForContext(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<bool>()))
             .Returns(_mockLogger.Object);
+
+        _activityListener = new ActivityListener
+        {
+            ShouldListenTo = s => s.Name == PipelineTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            // SampleUsingParentId required for activities created without an explicit parent context
+            // (common in unit tests where Activity.Current is null). Without it, StartActivity can
+            // return null even when a listener is registered. (Brain: Entry 1 — lessons-learned.md)
+            SampleUsingParentId = (ref ActivityCreationOptions<string> _) => ActivitySamplingResult.AllDataAndRecorded,
+            // Use ActivityStopped (not ActivityStarted) — tags set after StartActivity are only
+            // visible at stop time. (Brain: Entry 1 — lessons-learned.md)
+            ActivityStopped = a => _capturedActivities.Add(a)
+        };
+        ActivitySource.AddActivityListener(_activityListener);
     }
+
+    public void Dispose() => _activityListener.Dispose();
 
     private WorkItemDispatchLoop CreatePoller()
         => new WorkItemDispatchLoop(
@@ -290,4 +317,111 @@ public sealed class WorkItemDispatchLoopTests
         _mockLogger.Verify(l => l.Warning(It.IsAny<Exception>(), It.IsAny<string>(), It.IsAny<Guid>()),
             Times.AtLeastOnce(), "DispatchPendingAsync exception must log a Warning");
     }
+
+    // ── Dispatch.Attempt span emission (issue #2977) ──────────────────────────
+
+    /// <summary>
+    /// AC: For each work item dispatched, a Dispatch.Attempt activity is emitted with the
+    /// work_item_id, agent_selector, and result tags.
+    /// </summary>
+    [Fact]
+    public async Task PollAndDispatch_WhenItemsDispatched_EmitsDispatchAttemptSpanPerItem()
+    {
+        var item1 = MakeItem(agentSelector: "kiro,dotnet");
+        var item2 = MakeItem(agentSelector: "kiro,python");
+
+        _mockClient
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item1, item2]);
+        _mockClient
+            .Setup(c => c.DispatchPendingAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DispatchPendingResult.Dispatched);
+
+        var poller = new WorkItemDispatchLoop(
+            _mockClient.Object,
+            _mockLeaderGate.Object,
+            _mockLogger.Object,
+            rateLimitPerSecond: 100);
+
+        _capturedActivities.Clear();
+        await poller.PollAndDispatchAsync(CancellationToken.None);
+
+        // Two items dispatched → two Dispatch.Attempt spans
+        var dispatches = _capturedActivities
+            .Where(a => a.OperationName == "Dispatch.Attempt")
+            .ToList();
+        dispatches.Should().HaveCount(2, "one Dispatch.Attempt span per dispatched item");
+
+        // Verify tags on first span
+        var span1 = dispatches.First(a => a.GetTagItem("work_item_id")?.ToString() == item1.Id.ToString());
+        span1.GetTagItem("work_item_id").Should().Be(item1.Id);
+        span1.GetTagItem("agent_selector").Should().Be("kiro,dotnet");
+        span1.GetTagItem("result").Should().Be("Dispatched");
+
+        // Verify tags on second span
+        var span2 = dispatches.First(a => a.GetTagItem("work_item_id")?.ToString() == item2.Id.ToString());
+        span2.GetTagItem("work_item_id").Should().Be(item2.Id);
+        span2.GetTagItem("agent_selector").Should().Be("kiro,python");
+        span2.GetTagItem("result").Should().Be("Dispatched");
+    }
+
+    /// <summary>
+    /// AC: When the pending queue is empty (idle tick), no Dispatch.Attempt span is emitted.
+    /// Spans appear only for actual work — idle cycles must not produce spans.
+    /// </summary>
+    [Fact]
+    public async Task PollAndDispatch_WhenQueueEmpty_DoesNotEmitDispatchAttemptSpan()
+    {
+        _mockClient
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PendingWorkItemDto>());
+
+        var poller = new WorkItemDispatchLoop(
+            _mockClient.Object,
+            _mockLeaderGate.Object,
+            _mockLogger.Object,
+            rateLimitPerSecond: 100);
+
+        _capturedActivities.Clear();
+        await poller.PollAndDispatchAsync(CancellationToken.None);
+
+        _capturedActivities
+            .Where(a => a.OperationName == "Dispatch.Attempt")
+            .Should().BeEmpty("idle ticks must not emit Dispatch.Attempt spans");
+    }
+
+    /// <summary>
+    /// AC: A permanent rejection (409) still emits a Dispatch.Attempt span with result=PermanentRejection.
+    /// </summary>
+    [Fact]
+    public async Task PollAndDispatch_WhenPermanentRejection_EmitsDispatchAttemptSpanWithRejectionResult()
+    {
+        var item = MakeItem(agentSelector: "kiro,dotnet");
+
+        _mockClient
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+        _mockClient
+            .Setup(c => c.DispatchPendingAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DispatchPendingResult.PermanentRejection);
+
+        var poller = new WorkItemDispatchLoop(
+            _mockClient.Object,
+            _mockLeaderGate.Object,
+            _mockLogger.Object,
+            rateLimitPerSecond: 100);
+
+        _capturedActivities.Clear();
+        await poller.PollAndDispatchAsync(CancellationToken.None);
+
+        var span = _capturedActivities.FirstOrDefault(a => a.OperationName == "Dispatch.Attempt");
+        span.Should().NotBeNull("a Dispatch.Attempt span must be emitted even for permanent rejections");
+        span!.GetTagItem("result").Should().Be("PermanentRejection");
+    }
+
+    // TODO: Missing test coverage for the Dispatch.Attempt span when DispatchPendingAsync throws an exception
+    // (the `catch (Exception ex)` path in WorkItemDispatchLoop.PollAndDispatchAsync). In that path, the span
+    // is started but `dispatchActivity?.SetTag("result", ...)` is never reached (break exits before it).
+    // Add a test: PollAndDispatch_WhenDispatchThrowsException_SpanIsEmittedWithoutResultTag (or with a
+    // "Exception" result tag once the TODO in WorkItemDispatchLoop.cs is resolved).
 }

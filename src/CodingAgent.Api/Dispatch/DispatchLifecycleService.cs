@@ -364,7 +364,12 @@ internal sealed class DispatchLifecycleService : IDisposable
                 AgentServiceAccountName = _options.AgentServiceAccountName,
                 Namespace = _options.Namespace,
                 OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
-                ProjectSecrets = ctx.ProjectSecrets
+                ProjectSecrets = ctx.ProjectSecrets,
+                // Propagate the W3C traceparent captured at WorkItem creation so the agent pod's
+                // spans attach to the upstream dispatch trace rather than starting a new root trace.
+                // ctx.WorkItem is the full WorkItemEntity (loaded via FindAsync) — it carries the
+                // TraceParent column. ctx.Item is PendingWorkItemProjection which does not have it.
+                TraceParent = ctx.WorkItem.TraceParent
             };
             var job = JobSpecBuilder.Build(ctx.Template, buildCtx);
             await _kubeClient.CreateJobAsync(job, _options.Namespace, ct);
