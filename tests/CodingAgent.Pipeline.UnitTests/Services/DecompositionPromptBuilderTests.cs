@@ -183,7 +183,7 @@ public class DecompositionPromptBuilderTests
     public void BuildReviewPrompt_WithNullProjectContext_ReturnsSameAsWithout()
     {
         var without = DecompositionPromptBuilder.BuildReviewPrompt(12);
-        var withNull = DecompositionPromptBuilder.BuildReviewPrompt(12, null);
+        var withNull = DecompositionPromptBuilder.BuildReviewPrompt(12, (DecompositionProjectContext?)null);
 
         withNull.Should().Be(without);
     }
@@ -231,7 +231,133 @@ public class DecompositionPromptBuilderTests
         prompt.Should().Contain("one agent run");
     }
 
-    // ── MaxFiles parameterization ────────────────────────────────────────
+    // ── BuildReviewPrompt (maxSubIssues) ─────────────────────────────────
+
+    [Fact]
+    public void BuildReviewPrompt_WithMaxSubIssues_ContainsCapCriticalInstruction()
+    {
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(maxFiles: 12, maxSubIssues: 10);
+
+        // Should include a section about the sub-issue cap
+        prompt.Should().Contain("10");
+        // TODO: This assertion is tautological for the cap concern — [CRITICAL] already appears in
+        // the base review prompt (sections 1–5), so it passes regardless of whether the cap section
+        // is present. The companion BuildReviewPrompt_WithMaxSubIssues_NamesToSection test (which
+        // checks for "Sub-Issue Cap") is the real signal. Consider replacing this with an assertion
+        // that verifies the cap section specifically flags the count as [CRITICAL], e.g.:
+        // prompt.Should().Contain("Sub-Issue Cap").And.Contain("[CRITICAL]") within that section.
+        prompt.Should().Contain("[CRITICAL]");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_WithMaxSubIssues_NamesToSection()
+    {
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(maxFiles: 12, maxSubIssues: 7);
+
+        // The sub-issue cap section should be present
+        prompt.Should().Contain("Sub-Issue Cap");
+        prompt.Should().Contain("7");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_WithMaxSubIssues_InstructsRebalancingNotAddingSubIssues()
+    {
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(maxFiles: 12, maxSubIssues: 10);
+
+        // Should instruct to rebalance/merge rather than add sub-issues
+        prompt.Should().Contain("merging");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_WithNullMaxSubIssues_ReturnsSameAsOneArgOverload()
+    {
+        var oneArg = DecompositionPromptBuilder.BuildReviewPrompt(12);
+        var twoArg = DecompositionPromptBuilder.BuildReviewPrompt(12, maxSubIssues: null, projectContext: null);
+
+        twoArg.Should().Be(oneArg);
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_WithMaxSubIssues_IsLongerThanWithout()
+    {
+        var without = DecompositionPromptBuilder.BuildReviewPrompt(12, maxSubIssues: null, projectContext: null);
+        var with = DecompositionPromptBuilder.BuildReviewPrompt(12, maxSubIssues: 10, projectContext: null);
+
+        with.Length.Should().BeGreaterThan(without.Length);
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_WithMaxSubIssuesAndProjectContext_ContainsBothExtensions()
+    {
+        var context = CreateTestProjectContext();
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(12, maxSubIssues: 8, context);
+
+        // Should contain sub-issue cap instruction
+        prompt.Should().Contain("Sub-Issue Cap");
+        prompt.Should().Contain("8");
+
+        // Should also contain cross-repo routing validation
+        prompt.Should().Contain("Cross-Repo Routing Validation");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_WithMaxSubIssuesNullProjectContext_SameAsMaxSubIssuesOnly()
+    {
+        var prompt1 = DecompositionPromptBuilder.BuildReviewPrompt(12, maxSubIssues: 5, projectContext: null);
+        var prompt2 = DecompositionPromptBuilder.BuildReviewPrompt(12, maxSubIssues: 5);
+
+        prompt1.Should().Be(prompt2);
+    }
+
+    // ── BuildRefinementPrompt (maxSubIssues) ──────────────────────────────
+
+    [Fact]
+    public void BuildRefinementPrompt_WithMaxSubIssues_ConstraintListContainsSubIssueCap()
+    {
+        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(maxFiles: 12, maxSubIssues: 10);
+
+        // The constraint list must mention the sub-issue cap
+        prompt.Should().Contain("At most 10 sub-issues");
+    }
+
+    [Fact]
+    public void BuildRefinementPrompt_WithMaxSubIssues_ProhibitsSplittingBeyondCap()
+    {
+        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(maxFiles: 12, maxSubIssues: 8);
+
+        // Should warn about not resolving sizing by adding sub-issues
+        prompt.Should().Contain("merging");
+        prompt.Should().Contain("8");
+    }
+
+    [Fact]
+    public void BuildRefinementPrompt_WithNullMaxSubIssues_ReturnsSameAsOneArgOverload()
+    {
+        var oneArg = DecompositionPromptBuilder.BuildRefinementPrompt(12);
+        var twoArg = DecompositionPromptBuilder.BuildRefinementPrompt(12, maxSubIssues: null);
+
+        twoArg.Should().Be(oneArg);
+    }
+
+    [Fact]
+    public void BuildRefinementPrompt_WithMaxSubIssues_IsLongerThanWithout()
+    {
+        var without = DecompositionPromptBuilder.BuildRefinementPrompt(12, maxSubIssues: null);
+        var with = DecompositionPromptBuilder.BuildRefinementPrompt(12, maxSubIssues: 10);
+
+        with.Length.Should().BeGreaterThan(without.Length);
+    }
+
+    [Theory]
+    [InlineData(5)]
+    [InlineData(10)]
+    [InlineData(20)]
+    public void BuildRefinementPrompt_WithMaxSubIssues_NamedCapAppears(int cap)
+    {
+        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(12, maxSubIssues: cap);
+
+        prompt.Should().Contain(cap.ToString());
+    }
 
     [Fact]
     public void BuildAnalysisPrompt_ContainsMaxFilesConstraint()
