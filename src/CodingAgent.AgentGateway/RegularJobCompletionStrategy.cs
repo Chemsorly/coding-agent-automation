@@ -33,8 +33,8 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
     }
 
     /// <inheritdoc />
-    public async Task ExecuteAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload,
-                                   Activity? activity, CancellationToken ct)
+    public async Task<bool> ExecuteAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload,
+                                         Activity? activity, CancellationToken ct)
     {
         // Update run with completion data
         JobCompletionMapper.Apply(run, payload);
@@ -58,17 +58,32 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
 
         // Use lifecycle manager to atomically: remove run, transition DB WorkItem,
         // persist history, and mark issue complete in dedup tracker.
+        bool runWasAlive = true;
         try
         {
             var completedRun = await _lifecycleManager.CompleteRunAsync(jobId.Value, workItemStatus, ct,
                 errorMsg, failureEnum);
             if (completedRun is null)
             {
-                // Race: run was removed by RevertFailedDistributionAsync between GetRun and CompleteRunAsync.
-                // The DB WorkItem transition inside CompleteRunAsync was skipped (it returns early on null RemoveRun).
-                // Attempt direct DB transition — will use infrastructure-failure recovery fallback if needed.
+                // Race: run was removed by another path (e.g. HTTP Failed POST or
+                // RevertFailedDistributionAsync) between GetRun and CompleteRunAsync.
+                // The DB WorkItem transition inside CompleteRunAsync was skipped (it returns early on
+                // null RemoveRun). Attempt direct DB transition — will use infrastructure-failure
+                // recovery fallback if needed. Signal to the caller that the run was already terminated
+                // so it can skip the label swap and preserve whatever label the other path set.
+                // TODO: [WARNING] runWasAlive=false is set here regardless of the WorkItemStatus of the
+                // current payload (Failed, Succeeded, or Cancelled). The skipLabelSwap guard in
+                // AgentJobLifecycleService is only correct when the prior terminal writer was the HTTP
+                // Failed path (which sets an authoritative label). If CompleteRunAsync returns null for
+                // a Succeeded payload (e.g., race with RevertFailedDistributionAsync or double hub
+                // delivery), skipLabelSwap=true will silently suppress the agent:done / agent:next swap,
+                // leaving the issue without a terminal label until OrphanedLabelRecoveryService
+                // corrects it. Consider scoping the null-return handling to Failed payloads only, or
+                // using a more descriptive return type (enum/discriminated union) to distinguish
+                // "already terminated by HTTP Failed" from "race with RevertFailedDistributionAsync".
+                runWasAlive = false;
                 _logger.Warning(
-                    "CompleteRunAsync returned null for job {JobId} (race with RevertFailedDistributionAsync), attempting direct DB transition",
+                    "CompleteRunAsync returned null for job {JobId} (race with another terminal path — HTTP Failed or RevertFailedDistributionAsync), attempting direct DB transition",
                     jobId.Value);
                 await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, ct, errorMsg, failureEnum);
             }
@@ -83,6 +98,7 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
             jobId.Value, payload.FinalStep, payload.PullRequestUrl ?? "none");
 
         _changeNotifier.NotifyChange();
+        return runWasAlive;
     }
 
     private async Task DefensiveRunCleanupAsync(

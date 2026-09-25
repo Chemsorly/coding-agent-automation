@@ -34,6 +34,13 @@ internal interface IJobCompletionStrategy
     /// Passed so the regular strategy can set telemetry tags. May be null if tracing is disabled.
     /// </param>
     /// <param name="ct">Cancellation token.</param>
-    Task ExecuteAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload,
-                      Activity? activity, CancellationToken ct);
+    /// <returns>
+    /// <c>true</c> if the run was alive and processed by this call; <c>false</c> if the run had
+    /// already been terminated by another path (e.g. the HTTP <c>Failed</c> POST) before this
+    /// strategy executed, meaning <see cref="Pipeline.Interfaces.IRunLifecycleManager.CompleteRunAsync"/>
+    /// returned <c>null</c>. The caller uses this to skip the label swap in
+    /// post-completion bookkeeping so the HTTP path's label is preserved.
+    /// </returns>
+    Task<bool> ExecuteAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload,
+                            Activity? activity, CancellationToken ct);
 }

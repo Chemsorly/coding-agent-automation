@@ -1,3 +1,4 @@
+using CodingAgent.AgentGateway;
 using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Registry;
@@ -63,6 +64,14 @@ public sealed class MultiReplicaE2EFixture : IAsyncLifetime
     public InMemoryPipelineRunHistoryService HistoryService => _historyService;
 
     /// <summary>
+    /// The shared <see cref="FakeProviderFactory"/> used by both replicas.
+    /// Assertions against label swaps use <c>FakeProviders.IssueProvider.LabelChanges</c>,
+    /// which records every <see cref="IIssueProvider.AddLabelsAsync"/> and
+    /// <see cref="IIssueProvider.RemoveLabelAsync"/> call.
+    /// </summary>
+    public FakeProviderFactory FakeProviders => _fakeProviders;
+
+    /// <summary>
     /// The <see cref="IAgentRegistryService"/> resolved from Replica1.
     /// On the distributed path this is a <see cref="DistributedAgentRegistryService"/> backed by
     /// <see cref="SharedRedisStore"/>.
@@ -78,6 +87,32 @@ public sealed class MultiReplicaE2EFixture : IAsyncLifetime
 
     public IOrchestratorRunService RunService1 => Replica1.Services.GetRequiredService<IOrchestratorRunService>();
     public IOrchestratorRunService RunService2 => Replica2.Services.GetRequiredService<IOrchestratorRunService>();
+
+    /// <summary>
+    /// The <see cref="IRunLifecycleManager"/> resolved from Replica1.
+    /// Used by multi-replica label tests to invoke <see cref="IRunLifecycleManager.FailRunWithLabelAsync"/>
+    /// directly (simulating the HTTP <c>Failed</c> POST path) and assert that the correct label is applied.
+    /// </summary>
+    public IRunLifecycleManager LifecycleManager1 => Replica1.Services.GetRequiredService<IRunLifecycleManager>();
+
+    /// <summary>
+    /// The <see cref="IRunLifecycleManager"/> resolved from Replica2.
+    /// </summary>
+    public IRunLifecycleManager LifecycleManager2 => Replica2.Services.GetRequiredService<IRunLifecycleManager>();
+
+    /// <summary>
+    /// The <see cref="IAgentJobLifecycleService"/> resolved from Replica1.
+    /// Used by multi-replica label tests to invoke
+    /// <see cref="IAgentJobLifecycleService.HandleJobCompletedAsync"/> directly (simulating the hub
+    /// <c>ReportJobCompleted</c> path on Replica1) and exercise the full
+    /// <see cref="RegularJobCompletionStrategy"/> → <c>skipLabelSwap</c> code path.
+    /// </summary>
+    public IAgentJobLifecycleService JobLifecycleService1 => Replica1.Services.GetRequiredService<IAgentJobLifecycleService>();
+
+    /// <summary>
+    /// The <see cref="IAgentJobLifecycleService"/> resolved from Replica2.
+    /// </summary>
+    public IAgentJobLifecycleService JobLifecycleService2 => Replica2.Services.GetRequiredService<IAgentJobLifecycleService>();
 
     public Task InitializeAsync()
     {

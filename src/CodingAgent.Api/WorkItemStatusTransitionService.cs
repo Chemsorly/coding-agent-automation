@@ -1,10 +1,13 @@
+using System.Text.Json;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Infrastructure.Persistence.Services;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
 using Microsoft.EntityFrameworkCore;
+using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Api;
 
@@ -50,11 +53,13 @@ public sealed class WorkItemStatusTransitionService
     private readonly WorkItemTransitionService _transitionService;
     private readonly IRunLifecycleManager _runLifecycleManager;
     private readonly IDbContextFactory<PipelineDbContext>? _dbFactory;
+    private readonly ILogger _logger;
 
     public WorkItemStatusTransitionService(
         WorkItemTransitionService transitionService,
         IRunLifecycleManager runLifecycleManager,
-        IDbContextFactory<PipelineDbContext>? dbFactory = null)
+        IDbContextFactory<PipelineDbContext>? dbFactory = null,
+        ILogger? logger = null)
     {
         ArgumentNullException.ThrowIfNull(transitionService);
         ArgumentNullException.ThrowIfNull(runLifecycleManager);
@@ -62,6 +67,16 @@ public sealed class WorkItemStatusTransitionService
         _transitionService = transitionService;
         _runLifecycleManager = runLifecycleManager;
         _dbFactory = dbFactory;
+        // TODO: [WARNING] Serilog.Log.Logger is the global static logger. If this constructor runs before
+        // Serilog's bootstrap configuration is applied (e.g., in test setup without a configured static
+        // logger), Log.Logger resolves to SilentLogger and ForContext<>() returns a no-op logger.
+        // ResolveFailedFinalLabel's diagnostic log lines (disallowed-label Information and JsonException
+        // catch) would emit nothing, making label-parsing issues invisible at debug time. This is a
+        // pre-existing pattern in this codebase; the ILogger? optional parameter makes the silent-logger
+        // path the default in integration tests that don't inject a logger. Consider requiring a non-null
+        // ILogger in the constructor or using a NullLogger fallback that is explicitly documented.
+        // See review finding [WARNING] (DotNetSpecialist).
+        _logger = logger ?? Serilog.Log.Logger.ForContext<WorkItemStatusTransitionService>();
     }
 
     /// <summary>
@@ -142,19 +157,19 @@ public sealed class WorkItemStatusTransitionService
             if (request.Status == WorkItemStatus.Failed)
             {
                 var failureReason = request.ErrorMessage ?? request.FailureReason ?? "Infrastructure failure";
-                // TODO: [WARNING] FailRunAsync is always called with the hardcoded enum value
-                // FailureReason.InfrastructureFailure regardless of what the agent reported in
-                // request.FailureReason. ApplyStatusMutation persists the agent-supplied reason to the
-                // DB entity (e.g. AgentError), but the lifecycle manager always sees InfrastructureFailure.
-                // Any downstream logic in IRunLifecycleManager.FailRunAsync that branches on the
-                // failure-reason parameter (label-swap rules, alerting, etc.) will misbehave for
-                // non-infrastructure failures. This behaviour was present in the original PostStatus
-                // inline code and is preserved here unchanged. Consider parsing request.FailureReason
-                // with the same IsDefined guard used in ApplyStatusMutation and passing the result to
-                // FailRunAsync instead of the hardcoded constant.
-                await _runLifecycleManager.FailRunAsync(
+
+                // Parse the pipeline's intended terminal label from the HTTP payload.
+                // The agent serializes the full JobCompletionPayload into request.Result; we read
+                // FinalLabel from it so the HTTP path can honour agent:needs-refinement outcomes
+                // without depending on the SignalR ReportJobCompleted path (which is replica-dependent).
+                // Allowlist: only agent:needs-refinement is accepted. Any success label, re-queue label,
+                // active-state label, or unknown value falls back to agent:error (null resolvedFinalLabel).
+                var resolvedFinalLabel = ResolveFailedFinalLabel(request.Result);
+
+                await _runLifecycleManager.FailRunWithLabelAsync(
                     new RunId(id.ToString()),
                     failureReason,
+                    resolvedFinalLabel,
                     ct,
                     CodingAgent.Pipeline.Models.FailureReason.InfrastructureFailure);
             }
@@ -190,6 +205,69 @@ public sealed class WorkItemStatusTransitionService
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Parses <paramref name="resultJson"/> (the serialized <see cref="JobCompletionPayload"/>
+    /// from the agent's HTTP POST body) and returns <see cref="AgentLabels.NeedsRefinement"/> when
+    /// the payload's <c>FinalLabel</c> is exactly that value.
+    ///
+    /// Returns <c>null</c> for every other case:
+    /// <list type="bullet">
+    ///   <item><paramref name="resultJson"/> is null or empty</item>
+    ///   <item>JSON is malformed or does not contain <c>FinalLabel</c></item>
+    ///   <item><c>FinalLabel</c> is any other label — including success labels
+    ///   (<c>agent:done</c>, <c>agent:next</c>, <c>agent:epic-review</c>, <c>agent:wont-do</c>),
+    ///   re-queue labels (<c>agent:cancelled</c>), active-state labels, or unknown values</item>
+    /// </list>
+    ///
+    /// The narrow allowlist prevents a <c>Failed</c> HTTP transition from ending with a success or
+    /// re-queue label, which would bypass quality gates and confuse <see cref="IssueReworkService"/>.
+    /// </summary>
+    private string? ResolveFailedFinalLabel(string? resultJson)
+    {
+        if (string.IsNullOrEmpty(resultJson))
+            return null;
+
+        try
+        {
+            // TODO: [WARNING] PipelineJsonOptions.Lenient uses PropertyNameCaseInsensitive=true, which
+            // handles camelCase/PascalCase mismatches between agent serialization and server-side C# property
+            // names. Verify that FinalLabel is serialized by the agent with a casing that Lenient can match;
+            // a mismatch would silently return a null FinalLabel and fall through to agent:error without any
+            // log entry, making the failure indistinguishable from the intentional null-result branch.
+            // The existing tests serialize via PipelineJsonOptions.Default (PascalCase) — that roundtrip is
+            // covered, but camelCase serialization from the agent is not explicitly tested here.
+            // See review finding [WARNING] (SecurityReviewer, DotNetSpecialist).
+            var payload = JsonSerializer.Deserialize<JobCompletionPayload>(resultJson, PipelineJsonOptions.Lenient);
+            var finalLabel = payload?.FinalLabel;
+
+            if (finalLabel is null)
+                return null;
+
+            if (finalLabel == AgentLabels.NeedsRefinement)
+                return AgentLabels.NeedsRefinement;
+
+            // Non-null but not in the allowlist — log at Information so operators can diagnose
+            // unexpected values without flooding the warning channel.
+            // TODO: [WARNING] The raw finalLabel value from the agent-controlled HTTP payload is written
+            // directly into a Serilog structured log message. Serilog captures it as a structured property
+            // (mitigating classic format-string injection), but the raw string still flows into all
+            // configured sinks (file, Loki, etc.). A crafted FinalLabel containing newlines, ANSI escape
+            // sequences, or very long strings could pollute log output or cause log-storage issues.
+            // Consider truncating to a safe maximum length (e.g., 128 chars) and stripping control
+            // characters before logging. See review finding [WARNING] (SecurityReviewer).
+            _logger.Information(
+                "WorkItemStatusTransitionService: ignoring FinalLabel={FinalLabel} from Failed HTTP payload — only agent:needs-refinement is accepted; falling back to agent:error",
+                finalLabel);
+            return null;
+        }
+        catch (JsonException ex)
+        {
+            _logger.Information(ex,
+                "WorkItemStatusTransitionService: could not parse FinalLabel from Failed HTTP payload (malformed JSON) — falling back to agent:error");
+            return null;
+        }
+    }
 
     private static void ApplyStatusMutation(WorkItemEntity entity, WorkItemStatusRequest request)
     {

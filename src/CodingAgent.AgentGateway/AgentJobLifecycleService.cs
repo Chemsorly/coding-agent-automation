@@ -215,6 +215,13 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
         var run = _facade.GetRun(jobId);
 
+        // runWasAlive: true if the run existed in memory and was processed normally (or if the run
+        // was not found at all — orphan path has its own handling). false only when
+        // RegularJobCompletionStrategy.ExecuteAsync signals that CompleteRunAsync returned null,
+        // meaning another path (HTTP Failed POST or RevertFailedDistributionAsync) already
+        // terminated the run. In that case we skip the label swap to preserve the other path's label.
+        bool runWasAlive = true;
+
         if (run is not null)
         {
             // Select strategy based on run type and execute run-type-specific completion logic.
@@ -223,7 +230,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                 ? _consolidationStrategy
                 : _regularStrategy;
 
-            await strategy.ExecuteAsync(jobId, run, payload, activity, ct);
+            runWasAlive = await strategy.ExecuteAsync(jobId, run, payload, activity, ct);
         }
         else
         {
@@ -248,7 +255,21 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // Consolidation runs skip bookkeeping — they have no associated issue labels or feedback comments.
         if (run is not null && run.IssueProviderConfigId != ConsolidationConstants.ProviderConfigId)
         {
-            await PostCompletionBookkeepingAsync(jobId, run, payload, ct);
+            // skipLabelSwap=true when the run was already terminated by another path (HTTP Failed POST).
+            // In that case the HTTP path already set the correct label (e.g. agent:needs-refinement),
+            // and we must not overwrite it. The outbox enqueue and feedback comment still run.
+            // TODO: [WARNING] skipLabelSwap is derived from !runWasAlive, which is set to false whenever
+            // CompleteRunAsync returns null — regardless of the payload's WorkItemStatus. The timeout
+            // acceptance criterion (agent:cancelled suppressed after JobController sets agent:error) is
+            // satisfied incidentally by this same mechanism, but for a Succeeded or Cancelled payload
+            // where CompleteRunAsync returns null (e.g. race with RevertFailedDistributionAsync or double
+            // hub delivery), skipLabelSwap=true will silently suppress agent:done/agent:next, leaving
+            // the issue without a terminal label until OrphanedLabelRecoveryService corrects it.
+            // Consider scoping the null-return guard to Failed payloads only (workItemStatus == Failed),
+            // or using a richer return type from RegularJobCompletionStrategy to distinguish
+            // "already terminated by HTTP Failed" from "race with RevertFailed/double delivery".
+            // See review findings [WARNING] #4 (Correctness) and [WARNING] #1 (DotNetSpecialist).
+            await PostCompletionBookkeepingAsync(jobId, run, payload, skipLabelSwap: !runWasAlive, ct);
         }
     }
 
@@ -296,7 +317,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             ct);
     }
 
-    private async Task PostCompletionBookkeepingAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload, CancellationToken ct)
+    private async Task PostCompletionBookkeepingAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload, bool skipLabelSwap, CancellationToken ct)
     {
         // Outbox enqueue must happen BEFORE creating the linked CTS (survives ApplicationStopping).
         var outboxEntryId = await EnqueueFeedbackOutboxEntryAsync(jobId, run);
@@ -306,7 +327,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // directly and do not store it beyond their own await scope, so disposal is safe here.
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct, _appLifetime.ApplicationStopping);
 
-        await SwapLabelAndPostCommentAsync(jobId, run, payload, outboxEntryId, cts.Token);
+        await SwapLabelAndPostCommentAsync(jobId, run, payload, outboxEntryId, skipLabelSwap, cts.Token);
     }
 
     /// <summary>
@@ -352,12 +373,18 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     /// Catches <see cref="OperationCanceledException"/> (graceful shutdown / connection abort) —
     /// OrphanedLabelRecoveryService will correct any stuck label on its next sweep.
     /// </summary>
-    private async Task SwapLabelAndPostCommentAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload, Guid outboxEntryId, CancellationToken ct)
+    /// <param name="skipLabelSwap">
+    /// When <c>true</c>, the label swap is skipped entirely. Used when the run was already terminated
+    /// by another path (HTTP <c>Failed</c> POST) that set the authoritative label; this path must not
+    /// overwrite it. The outbox row and the feedback comment are still posted regardless.
+    /// </param>
+    private async Task SwapLabelAndPostCommentAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload, Guid outboxEntryId, bool skipLabelSwap, CancellationToken ct)
     {
         // Swap label based on final outcome (non-fatal).
         // The agent may also attempt a label swap via RequestLabelChange during its own
         // error handling, but that call can race with this handler (run already removed).
-        // This is the authoritative swap that guarantees correctness.
+        // This is the authoritative swap that guarantees correctness — unless skipLabelSwap
+        // is true, in which case the HTTP Failed path already set the authoritative label.
         // Only accept FinalLabel if it is a known agent label; ignore arbitrary values.
         var finalLabel = payload.FinalLabel is not null && AgentLabels.All.Contains(payload.FinalLabel)
             ? payload.FinalLabel
@@ -372,7 +399,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
         try
         {
-            if (label is not null)
+            if (label is not null && !skipLabelSwap)
             {
                 _logger.Information(
                     "Job {JobId} ReportJobCompleted swapping label to {Label} for issue {IssueIdentifier} (finalStep={FinalStep}, finalLabel={FinalLabel})",
@@ -380,6 +407,21 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                 var swLabel = Stopwatch.StartNew();
                 await _issueOps.SwapLabelAsync(run, label, ct);
                 _logger.Information("Job {JobId} SwapLabelAsync completed in {ElapsedMs}ms", jobId.Value, swLabel.ElapsedMilliseconds);
+            }
+            else if (skipLabelSwap)
+            {
+                // TODO: [WARNING] skipLabelSwap=true only suppresses the second swap when the run was
+                // already terminated by another path that caused CompleteRunAsync to return null
+                // (runWasAlive=false in RegularJobCompletionStrategy). The "no intermediate agent:error"
+                // guarantee for the same-replica ordering (hub path wins the race before the HTTP Failed
+                // POST) depends on the hub payload carrying the same FinalLabel (agent:needs-refinement)
+                // as the HTTP path, not on this skip logic. That invariant holds today because
+                // HttpPrimaryCompletionReporter sends the identical JobCompletionPayload over both
+                // channels, but if the two payloads ever diverge the same-replica NR outcome would
+                // incorrectly use the hub payload's FinalLabel rather than the HTTP path's resolved label.
+                _logger.Information(
+                    "Job {JobId} ReportJobCompleted skipping label swap — run was already terminated by HTTP path (issue {IssueIdentifier})",
+                    jobId.Value, run.IssueIdentifier);
             }
 
             // Post issue feedback comment if present (non-fatal)
