@@ -456,4 +456,148 @@ public sealed class AgentJobLifecycleServiceCompletionTests
         agent.LastJobCompletedAt.Should().BeAfter(before);
         _facade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
     }
+
+    // ── Skip-label-swap when run already terminated (Issue #3009) ─────────────
+
+    /// <summary>
+    /// When CompleteRunAsync returns null (run already terminated by HTTP Failed path),
+    /// ExecuteAsync returns false, and HandleJobCompletedAsync must NOT call SwapLabelAsync.
+    /// The outbox enqueue and PostIssueFeedbackCommentAsync must still fire.
+    /// </summary>
+    [Fact]
+    public async Task Regular_CompleteRunAsyncReturnsNull_SkipsLabelSwap_StillPostsFeedbackComment()
+    {
+        // Arrange: run is in memory (GetRun returns it), but CompleteRunAsync returns null
+        // simulating that the HTTP Failed POST already terminated the run.
+        var run = MakeRun();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Failed,
+            FinalLabel = AgentLabels.NeedsRefinement,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        // ReplaceRun is called by RegularJobCompletionStrategy before CompleteRunAsync
+        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()));
+        // CompleteRunAsync returns null → run was already terminated
+        _lifecycleManager
+            .Setup(l => l.CompleteRunAsync(
+                "job-1", It.IsAny<WorkItemStatus>(), It.IsAny<CancellationToken>(),
+                It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync((PipelineRun?)null);
+        // TransitionWorkItemAsync is called as fallback by RegularJobCompletionStrategy
+        _facade.Setup(f => f.TransitionWorkItemAsync(
+            "job-1", It.IsAny<WorkItemStatus>(), It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .Returns(Task.FromResult(true));
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        // SwapLabelAsync must NOT be called — the HTTP path already set the correct label
+        _issueOps.Verify(i => i.SwapLabelAsync(
+            It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "label swap must be skipped when CompleteRunAsync returned null (run already terminated by HTTP path)");
+
+        // PostIssueFeedbackCommentAsync must still be called — feedback comment is not skipped
+        _issueOps.Verify(i => i.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "feedback comment must still be posted even when label swap is skipped");
+
+        // TODO: [WARNING] The outbox enqueue (EnqueueFeedbackOutboxEntryAsync via _outbox.EnqueueAsync)
+        // is not verified here. Per the issue requirement, both the outbox enqueue AND the feedback
+        // comment post must still run on the skip path. If EnqueueFeedbackOutboxEntryAsync were
+        // accidentally wrapped inside the skipLabelSwap guard, this test would not catch the regression.
+        // Add: _outbox.Verify(o => o.EnqueueAsync(It.IsAny<FeedbackCommentOutboxEntry>(),
+        //         It.IsAny<CancellationToken>()), Times.Once,
+        //         "outbox enqueue must still fire when label swap is skipped");
+        // See review finding [WARNING] #3 (TestQualityReviewer).
+    }
+
+    /// <summary>
+    /// Ensures that the NeedsRefinement label set by the HTTP Failed path is never overwritten
+    /// when ReportJobCompleted arrives on the cross-replica hub with FinalLabel=NeedsRefinement.
+    /// SwapLabelAsync must not be called, so no label mutation reaches the issue provider.
+    /// </summary>
+    // TODO: [WARNING] This test is a near-duplicate of Regular_CompleteRunAsyncReturnsNull_SkipsLabelSwap_StillPostsFeedbackComment
+    // (identical setup, same SwapLabelAsync Times.Never assertion, same CompleteRunAsync stub). The only
+    // distinct assertion (CompleteRunAsync called AtLeast(1)) is already implied by the first test passing
+    // without throwing. Consider replacing this test with one that distinguishes its scenario more clearly
+    // — e.g., verifying that a non-NeedsRefinement hub payload (FinalLabel=AgentLabels.Done, Succeeded)
+    // also skips the swap when runWasAlive=false, to confirm the guard is keyed on runWasAlive and not on
+    // the payload label. See review finding [WARNING] #4 (TestQualityReviewer).
+    [Fact]
+    public async Task Regular_CompleteRunAsyncReturnsNull_NeedsRefinementPayload_NoLabelMutation()
+    {
+        // Arrange
+        var run = MakeRun();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Failed,
+            FinalLabel = AgentLabels.NeedsRefinement,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()));
+        _lifecycleManager
+            .Setup(l => l.CompleteRunAsync(
+                "job-1", It.IsAny<WorkItemStatus>(), It.IsAny<CancellationToken>(),
+                It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync((PipelineRun?)null);
+        _facade.Setup(f => f.TransitionWorkItemAsync(
+            "job-1", It.IsAny<WorkItemStatus>(), It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .Returns(Task.FromResult(true));
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        // Verify: no label mutation regardless of the FinalLabel in the payload
+        _issueOps.Verify(i => i.SwapLabelAsync(
+            It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "no label mutation should occur when run was already terminated — the HTTP path owns the label");
+
+        // Positive assertion: CompleteRunAsync was invoked (so the test isn't vacuous)
+        _lifecycleManager.Verify(l => l.CompleteRunAsync(
+            "job-1", It.IsAny<WorkItemStatus>(), It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<FailureReason?>()),
+            Times.AtLeast(1));
+    }
+
+    /// <summary>
+    /// Confirms the normal (non-skip) path is unaffected: when CompleteRunAsync returns the run,
+    /// SwapLabelAsync must still be called exactly once.
+    /// </summary>
+    [Fact]
+    public async Task Regular_CompleteRunAsyncReturnsRun_LabelSwapStillFires()
+    {
+        // Arrange: happy path — run is alive
+        var run = MakeRun();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            FinalLabel = AgentLabels.Done,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()));
+        _lifecycleManager
+            .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded,
+                It.IsAny<CancellationToken>(), null, null))
+            .ReturnsAsync(run);
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        // Label swap must fire on the normal (non-skip) path
+        _issueOps.Verify(i => i.SwapLabelAsync(
+            run, AgentLabels.Done, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "label swap must fire normally when CompleteRunAsync returns the run (run was alive)");
+    }
 }

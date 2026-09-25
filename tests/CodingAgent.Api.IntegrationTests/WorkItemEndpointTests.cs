@@ -1188,6 +1188,13 @@ public sealed class WorkItemEndpointTests
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    // TODO: Add a test for GetK8sJobName returning 404 when the row exists but K8sJobName is an
+    // empty string (""). The refactored handler checks `notFound is not null || string.IsNullOrEmpty(jobName)`,
+    // meaning both the null-column path (via LoadProjectionOrNotFoundAsync) and the empty-string path
+    // (via the secondary IsNullOrEmpty guard) should each independently yield 404. The null path is
+    // covered by GetK8sJobName_Returns404_WhenJobNameAbsent above; the empty-string branch is untested.
+    // Seed an entity with K8sJobName = "" and assert the endpoint returns 404.
+
     // ── GetIsDistributed — recent-terminal path ───────────────────────────────────
 
     [Fact]
@@ -1332,6 +1339,13 @@ public sealed class WorkItemEndpointTests
         body.Should().Contain(issueId,
             "recently terminated items must appear in active-identifiers for dedup purposes");
     }
+
+    // TODO: Add a test for GetActiveIdentifiers excluding an *expired* terminal item (CompletedAt
+    // before the dedup cooldown cutoff). The existing test only verifies inclusion of a within-window
+    // item. Without an exclusion test, a regression that drops the `CompletedAt >= cutoff` clause
+    // from WhereActiveOrRecentlyTerminal or widens the window would not be caught here. Seed a
+    // Succeeded item with CompletedAt = UtcNow - DefaultRestartDedupCooldown - 1 minute and assert
+    // its issueIdentifier does NOT appear in the response.
 
     // TODO: Add a test for GetIsDistributed returning false when a terminal item's CompletedAt
     // is outside the dedup cooldown window (CompletedAt < UtcNow - DefaultRestartDedupCooldown).

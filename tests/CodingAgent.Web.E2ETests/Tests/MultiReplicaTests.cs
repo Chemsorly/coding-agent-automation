@@ -1,3 +1,5 @@
+using AwesomeAssertions;
+using CodingAgent.AgentGateway;
 using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Web.E2ETests.Infrastructure;
 using CodingAgent.Orchestration;
@@ -873,4 +875,185 @@ public sealed class MultiReplicaTests : MultiReplicaTestBase
         Assert.Equal(2, Fixture.RunService1.ActiveRunCount);
     }
 
+    // ── NR: NeedsRefinement label correctness across replicas (Issue #3009) ──
+
+    // TODO: [WARNING] Missing test coverage for the JobController-timeout acceptance criterion.
+    // The issue requires: "A run first failed by the JobController (timeout) keeps agent:error when
+    // the agent's own Cancelled report is processed later on either replica. Its label is never
+    // agent:cancelled, and the issue always keeps exactly one agent:*  label."
+    // A test should: (a) fail a run via FailRunAsync (resolvedFinalLabel=null → agent:error) on one
+    // replica, then (b) call HandleJobCompletedAsync with a Cancelled payload on the other replica,
+    // and assert the final label is agent:error, agent:cancelled was never added, and exactly one
+    // agent:* label is present. See MultiReplicaTests for the NR1/NR2 pattern to follow.
+    // Note: this scenario is currently satisfied incidentally by the runWasAlive=false path in
+    // RegularJobCompletionStrategy (see [WARNING] in that file), but has no dedicated test.
+    // See review findings [WARNING] #3 (Correctness), [WARNING] #3 (DotNetSpecialist), and
+    // [WARNING] #2 (TestQualityReviewer).
+
+    /// <summary>
+    /// Simulates the same-replica scenario: HTTP Failed POST is processed by Replica1 (same
+    /// replica where the agent's hub connection lives). The label is set to agent:needs-refinement
+    /// by <see cref="IRunLifecycleManager.FailRunWithLabelAsync"/>. The subsequent hub
+    /// <c>ReportJobCompleted</c> would be short-circuited by <c>GuardActiveJob</c> on the
+    /// same replica; here we exercise only the HTTP path and verify the label.
+    ///
+    /// Exercises Change 1 (HTTP path reads FinalLabel) and Change 2 (FailRunWithLabelAsync sets
+    /// run.FinalLabel before errorLabel computation).
+    /// </summary>
+    // TODO: [WARNING] NR1 does not exercise the full same-replica ordering required by the acceptance
+    // criterion. It calls FailRunWithLabelAsync directly without subsequently invoking
+    // HandleJobCompletedAsync, so the GuardActiveJob short-circuit code path is never exercised. If
+    // GuardActiveJob were broken and the hub path proceeded after FailRunWithLabelAsync, this test would
+    // still pass because it only checks label state after the HTTP leg. To fully satisfy the acceptance
+    // criterion for the same-replica ordering, extend this test to also invoke HandleJobCompletedAsync
+    // with a NeedsRefinement payload and assert agent:error was still never added.
+    // See review finding [WARNING] #1 (TestQualityReviewer).
+    [Fact]
+    public async Task NR1_NeedsRefinement_HttpOnReplica1_LabelIsNeedsRefinement_NeverError()
+    {
+        Fixture.ResetAll();
+        await Task.Yield();
+
+        // Arrange: seed a run in the shared distributed store via Replica1
+        var runId = Guid.NewGuid().ToString("N");
+        var issueId = $"test-org/test-repo#{runId[..8]}";
+        var run = new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = issueId,
+            IssueTitle = "NR1 test issue",
+            IssueProviderConfigId = "issue-e2e",
+            RepoProviderConfigId = "repo-e2e",
+            AgentProviderConfigId = "agent-e2e",
+            RunType = PipelineRunType.Implementation
+        };
+        Fixture.RunService1.AddRun(run);
+        await Task.Yield(); // allow write-through to settle
+
+        // Act: HTTP Failed POST on Replica1 with agent:needs-refinement as the resolved label
+        var result = await Fixture.LifecycleManager1.FailRunWithLabelAsync(
+            new RunId(runId),
+            "Analysis gate: issue needs more detail",
+            AgentLabels.NeedsRefinement,
+            CancellationToken.None,
+            FailureReason.AgentError);
+
+        // Assert: run was found and processed
+        result.Should().NotBeNull("the run must be found and terminated by FailRunWithLabelAsync");
+        result!.FinalLabel.Should().Be(AgentLabels.NeedsRefinement,
+            "FailRunWithLabelAsync must set run.FinalLabel to the resolved label before label-swap");
+
+        // Label swap: agent:needs-refinement was added to the issue, agent:error was never added
+        var labelChanges = Fixture.FakeProviders.IssueProvider.LabelChanges;
+        labelChanges.Should().Contain(
+            c => c.Identifier == issueId && c.Label == AgentLabels.NeedsRefinement && c.Added,
+            "the issue must receive the agent:needs-refinement label");
+        labelChanges.Should().NotContain(
+            c => c.Label == AgentLabels.Error && c.Added,
+            "agent:error must never be added — the HTTP path sets agent:needs-refinement directly");
+    }
+
+    /// <summary>
+    /// Simulates the cross-replica scenario: HTTP Failed POST is processed by Replica2 (not the
+    /// hub-owning replica), then a hub <c>ReportJobCompleted</c> arrives on Replica1.
+    ///
+    /// After the HTTP path (Replica2) terminates the run, Replica1's
+    /// <c>HandleJobCompletedAsync</c> is invoked. Because the run's hash key is still readable
+    /// (TTL not yet expired in <see cref="FakeRedisStore"/>), <c>GetRun</c> returns the run.
+    /// <c>CompleteRunAsync</c> then attempts <c>RemoveRun</c>, which runs the Lua SREM on the
+    /// shared <see cref="FakeRedisStore"/>; the active-set SREM returns 0 (run already removed by
+    /// Replica2) → <c>CompleteRunAsync</c> returns null →
+    /// <c>RegularJobCompletionStrategy.ExecuteAsync</c> returns <c>false</c> (runWasAlive=false)
+    /// → <c>HandleJobCompletedAsync</c> passes <c>skipLabelSwap: true</c> to
+    /// <c>PostCompletionBookkeepingAsync</c> → <c>SwapLabelAsync</c> is never called.
+    ///
+    /// This exercises Change 3 (skip-label-swap) end-to-end through
+    /// <see cref="IAgentJobLifecycleService.HandleJobCompletedAsync"/>, unlike calling
+    /// <c>CompleteRunAsync</c> directly which would bypass the strategy entirely.
+    /// </summary>
+    [Fact]
+    public async Task NR2_NeedsRefinement_HttpOnReplica2_ThenHubPathOnReplica1_LabelIsNeedsRefinement_NeverError()
+    {
+        Fixture.ResetAll();
+        await Task.Yield();
+
+        // Arrange: seed the run through Replica1 (it writes to shared Redis)
+        var runId = Guid.NewGuid().ToString("N");
+        var issueId = $"test-org/test-repo#{runId[..8]}";
+        var run = new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = issueId,
+            IssueTitle = "NR2 cross-replica test",
+            IssueProviderConfigId = "issue-e2e",
+            RepoProviderConfigId = "repo-e2e",
+            AgentProviderConfigId = "agent-e2e",
+            RunType = PipelineRunType.Implementation
+        };
+        Fixture.RunService1.AddRun(run);
+        await Task.Yield();
+
+        // Act step 1: HTTP Failed POST on Replica2 (the other replica) with agent:needs-refinement.
+        // FailRunWithLabelAsync removes the run from shared Redis (SREM from active set) and swaps
+        // the label to agent:needs-refinement.
+        var httpResult = await Fixture.LifecycleManager2.FailRunWithLabelAsync(
+            new RunId(runId),
+            "Analysis gate: needs more detail",
+            AgentLabels.NeedsRefinement,
+            CancellationToken.None,
+            FailureReason.AgentError);
+
+        httpResult.Should().NotBeNull(
+            "Replica2's HTTP path must find the run and terminate it with agent:needs-refinement");
+
+        // Capture label state after HTTP path
+        var labelChangesAfterHttp = Fixture.FakeProviders.IssueProvider.LabelChanges.ToList();
+        labelChangesAfterHttp.Should().Contain(
+            c => c.Identifier == issueId && c.Label == AgentLabels.NeedsRefinement && c.Added,
+            "agent:needs-refinement must be added by the HTTP path on Replica2");
+        labelChangesAfterHttp.Should().NotContain(
+            c => c.Label == AgentLabels.Error && c.Added,
+            "agent:error must not be added by the HTTP path");
+
+        // Act step 2: Simulate hub ReportJobCompleted arriving on Replica1 via HandleJobCompletedAsync.
+        //
+        // The run hash key is still readable by Replica1's GetRun (EXPIREAT is 5 min in the future
+        // in FakeRedisStore), so the run is not null and RegularJobCompletionStrategy is selected.
+        // Inside the strategy, CompleteRunAsync calls RemoveRun → Lua SREM returns 0 (run already
+        // removed from active set by Replica2) → CompleteRunAsync returns null →
+        // ExecuteAsync returns false (runWasAlive = false) → HandleJobCompletedAsync passes
+        // skipLabelSwap: true → SwapLabelAsync is never called.
+        //
+        // This exercises the full Change 3 path through the strategy and bookkeeping layer.
+        var hubPayload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Failed,
+            FinalLabel = AgentLabels.NeedsRefinement,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+        await Fixture.JobLifecycleService1.HandleJobCompletedAsync(
+            new JobId(runId),
+            agent: null,
+            hubPayload,
+            CancellationToken.None);
+
+        // Assert: final label state is unchanged — still only agent:needs-refinement, never agent:error
+        var labelChangesAfterHub = Fixture.FakeProviders.IssueProvider.LabelChanges.ToList();
+        labelChangesAfterHub.Should().Contain(
+            c => c.Identifier == issueId && c.Label == AgentLabels.NeedsRefinement && c.Added,
+            "agent:needs-refinement must still be present after the hub path ran on Replica1");
+        labelChangesAfterHub.Should().NotContain(
+            c => c.Label == AgentLabels.Error && c.Added,
+            "agent:error must never be added — skipLabelSwap=true in HandleJobCompletedAsync " +
+            "prevents the second swap when CompleteRunAsync returns null");
+
+        // The label changes list must have exactly one add (NeedsRefinement) — no spurious second swap.
+        // This assertion fails if skipLabelSwap is not wired up: a broken implementation would call
+        // SwapLabelAsync twice (once by HTTP path, once by hub path), adding NeedsRefinement twice.
+        var nrAdds = labelChangesAfterHub.Count(c => c.Label == AgentLabels.NeedsRefinement && c.Added);
+        nrAdds.Should().Be(1,
+            "agent:needs-refinement should be added exactly once — a second add indicates " +
+            "the skip-label-swap fix is not working (HandleJobCompletedAsync called SwapLabelAsync " +
+            "even though CompleteRunAsync returned null)");
+    }
 }
