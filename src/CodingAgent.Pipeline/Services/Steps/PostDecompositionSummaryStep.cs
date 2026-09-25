@@ -28,15 +28,17 @@ public sealed class PostDecompositionSummaryStep : IPipelineStep
         var results = context.Run.SubIssueResults;
 
         // Determine outcome: zero attempted or all failed → error; otherwise → done
-        var attempted = results.Count;
+        // SkippedByCap entries are NOT counted as failures for outcome label logic.
+        var attempted = results.Count(r => !r.SkippedByCap);
         var succeeded = results.Count(r => r.Success);
-        var failed = attempted - succeeded;
+        var failed = results.Count(r => !r.Success && !r.SkippedByCap);
+        var skippedByCap = results.Count(r => r.SkippedByCap);
         var allFailed = attempted == 0 || succeeded == 0;
 
         var targetLabel = allFailed ? AgentLabels.Error : AgentLabels.Done;
 
         // Format summary comment
-        var summaryBody = FormatSummaryComment(results, attempted, succeeded, failed);
+        var summaryBody = FormatSummaryComment(results, attempted, succeeded, failed, skippedByCap);
 
         // Post summary comment (non-fatal on failure)
         try
@@ -73,8 +75,9 @@ public sealed class PostDecompositionSummaryStep : IPipelineStep
         else
         {
             context.Logger.Information(
-                "Decomposition complete for epic {IssueId}: {Succeeded}/{Attempted} sub-issues created",
-                context.Run.IssueIdentifier, succeeded, attempted);
+                "Decomposition complete for epic {IssueId}: {Succeeded}/{Attempted} sub-issues created{SkippedInfo}",
+                context.Run.IssueIdentifier, succeeded, attempted,
+                skippedByCap > 0 ? $", {skippedByCap} skipped by cap" : "");
         }
 
         return StepResult.Continue;
@@ -82,9 +85,11 @@ public sealed class PostDecompositionSummaryStep : IPipelineStep
 
     /// <summary>
     /// Formats the summary comment with the decomposition-summary marker and a results table.
+    /// <paramref name="skippedByCap"/> entries appear in the table with their own status
+    /// and are not counted as failures.
     /// </summary>
     internal static string FormatSummaryComment(
-        IReadOnlyList<SubIssueCreationResult> results, int attempted, int succeeded, int failed)
+        IReadOnlyList<SubIssueCreationResult> results, int attempted, int succeeded, int failed, int skippedByCap = 0)
     {
         var sb = new System.Text.StringBuilder();
 
@@ -94,7 +99,7 @@ public sealed class PostDecompositionSummaryStep : IPipelineStep
         sb.AppendLine("## 🧩 Decomposition Summary");
         sb.AppendLine();
 
-        if (attempted == 0)
+        if (attempted == 0 && skippedByCap == 0)
         {
             sb.AppendLine("⚠️ No sub-issues were attempted.");
             return sb.ToString();
@@ -103,6 +108,8 @@ public sealed class PostDecompositionSummaryStep : IPipelineStep
         sb.AppendLine($"**Created:** {succeeded}/{attempted} sub-issues");
         if (failed > 0)
             sb.AppendLine($"**Failed:** {failed}/{attempted} sub-issues");
+        if (skippedByCap > 0)
+            sb.AppendLine($"**Not created (cap):** {skippedByCap} sub-issue(s) exceeded the configured sub-issue cap");
         sb.AppendLine();
 
         // Results table
@@ -112,10 +119,26 @@ public sealed class PostDecompositionSummaryStep : IPipelineStep
         for (var i = 0; i < results.Count; i++)
         {
             var result = results[i];
-            var status = result.Success ? "✅ Created" : "❌ Failed";
-            var link = result.Success && result.Url is not null
-                ? $"[#{result.Identifier}]({result.Url})"
-                : result.FailureReason ?? "Unknown error";
+            string status;
+            string link;
+
+            if (result.SkippedByCap)
+            {
+                status = "⏭️ Not created (cap)";
+                link = result.FailureReason ?? "Exceeded sub-issue cap";
+            }
+            else if (result.Success)
+            {
+                status = "✅ Created";
+                link = result.Url is not null
+                    ? $"[#{result.Identifier}]({result.Url})"
+                    : result.Identifier ?? "";
+            }
+            else
+            {
+                status = "❌ Failed";
+                link = result.FailureReason ?? "Unknown error";
+            }
 
             var sanitizedTitle = TextSanitizer.SanitizeMarkdown(result.Title);
             sb.AppendLine($"| {i + 1} | {EscapeMarkdownPipe(sanitizedTitle)} | {status} | {link} |");

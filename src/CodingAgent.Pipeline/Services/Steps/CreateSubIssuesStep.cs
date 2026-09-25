@@ -65,6 +65,12 @@ public sealed class CreateSubIssuesStep : IPipelineStep
 
         // 3. Enforce MaxDecompositionSubIssues cap (take first N alphabetically — already sorted by parser)
         var cap = context.Config.MaxDecompositionSubIssues;
+        // TODO: The two branches of this ternary have asymmetric types: the capped branch yields
+        // IList<SubIssueProposal> (from .ToList()), while the uncapped branch preserves whatever
+        // concrete type the parser returned (IReadOnlyList<SubIssueProposal> or similar). Both
+        // expose .Count so there is no runtime defect, but the implicit type variance makes the
+        // two branches less obvious to future readers. Consider using an explicit type annotation
+        // or a single .Take(cap).ToList() in both branches for uniformity.
         var cappedProposals = proposals.Count > cap
             ? proposals.Take(cap).ToList()
             : proposals;
@@ -116,9 +122,35 @@ public sealed class CreateSubIssuesStep : IPipelineStep
             }
         }
 
+        // Record proposals beyond the cap as SkippedByCap — not counted as failures.
+        // TODO: If MaxDecompositionSubIssues is misconfigured as 0, every decomposition run will
+        // skip all proposals (proposals.Count > 0 == true, cappedProposals is empty) and post
+        // an agent:error label. Consider adding a validation guard in PipelineConfiguration that
+        // enforces a minimum value (e.g. >= 1) for MaxDecompositionSubIssues, or logging a
+        // clear warning when cap == 0 to make the misconfiguration obvious.
+        if (proposals.Count > cap)
+        {
+            var skippedProposals = proposals.Skip(cap);
+            foreach (var skipped in skippedProposals)
+            {
+                context.Logger.Information(
+                    "Sub-issue '{Title}' not created: exceeds MaxDecompositionSubIssues cap of {Cap}",
+                    skipped.Title, cap);
+
+                results.Add(new SubIssueCreationResult
+                {
+                    Title = skipped.Title,
+                    Success = false,
+                    SkippedByCap = true,
+                    FailureReason = $"Not created: exceeds the configured cap of {cap} sub-issues"
+                });
+            }
+        }
+
         // 12. Store results on context for summary step
         context.Run.SubIssueResults = results;
-        context.Run.DecompositionSubIssuesAttempted = results.Count;
+        // Attempted and Created only count proposals that were actually attempted (not skipped by cap)
+        context.Run.DecompositionSubIssuesAttempted = cappedProposals.Count;
         context.Run.DecompositionSubIssuesCreated = results.Count(r => r.Success);
 
         context.Logger.Information(

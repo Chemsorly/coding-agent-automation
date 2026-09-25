@@ -223,4 +223,125 @@ public class PostDecompositionSummaryStepTests
         summary.Should().Contain("❌ Failed");
         summary.Should().Contain("Timeout");
     }
+
+    // ── SkippedByCap rendering ────────────────────────────────────────────
+
+    [Fact]
+    public void FormatSummaryComment_SkippedByCap_ShowsNotCreatedCapStatus()
+    {
+        var results = new List<SubIssueCreationResult>
+        {
+            new() { Title = "Issue 1", Success = true, Identifier = "101", Url = "https://github.com/test/101" },
+            new() { Title = "Issue 2", Success = true, Identifier = "102", Url = "https://github.com/test/102" },
+            new() { Title = "Issue 3", Success = false, SkippedByCap = true, FailureReason = "Not created: exceeds the configured cap of 2 sub-issues" },
+            new() { Title = "Issue 4", Success = false, SkippedByCap = true, FailureReason = "Not created: exceeds the configured cap of 2 sub-issues" }
+        };
+
+        var summary = PostDecompositionSummaryStep.FormatSummaryComment(results, attempted: 2, succeeded: 2, failed: 0, skippedByCap: 2);
+
+        // The "Not created (cap)" status must appear
+        summary.Should().Contain("⏭️ Not created (cap)");
+        // The created count line
+        summary.Should().Contain("Created:** 2/2");
+        // A line about the cap
+        summary.Should().Contain("Not created (cap):");
+        summary.Should().Contain("2 sub-issue(s) exceeded");
+    }
+
+    [Fact]
+    public void FormatSummaryComment_SkippedByCap_DoesNotCountAsFailures()
+    {
+        var results = new List<SubIssueCreationResult>
+        {
+            new() { Title = "Issue 1", Success = true, Identifier = "101", Url = "https://github.com/test/101" },
+            new() { Title = "Issue 2", Success = false, SkippedByCap = true, FailureReason = "Not created: exceeds the configured cap of 1 sub-issues" }
+        };
+
+        var summary = PostDecompositionSummaryStep.FormatSummaryComment(results, attempted: 1, succeeded: 1, failed: 0, skippedByCap: 1);
+
+        // No "Failed" line should appear since skipped-by-cap entries are not failures
+        summary.Should().NotContain("**Failed:**");
+        summary.Should().Contain("✅ Created");
+        summary.Should().Contain("⏭️ Not created (cap)");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithSkippedByCap_OutcomeLabelIsDone_NotError()
+    {
+        // One created, two skipped by cap → outcome should be Done (not Error)
+        var results = new List<SubIssueCreationResult>
+        {
+            new() { Title = "Issue 1", Success = true, Identifier = "101", Url = "https://github.com/test/101" },
+            new() { Title = "Issue 2", Success = false, SkippedByCap = true, FailureReason = "Not created: exceeds the configured cap of 1 sub-issues" },
+            new() { Title = "Issue 3", Success = false, SkippedByCap = true, FailureReason = "Not created: exceeds the configured cap of 1 sub-issues" }
+        };
+
+        _issueOps.Setup(x => x.PostCommentAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+        _issueOps.Setup(x => x.SwapLabelAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var run = CreateRun(results);
+        var context = BuildContext(run);
+        var step = new PostDecompositionSummaryStep();
+
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue);
+        // Label should be Done, not Error — skipped-by-cap does not trigger error
+        _issueOps.Verify(x => x.SwapLabelAsync("50", AgentLabels.Done, It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(x => x.SwapLabelAsync("50", AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AllSkippedByCap_ZeroAttempted_SwapsLabelToError()
+    {
+        // All proposals were skipped (cap = 0 effectively) → no successes → Error
+        var results = new List<SubIssueCreationResult>
+        {
+            new() { Title = "Issue 1", Success = false, SkippedByCap = true, FailureReason = "Not created: exceeds the configured cap of 0 sub-issues" }
+        };
+
+        _issueOps.Setup(x => x.PostCommentAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+        _issueOps.Setup(x => x.SwapLabelAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var run = CreateRun(results);
+        var context = BuildContext(run);
+        var step = new PostDecompositionSummaryStep();
+
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue);
+        // Zero actual creations → Error label
+        _issueOps.Verify(x => x.SwapLabelAsync("50", AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_SummaryBodyContainsSkippedByCap_WhenPresent()
+    {
+        var results = new List<SubIssueCreationResult>
+        {
+            new() { Title = "Issue 1", Success = true, Identifier = "101", Url = "https://github.com/test/101" },
+            new() { Title = "Issue 2", Success = false, SkippedByCap = true, FailureReason = "Not created: exceeds the configured cap of 1 sub-issues" }
+        };
+
+        string? capturedBody = null;
+        _issueOps.Setup(x => x.PostCommentAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<IssueIdentifier, string, CancellationToken>((_, body, _) => capturedBody = body)
+            .ReturnsAsync((string?)null);
+        _issueOps.Setup(x => x.SwapLabelAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var run = CreateRun(results);
+        var context = BuildContext(run);
+        var step = new PostDecompositionSummaryStep();
+
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        capturedBody.Should().NotBeNull();
+        capturedBody.Should().Contain("⏭️ Not created (cap)");
+        capturedBody.Should().Contain("Issue 2");
+    }
 }
