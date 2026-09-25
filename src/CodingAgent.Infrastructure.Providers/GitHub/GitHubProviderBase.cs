@@ -126,8 +126,18 @@ public abstract class GitHubProviderBase : IAsyncDisposable
     /// Executes an Octokit API call with resilience (retry on transient errors) and rate limit handling.
     /// Acquires a fresh client inside the retry loop to ensure token freshness on retry.
     /// </summary>
+    /// <param name="operation">The API operation to execute.</param>
+    /// <param name="operationName">Name tag for <c>github.api.requests</c> metric.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <param name="isGraphQL">
+    /// Pass <c>true</c> for lambdas that make GraphQL mutations (e.g. <c>markPullRequestReadyForReview</c>,
+    /// <c>convertPullRequestToDraft</c>). This causes rate-limit headroom to be stored under the
+    /// <c>resource=graphql</c> tag rather than <c>resource=core</c>.
+    /// Default is <c>false</c> (REST API calls consume the <c>core</c> quota).
+    /// </param>
     protected async Task<T> ExecuteWithResilienceAsync<T>(
-        Func<IGitHubClient, Task<T>> operation, string operationName, CancellationToken ct)
+        Func<IGitHubClient, Task<T>> operation, string operationName, CancellationToken ct,
+        bool isGraphQL = false)
     {
         var context = ResilienceContextPool.Shared.Get(operationName, ct);
         try
@@ -135,7 +145,60 @@ public abstract class GitHubProviderBase : IAsyncDisposable
             return await _resiliencePipeline.ExecuteAsync(async ctx =>
             {
                 var client = await GetClientAsync(ctx.CancellationToken);
-                return await operation(client);
+                try
+                {
+                    var result = await operation(client);
+
+                    // Capture rate-limit info before the transient client is discarded.
+                    // GetLastApiInfo() returns null if the client has not made any calls yet
+                    // (e.g. when the Polly lambda itself never reached the API call).
+                    // TODO: CaptureRateLimitInfo is only called on the success path. On a
+                    // RateLimitExceededException / AbuseException attempt — precisely when remaining
+                    // is 0 or near-0 and the gauge signal is most valuable — the rate-limit value
+                    // is not captured even though GetLastApiInfo() carries it after the failed
+                    // response. Consider calling CaptureRateLimitInfo in the rate_limited catch
+                    // arms as well to reflect the depleted-quota condition in the gauge.
+                    CaptureRateLimitInfo(client, isGraphQL);
+
+                    GitHubTelemetry.ApiRequests.Add(1,
+                        new KeyValuePair<string, object?>("operation", operationName),
+                        new KeyValuePair<string, object?>("outcome", "success"));
+                    return result;
+                }
+                catch (Octokit.NotFoundException)
+                {
+                    // Not retried by Polly — record once and re-throw bare.
+                    // Do NOT wrap in PipelineRateLimitExceededException.
+                    GitHubTelemetry.ApiRequests.Add(1,
+                        new KeyValuePair<string, object?>("operation", operationName),
+                        new KeyValuePair<string, object?>("outcome", "not_found"));
+                    throw;
+                }
+                catch (Octokit.RateLimitExceededException)
+                {
+                    // Retried by Polly — emitted once per attempt.
+                    GitHubTelemetry.ApiRequests.Add(1,
+                        new KeyValuePair<string, object?>("operation", operationName),
+                        new KeyValuePair<string, object?>("outcome", "rate_limited"));
+                    throw;
+                }
+                catch (AbuseException)
+                {
+                    // Retried by Polly — emitted once per attempt.
+                    GitHubTelemetry.ApiRequests.Add(1,
+                        new KeyValuePair<string, object?>("operation", operationName),
+                        new KeyValuePair<string, object?>("outcome", "rate_limited"));
+                    throw;
+                }
+                catch (Exception)
+                {
+                    // Covers AuthorizationException (retried up to 3 times — emitted per attempt),
+                    // transient HttpRequestException, 5xx ApiException, and any other exception.
+                    GitHubTelemetry.ApiRequests.Add(1,
+                        new KeyValuePair<string, object?>("operation", operationName),
+                        new KeyValuePair<string, object?>("outcome", "error"));
+                    throw;
+                }
             }, context);
         }
         catch (Octokit.AuthorizationException)
@@ -164,16 +227,29 @@ public abstract class GitHubProviderBase : IAsyncDisposable
     }
 
     /// <summary>
+    /// Captures rate-limit remaining value from the client's last API response and stores it in
+    /// <see cref="GitHubTelemetry"/> for the observable gauge.
+    /// Must be called inside the Polly lambda, before the transient client is discarded.
+    /// </summary>
+    private static void CaptureRateLimitInfo(IGitHubClient client, bool isGraphQL)
+    {
+        var remaining = client.GetLastApiInfo()?.RateLimit?.Remaining;
+        if (remaining.HasValue)
+            GitHubTelemetry.UpdateRateLimit(isGraphQL ? "graphql" : "core", remaining.Value);
+    }
+
+    /// <summary>
     /// Executes a void-returning Octokit API call with resilience and rate limit handling.
     /// </summary>
     protected async Task ExecuteWithResilienceAsync(
-        Func<IGitHubClient, Task> operation, string operationName, CancellationToken ct)
+        Func<IGitHubClient, Task> operation, string operationName, CancellationToken ct,
+        bool isGraphQL = false)
     {
         await ExecuteWithResilienceAsync(async client =>
         {
             await operation(client);
             return true;
-        }, operationName, ct);
+        }, operationName, ct, isGraphQL);
     }
 
     /// <summary>

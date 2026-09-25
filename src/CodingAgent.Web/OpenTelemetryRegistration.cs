@@ -1,4 +1,4 @@
-using CodingAgent.Infrastructure.Telemetry;
+using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Pipeline.Telemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -17,6 +17,7 @@ internal static class OpenTelemetryRegistration
     /// </summary>
     internal static IServiceCollection AddApplicationTelemetry(
         this IServiceCollection services,
+        string? dbConnectionString,
         string? redisConnectionString)
     {
         services.AddOpenTelemetry()
@@ -25,17 +26,15 @@ internal static class OpenTelemetryRegistration
                 serviceVersion: typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0"))
             .WithTracing(t =>
             {
-                t.AddAspNetCoreInstrumentation(opts =>
-                    opts.Filter = OtelNoiseFilter.FilterAspNetCoreRequest)
-                    .AddHttpClientInstrumentation(opts =>
-                    {
-                        opts.FilterHttpRequestMessage = OtelNoiseFilter.FilterHttpClientRequest;
-                        opts.EnrichWithHttpRequestMessage = OtelNoiseFilter.EnrichHttpClientRequest;
-                    })
+                t.AddAspNetCoreInstrumentation()
+                    .AddHttpClientInstrumentation()
                     .AddSource(PipelineTelemetry.SourceName)
                     .AddSource("Microsoft.AspNetCore.SignalR.Server")
-                    .AddProcessor(new OtelNoiseSpanDropProcessor())
                     .AddOtlpExporter();
+
+                // DB mode: Npgsql tracing for query spans
+                if (!string.IsNullOrEmpty(dbConnectionString))
+                    t.AddSource("Npgsql");
 
                 // Redis backplane: trace Redis commands
                 if (!string.IsNullOrEmpty(redisConnectionString))
@@ -46,7 +45,6 @@ internal static class OpenTelemetryRegistration
                 m.AddAspNetCoreInstrumentation()
                     .AddHttpClientInstrumentation()
                     .AddMeter(PipelineTelemetry.SourceName)
-                    .AddMeter("System.Runtime")
                     // Prometheus requires Cumulative temporality. The OTLP exporter defaults to Delta
                     // for histograms and counters, which causes Grafana Cloud to silently drop histogram
                     // data (dispatch_queue_wait_time, pipeline_jobs_duration, etc.) while gauges — which
@@ -67,6 +65,10 @@ internal static class OpenTelemetryRegistration
                 // AddMeter after AddOtlpExporter is fine — both operate on the same
                 // MeterProviderBuilder, so this meter is exported with Cumulative temporality too.
                 m.AddMeter(WorkDistributionTelemetry.MeterName);
+
+                // GitHub-facing metrics (github.api.requests counter, github.rate_limit.remaining gauge).
+                // Not registered in the agent — agent pods must not emit these series.
+                m.AddMeter(GitHubTelemetry.MeterName);
             });
 
         return services;
