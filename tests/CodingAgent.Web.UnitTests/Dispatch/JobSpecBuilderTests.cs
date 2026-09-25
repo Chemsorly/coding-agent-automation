@@ -302,6 +302,57 @@ public class JobSpecBuilderTests
 
     #endregion
 
+    #region DerivedKeySecretName — work-item pod pre-vended key (issue #3034)
+
+    /// <summary>
+    /// Verifies that when <see cref="JobSpecBuilder.BuildContext.DerivedKeySecretName"/> is set
+    /// AND <see cref="JobSpecBuilder.BuildContext.WorkItemId"/> is non-null (the work-item pod case),
+    /// Build() does not throw and produces the correct env var configuration.
+    /// The guard that blocked this combination was removed in issue #3034 — work-item pods now
+    /// MUST use DerivedKeySecretName to receive the pre-vended per-job key.
+    /// </summary>
+    [Fact]
+    public void Build_WithDerivedKeySecretName_AndWorkItemId_DoesNotThrow_InjectsAgentApiKeyFromSecret()
+    {
+        var template = CreateTemplate();
+        var ctx = new JobSpecBuilder.BuildContext
+        {
+            WorkItemId = Guid.NewGuid(),  // non-null: this is a work-item pod
+            AgentSelector = "dotnet,dotnet10,kiro",
+            TimeoutSeconds = 1800,
+            JobName = "caa-12345678",
+            ClaimedPvc = null,
+            OrchestratorUrl = "http://orchestrator:8080",
+            AgentApiKeySecretName = "caa-secret",
+            AgentServiceAccountName = "caa-agent",
+            Namespace = "coding-agent",
+            DerivedKeySecretName = "caa-secrets-abcdef12"
+        };
+
+        // The guard added in #2234 (DerivedKeySecretName + WorkItemId → throw) was removed in #3034.
+        // Work-item pods now use DerivedKeySecretName to receive the pre-vended HMAC key.
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var env = job.Spec.Template.Spec.Containers[0].Env;
+
+        // AGENT_API_KEY must come from SecretKeyRef pointing to the per-job Secret
+        var apiKeyEnv = env.SingleOrDefault(e => e.Name == "AGENT_API_KEY");
+        apiKeyEnv.Should().NotBeNull("AGENT_API_KEY must be injected from the per-job Secret");
+        apiKeyEnv!.ValueFrom.Should().NotBeNull();
+        apiKeyEnv.ValueFrom!.SecretKeyRef!.Name.Should().Be("caa-secrets-abcdef12");
+        apiKeyEnv.ValueFrom.SecretKeyRef.Key.Should().Be("agent-api-key");
+
+        // Master key file path must NOT be present — pod must not hold the master key
+        env.Should().NotContain(e => e.Name == "AGENT_API_KEY_FILE",
+            "work-item pods must not receive the master key file path");
+
+        // Master agent-api-key volume must NOT be mounted
+        job.Spec.Template.Spec.Volumes.Should().NotContain(v => v.Name == "agent-api-key",
+            "work-item pods must not mount the master agent-api-key Secret");
+    }
+
+    #endregion
+
     #region PodSecurityContext — YAML round-trip
 
     [Fact]

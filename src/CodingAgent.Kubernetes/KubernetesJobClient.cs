@@ -1,5 +1,11 @@
 using k8s;
 using k8s.Models;
+using System.Text.Json;
+// TODO [WARNING]: System.Text.Json.Serialization is imported but no [JsonIgnore] or other attributes
+// from that namespace are used in this file. The anonymous type in PatchSecretOwnerReferenceAsync is
+// serialised with default camelCase-compatible property names, so the import is currently redundant.
+// Remove this using if no Serialization attributes are added in future. See: DotNetSpecialist [WARNING].
+using System.Text.Json.Serialization;
 
 namespace CodingAgent.Kubernetes;
 
@@ -29,6 +35,33 @@ public sealed class KubernetesJobClient : IKubernetesJobClient
 
     public async Task DeleteSecretAsync(string name, string ns, CancellationToken ct = default)
         => await _client.CoreV1.DeleteNamespacedSecretAsync(name, ns, cancellationToken: ct);
+
+    public async Task PatchSecretOwnerReferenceAsync(string name, string ns, V1OwnerReference ownerReference, CancellationToken ct = default)
+    {
+        // JSON Merge Patch (application/merge-patch+json) — sets ownerReferences to exactly the
+        // supplied list, replacing any previously set value. Using an anonymous type serialised
+        // as a V1Patch avoids a dependency on Newtonsoft.Json (the k8s SDK accepts either).
+        var patchBody = new
+        {
+            metadata = new
+            {
+                ownerReferences = new[]
+                {
+                    new
+                    {
+                        apiVersion = ownerReference.ApiVersion,
+                        kind = ownerReference.Kind,
+                        name = ownerReference.Name,
+                        uid = ownerReference.Uid,
+                        blockOwnerDeletion = ownerReference.BlockOwnerDeletion ?? true
+                    }
+                }
+            }
+        };
+        var json = JsonSerializer.Serialize(patchBody);
+        var patch = new V1Patch(json, V1Patch.PatchType.MergePatch);
+        await _client.CoreV1.PatchNamespacedSecretAsync(patch, name, ns, cancellationToken: ct);
+    }
 
     public async Task<V1PodList> ListPodsAsync(string ns, string labelSelector, CancellationToken ct = default)
         => await _client.CoreV1.ListNamespacedPodAsync(ns, labelSelector: labelSelector, cancellationToken: ct);

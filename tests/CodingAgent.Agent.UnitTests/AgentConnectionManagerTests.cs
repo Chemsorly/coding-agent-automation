@@ -200,6 +200,7 @@ public class AgentConnectionManagerTests
     {
         return new HubConnectionManagerFactory(
             "http://localhost:9999", "test-agent", "test-key",
+            isWorkItemMode: false,
             Mock.Of<Serilog.ILogger>());
     }
 }

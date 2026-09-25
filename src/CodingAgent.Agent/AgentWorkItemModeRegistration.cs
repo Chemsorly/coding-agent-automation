@@ -24,11 +24,11 @@ internal static class AgentWorkItemModeRegistration
         services.AddHttpClient<WorkItemHttpClient>(client =>
         {
             client.BaseAddress = new Uri(config.OrchestratorUrl.TrimEnd('/'));
-            // Derive per-agent key: HMAC(masterKey, agentId).
-            // Must match what AgentApiKeyAuthHandler re-derives from ?agentId= on each request.
-            var derivedKey = CodingAgent.Agent.HubConnectionManager.DeriveKey(config.AgentApiKey, config.AgentId.Value);
+            // The pre-vended per-job key (HMAC(master, jobName)) is already in config.AgentApiKey.
+            // No local derivation — AgentApiKeyAuthHandler re-derives HMAC(master, ?agentId=) server-side
+            // and compares, so presenting the pre-vended value directly matches.
             client.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", derivedKey);
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", config.AgentApiKey);
             // DO NOT set client.Timeout — resilience handler manages timeouts
         })
         .AddStandardResilienceHandler(options =>

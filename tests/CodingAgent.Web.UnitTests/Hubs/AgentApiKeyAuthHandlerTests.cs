@@ -370,6 +370,67 @@ public class AgentApiKeyAuthHandlerTests
         key1.Should().NotBe(key2);
     }
 
+    // ── AC #3: cross-pod impersonation rejection (issue #3034) ──────────
+
+    /// <summary>
+    /// Acceptance Criterion #3 — AgentApiKeyAuthHandler correctly rejects a connection that
+    /// presents HMAC(masterKey, differentJobName) when the master key is no longer distributed
+    /// to pods (issue #3034).
+    ///
+    /// Scenario: pod "caa-aaaabbbb" holds HMAC(master, "caa-aaaabbbb") as its AGENT_API_KEY
+    /// (pre-vended by DispatchLifecycleService). It cannot authenticate as "caa-ccccdddd"
+    /// because computing HMAC(master, "caa-ccccdddd") requires the master key, which the pod
+    /// no longer receives. The server re-derives HMAC(master, "caa-ccccdddd") and rejects the
+    /// token because it does not match.
+    /// </summary>
+    [Fact]
+    public async Task HandleAuthenticate_PodHoldingOnlyOwnPreVendedKey_CannotImpersonateOtherPod()
+    {
+        const string masterKey = "master-key";
+        const string ownJobName = "caa-aaaabbbb";
+        const string targetJobName = "caa-ccccdddd";
+
+        // The attacker pod holds only its own pre-vended key: HMAC(master, ownJobName)
+        using var hmac = new System.Security.Cryptography.HMACSHA256(
+            System.Text.Encoding.UTF8.GetBytes(masterKey));
+        var ownKey = Convert.ToHexString(
+            hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(ownJobName))).ToLowerInvariant();
+
+        // Attempt to authenticate as targetJobName using ownKey (ownKey ≠ HMAC(master, targetJobName))
+        var handler = await CreateHandlerAsync(masterKey, queryToken: ownKey, authHeader: null, agentId: targetJobName);
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.Should().BeFalse(
+            "a pod holding HMAC(master, ownJobName) cannot authenticate as a different pod — " +
+            "the server re-derives HMAC(master, targetJobName) and the values differ");
+    }
+
+    /// <summary>
+    /// Verifies that a pod presenting its own pre-vended key for its own agentId is accepted.
+    /// This is the expected normal authentication path for work-item pods after issue #3034.
+    /// </summary>
+    [Fact]
+    public async Task HandleAuthenticate_PodPresentingOwnPreVendedKey_IsAccepted()
+    {
+        const string masterKey = "master-key";
+        const string jobName = "caa-aaaabbbb";
+
+        // DispatchLifecycleService pre-vends HMAC(master, jobName) and stores it in the per-job Secret
+        using var hmac = new System.Security.Cryptography.HMACSHA256(
+            System.Text.Encoding.UTF8.GetBytes(masterKey));
+        var preVendedKey = Convert.ToHexString(
+            hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(jobName))).ToLowerInvariant();
+
+        // Pod presents preVendedKey as bearer with ?agentId=jobName
+        var handler = await CreateHandlerAsync(masterKey, queryToken: preVendedKey, authHeader: null, agentId: jobName);
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.Should().BeTrue(
+            "the pre-vended key HMAC(master, jobName) must be accepted when presented with the matching agentId");
+        var nameId = result.Principal!.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        nameId.Should().Be(jobName, "the authenticated identity must be the job name");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private Task<AgentApiKeyAuthHandler> CreateHandlerAsync(

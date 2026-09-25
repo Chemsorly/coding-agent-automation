@@ -5,9 +5,13 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 
 /// <summary>
 /// Tests for HubConnectionManager.DeriveKey (internal static — HMAC-SHA256 derivation).
+/// This utility method is retained on HubConnectionManager as a server-side HMAC helper
+/// (used indirectly by AgentApiKeyAuthHandler's derivation pattern). It is no longer called
+/// from HubConnectionManager's constructor for work-item pods — those pods receive a
+/// pre-vended key from DispatchLifecycleService and present it verbatim (issue #3034).
 /// The Agent assembly exposes internals to Agent.UnitTests only; since we can't access
 /// HubConnectionManager directly from Pipeline.UnitTests, this tests the observable
-/// properties (determinism, uniqueness, length, empty-fallback).
+/// properties (determinism, uniqueness, length, empty-fallback) of the utility method.
 /// NOTE: if Agent project adds InternalsVisibleTo for Pipeline.UnitTests in the future,
 /// move these to directly call HubConnectionManager.DeriveKey.
 /// </summary>
@@ -19,6 +23,10 @@ public sealed class HubConnectionManagerDeriveKeyTests
         var method = typeof(HubConnectionManager)
             .GetMethod("DeriveKey",
                 System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+        // TODO [WARNING]: If DeriveKey is renamed or removed, method will be null and method!.Invoke
+        // will throw NullReferenceException with a confusing failure message. Add an explicit
+        // method.Should().NotBeNull("DeriveKey must remain accessible for server-side HMAC use")
+        // assertion before the invoke to produce a meaningful failure. See: TestQualityReviewer [WARNING].
         return (string)method!.Invoke(null, [masterKey, agentId])!;
     }
 
@@ -67,5 +75,37 @@ public sealed class HubConnectionManagerDeriveKeyTests
         var result = DeriveKey("secret", "agent-1");
         result.Should().HaveLength(64);
         result.Should().MatchRegex("^[0-9a-f]+$");
+    }
+
+    /// <summary>
+    /// Documents the post-#3034 invariant: DeriveKey is a server-side HMAC utility.
+    /// Work-item pods no longer call it — they receive HMAC(master, jobName) pre-vended
+    /// by DispatchLifecycleService and present it verbatim as their bearer token.
+    /// AgentApiKeyAuthHandler calls the equivalent derivation server-side to validate.
+    /// </summary>
+    [Fact]
+    public void DeriveKey_ProducesValueThatMatchesServerSideAuthHandlerExpectation()
+    {
+        // Verify that the value produced by DeriveKey is exactly what AgentApiKeyAuthHandler
+        // computes when validating a bearer token presented with ?agentId=<jobName>.
+        // Both sides use: HMAC-SHA256(masterKey, agentId) → lowercase hex.
+        const string masterKey = "test-master-key";
+        const string jobName = "caa-abcdef12";
+
+        var preVendedKey = DeriveKey(masterKey, jobName);
+
+        // The value is a 64-char lowercase hex string — exactly what the agent receives
+        // as AGENT_API_KEY and presents verbatim as its bearer token.
+        preVendedKey.Should().HaveLength(64);
+        preVendedKey.Should().MatchRegex("^[0-9a-f]{64}$");
+
+        // Independently compute what AgentApiKeyAuthHandler derives for ?agentId=jobName
+        using var hmac = new System.Security.Cryptography.HMACSHA256(
+            System.Text.Encoding.UTF8.GetBytes(masterKey));
+        var hash = hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(jobName));
+        var serverExpected = Convert.ToHexString(hash).ToLowerInvariant();
+
+        preVendedKey.Should().Be(serverExpected,
+            "the pre-vended key stored in the per-job Secret must equal what the server derives for validation");
     }
 }

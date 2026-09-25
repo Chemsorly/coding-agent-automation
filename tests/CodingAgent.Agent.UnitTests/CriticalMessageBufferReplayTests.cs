@@ -431,7 +431,7 @@ public class CriticalMessageBufferReplayTests
     private static HubConnectionManagerFactory CreateTestHubManagerFactory()
     {
         var logger = new Mock<Serilog.ILogger>();
-        return new HubConnectionManagerFactory("http://localhost:9999", "test-agent", "test-api-key", logger.Object);
+        return new HubConnectionManagerFactory("http://localhost:9999", "test-agent", "test-api-key", isWorkItemMode: false, logger.Object);
     }
 
     private static AgentJobSlotManager GetSlotManager(AgentWorkerService service)

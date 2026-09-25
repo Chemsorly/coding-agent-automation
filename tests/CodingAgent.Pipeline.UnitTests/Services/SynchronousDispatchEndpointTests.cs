@@ -39,9 +39,25 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 ///   <item>Transition state machine: <c>Pending→Dispatched</c> remains valid (used by this endpoint).</item>
 /// </list>
 /// </summary>
-public sealed class SynchronousDispatchEndpointTests
+public sealed class SynchronousDispatchEndpointTests : IDisposable
 {
     private readonly string _dbName = $"dispatch-test-{Guid.NewGuid():N}";
+    private readonly string? _savedAgentApiKey;
+
+    public SynchronousDispatchEndpointTests()
+    {
+        // DeriveAgentKey (called during dispatch) throws InvalidOperationException when
+        // AGENT_API_KEY is unset. Set a test value for the duration of this test class
+        // and restore it in Dispose() to avoid polluting other tests.
+        _savedAgentApiKey = Environment.GetEnvironmentVariable("AGENT_API_KEY");
+        if (string.IsNullOrEmpty(_savedAgentApiKey))
+            Environment.SetEnvironmentVariable("AGENT_API_KEY", "test-dispatch-master-key");
+    }
+
+    public void Dispose()
+    {
+        Environment.SetEnvironmentVariable("AGENT_API_KEY", _savedAgentApiKey);
+    }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -722,9 +738,25 @@ public sealed class WorkItemTransitionService_PendingDispatchedTransitionsTests
 /// reflection — they must not run concurrently with other metric-emitting tests.
 /// </remarks>
 [Collection("Metrics")]
-public sealed class DispatchPendingWorkItemEndpointTests
+public sealed class DispatchPendingWorkItemEndpointTests : IDisposable
 {
     private readonly string _dbName = $"dispatch-pending-test-{Guid.NewGuid():N}";
+    private readonly string? _savedAgentApiKey;
+
+    public DispatchPendingWorkItemEndpointTests()
+    {
+        // DeriveAgentKey (called during dispatch) throws InvalidOperationException when
+        // AGENT_API_KEY is unset. Set a test value for the duration of this test class
+        // and restore it in Dispose() to avoid polluting other tests.
+        _savedAgentApiKey = Environment.GetEnvironmentVariable("AGENT_API_KEY");
+        if (string.IsNullOrEmpty(_savedAgentApiKey))
+            Environment.SetEnvironmentVariable("AGENT_API_KEY", "test-dispatch-pending-master-key");
+    }
+
+    public void Dispose()
+    {
+        Environment.SetEnvironmentVariable("AGENT_API_KEY", _savedAgentApiKey);
+    }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
 

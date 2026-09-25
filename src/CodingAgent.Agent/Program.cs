@@ -116,7 +116,7 @@ try
 
     // ── Hub connection manager ──
     builder.Services.AddSingleton<IHubConnectionManagerFactory>(sp =>
-        new HubConnectionManagerFactory(startupConfig.OrchestratorUrl, startupConfig.AgentId, startupConfig.AgentApiKey, Log.Logger));
+        new HubConnectionManagerFactory(startupConfig.OrchestratorUrl, startupConfig.AgentId, startupConfig.AgentApiKey, startupConfig.IsWorkItemMode, Log.Logger));
     builder.Services.AddSingleton<IHubConnectionManager>(sp =>
         sp.GetRequiredService<IHubConnectionManagerFactory>().Create());
 

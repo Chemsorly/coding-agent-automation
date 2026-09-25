@@ -99,7 +99,6 @@ public sealed class HubConnectionManager : IHubConnectionManager
 
         _logger = logger;
 
-        var derivedKey = DeriveKey(apiKey, agentId.Value);
         var hubUrl = $"{orchestratorUrl.TrimEnd('/')}{HubRoutes.Agent}?agentId={Uri.EscapeDataString(agentId.Value)}";
 
         _logger.Information("HubConnectionManager: target hub URL = {HubUrl}", hubUrl);
@@ -108,7 +107,7 @@ public sealed class HubConnectionManager : IHubConnectionManager
         _connection = new HubConnectionBuilder()
             .WithUrl(hubUrl, options =>
             {
-                options.AccessTokenProvider = () => Task.FromResult<string?>(derivedKey);
+                options.AccessTokenProvider = () => Task.FromResult<string?>(apiKey);
                 options.SkipNegotiation = true;
                 options.Transports = HttpTransportType.WebSockets;
                 options.HttpMessageHandlerFactory = httpMessageHandlerFactory;

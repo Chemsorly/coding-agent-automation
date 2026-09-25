@@ -69,6 +69,7 @@ public class AgentWorkerServiceReconnectionTests
     {
         var factory = new HubConnectionManagerFactory(
             "http://localhost:9999", "test-agent", "test-key",
+            isWorkItemMode: false,
             new Mock<Serilog.ILogger>().Object);
 
         var instance1 = factory.Create();
@@ -84,6 +85,7 @@ public class AgentWorkerServiceReconnectionTests
     {
         var factory = new HubConnectionManagerFactory(
             "http://localhost:9999", "test-agent", "test-key",
+            isWorkItemMode: false,
             new Mock<Serilog.ILogger>().Object);
 
         var manager = factory.Create();
@@ -142,6 +144,6 @@ public class AgentWorkerServiceReconnectionTests
     {
         var logger = new Mock<Serilog.ILogger>();
         return new HubConnectionManagerFactory(
-            "http://localhost:9999", "test-agent", "test-api-key", logger.Object);
+            "http://localhost:9999", "test-agent", "test-api-key", isWorkItemMode: false, logger.Object);
     }
 }

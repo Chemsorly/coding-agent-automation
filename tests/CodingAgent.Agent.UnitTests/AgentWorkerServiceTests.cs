@@ -851,7 +851,7 @@ public class AgentWorkerServiceTests : IDisposable
     private static HubConnectionManagerFactory CreateTestHubManagerFactory()
     {
         var logger = new Mock<Serilog.ILogger>();
-        return new HubConnectionManagerFactory("http://localhost:9999", "test-agent", "test-api-key", logger.Object);
+        return new HubConnectionManagerFactory("http://localhost:9999", "test-agent", "test-api-key", isWorkItemMode: false, logger.Object);
     }
 
     private static JobAssignmentMessage CreateTestJobAssignment(string jobId = "test-job-1")

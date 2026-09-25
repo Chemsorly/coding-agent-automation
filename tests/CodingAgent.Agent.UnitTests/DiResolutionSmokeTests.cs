@@ -75,7 +75,7 @@ public class DiResolutionSmokeTests
 
         // ── Hub connection manager ──
         services.AddSingleton<IHubConnectionManagerFactory>(new HubConnectionManagerFactory(
-            "http://localhost:9999", "test-agent-di-smoke", "fake-api-key", Log.Logger));
+            "http://localhost:9999", "test-agent-di-smoke", "fake-api-key", isWorkItemMode: false, Log.Logger));
         services.AddSingleton<IHubConnectionManager>(sp => sp.GetRequiredService<IHubConnectionManagerFactory>().Create());
 
         // ── Pipeline executor ──
@@ -310,7 +310,7 @@ public class DiResolutionSmokeTests
 
         // ── Hub connection manager ──
         services.AddSingleton<IHubConnectionManagerFactory>(new HubConnectionManagerFactory(
-            "http://localhost:9999", "test-agent-signalr-smoke", "fake-api-key", Log.Logger));
+            "http://localhost:9999", "test-agent-signalr-smoke", "fake-api-key", isWorkItemMode: false, Log.Logger));
         services.AddSingleton<IHubConnectionManager>(sp => sp.GetRequiredService<IHubConnectionManagerFactory>().Create());
 
         // ── Pipeline executor ──

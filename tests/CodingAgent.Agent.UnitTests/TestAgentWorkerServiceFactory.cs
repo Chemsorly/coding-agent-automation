@@ -146,7 +146,7 @@ internal static class TestAgentWorkerServiceFactory
     public static HubConnectionManagerFactory CreateTestHubManagerFactory(Serilog.ILogger? logger = null)
     {
         var l = logger ?? new Mock<Serilog.ILogger>().Object;
-        return new HubConnectionManagerFactory("http://localhost:9999", "test-agent", "test-api-key", l);
+        return new HubConnectionManagerFactory("http://localhost:9999", "test-agent", "test-api-key", isWorkItemMode: false, l);
     }
 
     private static LocalPipelineExecutor CreateMockExecutor(KiroCliLib.Core.IKiroCliOrchestrator orchestrator)
