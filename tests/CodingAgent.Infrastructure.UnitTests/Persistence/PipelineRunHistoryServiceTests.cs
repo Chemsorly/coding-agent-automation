@@ -213,9 +213,11 @@ public class PipelineRunHistoryServiceTests : IDisposable
 
         await service.AddRunToHistoryAsync(run);
 
-        // Persist is now fire-and-forget async — wait briefly for write to complete
+        // Persist is now fire-and-forget async — wait for write to complete.
+        // Timeout is generous (30 s) because the quality gate runs all test assemblies in
+        // parallel; under CPU pressure the background AtomicFileWriter task may be delayed.
         var expectedFile = Path.Combine(_tempDir, "persist-test-run.json");
-        await WaitForFileAsync(expectedFile, timeoutMs: 15000);
+        await WaitForFileAsync(expectedFile, timeoutMs: 30000);
 
         File.Exists(expectedFile).Should().BeTrue();
 

@@ -125,7 +125,7 @@ Other histograms (`token_vending.duration`, `quality_gate.duration`, etc.) use t
 
 The `pipeline.jobs.*` metrics (Prometheus: `pipeline_jobs_dispatched_total`, `pipeline_jobs_completed_total`, `pipeline_jobs_failed_total`, `pipeline_jobs_duration_seconds`) are emitted by two sources:
 
-1. **Agent pods** (ephemeral K8s Jobs) — via `PipelineRunInstrumentation.Dispose()`, with rich tags: `run_type`, `pipeline.project_id`, `pipeline.project_name`. These carry `service.name=coding-agent` and provide per-project, per-run-type breakdowns.
+1. **Agent pods** (ephemeral K8s Jobs) — via `PipelineRunInstrumentation.Dispose()`, with rich tags: `run_type`, `pipeline.project_id`, `pipeline.project_name`. These carry `service.name=coding-agent-worker` and provide per-project, per-run-type breakdowns.
 
 2. **Job Controller** (long-lived deployment) — via `WorkDistributionTelemetry.LogTerminalStatus()`, with minimal tags: `status` (and `failure_reason` for failed jobs, in snake_case). These carry `service.name=coding-agent-jobcontroller` and are **not subject to pod-exit flush races**.
 
@@ -151,7 +151,7 @@ The Job Controller-side recordings are not affected by any of the above.
 |----------|--------------------|
 | Alert: jobs completing / failing (reliability critical) | `workdistribution_workitems_terminated_total` (exact counts) |
 | Dashboard: jobs completed over 24h (non-exact OK) | `increase(pipeline_jobs_completed_total[24h])` (sums both emitters) |
-| Dashboard: per-run-type breakdown | `pipeline_jobs_completed_total{service_name="coding-agent"}` |
+| Dashboard: per-run-type breakdown | `pipeline_jobs_completed_total{service_name="coding-agent-worker"}` |
 | Dashboard: job duration percentiles | `pipeline_jobs_duration_seconds` (both emitters contribute) |
 
 ### Work Distribution Metrics
@@ -343,11 +343,14 @@ Agent pods emit telemetry with `service.name` derived from the agent image and l
 | `service.name` | Component | Port | How configured |
 |----------------|-----------|------|----------------|
 | `coding-agent-web` | Web service (Blazor UI) | — | Hardcoded at compile time in `OpenTelemetryRegistration.cs`; not overridable via `OTEL_SERVICE_NAME` |
-| `coding-agent-web` *(default)* or override | REST/WebSocket API | Port 8080 | Set via `otel.apiServiceName` in `values.yaml` (default: `coding-agent-web`). Override to `coding-agent-api` to separate API spans from Blazor spans in Tempo — then also update Grafana panel queries. |
+| `coding-agent-api` *(default)* or override | REST/WebSocket API | Port 8080 | Set via `otel.apiServiceName` in `values.yaml` (default: `coding-agent-api`). Override if you need a different name. |
 | `coding-agent-jobcontroller` | Job Controller | Port 8080 | Fixed fallback; overridable via `OTEL_SERVICE_NAME` env var |
 | `coding-agent-scheduler` | Scheduler | Port 8080 | Fixed fallback; overridable via `OTEL_SERVICE_NAME` env var |
+| `coding-agent-worker` | Agent pods (K8s Jobs) | — | Set unconditionally by `JobSpecBuilder`; per-run identity is in `service.instance.id` (= Job name) in `OTEL_RESOURCE_ATTRIBUTES` |
 
-> **Why API defaults to `coding-agent-web`:** The Grafana "Recent Pipeline Traces" panel queries `rootServiceName="coding-agent-web"`. With the API emitting under the same service name, `ExecutePipeline` spans (started by the API when a WorkItem is created) appear in that panel automatically. Override `otel.apiServiceName` to `coding-agent-api` if you want to distinguish API-origin spans from Blazor UI spans; then update the panel query to `rootServiceName=~"coding-agent-web|coding-agent-api"`. See issue #2255.
+> **Run identity in `service.instance.id`:** Agent pods all share the stable `service.name=coding-agent-worker`. The individual run is identified by `service.instance.id` (set to the Kubernetes Job name, e.g. `caa-abcdef12`) in `OTEL_RESOURCE_ATTRIBUTES`. This keeps service cardinality stable — queries no longer need regex to match per-run service names.
+
+> **⚠️ Breaking change (upgrade from pre-2969):** The API's `service.name` changed from `coding-agent-web` to `coding-agent-api`. Update any Grafana dashboards or alerts that filter on `service.name="coding-agent-web"` for API traffic. The "Recent Pipeline Traces" panel is not affected (updated in #2966).
 
 ### Example: Grafana Cloud
 

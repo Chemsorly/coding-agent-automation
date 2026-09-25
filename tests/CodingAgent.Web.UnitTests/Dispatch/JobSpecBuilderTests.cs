@@ -668,20 +668,29 @@ public class JobSpecBuilderTests
     }
 
     [Fact]
-    public void Build_WhenOtelResourceAttributesSet_PropagatesResourceAttributes()
+    public void Build_WhenOtelResourceAttributesSet_ComposesResourceAttributes()
     {
         Environment.SetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment=production,service.namespace=coding-agent");
         try
         {
             var template = CreateTemplate();
             var ctx = CreateContext();
+            ctx.JobName = "caa-abcdef12";
 
             var job = JobSpecBuilder.Build(template, ctx);
 
             var container = job.Spec.Template.Spec.Containers[0];
             var env = container.Env.FirstOrDefault(e => e.Name == "OTEL_RESOURCE_ATTRIBUTES");
-            env.Should().NotBeNull("OTEL_RESOURCE_ATTRIBUTES must be propagated for agent trace correlation");
-            env!.Value.Should().Be("deployment.environment=production,service.namespace=coding-agent");
+            env.Should().NotBeNull("OTEL_RESOURCE_ATTRIBUTES must always be set");
+            // Parent value is preserved and new per-job attrs are appended
+            env!.Value.Should().Contain("deployment.environment=production");
+            env.Value.Should().Contain("service.namespace=coding-agent");
+            env.Value.Should().Contain("service.instance.id=caa-abcdef12");
+            env.Value.Should().Contain("k8s.job.name=caa-abcdef12");
+            env.Value.Should().Contain("k8s.namespace.name=$(K8S_NAMESPACE_NAME)");
+            env.Value.Should().Contain("k8s.pod.name=$(K8S_POD_NAME)");
+            // Parent value must come first
+            env.Value.Should().StartWith("deployment.environment=production");
         }
         finally
         {
@@ -690,22 +699,33 @@ public class JobSpecBuilderTests
     }
 
     [Fact]
-    public void Build_WhenOtelVarsNotSet_DoesNotIncludeValueBasedOnes()
+    public void Build_WhenOtelVarsNotSet_DoesNotIncludeConditionallyPropagatedOnes()
     {
-        // Ensure env vars are clear
+        // OTEL_EXPORTER_OTLP_ENDPOINT and OTEL_EXPORTER_OTLP_PROTOCOL are conditional (only set when parent has them).
+        // OTEL_RESOURCE_ATTRIBUTES is always set (service.instance.id + k8s attrs are unconditional).
+        // TODO: Missing try/finally — env vars are set to null without restoring originals. If these vars
+        // were set in the CI environment or by a prior test, subsequent tests will see null unexpectedly.
+        // Fix: capture originals before the test and restore in a finally block (see
+        // Build_WhenOtelResourceAttributesSet_ComposesResourceAttributes for the correct pattern).
+        // See review finding (issue #2969).
         Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT", null);
         Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_PROTOCOL", null);
         Environment.SetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES", null);
 
         var template = CreateTemplate();
         var ctx = CreateContext();
+        ctx.JobName = "caa-abcdef12";
 
         var job = JobSpecBuilder.Build(template, ctx);
 
         var container = job.Spec.Template.Spec.Containers[0];
         container.Env.FirstOrDefault(e => e.Name == "OTEL_EXPORTER_OTLP_ENDPOINT").Should().BeNull();
         container.Env.FirstOrDefault(e => e.Name == "OTEL_EXPORTER_OTLP_PROTOCOL").Should().BeNull();
-        container.Env.FirstOrDefault(e => e.Name == "OTEL_RESOURCE_ATTRIBUTES").Should().BeNull();
+        // OTEL_RESOURCE_ATTRIBUTES is always present — starts directly with per-job attrs when parent is absent
+        var resourceAttrs = container.Env.FirstOrDefault(e => e.Name == "OTEL_RESOURCE_ATTRIBUTES");
+        resourceAttrs.Should().NotBeNull("OTEL_RESOURCE_ATTRIBUTES must always be set with per-job identity attrs");
+        resourceAttrs!.Value.Should().StartWith("service.instance.id=caa-abcdef12");
+        resourceAttrs.Value.Should().Contain("k8s.job.name=caa-abcdef12");
     }
 
     [Fact]
@@ -728,8 +748,10 @@ public class JobSpecBuilderTests
     }
 
     [Fact]
-    public void Build_SetsPerJobOtelServiceName()
+    public void Build_SetsStableOtelServiceName()
     {
+        // OTEL_SERVICE_NAME is always "coding-agent-worker" — run identity is carried via
+        // service.instance.id in OTEL_RESOURCE_ATTRIBUTES, not embedded in the service name.
         var template = CreateTemplate();
         var ctx = CreateContext();
         ctx.JobName = "caa-abcdef12";
@@ -738,8 +760,92 @@ public class JobSpecBuilderTests
 
         var container = job.Spec.Template.Spec.Containers[0];
         var env = container.Env.FirstOrDefault(e => e.Name == "OTEL_SERVICE_NAME");
-        env.Should().NotBeNull("OTEL_SERVICE_NAME must be set for per-job trace attribution");
-        env!.Value.Should().Be("coding-agent-worker-caa-abcdef12");
+        env.Should().NotBeNull("OTEL_SERVICE_NAME must be set");
+        env!.Value.Should().Be("coding-agent-worker",
+            "all agent pods share one stable service name; the run identity is in service.instance.id");
+    }
+
+    [Fact]
+    public void Build_SetsServiceInstanceIdInResourceAttributes()
+    {
+        Environment.SetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES", null);
+        var template = CreateTemplate();
+        var ctx = CreateContext();
+        ctx.JobName = "caa-abcdef12";
+
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var env = job.Spec.Template.Spec.Containers[0].Env.FirstOrDefault(e => e.Name == "OTEL_RESOURCE_ATTRIBUTES");
+        env.Should().NotBeNull();
+        env!.Value.Should().Contain("service.instance.id=caa-abcdef12",
+            "per-run identity must be in service.instance.id, not in OTEL_SERVICE_NAME");
+    }
+
+    [Fact]
+    public void Build_SetsKubernetesJobNameInResourceAttributes()
+    {
+        Environment.SetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES", null);
+        var template = CreateTemplate();
+        var ctx = CreateContext();
+        ctx.JobName = "caa-abcdef12";
+
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var env = job.Spec.Template.Spec.Containers[0].Env.FirstOrDefault(e => e.Name == "OTEL_RESOURCE_ATTRIBUTES");
+        env.Should().NotBeNull();
+        env!.Value.Should().Contain("k8s.job.name=caa-abcdef12");
+    }
+
+    [Fact]
+    public void Build_SetsResourceAttributesEvenWhenParentHasNone()
+    {
+        // OTEL_RESOURCE_ATTRIBUTES is always set on the pod, even when the orchestrator has no value.
+        Environment.SetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES", null);
+        var template = CreateTemplate();
+        var ctx = CreateContext();
+        ctx.JobName = "caa-abcdef12";
+
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var env = job.Spec.Template.Spec.Containers[0].Env.FirstOrDefault(e => e.Name == "OTEL_RESOURCE_ATTRIBUTES");
+        env.Should().NotBeNull("OTEL_RESOURCE_ATTRIBUTES must always be set regardless of parent value");
+        env!.Value.Should().StartWith("service.instance.id=caa-abcdef12",
+            "when no parent value, composed attrs start with service.instance.id");
+        env.Value.Should().Contain("k8s.job.name=caa-abcdef12");
+        env.Value.Should().Contain("k8s.namespace.name=$(K8S_NAMESPACE_NAME)");
+        env.Value.Should().Contain("k8s.pod.name=$(K8S_POD_NAME)");
+    }
+
+    [Fact]
+    public void Build_DownwardApiVarsForNamespaceAndPodNamePrecedeResourceAttributes()
+    {
+        // K8S_NAMESPACE_NAME and K8S_POD_NAME must appear before OTEL_RESOURCE_ATTRIBUTES
+        // in the env list — Kubernetes resolves $(VAR) substitution only for earlier entries.
+        Environment.SetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES", null);
+        var template = CreateTemplate();
+        var ctx = CreateContext();
+
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var envList = job.Spec.Template.Spec.Containers[0].Env;
+        var nsIndex = envList.ToList().FindIndex(e => e.Name == "K8S_NAMESPACE_NAME");
+        var podIndex = envList.ToList().FindIndex(e => e.Name == "K8S_POD_NAME");
+        var attrsIndex = envList.ToList().FindIndex(e => e.Name == "OTEL_RESOURCE_ATTRIBUTES");
+
+        nsIndex.Should().BeGreaterThan(-1, "K8S_NAMESPACE_NAME must be present via fieldRef");
+        podIndex.Should().BeGreaterThan(-1, "K8S_POD_NAME must be present via fieldRef");
+        attrsIndex.Should().BeGreaterThan(-1, "OTEL_RESOURCE_ATTRIBUTES must be present");
+        nsIndex.Should().BeLessThan(attrsIndex, "K8S_NAMESPACE_NAME must precede OTEL_RESOURCE_ATTRIBUTES");
+        podIndex.Should().BeLessThan(attrsIndex, "K8S_POD_NAME must precede OTEL_RESOURCE_ATTRIBUTES");
+
+        // Verify fieldRef (not Value) on the Downward API entries
+        var nsEnv = envList.First(e => e.Name == "K8S_NAMESPACE_NAME");
+        nsEnv.Value.Should().BeNull("K8S_NAMESPACE_NAME must use valueFrom.fieldRef, not a literal Value");
+        nsEnv.ValueFrom!.FieldRef!.FieldPath.Should().Be("metadata.namespace");
+
+        var podEnv = envList.First(e => e.Name == "K8S_POD_NAME");
+        podEnv.Value.Should().BeNull("K8S_POD_NAME must use valueFrom.fieldRef, not a literal Value");
+        podEnv.ValueFrom!.FieldRef!.FieldPath.Should().Be("metadata.name");
     }
 
     #endregion
