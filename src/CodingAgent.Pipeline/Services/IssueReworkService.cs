@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
@@ -154,6 +155,12 @@ public sealed class IssueReworkService : IIssueReworkService
                 currentLabels: issue.Labels);
 
             PipelineTelemetry.HousekeepingConflictReworkTriggered.Add(1, repoTag);
+            // Emit Housekeeping.ConflictRework span for each issue successfully re-queued for rework.
+            using (var reworkActivity = PipelineTelemetry.ActivitySource.StartActivity("Housekeeping.ConflictRework"))
+            {
+                reworkActivity?.SetTag("issue_id", issueIdString);
+                reworkActivity?.SetTag("pr_number", prNumber);
+            }
             _logger.Information(
                 "IssueReworkService: re-queued issue {IssueId} for rework due to merge conflict on PR #{PrNumber} (issueProvider: {IssueProviderId})",
                 issueIdString, prNumber, issueProviderId);

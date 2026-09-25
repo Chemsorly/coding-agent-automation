@@ -2208,6 +2208,87 @@ public sealed class DispatchPendingWorkItemEndpointTests
             "the item was claimed by a concurrent dispatch path and must remain Dispatched");
     }
 
+    // ── TraceParent passthrough (issue #2977) ────────────────────────────────
+
+    /// <summary>
+    /// Verifies that when a Pending WorkItemEntity has a non-null TraceParent, the K8s Job created
+    /// by DispatchLifecycleService carries the TRACEPARENT env var with the exact value.
+    ///
+    /// Root cause (issue #2977): DispatchLifecycleService.CreateK8sJobAsync built the BuildContext
+    /// from ctx.Item (PendingWorkItemProjection, which has NO TraceParent field) instead of
+    /// ctx.WorkItem (WorkItemEntity, which has the TraceParent column). The fix adds
+    /// TraceParent = ctx.WorkItem.TraceParent to the BuildContext initializer.
+    ///
+    /// This test seeds a WorkItemEntity with a known TraceParent directly in the in-memory DB
+    /// (Activity.Current is null in test environments), captures the V1Job via a Moq Callback,
+    /// and asserts TRACEPARENT appears in the container env with the correct value.
+    /// </summary>
+    [Fact]
+    public async Task DispatchPendingWorkItem_WhenWorkItemHasTraceParent_K8sJobCarriesTraceparentEnvVar()
+    {
+        // Arrange: seed a Pending WorkItem with a known TraceParent.
+        // Activity.Current is null in tests, so we seed directly — not via the endpoint.
+        // This is the path where TraceParent was originally broken: it was set at WorkItem creation
+        // time (WorkItemDispatchEndpoints.CreatePendingItem) but never forwarded to the BuildContext.
+        const string expectedTraceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+        var dbFactory = CreateDbFactory();
+        await using (var seedDb = await dbFactory.CreateDbContextAsync())
+        {
+            seedDb.WorkItems.Add(new WorkItemEntity
+            {
+                Id = Guid.NewGuid(), // placeholder; we'll re-query below
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = $"trace-test-{Guid.NewGuid():N}",
+                IssueProviderConfigId = "prov-1",
+                Status = WorkItemStatus.Pending,
+                AgentSelector = "kiro,dotnet",
+                TimeoutSeconds = 3600,
+                CreatedAt = DateTimeOffset.UtcNow,
+                Payload = "{}",
+                TraceParent = expectedTraceParent   // ← the value that must reach the K8s Job
+            });
+            await seedDb.SaveChangesAsync();
+        }
+
+        // Retrieve the seeded entity's ID
+        Guid entityId;
+        await using (var readDb = await dbFactory.CreateDbContextAsync())
+        {
+            var seeded = await readDb.WorkItems.AsNoTracking()
+                .FirstAsync(w => w.TraceParent == expectedTraceParent);
+            entityId = seeded.Id;
+        }
+
+        var templateStore = CreateTemplateStore("kiro,dotnet", maxConcurrent: 5);
+        k8s.Models.V1Job? capturedJob = null;
+        var k8sMock = new Mock<IKubernetesJobClient>();
+        k8sMock
+            .Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<k8s.Models.V1Job, string, CancellationToken>((job, _, _) => capturedJob = job)
+            .Returns(Task.CompletedTask);
+        var lifecycle = CreateLifecycleService(k8sMock.Object, ["pvc-0"]);
+        var resolver = CreateTemplateResolver(templateStore);
+        var lockProvider = CreateNoOpLockProvider();
+
+        // Act
+        var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
+            entityId, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
+
+        // Assert 1: dispatch succeeded
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
+            "a Pending WorkItem with TraceParent must dispatch successfully");
+
+        // Assert 2: the K8s Job contains TRACEPARENT with the exact value from WorkItemEntity.TraceParent.
+        // This is the core fix for issue #2977: TraceParent must flow through ctx.WorkItem (WorkItemEntity),
+        // not ctx.Item (PendingWorkItemProjection which lacks the field).
+        capturedJob.Should().NotBeNull("CreateJobAsync must have been called with a V1Job");
+        var envVars = capturedJob!.Spec.Template.Spec.Containers[0].Env;
+        var traceEnv = envVars.FirstOrDefault(e => e.Name == "TRACEPARENT");
+        traceEnv.Should().NotBeNull("TRACEPARENT must be present in the K8s Job container env");
+        traceEnv!.Value.Should().Be(expectedTraceParent,
+            "TRACEPARENT value must match WorkItemEntity.TraceParent — the agent pod needs it to attach its spans to the upstream dispatch trace");
+    }
+
 }
 
 // ── Characterization tests for unique-violation idempotent-retry (CreateWorkItem + DispatchWorkItem) ──
