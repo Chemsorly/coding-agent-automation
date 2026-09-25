@@ -17,5 +17,18 @@ public enum PipelineRunState
     /// internally to signal <see cref="QualityGateExecutor"/> to skip further CI polling
     /// and set <c>run.FinalLabel = agent:next</c> for automatic re-dispatch.
     /// </summary>
-    ConflictRestart
+    ConflictRestart,
+
+    /// <summary>
+    /// Sentinel state: the PR associated with this run was merged while the run was active.
+    /// Run ends as <see cref="CodingAgent.Pipeline.Models.WorkItemStatus.Succeeded"/> — the
+    /// work is done. No further commits, no LLM invocations.
+    /// </summary>
+    PrMerged = 6,
+
+    /// <summary>
+    /// Sentinel state: the PR associated with this run was closed without merging.
+    /// Run ends as <see cref="CodingAgent.Pipeline.Models.WorkItemStatus.Cancelled"/>.
+    /// </summary>
+    PrClosed = 7
 }

@@ -101,6 +101,11 @@ public class ProcessWrapper : IProcessWrapper
             CreateNoWindow = true
         };
 
+        // Strip OpenTelemetry vars before injecting per-invocation secrets so that
+        // (a) child processes cannot read the OTLP write token, and
+        // (b) quality-gate test hosts do not export spans/metrics to production.
+        ChildProcessEnvironment.StripTelemetry(startInfo);
+
         // Inject per-invocation environment variables into the child process.
         // These are isolated to this process launch and do not affect the parent process.
         if (environmentVariables is { Count: > 0 })
@@ -159,7 +164,12 @@ public class ProcessWrapper : IProcessWrapper
     /// </remarks>
     public void Kill()
     {
-        if (_process == null || _process.HasExited) return;
+        if (_process == null) return;
+        // _process.HasExited can throw InvalidOperationException when the OS process handle
+        // has already been released (e.g. after WaitForExit() completes). Treat that as
+        // "already gone" and bail out just like the HasExited==true case.
+        try { if (_process.HasExited) return; }
+        catch (InvalidOperationException) { return; }
         try
         {
             if (_useWsl)
@@ -172,10 +182,13 @@ public class ProcessWrapper : IProcessWrapper
                         {
                             FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "wsl.exe"),
                             Arguments = "pkill -9 -f kiro-cli",
-                            UseShellExecute = false, CreateNoWindow = true,
-                            RedirectStandardOutput = true, RedirectStandardError = true
+                            UseShellExecute = false,
+                            CreateNoWindow = true,
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true
                         }
                     };
+                    ChildProcessEnvironment.StripTelemetry(killProcess.StartInfo);
                     killProcess.Start();
                     killProcess.WaitForExit(WslKillTimeoutMs);
                 }

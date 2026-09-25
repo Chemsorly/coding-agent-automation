@@ -8,6 +8,15 @@ namespace KiroCliLib.UnitTests.Core;
 /// Tests for <see cref="ProcessWrapper"/> properties (IsRunning, ExitCode, ProcessId,
 /// LastOutputTime) and the Kill() method. These paths were previously uncovered.
 /// </summary>
+/// <remarks>
+/// Placed in the "EnvironmentVariables" collection to prevent parallel execution with
+/// other test classes that mutate the parent process environment via
+/// <see cref="Environment.SetEnvironmentVariable"/>. <see cref="ProcessWrapper.StartAsync"/>
+/// copies the current environment into <see cref="System.Diagnostics.ProcessStartInfo.Environment"/>
+/// when building the child PSI, so concurrent env-var mutations can cause the process to fail
+/// to start or produce incorrect inherited state.
+/// </remarks>
+[Collection("EnvironmentVariables")]
 public class ProcessWrapperPropertiesAndKillTests : IDisposable
 {
     private readonly string _workspaceDir;
@@ -185,8 +194,10 @@ public class ProcessWrapperPropertiesAndKillTests : IDisposable
         // Start the long-running process in the background
         var task = wrapper.StartAsync("hello", _workspaceDir, useResume: false, cts.Token);
 
-        // Give the process time to start and confirm it's running
-        await Task.Delay(300, CancellationToken.None);
+        // Poll until IsRunning becomes true (or timeout). A fixed delay is flaky under load.
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!wrapper.IsRunning && DateTime.UtcNow < deadline)
+            await Task.Delay(50, CancellationToken.None);
         wrapper.IsRunning.Should().BeTrue("process should be running before Kill()");
 
         // Kill it — this covers Kill() body for a running, non-WSL process

@@ -17,6 +17,9 @@
     <InternalsVisibleTo Include="CodingAgent.Infrastructure.UnitTests" />
     <InternalsVisibleTo Include="CodingAgent.Pipeline.UnitTests" />
     <InternalsVisibleTo Include="CodingAgent.Web.UnitTests" />
+    <!-- Allow CodingAgent.Agent and its tests to call ParseProjectId/ValidateRequiredSettings as static helpers -->
+    <InternalsVisibleTo Include="CodingAgent.Agent" />
+    <InternalsVisibleTo Include="CodingAgent.Agent.UnitTests" />
   </ItemGroup>
 
   <ItemGroup>

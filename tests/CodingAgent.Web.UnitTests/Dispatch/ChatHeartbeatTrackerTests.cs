@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Orchestration.Redis;
+using CodingAgent.Pipeline.Models;
 using Moq;
 using Serilog;
 using StackExchange.Redis;
@@ -96,6 +97,13 @@ public class ChatHeartbeatTrackerTests
     [Fact]
     public async Task WriteRedisHeartbeat_WhenAgentIdIsNull_ThrowsArgumentNullException()
     {
+        // TODO [WARNING]: The assertion ThrowAsync<ArgumentNullException> is subtly fragile.
+        // The AgentId implicit operator calls ArgumentException.ThrowIfNullOrEmpty, which throws
+        // ArgumentNullException (a subtype of ArgumentException) for null — so the test passes today.
+        // If the guard changes to throw plain ArgumentException, the test would fail. Also, a
+        // default(AgentId) sentinel (Value = null, constructed without the implicit operator) bypasses
+        // this path and is not covered by this test. Consider adding a separate test for default(AgentId).
+        // See review finding: TestQualityReviewer WARNING @ ChatHeartbeatTrackerTests.cs:87.
         var tracker = CreateTracker();
 
         var act = async () => await tracker.WriteRedisHeartbeatAsync(null!);
@@ -166,6 +174,10 @@ public class ChatHeartbeatTrackerTests
     [Fact]
     public async Task TryGetRedisHeartbeat_WhenAgentIdIsNull_ThrowsArgumentNullException()
     {
+        // TODO [WARNING]: Same fragility as WriteRedisHeartbeat_WhenAgentIdIsNull_ThrowsArgumentNullException —
+        // the assertion relies on ArgumentNullException being a subtype of what ThrowIfNullOrEmpty throws.
+        // Also, default(AgentId) (Value = null) is not covered. See review finding:
+        // TestQualityReviewer WARNING @ ChatHeartbeatTrackerTests.cs:87.
         var tracker = CreateTracker();
 
         var act = async () => await tracker.TryGetRedisHeartbeatAsync(TestJobName, null!);
@@ -213,6 +225,10 @@ public class ChatHeartbeatTrackerTests
     [Fact]
     public async Task DeleteRedisHeartbeat_WhenAgentIdIsNull_ThrowsArgumentNullException()
     {
+        // TODO [WARNING]: Same fragility as WriteRedisHeartbeat_WhenAgentIdIsNull_ThrowsArgumentNullException —
+        // the assertion relies on ArgumentNullException being a subtype of what ThrowIfNullOrEmpty throws.
+        // Also, default(AgentId) (Value = null) is not covered. See review finding:
+        // TestQualityReviewer WARNING @ ChatHeartbeatTrackerTests.cs:87.
         var tracker = CreateTracker();
 
         var act = async () => await tracker.DeleteRedisHeartbeatAsync(null!);
@@ -232,5 +248,36 @@ public class ChatHeartbeatTrackerTests
         // Awaiting the returned task exercises the async fault path through the try/catch.
         var act = async () => await tracker.DeleteRedisHeartbeatAsync(TestAgentId);
         await act.Should().NotThrowAsync("Redis faults in DeleteRedisHeartbeatAsync must be swallowed");
+    }
+
+    // ─── AgentId key-construction characterization ────────────────────────────
+
+    // TODO [WARNING]: Key-construction characterization tests are only present for WriteRedisHeartbeatAsync.
+    // Analogous tests for TryGetRedisHeartbeatAsync and DeleteRedisHeartbeatAsync are missing.
+    // The issue prerequisite explicitly called for characterization tests covering Redis key construction
+    // for all three methods. If agentId.Value usage in either method were accidentally changed to
+    // agentId.ToString() and the ToString() override were later removed, no characterization test would
+    // catch it. Add equivalent tests for TryGetRedisHeartbeatAsync and DeleteRedisHeartbeatAsync using
+    // explicit new AgentId("...") construction (not the TestAgentId string constant).
+    // See review finding: TestQualityReviewer WARNING @ ChatHeartbeatTrackerTests.cs:256.
+
+    /// <summary>
+    /// Characterization test: passing an <see cref="AgentId"/> writes the Redis key using
+    /// the <see cref="AgentId.Value"/> string, not a stringified struct representation.
+    /// Guards against accidental use of <c>agentId.ToString()</c> producing something other
+    /// than the bare value string (e.g. if the ToString override were ever removed).
+    /// </summary>
+    [Fact]
+    public async Task WriteRedisHeartbeat_WithAgentIdValue_UsesValueAsKeySegment()
+    {
+        var fakeRedis = new CodingAgent.Web.TestUtilities.FakeRedisStore();
+        var tracker = CreateTracker(fakeRedis);
+        var agentId = new AgentId("agent-abc");
+
+        await tracker.WriteRedisHeartbeatAsync(agentId);
+
+        var value = await fakeRedis.GetAsync("chat:heartbeat:agent-abc");
+        value.Should().NotBeNull(
+            "WriteRedisHeartbeatAsync must use agentId.Value as the key segment, not a struct representation");
     }
 }
