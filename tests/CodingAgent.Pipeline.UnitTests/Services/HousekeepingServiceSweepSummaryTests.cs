@@ -20,6 +20,7 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// Uses a custom <see cref="CapturingSink"/> injected into the Serilog logger so that
 /// log assertions are deterministic without Moq's generic-overload limitations.
 /// </summary>
+[Collection("Metrics")]
 public class HousekeepingServiceSweepSummaryLogTests
 {
     private const string RepoId = "rp-sweep";
@@ -270,13 +271,13 @@ public class HousekeepingServiceSweepSummaryMetricTests
     private static (HousekeepingService Service,
                     Mock<IRepositoryProvider> Provider,
                     Mock<IIssueProvider> Issues)
-        Create()
+        Create(HashSet<string>? activeBranches = null)
     {
         var providerMock = new Mock<IRepositoryProvider>();
         var issuesMock = new Mock<IIssueProvider>();
         var runsMock = new Mock<IOrchestratorRunService>();
         runsMock.Setup(r => r.GetActiveRunBranchesAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new HashSet<string>());
+                .ReturnsAsync(activeBranches ?? new HashSet<string>());
 
         var staleMock = new Mock<IStaleBranchCleaner>();
         staleMock.Setup(s => s.RunIfDueAsync(
@@ -307,10 +308,11 @@ public class HousekeepingServiceSweepSummaryMetricTests
         HousekeepingService svc,
         Mock<IRepositoryProvider> repo,
         Mock<IIssueProvider> issues,
-        IReadOnlyList<PullRequestSummary> prs)
+        IReadOnlyList<PullRequestSummary> prs,
+        int limit = 1)
         => svc.ExecuteAsync(
             repo.Object, RepoId, issues.Object, IssueProviderId,
-            prs, false, 1, false, 60, 25, CancellationToken.None);
+            prs, false, limit, false, 60, 25, CancellationToken.None);
 
     private static PullRequestSummary MakePr(int number)
         => new()
@@ -415,7 +417,7 @@ public class HousekeepingServiceSweepSummaryMetricTests
             await ExecAsync(svc, provider, issues, [MakePr(1), MakePr(2)]);
         }
 
-        measurements.Should().ContainSingle(m => m.Status == "up_to_date",
+        measurements.Should().ContainSingle(m => m.Status == "up_to_date" && m.RepoId == RepoId,
             "zero-count statuses must not emit — only up_to_date present");
         measurements.Should().NotContain(m => m.Status == "behind");
         measurements.Should().NotContain(m => m.Status == "conflicted");
@@ -439,9 +441,9 @@ public class HousekeepingServiceSweepSummaryMetricTests
         }
 
         // Three UpToDate PRs → single Add(3), not three Add(1) calls
-        measurements.Should().ContainSingle(m => m.Status == "up_to_date",
+        measurements.Should().ContainSingle(m => m.Status == "up_to_date" && m.RepoId == RepoId,
             "aggregate Add(N) produces one measurement per status, not N separate Add(1) calls");
-        measurements.Single(m => m.Status == "up_to_date").Value.Should().Be(3);
+        measurements.Single(m => m.Status == "up_to_date" && m.RepoId == RepoId).Value.Should().Be(3);
     }
 
     // ── TC-M5: Unknown→Behind re-probe — emits "behind", not "unknown" ───────
@@ -518,5 +520,156 @@ public class HousekeepingServiceSweepSummaryMetricTests
 
         measurements.Should().ContainSingle(m => m.RepoId == RepoId,
             "repo_provider_id tag must carry the repoProviderId parameter value");
+    }
+
+    // ── Helpers for skip_reason and slot_exhausted ────────────────────────────
+
+    private static (MeterListener Listener, List<(long Value, string Reason, string RepoId)> Measurements)
+        CreateSkippedListener()
+    {
+        var measurements = new List<(long Value, string Reason, string RepoId)>();
+        var listener = new MeterListener();
+        listener.InstrumentPublished += (instrument, l) =>
+        {
+            if (instrument.Name == "pipeline.housekeeping.skipped")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
+        {
+            if (instrument.Name != "pipeline.housekeeping.skipped") return;
+            var reason = "";
+            var repoId = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "skip_reason") reason = tag.Value?.ToString() ?? "";
+                if (tag.Key == "repo_provider_id") repoId = tag.Value?.ToString() ?? "";
+            }
+            measurements.Add((value, reason, repoId));
+        });
+        listener.Start();
+        return (listener, measurements);
+    }
+
+    private static (MeterListener Listener, List<string> Fires) CreateSlotExhaustedListener()
+    {
+        var fires = new List<string>(); // repo_provider_id per increment
+        var listener = new MeterListener();
+        listener.InstrumentPublished += (instrument, l) =>
+        {
+            if (instrument.Name == "pipeline.housekeeping.slot_exhausted")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
+        {
+            if (instrument.Name != "pipeline.housekeeping.slot_exhausted") return;
+            var repoId = "";
+            foreach (var tag in tags)
+                if (tag.Key == "repo_provider_id") repoId = tag.Value?.ToString() ?? "";
+            fires.Add(repoId);
+        });
+        listener.Start();
+        return (listener, fires);
+    }
+
+    // ── TC-M9: skip_reason=active_run ────────────────────────────────────────
+
+    [Fact]
+    public async Task Metric_SkipReason_ActiveRun_TaggedCorrectly()
+    {
+        var pr = MakePr(1); // branch = "feature/auto-1-x"
+        var (svc, provider, issues) = Create(activeBranches: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { pr.BranchName });
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+
+        var (listener, measurements) = CreateSkippedListener();
+        using (listener)
+        {
+            await ExecAsync(svc, provider, issues, [pr]);
+        }
+
+        measurements.Should().ContainSingle(
+            m => m.Reason == PipelineTelemetry.HousekeepingSkipReasons.ActiveRun && m.RepoId == RepoId,
+            "Behind PR whose branch has an active run must emit skip_reason=active_run");
+    }
+
+    // ── TC-M10: skip_reason=in_flight ─────────────────────────────────────────
+
+    [Fact]
+    public async Task Metric_SkipReason_InFlight_TaggedCorrectly()
+    {
+        var (svc, provider, issues) = Create();
+        // Cycle 1: trigger PR#1 (Behind) → enters inFlight
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+        await ExecAsync(svc, provider, issues, [MakePr(1)], limit: 2);
+
+        // Cycle 2: PR#1 is Blocked — EvictInFlightSlots keeps it in inFlight
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Blocked);
+
+        var (listener, measurements) = CreateSkippedListener();
+        using (listener)
+        {
+            await ExecAsync(svc, provider, issues, [MakePr(1)], limit: 2);
+        }
+
+        measurements.Should().ContainSingle(
+            m => m.Reason == PipelineTelemetry.HousekeepingSkipReasons.InFlight && m.RepoId == RepoId,
+            "PR occupying an in-flight slot (still Blocked) must emit skip_reason=in_flight");
+    }
+
+    // ── TC-M11: skip_reason=cooldown ──────────────────────────────────────────
+
+    [Fact]
+    public async Task Metric_SkipReason_Cooldown_TaggedCorrectly()
+    {
+        var (svc, provider, issues) = Create();
+        var clock = DateTimeOffset.UtcNow;
+        svc.UtcNow = () => clock;
+        svc.TriggerCooldown = TimeSpan.FromMinutes(25);
+
+        // Cycle 1: trigger PR#1 → records _lastTriggeredAt
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+        await ExecAsync(svc, provider, issues, [MakePr(1)]);
+
+        // Cycle 2: PR#1 Behind again, clock NOT advanced — within cooldown
+        // EvictInFlightSlots evicts (Behind is not Blocked/Unknown), so in_flight guard won't fire
+
+        var (listener, measurements) = CreateSkippedListener();
+        using (listener)
+        {
+            await ExecAsync(svc, provider, issues, [MakePr(1)]);
+        }
+
+        measurements.Should().ContainSingle(
+            m => m.Reason == PipelineTelemetry.HousekeepingSkipReasons.Cooldown && m.RepoId == RepoId,
+            "Behind PR re-attempted within TriggerCooldown window must emit skip_reason=cooldown");
+    }
+
+    // ── TC-M12: slot_exhausted fires once when concurrency cap hit ───────────
+
+    [Fact]
+    public async Task Metric_SlotExhausted_FiresOnceWhenCapReached()
+    {
+        var (svc, provider, issues) = Create();
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        var (listener, fires) = CreateSlotExhaustedListener();
+        using (listener)
+        {
+            // limit=1, 2 Behind PRs: first fills the slot, second hits inFlight.Count >= limit → slot_exhausted
+            await ExecAsync(svc, provider, issues, [MakePr(1), MakePr(2)], limit: 1);
+        }
+
+        fires.Should().ContainSingle(repoId => repoId == RepoId,
+            "slot_exhausted must fire exactly once when the concurrency cap is hit mid-loop");
     }
 }
