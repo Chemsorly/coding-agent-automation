@@ -10,6 +10,7 @@ namespace CodingAgent.Web.UnitTests.Services;
 /// Unit tests for <see cref="ConsolidationDispatcher.DispatchRunAsync"/>.
 /// Tests the dispatcher in isolation — all dependencies are mocked.
 /// </summary>
+[Collection("Metrics")]
 public sealed class ConsolidationDispatcherTests
 {
     private readonly Mock<IWorkDistributor> _workDistributor = new();
