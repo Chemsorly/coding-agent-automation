@@ -2,6 +2,7 @@ using CodingAgent.Web;
 using CodingAgent.Api.Client;
 using CodingAgent.AgentGateway;
 using CodingAgent.Infrastructure;
+using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.Pipeline;
 using CodingAgent.Web.Models;
@@ -152,7 +153,9 @@ Func<StackExchange.Redis.IConnectionMultiplexer>? dpMultiplexerFactory = string.
     ? null
     : () => StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnectionString);
 builder.Services.AddDataProtectionServices(dpMultiplexerFactory);
-builder.Services.AddApplicationTelemetry(redisConnectionString);
+// dbConnectionString is null — the Web host has no direct PostgreSQL connection.
+// Npgsql tracing is therefore not registered here (no DB spans to export).
+builder.Services.AddApplicationTelemetry(dbConnectionString: null, redisConnectionString);
 
 var app = builder.Build();
 
@@ -164,6 +167,11 @@ app.ValidateShutdownBudget();
 app.ValidateDiWiring();
 app.RegisterObservableGauges();
 app.MapApplicationEndpoints();
+
+// Pre-initialize github.api.requests counter tag combinations so Prometheus increase() works
+// on first increment. Must run after builder.Build() so the MeterProvider is active.
+GitHubTelemetry.PreInitialize();
+
 await app.RunConsolidationStartupAsync();
 
 app.Run();
