@@ -54,11 +54,12 @@ internal sealed class CiPollingCoordinator
             string? pollSha,
             PipelineConfiguration config,
             IPipelineCallbacks callbacks,
+            DateTime? notBefore,
             CancellationToken pollCt)
     {
         var run = context.Run;
 
-        var ciStatus = await PollCiWithNotStartedRetryAsync(context, pollSha, config, callbacks, pollCt);
+        var ciStatus = await PollCiWithNotStartedRetryAsync(context, pollSha, config, callbacks, notBefore, pollCt);
         var ciPassed = ciStatus.State == PipelineRunState.Passed;
         IReadOnlyDictionary<long, string>? ciLogPaths = null;
 
@@ -92,6 +93,22 @@ internal sealed class CiPollingCoordinator
         return (ciPassed, ciStatus, ciLogPaths);
     }
 
+    // ── Backward-compatible overload for pre-PR callers (no notBefore filter) ─
+
+    /// <summary>
+    /// Backward-compatible overload used by the pre-PR CI polling path
+    /// (<see cref="QualityGateExecutor.AppendExternalCiIfNeededAsync"/>). Does not apply a
+    /// <c>notBefore</c> filter because the push-event CI is the intended target on that path.
+    /// </summary>
+    internal Task<(bool ciPassed, PipelineRunStatus ciStatus, IReadOnlyDictionary<long, string>? ciLogPaths)>
+        PollAndHandleInfraRetryAsync(
+            QualityGateContext context,
+            string? pollSha,
+            PipelineConfiguration config,
+            IPipelineCallbacks callbacks,
+            CancellationToken pollCt)
+        => PollAndHandleInfraRetryAsync(context, pollSha, config, callbacks, notBefore: null, pollCt);
+
     /// <summary>
     /// Polls CI with automatic retry when CI never starts (GitHub Actions sometimes doesn't trigger).
     /// First waits up to <see cref="PipelineConfiguration.CiNotStartedTimeout"/> for any runs to appear.
@@ -105,11 +122,18 @@ internal sealed class CiPollingCoordinator
     /// When retries are exhausted, sets <see cref="PipelineRun.FailureReason"/> and returns a
     /// deterministic <see cref="PipelineRunState.Failed"/> status without blocking on a full timeout.
     /// </summary>
+    /// <param name="notBefore">
+    /// When set, only CI runs whose <see cref="PipelineRunStatus.StartedAt"/> is after this timestamp
+    /// are accepted as satisfying the "CI appeared" check. Used on the post-PR CI path to ignore
+    /// push-event CI runs that completed before the PR mark-ready event was sent. When
+    /// <see langword="null"/>, all runs are accepted (pre-PR polling behavior is unchanged).
+    /// </param>
     internal async Task<PipelineRunStatus> PollCiWithNotStartedRetryAsync(
         QualityGateContext context,
         string? pollSha,
         PipelineConfiguration config,
         IPipelineCallbacks callbacks,
+        DateTime? notBefore,
         CancellationToken ct)
     {
         var run = context.Run;
@@ -122,7 +146,7 @@ internal sealed class CiPollingCoordinator
             ct.ThrowIfCancellationRequested();
 
             var runResult = await TryCompleteCiOnCurrentShaAsync(
-                pipelineProvider, run, pollSha, config, ct);
+                pipelineProvider, run, pollSha, config, notBefore, ct);
             if (runResult is not null)
                 return runResult;
 
@@ -157,7 +181,7 @@ internal sealed class CiPollingCoordinator
                 $"⚠️ CI never started (attempt {attempt + 1}/{maxRetries}) — re-pushing to trigger GitHub Actions...");
 
             var guardResult = await TryDetectAlreadyRunningCiAsync(
-                pipelineProvider, run, pollSha, config, callbacks, ct);
+                pipelineProvider, run, pollSha, config, callbacks, notBefore, ct);
             if (guardResult is not null)
                 return guardResult;
 
@@ -175,15 +199,40 @@ internal sealed class CiPollingCoordinator
         return new PipelineRunStatus { State = PipelineRunState.Failed, Jobs = Array.Empty<PipelineJobResult>() };
     }
 
+    // ── Backward-compatible overload for pre-PR callers (no notBefore filter) ─
+
+    /// <summary>
+    /// Backward-compatible overload used by <see cref="HandleBranchMovedRetryLoopAsync"/> and
+    /// other pre-PR callers. Does not apply a <c>notBefore</c> filter.
+    /// </summary>
+    internal Task<PipelineRunStatus> PollCiWithNotStartedRetryAsync(
+        QualityGateContext context,
+        string? pollSha,
+        PipelineConfiguration config,
+        IPipelineCallbacks callbacks,
+        CancellationToken ct)
+        => PollCiWithNotStartedRetryAsync(context, pollSha, config, callbacks, notBefore: null, ct);
+
     /// <summary>
     /// Polls external CI after the PR has been promoted to ready-for-review. This validates
     /// CI workflows that only trigger on <c>pull_request</c> events (not on branch pushes),
     /// which would not have been caught by the pre-PR CI pass if that pass exited early via
     /// the <c>skipCiIfNoChanges</c> path.
     /// </summary>
+    /// <param name="context">Quality gate context.</param>
+    /// <param name="report">Current quality gate report (compilation + tests).</param>
+    /// <param name="notBefore">
+    /// When set, only CI runs that started AFTER this timestamp are accepted as satisfying the
+    /// post-PR CI check. This prevents an already-completed push-event CI run (which finished
+    /// before mark-ready fired) from masking a later-starting pull_request-event CI failure.
+    /// Captured in <see cref="QualityGateExecutor"/> just before <c>FinalizePullRequest</c> is called.
+    /// Pass <see langword="null"/> to disable filtering (preserves pre-#3114 behavior for non-post-PR callers).
+    /// </param>
+    /// <param name="ct">Cancellation token.</param>
     internal async Task<QualityGateReport> WaitForPostPrCiAsync(
         QualityGateContext context,
         QualityGateReport report,
+        DateTime? notBefore,
         CancellationToken ct)
     {
         var run = context.Run;
@@ -206,7 +255,7 @@ internal sealed class CiPollingCoordinator
         try
         {
             ciGate = await PollPostPrCiWithTelemetryAsync(
-                context, commitSha, config, callbacks, priorInfraRetryCount, ct);
+                context, commitSha, config, callbacks, priorInfraRetryCount, notBefore, ct);
         }
         finally
         {
@@ -320,11 +369,12 @@ internal sealed class CiPollingCoordinator
         PipelineRun run,
         string? pollSha,
         PipelineConfiguration config,
+        DateTime? notBefore,
         CancellationToken ct)
     {
         var appeared = await WaitForCiRunsToAppearAsync(
             pipelineProvider, run.BranchName!, pollSha,
-            config.CiNotStartedTimeout, config.ExternalCiPollInterval, ct);
+            config.CiNotStartedTimeout, config.ExternalCiPollInterval, notBefore, ct);
 
         if (!appeared)
             return null;
@@ -344,11 +394,18 @@ internal sealed class CiPollingCoordinator
         string? pollSha,
         PipelineConfiguration config,
         IPipelineCallbacks callbacks,
+        DateTime? notBefore,
         CancellationToken ct)
     {
-        // Final SHA-specific check before re-pushing — avoid racing with GitHub's delayed trigger
+        // Final SHA-specific check before re-pushing — avoid racing with GitHub's delayed trigger.
+        // TODO [WARNING] (Correctness/DotNetSpecialist #3114): On the post-PR CI path (notBefore set),
+        // if the push-event CI for the exact head SHA is still Running or already Passed (started before
+        // notBefore) when this code fires, WaitForCiRunsToAppearAsync correctly filtered it out and timed
+        // out, but this last-check query hits the same SHA and finds the same stale run. The
+        // SatisfiesNotBefore guard below prevents returning a pre-mark-ready result on this path.
         var lastCheck = await pipelineProvider.GetRunStatusAsync(run.BranchName!, pollSha, ct);
-        if (lastCheck.State != PipelineRunState.Pending || lastCheck.Jobs.Count > 0)
+        if ((lastCheck.State != PipelineRunState.Pending || lastCheck.Jobs.Count > 0)
+            && SatisfiesNotBefore(lastCheck.StartedAt, notBefore))
         {
             _logger.Information("Pipeline {RunId} CI appeared just before re-push (race avoided), proceeding to full wait", run.RunId);
             return await pipelineProvider.WaitForCompletionAsync(
@@ -357,7 +414,8 @@ internal sealed class CiPollingCoordinator
 
         // Branch-wide check: detect if CI is already running or passed on a prior SHA of this branch.
         var branchStatus = await pipelineProvider.GetRunStatusAsync(run.BranchName!, commitSha: null, ct);
-        if (branchStatus?.State == PipelineRunState.Passed)
+        if (branchStatus?.State == PipelineRunState.Passed
+            && SatisfiesNotBefore(branchStatus.StartedAt, notBefore))
         {
             _logger.Information(
                 "Pipeline {RunId} CI already passed on a prior SHA on branch {Branch} — skipping re-trigger",
@@ -366,7 +424,14 @@ internal sealed class CiPollingCoordinator
             return branchStatus;
         }
 
-        if (branchStatus?.State == PipelineRunState.Running)
+        // TODO [WARNING] (Correctness #3114): The Running arm applies the same SatisfiesNotBefore guard
+        // as the Passed arm above. Without this guard, a push-event CI run started before prReadyAt that
+        // is still Running when TryDetectAlreadyRunningCiAsync fires would be waited on unconditionally,
+        // and its eventual (potentially Passed) outcome would satisfy the post-PR CI gate — masking a
+        // later-starting pull_request-event CI failure. The guard below ensures consistency: both Passed
+        // and Running pre-mark-ready runs are rejected on the post-PR path.
+        if (branchStatus?.State == PipelineRunState.Running
+            && SatisfiesNotBefore(branchStatus.StartedAt, notBefore))
         {
             _logger.Information(
                 "Pipeline {RunId} CI already running on branch {Branch} — waiting for completion instead of re-triggering",
@@ -529,6 +594,7 @@ internal sealed class CiPollingCoordinator
         PipelineConfiguration config,
         IPipelineCallbacks callbacks,
         int priorInfraRetryCount,
+        DateTime? notBefore,
         CancellationToken ct)
     {
         var run = context.Run;
@@ -546,7 +612,7 @@ internal sealed class CiPollingCoordinator
             using var timeoutCts = new CancellationTokenSource(config.ExternalCiTimeout);
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
             var (ciPassed, ciStatus, ciLogPaths) = await PollAndHandleInfraRetryAsync(
-                context, commitSha, config, callbacks, linkedCts.Token);
+                context, commitSha, config, callbacks, notBefore, linkedCts.Token);
 
             _metrics.PostPrCiDuration.Record(
                 ciPollStopwatch.Elapsed.TotalSeconds,
@@ -721,12 +787,19 @@ internal sealed class CiPollingCoordinator
     /// Polls GetRunStatusAsync until at least one workflow run/job is detected or the timeout expires.
     /// Returns true if runs appeared, false if the timeout expired with no runs.
     /// </summary>
+    /// <param name="notBefore">
+    /// When set, a non-Pending status is only accepted as "runs appeared" if the status's
+    /// <see cref="PipelineRunStatus.StartedAt"/> is after this timestamp (or null — fail-open).
+    /// This prevents push-event CI runs that completed before mark-ready from being treated as
+    /// the post-PR CI result. When null, all non-Pending statuses are accepted (pre-#3114 behavior).
+    /// </param>
     private async Task<bool> WaitForCiRunsToAppearAsync(
         IPipelineProvider provider,
         string branchName,
         string? commitSha,
         TimeSpan timeout,
         TimeSpan pollInterval,
+        DateTime? notBefore,
         CancellationToken ct)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -737,7 +810,8 @@ internal sealed class CiPollingCoordinator
             try
             {
                 var status = await provider.GetRunStatusAsync(branchName, commitSha, ct);
-                if (status.State != PipelineRunState.Pending || status.Jobs.Count > 0)
+                if ((status.State != PipelineRunState.Pending || status.Jobs.Count > 0)
+                    && SatisfiesNotBefore(status.StartedAt, notBefore))
                     return true;
             }
             catch (OperationCanceledException) { throw; }
@@ -750,6 +824,20 @@ internal sealed class CiPollingCoordinator
         }
         return false;
     }
+
+    // ── Private helper: SatisfiesNotBefore ───────────────────────────────────
+
+    /// <summary>
+    /// Returns <see langword="true"/> when the CI run's <paramref name="startedAt"/> satisfies
+    /// the <paramref name="notBefore"/> filter.
+    /// <list type="bullet">
+    ///   <item>If <paramref name="notBefore"/> is null → filter disabled, all runs accepted.</item>
+    ///   <item>If <paramref name="startedAt"/> is null → unknown timestamp, fail-open (accepted).</item>
+    ///   <item>Otherwise → accepted only if <paramref name="startedAt"/> &gt; <paramref name="notBefore"/>.</item>
+    /// </list>
+    /// </summary>
+    private static bool SatisfiesNotBefore(DateTime? startedAt, DateTime? notBefore)
+        => notBefore is null || startedAt is null || startedAt.Value > notBefore.Value;
 
     // ── Constants ─────────────────────────────────────────────────────────────
 

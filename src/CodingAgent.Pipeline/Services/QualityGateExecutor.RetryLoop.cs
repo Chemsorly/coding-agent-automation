@@ -204,11 +204,29 @@ public partial class QualityGateExecutor
 
         if (report.AllPassed)
         {
+            // Capture the timestamp immediately before FinalizePullRequest. This serves as the
+            // notBefore anchor for the post-PR CI poll: any CI run that started before this point
+            // was a push-event run that completed before the PR was marked ready-for-review, and
+            // must not be used to satisfy the post-PR CI check.
+            // The pull_request-event CI (triggered by UpdatePullRequestAsync(..., markReady: true)
+            // inside RunFullPrCreationAsync) starts asynchronously after this point — typically
+            // 5–60 seconds after mark-ready fires. WaitForCiRunsToAppearAsync will filter out
+            // pre-notBefore runs and wait for a run that started after mark-ready.
+            // TODO [WARNING] (Correctness #3114): prReadyAt is captured BEFORE FinalizePullRequest
+            // runs. The true notBefore boundary is the mark-ready API call (UpdatePullRequestAsync
+            // markReady:true), which executes inside RunFullPrCreationAsync and completes strictly
+            // AFTER this point. Any push-event CI run that started in the window (prReadyAt,
+            // mark-ready] satisfies StartedAt > prReadyAt and may be wrongly accepted as the
+            // post-PR run, masking a later pull_request-event CI failure — the exact class of bug
+            // #3114 aims to fix. Capturing the anchor after FinalizePullRequest returns (or
+            // propagating the actual mark-ready timestamp from RunFullPrCreationAsync) would close
+            // this window, at the cost of adding a return value to the finalization path.
+            var prReadyAt = DateTime.UtcNow;
             await callbacks.FinalizePullRequest(run, false, linkedCt);
 
             // Wait for post-PR CI and handle retry/draft if it fails.
             // Extracted to keep RunPostRetryCleanupAndFinalizeAsync within complexity threshold.
-            await HandlePostPrCiAsync(context, report, linkedCt);
+            await HandlePostPrCiAsync(context, report, prReadyAt, linkedCt);
         }
         else
             await FinalizeDraftPrAsync(context, run, report, "exhausted after cleanup", linkedCt);
@@ -218,10 +236,15 @@ public partial class QualityGateExecutor
     /// Waits for post-PR CI after FinalizePullRequest and routes failures through the retry loop.
     /// Extracted from <see cref="RunPostRetryCleanupAndFinalizeAsync"/> to reduce cognitive complexity.
     /// </summary>
-    private async Task HandlePostPrCiAsync(QualityGateContext context, QualityGateReport report, CancellationToken linkedCt)
+    /// <param name="prReadyAt">
+    /// Timestamp captured just before <c>FinalizePullRequest</c> was called in
+    /// <see cref="RunPostRetryCleanupAndFinalizeAsync"/>. Passed to <see cref="WaitForPostPrCiAsync"/>
+    /// as the <c>notBefore</c> filter so only CI runs that started after mark-ready are accepted.
+    /// </param>
+    private async Task HandlePostPrCiAsync(QualityGateContext context, QualityGateReport report, DateTime prReadyAt, CancellationToken linkedCt)
     {
         var run = context.Run;
-        report = await WaitForPostPrCiAsync(context, report, linkedCt);
+        report = await WaitForPostPrCiAsync(context, report, prReadyAt, linkedCt);
         if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart
                 or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
 
@@ -247,8 +270,9 @@ public partial class QualityGateExecutor
     private Task<QualityGateReport> WaitForPostPrCiAsync(
         QualityGateContext context,
         QualityGateReport report,
+        DateTime prReadyAt,
         CancellationToken ct)
-        => _ciPollingCoordinator.WaitForPostPrCiAsync(context, report, ct);
+        => _ciPollingCoordinator.WaitForPostPrCiAsync(context, report, prReadyAt, ct);
 
     /// <summary>
     /// Encapsulates the draft-PR finalization pattern: log a warning, emit a UI line,

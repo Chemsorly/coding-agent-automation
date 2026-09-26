@@ -3,6 +3,7 @@ using Moq;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Telemetry;
 
 namespace CodingAgent.Pipeline.UnitTests;
 
@@ -859,6 +860,327 @@ public class CiPollingCoordinatorTests
             Times.Never,
             "the retry-fix agent must never be invoked for a CI-never-started infrastructure failure");
     }
+
+    // ── Issue #3114: notBefore filter for post-PR CI ──────────────────────────
+
+    /// <summary>
+    /// Regression test for issue #3114: when a CI run for SHA-F from the push event already
+    /// completed (Passed) before <c>notBefore</c> was captured, <c>WaitForCiRunsToAppearAsync</c>
+    /// must NOT accept that run as satisfying the post-PR CI check. It must continue polling
+    /// until a run that started after <c>notBefore</c> appears.
+    ///
+    /// Scenario:
+    ///   - First GetRunStatusAsync call: Passed, StartedAt = one minute ago (before notBefore)
+    ///   - Second GetRunStatusAsync call: Running, StartedAt = one second ago (after notBefore)
+    ///   - WaitForCompletionAsync: Passed
+    /// Expected: CI gate passes via the second (post-mark-ready) run.
+    /// </summary>
+    [Fact]
+    public async Task WhenNotBefore_SetAndExistingRunStartedBefore_WaitForCiRunsToAppearIgnoresIt()
+    {
+        var notBefore = DateTime.UtcNow;
+        var run = CreateRun();
+        run.PullRequestNumber = null;
+
+        // Use a longer CiNotStartedTimeout (500ms) so WaitForCiRunsToAppearAsync polls
+        // multiple times: first call returns a pre-notBefore run (filtered), then subsequent
+        // calls return a post-notBefore run (accepted). ExternalCiPollInterval is kept small (50ms).
+        var context = BuildContextForPostPrCi(run, ciNotStartedTimeout: TimeSpan.FromMilliseconds(500));
+
+        var callCount = 0;
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                var call = Interlocked.Increment(ref callCount);
+                // First call: push-event CI already done, started BEFORE notBefore → must be filtered
+                if (call == 1)
+                    return new PipelineRunStatus
+                    {
+                        State = PipelineRunState.Passed,
+                        Jobs = [new() { Name = "build", State = PipelineRunState.Passed }],
+                        StartedAt = notBefore.AddMinutes(-1)
+                    };
+                // Subsequent calls: pull_request-event CI appeared, started AFTER notBefore
+                return new PipelineRunStatus
+                {
+                    State = PipelineRunState.Running,
+                    Jobs = [new() { Name = "build", State = PipelineRunState.Running }],
+                    StartedAt = notBefore.AddSeconds(1)
+                };
+            });
+
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Passed,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Passed }],
+                StartedAt = notBefore.AddSeconds(5)
+            });
+
+        SetupDefaultCallbackMocks();
+
+        var report = await BuildCoordinator().WaitForPostPrCiAsync(
+            context, PassingReport, notBefore, CancellationToken.None);
+
+        report.ExternalCi.Should().NotBeNull();
+        report.ExternalCi!.Passed.Should().BeTrue(
+            "CI passes once the post-mark-ready run (started after notBefore) is observed");
+
+        // The first call (pre-notBefore Passed run) must not have satisfied the check;
+        // WaitForCompletionAsync must have been called (meaning a second run appeared).
+        _mockPipelineProvider.Verify(
+            p => p.WaitForCompletionAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "WaitForCompletionAsync must be called once the post-mark-ready run appears");
+    }
+
+    /// <summary>
+    /// Regression test for issue #3114: when the CI-never-started timeout fires and
+    /// <c>TryDetectAlreadyRunningCiAsync</c> finds a branch-wide Passed run that started
+    /// BEFORE <c>notBefore</c>, it must NOT return early with that stale result.
+    ///
+    /// Without the notBefore guard, the branch-wide Passed early-return would return the
+    /// pre-mark-ready result and the pull_request-event CI failure would be missed.
+    /// </summary>
+    [Fact]
+    public async Task WhenNotBefore_SetAndBranchWidePassedRunIsBeforeNotBefore_DoesNotEarlyReturn()
+    {
+        var notBefore = DateTime.UtcNow;
+        var run = CreateRun();
+        run.PullRequestNumber = null;
+
+        // notBefore is passed through; CiNotStartedMaxRetries = 1 so the never-started path fires once
+        var context = BuildContextForPostPrCi(run, ciNotStartedMaxRetries: 1);
+
+        // SHA-specific GetRunStatusAsync: always Pending (CI never appeared on SHA-F)
+        // Branch-wide GetRunStatusAsync (sha = null): Passed, but started BEFORE notBefore
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsNotNull<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Pending,
+                Jobs = [],
+                StartedAt = null
+            });
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Passed,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Passed }],
+                StartedAt = notBefore.AddMinutes(-5)  // BEFORE notBefore — must not be accepted
+            });
+
+        SetupDefaultCallbackMocks();
+
+        var report = await BuildCoordinator().WaitForPostPrCiAsync(
+            context, PassingReport, notBefore, CancellationToken.None);
+
+        // The branch-wide Passed result (started before notBefore) must be filtered out.
+        // The CI-never-started exhaustion path fires → InfrastructureFailure gate result.
+        report.ExternalCi.Should().NotBeNull();
+        report.ExternalCi!.Passed.Should().BeFalse(
+            "stale branch-wide Passed run (started before notBefore) must not satisfy post-PR CI check");
+
+        // WaitForCompletionAsync must NOT have been called with the stale branch-wide result
+        _mockPipelineProvider.Verify(
+            p => p.WaitForCompletionAsync(
+                It.IsAny<string>(), null, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "must not wait for completion of a pre-notBefore branch-wide run");
+        // TODO [WARNING] (TestQualityReviewer #3114): The It.IsNotNull<string?>() matcher for the
+        // SHA-specific GetRunStatusAsync setup is dead code in this test. BuildCoordinator() constructs
+        // a fresh CiPollingCoordinator that resolves the SHA via context.RepoProvider inside
+        // WaitForPostPrCiAsync — but context.RepoProvider is _mockRepoProvider.Object which has no
+        // GetHeadCommitShaAsync setup here. If TryReadHeadShaAsync returns null, pollSha is null and
+        // both SHA-specific and branch-wide calls use the null-SHA matcher. The It.IsNotNull setup
+        // matches nothing, making it a no-op. The test still correctly validates the branch-wide
+        // filtering path, but the comment claiming SHA-specific vs branch-wide distinction is misleading.
+    }
+
+    /// <summary>
+    /// When the branch-wide Passed run started AFTER notBefore, it IS a valid post-mark-ready
+    /// result and should be accepted (existing skip-re-trigger behavior preserved).
+    /// </summary>
+    [Fact]
+    public async Task WhenNotBefore_SetAndBranchWidePassedRunIsAfterNotBefore_EarlyReturnsCorrectly()
+    {
+        var notBefore = DateTime.UtcNow;
+        var run = CreateRun();
+        run.PullRequestNumber = null;
+
+        var context = BuildContextForPostPrCi(run, ciNotStartedMaxRetries: 1);
+
+        // SHA-specific: always Pending
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsNotNull<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [], StartedAt = null });
+
+        // Branch-wide: Passed, started AFTER notBefore — should be accepted
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Passed,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Passed }],
+                StartedAt = notBefore.AddSeconds(30)  // AFTER notBefore — must be accepted
+            });
+
+        SetupDefaultCallbackMocks();
+
+        var report = await BuildCoordinator().WaitForPostPrCiAsync(
+            context, PassingReport, notBefore, CancellationToken.None);
+
+        report.ExternalCi.Should().NotBeNull();
+        report.ExternalCi!.Passed.Should().BeTrue(
+            "branch-wide Passed run started after notBefore is a valid post-mark-ready result");
+
+        // WaitForCompletionAsync with branch (null sha) must NOT be called — early-return skips it
+        _mockPipelineProvider.Verify(
+            p => p.WaitForCompletionAsync(
+                It.IsAny<string>(), null, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "branch-wide Passed run (after notBefore) must skip WaitForCompletionAsync via early-return");
+        // TODO [WARNING] (TestQualityReviewer #3114): The Times.Never assertion above only verifies
+        // WaitForCompletionAsync was not called with a null SHA. It does not verify that
+        // WaitForCompletionAsync was not called with any SHA, nor that it was called with a non-null
+        // SHA (which would indicate the code unexpectedly routed through TryCompleteCiOnCurrentShaAsync
+        // rather than the branch-wide early-return). Adding Times.Never for any SHA variant would make
+        // the early-return behavior fully conclusive.
+    }
+
+    /// <summary>
+    /// When StartedAt is null (GitHub did not return timestamp), the notBefore filter must
+    /// fail-open: treat the run as if it started after notBefore, preserving existing behavior.
+    /// </summary>
+    [Fact]
+    public async Task WhenNotBefore_SetAndStartedAtIsNull_FailOpenAcceptsRun()
+    {
+        var notBefore = DateTime.UtcNow;
+        var run = CreateRun();
+        run.PullRequestNumber = null;
+
+        var context = BuildContextForPostPrCi(run);
+
+        // GetRunStatusAsync: Running with null StartedAt — should be accepted (fail-open)
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Running,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Running }],
+                StartedAt = null   // no timestamp — must fail-open
+            });
+
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Passed,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Passed }]
+            });
+
+        SetupDefaultCallbackMocks();
+
+        var report = await BuildCoordinator().WaitForPostPrCiAsync(
+            context, PassingReport, notBefore, CancellationToken.None);
+
+        report.ExternalCi.Should().NotBeNull();
+        report.ExternalCi!.Passed.Should().BeTrue(
+            "null StartedAt must fail-open (treat as after notBefore) to preserve existing behavior");
+    }
+
+    /// <summary>
+    /// When notBefore is null (non-post-PR call sites), the filter is disabled and all
+    /// runs are accepted regardless of StartedAt — existing behavior is preserved.
+    /// </summary>
+    [Fact]
+    public async Task WhenNotBefore_IsNull_AllRunsAreAccepted()
+    {
+        var run = CreateRun();
+        run.PullRequestNumber = null;
+
+        var context = BuildContextForPostPrCi(run);
+
+        // Run started in the past — would be filtered if notBefore were set, but notBefore is null
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Passed,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Passed }],
+                StartedAt = DateTime.UtcNow.AddHours(-1)  // very old, would be filtered
+            });
+
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Passed,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Passed }]
+            });
+
+        SetupDefaultCallbackMocks();
+
+        // notBefore = null → filter disabled
+        var report = await BuildCoordinator().WaitForPostPrCiAsync(
+            context, PassingReport, notBefore: null, CancellationToken.None);
+
+        report.ExternalCi.Should().NotBeNull();
+        report.ExternalCi!.Passed.Should().BeTrue(
+            "notBefore = null means no filtering; any run status is accepted");
+    }
+
+    // ── Issue #3114: helpers ──────────────────────────────────────────────────
+
+    private QualityGateContext BuildContextForPostPrCi(
+        PipelineRun run,
+        int ciNotStartedMaxRetries = 0,
+        TimeSpan? ciNotStartedTimeout = null) => new()
+    {
+        Run = run,
+        Config = new PipelineConfiguration
+        {
+            AgentTimeout = TimeSpan.FromMinutes(10),
+            MaxRetries = 0,
+            MaxInfrastructureRetries = 0,
+            ExternalCiTimeout = TimeSpan.FromMinutes(5),
+            CiNotStartedTimeout = ciNotStartedTimeout ?? TimeSpan.FromMilliseconds(50),
+            CiNotStartedMaxRetries = ciNotStartedMaxRetries,
+            ExternalCiPollInterval = TimeSpan.FromMilliseconds(50),
+            StallPollInterval = TimeSpan.FromMilliseconds(50),
+            StallWarningInterval = TimeSpan.FromHours(1)
+        },
+        AgentProvider = new Mock<IAgentProvider>().Object,
+        IssueOps = _mockIssueOps.Object,
+        Callbacks = _mockCallbacks.Object,
+        RepoProvider = _mockRepoProvider.Object,
+        PipelineProvider = _mockPipelineProvider.Object,
+        QualityGateConfigs = new List<QualityGateConfiguration>()
+    };
+
+    private CiPollingCoordinator BuildCoordinator() =>
+        new CiPollingCoordinator(
+            _mockLogger.Object,
+            new CiLogWriter(_mockLogger.Object),
+            new CiPollingMetrics(
+                PipelineTelemetry.ExternalCiDuration,
+                PipelineTelemetry.PostPrCiDuration,
+                PipelineTelemetry.StepDuration,
+                PipelineTelemetry.StepCount));
 
     /// <summary>
     /// True mid-loop scenario: N-1 CI-not-started iterations push empty re-trigger commits,
