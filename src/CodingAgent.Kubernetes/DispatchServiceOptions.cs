@@ -21,6 +21,19 @@ public sealed class DispatchServiceOptions
     /// <summary>K8s Secret name containing the master agent API key (for OTEL headers mount only; NOT vended to agent pods).</summary>
     public string AgentApiKeySecretName { get; set; } = "";
 
+    /// <summary>
+    /// The master agent API key value, read from the <c>AGENT_API_KEY</c> environment variable at startup.
+    /// Used by <see cref="CodingAgent.Api.Dispatch.DispatchLifecycleService"/> to pre-compute
+    /// per-job credentials (<c>HMAC-SHA256(masterKey, jobName)</c>) stored in per-job K8s Secrets.
+    /// Never injected into agent pods directly — only the derived per-job value enters the pod.
+    /// </summary>
+    // TODO: This property holds the raw master key as a plain string. If DispatchServiceOptions is
+    // ever passed to a structured logger with destructuring (e.g., {@options}), or bound to an ASP.NET
+    // configuration diagnostics endpoint, the master key may be exposed in plaintext. Consider
+    // annotating with [LogMasked] / a redaction attribute, or storing only a flag indicating whether
+    // the key is present rather than the key value itself.
+    public string AgentApiKeyValue { get; set; } = "";
+
     /// <summary>ServiceAccount name for agent Job pods (zero RBAC).</summary>
     public string AgentServiceAccountName { get; set; } = "";
 

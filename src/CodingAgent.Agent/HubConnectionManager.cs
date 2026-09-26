@@ -90,7 +90,8 @@ public sealed class HubConnectionManager : IHubConnectionManager
     public HubConnection Connection => _connection;
 
     public HubConnectionManager(string orchestratorUrl, AgentId agentId, string apiKey, Serilog.ILogger logger,
-        Func<HttpMessageHandler, HttpMessageHandler>? httpMessageHandlerFactory = null)
+        Func<HttpMessageHandler, HttpMessageHandler>? httpMessageHandlerFactory = null,
+        bool keyIsPreDerived = false)
     {
         ArgumentNullException.ThrowIfNull(orchestratorUrl);
         ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId));
@@ -99,7 +100,11 @@ public sealed class HubConnectionManager : IHubConnectionManager
 
         _logger = logger;
 
-        var derivedKey = DeriveKey(apiKey, agentId.Value);
+        // When keyIsPreDerived is true, the caller has already received a pre-computed
+        // HMAC-SHA256(masterKey, agentId) credential (from a per-job K8s Secret).
+        // Use it directly as the bearer token — no further derivation needed.
+        // When false (legacy path: non-work-item pods receiving the master key), derive in-process.
+        var bearerToken = keyIsPreDerived ? apiKey : DeriveKey(apiKey, agentId.Value);
         var hubUrl = $"{orchestratorUrl.TrimEnd('/')}{HubRoutes.Agent}?agentId={Uri.EscapeDataString(agentId.Value)}";
 
         _logger.Information("HubConnectionManager: target hub URL = {HubUrl}", hubUrl);
@@ -108,7 +113,7 @@ public sealed class HubConnectionManager : IHubConnectionManager
         _connection = new HubConnectionBuilder()
             .WithUrl(hubUrl, options =>
             {
-                options.AccessTokenProvider = () => Task.FromResult<string?>(derivedKey);
+                options.AccessTokenProvider = () => Task.FromResult<string?>(bearerToken);
                 options.SkipNegotiation = true;
                 options.Transports = HttpTransportType.WebSockets;
                 options.HttpMessageHandlerFactory = httpMessageHandlerFactory;

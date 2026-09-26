@@ -44,6 +44,8 @@ public class ConsolidationPageComponentTests : BunitContext
         Services.AddSingleton<IConsolidationService>(_mockConsolidationService.Object);
         Services.AddSingleton(_mockConfigClient.Object);
         Services.AddSingleton(_badgeService);
+        // Required by Consolidation.razor after issue #3027 (cancel via PostStatus)
+        Services.AddSingleton(new Mock<IPipelineApiWorkItemClient>().Object);
 
         var mockConfigClientForProjects = _mockConfigClient;
         mockConfigClientForProjects.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
@@ -67,14 +69,14 @@ public class ConsolidationPageComponentTests : BunitContext
         string issueProviderId = "issue-1",
         string repoProviderId = "repo-1",
         bool enabled = true) => new()
-    {
-        Id = id,
-        Name = name,
-        BrainProviderId = brainProviderId,
-        IssueProviderId = issueProviderId,
-        RepoProviderId = repoProviderId,
-        Enabled = enabled
-    };
+        {
+            Id = id,
+            Name = name,
+            BrainProviderId = brainProviderId,
+            IssueProviderId = issueProviderId,
+            RepoProviderId = repoProviderId,
+            Enabled = enabled
+        };
 
     // ═══ Requirement 1.2: Per-template cards render ═══
 

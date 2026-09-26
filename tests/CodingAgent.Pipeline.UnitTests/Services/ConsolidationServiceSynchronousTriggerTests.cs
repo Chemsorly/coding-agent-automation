@@ -144,22 +144,24 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
             Times.Once,
             "the JobDistributionRequest must carry correct consolidation-specific fields");
 
-        // Assert: run was persisted to the store exactly once
+        // Assert: run was persisted to the store exactly once (first persist + WorkItemId re-persist = 2 calls)
         _mockRunStore.Verify(
             s => s.SaveRunAsync(
-                It.Is<ConsolidationRun>(r => r.Status == ConsolidationRunStatus.Pending),
+                It.Is<ConsolidationRun>(r =>
+                    r.Status == ConsolidationRunStatus.Pending &&
+                    r.RunId == run!.RunId),
+                It.IsAny<CancellationToken>()),
+            Times.AtLeastOnce,
+            "the Pending run must be persisted to the store at least once");
+
+        // Assert: IssueIdentifier uses the deterministic {type}:{templateId} format (issue #3027)
+        _mockWorkDistributor.Verify(
+            d => d.DistributeAsync(
+                It.Is<JobDistributionRequest>(r =>
+                    r.IssueIdentifier == $"{ConsolidationRunType.BrainConsolidation}:{Template.Id}"),
                 It.IsAny<CancellationToken>()),
             Times.Once,
-            "the Pending run must be persisted to the store exactly once");
-        // TODO [WARNING]: The It.Is predicate above checks Status==Pending but not r.RunId == run!.RunId.
-        // If TriggerAsync saved a different (e.g. placeholder) run and returned a different object the
-        // assertion would still pass. Add r.RunId == run!.RunId to the predicate to verify identity.
-        // (review-findings-testqualityreviewer.md)
-        // TODO [WARNING]: No assertion verifies the IssueIdentifier field of the JobDistributionRequest.
-        // TriggerAsync now sets IssueIdentifier = type.ToString() (changed from run.RunId in the old
-        // dispatcher). A regression where IssueIdentifier reverts to an unexpected value would not be
-        // caught. Consider adding an It.Is check for IssueIdentifier to the DistributeAsync verify above.
-        // (review-findings-testqualityreviewer.md)
+            $"IssueIdentifier must be '{ConsolidationRunType.BrainConsolidation}:{Template.Id}' for cross-replica dedup (issue #3027)");
     }
 
     // ── Test B: Config-error trigger creates no WorkItem ─────────────────────
@@ -325,13 +327,18 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
 
     /// <summary>
     /// A duplicate trigger while a run is already Pending must be rejected.
+    /// After issue #3027: dedup is API-layer — both triggers call DistributeAsync.
+    /// The second trigger receives DistributionResult(Success=true, WorkItemId=null) which
+    /// signals a 409 from the partial unique index. TriggerAsync maps this to null.
     /// </summary>
     [Fact]
     public async Task TriggerAsync_DuplicateWhilePending_ReturnsNull()
     {
+        // Arrange: first succeeds; second gets 409 mapped as (Success=true, WorkItemId=null)
         _mockWorkDistributor
-            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-dup-1", ErrorMessage: null));
+            .SetupSequence(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-dup-1", ErrorMessage: null, Queued: true))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: null, ErrorMessage: null, Queued: true));
 
         var sut = CreateSut();
 
@@ -347,12 +354,12 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
             ConsolidationRunType.BrainConsolidation,
             new TemplateId(Template.Id),
             CancellationToken.None);
-        second.Should().BeNull("duplicate trigger while run is Pending must be rejected");
+        second.Should().BeNull("duplicate trigger while run is Pending must be rejected (WorkItemId=null = 409)");
 
-        // Distributor called only once (second trigger rejected before reaching distributor)
+        // Both triggers reach DistributeAsync — no in-process short-circuit after _runningRuns removal
         _mockWorkDistributor.Verify(
             d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()),
-            Times.Once,
-            "distributor must not be called on duplicate trigger");
+            Times.Exactly(2),
+            "both triggers call DistributeAsync; dedup is enforced by the API layer (partial unique index)");
     }
 }

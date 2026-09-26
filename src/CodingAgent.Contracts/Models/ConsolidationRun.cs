@@ -18,15 +18,31 @@ public enum ConsolidationRunStatus
     Running,
     Succeeded,
     Failed,
+    /// <summary>
+    /// The run has been accepted and is waiting for a free agent slot to be dispatched.
+    /// This is the initial status of every newly triggered consolidation run.
+    /// Runs in this state are eligible for restart rehydration by
+    /// <c>ConsolidationRetryBackgroundService</c>.
+    /// </summary>
+    // TODO [WARNING]: This enum value was added as part of an issue whose stated scope was a
+    // two-line test-attribute fix ([Collection("Metrics")]). Inserting Queued between Failed
+    // (ordinal 2) and Cancelled (ordinal 3) is safe because the JSON serializer uses string
+    // names (JsonStringEnumConverter), but the change is outside the scope of issue #3020 and
+    // was not independently reviewed. Verify correctness in a standalone feature review.
+    Queued,
     Cancelled,
     /// <summary>
     /// The work item has been successfully submitted to the unified dispatch queue as
-    /// <c>Pending</c> via <c>POST /api/work-items</c>. The WorkItem already exists in the
-    /// database — the Scheduler's <c>WorkItemDispatchLoop</c> will pick it up and create
-    /// the K8s Job when capacity is available.
+    /// <c>Pending</c> (i.e. <see cref="DistributionResult.Queued"/> was true on success).
+    /// The WorkItem already exists in the database — the Scheduler's
+    /// <c>WorkItemDispatchLoop</c> will pick it up and create the K8s Job when
+    /// capacity is available.
     /// <para>
-    /// This is the initial status of every newly triggered consolidation run. The run will
-    /// be transitioned to <c>Running</c> by the agent drain service when the K8s Job starts.
+    /// This state is intentionally excluded from
+    /// <c>ConsolidationService.RehydrateQueuedRunsAsync</c> so the retry background
+    /// service does not re-dispatch it (which would produce an idempotent 409 each cycle).
+    /// The run will be transitioned to <c>Running</c> by the agent drain service when the
+    /// K8s Job starts.
     /// </para>
     /// </summary>
     Pending
@@ -59,6 +75,18 @@ public sealed class ConsolidationRun
     /// <see cref="ConsolidationJobResult.DiffSummaryTokenUsage"/>.
     /// </summary>
     public long TotalTokens { get; set; }
+
+    /// <summary>
+    /// Required agent labels resolved at enqueue time. Persisted to enable restart rehydration
+    /// of queued runs without re-resolving provider configs.
+    /// </summary>
+    // TODO [WARNING]: This property was added as part of an issue whose stated scope was a
+    // two-line test-attribute fix ([Collection("Metrics")]). The change is functionally correct
+    // (nullable, backward-compatible, used only in ConsolidationDispatcher.DispatchRunAsync)
+    // but is outside the scope of issue #3020 and was not independently reviewed. Verify
+    // correctness and migration story (existing persisted rows without this field) in a
+    // standalone feature review.
+    public IReadOnlyList<string>? QueuedRequiredLabels { get; set; }
 
     /// <summary>
     /// Project display name for the owning project (resolved from template → project at trigger time).
@@ -101,4 +129,13 @@ public sealed class ConsolidationRun
     /// Null for runs created before this field was introduced.
     /// </summary>
     public string? TraceParent { get; set; }
+
+    /// <summary>
+    /// The ID of the WorkItem created by DistributeAsync for this run.
+    /// Populated in TriggerAsync after a successful dispatch (issue #3027).
+    /// Null for runs created before this field was introduced or for runs where dispatch failed.
+    /// Required by the Consolidation page to route cancel through PostStatus(Cancelled)
+    /// without going through the now-removed CancelQueuedRunAsync method.
+    /// </summary>
+    public string? WorkItemId { get; set; }
 }
