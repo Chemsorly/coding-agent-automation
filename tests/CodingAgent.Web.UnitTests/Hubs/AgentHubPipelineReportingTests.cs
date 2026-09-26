@@ -432,6 +432,89 @@ public sealed class AgentHubPipelineReportingTests
         await act.Should().NotThrowAsync();
     }
 
+    [Fact]
+    public async Task ReportStepTransition_WhenOrphanRestoredAtUpdateFaults_LogsWarningWithReportStepTransitionCallerName()
+    {
+        // Arrange: the orphanRestoredAt Redis write fails.
+        // TCS is signalled by the Moq Callback when the matching Warning fires on the thread pool,
+        // so the test thread yields instead of spinning — no SpinWait, no CPU pressure.
+        var warningFired = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var agent = CreateAgent();
+        // OrphanRestoredAt must be non-null to enter the if-branch that calls UpdateAgentFieldFireAndForget.
+        // If null, the if-guard short-circuits, the fault is never triggered, and WaitAsync hangs for 30 s.
+        agent.OrphanRestoredAt = DateTimeOffset.UtcNow.AddMinutes(-5);
+
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.UpdateAgentFieldAsync(agent.AgentId, "orphanRestoredAt", null))
+            .Returns(Task.FromException(new InvalidOperationException("Redis down")));
+
+        // Wire the Callback before the act so the TCS is signalled as soon as the continuation fires.
+        // Serilog's Warning<T0,T1,T2>(Exception?, string, T0, T1, T2) overload is matched by concrete types:
+        // T0 = string (callerContext), T1 = AgentId, T2 = string (field name).
+        // It.IsAny<object>() would NOT match here — use typed matchers or Moq resolves the wrong overload.
+        //
+        // TODO: The template-string predicate (s.Contains("{CallerContext}") etc.) binds to the internal
+        // UpdateFieldFailedTemplate constant in AgentHubFacadeExtensions. If that constant is renamed or
+        // reworded the Setup silently stops matching and the test hangs for the full WaitAsync timeout before
+        // failing with a TimeoutException rather than a clear assertion error. Consider replacing the substring
+        // check with a direct reference to the internal constant (via InternalsVisibleTo or a test-local copy)
+        // and/or using Task.WhenAny(warningFired.Task, Task.Delay(timeout)) + Assert.Fail for a clearer failure.
+        _mockLogger
+            .Setup(l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("{CallerContext}") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(ctx => ctx == "ReportStepTransition"),
+                It.IsAny<AgentId>(),
+                It.Is<string>(f => f == "orphanRestoredAt")))
+            .Callback(() => warningFired.TrySetResult(true));
+
+        // TODO: This test constructs AgentHub inline using the shared _mockFacade field because CreateHub()
+        // does not accept a custom IAgentJobLifecycleService. If parallel test mutations to _mockFacade ever
+        // become a concern (xUnit isolates instances today so this is currently safe), consider extending
+        // CreateHub() with an optional lifecycle parameter to remove the boilerplate duplication.
+        var mockLifecycle = new Mock<IAgentJobLifecycleService>();
+        var hub = new AgentHub(new AgentHubDependencies(
+            _mockFacade.Object,
+            Mock.Of<IChatNotifier>(),
+            _mockChangeNotifier.Object,
+            Mock.Of<IHubConsolidationOperations>(),
+            Mock.Of<IHubIssueOperations>(),
+            mockLifecycle.Object,
+            Mock.Of<IAgentTokenRefreshService>(),
+            Mock.Of<IGateCommentFormatter>(),
+            _mockLogger.Object,
+            Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
+
+        var mockContext = new Mock<HubCallerContext>();
+        mockContext.Setup(c => c.ConnectionId).Returns("conn-1");
+        hub.Context = mockContext.Object;
+
+        // Act — Task.FromException produces an already-faulted task, so the ContinueWith callback
+        // is queued to the thread pool immediately after ReportStepTransition returns.
+        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow);
+
+        // Block until the ThreadPool continuation fires (30 s safety net).
+        await warningFired.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        // Assert: Warning logged with the exception, the correct callerContext, agent ID, and field name.
+        // T2 is pinned to "orphanRestoredAt" to confirm the correct fault path fired.
+        //
+        // TODO: It.IsAny<Exception>() does not verify the exception is non-null or that it wraps the injected
+        // fault. UpdateAgentFieldFireAndForget passes t.Exception?.Flatten() (an AggregateException wrapping
+        // the original InvalidOperationException) to the logger. Tighten to
+        // It.Is<AggregateException>(ex => ex.InnerException is InvalidOperationException) so a regression
+        // that silently drops the exception object while still calling Warning would be caught.
+        _mockLogger.Verify(
+            l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("{CallerContext}") && s.Contains("{AgentId}") && s.Contains("{Field}")),
+                It.Is<string>(ctx => ctx == "ReportStepTransition"),  // T0 = string (callerContext)
+                It.IsAny<AgentId>(),                                   // T1 = AgentId
+                It.Is<string>(f => f == "orphanRestoredAt")),          // T2 = string (field name)
+            Times.Once);
+    }
+
     // ── RequestLabelChange — invalid label path ───────────────────────────
 
     [Fact]

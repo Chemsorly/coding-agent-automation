@@ -88,7 +88,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     /// <inheritdoc />
     public async Task HandleJobRejectedAsync(JobId jobId, AgentEntry? agent, string reason, CancellationToken ct)
     {
-        _logger.Warning("Agent {AgentId} rejected job {JobId}: {Reason}", agent?.AgentId, jobId.Value, reason);
+        _logger.Warning("Agent {AgentId} rejected job {JobId}: {Reason}", agent?.AgentId, jobId.Value, LogSanitizer.SanitizeForLog(reason));
 
         // Clean up the orphaned run so the issue can be re-dispatched
         var run = _facade.GetRun(jobId);
@@ -403,7 +403,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             {
                 _logger.Information(
                     "Job {JobId} ReportJobCompleted swapping label to {Label} for issue {IssueIdentifier} (finalStep={FinalStep}, finalLabel={FinalLabel})",
-                    jobId.Value, label, run.IssueIdentifier, payload.FinalStep, payload.FinalLabel ?? "null");
+                    jobId.Value, label, run.IssueIdentifier, payload.FinalStep, LogSanitizer.SanitizeForLog(payload.FinalLabel ?? "null"));
                 var swLabel = Stopwatch.StartNew();
                 await _issueOps.SwapLabelAsync(run, label, ct);
                 _logger.Information("Job {JobId} SwapLabelAsync completed in {ElapsedMs}ms", jobId.Value, swLabel.ElapsedMilliseconds);

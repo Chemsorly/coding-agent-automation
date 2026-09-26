@@ -691,10 +691,20 @@ public sealed class ReconciliationLoop
     /// subsequent reconciliation cycles), or <c>false</c> if it threw.
     /// <para>
     /// NOTE: a <c>false</c> return does NOT always mean the caller must retry. If PostStatusAsync
-    /// returned 400 (rejected transition), this method caches the WorkItem ID internally in
-    /// <c>_reconciledTerminalIds</c> before returning <c>false</c>, so the caller must NOT
-    /// double-cache it. Only non-400 exceptions leave the ID uncached (so the caller's retry
-    /// on the next cycle is correct for those cases).
+    /// returned 400 (rejected transition), this method conditionally caches the WorkItem ID in
+    /// <c>_reconciledTerminalIds</c> before returning <c>false</c>:
+    /// <list type="bullet">
+    ///   <item>If the WorkItem is already terminal (Succeeded/Failed/Cancelled) or not found (null),
+    ///     the ID is cached so the caller does NOT retry — the transition was definitively rejected.</item>
+    ///   <item>If the WorkItem is in a non-terminal state (Pending/Dispatched/Running), the ID is
+    ///     NOT cached so the next reconciliation cycle retries — the 400 was a race condition (e.g.
+    ///     K8s job completed before the dispatch path committed the Dispatched status write).</item>
+    ///   <item>If the follow-up <see cref="IPipelineApiWorkItemClient.GetStatusAsync"/> call itself
+    ///     throws, the ID is NOT cached (conservative — retry next cycle).</item>
+    /// </list>
+    /// The caller must NOT double-cache (add to <c>_reconciledTerminalIds</c>) when this method
+    /// returns <c>false</c> — that is handled inside this method for the caching branch.
+    /// Only non-400 exceptions leave the ID fully uncached (caller's retry on next cycle is correct).
     /// </para>
     /// </summary>
     private async Task<bool> HandleJobCompletedAsync(
@@ -744,15 +754,61 @@ public sealed class ReconciliationLoop
         }
         catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.BadRequest)
         {
-            // A 400 response means the API definitively rejected this transition
-            // (e.g. WorkItem is Pending, not yet Running — Pending→Succeeded is invalid).
-            // This is not a transient error; retrying will always produce the same result.
-            // Cache the WorkItem ID to suppress the retry loop and log at Warning level
-            // (expected edge case, not a system error).
+            // A 400 response means the API rejected this transition. Whether to cache the WorkItem
+            // ID (suppress future retries) depends on the WorkItem's current state:
+            //
+            //   • Non-terminal (Pending/Dispatched/Running): do NOT cache — this is a race condition
+            //     where the K8s job completed before the dispatch path committed the Dispatched
+            //     status write. The next reconciliation cycle should retry (issue #3041).
+            //   • Terminal (Succeeded/Failed/Cancelled) or not found (null): cache as before —
+            //     the rejection is definitive and retrying would always produce the same result.
+            //   • GetStatusAsync throws: do NOT cache (conservative) — retry next cycle.
+            WorkItemStatus? currentStatus = null;
+            try
+            {
+                currentStatus = await _workItemClient.GetStatusAsync(workItemId, ct);
+            }
+            // TODO: [WARNING] This catch swallows OperationCanceledException. When `ct` fires while
+            // GetStatusAsync is awaited (e.g. leadership lease expires), the cancellation is logged
+            // as a Warning and the method returns false instead of propagating. The outer loop then
+            // treats this as a retryable transient error rather than exiting.
+            // Fix: change to `catch (Exception statusEx) when (statusEx is not OperationCanceledException)`
+            // so cancellations propagate (mirrors the existing pattern at the outer catch).
+            catch (Exception statusEx)
+            {
+                _log.Warning(statusEx,
+                    "HandleJobCompletedAsync: completion POST for WorkItem {WorkItemId} rejected (400) " +
+                    "and follow-up GetStatusAsync also failed — not caching, will retry next cycle.",
+                    workItemId);
+                return false;
+            }
+
+            // TODO: [WARNING] `Running` is included in the non-terminal (no-cache) set alongside
+            // Pending and Dispatched, but the issue requirements explicitly enumerate only
+            // Pending and Dispatched as the pre-Running states that must not be cached.
+            // Running→Succeeded and Running→Failed are valid transitions; a 400 for a Running
+            // WorkItem may indicate a concurrent completion rather than the pre-dispatch race
+            // described in the issue. Including Running here is "defensive" but is outside the
+            // stated scope and could cause an infinite retry if the API consistently rejects a
+            // terminal POST for a Running item. Consider restricting to Pending/Dispatched only.
+            var isNonTerminal = currentStatus is WorkItemStatus.Pending
+                or WorkItemStatus.Dispatched
+                or WorkItemStatus.Running;
+
+            if (isNonTerminal)
+            {
+                _log.Warning(
+                    "HandleJobCompletedAsync: completion POST for WorkItem {WorkItemId} rejected (400) — " +
+                    "WorkItem is in pre-Running state {CurrentStatus}, not caching. Will retry next cycle.",
+                    workItemId, currentStatus);
+                return false;
+            }
+
+            // Terminal or null (item cleaned up) — cache to prevent redundant retries.
             _log.Warning(
-                "HandleJobCompletedAsync: completion POST for WorkItem {WorkItemId} rejected (400 — " +
-                "WorkItem not in a transitionable state). Caching as processed to prevent retry.",
-                workItemId);
+                "HandleJobCompletedAsync: completion POST for WorkItem {WorkItemId} rejected (400) — " +
+                "WorkItem status is {CurrentStatus} (terminal or not found). Caching to prevent retry.",
+                workItemId, currentStatus);
             _reconciledTerminalIds.Add(workItemId);
             return false;
         }

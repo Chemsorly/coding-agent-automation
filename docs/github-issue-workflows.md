@@ -109,7 +109,7 @@ When the pipeline loop is active, it polls for `agent:next` issues automatically
 
 - Issues are processed FIFO (oldest `CreatedAt` first)
 - Issues with `agent:error` or `agent:needs-refinement` are **skipped** (even if they also have `agent:next`)
-- One issue is processed at a time; the loop waits for the current run to finish before starting the next
+- Runs execute in parallel, each in its own Kubernetes Job. Each poll cycle dispatches up to `closedLoopMaxRunsPerCycle` items (0 = no limit). How many run at once is capped per agent label set by the job template's `maxConcurrent` (Helm `jobTemplates`) and by the available credential PVCs; decomposition is additionally capped by `MaxConcurrentDecompositions`. Work beyond that capacity waits in the queue (Work page) until a slot frees up
 - Configurable poll interval, max runs per cycle, and backoff on failures
 - When `DecompositionEnabled` is true on a template, the loop also polls for `agent:epic` and `agent:epic-approved` issues and dispatches them for decomposition
 - When a project has an `EpicIssueProviderId` configured, the loop polls that provider for epics independently (see [Projects](projects.md))
