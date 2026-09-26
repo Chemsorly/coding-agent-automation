@@ -28,7 +28,8 @@ public interface IHubConsolidationOperations
 
     /// <summary>
     /// Handles consolidation job completion: updates run status, persists harness
-    /// suggestions, increments badge count, and notifies change listeners.
+    /// suggestions, increments badge count, writes pipeline run history via
+    /// <see cref="IRunLifecycleManager"/>, and notifies change listeners.
     /// Returns a debug info string for E2E test observability.
     /// </summary>
     Task<string> HandleConsolidationCompleteAsync(
@@ -46,6 +47,7 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
     private readonly IConsolidationService _consolidationService;
     private readonly ConsolidationBadgeService _badgeService;
     private readonly IChangeNotifier _changeNotifier;
+    private readonly IRunLifecycleManager _lifecycleManager;
     private readonly ILogger _logger;
 
     public HubConsolidationOperations(
@@ -53,18 +55,21 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
         IConsolidationService consolidationService,
         ConsolidationBadgeService badgeService,
         IChangeNotifier changeNotifier,
+        IRunLifecycleManager lifecycleManager,
         ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(modelFetchService);
         ArgumentNullException.ThrowIfNull(consolidationService);
         ArgumentNullException.ThrowIfNull(badgeService);
         ArgumentNullException.ThrowIfNull(changeNotifier);
+        ArgumentNullException.ThrowIfNull(lifecycleManager);
         ArgumentNullException.ThrowIfNull(logger);
 
         _modelFetchService = modelFetchService;
         _consolidationService = consolidationService;
         _badgeService = badgeService;
         _changeNotifier = changeNotifier;
+        _lifecycleManager = lifecycleManager;
         _logger = logger;
     }
 
@@ -101,7 +106,8 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
 
         var totalTokens = SumTokenUsage(result.ReviewTokenUsage, result.RefinementTokenUsage, result.DiffSummaryTokenUsage);
 
-        // Update the consolidation run status
+        // Update the consolidation run status (ConsolidationRuns table — kept per issue spec;
+        // this is the write that moves a real run's ConsolidationRuns row to terminal).
         try
         {
             var status = result.Success
@@ -116,6 +122,31 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
         catch (Exception ex)
         {
             _logger.Error(ex, "Failed to update consolidation run {JobId} status", sanitizedJobId);
+        }
+
+        // Route through RunLifecycleManager to write pipeline run history and transition WorkItem.
+        // RunLifecycleManager.CompleteRunAsync/FailRunAsync will internally call RemoveRun (which is
+        // a no-op if the ghost run is not in memory) and AddRunToHistoryAsync.
+        // RunLifecycleManager already skips the label swap for consolidation runs via the
+        // IssueProviderConfigId == ConsolidationConstants.ProviderConfigId guard in CompleteRunAsync.
+        try
+        {
+            var runId = new RunId(result.JobId);
+            if (result.Success)
+            {
+                await _lifecycleManager.CompleteRunAsync(runId, WorkItemStatus.Succeeded, ct);
+                _logger.Information("Consolidation run {JobId} CompleteRunAsync completed", result.JobId);
+            }
+            else
+            {
+                var errorMsg = result.ErrorMessage ?? "Consolidation run failed";
+                await _lifecycleManager.FailRunAsync(runId, errorMsg, ct);
+                _logger.Information("Consolidation run {JobId} FailRunAsync completed", result.JobId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to route consolidation run {JobId} through RunLifecycleManager (non-fatal)", result.JobId);
         }
 
         if (result.HarnessSuggestions is not null)

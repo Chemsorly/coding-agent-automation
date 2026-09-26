@@ -51,6 +51,13 @@ public sealed record ActiveWorkItemDto
     public string? IssueTitle { get; init; }
 
     /// <summary>
+    /// Web URL of the issue on the provider, extracted from <c>JobDistributionRequest.IssueDetail.Url</c>
+    /// in the Payload. Null when payload is absent, has no IssueDetail, or payload is malformed.
+    /// Populated by the API for display purposes only — enables "open in provider" links on in-flight rows.
+    /// </summary>
+    public string? IssueUrl { get; init; }
+
+    /// <summary>
     /// Dispatch source extracted from <c>JobDistributionRequest.InitiatedBy</c> in the Payload
     /// (e.g. <c>"loop:issue"</c>, <c>"manual"</c>, <c>"consolidation:auto"</c>).
     /// Null when payload is absent or payload is malformed.

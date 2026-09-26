@@ -27,6 +27,7 @@ public sealed class HubConsolidationOperationsTests
     private readonly Mock<IConsolidationService> _consolidation = new();
     private readonly ConsolidationBadgeService _badge = new();
     private readonly Mock<IChangeNotifier> _notifier = new();
+    private readonly Mock<IRunLifecycleManager> _lifecycleManager = new();
     private readonly Mock<ILogger> _logger = new();
     private readonly HubConsolidationOperations _sut;
 
@@ -38,6 +39,7 @@ public sealed class HubConsolidationOperationsTests
             _consolidation.Object,
             _badge,
             _notifier.Object,
+            _lifecycleManager.Object,
             _logger.Object);
     }
 
@@ -66,13 +68,13 @@ public sealed class HubConsolidationOperationsTests
             ErrorMessage = success ? null : "Failed"
         };
 
-    // ── Constructor guards (null consolidation/badge/notifier only — ModelFetchService is sealed) ─
+    // ── Constructor guards ────────────────────────────────────────────────
 
     [Fact]
     public void Constructor_NullConsolidation_Throws()
     {
         var act = () => new HubConsolidationOperations(
-            _modelFetch, null!, _badge, _notifier.Object, _logger.Object);
+            _modelFetch, null!, _badge, _notifier.Object, _lifecycleManager.Object, _logger.Object);
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -80,7 +82,15 @@ public sealed class HubConsolidationOperationsTests
     public void Constructor_NullBadge_Throws()
     {
         var act = () => new HubConsolidationOperations(
-            _modelFetch, _consolidation.Object, null!, _notifier.Object, _logger.Object);
+            _modelFetch, _consolidation.Object, null!, _notifier.Object, _lifecycleManager.Object, _logger.Object);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Constructor_NullLifecycleManager_Throws()
+    {
+        var act = () => new HubConsolidationOperations(
+            _modelFetch, _consolidation.Object, _badge, _notifier.Object, null!, _logger.Object);
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -158,6 +168,38 @@ public sealed class HubConsolidationOperationsTests
         _consolidation.Verify(c => c.UpdateRunAsync(
             new RunId("job-1"), ConsolidationRunStatus.Failed, "Failed",
             It.IsAny<CancellationToken>(), It.IsAny<long>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleConsolidationCompleteAsync_Success_CallsCompleteRunAsync()
+    {
+        SetupUpdateRun(_consolidation);
+        _lifecycleManager
+            .Setup(l => l.CompleteRunAsync(new RunId("job-1"), WorkItemStatus.Succeeded,
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync((PipelineRun?)null);
+
+        await _sut.HandleConsolidationCompleteAsync(MakeResult(success: true), null);
+
+        _lifecycleManager.Verify(l => l.CompleteRunAsync(
+            new RunId("job-1"), WorkItemStatus.Succeeded,
+            It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleConsolidationCompleteAsync_Failure_CallsFailRunAsync()
+    {
+        SetupUpdateRun(_consolidation);
+        _lifecycleManager
+            .Setup(l => l.FailRunAsync(new RunId("job-1"), It.IsAny<string>(),
+                It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync((PipelineRun?)null);
+
+        await _sut.HandleConsolidationCompleteAsync(MakeResult(success: false), null);
+
+        _lifecycleManager.Verify(l => l.FailRunAsync(
+            new RunId("job-1"), It.IsAny<string>(),
+            It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()), Times.Once);
     }
 
     [Fact]

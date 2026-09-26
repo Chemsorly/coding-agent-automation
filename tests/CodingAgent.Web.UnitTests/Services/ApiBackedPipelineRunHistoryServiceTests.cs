@@ -35,17 +35,27 @@ public sealed class ApiBackedPipelineRunHistoryServiceTests
         act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
     }
 
-    // ── AddRunToHistoryAsync — consolidation skip ─────────────────────────
+    // ── AddRunToHistoryAsync — consolidation now persisted ────────────────
 
     [Fact]
-    public async Task AddRunToHistoryAsync_ConsolidationRun_SkipsClientCall()
+    public async Task AddRunToHistoryAsync_ConsolidationRun_CallsClientNow()
     {
+        // Write guard removed: consolidation runs are now persisted to pipeline history.
+        PipelineRunSummary? captured = null;
+        _client
+            .Setup(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRunSummary>(), It.IsAny<CancellationToken>()))
+            .Callback<PipelineRunSummary, CancellationToken>((s, _) => captured = s)
+            .Returns(Task.CompletedTask);
+
         var run = MakeRun(providerConfigId: ConsolidationConstants.ProviderConfigId);
+        run.CurrentStep = PipelineStep.Completed;
 
         var sut = CreateSut();
         await sut.AddRunToHistoryAsync(run);
 
-        _client.Verify(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRunSummary>(), It.IsAny<CancellationToken>()), Times.Never);
+        _client.Verify(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRunSummary>(), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "consolidation run must now be forwarded to the history API (write guard removed)");
     }
 
     [Fact]
@@ -117,20 +127,21 @@ public sealed class ApiBackedPipelineRunHistoryServiceTests
     // ── AddRunSummaryAsync — exception is swallowed (non-fatal) ──────────
 
     [Fact]
-    public async Task AddRunSummaryAsync_ConsolidationSummary_DoesNotCallHttpClient()
+    public async Task AddRunSummaryAsync_ConsolidationSummary_NowCallsHttpClient()
     {
-        // Regression test for issue #2629: AddRunSummaryAsync must silently skip consolidation
-        // summaries without forwarding them to the API. Mirrors the guard already present on
-        // AddRunToHistoryAsync(PipelineRun) for the IssueProviderConfigId == sentinel check.
-        // TODO: add a second variant using ConsolidationConstants.ConsolidationAuto ("consolidation:auto")
-        // to verify the StartsWith prefix guard covers all consolidation:* variants, not just
-        // ConsolidationConstants.InitiatedBy ("consolidation:manual"). See review finding from issue #2629.
+        // Write guard removed: consolidation summaries are now forwarded to the API.
+        PipelineRunSummary? captured = null;
+        _client
+            .Setup(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRunSummary>(), It.IsAny<CancellationToken>()))
+            .Callback<PipelineRunSummary, CancellationToken>((s, _) => captured = s)
+            .Returns(Task.CompletedTask);
+
         var sut = CreateSut();
         var summary = new PipelineRunSummary
         {
             RunId = Guid.NewGuid().ToString(),
             IssueIdentifier = "consolidation-test",
-            IssueTitle = "Should be skipped",
+            IssueTitle = "Should now be persisted",
             FinalStep = PipelineStep.Completed,
             StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
             InitiatedBy = ConsolidationConstants.InitiatedBy,   // "consolidation:manual"
@@ -138,11 +149,11 @@ public sealed class ApiBackedPipelineRunHistoryServiceTests
 
         await sut.AddRunSummaryAsync(summary);
 
-        // The HTTP client must never be called when the summary is a consolidation run.
+        // The HTTP client must now be called (write guard removed)
         _client.Verify(
             c => c.AddRunToHistoryAsync(It.IsAny<PipelineRunSummary>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "consolidation summaries must be dropped before reaching the HTTP client");
+            Times.Once,
+            "consolidation summaries must now be forwarded to the HTTP client (write guard removed)");
     }
 
     [Fact]

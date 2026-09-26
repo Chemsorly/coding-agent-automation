@@ -28,15 +28,22 @@ namespace CodingAgent.Web.UnitTests.Hubs;
 /// - True unregistered connections log at Warning.
 /// </summary>
 /// <remarks>
-/// Placed in [Collection("Metrics")] to prevent cross-talk through the process-global static
-/// <see cref="PipelineTelemetry.Meter"/>. Without serialization, parallel tests that also
-/// exercise <see cref="AgentAuthorizationFilter"/> emit measurements on the same instrument,
-/// which the raw <see cref="System.Diagnostics.Metrics.MeterListener"/> in these tests
-/// captures — causing spurious "2 items found" failures.
+/// <see cref="PipelineTelemetry.HubAuthRejections"/> is process-global, and classes outside
+/// [Collection("Metrics")] (e.g. <see cref="AgentAuthorizationFilterInvokeTests"/>) drive the filter
+/// into rejections in parallel — the collection only serializes classes that join it. The counter
+/// tests therefore tag their async flow via <see cref="TestFlow"/> and ignore measurements recorded
+/// on any other flow, instead of relying on serialization.
 /// </remarks>
 [Collection("Metrics")]
 public class AgentAuthorizationFilterObservabilityTests
 {
+    /// <summary>
+    /// Marks the async flow of the counter test that is listening. <see cref="MeterListener"/>
+    /// callbacks run synchronously on the flow that calls <c>Add</c>, so a measurement seen under
+    /// any other value was emitted by a test running in parallel.
+    /// </summary>
+    private static readonly AsyncLocal<object?> TestFlow = new();
+
     private readonly Mock<IAgentRegistryService> _registryMock;
     private readonly Mock<ILogger> _loggerMock;
     private readonly AgentAuthorizationFilter _filter;
@@ -63,6 +70,8 @@ public class AgentAuthorizationFilterObservabilityTests
         var invCtx = new HubInvocationContext(ctx, Mock.Of<IServiceProvider>(), hub, method, []);
 
         var measurements = new List<(long Value, string Reason)>();
+        var flow = new object();
+        TestFlow.Value = flow;
         using var meter = new MeterListener();
         meter.InstrumentPublished += (instrument, listener) =>
         {
@@ -71,7 +80,7 @@ public class AgentAuthorizationFilterObservabilityTests
         };
         meter.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
         {
-            if (instrument.Name != "agent.hub.auth_rejections") return;
+            if (instrument.Name != "agent.hub.auth_rejections" || !ReferenceEquals(TestFlow.Value, flow)) return;
             var reason = "";
             foreach (var tag in tags)
             {
@@ -110,6 +119,8 @@ public class AgentAuthorizationFilterObservabilityTests
         var invCtx = new HubInvocationContext(ctx, Mock.Of<IServiceProvider>(), hub, method, []);
 
         var measurements = new List<(long Value, string Reason)>();
+        var flow = new object();
+        TestFlow.Value = flow;
         using var meter = new MeterListener();
         meter.InstrumentPublished += (instrument, listener) =>
         {
@@ -118,7 +129,7 @@ public class AgentAuthorizationFilterObservabilityTests
         };
         meter.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
         {
-            if (instrument.Name != "agent.hub.auth_rejections") return;
+            if (instrument.Name != "agent.hub.auth_rejections" || !ReferenceEquals(TestFlow.Value, flow)) return;
             var reason = "";
             foreach (var tag in tags)
             {
@@ -189,6 +200,8 @@ public class AgentAuthorizationFilterObservabilityTests
             [new JobId("job-wrong"), new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow }]);
 
         var measurements = new List<(long Value, string Reason)>();
+        var flow = new object();
+        TestFlow.Value = flow;
         using var meter = new MeterListener();
         meter.InstrumentPublished += (instrument, listener) =>
         {
@@ -197,7 +210,7 @@ public class AgentAuthorizationFilterObservabilityTests
         };
         meter.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
         {
-            if (instrument.Name != "agent.hub.auth_rejections") return;
+            if (instrument.Name != "agent.hub.auth_rejections" || !ReferenceEquals(TestFlow.Value, flow)) return;
             var reason = "";
             foreach (var tag in tags)
             {

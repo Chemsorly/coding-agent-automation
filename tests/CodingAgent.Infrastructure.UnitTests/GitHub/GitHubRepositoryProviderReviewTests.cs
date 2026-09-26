@@ -16,6 +16,7 @@ namespace CodingAgent.Infrastructure.UnitTests;
 /// - DismissPreviousReviewAsync (marker-based dismiss with pagination)
 /// - SupportsInlineReviewComments property
 /// </summary>
+[Collection("GitHubTelemetry")]
 public class GitHubRepositoryProviderReviewTests : WireMockTestBase
 {
     private const string Owner = "test-owner";
