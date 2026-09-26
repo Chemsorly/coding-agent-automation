@@ -301,21 +301,14 @@
             var items = runs.Items.Where(r => r.StartedAtOffset >= windowStart).ToList();
 
             // Only flag truncation when the fetch cap may have excluded in-window runs: there are older
-            // pages AND the oldest fetched run still falls inside the window.
-            // TODO: [WARNING] For narrow windows (1h/6h/24h) on a busy system with >500 runs per day,
-            // the banner may still fire incorrectly because runs.HasMore reflects the global page count,
-            // not per-window coverage. A server-side date-filtered endpoint would make this exact.
+            // pages AND the oldest fetched run still falls inside the window. Known limit (#3077): the
+            // figures come from this one page, so exact whole-window numbers need a server-side filter.
             _isTruncated = runs.HasMore && runs.Items.Count > 0 &&
                 runs.Items.Min(r => r.StartedAtOffset) >= windowStart;
 
             _total = items.Count;
-            // TODO: [WARNING] Chart-vs-headline divergence for hourly windows. The pre-filter keeps
-            // runs with StartedAtOffset >= windowStart (no upper bound), so runs in the current
-            // partial hour (between windowEnd and now) are counted in _total, _successRate,
-            // _retryRate, etc. But BuildHourlyBuckets only covers [windowStart, windowEnd) where
-            // windowEnd is the start of the current hour — those same runs land in no chart bucket.
-            // Fix: either add a trailing partial-hour bucket in BuildHourlyBuckets, or exclude
-            // partial-hour runs from the headline metrics.
+            // Known limit (#3077): runs started in the current hour count here, but the hourly chart
+            // ends at the start of the current hour, so they appear in no bar.
             if (_total > 0)
                 Aggregate(items, now);
         }
