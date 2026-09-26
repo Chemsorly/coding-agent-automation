@@ -792,6 +792,12 @@ public sealed class WorkItemStatusTransitionServiceTests
         outcome.Should().Be(StatusTransitionOutcome.AlreadyAtTarget);
         count.Should().Be(0,
             "pipeline.run.outcomes must NOT be recorded for an AlreadyAtTarget no-op");
+        // TODO: [WARNING] This test does not verify that workdistribution.workitems_terminated is also
+        // NOT emitted for AlreadyAtTarget no-op transitions. The acceptance criterion "increments exactly
+        // once" applies to both counters. If the production code were changed to emit
+        // workdistribution.workitems_terminated for no-ops, this test would not catch it. Add a
+        // MeterListener for WorkDistributionTelemetry.MeterName and assert that WorkItemsTerminated
+        // does not increment during this test.
     }
 
     // ── Test Infrastructure ────────────────────────────────────────────────────
