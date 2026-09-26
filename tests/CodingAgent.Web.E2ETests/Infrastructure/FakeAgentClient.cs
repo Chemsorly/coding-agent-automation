@@ -118,8 +118,17 @@ public sealed class FakeAgentClient : IAsyncDisposable
                 RunId = assignment.JobId,
                 IssueIdentifier = assignment.IssueIdentifier,
                 IssueTitle = assignment.IssueDetail.Title,
-                // Not carried on the assignment message; the pod knows it from its own env.
-                IssueProviderConfigId = "issue-e2e",
+                // Use the IssueProviderConfigId from the assignment rather than a hardcoded value.
+                // For pipeline runs this is the real issue provider (e.g. "issue-e2e"); for
+                // consolidation runs it is ConsolidationConstants.ProviderConfigId ("consolidation").
+                // HubConsolidationOperations.HandleConsolidationCompleteAsync and
+                // AgentJobLifecycleService.CompleteRunAsync both branch on
+                // IssueProviderConfigId == ConsolidationConstants.ProviderConfigId, so registering
+                // with the wrong sentinel causes consolidation completions to fall through to the
+                // pipeline completion path and silently no-op (the consolidation run never
+                // transitions to Succeeded/Failed). Fallback to "issue-e2e" for backward
+                // compatibility with old-schema payloads where IssueProviderConfigId is null.
+                IssueProviderConfigId = assignment.IssueProviderConfigId ?? "issue-e2e",
                 RepoProviderConfigId = assignment.RepoProviderConfigId,
                 AgentProviderConfigId = assignment.AgentProviderConfigId,
                 BrainProviderConfigId = assignment.BrainProviderConfigId,
