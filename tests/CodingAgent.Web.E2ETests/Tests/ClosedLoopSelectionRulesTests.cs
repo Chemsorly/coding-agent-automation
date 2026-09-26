@@ -218,6 +218,16 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             IsDraft = false,
             CreatedAt = DateTime.UtcNow
         });
+        // Dispatch preparation calls GetIssueAsync with the PR identifier. On GitHub every PR is
+        // also an issue under the same number; the harness models them separately, so we must seed
+        // the issue side or orchestration returns null and the review work item is never created.
+        Fixture.IssueProvider.Issues.Add(new IssueDetail
+        {
+            Identifier = "42",
+            Title = "PR for review",
+            Description = "PR body",
+            Labels = new[] { "agent:next" }
+        });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
             Identifier = "200",
@@ -306,6 +316,16 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             Url = "https://github.com/e2e-org/e2e-repo/pull/43",
             IsDraft = false,
             CreatedAt = DateTime.UtcNow
+        });
+        // Dispatch preparation calls GetIssueAsync with the PR identifier. On GitHub every PR is
+        // also an issue under the same number; the harness models them separately, so we must seed
+        // the issue side or orchestration returns null and the review work item is never created.
+        Fixture.IssueProvider.Issues.Add(new IssueDetail
+        {
+            Identifier = "43",
+            Title = "PR for review",
+            Description = "PR body",
+            Labels = new[] { "agent:next" }
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
