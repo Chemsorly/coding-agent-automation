@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -217,6 +219,14 @@ public sealed class FakeAgentClient : IAsyncDisposable
     /// <summary>
     /// Accepts a job and reports completion with the given final step.
     /// Includes step metadata to simulate real agent behavior.
+    ///
+    /// <para>
+    /// <b>SignalR-only path:</b> this helper only sends <c>ReportJobCompleted</c> over the hub;
+    /// it does NOT post to <c>POST /api/work-items/{id}/status</c>. Use
+    /// <see cref="CompleteLikeProductionAsync"/> when the HTTP completion channel must also be
+    /// exercised (e.g. to verify the terminal label written by <c>WorkItemStatusTransitionService</c>
+    /// for <c>Failed</c> runs).
+    /// </para>
     /// </summary>
     public async Task AcceptAndCompleteJobAsync(
         string jobId,
@@ -270,6 +280,14 @@ public sealed class FakeAgentClient : IAsyncDisposable
     /// <summary>
     /// Accepts a job and reports completion with a fully custom payload.
     /// Use this for tests that need to control RetryCount, FailureReason, IsDraftPr, etc.
+    ///
+    /// <para>
+    /// <b>SignalR-only path:</b> this helper only sends <c>ReportJobCompleted</c> over the hub;
+    /// it does NOT post to <c>POST /api/work-items/{id}/status</c>. Use
+    /// <see cref="CompleteLikeProductionAsync"/> when the HTTP completion channel must also be
+    /// exercised (e.g. to verify the terminal label written by <c>WorkItemStatusTransitionService</c>
+    /// for <c>Failed</c> runs).
+    /// </para>
     /// </summary>
     public async Task AcceptAndCompleteJobWithPayloadAsync(string jobId, JobCompletionPayload payload)
     {
@@ -299,6 +317,173 @@ public sealed class FakeAgentClient : IAsyncDisposable
 
         // Report completion with the provided payload
         await _connection.InvokeAsync("ReportJobCompleted", jobId, payload);
+    }
+
+    /// <summary>
+    /// Completes a job using the same two-channel sequence as the production agent:
+    /// <list type="bullet">
+    ///   <item><c>POST /api/work-items/{id}/status</c> (HTTP primary channel)</item>
+    ///   <item><c>ReportJobCompleted</c> over SignalR (secondary channel)</item>
+    /// </list>
+    /// The ordering of the two channels is controlled by <paramref name="order"/>.
+    ///
+    /// <para>
+    /// This helper mirrors <c>HttpPrimaryCompletionReporter.ReportCompletionAsync</c>:
+    /// it uses <see cref="CompletionOutcomeResolver"/> for the status mapping, serializes the
+    /// payload into <c>WorkItemStatusUpdate.Result</c> with <c>PipelineJsonOptions.Default</c>
+    /// (so <c>ResolveFailedFinalLabel</c> can parse it), and derives the per-agent Bearer key with
+    /// the same HMAC-SHA256 formula as <c>DispatchLoop.DeriveAgentKey</c>.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Call order requirement:</b> must be called after <see cref="AcceptJobAsync"/> so that
+    /// <c>AgentJobLifecycleService.HandleJobAcceptedAsync</c> has already written the
+    /// <c>AssignedAgentId</c> to the WorkItem — otherwise <c>AuthorizeAgentForWorkItemAsync</c>
+    /// will reject the HTTP POST with 403.
+    /// </para>
+    ///
+    /// <para>
+    /// For multi-replica tests where the HTTP POST must target a different replica than the
+    /// hub connection, use the overload that accepts an explicit <c>httpServerAddress</c>.
+    /// </para>
+    /// </summary>
+    public Task CompleteLikeProductionAsync(
+        string jobId,
+        JobCompletionPayload payload,
+        CompletionOrder order = CompletionOrder.HttpThenHub,
+        CancellationToken ct = default)
+        => CompleteLikeProductionAsync(jobId, payload, httpServerAddress: null, order, ct);
+
+    /// <summary>
+    /// Completes a job using the same two-channel sequence as the production agent, with explicit
+    /// control over which server address receives the HTTP POST. This enables multi-replica tests
+    /// to route the HTTP primary channel to a different replica than the hub connection.
+    /// </summary>
+    /// <param name="jobId">The job / work-item ID.</param>
+    /// <param name="payload">The completion payload.</param>
+    /// <param name="httpServerAddress">
+    /// The base URL of the API replica that should receive the HTTP POST
+    /// (<c>POST /api/work-items/{id}/status</c>). When <c>null</c>, the replica this agent is
+    /// connected to (<see cref="_serverAddress"/>) is used — identical to the single-replica
+    /// overload.
+    /// </param>
+    /// <param name="order">Controls the sequencing of HTTP and hub calls.</param>
+    /// <param name="ct">Cancellation token.</param>
+    public async Task CompleteLikeProductionAsync(
+        string jobId,
+        JobCompletionPayload payload,
+        string? httpServerAddress,
+        CompletionOrder order = CompletionOrder.HttpThenHub,
+        CancellationToken ct = default)
+    {
+        if (_serverAddress is null || _apiKey is null || _connection is null)
+            throw new InvalidOperationException("Not connected. Call ConnectAsync before CompleteLikeProductionAsync.");
+
+        // TODO: [WARNING] Add ArgumentNullException.ThrowIfNull(jobId) and a guard for empty /
+        // malformed GUID strings here, to match the ArgumentNullException.ThrowIfNull(payload)
+        // guard below and to give callers a clear error when jobId is uninitialized. Currently
+        // Guid.Parse(jobId) throws FormatException/ArgumentNullException with no context.
+        // See review-findings.md [WARNING] DotNetSpecialist — FakeAgentClient.cs:348.
+        ArgumentNullException.ThrowIfNull(payload);
+
+        // Resolve the HTTP target: default to the replica this agent's hub connection uses.
+        var effectiveHttpAddress = httpServerAddress ?? _serverAddress;
+
+        // Step 1 — map FinalStep to terminal WorkItemStatus (same logic as HttpPrimaryCompletionReporter).
+        var (terminalStatus, _, terminalFailureReason) = CompletionOutcomeResolver.Resolve(
+            payload.FinalStep, payload.FailureReason, payload.FailureCategory, "e2e fake agent");
+
+        // Step 2 — build WorkItemStatusUpdate (mirrors the terminal update in HttpPrimaryCompletionReporter).
+        var statusString = terminalStatus switch
+        {
+            WorkItemStatus.Succeeded => "Succeeded",
+            WorkItemStatus.Cancelled => "Cancelled",
+            _ => "Failed"
+        };
+
+        var resultJson = JsonSerializer.Serialize(payload, PipelineJsonOptions.Default);
+
+        // TODO: [WARNING] FailureReason for non-Failed outcomes (Succeeded, Cancelled) should mirror
+        // HttpPrimaryCompletionReporter: persistedFailureReason = terminalFailureReason?.ToString()
+        // ?? payload.FailureCategory?.ToString(). For gate-rejected success (Succeeded +
+        // FailureCategory=GateRejected) the current code sets FailureReason=null whereas the
+        // production reporter sets it to "GateRejected". This divergence is not exercised by the
+        // current tests but would silently give a false signal to future tests relying on this field
+        // for ConflictRestart or gate-rejected success runs.
+        // See review-findings.md [WARNING] Correctness — FakeAgentClient.cs:348.
+        var persistedFailureReason = terminalFailureReason?.ToString()
+            ?? payload.FailureCategory?.ToString();
+
+        var update = new WorkItemStatusUpdate
+        {
+            Status = statusString,
+            AgentId = AgentId,
+            Result = resultJson,
+            ErrorMessage = terminalStatus == WorkItemStatus.Failed ? payload.FailureReason : null,
+            FailureReason = persistedFailureReason
+        };
+
+        // Step 3 — dispatch in the requested order.
+        switch (order)
+        {
+            case CompletionOrder.HttpThenHub:
+                await PostStatusHttpAsync(Guid.Parse(jobId), update, effectiveHttpAddress, ct);
+                await _connection.InvokeAsync(HubMethodNames.ReportJobCompleted, jobId, payload, ct);
+                break;
+
+            case CompletionOrder.HubThenHttp:
+                await _connection.InvokeAsync(HubMethodNames.ReportJobCompleted, jobId, payload, ct);
+                await PostStatusHttpAsync(Guid.Parse(jobId), update, effectiveHttpAddress, ct);
+                break;
+
+            case CompletionOrder.HttpOnly:
+                await PostStatusHttpAsync(Guid.Parse(jobId), update, effectiveHttpAddress, ct);
+                break;
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(order), order, "Unknown CompletionOrder value.");
+        }
+    }
+
+    /// <summary>
+    /// POSTs a <see cref="WorkItemStatusUpdate"/> to <c>/api/work-items/{id}/status</c>,
+    /// authenticating with the per-agent derived key (same as <c>WorkItemHttpClient</c> in K8s mode).
+    /// </summary>
+    /// <param name="workItemId">The work-item GUID.</param>
+    /// <param name="update">The status update to POST.</param>
+    /// <param name="serverAddress">
+    /// The base URL of the API replica to POST to. Allows multi-replica tests to target a
+    /// specific replica (e.g. the non-hub-owning replica) for the HTTP primary channel.
+    /// </param>
+    /// <param name="ct">Cancellation token.</param>
+    private async Task PostStatusHttpAsync(
+        Guid workItemId,
+        WorkItemStatusUpdate update,
+        string serverAddress,
+        CancellationToken ct)
+    {
+        using var http = new HttpClient { BaseAddress = new Uri(serverAddress) };
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", DeriveKey(_apiKey!, AgentId));
+
+        // JsonContent.Create with PipelineJsonOptions.Default matches exactly what
+        // WorkItemHttpClient.PostStatusAsync sends (line 173 of WorkItemHttpClient.cs).
+        var content = JsonContent.Create(update, options: PipelineJsonOptions.Default);
+        var response = await http.PostAsync(
+            $"/api/work-items/{workItemId}/status?agentId={Uri.EscapeDataString(AgentId)}",
+            content, ct);
+
+        // Throw on non-success so that a broken HTTP channel (e.g. 403 from
+        // AuthorizeAgentForWorkItemAsync when AcceptJobAsync was not called first) surfaces as a
+        // test failure rather than silently falling through to the hub path. Without this, both
+        // tests in CompleteLikeProductionTests would pass via SignalR alone even if the HTTP
+        // primary channel is completely broken, defeating the purpose of the helper.
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+            throw new HttpRequestException(
+                $"[FakeAgentClient] PostStatusHttpAsync returned {(int)response.StatusCode} for workItem={workItemId}: {body}");
+        }
     }
 
     /// <summary>
