@@ -307,6 +307,10 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             db.WorkItems.RemoveRange(db.WorkItems);
             db.PipelineRuns.RemoveRange(db.PipelineRuns);
             db.ConsolidationRuns.RemoveRange(db.ConsolidationRuns);
+            // Clear harness suggestions (stored in KeyValueStore["harness-suggestions"] by
+            // PostgresHarnessSuggestionStore). Not clearing this would let Scenario 4 leave
+            // stale suggestions visible to subsequent tests.
+            db.KeyValueStore.RemoveRange(db.KeyValueStore);
             db.SaveChanges();
         }
 

@@ -225,4 +225,13 @@ public sealed class ConsolidationPage
         if (button is null) return false;
         return await button.IsDisabledAsync();
     }
+
+    /// <summary>Clicks the Cancel button for a Pending run in the run history table by row index (0-based).</summary>
+    public async Task ClickCancelRunAsync(int rowIndex)
+    {
+        // The Cancel button uses class btn-cancel-run and is only rendered for Pending rows
+        // with a WorkItemId. Selector is scoped to the specific row by nth-child (1-based).
+        await _page.ClickAsync(
+            $".monitoring-table tbody tr:nth-child({rowIndex + 1}) button.btn-cancel-run");
+    }
 }
