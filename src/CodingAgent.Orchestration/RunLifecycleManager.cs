@@ -4,6 +4,7 @@ using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -118,7 +119,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
         _logger.Information(
             "RunLifecycleManager.FailRunAsync: run {RunId} terminal (status=Failed, issue={IssueIdentifier}, step={Step}, highWater={HighWater}, reason={Reason}, agent={AgentId})",
-            runId, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, failureReason, run.AgentId ?? "none");
+            runId, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, LogSanitizer.SanitizeForLog(failureReason), run.AgentId ?? "none");
 
         return run;
     }

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Orchestration.Health;
@@ -162,7 +163,7 @@ public sealed class ModelFetchService : IModelFetchReceiver
         }
         else
         {
-            _logger.Warning("Received FetchModelsResponse for unknown request {RequestId}", response.RequestId);
+            _logger.Warning("Received FetchModelsResponse for unknown request {RequestId}", LogSanitizer.SanitizeForLog(response.RequestId));
         }
     }
 }
