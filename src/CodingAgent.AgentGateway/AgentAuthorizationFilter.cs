@@ -258,8 +258,8 @@ public sealed class AgentAuthorizationFilter : IHubFilter
                 new KeyValuePair<string, object?>("reason", PipelineTelemetry.HubAuthRejectionReasons.JobMismatch));
             _logger.Warning(
                 "Hub method {Method} rejected — job {JobId} not assigned to agent {AgentId} (active job: {ActiveJobId})",
-                ctx.HubMethodName, jobId.Value, agent.AgentId, activeJobId ?? "none");
-            throw new HubException($"Job {jobId.Value} is not assigned to agent {agent.AgentId}");
+                ctx.HubMethodName, LogSanitizer.SanitizeForLog(jobId.Value), agent.AgentId, activeJobId ?? "none");
+            throw new HubException($"Job {LogSanitizer.SanitizeForLog(jobId.Value)} is not assigned to agent {agent.AgentId}");
         }
 
         return true;

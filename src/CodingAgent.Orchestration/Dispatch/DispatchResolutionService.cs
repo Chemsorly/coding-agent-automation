@@ -49,7 +49,8 @@ public sealed class DispatchResolutionService
         var profile = _profileResolver.Resolve(profiles, agent.Labels);
         if (profile is null)
         {
-            var labelsStr = string.Join(", ", agent.Labels);
+            // Labels are self-reported by the agent at registration.
+            var labelsStr = LogSanitizer.SanitizeForLog(string.Join(", ", agent.Labels));
             _logger.Warning("No profile matches agent {AgentId} labels [{Labels}]", agent.AgentId, labelsStr);
         }
 

@@ -25,16 +25,12 @@ public sealed partial class AgentHub
             // the log entry will show an empty string instead of a meaningful identifier. Callers should
             // ensure AgentId.Value is never null before reaching this point, or SanitizeForLog should
             // preserve a null/empty indicator rather than silently collapsing it to "".
-            // TODO: The HubException message below interpolates message.AgentId (unsanitized struct)
-            // while the log above uses SanitizeForLog. The exception is returned to the caller (not
-            // written to server logs), so log injection is not the risk here, but the inconsistency
-            // between sanitized log args and unsanitized exception message text may confuse future
-            // maintainers about the threat model. Consider applying the same sanitization or documenting
-            // why they intentionally differ.
+            // HubException messages are sanitized too: SignalR's dispatcher logs every failed hub
+            // invocation at Error with the exception attached, so the message reaches server logs.
             _logger.Warning(
                 "RegisterAgent rejected — message agentId '{MessageAgentId}' does not match query param '{QueryAgentId}'",
                 SanitizeForLog(message.AgentId.Value), SanitizeForLog(queryAgentId));
-            throw new HubException($"AgentId mismatch: message has '{message.AgentId}' but connection has '{queryAgentId}'");
+            throw new HubException($"AgentId mismatch: message has '{SanitizeForLog(message.AgentId.Value)}' but connection has '{SanitizeForLog(queryAgentId)}'");
         }
 
         // Defense-in-depth: validate authenticated identity matches registration
@@ -45,7 +41,7 @@ public sealed partial class AgentHub
             _logger.Warning(
                 "RegisterAgent rejected — authenticated as '{AuthenticatedAgentId}' but registering as '{MessageAgentId}'",
                 SanitizeForLog(authenticatedAgentId), SanitizeForLog(message.AgentId.Value));
-            throw new HubException($"AgentId mismatch: authenticated as '{authenticatedAgentId}' but registering as '{message.AgentId}'");
+            throw new HubException($"AgentId mismatch: authenticated as '{authenticatedAgentId}' but registering as '{SanitizeForLog(message.AgentId.Value)}'");
         }
 
         // If an agent with the same ID is already connected with a different connectionId,
@@ -198,7 +194,7 @@ public sealed partial class AgentHub
         {
             _logger.Warning(
                 "DeregisterAgent rejected — caller connection {ConnectionId} does not own agent {AgentId}",
-                Context.ConnectionId, agentId.Value);
+                Context.ConnectionId, SanitizeForLog(agentId.Value));
             return Task.CompletedTask;
         }
 
@@ -221,7 +217,7 @@ public sealed partial class AgentHub
         {
             _logger.Warning(
                 "AgentReady rejected — caller connection {ConnectionId} does not own agent {AgentId}",
-                Context.ConnectionId, agentId.Value);
+                Context.ConnectionId, SanitizeForLog(agentId.Value));
             return Task.CompletedTask;
         }
 

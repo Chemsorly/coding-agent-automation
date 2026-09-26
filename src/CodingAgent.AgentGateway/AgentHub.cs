@@ -175,15 +175,9 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
         if (callerAgent is null || !string.Equals(callerAgent.AgentId.Value, message.AgentId.Value, StringComparison.Ordinal))
         {
-            // TODO: message.AgentId.Value is logged here as a raw string. If AgentId.Value is null,
-            // this logs a null literal rather than the struct's ToString() representation (which the
-            // original code used). This is a minor semantic change from the refactor — the struct's
-            // ToString() would have returned a meaningful fallback string, while .Value logs null.
-            // Consider using SanitizeForLog(message.AgentId.Value) or message.AgentId.ToString()
-            // for consistent null-safe log output.
             _logger.Warning(
                 "Heartbeat rejected — caller connection {ConnectionId} does not own agent {AgentId}",
-                Context.ConnectionId, message.AgentId.Value);
+                Context.ConnectionId, SanitizeForLog(message.AgentId.Value));
             return Task.CompletedTask;
         }
 

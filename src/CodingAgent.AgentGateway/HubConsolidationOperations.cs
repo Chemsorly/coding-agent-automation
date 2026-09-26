@@ -83,6 +83,8 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
     {
         ArgumentNullException.ThrowIfNull(result);
 
+        // result.JobId is agent-supplied and the hub only validates it when the agent has an active job.
+        var sanitizedJobId = LogSanitizer.SanitizeForLog(result.JobId);
         var debugInfo = $"agentFound={agent is not null}, agentId={agent?.AgentId ?? "NULL"}, activeJobId={agent?.ActiveJobId ?? "NULL"}";
         _logger.Debug("HubConsolidationOperations.HandleConsolidationComplete ENTRY: {DebugInfo}", debugInfo);
 
@@ -109,11 +111,11 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
             await _consolidationService.UpdateRunAsync(result.JobId, status, summary, ct, totalTokens);
-            _logger.Information("Consolidation run {JobId} UpdateRunAsync completed in {ElapsedMs}ms", result.JobId, sw.ElapsedMilliseconds);
+            _logger.Information("Consolidation run {JobId} UpdateRunAsync completed in {ElapsedMs}ms", sanitizedJobId, sw.ElapsedMilliseconds);
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Failed to update consolidation run {JobId} status", result.JobId);
+            _logger.Error(ex, "Failed to update consolidation run {JobId} status", sanitizedJobId);
         }
 
         if (result.HarnessSuggestions is not null)
@@ -122,12 +124,12 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 await _consolidationService.SaveHarnessSuggestionsAsync(result.HarnessSuggestions, ct);
-                _logger.Information("Consolidation run {JobId} SaveHarnessSuggestionsAsync completed in {ElapsedMs}ms", result.JobId, sw.ElapsedMilliseconds);
+                _logger.Information("Consolidation run {JobId} SaveHarnessSuggestionsAsync completed in {ElapsedMs}ms", sanitizedJobId, sw.ElapsedMilliseconds);
                 _badgeService.IncrementBy(result.HarnessSuggestions.Suggestions.Count);
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Failed to persist harness suggestions for consolidation job {JobId}", result.JobId);
+                _logger.Error(ex, "Failed to persist harness suggestions for consolidation job {JobId}", sanitizedJobId);
             }
         }
 
@@ -135,7 +137,7 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
         {
             _badgeService.IncrementBy(result.CreatedIssues.Count);
             _logger.Information("Refactoring consolidation job {JobId} created {Count} issue(s)",
-                result.JobId, result.CreatedIssues.Count);
+                sanitizedJobId, result.CreatedIssues.Count);
         }
 
         return debugInfo;
