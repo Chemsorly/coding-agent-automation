@@ -44,7 +44,7 @@ public class BrainConsolidationExecutorTests
             .Setup(x => x.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockBrainProvider
-            .Setup(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), "main", It.IsAny<CancellationToken>()))
+            .Setup(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), (BranchName)"main", It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         _mockAgentProvider
@@ -65,7 +65,7 @@ public class BrainConsolidationExecutorTests
 
         _mockBrainProvider.Verify(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()), Times.Once);
         _mockBrainProvider.Verify(x => x.CommitAllAsync(It.IsAny<WorkspacePath>(), It.Is<string>(m => m.Contains(job.JobId)), It.IsAny<CancellationToken>()), Times.Once);
-        _mockBrainProvider.Verify(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), "main", It.IsAny<CancellationToken>()), Times.Once);
+        _mockBrainProvider.Verify(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), (BranchName)"main", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -83,7 +83,7 @@ public class BrainConsolidationExecutorTests
             .Setup(x => x.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockBrainProvider
-            .Setup(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), "main", It.IsAny<CancellationToken>()))
+            .Setup(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), (BranchName)"main", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("non-fast-forward: push rejected"));
 
         _mockAgentProvider
@@ -132,7 +132,7 @@ public class BrainConsolidationExecutorTests
 
         // Should NOT attempt commit or push when agent fails
         _mockBrainProvider.Verify(x => x.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        _mockBrainProvider.Verify(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockBrainProvider.Verify(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

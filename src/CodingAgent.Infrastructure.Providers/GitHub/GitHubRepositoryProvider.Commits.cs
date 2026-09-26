@@ -27,16 +27,16 @@ public partial class GitHubRepositoryProvider
 
     // Requires a live git remote — not unit-testable; core retry logic covered via PushWithTokenFactory tests.
     [ExcludeFromCodeCoverage]
-    public Task PushBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct)
+    public Task PushBranchAsync(WorkspacePath workspacePath, BranchName branchName, CancellationToken ct)
         => PushBranchAsync(workspacePath, branchName, forcePush: false, ct);
 
     // Token factory passed so each Polly retry fetches a fresh GitHub App installation token
     // (tokens expire after 1h; long pipeline runs exceed that window).
     [ExcludeFromCodeCoverage]
-    public Task PushBranchAsync(WorkspacePath workspacePath, string branchName, bool forcePush, CancellationToken ct)
+    public Task PushBranchAsync(WorkspacePath workspacePath, BranchName branchName, bool forcePush, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
-        ArgumentNullException.ThrowIfNull(branchName);
+        ArgumentException.ThrowIfNullOrEmpty(branchName.Value);
 
         return Task.Run(() =>
             RepositoryGitOperations.Push(workspacePath, branchName, forcePush,

@@ -96,18 +96,18 @@ public partial class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryP
         }, ct);
     }
 
-    public Task<string> CreateBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct)
+    public Task<string> CreateBranchAsync(WorkspacePath workspacePath, BranchName branchName, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
-        ArgumentNullException.ThrowIfNull(branchName);
+        ArgumentException.ThrowIfNullOrEmpty(branchName.Value);
 
         return Task.Run(() => RepositoryGitOperations.CreateBranch(workspacePath, branchName), ct);
     }
 
-    public Task CheckoutRemoteBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct)
+    public Task CheckoutRemoteBranchAsync(WorkspacePath workspacePath, BranchName branchName, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
-        ArgumentNullException.ThrowIfNull(branchName);
+        ArgumentException.ThrowIfNullOrEmpty(branchName.Value);
 
         return Task.Run(() => RepositoryGitOperations.CheckoutRemoteBranch(workspacePath, branchName), ct);
     }

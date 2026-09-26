@@ -42,7 +42,7 @@ public class BrainConsolidationExecutorReviewTests : IDisposable
             .Callback(() => _callOrder.Add("commit"))
             .Returns(Task.CompletedTask);
         _mockBrainProvider
-            .Setup(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
             .Callback(() => _callOrder.Add("push"))
             .Returns(Task.CompletedTask);
     }
@@ -174,7 +174,7 @@ public class BrainConsolidationExecutorReviewTests : IDisposable
         _mockAgentProvider.Verify(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(2));
         // Commit and push still happen
         _mockBrainProvider.Verify(x => x.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
-        _mockBrainProvider.Verify(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), "main", It.IsAny<CancellationToken>()), Times.Once);
+        _mockBrainProvider.Verify(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), (BranchName)"main", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -208,7 +208,7 @@ public class BrainConsolidationExecutorReviewTests : IDisposable
         _mockAgentProvider.Verify(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(2));
         // Commit and push still proceed
         _mockBrainProvider.Verify(x => x.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
-        _mockBrainProvider.Verify(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), "main", It.IsAny<CancellationToken>()), Times.Once);
+        _mockBrainProvider.Verify(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), (BranchName)"main", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -290,7 +290,7 @@ public class BrainConsolidationExecutorReviewTests : IDisposable
         // Note: diff summary is still called because it's separate from the review helper
         // But the review helper itself is skipped when disabled
         _mockBrainProvider.Verify(x => x.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
-        _mockBrainProvider.Verify(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), "main", It.IsAny<CancellationToken>()), Times.Once);
+        _mockBrainProvider.Verify(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), (BranchName)"main", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
