@@ -23,4 +23,8 @@ public sealed class IssueDetail
     /// <summary>Web URL of the issue on the provider (e.g. GitHub HtmlUrl / GitLab WebUrl), or null if unknown.</summary>
     [Key(5)]
     public string? Url { get; init; }
+
+    /// <summary>Issue creation date, used for FIFO ordering in the pipeline loop.</summary>
+    [Key(6)]
+    public DateTime? CreatedAt { get; init; }
 }

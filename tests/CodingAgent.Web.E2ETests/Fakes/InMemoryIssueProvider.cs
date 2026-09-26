@@ -78,7 +78,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
         var paged = filtered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
         return Task.FromResult(new PagedResult<IssueSummary>
         {
-            Items = paged.Select(i => new IssueSummary { Identifier = i.Identifier, Title = i.Title, Labels = i.Labels, Description = i.Description }).ToList(),
+            Items = paged.Select(i => new IssueSummary { Identifier = i.Identifier, Title = i.Title, Labels = i.Labels, Description = i.Description, CreatedAt = i.CreatedAt }).ToList(),
             Page = page,
             PageSize = pageSize,
             HasMore = filtered.Count > page * pageSize
@@ -141,6 +141,12 @@ public sealed class InMemoryIssueProvider : IIssueProvider
             var existing = Issues[idx];
             var updated = new HashSet<string>(existing.Labels);
             updated.UnionWith(labels);
+            // TODO [WARNING]: CreatedAt is not propagated here. If the loop's dispatch path calls
+            // AddLabelsAsync (e.g. to swap agent:next → agent:in-progress) on an issue that was
+            // seeded with a CreatedAt value, the rebuilt IssueDetail has CreatedAt=null. On the next
+            // ListOpenIssuesAsync call the summary will carry a null CreatedAt, which SortByCreatedAtFifo
+            // treats as DateTime.MaxValue, silently breaking FIFO ordering for mutated issues in
+            // multi-cycle tests. Fix: add CreatedAt = existing.CreatedAt to the initializer below.
             Issues[idx] = new IssueDetail
             {
                 Description = existing.Description,
@@ -163,6 +169,8 @@ public sealed class InMemoryIssueProvider : IIssueProvider
         {
             var existing = Issues[idx];
             var updatedLabels = existing.Labels.Where(l => l != label).ToList();
+            // TODO [WARNING]: CreatedAt is not propagated here either (same issue as AddLabelsAsync above).
+            // Fix: add CreatedAt = existing.CreatedAt to the initializer below.
             Issues[idx] = new IssueDetail
             {
                 Description = existing.Description,

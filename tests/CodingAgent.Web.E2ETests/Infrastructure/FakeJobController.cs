@@ -42,27 +42,19 @@ public sealed class FakeJobController : IAsyncDisposable
     private readonly Task _loop;
 
     /// <summary>
-    /// Lock that protects <see cref="_claimedWorkItemIds"/>. Both the background poll loop
-    /// (<c>DispatchOnceAsync</c>) and the test thread read/write this list concurrently, so all
-    /// mutations must hold this lock.
+    /// Work item ids this controller has claimed, for test assertions.
+    /// ConcurrentBag is used because the background poll loop (running on a thread-pool thread)
+    /// calls Add() concurrently with test code reading the collection. A plain List&lt;Guid&gt;
+    /// would produce a data race: concurrent Add + enumeration can throw InvalidOperationException
+    /// or silently undercount.
     /// </summary>
-    private readonly object _claimedLock = new();
-
-    /// <summary>Backing store for <see cref="ClaimedWorkItemIds"/>. Always access under <see cref="_claimedLock"/>.</summary>
-    private readonly List<Guid> _claimedWorkItemIds = [];
+    public ConcurrentBag<Guid> ClaimedWorkItemIds { get; } = [];
 
     /// <summary>
-    /// Work item ids this controller has claimed, in claim order, for test assertions.
-    /// Returns a snapshot of the list taken under a lock, so callers on the test thread
-    /// never observe a torn or concurrently-mutated list.
+    /// Clears ClaimedWorkItemIds between tests. Must be called from ResetAll() so assertions
+    /// in each test start from a clean slate rather than accumulating across the fixture lifetime.
     /// </summary>
-    public IReadOnlyList<Guid> ClaimedWorkItemIds
-    {
-        get { lock (_claimedLock) { return _claimedWorkItemIds.ToList(); } }
-    }
-
-    /// <summary>Appends a claimed work item id under the lock. Called from the poll loop.</summary>
-    private void TrackClaimed(Guid id) { lock (_claimedLock) { _claimedWorkItemIds.Add(id); } }
+    internal void ClearClaimedWorkItemIds() => ClaimedWorkItemIds.Clear();
 
     public FakeJobController(
         IPipelineApiWorkItemClient workItems,
@@ -133,7 +125,7 @@ public sealed class FakeJobController : IAsyncDisposable
             // null means another claimant won the race (409). Leave it alone.
             if (claim is null) continue;
 
-            TrackClaimed(item.Id);
+            ClaimedWorkItemIds.Add(item.Id);
             _inFlight[item.Id] = agent.AgentId.Value;
 
             // The in-progress label, exactly as DispatchLoop posts it once the Job exists. It is
@@ -172,7 +164,7 @@ public sealed class FakeJobController : IAsyncDisposable
             // Track in-flight before calling StartAssignedWorkItemAsync so concurrent poll
             // iterations don't also try to bootstrap the same item.
             if (!_inFlight.TryAdd(item.Id, agent.AgentId.Value)) continue;
-            TrackClaimed(item.Id);
+            ClaimedWorkItemIds.Add(item.Id);
 
             // Set AssignedAgentId directly on the WorkItem so AuthorizeAgentForWorkItemAsync
             // allows the agent's derived-key request to GET /assignment.
@@ -296,13 +288,6 @@ public sealed class FakeJobController : IAsyncDisposable
         _goneSince.Clear();
         DisconnectGracePeriod = DefaultDisconnectGracePeriod;
     }
-
-    /// <summary>
-    /// Clears the claimed-work-item history. Called between tests so that index-based assertions
-    /// on <see cref="ClaimedWorkItemIds"/> (e.g. <c>[0]</c> is the first claim in <em>this</em>
-    /// test) are not polluted by claims from earlier tests in the shared fixture.
-    /// </summary>
-    internal void ClearClaimed() { lock (_claimedLock) { _claimedWorkItemIds.Clear(); } }
 
     /// <summary>
     /// Picks an idle agent whose labels satisfy the selector. The real controller matches a
