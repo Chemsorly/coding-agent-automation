@@ -272,7 +272,7 @@
                                 </select>
                                 <button class="btn-icon" disabled="@(index == 0)" @onclick="() => MoveTemplateUp(index)" title="Move up">▲</button>
                                 <button class="btn-icon" disabled="@(index == _project.TemplateIds.Count - 1)" @onclick="() => MoveTemplateDown(index)" title="Move down">▼</button>
-                                <button class="btn-icon btn-danger" @onclick="() => RemoveTemplate(index)" title="Remove">✕</button>
+                                <button class="btn-icon btn-icon-danger" @onclick="() => RemoveTemplate(index)" title="Remove">✕</button>
                             </div>
                         </div>
                     }

@@ -1076,4 +1076,31 @@ public class RunsPageComponentTests : BunitContext
         checkbox.GetAttribute("aria-label").Should().Be("Feedback only",
             "the Feedback only checkbox must carry aria-label='Feedback only' for assistive technology");
     }
+
+    // ── Terminal-like final steps ─────────────────────────────────────────────
+
+    /// <summary>
+    /// A conflict-restarted run used to fall through to "Running" (the switch default); restarted, merged
+    /// and closed runs must show the same outcome badge as the Run page.
+    /// </summary>
+    [Fact]
+    public void RunsTable_TerminalLikeSteps_ShowOutcomeBadges_NotRunning()
+    {
+        _mockRunHistory
+            .Setup(c => c.GetRunHistoryAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(OnePage(
+                MakeSummary("r1", PipelineStep.ConflictRestart, issueIdentifier: "1"),
+                MakeSummary("r2", PipelineStep.PrMerged, issueIdentifier: "2"),
+                MakeSummary("r3", PipelineStep.PrClosed, issueIdentifier: "3")));
+
+        var cut = Render<Runs>();
+
+        var badges = cut.FindAll(".monitoring-table tbody .step-badge")
+            .Select(b => (Text: b.TextContent.Trim(), Class: b.ClassName))
+            .ToList();
+        badges.Select(b => b.Text).Should().BeEquivalentTo(["Restarted", "Merged", "Closed"]);
+        badges.Should().NotContain(b => b.Class!.Contains("step-running"));
+    }
 }

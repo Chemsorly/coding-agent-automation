@@ -19,13 +19,16 @@
     --subtle-bg: #FAFBFC;
     --text: #0F1320;
     --text-muted: #59606E;
-    --text-faint: #8B92A0;
+    --text-faint: #677080;   /* ≥4.5:1 on every surface — it labels small uppercase text */
     --accent: #5B5BD6;
     --accent-light: #4B49CB;
+    --accent-fill: #5B5BD6;        /* filled buttons/badges with white text (≥4.5:1) */
+    --accent-fill-hover: #4B49CB;
     --nav-active-fg: #3F3AC0;
-    --success: #15803D;
-    --error: #DC2626;
-    --warning: #B45309;
+    /* Status colours are also used as text on their own tinted backgrounds (badges, pills) — keep ≥4.5:1 there. */
+    --success: #137A3A;
+    --error: #C81E1E;
+    --warning: #AD4F08;
     --border: #E8EAEF;
     --hairline: #F0F1F4;
     --ctl-border: #DADDE4;
@@ -42,6 +45,9 @@
     --bg-active: #ECECFB;
     --bg-active-alt: #F1ECFD;
     --brand-shadow: rgba(91, 91, 214, .30);
+
+    /* The one monospace stack for IDs, logs, code and data cells. */
+    --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
     font-family: 'Manrope', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
     color: var(--text);
@@ -61,9 +67,12 @@
     --subtle-bg: #1E1F28;
     --text: #E9EAF1;
     --text-muted: #A2A8B6;
-    --text-faint: #6E7484;
+    --text-faint: #858B9B;
     --accent: #8385F0;
     --accent-light: #A6A7F6;
+    /* --accent is light for text on dark surfaces; white text needs a deeper fill. */
+    --accent-fill: #5B5BD6;
+    --accent-fill-hover: #6262DB;
     --nav-active-fg: #C3C3FA;
     --success: #34D399;
     --error: #F87171;
@@ -85,8 +94,20 @@
     --brand-shadow: rgba(131, 133, 240, .35);
 }
 
+/* Native widgets (scrollbars, checkboxes, file inputs, select pop-ups) follow the app theme,
+   not the OS one — without this they render light inside the dark theme. */
+[data-theme="dark"] { color-scheme: dark; }
+[data-theme="light"] { color-scheme: light; }
+
+/* Form controls don't inherit the page font by default (browsers fall back to e.g. Arial), and code
+   elements use the browser's monospace. :where() keeps specificity at zero, so any class that sets
+   its own font still wins. */
+:where(.cockpit) :where(button, input, select, textarea, optgroup) { font-family: inherit; }
+:where(.cockpit) :where(code, kbd, samp, pre) { font-family: var(--font-mono); }
+:where(.cockpit) :where(input[type="checkbox"], input[type="radio"]) { accent-color: var(--accent-fill); }
+
 .cockpit .mono {
-    font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
 }
 
 /* ---- Base link color for the cockpit shell --------------------------------- */
@@ -417,7 +438,7 @@
 /* ---- Run page: live trace log --------------------------------------------- */
 .run-live-log {
     max-height: 380px; overflow: auto; margin: 0;
-    font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 12px; line-height: 1.55; color: var(--text);
     background: var(--subtle-bg); border: 1px solid var(--border); border-radius: 10px;
     padding: 12px 14px; white-space: pre-wrap; word-break: break-word;
@@ -481,7 +502,7 @@
 .cockpit .monitoring-table thead th.sort-active { color: var(--nav-active-fg); }
 
 /* Sort direction arrow. */
-.cockpit .sort-indicator { font-size: 0.8em; opacity: 0.75; }
+.cockpit .sort-indicator { font-size: 0.8em; opacity: 0.85; }
 
 /* Column filter select — compact, inline below the sort button. */
 .cockpit .monitoring-table thead th .column-filter {
@@ -501,11 +522,12 @@
 
 /* Links cell: prevent row click propagation visually; flex layout for icon links. */
 .cockpit .runs-links-cell { display: flex; align-items: center; gap: 5px; overflow: visible; white-space: nowrap; }
-/* TODO: text-overflow: ellipsis on a flex container does not truncate flex item text — it only applies to block
-   elements with overflow: hidden and white-space: nowrap. Child <span> or <a> elements inside .fleet-work-cell
-   that contain long text need their own overflow: hidden; text-overflow: ellipsis; min-width: 0; white-space: nowrap
-   for ellipsis to appear. The current rule may not visually truncate the active issue title in the summary row. */
-.cockpit .fleet-work-cell { display: flex; align-items: center; gap: 5px; overflow: hidden; white-space: nowrap; max-width: 300px; text-overflow: ellipsis; }
+/* Fleet "Active work" cell: the <td> stays a table cell; the chips sit in an inner flex row. Only the issue
+   chip's title shrinks (with an ellipsis) — the Run and PR chips always stay visible and clickable. */
+.cockpit .fleet-work-links { display: flex; align-items: center; gap: 5px; min-width: 0; white-space: nowrap; }
+.cockpit .fleet-work-links > .runs-link { flex-shrink: 0; }
+.cockpit .fleet-work-links > .fleet-work-issue { flex-shrink: 1; min-width: 0; overflow: hidden; }
+.cockpit .fleet-work-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .cockpit .runs-link {
     display: inline-flex;
     align-items: center;
@@ -523,6 +545,22 @@
 .cockpit .runs-link:hover { background: var(--bg-active); color: var(--nav-active-fg); }
 .cockpit .runs-link-pr { color: var(--success); }
 .cockpit .runs-link-pr:hover { background: var(--success-bg); color: var(--success); }
+
+/* ---- Tables that must fit their card at 1440px ------------------------------ */
+/* .monitoring-table cells are nowrap, and in auto table layout "overflow: hidden; text-overflow: ellipsis"
+   on a <td> does not stop long text from widening the column — the tables scrolled sideways and hid their
+   action buttons. */
+
+/* Work in-flight / queue: the issue column takes the remaining width and truncates (max-width: 0 stops its
+   text from counting towards the column width), so Cancel/Remove stay in view. */
+.cockpit .work-table td:first-child { width: 100%; max-width: 0; }
+
+/* Pipelines templates: template and provider names are long repo slugs — wrap them instead. */
+.cockpit .template-table td:nth-child(-n+5) { white-space: normal; overflow-wrap: anywhere; min-width: 120px; }
+.cockpit .template-table .feature-badge-bar { flex-wrap: wrap; }
+
+/* Settings lists (profiles, quality gates, reviewers): wrap every cell except the actions column. */
+.cockpit .settings-section .monitoring-table td:not(:last-child) { white-space: normal; overflow-wrap: anywhere; }
 
 /* ---- Settings re-shell (scoped tweaks so it sits cleanly in the new frame) -- */
 .cockpit .settings-page { padding: 0; height: auto; }
@@ -633,12 +671,18 @@
     .cockpit-theme-toggle span { display: none; }
     .cockpit-nav-link { justify-content: center; gap: 0; padding: 11px; }
     .cockpit-brand { justify-content: center; padding: 12px; }
+    /* Health: dots only in the 60px rail (each dot's title names the service). */
+    .cockpit-sidebar .sidebar-health-title,
+    .cockpit-sidebar .sidebar-health-label { display: none; }
+    .cockpit-sidebar .sidebar-health { padding: 8px 4px; }
+    .cockpit-sidebar .sidebar-health-item { justify-content: center; }
 }
 
 /* ---- Breakpoint 2 — Tablet top bar (≤768px) ---- */
 @media (max-width: 768px) {
-    .cockpit-search { display: none; }
-    .cockpit-project-switcher { display: none; }
+    /* The project scope stays reachable: the switcher shrinks and truncates instead of disappearing. */
+    .cockpit-project-switcher { min-width: 0; max-width: 220px; flex: 0 1 auto; }
+    .cockpit-project-switcher select { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
     .cockpit-topbar { padding: 0 14px; gap: 10px; }
 }
 
@@ -665,6 +709,10 @@
     .cockpit-sidebar.is-open .cockpit-nav-link { justify-content: flex-start; gap: 11px; padding: 9px 11px; }
     .cockpit-sidebar.is-open .cockpit-brand { justify-content: flex-start; padding: 12px 18px; }
     .cockpit-sidebar.is-open .cockpit-theme-toggle span { display: inline; }
+    .cockpit-sidebar.is-open .sidebar-health-title { display: block; }
+    .cockpit-sidebar.is-open .sidebar-health-label { display: inline; }
+    .cockpit-sidebar.is-open .sidebar-health { padding: 12px 16px 8px; }
+    .cockpit-sidebar.is-open .sidebar-health-item { justify-content: flex-start; }
 
     /* Show hamburger button and backdrop */
     .cockpit-hamburger { display: inline-flex; }
