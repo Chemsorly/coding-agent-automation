@@ -118,12 +118,12 @@ public class GitHubIssueProviderWireMockTests : WireMockTestBase
         await using var provider = CreateProvider();
         await provider.RemoveLabelAsync("42", "bug", CancellationToken.None);
 
-        #pragma warning disable CS8602 // WireMock ILogEntry.RequestMessage is always populated
+#pragma warning disable CS8602 // WireMock ILogEntry.RequestMessage is always populated
         Server.LogEntries.Should().Contain(e =>
             e.RequestMessage.Method == "DELETE" &&
             e.RequestMessage.Path != null &&
             e.RequestMessage.Path.Contains("/labels/bug"));
-        #pragma warning restore CS8602
+#pragma warning restore CS8602
     }
 
     [Fact]
