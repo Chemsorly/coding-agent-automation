@@ -186,7 +186,10 @@ public sealed class HubConnectionManagerDeriveKeyTests
     }
 
     /// <summary>
-    /// Verifies the security invariant: a work-item pod (holding only its pre-derived key)
+    /// Verifies the security invariant: a work-item pod holding only its pre-derived key
+    /// HMAC(master, podA) cannot forge the credential for any other pod, because computing
+    /// HMAC(master, podB) requires the master key which is never distributed to pods.
+    /// </summary>
     [Fact]
     public void PreDerivedKey_CannotBeUsedToImpersonateDifferentPod()
     {
