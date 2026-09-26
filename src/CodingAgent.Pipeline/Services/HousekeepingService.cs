@@ -231,7 +231,7 @@ public sealed class HousekeepingService : IHousekeepingService
 
         // ── Step 3: Evict resolved in-flight entries ──────────────────────────
         EvictInFlightSlots(inFlight, currentPrNumbers, mergeabilityMap,
-            repoProviderId, repoTag, now);
+            repoProviderId, repoTag, now, triggerCooldown);
 
         // ── Step 4: Get active run branches (for rework exclusion) ───────────
         var (activeRunBranches, activeRunBranchesUnavailable) = await FetchActiveRunBranchesAsync(ct);
@@ -462,7 +462,8 @@ public sealed class HousekeepingService : IHousekeepingService
         IReadOnlyDictionary<int, PrMergeabilityStatus> mergeabilityMap,
         string repoProviderId,
         KeyValuePair<string, object?> repoTag,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        TimeSpan triggerCooldown)
     {
         foreach (var prNumber in inFlight.ToList())
         {
@@ -476,7 +477,27 @@ public sealed class HousekeepingService : IHousekeepingService
             {
                 var status = mergeabilityMap[prNumber];
 
-                if (status != PrMergeabilityStatus.Blocked && status != PrMergeabilityStatus.Unknown)
+                // Evict if status is actionable (not Blocked/Unknown), OR if the PR has been
+                // in-flight longer than the trigger cooldown with a Blocked status.
+                //
+                // The Blocked-timeout case handles the "failed-CI deadlock": GitHub returns
+                // "blocked" for both "CI still running" and "CI finished but failed". Without a
+                // timeout, a failed required-CI run keeps the concurrency slot occupied until
+                // the next main push — potentially hours (observed: 2h30m blind spot, Sep 2026).
+                //
+                // Unknown is deliberately excluded from the timeout: Unknown means "still
+                // computing" (GitHub lazy mergeability), which resolves within seconds. Evicting
+                // Unknown early would prematurely free the slot mid-computation.
+                var lastTriggered = _lastTriggeredAt.GetValueOrDefault((repoProviderId, prNumber), DateTimeOffset.MinValue);
+                // Note: DateTimeOffset.MinValue is a safe defensive default — every inFlight.Add
+                // in SelectAndTriggerBranchUpdatesAsync is paired with a _lastTriggeredAt write,
+                // so this fallback is unreachable in production. If reached (e.g. via a future
+                // refactor), now - MinValue >> any cooldown → instant eviction of the orphaned entry.
+                var blockedCooldownExpired = status == PrMergeabilityStatus.Blocked
+                                            && (now - lastTriggered) >= triggerCooldown;
+
+                if ((status != PrMergeabilityStatus.Blocked && status != PrMergeabilityStatus.Unknown)
+                    || blockedCooldownExpired)
                 {
                     inFlight.Remove(prNumber);
                     PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);

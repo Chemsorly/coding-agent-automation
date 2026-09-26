@@ -152,7 +152,7 @@ public partial class AgentPhaseExecutor
                 run.RunId, agents.Count, context.AgentProvider.ProviderType);
         }
 
-        var orchestrator = new CodeReviewOrchestrator(_logger, _meterFactory);
+        var orchestrator = new CodeReviewOrchestrator(_logger);
         await orchestrator.RunReviewLoopAsync(context, agents, maxIterations, skipFixPrompt, useParallel, ct);
 
         run.CodeReviewIterationInProgress = 0;

@@ -50,26 +50,34 @@ public sealed partial class AgentHub
 
         // If an agent with the same ID is already connected with a different connectionId,
         // force-disconnect the old connection before re-registering.
-        // Exception: when the reconnecting agent carries no ActiveJob but the existing registry
-        // entry has one, this is a mid-run kiro-cli sub-process restart — the old connection is
-        // still being used by the running pipeline's OrchestratorProxy. Killing it here severs all
-        // subsequent hub calls (RequestGetIssue, etc.) on that connection without any server-side
-        // error log. Skip ForceDisconnect to preserve the pipeline connection.
-        // A pod replacement always arrives with an ActiveJob (the new pod knows its assignment), so
-        // the (message.ActiveJob is not null) case continues to trigger ForceDisconnect as before.
-        // TODO: [WARNING] The guard relies on the convention that pod replacements always supply
-        // ActiveJob, but this is unenforced. If a replacement pod re-registers with message.ActiveJob
-        // == null while existingEntry.ActiveJobId is still set (e.g. the new pod has not yet been
-        // assigned a job), the guard will suppress ForceDisconnect. The new connection takes
-        // ownership in the registry, but the old connection is left alive. A secondary signal
-        // (run ownership, pod identity from hostname, or a dedicated replacement flag) would make
-        // this distinction explicit and verifiable rather than relying on an implicit contract.
+        // Exception: when the reconnecting agent has the SAME hostname as the existing entry
+        // (i.e. it is the same pod) and carries no ActiveJob while the existing entry has one,
+        // this is a mid-run kiro-cli sub-process restart — the old connection is still being used
+        // by the running pipeline's OrchestratorProxy. Killing it here severs all subsequent hub
+        // calls (RequestGetIssue, etc.) on that connection without any server-side error log.
+        // Skip ForceDisconnect to preserve the pipeline connection.
+        // A different hostname unambiguously identifies a new pod (pod replacement), regardless of
+        // whether message.ActiveJob is null — the new pod may not yet have a job assignment at
+        // registration time. In that case the guard does NOT skip ForceDisconnect: a new pod must
+        // always evict the stale connection of the old pod it is replacing.
         var existingEntry = _facade.GetByAgentId(message.AgentId);
         var preserveExistingConnectionId = false;
         if (existingEntry is not null && existingEntry.ConnectionId != Context.ConnectionId
             && existingEntry.Status != AgentStatus.Disconnected)
         {
-            if (message.ActiveJob is null && existingEntry.ActiveJobId is not null)
+            // TODO: [WARNING] Null-hostname mixed-deployment risk: `AgentRegistrationMessage.Hostname`
+            // is declared `required` but MessagePack does NOT enforce `required` at deserialization —
+            // an older agent binary that does not send Key(1) will produce a null `message.Hostname`.
+            // Likewise, `existingEntry.Hostname` may be null if the entry was persisted by a pre-fix
+            // registration. A null hostname on either side means pod identity cannot be confirmed —
+            // treat as "different pod" and fall through to ForceDisconnect. The null-safe comparison
+            // (`is not null` guards on both sides) prevents `null == null` from evaluating to `true`
+            // and reintroducing the original bug under mixed-deployment or pre-fix registry state.
+            if (message.ActiveJob is null
+                && existingEntry.ActiveJobId is not null
+                && message.Hostname is not null
+                && existingEntry.Hostname is not null
+                && message.Hostname == existingEntry.Hostname)
             {
                 // Mid-run kiro-cli reconnect: preserve the active pipeline connection.
                 // Setting preserveExistingConnectionId=true keeps the old connection ID in
