@@ -93,15 +93,25 @@ public sealed class ConsolidationServiceEvictionTests : IDisposable
         }
     }
 
-    private ConsolidationService CreateSut() => new(new ConsolidationServiceDependencies(
-        _logger,
-        _config,
-        _mockProjectStore.Object,
-        _mockRunHistory.Object,
-        _mockRunStore.Object,
-        new Mock<IHarnessSuggestionStore>().Object,
-        new Mock<IProviderConfigStore>().Object,
-        WorkspaceManager: new ConsolidationWorkspaceManager(_logger, _config)));
+    private ConsolidationService CreateSut()
+    {
+        // WorkDistributor returns success so TriggerAsync creates a Pending run.
+        var mockWorkDistributor = new Mock<IWorkDistributor>();
+        mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-eviction-test", ErrorMessage: null));
+
+        return new ConsolidationService(new ConsolidationServiceDependencies(
+            _logger,
+            _config,
+            _mockProjectStore.Object,
+            _mockRunHistory.Object,
+            _mockRunStore.Object,
+            new Mock<IHarnessSuggestionStore>().Object,
+            new Mock<IProviderConfigStore>().Object,
+            WorkspaceManager: new ConsolidationWorkspaceManager(_logger, _config),
+            WorkDistributor: mockWorkDistributor.Object));
+    }
 
     /// <summary>
     /// Seeds the first run into _runningRuns by triggering it normally, then configures
@@ -148,10 +158,10 @@ public sealed class ConsolidationServiceEvictionTests : IDisposable
         // Act: second trigger for same (type, templateId)
         var second = await sut.TriggerAsync(RunType, TemplateId, CancellationToken.None);
 
-        // Assert: eviction path allowed the new run through (starts as Queued in K8s mode)
+        // Assert: eviction path allowed the new run through (starts as Pending)
         second.Should().NotBeNull(
             "stale Succeeded entry must be evicted so the new run is accepted");
-        second!.Status.Should().Be(ConsolidationRunStatus.Queued);
+        second!.Status.Should().Be(ConsolidationRunStatus.Pending);
     }
 
     [Fact]
@@ -201,17 +211,17 @@ public sealed class ConsolidationServiceEvictionTests : IDisposable
     }
 
     [Fact]
-    public async Task TriggerAsync_StaleEntryStillQueuedInStore_NotEvicted_ReturnsNull()
+    public async Task TriggerAsync_StaleEntryStillPendingInStore_NotEvicted_ReturnsNull()
     {
-        // Arrange: entry is Queued in store — also not terminal, must not be evicted
-        var (sut, _) = await SeedStaleEntryAsync(ConsolidationRunStatus.Queued);
+        // Arrange: entry is Pending in store — also not terminal, must not be evicted
+        var (sut, _) = await SeedStaleEntryAsync(ConsolidationRunStatus.Pending);
 
         // Act
         var second = await sut.TriggerAsync(RunType, TemplateId, CancellationToken.None);
 
         // Assert
         second.Should().BeNull(
-            "a Queued entry (not terminal) must not be evicted");
+            "a Pending entry (not terminal) must not be evicted");
     }
 
     #endregion

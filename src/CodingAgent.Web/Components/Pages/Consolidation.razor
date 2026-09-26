@@ -9,7 +9,6 @@
 @using CodingAgent.Web.Services
 @using Serilog
 @inject IConsolidationService ConsolidationService
-@inject IConsolidationDispatcher ConsolidationDispatcher
 @inject ConsolidationBadgeService BadgeService
 @inject IPipelineApiConfigClient ConfigClient
 
@@ -205,7 +204,7 @@
                                 @if (_anyRunCancellable)
                                 {
                                     <td>
-                                        @if (run.Status == ConsolidationRunStatus.Queued || run.Status == ConsolidationRunStatus.Pending)
+                                        @if (run.Status == ConsolidationRunStatus.Pending)
                                         {
                                             <button class="btn-cancel-run" @onclick="() => CancelQueuedRun(run.RunId)">Cancel</button>
                                         }
@@ -350,7 +349,6 @@
             // (e.g. a service that doesn't honour the non-null contract) must not NRE the render.
             _runHistory = await ConsolidationService.GetRunHistoryAsync(CancellationToken.None) ?? [];
             _anyRunCancellable = _runHistory.Any(r =>
-                r.Status == ConsolidationRunStatus.Queued ||
                 r.Status == ConsolidationRunStatus.Pending);
         }
         catch (Exception ex)
@@ -461,21 +459,18 @@
             {
                 _statusMessage = type switch
                 {
-                    ConsolidationRunType.BrainConsolidation => $"Brain consolidation rejected for {templateName} — already running/queued or template not found.",
-                    ConsolidationRunType.RefactoringDetection => $"Refactoring scan rejected for {templateName} — already running/queued or template not found.",
-                    ConsolidationRunType.HarnessSuggestions => "Harness suggestions rejected — already running/queued.",
+                    ConsolidationRunType.BrainConsolidation => $"Brain consolidation rejected for {templateName} — already running, a configuration error occurred, or template not found.",
+                    ConsolidationRunType.RefactoringDetection => $"Refactoring scan rejected for {templateName} — already running, a configuration error occurred, or template not found.",
+                    ConsolidationRunType.HarnessSuggestions => "Harness suggestions rejected — already running or a configuration error occurred.",
                     _ => "Consolidation rejected."
                 };
                 _statusIsError = true;
             }
             else
             {
-                // Dispatch to the K8s job queue. If dispatch fails the run stays Queued —
-                // startup rehydration will retry on next orchestrator restart.
-                await ConsolidationDispatcher.DispatchRunAsync(run, CancellationToken.None);
-
-                // run.Status is always Queued here — the K8s job transitions it to Running
-                // asynchronously after the agent starts. Show the queued message always.
+                // The WorkItem was already created as Pending by TriggerAsync.
+                // The K8s Scheduler will dispatch it; the K8s Job transitions to Running
+                // asynchronously after the agent starts.
                 _statusMessage = $"{FormatRunType(type)} queued — waiting for an idle agent.";
                 await LoadDataAsync();
             }
@@ -492,7 +487,7 @@
     {
         return _runHistory.Any(r => r.Type == type
             && r.TemplateId == templateId
-            && (r.Status == ConsolidationRunStatus.Running || r.Status == ConsolidationRunStatus.Queued
+            && (r.Status == ConsolidationRunStatus.Running
                 || r.Status == ConsolidationRunStatus.Pending));
     }
 
