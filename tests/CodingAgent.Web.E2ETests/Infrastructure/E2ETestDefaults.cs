@@ -23,6 +23,17 @@ internal static class E2ETestDefaults
     public const string UnreachableApiBaseUrl = "http://127.0.0.1:1";
 
     /// <summary>
+    /// Base URL handed to the Web host for <c>SchedulerApi:BaseUrl</c> when the harness runs the
+    /// Blazor app without a real Scheduler host.
+    ///
+    /// Without this guard the Web host falls back to <c>http://localhost:8080</c> (logged as a
+    /// warning but not fatal), which causes every <see cref="ILoopStatusService"/> poll to fail
+    /// with a connection-refused error — making the failure look like a loop problem rather than
+    /// a harness misconfiguration.
+    /// </summary>
+    public const string UnreachableSchedulerBaseUrl = "http://127.0.0.1:1";
+
+    /// <summary>
     /// Applies the database settings both hosts need at startup.
     ///
     /// Spec 041 made PostgreSQL mandatory and Spec 045 left <c>AddPooledDbContextFactory</c> in
@@ -86,6 +97,7 @@ internal static class E2ETestDefaults
                      "Database__Name", "Database__SslMode", "Database__MigrateOnStartup",
                      "Database__SkipStartupInit", "AGENT_API_KEY",
                      "PipelineApi__BaseUrl", "PipelineApi__HubUrl", "PipelineLoop__ConfigCacheTtlSeconds",
+                     "SchedulerApi__BaseUrl", "SchedulerApi__StatusPollIntervalSeconds",
                      "WorkDistribution__Namespace", "WorkDistribution__OrchestratorUrl",
                      "WorkDistribution__AgentApiKeySecretName", "WorkDistribution__AgentServiceAccountName",
                      "WorkDistribution__CredentialPools__Kiro__0", "WorkDistribution__CredentialPools__Kiro__1",

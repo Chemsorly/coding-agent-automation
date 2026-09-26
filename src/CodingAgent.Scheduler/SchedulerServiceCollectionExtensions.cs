@@ -290,7 +290,10 @@ public static class SchedulerServiceCollectionExtensions
         services.AddHostedService(sp => sp.GetRequiredService<LoopWatchdogService>());
 
         // ── OrphanedLabelRecoveryService ──────────────────────────────────────
-        services.AddHostedService(sp => new OrphanedLabelRecoveryService(
+        // Registered as a named singleton (in addition to IHostedService) so that
+        // SchedulerE2EWebApplicationFactory can resolve it by concrete type for test hooks
+        // (SweepOnceForTestAsync). Pattern mirrors LoopWatchdogService above.
+        services.AddSingleton<OrphanedLabelRecoveryService>(sp => new OrphanedLabelRecoveryService(
             sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<IPipelineApiConfigClient>(),
             sp.GetRequiredService<IPipelineApiWorkItemClient>(),
@@ -298,6 +301,7 @@ public static class SchedulerServiceCollectionExtensions
             sp.GetRequiredService<ILabelService>(),
             sp.GetService<ILeaderElectionService>(),
             Log.Logger));
+        services.AddHostedService(sp => sp.GetRequiredService<OrphanedLabelRecoveryService>());
 
         // ── FeedbackCommentRelayService ───────────────────────────────────────
         services.AddHttpClient<IPipelineApiFeedbackCommentOutboxClient, PipelineApiFeedbackCommentOutboxClient>(c =>
@@ -307,12 +311,16 @@ public static class SchedulerServiceCollectionExtensions
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", agentApiKey);
         }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
-        services.AddHostedService(sp => new FeedbackCommentRelayService(
+        // Registered as a named singleton (in addition to IHostedService) so that
+        // SchedulerE2EWebApplicationFactory can resolve it by concrete type for test hooks
+        // (SweepOnceForTestAsync). Pattern mirrors LoopWatchdogService above.
+        services.AddSingleton<FeedbackCommentRelayService>(sp => new FeedbackCommentRelayService(
             sp.GetRequiredService<IPipelineApiFeedbackCommentOutboxClient>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<IPipelineApiConfigClient>(),
             sp.GetService<ILeaderElectionService>(),
             Log.Logger));
+        services.AddHostedService(sp => sp.GetRequiredService<FeedbackCommentRelayService>());
 
         // ── Redis cleanup services (null-safe) ────────────────────────────────
         services.AddSingleton<AgentRegistryCleanupService>(sp =>
