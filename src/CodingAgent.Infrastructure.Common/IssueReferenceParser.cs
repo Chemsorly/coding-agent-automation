@@ -4,11 +4,12 @@ namespace CodingAgent.Pipeline.Services;
 
 /// <summary>
 /// Extracts issue references from PR/MR title and description text.
-/// Provides three parsing modes:
+/// Provides four parsing modes:
 /// <list type="bullet">
 ///   <item><see cref="ParseClosingKeywords"/> — base closing keywords (Closes/Fixes/Resolves #N, GitLab-compatible base forms)</item>
 ///   <item><see cref="ParseAllClosingKeywords"/> — all closing keyword forms from both GitLab and GitHub (base forms + closed/fixed/resolved/close/fix/resolve + GH-N in keyword context)</item>
 ///   <item><see cref="ParseIssueReferences"/> — all GitHub patterns (closing keywords with all verb forms, GH-N, cross-repo, simple #N)</item>
+///   <item><see cref="ParseIssueUrls"/> — full GitHub issue URLs (https://github.com/owner/repo/issues/N)</item>
 /// </list>
 /// </summary>
 public static class IssueReferenceParser
@@ -40,6 +41,13 @@ public static class IssueReferenceParser
     // Simple #N references (not preceded by &, word chars, or /)
     private static readonly Regex SimpleHashPattern = new(
         @"(?<![&\w/])#(\d+)\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled,
+        matchTimeout: TimeSpan.FromSeconds(2));
+
+    // Full GitHub issue URLs: https://github.com/owner/repo/issues/N
+    // Deliberately does NOT match /pull/N, /commit/, /tree/, /blob/, or raw.githubusercontent.com
+    private static readonly Regex GitHubIssueUrlPattern = new(
+        @"https?://(?:www\.)?github\.com/[\w\-\.]+/[\w\-\.]+/issues/(\d+)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled,
         matchTimeout: TimeSpan.FromSeconds(2));
 
@@ -131,5 +139,26 @@ public static class IssueReferenceParser
                 issueNumbers.Add(match.Groups[1].Value);
         }
         catch (RegexMatchTimeoutException) { /* regex timeout — skip this pattern */ }
+    }
+
+    /// <summary>
+    /// Parses text for GitHub issue URL references and adds matched issue numbers to the set.
+    /// Recognizes: <c>https://github.com/owner/repo/issues/N</c> (HTTP and HTTPS, optional <c>www.</c> prefix).
+    /// <para>
+    /// Does NOT match pull request URLs (<c>/pull/N</c>), commit URLs (<c>/commit/</c>),
+    /// tree/blob links, or <c>raw.githubusercontent.com</c> URLs.
+    /// </para>
+    /// </summary>
+    public static void ParseIssueUrls(string? text, HashSet<string> issueNumbers)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return;
+
+        try
+        {
+            foreach (Match match in GitHubIssueUrlPattern.Matches(text))
+                issueNumbers.Add(match.Groups[1].Value);
+        }
+        catch (RegexMatchTimeoutException) { /* adversarial input — return partial results */ }
     }
 }

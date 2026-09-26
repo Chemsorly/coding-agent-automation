@@ -554,6 +554,136 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
             "won't-do gate must categorise the run as GateRejected; HTTP reporter persists it via FailureCategory fallback");
     }
 
+    [Fact]
+    public async Task Analysis_EnableNativeImagePartsTrue_ImagePathsPassedToAgent()
+    {
+        // Arrange: non-null DownloadedImages + EnableNativeImageParts = true → ImagePaths must be forwarded.
+        // We cannot use SetupAgentWithValidAnalysis() directly because it captures AgentRequest internally
+        // and doesn't expose req. We set up the mock manually, writing the required analysis files in the
+        // Callback while also capturing the request.
+        var testImage = new DownloadedImage
+        {
+            LocalPath = "/tmp/img.png",
+            LocalFilename = "img.png",
+            Reference = new ImageReference
+            {
+                Url = "https://example.com/img.png",
+                AltText = "test",
+                SourceType = ImageSourceType.Body,
+                SourceIndex = 0
+            },
+            FileSizeBytes = 1024,
+            MimeType = "image/png"
+        };
+
+        AgentRequest? capturedRequest = null;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                capturedRequest = req;
+                // Write the analysis files the executor requires before it can continue
+                var agentDir = Path.Combine(_workspacePath, ".agent");
+                Directory.CreateDirectory(agentDir);
+                File.WriteAllText(
+                    Path.Combine(_workspacePath, AgentWorkspacePaths.AnalysisFilePath),
+                    new string('x', PipelineConstants.MinAnalysisLength + 100));
+                File.WriteAllText(
+                    Path.Combine(_workspacePath, AgentWorkspacePaths.AnalysisAssessmentFilePath),
+                    JsonSerializer.Serialize(new { recommendation = "ready", reason = "test", concerns = Array.Empty<string>(), blockingIssues = Array.Empty<string>() }));
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        var context = new AgentPhaseContext
+        {
+            Run = _run,
+            Config = _config with { EnableNativeImageParts = true },
+            AgentProvider = _mockAgent.Object,
+            IssueOps = _mockIssueOps.Object,
+            Callbacks = _mockCallbacks.Object,
+            OrchestratorCts = null,
+            Issue = new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "Test requirements", AcceptanceCriteria = new[] { "AC1", "AC2" } },
+            DownloadedImages = new[] { testImage }
+        };
+
+        // Act
+        await _executor.ExecuteAnalysisPhaseAsync(context, Array.Empty<IssueComment>(), false, CancellationToken.None);
+
+        // TODO: [WARNING] If ExecuteAnalysisPhaseAsync short-circuits before calling ExecuteAsync (e.g., a precondition
+        // failure), capturedRequest remains null and the null-check below catches it, but the subsequent
+        // capturedRequest!.ImagePaths access produces a less informative crash. Consider adding:
+        //   _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.AtLeastOnce());
+        // before the ImagePaths assertions to produce a clean failure message.
+        // TODO: [WARNING] Missing boundary case: EnableNativeImageParts=true with DownloadedImages=null should yield
+        // ImagePaths=null without throwing. Add a [Theory] row or separate test to cover this path.
+
+        // Assert: flag true → images forwarded
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.ImagePaths.Should().NotBeNull();
+        capturedRequest.ImagePaths.Should().Contain("/tmp/img.png");
+    }
+
+    [Fact]
+    public async Task Analysis_EnableNativeImagePartsFalse_ImagePathsIsNull()
+    {
+        // Arrange: non-null DownloadedImages + EnableNativeImageParts = false → ImagePaths must be null
+        var testImage = new DownloadedImage
+        {
+            LocalPath = "/tmp/img.png",
+            LocalFilename = "img.png",
+            Reference = new ImageReference
+            {
+                Url = "https://example.com/img.png",
+                AltText = "test",
+                SourceType = ImageSourceType.Body,
+                SourceIndex = 0
+            },
+            FileSizeBytes = 1024,
+            MimeType = "image/png"
+        };
+
+        AgentRequest? capturedRequest = null;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                capturedRequest = req;
+                var agentDir = Path.Combine(_workspacePath, ".agent");
+                Directory.CreateDirectory(agentDir);
+                File.WriteAllText(
+                    Path.Combine(_workspacePath, AgentWorkspacePaths.AnalysisFilePath),
+                    new string('x', PipelineConstants.MinAnalysisLength + 100));
+                File.WriteAllText(
+                    Path.Combine(_workspacePath, AgentWorkspacePaths.AnalysisAssessmentFilePath),
+                    JsonSerializer.Serialize(new { recommendation = "ready", reason = "test", concerns = Array.Empty<string>(), blockingIssues = Array.Empty<string>() }));
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        var context = new AgentPhaseContext
+        {
+            Run = _run,
+            Config = _config with { EnableNativeImageParts = false },
+            AgentProvider = _mockAgent.Object,
+            IssueOps = _mockIssueOps.Object,
+            Callbacks = _mockCallbacks.Object,
+            OrchestratorCts = null,
+            Issue = new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "Test requirements", AcceptanceCriteria = new[] { "AC1", "AC2" } },
+            DownloadedImages = new[] { testImage }
+        };
+
+        // Act
+        await _executor.ExecuteAnalysisPhaseAsync(context, Array.Empty<IssueComment>(), false, CancellationToken.None);
+
+        // TODO: [WARNING] Same structural concern as the "true" variant above: add a Verify(Times.AtLeastOnce())
+        // before the ImagePaths assertions so a short-circuit produces a clean failure rather than a null-deref crash.
+
+        // Assert: flag false → ImagePaths suppressed, but context.DownloadedImages untouched
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.ImagePaths.Should().BeNull();
+        context.DownloadedImages.Should().NotBeNull("context.DownloadedImages must remain populated when EnableNativeImageParts = false");
+        context.DownloadedImages!.Should().Contain(testImage);
+    }
+
     private AgentPhaseContext BuildContext()
     {
         return new AgentPhaseContext
