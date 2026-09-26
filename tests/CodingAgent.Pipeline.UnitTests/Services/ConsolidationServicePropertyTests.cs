@@ -116,12 +116,17 @@ public class ConsolidationServicePropertyTests : IDisposable
         mockProjectStore.Setup(x => x.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
 
+        var mockDist1 = new Mock<IWorkDistributor>();
+        mockDist1.Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-prop-1", ErrorMessage: null));
+
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(
             Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
             new FileSystemConsolidationRunStore(runsDir),
             new InMemoryHarnessSuggestionStore(),
             new Mock<IProviderConfigStore>().Object,
-            WorkspaceManager: new ConsolidationWorkspaceManager(Serilog.Log.Logger, config)));
+            WorkspaceManager: new ConsolidationWorkspaceManager(Serilog.Log.Logger, config),
+            WorkDistributor: mockDist1.Object));
 
         var count = Math.Min(runCount.Get, 5);
         var types = new[] { ConsolidationRunType.BrainConsolidation, ConsolidationRunType.RefactoringDetection };
@@ -196,22 +201,30 @@ public class ConsolidationServicePropertyTests : IDisposable
         mockProjectStore.Setup(x => x.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
 
+        var mockDist2 = new Mock<IWorkDistributor>();
+        mockDist2
+            .SetupSequence(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-prop-2", ErrorMessage: null))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: null, ErrorMessage: null, Queued: true))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-prop-3", ErrorMessage: null));
+
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(
             Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
             new FileSystemConsolidationRunStore(runsDir),
             new InMemoryHarnessSuggestionStore(),
             new Mock<IProviderConfigStore>().Object,
-            WorkspaceManager: new ConsolidationWorkspaceManager(Serilog.Log.Logger, config)));
+            WorkspaceManager: new ConsolidationWorkspaceManager(Serilog.Log.Logger, config),
+            WorkDistributor: mockDist2.Object));
 
         // First trigger succeeds
         var first = sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None)
             .GetAwaiter().GetResult();
         first.Should().NotBeNull();
 
-        // Same type+template should be rejected
+        // Same type+template should be rejected (WorkItemId=null = 409 dedup path)
         var duplicate = sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None)
             .GetAwaiter().GetResult();
-        duplicate.Should().BeNull("same type+templateId is already running");
+        duplicate.Should().BeNull("same type+templateId is already running — DB-layer 409 dedup");
 
         // Different pair should succeed
         var differentType = useSameType

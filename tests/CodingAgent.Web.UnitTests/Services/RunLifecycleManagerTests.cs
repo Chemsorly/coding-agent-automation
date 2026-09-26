@@ -204,6 +204,24 @@ public sealed class RunLifecycleManagerTests
     }
 
     [Fact]
+    public async Task FailRunAsync_FailureReasonWithNewlines_LogsEscapedReason_KeepsRawReasonOnRun()
+    {
+        // The HTTP status path passes the agent-supplied WorkItemStatusRequest.ErrorMessage through as
+        // failureReason, so CR/LF must be escaped in the terminal log entry (CodeQL cs/log-forging).
+        // Escaping is a log-output concern only — the reason stored on the run stays verbatim.
+        const string reason = "boom\r\n[ERR] forged entry";
+        _runService.AddRun(CreateRun("run-fail-forged", PipelineRunType.Implementation));
+
+        var result = await _sut.FailRunAsync("run-fail-forged", reason, CancellationToken.None);
+
+        result!.FailureReason.Should().Be(reason);
+        // {Reason} is the fifth property value of the terminal log entry.
+        _mockLogger.Verify(l => l.Information(
+            It.Is<string>(t => t.StartsWith("RunLifecycleManager.FailRunAsync:", StringComparison.Ordinal)),
+            It.Is<object?[]>(a => a[4] as string == "boom\\r\\n[ERR] forged entry")), Times.Once);
+    }
+
+    [Fact]
     public async Task FailRunAsync_ReviewRun_SwapsLabelViaRepoProvider()
     {
         // Arrange

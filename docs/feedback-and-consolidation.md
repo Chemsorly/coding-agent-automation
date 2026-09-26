@@ -20,7 +20,7 @@ Each run produces a `RunFeedback` record with two sections:
 
 ### Where Feedback Appears
 
-- **Run detail modal** — Collapsible "Feedback" section showing all fields
+- **Run page** — Collapsible "Feedback (n)" section at the bottom of the run's page (`/runs/{id}`), showing all fields. The Runs list has a "Feedback only" filter
 - **GitHub issue** — If issue feedback has a description, a comment is posted with the `<!-- agent:issue-feedback -->` marker
 - **Harness suggestions** — Accumulated feedback feeds into the consolidation loops (see below)
 
@@ -107,7 +107,7 @@ Consolidation jobs are dispatched via `IConsolidationDispatchService`. In K8s mo
 
 ### Consolidation Page
 
-The sidebar shows a "Consolidation" nav item with a badge count (new issues + suggestions since last visit). The page displays:
+The page is reached through the "Consolidation" item in the sidebar navigation. It displays:
 
 - Per-template cards with trigger buttons and last-run status
 - Global harness suggestions section

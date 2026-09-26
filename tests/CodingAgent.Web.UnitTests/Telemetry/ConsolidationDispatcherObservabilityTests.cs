@@ -15,9 +15,11 @@ namespace CodingAgent.Web.UnitTests.Telemetry;
 /// cascades the run to Failed.
 ///
 /// Uses a scoped <see cref="MeterListener"/> (disposed inside each test) to observe the global
-/// static <see cref="PipelineTelemetry.Meter"/> without requiring [Collection("Metrics")]
-/// serialization — the listener is live only for the duration of each individual test.
+/// static <see cref="PipelineTelemetry.Meter"/>. Placed in [Collection("Metrics")] together
+/// with <see cref="ConsolidationDispatcherTests"/> to prevent parallel execution from causing
+/// stray measurements on the global counter.
 /// </summary>
+[Collection("Metrics")]
 public sealed class ConsolidationDispatcherObservabilityTests
 {
     private readonly Mock<IWorkDistributor> _workDistributor = new();
@@ -94,14 +96,7 @@ public sealed class ConsolidationDispatcherObservabilityTests
             StartedAtUtc = DateTimeOffset.UtcNow
         };
 
-        // TODO: This test class does not use [Collection("Metrics")] because its MeterListener
-        // callbacks filter strictly on "consolidation.dispatch.permanent_failures" and that
-        // instrument is currently incremented by exactly one production path. If a future test
-        // also exercises ConsolidationDispatcher permanent failure in parallel, the ContainSingle
-        // assertion below could observe extra measurements and flake. Consider adding
-        // [Collection("Metrics")] for defensive consistency with MetricsTestCollection convention.
-        //
-        // TODO: If PipelineTelemetry counter creation is ever made lazy/deferred, InstrumentPublished
+        // If PipelineTelemetry counter creation is ever made lazy/deferred, InstrumentPublished
         // would need to be triggered after Start() — currently safe because the counter is a
         // global static field initialised at class-load time, so Start() replays the publication.
         var measurements = new List<(long Value, string RunType)>();

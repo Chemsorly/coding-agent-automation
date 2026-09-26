@@ -9,6 +9,7 @@ using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using k8s.Models;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Hosting;
@@ -285,7 +286,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             if (KiroCliSettingsWriter.ValidEffortValues.Contains(effort))
                 container.Env.Add(new V1EnvVar { Name = AgentDefaults.EnvChatEffort, Value = effort });
             else
-                _logger.Warning("ChatJobDispatcher: invalid effort value rejected: {Effort}", effort);
+                _logger.Warning("ChatJobDispatcher: invalid effort value rejected: {Effort}", LogSanitizer.SanitizeForLog(effort));
         }
 
         job.Metadata.Labels[LabelChatSessionId] = dispatchId.ToString();

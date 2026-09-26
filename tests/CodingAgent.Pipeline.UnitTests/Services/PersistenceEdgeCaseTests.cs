@@ -95,6 +95,12 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
         var mockHistory = new Mock<IPipelineRunHistoryService>();
         mockHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>());
 
+        var mockWorkDistributor = new Mock<IWorkDistributor>();
+        mockWorkDistributor
+            .SetupSequence(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-persist-edge", ErrorMessage: null))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: null, ErrorMessage: null, Queued: true));
+
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(
             new LoggerConfiguration().CreateLogger(),
             new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir, DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10" },
@@ -102,13 +108,14 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
             mockHistory.Object,
             store,
             harnessStore,
-            new Mock<IProviderConfigStore>().Object));
+            new Mock<IProviderConfigStore>().Object,
+            WorkDistributor: mockWorkDistributor.Object));
 
         var first = await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "t1", CancellationToken.None);
         var second = await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "t1", CancellationToken.None);
 
         first.Should().NotBeNull();
-        second.Should().BeNull(); // rejected by concurrency guard
+        second.Should().BeNull("rejected by DB-layer dedup (WorkItemId=null = 409 duplicate)");
     }
 
     // ── GetLastSuccessfulHarnessRunTimestampAsync ────────────────────────

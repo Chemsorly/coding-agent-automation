@@ -142,6 +142,29 @@ public class AgentAuthorizationFilterObservabilityTests
             "reconnect_race reason should be emitted when agentId query param is present");
     }
 
+    /// <summary>
+    /// The <c>agentId</c> query parameter is caller-controlled: CR/LF must be escaped before it
+    /// reaches the reconnect-race Debug entry, or a crafted value forges extra log lines
+    /// (CodeQL cs/log-forging).
+    /// </summary>
+    [Fact]
+    public async Task ReconnectRace_AgentIdWithNewlines_LogsEscapedAgentIdAtDebug()
+    {
+        _registryMock.Setup(r => r.GetByConnectionId(It.IsAny<string>())).Returns((AgentEntry?)null);
+
+        var hub = CreateHub("conn-race");
+        var ctx = MakeContextWithAgentIdQuery("conn-race", Uri.EscapeDataString("race-agent\r\n[ERR] forged entry"));
+        hub.Context = ctx;
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.Heartbeat))!;
+        var invCtx = new HubInvocationContext(ctx, Mock.Of<IServiceProvider>(), hub, method, []);
+
+        var act = async () => await _filter.InvokeMethodAsync(invCtx, _ => ValueTask.FromResult((object?)null));
+
+        await act.Should().ThrowAsync<HubException>();
+        _loggerMock.Verify(l => l.Debug(
+            It.IsAny<string>(), nameof(AgentHub.Heartbeat), "conn-race", "race-agent\\r\\n[ERR] forged entry"), Times.Once);
+    }
+
     [Fact]
     public async Task JobMismatch_EmitsCounter_WithJobMismatchReason()
     {
@@ -325,12 +348,10 @@ public class AgentAuthorizationFilterObservabilityTests
     // constant's string value. Add a test that exercises GuardOperatorMethod with a non-UI-subscription
     // method and verifies the counter emits with reason=operator_forbidden. (Test Quality Review)
 
-    // TODO [WARNING]: No test verifies the log-level demotion behaviour introduced by this PR:
-    // - reconnect-race rejections should log at Debug (_logger.Debug called)
-    // - true unregistered connections should log at Warning (_logger.Warning called)
-    // The _loggerMock is never verified with Verify(...) calls for Debug/Warning in any test method.
-    // Add Moq Verify assertions for the correct log level in the NotRegistered and ReconnectRace tests.
-    // (Test Quality Review)
+    // TODO [WARNING]: No test verifies that true unregistered connections log at Warning
+    // (_logger.Warning called). The reconnect-race Debug path is covered by
+    // ReconnectRace_AgentIdWithNewlines_LogsEscapedAgentIdAtDebug; add a Moq Verify assertion
+    // for the Warning level in the NotRegistered test. (Test Quality Review)
 
     // TODO [WARNING]: The integration regression test (AgentHubGateTests: Report after forced reconnect
     // succeeds, not rejected) required by the issue spec was not added to

@@ -49,7 +49,7 @@ public sealed partial class AgentHub
             {
                 _logger.Warning(
                     "SubscribeToRun rejected — agent {AgentId} is not assigned to run {JobId}",
-                    callerAgentId, jobId);
+                    SanitizeForLog(callerAgentId), jobId);
                 throw new HubException("Not authorized for this run.");
             }
         }

@@ -194,12 +194,6 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
         if (baked is { Count: > 0 })
         {
             var profile = ProfileResolver.ResolveByRequiredLabels(profiles, baked);
-            // TODO [WARNING]: If no profile matches the baked labels, the fallback returns baked
-            // directly as the selector key. If the baked labels are a required-labels subset
-            // (e.g. ["kiro","dotnet"]) rather than full MatchLabels (e.g. ["kiro","dotnet","dotnet10"]),
-            // the resulting selector may not match any job template → 422 → permanent-failure cascade.
-            // Pre-existing behavior (same as old code), but the cascade-to-Failed makes the
-            // consequence permanent rather than recoverable. (review-findings.md DotNetSpecialist warning)
             var selector = profile?.MatchLabels ?? baked;
             Log.Debug(
                 "ConsolidationDispatcher: run {RunId} using baked QueuedRequiredLabels → selector '{Selector}'",
@@ -227,15 +221,6 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
         // 3. No default labels configured. Pick the first enabled profile explicitly rather
         //    than passing empty labels to ResolveByRequiredLabels (which would match ALL profiles
         //    via Superset and return an arbitrary/wrong one).
-        // TODO [WARNING]: FirstOrDefault uses raw list order from LoadAgentProfilesAsync, which is
-        // not guaranteed to be priority-sorted. The selection can route to a lower-priority agent
-        // when DefaultRequiredAgentLabels is not configured and multiple enabled profiles exist.
-        // Fix: order by descending Priority then ascending Id (mirrors ProfileResolver tiebreak)
-        // before calling FirstOrDefault. (review-findings.md correctness finding #3)
-        // TODO [WARNING]: The selected profile's MatchLabels may have no matching job template,
-        // causing dispatch to 422 and cascade the run to Failed — even if another enabled profile
-        // DOES have a template. A better approach would prefer a profile whose selector resolves to
-        // an existing job template before falling back arbitrarily. (review-findings.md finding #4)
         var firstEnabled = profiles.FirstOrDefault(p => p.Enabled);
         if (firstEnabled is not null)
         {

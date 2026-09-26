@@ -219,7 +219,9 @@ public class AgentAuthTests
     {
         _registry.Register(new AgentRegistrationMessage
         {
-            AgentId = "agent-1", Hostname = "h", Labels = new[] { "l" }
+            AgentId = "agent-1",
+            Hostname = "h",
+            Labels = new[] { "l" }
         }, "conn-1");
 
         var agent = _registry.GetByConnectionId("conn-1");
@@ -232,7 +234,9 @@ public class AgentAuthTests
     {
         var entry = _registry.Register(new AgentRegistrationMessage
         {
-            AgentId = "agent-1", Hostname = "h", Labels = new[] { "l" }
+            AgentId = "agent-1",
+            Hostname = "h",
+            Labels = new[] { "l" }
         }, "conn-1");
         entry.ActiveJobId = "job-1";
 
@@ -245,7 +249,9 @@ public class AgentAuthTests
     {
         var entry = _registry.Register(new AgentRegistrationMessage
         {
-            AgentId = "agent-1", Hostname = "h", Labels = new[] { "l" }
+            AgentId = "agent-1",
+            Hostname = "h",
+            Labels = new[] { "l" }
         }, "conn-1");
         entry.ActiveJobId = "job-1";
 
@@ -258,7 +264,9 @@ public class AgentAuthTests
     {
         _registry.Register(new AgentRegistrationMessage
         {
-            AgentId = "agent-1", Hostname = "h", Labels = new[] { "l" }
+            AgentId = "agent-1",
+            Hostname = "h",
+            Labels = new[] { "l" }
         }, "conn-1");
 
         var agent = _registry.GetByConnectionId("conn-1");
@@ -292,6 +300,13 @@ public class AgentAuthTests
 /// Unit tests for <see cref="AgentAuthorizationFilter.InvokeMethodAsync"/> — exercises the
 /// full runtime authorization logic using a real <see cref="HubInvocationContext"/>.
 /// </summary>
+/// <remarks>
+/// In [Collection("Metrics")] to prevent cross-talk with AgentAuthorizationFilterObservabilityTests
+/// through the process-global PipelineTelemetry.Meter. Calling InvokeMethodAsync emits measurements
+/// on agent.hub.auth_rejections; parallel execution with MeterListener-based tests causes spurious
+/// "2 items found" failures.
+/// </remarks>
+[Collection("Metrics")]
 public class AgentAuthorizationFilterInvokeTests
 {
     private readonly AgentRegistryService _registry;
@@ -543,6 +558,13 @@ public sealed class DummyHub : Microsoft.AspNetCore.SignalR.Hub
 /// so the <c>?agentId</c> fallback is structurally unreachable for operator-authenticated
 /// connections — no separate test is needed for that path.
 /// </summary>
+/// <remarks>
+/// In [Collection("Metrics")] to prevent cross-talk with AgentAuthorizationFilterObservabilityTests
+/// through the process-global PipelineTelemetry.Meter. Calling InvokeMethodAsync emits measurements
+/// on agent.hub.auth_rejections; parallel execution with MeterListener-based tests causes spurious
+/// "2 items found" failures.
+/// </remarks>
+[Collection("Metrics")]
 public class AgentAuthorizationFilterRedisFallbackTests
 {
     private readonly Mock<IAgentRegistryService> _registryMock;

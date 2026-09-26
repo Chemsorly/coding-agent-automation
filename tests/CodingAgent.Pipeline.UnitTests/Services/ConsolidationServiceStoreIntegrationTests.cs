@@ -56,6 +56,12 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
         _store = new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs"));
         _harnessStore = new InMemoryHarnessSuggestionStore();
 
+        // WorkDistributor returns success so TriggerAsync creates a Pending run.
+        var mockWorkDistributor = new Mock<IWorkDistributor>();
+        mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-integration-test", ErrorMessage: null));
+
         _sut = new ConsolidationService(
             new ConsolidationServiceDependencies(
                 new LoggerConfiguration().CreateLogger(),
@@ -66,7 +72,8 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
                 _harnessStore,
                 new Mock<IProviderConfigStore>().Object,
                 WorkspaceManager: new ConsolidationWorkspaceManager(
-                    new LoggerConfiguration().CreateLogger(), _config)));
+                    new LoggerConfiguration().CreateLogger(), _config),
+                WorkDistributor: mockWorkDistributor.Object));
     }
 
     public void Dispose()
@@ -89,7 +96,7 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
         // Arrange: trigger creates and persists a run (starts as Queued in K8s mode)
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
-        run!.Status.Should().Be(ConsolidationRunStatus.Queued);
+        run!.Status.Should().Be(ConsolidationRunStatus.Pending);
 
         // Act: simulate agent completion callback
         await _sut.UpdateRunAsync(run.RunId, ConsolidationRunStatus.Succeeded, "Completed", CancellationToken.None, totalTokens: 1500);
@@ -116,28 +123,27 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
     }
 
     /// <summary>
-    /// REGRESSION TEST: CancelQueuedRunAsync must load the run from the store, not from filesystem directly.
+    /// REGRESSION TEST: TransitionToRunningAsync must load the run from the store, not from filesystem directly.
+    /// CancelQueuedRunAsync was removed in issue #3027 — cancellation is now routed through
+    /// PostStatus(Cancelled) in Consolidation.razor using the WorkItemId.
     /// </summary>
     [Fact]
-    public async Task CancelQueuedRunAsync_QueuedRun_UpdatesStatusViaStore()
+    public async Task TransitionToRunningAsync_PendingRun_UpdatesStatusViaStore()
     {
-        // Arrange: create a run and manually set it to Queued (simulating dispatch to queue)
+        // Arrange: create a run and set to Pending in the store
         var run = await _sut.TriggerAsync(ConsolidationRunType.RefactoringDetection, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
 
-        // Manually transition to Queued (simulating what happens when no agent is available)
-        run!.Status = ConsolidationRunStatus.Queued;
+        run!.Status = ConsolidationRunStatus.Pending;
         await _store.SaveRunAsync(run, CancellationToken.None);
 
         // Act
-        var cancelled = await _sut.CancelQueuedRunAsync(run.RunId, CancellationToken.None);
+        await _sut.TransitionToRunningAsync(run.RunId, CancellationToken.None);
 
-        // Assert
-        cancelled.Should().BeTrue();
+        // Assert: store reflects Running status
         var persisted = await _store.GetByIdAsync(run.RunId, CancellationToken.None);
         persisted.Should().NotBeNull();
-        persisted!.Status.Should().Be(ConsolidationRunStatus.Cancelled);
-        persisted.Summary.Should().Be("Cancelled by user");
+        persisted!.Status.Should().Be(ConsolidationRunStatus.Running);
     }
 
     /// <summary>
@@ -149,7 +155,7 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
         // Arrange: create a run and set to Queued
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
-        run!.Status = ConsolidationRunStatus.Queued;
+        run!.Status = ConsolidationRunStatus.Pending;
         await _store.SaveRunAsync(run, CancellationToken.None);
 
         // Act
@@ -171,7 +177,7 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
         // Arrange: create a run queued 90 min ago (simulates long queue wait)
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
-        run!.Status = ConsolidationRunStatus.Queued;
+        run!.Status = ConsolidationRunStatus.Pending;
         run.StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-90);
         await _store.SaveRunAsync(run, CancellationToken.None);
 
@@ -187,16 +193,17 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
     }
 
     /// <summary>
-    /// BUG FIX #1540: TransitionToRunningAsync must update the in-memory _runningRuns tracker
-    /// so that GetActiveRunStartedAt (used by HeartbeatMonitorService) returns the corrected timestamp.
+    /// BUG FIX #1540 + issue #3027: TransitionToRunningAsync must update the persisted store
+    /// so that GetActiveRunStartedAt returns the corrected timestamp.
+    /// After _runningRuns removal (issue #3027), GetActiveRunStartedAt queries the store directly.
     /// </summary>
     [Fact]
-    public async Task TransitionToRunningAsync_QueuedRun_UpdatesInMemoryTracker()
+    public async Task TransitionToRunningAsync_QueuedRun_UpdatesStoreAndGetActiveRunStartedAtReflectsReset()
     {
-        // Arrange: create a run (enters _runningRuns) and set to Queued with old StartedAtUtc
+        // Arrange: create a run and set to Pending with old StartedAtUtc in the store
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
-        run!.Status = ConsolidationRunStatus.Queued;
+        run!.Status = ConsolidationRunStatus.Pending;
         run.StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-90);
         await _store.SaveRunAsync(run, CancellationToken.None);
 
@@ -205,9 +212,9 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
         // Act
         await _sut.TransitionToRunningAsync(run.RunId, CancellationToken.None);
 
-        // Assert: GetActiveRunStartedAt should return the reset timestamp
+        // Assert: GetActiveRunStartedAt queries the store and returns the reset timestamp
         var activeStartedAt = _sut.GetActiveRunStartedAt(run.RunId);
-        activeStartedAt.Should().NotBeNull();
+        activeStartedAt.Should().NotBeNull("TransitionToRunningAsync resets StartedAtUtc in the store");
         activeStartedAt!.Value.Should().BeOnOrAfter(beforeTransition);
     }
 
@@ -287,11 +294,11 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
     public async Task CleanupOrphanedRunsAsync_MarksRunningAsFailed_ViaStore()
     {
         // Arrange: create a run and manually transition it to Running (simulating the K8s Job
-        // Controller dispatch — TriggerAsync creates Queued, the Job Controller transitions to Running)
+        // Controller dispatch — TriggerAsync creates Pending, the Job Controller transitions to Running)
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
 
-        // Simulate Job Controller transitioning Queued → Running
+        // Simulate Job Controller transitioning Pending → Running
         run!.Status = ConsolidationRunStatus.Running;
         await _store.SaveRunAsync(run, CancellationToken.None);
 

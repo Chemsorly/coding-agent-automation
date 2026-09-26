@@ -12,6 +12,7 @@ namespace CodingAgent.Infrastructure.UnitTests;
 /// <see cref="GitHubRepositoryProvider"/>: <c>IsPullRequestBehindBaseAsync</c>
 /// and <c>UpdatePullRequestBranchAsync</c> (spec 040, task 3.2 / 3.3).
 /// </summary>
+[Collection("GitHubTelemetry")]
 public class GitHubRepositoryProviderAutoUpdateTests : WireMockTestBase
 {
     private const string Owner = "test-owner";

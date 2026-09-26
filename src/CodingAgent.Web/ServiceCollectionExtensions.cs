@@ -102,6 +102,17 @@ public static partial class ServiceCollectionExtensions
                 sp.GetRequiredService<IConsolidationRunStore>(),
                 sp.GetRequiredService<IPipelineRunHistoryService>()));
 
+        // Resolves agent selector labels for consolidation dispatch.
+        // Implemented in CodingAgent.Web so IAgentProfileStore and IPipelineConfigStore
+        // stay out of CodingAgent.Pipeline.
+        services.AddSingleton<IConsolidationSelectorResolver>(sp =>
+            new ConsolidationSelectorResolver(
+                sp.GetRequiredService<IAgentProfileStore>(),
+                sp.GetRequiredService<IPipelineConfigStore>()));
+
+        // IWorkDistributor is registered by AddWorkDistribution (called immediately after
+        // AddConsolidationServices in Program.cs). The factory lambda resolves lazily at
+        // first use, so ordering at startup is safe.
         services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
             new Pipeline.Models.ConsolidationServiceDependencies(
                 Log.Logger,
@@ -112,34 +123,14 @@ public static partial class ServiceCollectionExtensions
                 sp.GetRequiredService<IHarnessSuggestionStore>(),
                 sp.GetRequiredService<IProviderConfigStore>(),
                 sp.GetRequiredService<IConsolidationWorkspaceManager>(),
-                sp.GetRequiredService<IConsolidationFeedbackCache>())));
+                sp.GetRequiredService<IConsolidationFeedbackCache>(),
+                WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
+                SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>())));
 
         services.AddSingleton<IConsolidationRunTracker>(sp =>
             (IConsolidationRunTracker)sp.GetRequiredService<IConsolidationService>());
 
         services.AddSingleton<ConsolidationBadgeService>();
-
-        // Dispatches consolidation runs to the K8s job queue. Shared by UI trigger and
-        // startup rehydration (ConsolidationRehydrationExtensions) so both paths use
-        // identical JobDistributionRequest construction.
-        services.AddSingleton<IConsolidationDispatcher>(sp => new ConsolidationDispatcher(
-            sp.GetRequiredService<IWorkDistributor>(),
-            sp.GetRequiredService<IAgentProfileStore>(),
-            sp.GetRequiredService<IConsolidationWorkspaceManager>(),
-            sp.GetRequiredService<IPipelineConfigStore>(),
-            sp.GetRequiredService<IConsolidationService>(),
-            sp.GetRequiredService<IProjectStore>()));
-
-        // Background retry sweep for transient dispatch failures (409 capacity / 503 PVC).
-        // Startup rehydration only runs once; this service fills the gap for runs that fail
-        // transiently while the orchestrator is running (issue #2536 CRITICAL fix).
-        services.AddSingleton<ConsolidationRetryBackgroundService>(sp =>
-            new ConsolidationRetryBackgroundService(
-                sp.GetRequiredService<IConsolidationService>(),
-                sp.GetRequiredService<IConsolidationDispatcher>(),
-                sp.GetRequiredService<TimeProvider>(),
-                Log.Logger));
-        services.AddHostedService(sp => sp.GetRequiredService<ConsolidationRetryBackgroundService>());
 
         return services;
     }

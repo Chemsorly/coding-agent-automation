@@ -19,7 +19,6 @@ public class ConsolidationActionsColumnTests : BunitContext
 {
     private readonly Mock<IConsolidationService> _mockService = new();
     private readonly Mock<IPipelineApiConfigClient> _mockConfigClient = new();
-    private readonly Mock<IConsolidationDispatcher> _mockDispatcher = new();
     private readonly ConsolidationBadgeService _badgeService = new();
 
     public ConsolidationActionsColumnTests()
@@ -35,21 +34,21 @@ public class ConsolidationActionsColumnTests : BunitContext
         _mockService.Setup(s => s.GetLastRunAsync(
             It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ConsolidationRun?)null);
-        _mockDispatcher.Setup(d => d.DispatchRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
 
         Services.AddSingleton<IConsolidationService>(_mockService.Object);
-        Services.AddSingleton<IConsolidationDispatcher>(_mockDispatcher.Object);
         Services.AddSingleton(_mockConfigClient.Object);
         Services.AddSingleton(_badgeService);
+        // Required by Consolidation.razor after issue #3027 (cancel via PostStatus)
+        Services.AddSingleton(new Mock<IPipelineApiWorkItemClient>().Object);
     }
 
-    private static ConsolidationRun MakeRun(ConsolidationRunStatus status, string id = "run-1") => new()
+    private static ConsolidationRun MakeRun(ConsolidationRunStatus status, string id = "run-1", string? workItemId = null) => new()
     {
         RunId = id,
         Type = ConsolidationRunType.BrainConsolidation,
         StartedAtUtc = DateTime.UtcNow.AddMinutes(-5),
         Status = status,
+        WorkItemId = workItemId,
     };
 
     [Fact]
@@ -70,30 +69,6 @@ public class ConsolidationActionsColumnTests : BunitContext
             .ToList();
         headers.Should().NotContain("Actions",
             "the Actions column must be hidden when no run is in a cancellable state");
-        // TODO: [WARNING] This test only covers the case where the run history has terminal-state runs.
-        // The empty-history case (_runHistory = []) is not tested: _anyRunCancellable defaults to false
-        // via .Any() on an empty list, so the column should also be hidden. Add a separate test with
-        // GetRunHistoryAsync returning an empty list to guard against any future change that initialises
-        // _anyRunCancellable = true or changes the default.
-    }
-
-    [Fact]
-    public void Consolidation_ShowsActionsColumn_WhenSomeRunIsQueued()
-    {
-        _mockService.Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ConsolidationRun>
-            {
-                MakeRun(ConsolidationRunStatus.Succeeded, "r1"),
-                MakeRun(ConsolidationRunStatus.Queued, "r2"),
-            });
-
-        var cut = Render<Consolidation>();
-
-        var headers = cut.FindAll(".monitoring-table thead th")
-            .Select(e => e.TextContent.Trim())
-            .ToList();
-        headers.Should().Contain("Actions",
-            "the Actions column must be visible when at least one run is Queued");
     }
 
     [Fact]
@@ -102,8 +77,9 @@ public class ConsolidationActionsColumnTests : BunitContext
         _mockService.Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ConsolidationRun>
             {
-                MakeRun(ConsolidationRunStatus.Pending, "r1"),
-                MakeRun(ConsolidationRunStatus.Succeeded, "r2"),
+                MakeRun(ConsolidationRunStatus.Succeeded, "r1"),
+                // WorkItemId must be set for the cancel button to appear (issue #3027)
+                MakeRun(ConsolidationRunStatus.Pending, "r2", workItemId: Guid.NewGuid().ToString()),
             });
 
         var cut = Render<Consolidation>();
@@ -112,22 +88,23 @@ public class ConsolidationActionsColumnTests : BunitContext
             .Select(e => e.TextContent.Trim())
             .ToList();
         headers.Should().Contain("Actions",
-            "the Actions column must be visible when at least one run is Pending");
+            "the Actions column must be visible when at least one run is Pending with a WorkItemId");
     }
 
     [Fact]
-    public void Consolidation_ShowsCancelButton_OnlyForCancellableRuns()
+    public void Consolidation_ShowsCancelButton_OnlyForPendingRuns()
     {
         _mockService.Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ConsolidationRun>
             {
                 MakeRun(ConsolidationRunStatus.Succeeded, "r1"),
-                MakeRun(ConsolidationRunStatus.Queued, "r2"),
+                // WorkItemId must be set for the cancel button to appear (issue #3027)
+                MakeRun(ConsolidationRunStatus.Pending, "r2", workItemId: Guid.NewGuid().ToString()),
             });
 
         var cut = Render<Consolidation>();
 
         var cancelButtons = cut.FindAll(".btn-cancel-run");
-        cancelButtons.Should().HaveCount(1, "only the Queued run must have a Cancel button");
+        cancelButtons.Should().HaveCount(1, "only the Pending run with a WorkItemId must have a Cancel button");
     }
 }

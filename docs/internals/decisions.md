@@ -242,13 +242,13 @@ The practical impact is low: draft PRs are rare (require retry exhaustion), and 
 **Topology (verified 2026-08-22):**
 - GitHub App PEM and GitLab access tokens live exclusively in the database (`ProviderConfig.Settings["privateKeyBase64"]` / `Settings["accessToken"]`). No K8s Secret in the Helm chart contains these credentials — the chart manages only `agent-api-key` (the HMAC master key).
 - `TokenVendingService` is registered in `CodingAgent.Api`, `CodingAgent.Web` (Orchestrator), and `CodingAgent.Scheduler`. All three processes read `ProviderConfig` from Postgres and perform the GitHub JWT exchange in-process.
-- Agent pods receive only: (a) the HMAC-derived per-job key (`HMAC-SHA256(master, jobName)`, mounted from the chart Secret), and (b) short-lived GitHub installation access tokens (1-hour expiry) vended via SignalR `RefreshToken` calls handled by `AgentTokenRefreshService` in the API hub. The raw PEM and long-lived GitLab PATs never enter the agent container.
-- The agent's `HubConnectionManager` receives the master key at construction and derives its per-agent key internally (`DeriveKey(masterKey, agentId.Value)`) — it never sends the master key over the wire.
+- Agent pods receive only: (a) the per-job derived key (`HMAC-SHA256(masterKey, jobName)`, stored in a per-job K8s Secret created by `DispatchLifecycleService`), and (b) short-lived GitHub installation access tokens (1-hour expiry) vended via SignalR `RefreshToken` calls handled by `AgentTokenRefreshService` in the API hub. The raw master key and the raw PEM/GitLab PATs never enter the agent container.
+- For work-item pods, `AgentStartupConfig` reads `AGENT_API_KEY` (env var, pre-derived) and sets `KeyIsPreDerived=true`. `HubConnectionManager` and `WorkItemHttpClient` use the key directly without re-deriving it. For non-work-item pods (chat/consolidation), the legacy file-mount path (`AGENT_API_KEY_FILE` = raw master key) is still used; `KeyIsPreDerived=false` and in-process derivation applies.
 - Assembly boundary: NetArchTest rules in `LayerBoundaryTests.cs` prevent `CodingAgent.Agent`, `Agent.KiroCli`, and `Agent.OpenCode` from depending on `CodingAgent.Orchestration` (where `TokenVendingService` and `ProviderSettingKeys.PrivateKeyBase64` live). This is structural enforcement, not a named invariant test.
 
 **Known limitation — GitLab PATs:** GitLab access tokens are passed through in plaintext (no vending). Unlike GitHub App tokens (short-lived and scoped), GitLab PATs are long-lived. Recommend project access tokens with ≤1-day expiry to minimize exposure if an agent is compromised.
 
-**DerivedKeySecretName footgun:** `JobSpecBuilder.BuildContext.DerivedKeySecretName` must NEVER be set for work-item or consolidation pods. Setting it injects an already-derived key, causing `HubConnectionManager` to double-derive and fail auth. The comment in `DispatchLifecycleService.cs` and `DispatchLoop.cs` is the only guard. If this configuration needs to be made impossible to express accidentally, add a startup validation guard in `JobSpecBuilder`.
+**Per-job key flow (work-item pods, 2026-09-26):** `DispatchLifecycleService` pre-computes `HMAC-SHA256(masterKey, jobName)` and stores it in a K8s Secret `caa-key-{jobName}` with an OwnerReference pointing to the Job (auto-GC). `JobSpecBuilder` injects `AGENT_API_KEY` from this Secret when `DerivedKeySecretName` is set. The pod's `HubConnectionManager` uses the key directly (`keyIsPreDerived=true`) — no further derivation occurs. `AgentApiKeyAuthHandler` validates by computing `HMAC(masterKey, agentId)` server-side and comparing, which matches the pre-derived value. The master key never enters pod memory.
 
 **Context:** The `TokenVendingService` generates GitHub installation tokens (1-hour expiry). `AgentTokenRefreshService` handles mid-job refresh requests from agents over SignalR — agents call `RequestTokenRefresh` unconditionally before each token-requiring provider operation (git push, PR creation, etc.); there is no age-based or timer-based proactive refresh on the agent side. `TokenExpiresAt` is written into the initial `ProviderConfig.Settings` snapshot at dispatch time (`TokenVendingService.PrepareAgentConfigsAsync`) but is not read by agent code — the server-side `GitHubAppAuthService` (5-minute renewal buffer, `_renewalBuffer = TimeSpan.FromMinutes(5)`) ensures the orchestrator never vends an expired token, making per-call refresh safe in practice. The SignalR dependency for refresh is acceptable because agents already depend on SignalR for lifecycle management. This pattern mirrors GitHub Actions' per-job `GITHUB_TOKEN` injection.
 
@@ -288,7 +288,9 @@ The practical impact is low: draft PRs are rare (require retry exhaustion), and 
 
 **Reassess when:** If the system needs per-agent revocation without rotating the master key (e.g., a compromised agent that must be isolated without restarting others). This would require individual secrets or a revocation list.
 
-**Status (2026-08-17):** Resolved in Spec 043. JobSpecBuilder now vends HMAC-SHA256(master, agentId) via per-Job Secret with ownerReference. WorkItemHttpClient appends ?agentId= on GetAssignment and PostStatus. The divergence predated specs 041–045; prior to this spec, every agent pod mounted the master Secret directly despite the HMAC derivation logic existing at the auth layer.
+**Status (2026-09-26, issue #3034):** Implemented. `DispatchLifecycleService.CreateK8sJobAsync` now pre-computes `HMAC-SHA256(masterKey, jobName)` and stores it in a per-job K8s Secret (`caa-key-{jobName}`) with an OwnerReference for auto-GC. `JobSpecBuilder` injects `AGENT_API_KEY` from this per-job Secret via `DerivedKeySecretName`. Work-item pods receive only the pre-derived value and never hold the master key. `HubConnectionManager` and `WorkItemHttpClient` use `AGENT_API_KEY` directly when `keyIsPreDerived=true` (no further derivation). Non-work-item pods (chat/consolidation) remain on the legacy master-key-file-mount path until a follow-up migration.
+
+**Security invariant:** A work-item pod's credential `HMAC(master, podA-name)` cannot be used to impersonate `podB` because computing `HMAC(master, podB-name)` requires the master key, which is never distributed to pods.
 
 ---
 
@@ -588,11 +590,11 @@ Both providers give the stall monitor actionable signal via `AgentHealthStatus` 
 
 **Decision:** `QualityGateExecutor.ProceedToQualityGatesAsync` `catch (Exception ex)` handler does not call `run.MarkCompleted()` before `AddRunToHistoryAsync`. This leaves `CompletedAt = null` on exception-terminated runs, producing ghost `PipelineRun` rows that accumulate permanently because retention sweeps gate on `CompletedAt IS NOT NULL`. `DatabaseMaintenanceService.ReconcileOrphanedPipelineRunsAsync` is the compensating sweep; its code comment explicitly names "the separate terminal gap in QualityGateExecutor.RetryLoop." The fix is a single `run.MarkCompleted()` call before `TransitionTo(PipelineStep.Failed)`, matching the `OperationCanceledException` handler directly above.
 
-**Status:** Currently broken — #2851 tracks the one-line fix.
+**Status:** Fixed (PR #2858, merged 2026-09-22) — both catch arms in `ProceedToQualityGatesAsync` delegate to the shared private `FinalizeRunAsync` helper, which calls `run.MarkCompleted()` as its first statement before `swapLabel`, `TransitionTo`, and `AddRunToHistoryAsync`. The structural approach makes the ordering invariant impossible to violate independently across the two arms. `ReconcileOrphanedPipelineRunsAsync` remains as a safety net for any historical ghost rows; no new accumulation occurs.
 
 **Context:** Same root cause as #2778 (ConflictRestart missing `MarkCompleted`, fixed in #2789). The OCE handler in the same method was already correct; only the general `Exception` handler was missed.
 
-**Reassess when:** Never once #2851 is fixed. Pattern going forward: every `catch` block that calls `AddRunToHistoryAsync` on a terminal step MUST also call `run.MarkCompleted()` first.
+**Reassess when:** N/A — #2851 is fixed. Pattern going forward: every `catch` block that calls `AddRunToHistoryAsync` on a terminal step MUST also call `run.MarkCompleted()` first.
 
 ---
 
