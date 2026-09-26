@@ -59,13 +59,20 @@ public sealed class RunDetailPage
     {
         await CancelButton.WaitForAsync(new() { Timeout = 15_000 });
 
-        // Click-with-retry: the cancel button is rendered in SSR before the Blazor circuit
+        // Click-with-retry: the cancel button may be rendered in SSR before the Blazor circuit
         // connects. The first click may be ignored if the circuit is not yet interactive.
         // We retry until the confirm section appears (up to the full 15s budget).
+        // IMPORTANT: After a successful click the cancel button is REPLACED by the confirm
+        // section in the DOM. We must check for the confirm section BEFORE clicking again,
+        // otherwise ClickAsync blocks for its full timeout waiting for the button to reappear.
         var confirmSection = _page.Locator("[data-testid='cancel-pipeline-confirm-section']");
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
         while (DateTime.UtcNow < deadline)
         {
+            // If the confirm section already appeared (from a previous click), stop retrying.
+            if (await confirmSection.CountAsync() > 0)
+                break;
+
             await CancelButton.ClickAsync();
             try
             {
@@ -74,7 +81,7 @@ public sealed class RunDetailPage
             }
             catch (TimeoutException)
             {
-                // Circuit not yet interactive; retry the click
+                // Circuit not yet interactive or click was dropped; retry
             }
         }
 
@@ -112,10 +119,17 @@ public sealed class RunDetailPage
 
         // Click-with-retry: same Blazor SSR/circuit race as CancelAsync above.
         // We retry until the confirm sub-section appears inside the redispatch card.
+        // IMPORTANT: After a successful click the re-dispatch button is hidden and the
+        // confirm section appears. Check for the confirm button BEFORE clicking again
+        // to avoid blocking in ClickAsync waiting for the button to reappear.
         var confirmSection = _page.Locator("[data-testid='redispatch-confirm-btn']");
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
         while (DateTime.UtcNow < deadline)
         {
+            // If the confirm section already appeared (from a previous click), stop retrying.
+            if (await confirmSection.CountAsync() > 0)
+                break;
+
             await redispatchBtn.ClickAsync();
             try
             {
@@ -124,7 +138,7 @@ public sealed class RunDetailPage
             }
             catch (TimeoutException)
             {
-                // Circuit not yet interactive; retry
+                // Circuit not yet interactive or click was dropped; retry
             }
         }
 
