@@ -69,14 +69,14 @@ public class ConsolidationPageComponentTests : BunitContext
         string issueProviderId = "issue-1",
         string repoProviderId = "repo-1",
         bool enabled = true) => new()
-    {
-        Id = id,
-        Name = name,
-        BrainProviderId = brainProviderId,
-        IssueProviderId = issueProviderId,
-        RepoProviderId = repoProviderId,
-        Enabled = enabled
-    };
+        {
+            Id = id,
+            Name = name,
+            BrainProviderId = brainProviderId,
+            IssueProviderId = issueProviderId,
+            RepoProviderId = repoProviderId,
+            Enabled = enabled
+        };
 
     // ═══ Requirement 1.2: Per-template cards render ═══
 
