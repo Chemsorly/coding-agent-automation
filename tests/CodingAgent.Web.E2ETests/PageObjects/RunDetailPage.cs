@@ -24,11 +24,11 @@ public sealed class RunDetailPage
     {
         await _page.GotoAsync($"{_baseUrl}/runs/{runId}");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        // Allow time for the Blazor Server circuit to connect via SignalR
-        // and for event handlers (@onclick) to be attached to DOM elements.
-        // 1500ms was insufficient in CI; 3000ms matches AgentCodingPage.NavigateAsync's
-        // proven delay on the same ARM runner profile.
-        await _page.WaitForTimeoutAsync(3000);
+        // Do not use a fixed WaitForTimeoutAsync here — the Blazor Server circuit establishment
+        // time varies from ~500ms to >3s depending on CI runner load, making any fixed delay
+        // either too short (flaky) or wasteful on fast machines.
+        // CancelAsync and RedispatchAsync use click-retry loops to handle the prerender race
+        // where the cancel/redispatch buttons are visible in SSR but @onclick isn't wired yet.
     }
 
     /// <summary>The whole-page text, for asserting the issue identifier / title is shown.</summary>
@@ -58,8 +58,27 @@ public sealed class RunDetailPage
     public async Task CancelAsync(bool confirm)
     {
         await CancelButton.WaitForAsync(new() { Timeout = 15_000 });
-        await CancelButton.ClickAsync();
 
+        // Click-with-retry: the cancel button is rendered in SSR before the Blazor circuit
+        // connects. The first click may be ignored if the circuit is not yet interactive.
+        // We retry until the confirm section appears (up to the full 15s budget).
+        var confirmSection = _page.Locator("[data-testid='cancel-pipeline-confirm-section']");
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        while (DateTime.UtcNow < deadline)
+        {
+            await CancelButton.ClickAsync();
+            try
+            {
+                await confirmSection.WaitForAsync(new() { Timeout = 1_500 });
+                break; // confirm section appeared — circuit is live and click registered
+            }
+            catch (TimeoutException)
+            {
+                // Circuit not yet interactive; retry the click
+            }
+        }
+
+        // confirm section is now visible; click the appropriate button
         if (confirm)
         {
             var confirmBtn = _page.Locator("[data-testid='confirm-cancel-pipeline-btn']");
@@ -90,7 +109,24 @@ public sealed class RunDetailPage
     {
         var redispatchBtn = _page.Locator("[data-testid='redispatch-btn']");
         await redispatchBtn.WaitForAsync(new() { Timeout = 10_000 });
-        await redispatchBtn.ClickAsync();
+
+        // Click-with-retry: same Blazor SSR/circuit race as CancelAsync above.
+        // We retry until the confirm sub-section appears inside the redispatch card.
+        var confirmSection = _page.Locator("[data-testid='redispatch-confirm-btn']");
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        while (DateTime.UtcNow < deadline)
+        {
+            await redispatchBtn.ClickAsync();
+            try
+            {
+                await confirmSection.WaitForAsync(new() { Timeout = 1_500 });
+                break; // confirm button appeared — click registered
+            }
+            catch (TimeoutException)
+            {
+                // Circuit not yet interactive; retry
+            }
+        }
 
         if (confirm)
         {
