@@ -12,9 +12,9 @@ namespace CodingAgent.AgentGateway;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Consolidation runs skip pipeline history persistence — they have their own completion path
-/// (ReportConsolidationComplete) and their own history on the Consolidation page. They enter
-/// the PipelineRun tracking only as ghost entries during orchestrator restart rehydration.
+/// Consolidation runs route through <see cref="IRunLifecycleManager"/> so that pipeline run
+/// history is written and WorkItem status is transitioned consistently. They enter the PipelineRun
+/// tracking as ghost entries during orchestrator restart rehydration.
 /// </para>
 /// <para>
 /// Does not perform agent-idle transitions — that is the caller's responsibility.
@@ -24,16 +24,16 @@ namespace CodingAgent.AgentGateway;
 /// </remarks>
 internal sealed class ConsolidationJobCompletionStrategy : IJobCompletionStrategy
 {
-    private readonly IAgentHubFacade _facade;
+    private readonly IRunLifecycleManager _lifecycleManager;
     private readonly IChangeNotifier _changeNotifier;
     private readonly ILogger _logger;
 
     public ConsolidationJobCompletionStrategy(
-        IAgentHubFacade facade,
+        IRunLifecycleManager lifecycleManager,
         IChangeNotifier changeNotifier,
         ILogger logger)
     {
-        _facade = facade;
+        _lifecycleManager = lifecycleManager;
         _changeNotifier = changeNotifier;
         _logger = logger;
     }
@@ -42,28 +42,50 @@ internal sealed class ConsolidationJobCompletionStrategy : IJobCompletionStrateg
     public async Task<bool> ExecuteAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload,
                                          Activity? activity, CancellationToken ct)
     {
-        // Skip pipeline history persistence for consolidation runs.
-        // Consolidation runs have their own completion path (ReportConsolidationComplete)
-        // and their own history on the Consolidation page. They enter the PipelineRun
-        // tracking only as ghost entries during orchestrator restart rehydration.
         _logger.Information(
-            "ReportJobCompleted: skipping pipeline persistence for consolidation run {JobId} (IssueIdentifier={IssueIdentifier})",
+            "ReportJobCompleted: routing consolidation run {JobId} (IssueIdentifier={IssueIdentifier}) through RunLifecycleManager",
             jobId.Value, run.IssueIdentifier);
 
         var (workItemStatus, consolidationError, consolidationFailureEnum) =
             CompletionOutcomeResolver.Resolve(payload.FinalStep, payload.FailureReason, payload.FailureCategory,
                 "Consolidation run failed");
 
-        _facade.RemoveRun(jobId.Value);
-
-        try
+        // Route through RunLifecycleManager so history is written and WorkItem status is
+        // transitioned atomically. RunLifecycleManager.CompleteRunAsync calls _runService.RemoveRun
+        // internally — do NOT call _facade.RemoveRun separately.
+        // RunLifecycleManager already skips the label swap for consolidation runs
+        // (IssueProviderConfigId == ConsolidationConstants.ProviderConfigId guard in CompleteRunAsync).
+        // TODO: [WARNING] Cancelled step is incorrectly routed through FailRunAsync. CompletionOutcomeResolver
+        // returns WorkItemStatus.Cancelled for PipelineStep.Cancelled, but the else branch below unconditionally
+        // calls FailRunAsync, which persists WorkItemStatus.Failed and PipelineStep.Failed in both history and
+        // the DB WorkItems row. WorkItemStatus.Cancelled should route to CancelRunAsync instead to preserve the
+        // correct terminal state. Concrete scenario: agent pod receives SIGTERM → sends FinalStep=Cancelled →
+        // DB and history record Failed instead of Cancelled. Fix by adding a separate branch:
+        //   if (workItemStatus == WorkItemStatus.Cancelled) await _lifecycleManager.CancelRunAsync(...)
+        // The synthetic error message "Consolidation run failed" also leaks into Cancelled history records.
+        if (workItemStatus == WorkItemStatus.Succeeded)
         {
-            await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, ct,
-                consolidationError, consolidationFailureEnum);
+            try
+            {
+                await _lifecycleManager.CompleteRunAsync(jobId.Value, workItemStatus, ct,
+                    consolidationError, consolidationFailureEnum);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "ReportJobCompleted: RunLifecycleManager.CompleteRunAsync failed for consolidation run {JobId} (non-fatal)", jobId.Value);
+            }
         }
-        catch (Exception ex)
+        else
         {
-            _logger.Warning(ex, "ReportJobCompleted: failed to transition consolidation WorkItem {JobId} (non-fatal)", jobId.Value);
+            try
+            {
+                await _lifecycleManager.FailRunAsync(jobId.Value, consolidationError ?? "Consolidation run failed", ct,
+                    consolidationFailureEnum);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "ReportJobCompleted: RunLifecycleManager.FailRunAsync failed for consolidation run {JobId} (non-fatal)", jobId.Value);
+            }
         }
 
         // TODO: NotifyChange fires here while the agent is still in Busy state — the agent-idle

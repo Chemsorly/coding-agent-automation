@@ -398,8 +398,9 @@ public class PipelineRunHistoryServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task AddRunToHistory_RejectsConsolidationRun_Silently()
+    public async Task AddRunToHistory_PersistsConsolidationRun()
     {
+        // Write guard removed: consolidation runs are now written to pipeline history.
         var runsDir = Path.Combine(Path.GetTempPath(), $"test-runs-consol-guard-{Guid.NewGuid()}");
         Directory.CreateDirectory(runsDir);
         try
@@ -421,12 +422,9 @@ public class PipelineRunHistoryServiceTests : IDisposable
             // Should not throw
             await historyService.AddRunToHistoryAsync(consolidationRun);
 
-            // Should not appear in history
+            // Should appear in history (write guard removed)
             var history = await historyService.GetRunHistoryAsync();
-            history.Should().BeEmpty();
-
-            // Should not persist to disk
-            Directory.GetFiles(runsDir, "*.json").Should().BeEmpty();
+            history.Should().HaveCount(1, "consolidation run must now be written to pipeline history");
         }
         finally
         {
