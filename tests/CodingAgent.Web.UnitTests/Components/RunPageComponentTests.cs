@@ -706,4 +706,64 @@ public class RunPageComponentTests : BunitContext
         Assert.Contains("503 Service Unavailable", callout.TextContent);
     }
 
+    // ── Terminal-like final steps ─────────────────────────────────────────
+
+    /// <summary>
+    /// Restarted, merged and closed runs are finished: the page must show their outcome badge and must
+    /// not offer "Cancel Pipeline" or a live-output panel that waits forever.
+    /// </summary>
+    [Theory]
+    [InlineData(PipelineStep.ConflictRestart, "Restarted")]
+    [InlineData(PipelineStep.PrMerged, "Merged")]
+    [InlineData(PipelineStep.PrClosed, "Closed")]
+    public void TerminalLikeRun_ShowsOutcome_WithoutCancelOrLiveOutput(PipelineStep finalStep, string expectedBadge)
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "3019",
+            IssueTitle = "Terminal-like run",
+            FinalStep = finalStep,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-2),
+            CompletedAtOffset = DateTimeOffset.UtcNow.AddHours(-1),
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        Assert.Equal(expectedBadge, cut.Find(".cockpit-page-header .step-badge").TextContent.Trim());
+        Assert.Empty(cut.FindAll("[data-testid='cancel-pipeline-btn']"));
+        Assert.DoesNotContain(cut.FindAll("h2"), h => h.TextContent.Trim() == "Live output");
+    }
+
+    /// <summary>
+    /// A conflict-restarted Implementation run can be re-dispatched, and the button uses an app button
+    /// style (it used the undefined .btn-primary class and rendered as a bare browser button).
+    /// </summary>
+    [Fact]
+    public void ReDispatch_ConflictRestartRun_ShowsStyledReDispatchButton()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "3019",
+            IssueTitle = "Restarted run",
+            FinalStep = PipelineStep.ConflictRestart,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+        };
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        var button = cut.Find("[data-testid='redispatch-btn']");
+        Assert.Contains("btn-trigger", button.ClassList);
+        button.Click();
+        Assert.Contains("btn-save", cut.Find("[data-testid='redispatch-confirm-btn']").ClassList);
+    }
+
 }

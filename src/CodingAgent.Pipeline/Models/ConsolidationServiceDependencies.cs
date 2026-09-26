@@ -15,4 +15,6 @@ public sealed record ConsolidationServiceDependencies(
     IHarnessSuggestionStore HarnessSuggestionStore,
     IProviderConfigStore ProviderConfigStore,
     IConsolidationWorkspaceManager? WorkspaceManager = null,
-    IConsolidationFeedbackCache? FeedbackCache = null);
+    IConsolidationFeedbackCache? FeedbackCache = null,
+    IWorkDistributor? WorkDistributor = null,
+    IConsolidationSelectorResolver? SelectorResolver = null);

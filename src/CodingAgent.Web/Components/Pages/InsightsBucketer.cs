@@ -1,4 +1,5 @@
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.Services;
 
 namespace CodingAgent.Web.Components.Pages;
 
@@ -90,12 +91,8 @@ internal static class InsightsBucketer
                 var slotStart = windowStart.AddHours(i);
                 var slotEnd = slotStart.AddHours(1);
                 var slotItems = items
-                    .Where(r => r.StartedAtOffset >= slotStart && r.StartedAtOffset < slotEnd)
-                    .ToList();
-                return new TimeBucket(slotStart,
-                    slotItems.Count(r => r.FinalStep == PipelineStep.Completed),
-                    slotItems.Count(r => r.FinalStep == PipelineStep.Failed),
-                    slotItems.Count(r => r.FinalStep == PipelineStep.Cancelled));
+                    .Where(r => r.StartedAtOffset >= slotStart && r.StartedAtOffset < slotEnd);
+                return ToBucket(slotStart, slotItems);
             })
             .ToList();
     }
@@ -169,14 +166,32 @@ internal static class InsightsBucketer
                 var slotStart = windowStart.AddDays(i);
                 var slotEnd = slotStart.AddDays(1);
                 var slotItems = items
-                    .Where(r => r.StartedAtOffset >= slotStart && r.StartedAtOffset < slotEnd)
-                    .ToList();
-                return new TimeBucket(slotStart,
-                    slotItems.Count(r => r.FinalStep == PipelineStep.Completed),
-                    slotItems.Count(r => r.FinalStep == PipelineStep.Failed),
-                    slotItems.Count(r => r.FinalStep == PipelineStep.Cancelled));
+                    .Where(r => r.StartedAtOffset >= slotStart && r.StartedAtOffset < slotEnd);
+                return ToBucket(slotStart, slotItems);
             })
             .ToList();
+    }
+
+    /// <summary>
+    /// Counts a slot's runs per outcome with <see cref="RunOutcomeDisplay.Classify"/>, so the chart agrees with
+    /// the Runs list and the outcome mix: a merged PR counts as succeeded, a closed PR as cancelled, and conflict
+    /// restarts get their own series. Runs that are still in flight are not counted.
+    /// </summary>
+    private static TimeBucket ToBucket(DateTimeOffset slotStart, IEnumerable<PipelineRunSummary> slotItems)
+    {
+        int succeeded = 0, failed = 0, cancelled = 0, restarted = 0;
+        foreach (var run in slotItems)
+        {
+            switch (RunOutcomeDisplay.Classify(run.FinalStep))
+            {
+                case RunOutcome.Succeeded: succeeded++; break;
+                case RunOutcome.Failed: failed++; break;
+                case RunOutcome.Cancelled: cancelled++; break;
+                case RunOutcome.Restarted: restarted++; break;
+            }
+        }
+
+        return new TimeBucket(slotStart, succeeded, failed, cancelled, restarted);
     }
 }
 
@@ -185,7 +200,11 @@ internal static class InsightsBucketer
 /// now supports both hourly (1h/6h/24h) and daily (7d/All) granularity.
 /// </summary>
 /// <param name="SlotStart">UTC start of the bucket (truncated to the hour for hourly, to the day for daily).</param>
-internal sealed record TimeBucket(DateTimeOffset SlotStart, int Completed, int Failed, int Cancelled)
+/// <param name="Succeeded">Runs that completed or whose PR was merged.</param>
+/// <param name="Failed">Failed runs.</param>
+/// <param name="Cancelled">Cancelled runs, including runs whose PR was closed.</param>
+/// <param name="Restarted">Runs superseded by a conflict restart.</param>
+internal sealed record TimeBucket(DateTimeOffset SlotStart, int Succeeded, int Failed, int Cancelled, int Restarted)
 {
-    public int Total => Completed + Failed + Cancelled;
+    public int Total => Succeeded + Failed + Cancelled + Restarted;
 }
