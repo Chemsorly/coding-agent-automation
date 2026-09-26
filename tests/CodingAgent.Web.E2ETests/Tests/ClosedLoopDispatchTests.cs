@@ -57,11 +57,11 @@ public sealed class ClosedLoopDispatchTests : E2ETestBase
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: start the loop the way the Start Loop button does — StartLoopAsync only. The
-        // service is hosted in the harness, so its ExecuteAsync is already parked on the
-        // activation signal; calling StartAsync here as well would run a second copy of it, and
-        // the matching StopAsync in the finally would leave the singleton unable to run for any
-        // later test in the process.
-        var loopService = Fixture.Factory.Services.GetRequiredService<PipelineLoopService>();
+        // service is hosted in the Scheduler harness, so its ExecuteAsync is already parked on
+        // the activation signal; calling StartAsync here as well would run a second copy of it,
+        // and the matching StopAsync in the finally would leave the singleton unable to run for
+        // any later test in the process.
+        var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
         {
             var started = await loopService.StartLoopAsync();

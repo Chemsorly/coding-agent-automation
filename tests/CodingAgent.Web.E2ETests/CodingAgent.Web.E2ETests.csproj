@@ -57,6 +57,9 @@
     <!-- The harness runs the Pipeline API alongside the Blazor app: the API is the sole host of
          /hubs/agent and /api/work-items/* from Spec 044 onward, so fake agents connect there. -->
     <ProjectReference Include="..\..\src\CodingAgent.Api\CodingAgent.Api.csproj" />
+    <!-- The harness also runs the Scheduler in-process (Spec 047 / issue #3085): the real
+         PipelineLoopService lives in Scheduler, and loop control tests go through real HTTP. -->
+    <ProjectReference Include="..\..\src\CodingAgent.Scheduler\CodingAgent.Scheduler.csproj" />
     <ProjectReference Include="..\CodingAgent.Web.TestUtilities\CodingAgent.Web.TestUtilities.csproj" />
   </ItemGroup>
 
