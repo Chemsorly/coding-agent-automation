@@ -61,7 +61,7 @@
 }
 
 .drawer-issue-number {
-    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-family: var(--font-mono);
     font-size: 0.8rem;
     color: var(--accent-light);
     font-weight: 600;

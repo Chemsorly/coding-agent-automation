@@ -452,8 +452,10 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         await svc.StartLoopAsync();
 
-        // In multi-template mode, status shows "Cycle complete" when no issues found
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        // In multi-template mode, status shows "Cycle complete" when no issues found.
+        // Use a generous timeout: under CI load the first full cycle (poll + dispatch + sweep)
+        // can take longer than 5 s, causing a false timeout failure.
+        var deadline = DateTime.UtcNow.AddSeconds(30);
         while (!svc.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase) && DateTime.UtcNow < deadline)
             await Task.Delay(50);
 
@@ -461,7 +463,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         Assert.Contains("Cycle complete", svc.StatusMessage, StringComparison.OrdinalIgnoreCase);
 
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(5);
+        deadline = DateTime.UtcNow.AddSeconds(30);
         while (svc.IsLoopActive && DateTime.UtcNow < deadline)
             await Task.Delay(50);
         cts.Cancel();

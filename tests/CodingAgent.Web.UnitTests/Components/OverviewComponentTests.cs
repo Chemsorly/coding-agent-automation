@@ -282,7 +282,88 @@ public class OverviewComponentTests : BunitContext
             "only the non-active failed run should appear in the Failed runs tile");
     }
 
+    // ── Terminal-like steps (ConflictRestart / PrMerged / PrClosed) ────────
+
+    /// <summary>
+    /// Restarted, merged and closed runs are finished: they must not count as Active or be listed
+    /// under "Active runs" with a Running pill, and the recent list shows their real outcome.
+    /// </summary>
+    [Fact]
+    public void TerminalLikeSteps_AreNotActive_AndShowTheirOutcomeInRecentActivity()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var runs = new List<PipelineRunSummary>
+        {
+            MakeRun("1", PipelineStep.GeneratingCode, now),
+            MakeRun("2", PipelineStep.ConflictRestart, now.AddMinutes(-1)),
+            MakeRun("3", PipelineStep.PrMerged, now.AddMinutes(-2)),
+            MakeRun("4", PipelineStep.PrClosed, now.AddMinutes(-3)),
+        };
+        RegisterOverviewServices(EmptyAgentsMock(), HistoryMock(runs));
+
+        var cut = Render<Overview>();
+
+        GetStatValue(cut, "Active").Should().Be("1", "only the GeneratingCode run is still in flight");
+        var badges = cut.FindAll(".cockpit-run-row .step-badge").Select(b => b.TextContent.Trim()).ToList();
+        badges.Should().ContainSingle(b => b == "Running");
+        badges.Should().Contain(["Restarted", "Merged", "Closed"]);
+    }
+
+    /// <summary>
+    /// Success rate is succeeded ÷ (succeeded + failed + cancelled): a merged PR counts as a success and a
+    /// conflict restart is left out (the re-dispatched run carries the outcome).
+    /// </summary>
+    [Fact]
+    public void SuccessRate_CountsMergedAsSuccess_AndIgnoresRestarts()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var runs = new List<PipelineRunSummary>
+        {
+            MakeRun("1", PipelineStep.Completed, now),
+            MakeRun("2", PipelineStep.PrMerged, now.AddMinutes(-1)),
+            MakeRun("3", PipelineStep.Failed, now.AddMinutes(-2)),
+            MakeRun("4", PipelineStep.ConflictRestart, now.AddMinutes(-3)),
+        };
+        RegisterOverviewServices(EmptyAgentsMock(), HistoryMock(runs));
+
+        var cut = Render<Overview>();
+
+        GetStatValue(cut, "Success · last 100").Should().Be("67%");
+    }
+
     // ── helpers ────────────────────────────────────────────────────────────
+
+    private static PipelineRunSummary MakeRun(string issueId, PipelineStep finalStep, DateTimeOffset startedAt) => new()
+    {
+        RunId = Guid.NewGuid().ToString(),
+        IssueIdentifier = issueId,
+        IssueTitle = $"Issue {issueId}",
+        RunType = PipelineRunType.Implementation,
+        FinalStep = finalStep,
+        StartedAtOffset = startedAt,
+    };
+
+    private static Mock<IPipelineApiRunHistoryClient> HistoryMock(List<PipelineRunSummary> runs)
+    {
+        var mock = new Mock<IPipelineApiRunHistoryClient>();
+        mock.Setup(c => c.GetRunHistoryAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = runs, Page = 1, PageSize = 100, HasMore = false });
+        return mock;
+    }
+
+    private static Mock<IPipelineApiAgentClient> EmptyAgentsMock()
+    {
+        var mock = new Mock<IPipelineApiAgentClient>();
+        mock.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<AgentEntryDto>());
+        return mock;
+    }
+
+    private static string? GetStatValue(IRenderedComponent<Overview> cut, string label) =>
+        cut.FindAll(".cockpit-stat")
+            .FirstOrDefault(s => s.QuerySelector(".cockpit-stat-l")?.TextContent.Trim() == label)
+            ?.QuerySelector(".cockpit-stat-v")?.TextContent.Trim();
 
     private static PipelineRunSummary MakeFailedRun(
         IssueIdentifier issueId,
