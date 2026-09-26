@@ -18,6 +18,12 @@ public enum ConsolidationRunStatus
     Running,
     Succeeded,
     Failed,
+    /// <summary>
+    /// The run has been accepted and is waiting for an agent to pick it up.
+    /// Queued runs are re-dispatched on orchestrator restart by
+    /// <c>ConsolidationRehydrationExtensions.RunConsolidationStartupAsync</c>.
+    /// </summary>
+    Queued,
     Cancelled,
     /// <summary>
     /// The work item has been successfully submitted to the unified dispatch queue as
@@ -59,6 +65,12 @@ public sealed class ConsolidationRun
     /// <see cref="ConsolidationJobResult.DiffSummaryTokenUsage"/>.
     /// </summary>
     public long TotalTokens { get; set; }
+
+    /// <summary>
+    /// Required agent labels resolved at enqueue time. Persisted to enable restart rehydration
+    /// of queued runs without re-resolving provider configs.
+    /// </summary>
+    public IReadOnlyList<string>? QueuedRequiredLabels { get; set; }
 
     /// <summary>
     /// Project display name for the owning project (resolved from template → project at trigger time).

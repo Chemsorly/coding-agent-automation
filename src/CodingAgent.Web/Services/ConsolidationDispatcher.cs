@@ -307,6 +307,16 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
     {
         try
         {
+            // TODO [WARNING]: This passes the caller's ct rather than CancellationToken.None.
+            // If the outer request/token is cancelled by the time a permanent failure is detected
+            // (e.g. HTTP request aborted, orchestrator shutdown), UpdateRunAsync will throw
+            // OperationCanceledException, which is caught here and logged — leaving the run in
+            // Queued instead of Failed. This defeats the permanent-failure cascade (acceptance
+            // criterion 2 / issue #2536): the run will be retried by the retry sweep, hit the
+            // same 422, and permanently fail again indefinitely. Consider using CancellationToken.None
+            // here for the same reason TransitionToPendingSafelyAsync does: the bookkeeping write
+            // for a permanent outcome must not be skipped on cancellation.
+            // (review-findings-correctness.md WARNING)
             await _consolidationService.UpdateRunAsync(
                 new RunId(run.RunId),
                 ConsolidationRunStatus.Failed,
