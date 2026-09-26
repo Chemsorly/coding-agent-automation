@@ -1,7 +1,9 @@
 using CodingAgent.Api.Client;
+using CodingAgent.Infrastructure.Resilience;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using Polly;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -12,11 +14,11 @@ namespace CodingAgent.Api.Client.Stores;
 /// all persistence and reads through the Pipeline API instead of accessing Postgres directly.
 /// This removes the last Postgres dependency from the orchestrator host (T8 item 2).
 /// </summary>
-[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "HTTP client wrapper — requires integration tests, not unit tests.")]
 public sealed class ApiBackedPipelineRunHistoryService : IPipelineRunHistoryService
 {
     private readonly IPipelineApiRunHistoryClient _client;
     private readonly ILogger _logger;
+    private readonly ResiliencePipeline _retryPipeline;
 
     public ApiBackedPipelineRunHistoryService(IPipelineApiRunHistoryClient client, ILogger logger)
     {
@@ -24,6 +26,7 @@ public sealed class ApiBackedPipelineRunHistoryService : IPipelineRunHistoryServ
         ArgumentNullException.ThrowIfNull(logger);
         _client = client;
         _logger = logger;
+        _retryPipeline = ResiliencePipelineFactory.CreateHttpPipeline(logger);
     }
 
     /// <inheritdoc />
@@ -67,11 +70,24 @@ public sealed class ApiBackedPipelineRunHistoryService : IPipelineRunHistoryServ
 
         try
         {
-            await _client.AddRunToHistoryAsync(summary, ct);
+            // Retry transient HTTP failures (5xx, timeout, network) before giving up.
+            // TODO: CreateHttpPipeline's ShouldHandle predicate retries ALL HttpRequestException without
+            // filtering by HTTP status code, so 4xx responses are also retried up to 3 times. The issue
+            // requirement states "Permanent failures (4xx, deserialization) must not be retried." The note
+            // about idempotency-key safety is also inaccurate — PipelineRunEndpoints does not read the
+            // X-Idempotency-Key header; idempotency is enforced via an upsert at the database layer.
+            // To fully satisfy the requirement, ResiliencePipelineFactory.CreateHttpPipeline (or a new
+            // variant) should filter HttpRequestException by StatusCode, retrying only when StatusCode is
+            // null (network/timeout) or >= 500. See issue #3038 and DotNetSpecialist/Correctness review.
+            await _retryPipeline.ExecuteAsync(
+                async token => await _client.AddRunToHistoryAsync(summary, token),
+                ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Non-fatal — same contract as PostgresPipelineRunHistoryService.AddRunToHistoryAsync
+            // Non-fatal — same contract as PostgresPipelineRunHistoryService.AddRunToHistoryAsync.
+            // Reached only after the retry budget is exhausted (for HttpRequestException) or
+            // immediately for exception types not in the retry predicate (e.g. InvalidOperationException).
             _logger.Warning(ex, "ApiBackedPipelineRunHistoryService: failed to persist run {RunId} via API", summary.RunId);
         }
     }

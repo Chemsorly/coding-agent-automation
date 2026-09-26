@@ -87,14 +87,6 @@ public interface IConsolidationService
     Task TransitionToRunningAsync(RunId runId, CancellationToken ct);
 
     /// <summary>
-    /// Rehydrates queued consolidation runs from persisted files on startup.
-    /// Re-adds them to the concurrency tracker and returns them for re-enqueuing.
-    /// </summary>
-    /// <param name="ct">Cancellation token.</param>
-    /// <returns>List of runs that were in Queued status and need re-enqueuing.</returns>
-    Task<IReadOnlyList<ConsolidationRun>> RehydrateQueuedRunsAsync(CancellationToken ct);
-
-    /// <summary>
     /// Fired when any consolidation run changes state (created, completed, or failed).
     /// </summary>
     event Action? OnChange;

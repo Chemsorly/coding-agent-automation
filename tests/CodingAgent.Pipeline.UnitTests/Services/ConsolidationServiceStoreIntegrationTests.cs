@@ -56,6 +56,12 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
         _store = new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs"));
         _harnessStore = new InMemoryHarnessSuggestionStore();
 
+        // WorkDistributor returns success so TriggerAsync creates a Pending run.
+        var mockWorkDistributor = new Mock<IWorkDistributor>();
+        mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-integration-test", ErrorMessage: null));
+
         _sut = new ConsolidationService(
             new ConsolidationServiceDependencies(
                 new LoggerConfiguration().CreateLogger(),
@@ -66,7 +72,8 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
                 _harnessStore,
                 new Mock<IProviderConfigStore>().Object,
                 WorkspaceManager: new ConsolidationWorkspaceManager(
-                    new LoggerConfiguration().CreateLogger(), _config)));
+                    new LoggerConfiguration().CreateLogger(), _config),
+                WorkDistributor: mockWorkDistributor.Object));
     }
 
     public void Dispose()
@@ -89,7 +96,7 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
         // Arrange: trigger creates and persists a run (starts as Queued in K8s mode)
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
-        run!.Status.Should().Be(ConsolidationRunStatus.Queued);
+        run!.Status.Should().Be(ConsolidationRunStatus.Pending);
 
         // Act: simulate agent completion callback
         await _sut.UpdateRunAsync(run.RunId, ConsolidationRunStatus.Succeeded, "Completed", CancellationToken.None, totalTokens: 1500);
@@ -126,7 +133,7 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
         run.Should().NotBeNull();
 
         // Manually transition to Queued (simulating what happens when no agent is available)
-        run!.Status = ConsolidationRunStatus.Queued;
+        run!.Status = ConsolidationRunStatus.Pending;
         await _store.SaveRunAsync(run, CancellationToken.None);
 
         // Act
@@ -149,7 +156,7 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
         // Arrange: create a run and set to Queued
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
-        run!.Status = ConsolidationRunStatus.Queued;
+        run!.Status = ConsolidationRunStatus.Pending;
         await _store.SaveRunAsync(run, CancellationToken.None);
 
         // Act
@@ -171,7 +178,7 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
         // Arrange: create a run queued 90 min ago (simulates long queue wait)
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
-        run!.Status = ConsolidationRunStatus.Queued;
+        run!.Status = ConsolidationRunStatus.Pending;
         run.StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-90);
         await _store.SaveRunAsync(run, CancellationToken.None);
 
@@ -196,7 +203,7 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
         // Arrange: create a run (enters _runningRuns) and set to Queued with old StartedAtUtc
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
-        run!.Status = ConsolidationRunStatus.Queued;
+        run!.Status = ConsolidationRunStatus.Pending;
         run.StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-90);
         await _store.SaveRunAsync(run, CancellationToken.None);
 
@@ -287,11 +294,11 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
     public async Task CleanupOrphanedRunsAsync_MarksRunningAsFailed_ViaStore()
     {
         // Arrange: create a run and manually transition it to Running (simulating the K8s Job
-        // Controller dispatch — TriggerAsync creates Queued, the Job Controller transitions to Running)
+        // Controller dispatch — TriggerAsync creates Pending, the Job Controller transitions to Running)
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
 
-        // Simulate Job Controller transitioning Queued → Running
+        // Simulate Job Controller transitioning Pending → Running
         run!.Status = ConsolidationRunStatus.Running;
         await _store.SaveRunAsync(run, CancellationToken.None);
 

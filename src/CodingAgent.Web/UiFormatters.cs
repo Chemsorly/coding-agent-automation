@@ -42,21 +42,4 @@ public static class UiFormatters
         PipelineRunType.Consolidation => "Consolidation",
         _ => "Implementation"
     };
-
-    public static string FormatDuration(DateTime startedAt, DateTime? completedAt)
-    {
-        if (completedAt is null) return "—";
-        var duration = completedAt.Value - startedAt;
-        return duration.ToString(@"hh\:mm\:ss");
-    }
-
-    public static string FormatTimestamp(DateTime timestamp)
-    {
-        var utc = timestamp.Kind == DateTimeKind.Utc ? timestamp : timestamp.ToUniversalTime();
-        var ago = DateTime.UtcNow - utc;
-        if (ago.TotalMinutes < 60) return $"{(int)ago.TotalMinutes}m ago";
-        if (ago.TotalHours < 24) return $"{(int)ago.TotalHours}h ago";
-        if (ago.TotalDays < 7) return $"{(int)ago.TotalDays}d ago";
-        return utc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
-    }
 }
