@@ -38,14 +38,17 @@ public class ConsolidationActionsColumnTests : BunitContext
         Services.AddSingleton<IConsolidationService>(_mockService.Object);
         Services.AddSingleton(_mockConfigClient.Object);
         Services.AddSingleton(_badgeService);
+        // Required by Consolidation.razor after issue #3027 (cancel via PostStatus)
+        Services.AddSingleton(new Mock<IPipelineApiWorkItemClient>().Object);
     }
 
-    private static ConsolidationRun MakeRun(ConsolidationRunStatus status, string id = "run-1") => new()
+    private static ConsolidationRun MakeRun(ConsolidationRunStatus status, string id = "run-1", string? workItemId = null) => new()
     {
         RunId = id,
         Type = ConsolidationRunType.BrainConsolidation,
         StartedAtUtc = DateTime.UtcNow.AddMinutes(-5),
         Status = status,
+        WorkItemId = workItemId,
     };
 
     [Fact]
@@ -75,7 +78,8 @@ public class ConsolidationActionsColumnTests : BunitContext
             .ReturnsAsync(new List<ConsolidationRun>
             {
                 MakeRun(ConsolidationRunStatus.Succeeded, "r1"),
-                MakeRun(ConsolidationRunStatus.Pending, "r2"),
+                // WorkItemId must be set for the cancel button to appear (issue #3027)
+                MakeRun(ConsolidationRunStatus.Pending, "r2", workItemId: Guid.NewGuid().ToString()),
             });
 
         var cut = Render<Consolidation>();
@@ -84,7 +88,7 @@ public class ConsolidationActionsColumnTests : BunitContext
             .Select(e => e.TextContent.Trim())
             .ToList();
         headers.Should().Contain("Actions",
-            "the Actions column must be visible when at least one run is Pending");
+            "the Actions column must be visible when at least one run is Pending with a WorkItemId");
     }
 
     [Fact]
@@ -94,12 +98,13 @@ public class ConsolidationActionsColumnTests : BunitContext
             .ReturnsAsync(new List<ConsolidationRun>
             {
                 MakeRun(ConsolidationRunStatus.Succeeded, "r1"),
-                MakeRun(ConsolidationRunStatus.Pending, "r2"),
+                // WorkItemId must be set for the cancel button to appear (issue #3027)
+                MakeRun(ConsolidationRunStatus.Pending, "r2", workItemId: Guid.NewGuid().ToString()),
             });
 
         var cut = Render<Consolidation>();
 
         var cancelButtons = cut.FindAll(".btn-cancel-run");
-        cancelButtons.Should().HaveCount(1, "only the Pending run must have a Cancel button");
+        cancelButtons.Should().HaveCount(1, "only the Pending run with a WorkItemId must have a Cancel button");
     }
 }

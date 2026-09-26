@@ -24,12 +24,13 @@ public sealed class ConsolidationServiceStoreDelegationTests
         _mockProjectStore.Setup(x => x.LoadProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineProject>
             {
-                new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = new List<string> { "t1" } }
+                new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = new List<string> { "t1", "t2" } }
             });
         _mockProjectStore.Setup(x => x.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate>
             {
-                new() { Id = "t1", Name = "Template", IssueProviderId = "ip", RepoProviderId = "rp", Enabled = true }
+                new() { Id = "t1", Name = "Template1", IssueProviderId = "ip", RepoProviderId = "rp", Enabled = true },
+                new() { Id = "t2", Name = "Template2", IssueProviderId = "ip", RepoProviderId = "rp", Enabled = true }
             });
     }
 
@@ -75,29 +76,6 @@ public sealed class ConsolidationServiceStoreDelegationTests
         _mockRunStore.Verify(s => s.GetByIdAsync((RunId)runId, It.IsAny<CancellationToken>()), Times.Once);
         _mockRunStore.Verify(s => s.SaveRunAsync(It.Is<ConsolidationRun>(r =>
             r.RunId == runId && r.Status == ConsolidationRunStatus.Succeeded), It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task CancelQueuedRunAsync_Calls_GetByIdAsync_OnStore()
-    {
-        var runId = Guid.NewGuid().ToString();
-        var run = new ConsolidationRun
-        {
-            RunId = runId,
-            Type = ConsolidationRunType.RefactoringDetection,
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            Status = ConsolidationRunStatus.Pending
-        };
-        _mockRunStore.Setup(s => s.GetByIdAsync((RunId)runId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(run);
-
-        var sut = CreateSut();
-        var result = await sut.CancelQueuedRunAsync(runId, CancellationToken.None);
-
-        result.Should().BeTrue();
-        _mockRunStore.Verify(s => s.GetByIdAsync((RunId)runId, It.IsAny<CancellationToken>()), Times.Once);
-        _mockRunStore.Verify(s => s.SaveRunAsync(It.Is<ConsolidationRun>(r =>
-            r.Status == ConsolidationRunStatus.Cancelled), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -262,30 +240,6 @@ public sealed class ConsolidationServiceStoreDelegationTests
     }
 
     [Fact]
-    public async Task CancelQueuedRunAsync_WhenStoreThrows_ReturnsFalse()
-    {
-        var runId = new RunId(Guid.NewGuid().ToString());
-        _mockRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new IOException("disk error"));
-
-        var sut = CreateSut();
-        var result = await sut.CancelQueuedRunAsync(runId, CancellationToken.None);
-        result.Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task CancelQueuedRunAsync_WhenRunNotFound_ReturnsFalse()
-    {
-        var runId = new RunId(Guid.NewGuid().ToString());
-        _mockRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ConsolidationRun?)null);
-
-        var sut = CreateSut();
-        var result = await sut.CancelQueuedRunAsync(runId, CancellationToken.None);
-        result.Should().BeFalse();
-    }
-
-    [Fact]
     public async Task TransitionToRunningAsync_WhenStoreThrows_LogsAndSwallowsException()
     {
         var runId = new RunId(Guid.NewGuid().ToString());
@@ -327,16 +281,18 @@ public sealed class ConsolidationServiceStoreDelegationTests
         await act.Should().NotThrowAsync();
     }
 
-    // ── Issue #2619 — Pending runs rehydration into _runningRuns ──────────────
+    // ── Issue #3027 — DB-layer dedup (replaced in-memory _runningRuns) ────────
 
     /// <summary>
-    /// Regression test for issue #2619: after an orchestrator restart, a Pending consolidation
-    /// run must be re-added to _runningRuns by CleanupOrphanedRunsAsync so that a subsequent
-    /// TriggerAsync call for the same (type, templateId) key is rejected as a duplicate.
+    /// After issue #3027, dedup is enforced by the DB-layer partial unique index via the
+    /// API (KubernetesWorkDistributor maps 409 → DistributionResult(Success=true, WorkItemId=null)).
+    /// CleanupOrphanedRunsAsync no longer populates an in-memory dictionary.
+    /// A second trigger after startup only succeeds or fails based on what DistributeAsync returns.
     /// </summary>
     [Fact]
-    public async Task CleanupOrphanedRunsAsync_WithPendingRun_AddsKeyToRunningRunsForDedup()
+    public async Task CleanupOrphanedRunsAsync_WithPendingRun_DoesNotBlockSubsequentTrigger_DbLayerDedup()
     {
+        // Arrange: simulate a Pending run existing from a previous session
         var pendingRun = new ConsolidationRun
         {
             RunId = Guid.NewGuid().ToString(),
@@ -348,23 +304,34 @@ public sealed class ConsolidationServiceStoreDelegationTests
         _mockRunStore.Setup(s => s.LoadAllRunsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ConsolidationRun> { pendingRun });
 
+        // The distributor returns success on the first call — the DB's unique index would enforce
+        // dedup in production, but here we're testing that CleanupOrphanedRunsAsync itself
+        // no longer blocks the trigger (i.e., no in-memory key is inserted).
         var sut = CreateSut();
-
-        // Act: startup cleanup adds Pending run keys back into _runningRuns for dedup
         await sut.CleanupOrphanedRunsAsync([], CancellationToken.None);
 
-        // Assert: _runningRuns must contain the key so TriggerAsync rejects a duplicate
-        var duplicate = await sut.TriggerAsync(
+        // Act: trigger for the same (type, templateId) — should go through to DistributeAsync
+        // (DB layer is the guard; unit test distributor mock returns success)
+        var triggerResult = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation,
             new TemplateId("t1"),
             CancellationToken.None);
-        duplicate.Should().BeNull(
-            because: "the Pending run's key should have been re-added to _runningRuns by CleanupOrphanedRunsAsync");
+
+        // Assert: CleanupOrphanedRunsAsync did NOT insert an in-memory dedup key.
+        // The trigger reaches DistributeAsync and returns success (WorkItemId="wi-delegation-test").
+        triggerResult.Should().NotBeNull(
+            because: "_runningRuns was removed in #3027; CleanupOrphanedRunsAsync no longer " +
+                     "blocks TriggerAsync — DB-layer dedup via partial unique index is the guard");
+        // TODO [WARNING]: Only a non-null return is asserted. A regression that short-circuits
+        // TriggerAsync before persisting (e.g. returns a recycled run object) would still pass.
+        // Add _mockRunStore.Verify(s => s.SaveRunAsync(...), Times.AtLeastOnce) or a
+        // distributor-verify on the IssueIdentifier to give this test stronger coverage.
+        // (review-findings-testqualityreviewer.md)
     }
 
     /// <summary>
     /// A Pending run for one (type, templateId) pair must not block TriggerAsync for a
-    /// different (type, templateId) pair.
+    /// different (type, templateId) pair. This remains true after _runningRuns removal.
     /// </summary>
     [Fact]
     public async Task CleanupOrphanedRunsAsync_PendingForOneType_DoesNotBlockTriggerForDifferentType()
@@ -390,109 +357,9 @@ public sealed class ConsolidationServiceStoreDelegationTests
             CancellationToken.None);
         differentTypeRun.Should().NotBeNull(
             because: "a Pending BrainConsolidation run must not block RefactoringDetection for the same template");
-        // TODO [WARNING]: This test does not verify that SaveRunAsync was called for the RefactoringDetection
-        // run, only that TriggerAsync returned non-null. A regression that removes PersistRunAsync from
-        // the success path would pass this assertion. Add:
-        //   _mockRunStore.Verify(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()), Times.Once)
-        // to close this gap. (review-findings-testqualityreviewer.md)
-    }
-
-    /// <summary>
-    /// Multiple Pending runs must all have their keys added to _runningRuns so subsequent
-    /// TriggerAsync calls for each key are rejected.
-    /// </summary>
-    [Fact]
-    public async Task CleanupOrphanedRunsAsync_MultiplePendingRuns_AllKeysAddedToRunningRuns()
-    {
-        var pending1 = new ConsolidationRun
-        {
-            RunId = Guid.NewGuid().ToString(),
-            Type = ConsolidationRunType.BrainConsolidation,
-            TemplateId = "t1",
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            Status = ConsolidationRunStatus.Pending
-        };
-        var pending2 = new ConsolidationRun
-        {
-            RunId = Guid.NewGuid().ToString(),
-            Type = ConsolidationRunType.RefactoringDetection,
-            TemplateId = "t1",
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            Status = ConsolidationRunStatus.Pending
-        };
-        _mockRunStore.Setup(s => s.LoadAllRunsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ConsolidationRun> { pending1, pending2 });
-
-        var sut = CreateSut();
-        await sut.CleanupOrphanedRunsAsync([], CancellationToken.None);
-
-        // Both (type, templateId) keys must be in _runningRuns — verified via TriggerAsync
-        var dup1 = await sut.TriggerAsync(
-            ConsolidationRunType.BrainConsolidation,
-            new TemplateId("t1"),
-            CancellationToken.None);
-        var dup2 = await sut.TriggerAsync(
-            ConsolidationRunType.RefactoringDetection,
-            new TemplateId("t1"),
-            CancellationToken.None);
-
-        dup1.Should().BeNull(because: "BrainConsolidation/t1 key must be in _runningRuns after cleanup");
-        dup2.Should().BeNull(because: "RefactoringDetection/t1 key must be in _runningRuns after cleanup");
-        // TODO [WARNING]: This test only verifies that both keys are blocked (both TriggerAsync calls
-        // return null). It does not verify that an unrelated (type, templateId) pair is NOT blocked.
-        // A key-comparison bug that blocked all TriggerAsync calls regardless of key would not be caught.
-        // Consider adding a third TriggerAsync call for e.g. BrainConsolidation/"t2" and asserting it
-        // returns non-null to confirm the dedup is key-scoped. (review-findings-testqualityreviewer.md)
-    }
-
-
-    [Fact]
-    public async Task CleanupOrphanedRunsAsync_ThenTriggerAsync_PendingRunCompletedInStore_AllowsNewTrigger()
-    {
-        var runId = Guid.NewGuid().ToString();
-        var pendingRun = new ConsolidationRun
-        {
-            RunId = runId,
-            Type = ConsolidationRunType.BrainConsolidation,
-            TemplateId = "t1",
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            Status = ConsolidationRunStatus.Pending
-        };
-        _mockRunStore.Setup(s => s.LoadAllRunsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ConsolidationRun> { pendingRun });
-
-        var sut = CreateSut();
-
-        // Simulate startup: CleanupOrphanedRunsAsync inserts (BrainConsolidation, "t1") key
-        // into _runningRuns for the Pending run.
-        await sut.CleanupOrphanedRunsAsync([], CancellationToken.None);
-
-        // Simulate Scheduler completing the run between restart and next trigger:
-        // GetByIdAsync now returns Status=Succeeded (authoritative store value).
-        // Note: the in-memory _runningRuns entry still has Status=Pending — TryEvictAndRetryAsync
-        // uses the STORE status, not the in-memory status, to decide whether to evict.
-        var succeededRun = new ConsolidationRun
-        {
-            RunId = runId,
-            Type = ConsolidationRunType.BrainConsolidation,
-            TemplateId = "t1",
-            StartedAtUtc = pendingRun.StartedAtUtc,
-            Status = ConsolidationRunStatus.Succeeded
-        };
-        _mockRunStore.Setup(s => s.GetByIdAsync(
-                It.Is<RunId>(r => r.Value == runId),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(succeededRun);
-
-        // Act: TriggerAsync should evict the stale Pending entry and allow the new run
-        var newRun = await sut.TriggerAsync(
-            ConsolidationRunType.BrainConsolidation,
-            new TemplateId("t1"),
-            CancellationToken.None);
-
-        newRun.Should().NotBeNull(
-            because: "TryEvictAndRetryAsync must evict the stale Pending entry when the store shows Succeeded");
-        newRun!.RunId.Should().NotBe(runId,
-            because: "the new run must have a fresh RunId, not the completed run's ID");
+        _mockRunStore.Verify(s => s.SaveRunAsync(
+            It.Is<ConsolidationRun>(r => r.Type == ConsolidationRunType.RefactoringDetection),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce,
+            "the RefactoringDetection run must be persisted to the store");
     }
 }
