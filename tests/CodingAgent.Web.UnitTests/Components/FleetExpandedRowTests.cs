@@ -53,6 +53,49 @@ public class FleetExpandedRowTests : BunitContext
         return cut;
     }
 
+    private static AgentEntryDto MakeBusyAgent() => MakeAgent("agent-busy") with
+    {
+        Status = AgentStatus.Busy,
+        ActiveIssueIdentifier = "3020",
+        ActiveIssueUrl = "https://github.com/owner/repo/issues/3020",
+        ActiveIssueTitle = "ConsolidationDispatcherObservabilityTests flakes under parallel xUnit",
+        ActiveRunId = "1e9a22a8-9e0f-420b-ae28-7295eab39878",
+        ActivePullRequestUrl = "https://github.com/owner/repo/pull/3059",
+    };
+
+    /// <summary>
+    /// The "Active work" cell stays a table cell and holds its chips in an inner flex row, so a long issue
+    /// title can't push the Run/PR chips out of the (formerly flex, overflow-hidden) cell.
+    /// </summary>
+    [Fact]
+    public void Fleet_ActiveWorkCell_KeepsIssueRunAndPrChipsInInnerRow()
+    {
+        _mockAgents.Setup(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentEntryDto> { MakeBusyAgent() });
+
+        var cut = Render<Fleet>();
+
+        var links = cut.Find("td.fleet-work-cell > .fleet-work-links");
+        links.QuerySelector("a.fleet-work-issue .fleet-work-title").Should().NotBeNull(
+            "only the issue chip's title is allowed to shrink");
+        links.QuerySelector("a[title='Open pipeline run']")!.GetAttribute("href")
+            .Should().Be("/runs/1e9a22a8-9e0f-420b-ae28-7295eab39878");
+        links.QuerySelector("a[title='Open pull request']").Should().NotBeNull();
+    }
+
+    /// <summary>The expanded row links the PR as "View PR" (full URL in the tooltip), not the raw URL.</summary>
+    [Fact]
+    public void Fleet_ExpandedRow_PullRequest_ShowsViewPrLink()
+    {
+        var cut = RenderFleetWithExpandedAgent(MakeBusyAgent());
+
+        var prItem = cut.FindAll(".cockpit-detail-item")
+            .Single(el => el.QuerySelector(".k")?.TextContent.Trim() == "Pull request");
+        var link = prItem.QuerySelector("a")!;
+        link.TextContent.Trim().Should().Be("View PR");
+        link.GetAttribute("title").Should().Be("https://github.com/owner/repo/pull/3059");
+    }
+
     [Fact]
     public void Fleet_ExpandedRow_DoesNotShowConnectionId()
     {
