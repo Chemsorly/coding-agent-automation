@@ -12,7 +12,7 @@ namespace CodingAgent.Scheduler.UnitTests;
 /// Unit tests for WorkItemCountsService — validates leader gating and error handling.
 /// Uses a fast tick interval (1ms) so the service fires within the test window.
 /// </summary>
-[Collection("SchedulerTiming")]
+[Collection("Metrics")]
 public sealed class WorkItemCountsServiceTests
 {
     private readonly Mock<ISchedulerApiClient> _mockClient;
