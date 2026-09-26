@@ -691,6 +691,12 @@ public sealed class ConsolidationDispatcherTests
             "Startup race (no profiles, no default labels) must skip dispatch entirely");
 
         // UpdateRunAsync must NOT be called — run stays Queued
+        // TODO [WARNING]: This Verify uses the 5-argument overload (including optional totalTokens).
+        // The production code never calls UpdateRunAsync on the skip-dispatch path, so Times.Never
+        // is correct. However, if the optional parameter is removed or reordered, the 5-arg
+        // expression will silently stop matching any 4-arg production call — making this a false
+        // negative. Consider using the 4-argument Verify to match the actual production invocation
+        // surface and be robust to future signature changes. (review-findings-dotnetspecialist.md WARNING)
         _consolidationService.Verify(
             s => s.UpdateRunAsync(
                 It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(),
@@ -775,7 +781,7 @@ public sealed class ConsolidationDispatcherTests
         _consolidationService
             .Setup(s => s.UpdateRunAsync(
                 It.IsAny<RunId>(), ConsolidationRunStatus.Failed,
-                It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()))
+                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var runId = Guid.NewGuid().ToString();
@@ -791,20 +797,13 @@ public sealed class ConsolidationDispatcherTests
         await sut.DispatchRunAsync(run, CancellationToken.None);
 
         // Must cascade to Failed — permanent dispatch failures must not leave runs Queued forever.
-        // TODO [WARNING]: The Moq Setup and Verify below use a 5-argument overload (including the
-        // optional 'totalTokens' long parameter). The production call in FailRunSafelyAsync omits
-        // that optional parameter (4-argument call, default applied by compiler). Moq expands
-        // default args so this currently matches, but if the signature changes (parameter removed
-        // or reordered) the Verify will silently stop matching the production call — producing a
-        // false negative. Fix: use a 4-argument Setup/Verify without the optional parameter to
-        // match the actual production invocation surface. (review-findings.md TestQualityReviewer warning)
+        // 4-argument Verify matches the actual production call in FailRunSafelyAsync (omits optional totalTokens).
         _consolidationService.Verify(
             s => s.UpdateRunAsync(
                 It.Is<RunId>(r => r.Value == runId),
                 ConsolidationRunStatus.Failed,
                 It.IsAny<string?>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<long>()),
+                It.IsAny<CancellationToken>()),
             Times.Once,
             "Permanent dispatch failure (IsPermanentFailure=true) must cascade run to Failed");
     }
@@ -861,6 +860,12 @@ public sealed class ConsolidationDispatcherTests
             .ReturnsAsync(new DistributionResult(false, null, "no template",
                 IsPermanentFailure: true));
 
+        // TODO [WARNING]: This Setup uses the 5-argument overload (including optional totalTokens long).
+        // The production call in FailRunSafelyAsync omits the optional parameter (4-argument call).
+        // Moq currently expands compiler defaults and matches, but if the optional parameter is
+        // removed or reordered, the Setup will silently stop intercepting the production call —
+        // the thrown exception will not be injected and the test will no longer verify the swallow
+        // behavior it is intended to guard. (review-findings-dotnetspecialist.md WARNING line ~838)
         _consolidationService
             .Setup(s => s.UpdateRunAsync(
                 It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(),
@@ -905,7 +910,7 @@ public sealed class ConsolidationDispatcherTests
         _consolidationService
             .Setup(s => s.UpdateRunAsync(
                 It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(),
-                It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()))
+                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var runId = Guid.NewGuid().ToString();
@@ -921,13 +926,14 @@ public sealed class ConsolidationDispatcherTests
         await sut.DispatchRunAsync(run, CancellationToken.None);
 
         // Must transition to Pending — not stay Queued, not cascade to Failed.
+        // 4-argument Setup/Verify matches the actual production call in TransitionToPendingSafelyAsync
+        // (omits optional totalTokens), so Moq is guaranteed to intercept and verify the real call.
         _consolidationService.Verify(
             s => s.UpdateRunAsync(
                 It.Is<RunId>(r => r.Value == runId),
                 ConsolidationRunStatus.Pending,
                 It.IsAny<string?>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<long>()),
+                It.IsAny<CancellationToken>()),
             Times.Once,
             "Unified-path success (Queued=true) must transition ConsolidationRun to Pending " +
             "so the retry sweep does not re-dispatch it");
@@ -957,6 +963,12 @@ public sealed class ConsolidationDispatcherTests
         await sut.DispatchRunAsync(run, CancellationToken.None);
 
         // Legacy synchronous path: no state update — the agent transitions the run.
+        // TODO [WARNING]: This Verify uses the 5-argument overload (including optional totalTokens).
+        // For a Times.Never assertion the false-negative risk runs in the dangerous direction:
+        // if a production 4-argument call is ever fired accidentally on this path, Moq may not
+        // match it against the 5-arg expression (if the optional parameter is removed or reordered),
+        // causing Times.Never to pass even though UpdateRunAsync was actually invoked — silently
+        // missing a regression. (review-findings-dotnetspecialist.md WARNING line ~907)
         _consolidationService.Verify(
             s => s.UpdateRunAsync(
                 It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(),
@@ -977,6 +989,12 @@ public sealed class ConsolidationDispatcherTests
             .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(true, "wi-1", null, Queued: true));
 
+        // TODO [WARNING]: This Setup uses the 5-argument overload (including optional totalTokens long).
+        // The production call in TransitionToPendingSafelyAsync omits the optional parameter (4-argument
+        // call). Moq currently expands compiler defaults and matches, but if the optional parameter is
+        // removed or reordered, the Setup will silently stop intercepting the production call — the
+        // thrown exception will not be injected and the test will no longer verify the swallow it guards.
+        // (review-findings-dotnetspecialist.md WARNING line ~931)
         _consolidationService
             .Setup(s => s.UpdateRunAsync(
                 It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(),
@@ -1048,6 +1066,12 @@ public sealed class ConsolidationDispatcherTests
             "to prevent empty-selector 422 from permanently cascading the run to Failed");
 
         // UpdateRunAsync must also NOT be called — run stays Queued
+        // TODO [WARNING]: This Verify uses the 5-argument overload (including optional totalTokens).
+        // For a Times.Never assertion the false-negative risk is significant: if a production
+        // 4-argument call fires accidentally on this path, Moq may not match the 5-arg expression
+        // (if the optional parameter is removed or reordered), causing Times.Never to pass even
+        // though UpdateRunAsync was invoked — silently missing a regression.
+        // (review-findings-dotnetspecialist.md WARNING line ~960)
         _consolidationService.Verify(
             s => s.UpdateRunAsync(
                 It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(),
