@@ -104,6 +104,24 @@ public class InsightsPageComponentTests : BunitContext
         cut.FindAll(".cockpit-two-col-asymmetric").Should().ContainSingle();
     }
 
+    [Theory]
+    [InlineData("168", "Last 7d", 7)]
+    [InlineData("0", "All runs", 1)]
+    public void TimeWindow_DailyWindows_UseDailyBucketsAndDateLabels(string windowValue, string windowLabel, int expectedBuckets)
+    {
+        Returns(Run(PipelineStep.Completed), Run(PipelineStep.Failed));
+        var cut = Render<Insights>();
+
+        cut.Find("select[aria-label='Time window']").Change(windowValue);
+
+        cut.FindAll(".cockpit-stat-l").Select(l => l.TextContent.Trim())
+            .Should().Contain($"Success rate · {windowLabel}");
+        // One bar column per day; the runs started minutes ago, so "All" spans just today.
+        cut.FindAll("[title$='run(s)']").Should().HaveCount(expectedBuckets);
+        // Month name is culture-dependent ("Sep", "Sept.", "Sep."), so only the shape is asserted.
+        cut.FindAll("[title$='run(s)']").Last().GetAttribute("title").Should().MatchRegex(@"^\D+ \d{1,2} UTC — 2 run\(s\)$");
+    }
+
     [Fact]
     public void GateCard_SaysNoGateData_WhenNoRunHasGateOutcomes()
     {
