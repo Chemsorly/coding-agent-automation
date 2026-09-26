@@ -704,7 +704,7 @@ public sealed class AgentHubRegistrationBranchTests
         hub.Groups = new Mock<IGroupManager>().Object;
 
         // Existing entry has an active job in flight
-        var existingEntry = CreateEntry("agent-1", "conn-old", AgentStatus.Busy);
+        var existingEntry = CreateEntry("agent-1", "conn-old", AgentStatus.Busy) with { Hostname = "pod-running" };
         existingEntry.ActiveJobId = "job-123";
         var newEntry = CreateEntry("agent-1", "conn-new");
 
@@ -717,7 +717,13 @@ public sealed class AgentHubRegistrationBranchTests
         var message = new AgentRegistrationMessage
         {
             AgentId = "agent-1",
-            Hostname = "host",
+            // Same hostname as existingEntry ("pod-running") is intentional and required: the hostname
+            // equality check is the discriminating signal that this is a kiro-cli sub-process restart
+            // on the same pod, not a pod replacement. If the hostname check were removed from the
+            // production guard the test would still pass on the two-condition form — using an explicit
+            // distinct hostname (not CreateEntry's hard-coded "host") ensures the intent is clear and
+            // the value can be updated if the hostname check is ever changed.
+            Hostname = "pod-running",
             Labels = []
             // no ActiveJob — mid-run kiro-cli sub-process restart
         };
@@ -849,6 +855,150 @@ public sealed class AgentHubRegistrationBranchTests
         // ForceDisconnect MUST be called — guard only skips when existingEntry.ActiveJobId is non-null
         mockOldClientProxy.Verify(p => p.ForceDisconnect(), Times.Once,
             "when existingEntry has no active job, ForceDisconnect must fire regardless of message.ActiveJob");
+    }
+
+    [Fact]
+    public async Task RegisterAgent_PodReplacement_DifferentHostname_NoActiveJob_ForceDisconnects()
+    {
+        // AC #1: a genuine pod replacement registers with a DIFFERENT hostname and no ActiveJob
+        // (the new pod has not yet been assigned a work item). The guard must NOT preserve the old
+        // connection — a different hostname unambiguously identifies a different pod.
+        var ctx = BuildContext("conn-new", agentIdQueryParam: "agent-1", user: null);
+
+        var mockOldClientProxy = new Mock<IAgentHubClient>();
+        mockOldClientProxy.Setup(p => p.ForceDisconnect()).Returns(Task.CompletedTask);
+
+        var mockClients = new Mock<IHubCallerClients<IAgentHubClient>>();
+        mockClients.Setup(c => c.Client("conn-old")).Returns(mockOldClientProxy.Object);
+
+        var hub = new AgentHub(new AgentHubDependencies(
+            Facade: _facade.Object,
+            ChatNotifier: _chatNotifier.Object,
+            ChangeNotifier: _changeNotifier.Object,
+            ConsolidationOps: Mock.Of<IHubConsolidationOperations>(),
+            IssueOps: _issueOps.Object,
+            LifecycleService: _lifecycleService.Object,
+            TokenRefreshService: _tokenRefreshService.Object,
+            GateCommentFormatter: _gateCommentFormatter.Object,
+            Logger: Log.Logger,
+            OrphanRecoveryService: _orphanRecoveryService.Object,
+            UiContext: HubTestHelpers.CreateNoOpHubContext()));
+        hub.Context = ctx;
+        hub.Clients = mockClients.Object;
+        hub.Groups = new Mock<IGroupManager>().Object;
+
+        // Existing entry belongs to the OLD pod and has an active job in flight
+        var existingEntry = new AgentEntry
+        {
+            AgentId = "agent-1",
+            ConnectionId = "conn-old",
+            Hostname = "pod-old",   // <-- old pod hostname
+            Labels = [],
+            Status = AgentStatus.Busy,
+            RegisteredAt = DateTimeOffset.UtcNow,
+            ActiveJobId = "job-456"
+        };
+        var newEntry = CreateEntry("agent-1", "conn-new");
+
+        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "agent-1"))).Returns(existingEntry);
+        // preserveExistingConnectionId must be false (default) — different hostname → NOT kiro-cli reconnect
+        // TODO: [WARNING] This setup matches only when preserveExistingConnectionId=false. If production
+        // code passes true instead, the mock returns null (no matching setup) causing a NullReferenceException
+        // before the ForceDisconnect Verify assertion is reached. The test then fails with an exception
+        // rather than a clear assertion failure, making it harder to diagnose which behavioral invariant
+        // was violated. The ForceDisconnect assertion is the primary guard; consider also setting up
+        // Register with It.IsAny<bool>() so a wrong flag produces a clean Verify failure rather than
+        // an opaque exception.
+        _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-new", false)).Returns(newEntry);
+        _orphanRecoveryService
+            .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
+            .Returns(Task.CompletedTask);
+
+        var message = new AgentRegistrationMessage
+        {
+            AgentId = "agent-1",
+            Hostname = "pod-new",   // <-- different hostname: new pod, not a kiro-cli sub-process restart
+            Labels = []
+            // no ActiveJob — new pod has not yet been assigned a work item
+        };
+
+        await hub.RegisterAgent(message);
+
+        // ForceDisconnect MUST fire — different hostname means a different pod regardless of ActiveJob
+        mockOldClientProxy.Verify(p => p.ForceDisconnect(), Times.Once,
+            "a pod replacement with a different hostname must ForceDisconnect the old connection even when ActiveJob is null");
+        // Registration must proceed with preserveExistingConnectionId=false so the stale connection is evicted
+        _facade.Verify(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-new", false), Times.Once,
+            "registration must use preserveExistingConnectionId=false for a different-hostname pod replacement");
+    }
+
+    [Fact]
+    public async Task RegisterAgent_MidRunReconnect_SameHostname_NoActiveJob_DoesNotForceDisconnect()
+    {
+        // AC #2 (primary regression guard): same pod reconnects without ActiveJob while the registry
+        // entry still holds an active job. This is the kiro-cli sub-process mid-run restart pattern —
+        // the hostname explicitly confirms "same pod". ForceDisconnect must NOT be sent.
+        // Uses distinct hostname values (not CreateEntry's hardcoded "host") to make the intent explicit.
+        var ctx = BuildContext("conn-new", agentIdQueryParam: "agent-1", user: null);
+
+        var mockOldClientProxy = new Mock<IAgentHubClient>();
+        mockOldClientProxy.Setup(p => p.ForceDisconnect()).Returns(Task.CompletedTask);
+
+        var mockClients = new Mock<IHubCallerClients<IAgentHubClient>>();
+        mockClients.Setup(c => c.Client("conn-old")).Returns(mockOldClientProxy.Object);
+
+        var hub = new AgentHub(new AgentHubDependencies(
+            Facade: _facade.Object,
+            ChatNotifier: _chatNotifier.Object,
+            ChangeNotifier: _changeNotifier.Object,
+            ConsolidationOps: Mock.Of<IHubConsolidationOperations>(),
+            IssueOps: _issueOps.Object,
+            LifecycleService: _lifecycleService.Object,
+            TokenRefreshService: _tokenRefreshService.Object,
+            GateCommentFormatter: _gateCommentFormatter.Object,
+            Logger: Log.Logger,
+            OrphanRecoveryService: _orphanRecoveryService.Object,
+            UiContext: HubTestHelpers.CreateNoOpHubContext()));
+        hub.Context = ctx;
+        hub.Clients = mockClients.Object;
+        hub.Groups = new Mock<IGroupManager>().Object;
+
+        // Existing entry: same pod (same hostname), job in flight, kiro-cli sub-process dropped and is reconnecting
+        var existingEntry = new AgentEntry
+        {
+            AgentId = "agent-1",
+            ConnectionId = "conn-old",
+            Hostname = "pod-xyz",   // <-- same pod hostname
+            Labels = [],
+            Status = AgentStatus.Busy,
+            RegisteredAt = DateTimeOffset.UtcNow,
+            ActiveJobId = "job-789"
+        };
+        var newEntry = CreateEntry("agent-1", "conn-new");
+
+        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "agent-1"))).Returns(existingEntry);
+        // preserveExistingConnectionId must be true — same hostname confirms kiro-cli sub-process reconnect
+        _facade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-new", true)).Returns(newEntry);
+        _orphanRecoveryService
+            .Setup(s => s.RecoverOrphanedStateAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<AgentId>()))
+            .Returns(Task.CompletedTask);
+
+        var message = new AgentRegistrationMessage
+        {
+            AgentId = "agent-1",
+            Hostname = "pod-xyz",   // <-- same hostname as existingEntry: same pod = kiro-cli sub-process restart
+            Labels = []
+            // no ActiveJob — mid-run sub-process restart, job is still running on the old connection
+        };
+
+        await hub.RegisterAgent(message);
+
+        // ForceDisconnect must NOT be sent — same pod, same job in flight, old connection still needed
+        mockOldClientProxy.Verify(p => p.ForceDisconnect(), Times.Never,
+            "a kiro-cli sub-process reconnect from the same pod must not ForceDisconnect the existing pipeline connection");
+        // Registration must complete with preserveExistingConnectionId=true to keep conn-old in _connectionIndex
+        _facade.Verify(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-new", true), Times.Once,
+            "registration must use preserveExistingConnectionId=true to preserve the in-flight pipeline connection");
     }
 
     // ── Test helpers ──────────────────────────────────────────────────────
