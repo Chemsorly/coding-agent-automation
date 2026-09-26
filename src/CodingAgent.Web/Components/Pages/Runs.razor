@@ -149,24 +149,8 @@
                     <tbody>
                         @foreach (var run in _filteredRuns)
                         {
-                            var resultLabel = run.FinalStep switch
-                            {
-                                PipelineStep.Completed => "Completed",
-                                PipelineStep.Failed => "Failed",
-                                PipelineStep.Cancelled => "Cancelled",
-                                PipelineStep.PrMerged => "Merged",
-                                PipelineStep.PrClosed => "Closed",
-                                _ => "Running"
-                            };
-                            var resultClass = run.FinalStep switch
-                            {
-                                PipelineStep.Completed => "step-completed",
-                                PipelineStep.Cancelled => "step-cancelled",
-                                PipelineStep.Failed => "step-failed",
-                                PipelineStep.PrMerged => "step-completed",
-                                PipelineStep.PrClosed => "step-cancelled",
-                                _ => "step-running"
-                            };
+                            var resultLabel = RunOutcomeDisplay.Label(run.FinalStep);
+                            var resultClass = RunOutcomeDisplay.BadgeClass(run.FinalStep);
                             var runTypeLabel = run.RunType switch
                             {
                                 PipelineRunType.Review => "Review",
@@ -588,13 +572,7 @@
         return items;
     }
 
-    private static string ResultLabel(PipelineRunSummary r) => r.FinalStep switch
-    {
-        PipelineStep.Completed => "Completed",
-        PipelineStep.Failed => "Failed",
-        PipelineStep.Cancelled => "Cancelled",
-        _ => "Running"
-    };
+    private static string ResultLabel(PipelineRunSummary r) => RunOutcomeDisplay.Label(r.FinalStep);
 
     private static string RunTypeLabel(PipelineRunSummary r) => r.RunType switch
     {

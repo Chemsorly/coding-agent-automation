@@ -28,11 +28,46 @@ public static class PipelineRunFactory
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        // Consolidation runs are tracked via ConsolidationRun, not PipelineRun.
-        // Return null so the caller skips AddRun and avoids ghost "Impl" entries in Active Runs.
+        // Consolidation runs now produce a real PipelineRun (Phase 1 of issue #3023).
+        // Early-return before the StartActivity span block — consolidation runs do not get an
+        // OrchestratorActivity span (consistent with the original design intent; the comment
+        // in PipelineRun.cs noted "Null for Consolidation runs").
+        //
+        // IMPORTANT: IssueProviderConfigId is hardcoded to ConsolidationConstants.ProviderConfigId
+        // (the sentinel "consolidation") rather than passed through from request.IssueProviderConfigId.
+        // AgentJobLifecycleService selects ConsolidationJobCompletionStrategy based on
+        // run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId — NOT on RunType.
+        // Using any other value would silently route completion through RegularJobCompletionStrategy.
+        //
+        // TODO: The || condition here means a request with RunType == Consolidation but TaskType != Consolidation
+        // is also routed here. This is correct for the current enum range, but a future RunType value that is
+        // unrelated to consolidation would be silently misclassified if it shares the same enum integer. Safe
+        // today — revisit if new RunType values are added. See review warning (issue #3023).
         if (request.TaskType == WorkItemTaskType.Consolidation ||
             request.RunType == PipelineRunType.Consolidation)
-            return null;
+        {
+            // TODO: PipelineRun.CreateImplementation is semantically misnamed for consolidation usage. It works
+            // today because CreateImplementation has no RunType guard, but if a guard is ever added to reject
+            // non-Implementation run types, this call site will throw at runtime. Consider introducing a
+            // CreateConsolidation factory method mirroring CreateDecomposition. See review warning (issue #3023).
+            var consolidationRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+            {
+                RunId = workItemId.ToString(),
+                IssueIdentifier = request.IssueIdentifier,
+                IssueTitle = string.IsNullOrEmpty(request.IssueDetail?.Title)
+                    ? request.IssueIdentifier.Value
+                    : request.IssueDetail.Title,
+                IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+                RepoProviderConfigId = request.RepoProviderConfigId,
+                RunType = PipelineRunType.Consolidation,
+                InitiatedBy = request.InitiatedBy ?? InitiatedByConstants.ConsolidationManual,
+                AgentProviderConfigId = request.AgentProviderConfigId,
+                BrainProviderConfigId = request.BrainProviderConfigId,
+            });
+            consolidationRun.ProjectId = request.ProjectId?.ToString();
+            consolidationRun.ProjectName = request.ProjectName;
+            return consolidationRun;
+        }
 
         // Stamp the workItemId onto the request as RunId so FromDistributionRequest uses it.
         var requestWithRunId = request with { RunId = workItemId.ToString() };
@@ -113,6 +148,14 @@ public static class PipelineRunFactory
                 IssueIdentifier = request.IssueIdentifier,
                 IssueTitle = string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
                 IssueUrl = request.IssueDetail?.Url,
+                // TODO: FromDistributionRequest has no Consolidation arm in this switch — a consolidation
+                // work item rehydrated after an API restart (e.g. pod reconnect while a consolidation job is
+                // in-flight) will fall through here and produce a run with IssueProviderConfigId =
+                // request.IssueProviderConfigId (the real provider ID) rather than ConsolidationConstants.ProviderConfigId.
+                // This will silently route completion through RegularJobCompletionStrategy instead of
+                // ConsolidationJobCompletionStrategy. Add a PipelineRunType.Consolidation arm that mirrors
+                // CreateFromWorkItem's consolidation branch (hardcoding the sentinel ProviderConfigId).
+                // See review warning (issue #3023).
                 IssueProviderConfigId = request.IssueProviderConfigId,
                 RepoProviderConfigId = request.RepoProviderConfigId,
                 // NOTE: InitiatedBy null fallback — "rehydrated" is a reasonable default for
