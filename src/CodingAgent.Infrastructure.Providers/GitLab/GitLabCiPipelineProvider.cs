@@ -113,6 +113,14 @@ public class GitLabCiPipelineProvider : GitLabProviderBase, IPipelineProvider
             Jobs = jobs,
             Url = pipeline.WebUrl,
             StartedAt = pipeline.CreatedAt != default ? pipeline.CreatedAt : null,
+            // TODO [WARNING] (Correctness #3114): StartedAt is assigned pipeline.CreatedAt directly
+            // without .ToUniversalTime(), unlike GitHub's provider which uses .UtcDateTime. The
+            // SatisfiesNotBefore helper in CiPollingCoordinator compares startedAt.Value > notBefore.Value
+            // where notBefore = DateTime.UtcNow (Kind=Utc). DateTime comparison ignores Kind and
+            // compares raw ticks, so a non-UTC CreatedAt (Local/Unspecified) will be off by the
+            // UTC offset, causing the notBefore filter to accept or reject GitLab CI runs incorrectly.
+            // Fix: use pipeline.CreatedAt.ToUniversalTime() (or .UtcDateTime if NGitLab exposes it)
+            // to match the GitHub provider pattern.
             CompletedAt = IsTerminalState(pipelineState) ? pipeline.UpdatedAt : null,
             CommitSha = commitSha ?? pipeline.Sha.ToString().ToLowerInvariant()
         };
