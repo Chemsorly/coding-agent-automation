@@ -250,6 +250,11 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         JobTemplate template,
         CancellationToken cancellationToken)
     {
+        // Spec 043 Req 8a: the chat pod receives only HMAC-SHA256(master key, job name).
+        if (string.IsNullOrEmpty(_options.AgentApiKeyValue))
+            throw new InvalidOperationException(
+                "AGENT_API_KEY is not configured on the API, so no agent key can be issued for the chat pod.");
+
         var ctx = new JobSpecBuilder.BuildContext
         {
             WorkItemId = null,
@@ -299,6 +304,36 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         job.Spec.Template.Spec.TerminationGracePeriodSeconds = _options.ChatTerminationGracePeriodSeconds;
 
         await _jobClient.CreateJobAsync(job, _options.Namespace, cancellationToken);
+        await CreateAgentKeySecretAsync(jobName, cancellationToken);
+    }
+
+    /// <summary>
+    /// Creates the chat Job's agent key Secret (<see cref="AgentJobKeySecret"/>), owned by the Job.
+    /// If that fails — or the dispatch is cancelled first — the Job is deleted, because its pod
+    /// could never authenticate yet would hold its claimed PVC until the Job deadline; the
+    /// exception then propagates to the caller.
+    /// </summary>
+    private async Task CreateAgentKeySecretAsync(string jobName, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var jobUid = await AgentJobKeySecret.ReadJobUidAsync(_jobClient, _options.Namespace, jobName, cancellationToken);
+            await AgentJobKeySecret.CreateForJobAsync(
+                _jobClient, _options.Namespace, jobName, jobUid, _options.AgentApiKeyValue, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "ChatJobDispatcher: failed to create the agent key Secret for chat Job {JobName} — deleting the Job", jobName);
+            try
+            {
+                await _jobClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
+            }
+            catch (Exception deleteEx)
+            {
+                _logger.Warning(deleteEx, "ChatJobDispatcher: failed to delete chat Job {JobName} after its agent key Secret could not be created", jobName);
+            }
+            throw;
+        }
     }
 
     private async Task<string> PollForAgentConnectionAsync( // NOSONAR S107 — private polling helper; params are independent timing/routing inputs

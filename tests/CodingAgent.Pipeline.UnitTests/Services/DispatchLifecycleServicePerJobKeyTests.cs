@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using AwesomeAssertions;
@@ -7,6 +8,7 @@ using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline.Models;
+using k8s.Autorest;
 using k8s.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -16,15 +18,17 @@ using Moq;
 namespace CodingAgent.Pipeline.UnitTests.Services;
 
 /// <summary>
-/// Tests for the per-job API key derivation and Secret creation introduced in issue #3034.
+/// Tests for the per-job API key (issue #3034, Spec 043 Req 8a).
 ///
 /// Verifies that:
-/// 1. <c>DispatchLifecycleService.DeriveJobKey</c> produces the same value as
-///    <c>AgentApiKeyAuthHandler</c> server-side validation.
-/// 2. The per-job K8s Secret is created with the derived key when <c>AgentApiKeyValue</c> is set.
-/// 3. The per-job Secret name follows the convention <c>caa-key-{jobName}</c>.
-/// 4. The per-job Secret key is stored under the <c>agent-api-key</c> data key.
-/// 5. No per-job Secret is created when <c>AgentApiKeyValue</c> is absent (degraded mode).
+/// 1. <see cref="AgentKeyDerivation.DeriveAgentKey"/> produces the value <c>AgentApiKeyAuthHandler</c>
+///    accepts (known-answer test).
+/// 2. The per-job K8s Secret <c>caa-key-{jobName}</c> is created with the derived key under the
+///    <c>agent-api-key</c> data key, owned by the Job.
+/// 3. Without a master key the dispatch fails and no Job is created — there is no fallback that
+///    would mount the master key into the pod.
+/// 4. When the key Secret cannot be created, the Job is deleted and the WorkItem fails.
+/// 5. A key Secret left over from an earlier Job with the same name is replaced.
 /// </summary>
 public sealed class DispatchLifecycleServicePerJobKeyTests : IDisposable
 {
@@ -47,11 +51,11 @@ public sealed class DispatchLifecycleServicePerJobKeyTests : IDisposable
         DispatchLifecycleService.TestRetryDelayOverride = null;
     }
 
-    // ── DeriveJobKey ────────────────────────────────────────────────────────────────────────────
+    // ── DeriveAgentKey ──────────────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// DeriveJobKey must produce the same value as the server-side HMAC derivation in
-    /// AgentApiKeyAuthHandler. This test encodes the cross-component invariant that
+    /// DeriveAgentKey is shared by the key Secret (issuer) and AgentApiKeyAuthHandler (verifier).
+    /// This test encodes the cross-component invariant that
     /// token issued by dispatch == token accepted by auth handler.
     ///
     /// The assertion uses a pre-computed known-answer value (KAT) to guard against silent
@@ -62,7 +66,7 @@ public sealed class DispatchLifecycleServicePerJobKeyTests : IDisposable
     /// → 5a7c1feeee81604f96233c9805c785659b894769b27a19e59fcfb8bcd906f743
     /// </summary>
     [Fact]
-    public void DeriveJobKey_ProducesExpectedHmacSha256()
+    public void DeriveAgentKey_ProducesExpectedHmacSha256()
     {
         const string masterKey = "test-master-key";
         const string jobName = "caa-aabbccdd";
@@ -73,28 +77,28 @@ public sealed class DispatchLifecycleServicePerJobKeyTests : IDisposable
         // which would break compatibility with AgentApiKeyAuthHandler server-side validation.
         const string knownAnswer = "5a7c1feeee81604f96233c9805c785659b894769b27a19e59fcfb8bcd906f743";
 
-        var result = DispatchLifecycleService.DeriveJobKey(masterKey, jobName);
+        var result = AgentKeyDerivation.DeriveAgentKey(masterKey, jobName);
 
         result.Should().Be(knownAnswer,
-            "DeriveJobKey must produce the exact pre-computed HMAC-SHA256 hex value; " +
+            "DeriveAgentKey must produce the exact pre-computed HMAC-SHA256 hex value; " +
             "a mismatch indicates an algorithm, encoding, or case-normalisation change " +
             "that would break AgentApiKeyAuthHandler server-side validation");
     }
 
     [Fact]
-    public void DeriveJobKey_DifferentJobs_ProduceDifferentKeys()
+    public void DeriveAgentKey_DifferentJobs_ProduceDifferentKeys()
     {
         const string masterKey = "test-master-key";
-        var key1 = DispatchLifecycleService.DeriveJobKey(masterKey, "caa-aabbccdd");
-        var key2 = DispatchLifecycleService.DeriveJobKey(masterKey, "caa-eeffgghh");
+        var key1 = AgentKeyDerivation.DeriveAgentKey(masterKey, "caa-aabbccdd");
+        var key2 = AgentKeyDerivation.DeriveAgentKey(masterKey, "caa-eeffgghh");
         key1.Should().NotBe(key2);
     }
 
     [Fact]
-    public void DeriveJobKey_Deterministic_SameInputSameOutput()
+    public void DeriveAgentKey_Deterministic_SameInputSameOutput()
     {
-        var key1 = DispatchLifecycleService.DeriveJobKey("master", "caa-aabbccdd");
-        var key2 = DispatchLifecycleService.DeriveJobKey("master", "caa-aabbccdd");
+        var key1 = AgentKeyDerivation.DeriveAgentKey("master", "caa-aabbccdd");
+        var key2 = AgentKeyDerivation.DeriveAgentKey("master", "caa-aabbccdd");
         key1.Should().Be(key2);
     }
 
@@ -138,35 +142,30 @@ public sealed class DispatchLifecycleServicePerJobKeyTests : IDisposable
         capturedSecret.StringData.Should().ContainKey("agent-api-key",
             "the derived key must be stored under the 'agent-api-key' data key");
 
-        // Assert: stored value equals HMAC-SHA256(masterKey, jobName)
-        // TODO: This assertion calls DeriveJobKey (the function under test) to compute the expected
-        // value, creating a circular dependency — if DeriveJobKey is broken, both the production
-        // path and the assertion compute the same wrong value and the test passes. Replace with an
-        // inline HMACSHA256 computation (as in DeriveJobKey_ProducesExpectedHmacSha256) or a
-        // known-answer constant to break the circularity.
-        var expectedKey = DispatchLifecycleService.DeriveJobKey(masterKey, expectedJobName);
+        // Assert: stored value equals HMAC-SHA256(masterKey, jobName), computed independently of
+        // the production helper so a broken helper cannot make the assertion agree with itself.
+        var expectedKey = Convert.ToHexString(
+            HMACSHA256.HashData(Encoding.UTF8.GetBytes(masterKey), Encoding.UTF8.GetBytes(expectedJobName)))
+            .ToLowerInvariant();
         capturedSecret.StringData["agent-api-key"].Should().Be(expectedKey,
             "stored value must equal HMAC-SHA256(masterKey, jobName)");
 
-        // TODO: Assert that capturedSecret.Metadata.OwnerReferences is non-null and contains an
-        // OwnerReference pointing to the Job (ApiVersion=batch/v1, Kind=Job, Name=expectedJobName,
-        // Uid=test-uid). The OwnerReference is the auto-GC mechanism; a regression removing it
-        // (e.g. GetJobUidAsync returning null) would not be caught by the current assertions.
+        // Assert: the Job owns the Secret, so Kubernetes deletes the key together with the Job.
+        capturedSecret.Metadata.OwnerReferences.Should().ContainSingle(o =>
+            o.ApiVersion == "batch/v1" && o.Kind == "Job" && o.Name == expectedJobName && o.Uid == "test-uid");
     }
 
     /// <summary>
-    /// When AgentApiKeyValue is absent, no per-job key Secret is created (degraded mode).
-    /// The pod falls back to the legacy master-key-mount path.
+    /// Without a master key no per-job key can be issued. The dispatch must fail before any Job is
+    /// created — there is no fallback that would mount the master key into the pod.
     /// </summary>
     [Fact]
-    public async Task WhenAgentApiKeyValueIsAbsent_NoPerJobKeySecretCreated()
+    public async Task WhenAgentApiKeyValueIsAbsent_DispatchFailsWithoutCreatingAJob()
     {
         var entity = await SeedPendingWorkItemAsync();
 
+        // No setups: MockBehavior.Strict fails the test on any Kubernetes call.
         var k8sMock = new Mock<IKubernetesJobClient>(MockBehavior.Strict);
-        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        // ReadJobAsync and CreateSecretAsync must NOT be called — MockBehavior.Strict enforces this.
 
         var service = CreateServiceWithApiKey(k8sMock.Object, agentApiKeyValue: ""); // no master key
         using var _ = service;
@@ -174,14 +173,84 @@ public sealed class DispatchLifecycleServicePerJobKeyTests : IDisposable
         await RunDispatchAsync(entity, service, projectSecrets: null);
 
         k8sMock.Verify(
-            k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never,
-            "no Secret must be created when AgentApiKeyValue is absent");
-        // TODO: Also assert that the V1Job passed to CreateJobAsync has DerivedKeySecretName absent
-        // in its env vars (i.e. AGENT_API_KEY is not sourced via SecretKeyRef). Without this check,
-        // a regression that sets DerivedKeySecretName=null but still omits the master-key mount would
-        // not be caught, silently producing a pod that can never start (CreateContainerConfigError
-        // because the SecretKeyRef references a non-existent Secret).
+            "no Job may be created when no agent key can be issued");
+        (await ReloadAsync(entity.Id)).Status.Should().Be(WorkItemStatus.Failed);
+    }
+
+    /// <summary>
+    /// A Job whose key Secret cannot be created could never authenticate. It is deleted and the
+    /// WorkItem fails, instead of the pod waiting in CreateContainerConfigError until its deadline.
+    /// </summary>
+    [Fact]
+    public async Task WhenKeySecretCannotBeCreated_JobIsDeletedAndWorkItemFails()
+    {
+        var entity = await SeedPendingWorkItemAsync();
+        var expectedJobName = DispatchLifecycleService.GenerateJobName(entity.Id);
+
+        var k8sMock = new Mock<IKubernetesJobClient>(MockBehavior.Strict);
+        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        k8sMock.Setup(k => k.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Name = expectedJobName, Uid = "test-uid" } });
+        k8sMock.Setup(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpOperationException("forbidden")
+            {
+                Response = new HttpResponseMessageWrapper(new HttpResponseMessage(HttpStatusCode.Forbidden), "")
+            });
+        k8sMock.Setup(k => k.DeleteJobAsync(expectedJobName, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var service = CreateServiceWithApiKey(k8sMock.Object, "super-secret-master");
+        using var _ = service;
+
+        await RunDispatchAsync(entity, service, projectSecrets: null);
+
+        k8sMock.Verify(k => k.DeleteJobAsync(expectedJobName, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once,
+            "a Job whose agent key could not be issued must be deleted");
+        (await ReloadAsync(entity.Id)).Status.Should().Be(WorkItemStatus.Failed);
+    }
+
+    /// <summary>
+    /// A key Secret with the same name can only be left over from an earlier Job with the same name
+    /// (re-dispatched work item). It is replaced so the new Job owns it; otherwise garbage collection
+    /// of the old Job would delete the key under the new pod.
+    /// </summary>
+    [Fact]
+    public async Task WhenKeySecretAlreadyExists_ItIsReplacedAndOwnedByTheNewJob()
+    {
+        var entity = await SeedPendingWorkItemAsync();
+        var expectedJobName = DispatchLifecycleService.GenerateJobName(entity.Id);
+        var secretName = $"caa-key-{expectedJobName}";
+
+        var k8sMock = new Mock<IKubernetesJobClient>(MockBehavior.Strict);
+        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        k8sMock.Setup(k => k.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Name = expectedJobName, Uid = "new-job-uid" } });
+        k8sMock.SetupSequence(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpOperationException("exists")
+            {
+                Response = new HttpResponseMessageWrapper(new HttpResponseMessage(HttpStatusCode.Conflict), "")
+            })
+            .Returns(Task.CompletedTask);
+        k8sMock.Setup(k => k.DeleteSecretAsync(secretName, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var service = CreateServiceWithApiKey(k8sMock.Object, "super-secret-master");
+        using var _ = service;
+
+        await RunDispatchAsync(entity, service, projectSecrets: null);
+
+        k8sMock.Verify(k => k.DeleteSecretAsync(secretName, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        var secretCreates = k8sMock.Invocations
+            .Where(i => i.Method.Name == nameof(IKubernetesJobClient.CreateSecretAsync))
+            .Select(i => (V1Secret)i.Arguments[0])
+            .ToList();
+        secretCreates.Should().HaveCount(2);
+        secretCreates[^1].Metadata.OwnerReferences.Should().ContainSingle(o => o.Uid == "new-job-uid");
+        (await ReloadAsync(entity.Id)).Status.Should().Be(WorkItemStatus.Dispatched);
     }
 
     /// <summary>
@@ -240,6 +309,12 @@ public sealed class DispatchLifecycleServicePerJobKeyTests : IDisposable
             KiroPvcPool = ["pvc-0"]
         };
         return new DispatchLifecycleService(k8sClient, transitionSvc, opts);
+    }
+
+    private async Task<WorkItemEntity> ReloadAsync(Guid id)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        return await db.WorkItems.AsNoTracking().SingleAsync(w => w.Id == id);
     }
 
     private async Task<WorkItemEntity> SeedPendingWorkItemAsync()

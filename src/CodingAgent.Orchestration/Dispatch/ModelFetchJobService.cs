@@ -62,6 +62,14 @@ public sealed class ModelFetchJobService
     public async Task<(IReadOnlyList<AgentModelInfo> Models, string? Error)> FetchModelsAsync(
         string providerType, CancellationToken ct, IProgress<string>? progress = null)
     {
+        // Spec 043 Req 8a: the fetch-models pod receives only HMAC-SHA256(master key, job name).
+        if (string.IsNullOrEmpty(_options.AgentApiKeyValue))
+        {
+            const string msg = "AGENT_API_KEY is not configured on the API, so no agent key can be issued for the fetch-models pod.";
+            Log.Error("ModelFetchJobService: {Message}", msg);
+            return ([], msg);
+        }
+
         // Read timeout from config each call so UI changes take effect without restart.
         var config = await _configStore.LoadPipelineConfigAsync(ct);
         var pollTimeoutSeconds = _pollTimeoutSecondsOverride ?? config.ModelFetchTimeoutSeconds;
@@ -116,11 +124,33 @@ public sealed class ModelFetchJobService
             return ([], $"Failed to create fetch-models job: {ex.Message}");
         }
 
+        // ── 4b. Issue the job's agent key ─────────────────────────────────
+        // Created after the job so the job owns it. Without it the pod cannot authenticate, so on
+        // failure the job is deleted rather than left waiting until its deadline.
+        try
+        {
+            var jobUid = await AgentJobKeySecret.ReadJobUidAsync(_kubeClient, _options.Namespace, jobName, ct);
+            await AgentJobKeySecret.CreateForJobAsync(
+                _kubeClient, _options.Namespace, jobName, jobUid, _options.AgentApiKeyValue, ct);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "ModelFetchJobService: failed to create the agent key Secret for job {JobName} — deleting the job", jobName);
+            try
+            {
+                await _kubeClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
+            }
+            catch (Exception deleteEx)
+            {
+                Log.Warning(deleteEx, "ModelFetchJobService: failed to delete job {JobName} after its agent key Secret could not be created", jobName);
+            }
+            return ([], ex is OperationCanceledException
+                ? "Fetch models was cancelled before the job's agent key could be created."
+                : $"Failed to create the fetch-models job's agent key: {ex.Message}");
+        }
+
         // ── 5. Wait for agent to connect and report results via SignalR ──
-        // For model-fetch pods, AGENT_ID is still set from metadata.name (Downward API fieldRef),
-        // so the pod name includes the random K8s suffix. This differs from work-item pods where
-        // AGENT_ID is set to the static job name (Spec 041 auth fix). Model-fetch pods use the
-        // chat/SignalR auth path (not the HMAC work-item path) so the suffix mismatch is acceptable.
+        // AGENT_ID is the job name (JobSpecBuilder), the identity the job's agent key is issued for.
         // ModelFetchService.WaitAndFetchAsync polls the registry until that agent appears,
         // then sends RequestFetchModels and awaits ReportFetchModelsResult — all over the
         // existing hub connection. No pod log reads, no pods/log RBAC required.

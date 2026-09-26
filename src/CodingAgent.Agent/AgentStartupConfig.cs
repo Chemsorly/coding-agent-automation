@@ -41,9 +41,11 @@ internal sealed record AgentStartupConfig
     /// <summary>
     /// <see langword="true"/> when <see cref="AgentApiKey"/> was loaded from the <c>AGENT_API_KEY</c>
     /// environment variable (i.e. it is a pre-computed per-job credential:
-    /// <c>HMAC-SHA256(masterKey, jobName)</c> stored in a per-job K8s Secret).
-    /// <see langword="false"/> when loaded from <c>AGENT_API_KEY_FILE</c> (legacy path: the file
-    /// contains the raw master key; in-process derivation is required for non-work-item pods).
+    /// <c>HMAC-SHA256(masterKey, jobName)</c> stored in a per-job K8s Secret). Every dispatched agent
+    /// Job — work item, consolidation, chat and model fetch — receives its key this way.
+    /// <see langword="false"/> when loaded from <c>AGENT_API_KEY_FILE</c> (legacy path for agents
+    /// started outside the dispatchers: the file contains the raw master key and the agent derives
+    /// its own key in-process).
     ///
     /// When <see langword="true"/>, <see cref="HubConnectionManager"/> and
     /// <see cref="WorkItemHttpClient"/> use <see cref="AgentApiKey"/> directly as the bearer token
@@ -92,23 +94,16 @@ internal sealed record AgentStartupConfig
         if (!string.IsNullOrEmpty(apiKeyFilePath))
         {
             // File-mounted path: the file contains the raw master key.
-            // In-process derivation (HubConnectionManager.DeriveKey) is required.
+            // In-process derivation (HubConnectionManager.DeriveKey) is required. No dispatched
+            // agent Job mounts the master key any more; this path serves agents started by hand.
             agentApiKey = (await File.ReadAllTextAsync(apiKeyFilePath)).Trim();
             keyIsPreDerived = false;
         }
         else
         {
-            // Env-var path: for work-item pods, DispatchLifecycleService stores
-            // HMAC-SHA256(masterKey, jobName) here via a per-job K8s Secret.
+            // Env-var path: every dispatcher (work item, consolidation, chat, model fetch) stores
+            // HMAC-SHA256(masterKey, jobName) here via the Job's own K8s Secret (AgentJobKeySecret).
             // Use the key directly — no further derivation needed.
-            // TODO(#3034): Add a startup guard that logs a prominent warning (or throws) when
-            // IsWorkItemMode == false && keyIsPreDerived == true — e.g. a non-work-item (chat)
-            // pod deployed without AGENT_API_KEY_FILE would silently set keyIsPreDerived=true
-            // and use the raw master key as the bearer token, causing an auth failure. Similarly,
-            // add a warning when IsWorkItemMode == true && keyIsPreDerived == false — e.g. if a
-            // Helm migration leaves the master-key file mount on a work-item pod, the agent will
-            // derive HMAC(masterKey, agentId) in-process, re-introducing the cross-pod impersonation
-            // vulnerability this change was designed to fix.
             agentApiKey = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentApiKey)
                 ?? throw new InvalidOperationException(
                     $"Neither {AgentDefaults.EnvAgentApiKeyFile} nor {AgentDefaults.EnvAgentApiKey} is set.");

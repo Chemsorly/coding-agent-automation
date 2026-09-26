@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
@@ -168,12 +166,13 @@ internal sealed class DispatchLifecycleService : IDisposable
             throw;
         }
 
-        // Create K8s Job via JobSpecBuilder
-        if (!await CreateK8sJobAsync(db, new K8sJobCreationContext(item, workItem, template, jobName, claimedPvc, availablePvcs, projectSecrets, logPrefix, onFailure), ct))
+        // Create K8s Job via JobSpecBuilder, together with its agent key Secret
+        var (jobCreated, jobUid) = await CreateK8sJobAsync(db, new K8sJobCreationContext(item, workItem, template, jobName, claimedPvc, availablePvcs, projectSecrets, logPrefix, onFailure), ct);
+        if (!jobCreated)
             return;
 
         // Create per-job K8s Secret if project has secrets
-        await CreateJobSecretIfNeededAsync(jobName, item.Id, projectSecrets, logPrefix, ct);
+        await CreateJobSecretIfNeededAsync(jobName, jobUid, item.Id, projectSecrets, logPrefix, ct);
 
         // Update to Dispatched — clear change tracker first to get fresh state
         // (avoids stale entity if another service modified the item during K8s API call)
@@ -338,22 +337,28 @@ internal sealed class DispatchLifecycleService : IDisposable
         Func<Guid, string, Task>? OnFailure);
 
     /// <summary>
-    /// Creates a K8s Job via JobSpecBuilder. Handles 409 Conflict (idempotent) and general failures
-    /// (releases PVC, fails WorkItem). Returns true if job creation succeeded (or 409), false if the
-    /// caller should return early due to an error.
+    /// Creates a K8s Job via JobSpecBuilder, then the Job's agent key Secret
+    /// (<see cref="AgentJobKeySecret"/>). A 409 Conflict on the Job is treated as success
+    /// (idempotent). Any failure — a missing master key, a Job that cannot be created, or a key
+    /// Secret that cannot be created — releases the PVC, fails the WorkItem and returns false; a Job
+    /// whose key Secret could not be created is deleted, because its pod could never authenticate.
+    /// On success also returns the Job's UID (null when it could not be read), so the caller can
+    /// make the Job own the project-secrets Secret without reading the Job again.
     /// </summary>
-    private async Task<bool> CreateK8sJobAsync(
+    private async Task<(bool Created, string? JobUid)> CreateK8sJobAsync(
         PipelineDbContext db,
         K8sJobCreationContext ctx,
         CancellationToken ct)
     {
-        // Per-job credential name: caa-key-{jobName} (auto-GC'd via OwnerReference on Job).
-        // Contains HMAC-SHA256(masterKey, jobName) so the pod can authenticate without holding
-        // the master key. Null when master key is not configured (e.g. tests without API key env).
-        string? perJobKeySecretName = null;
-        if (!string.IsNullOrEmpty(_options.AgentApiKeyValue))
+        // Spec 043 Req 8a: the pod receives only HMAC-SHA256(master key, job name). Without the
+        // master key that credential cannot be issued, so fail the dispatch rather than start a pod
+        // that cannot authenticate.
+        if (string.IsNullOrEmpty(_options.AgentApiKeyValue))
         {
-            perJobKeySecretName = $"caa-key-{ctx.JobName}";
+            _log.Error("DispatchLifecycleService: AGENT_API_KEY is not configured — cannot issue an agent key for Job {JobName} ({LogPrefix}WorkItem {WorkItemId})",
+                ctx.JobName, ctx.LogPrefix, ctx.Item.Id);
+            await HandleJobCreationFailureAsync(db, ctx, "AGENT_API_KEY is not configured on the API, so no agent key can be issued", ct);
+            return (false, null);
         }
 
         try
@@ -371,12 +376,7 @@ internal sealed class DispatchLifecycleService : IDisposable
                 Namespace = _options.Namespace,
                 OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
                 ProjectSecrets = ctx.ProjectSecrets,
-                TraceParent = ctx.WorkItem.TraceParent,
-                // Spec 043 Req 8a: vend per-job derived key via dedicated K8s Secret.
-                // The pod receives HMAC-SHA256(masterKey, jobName) as AGENT_API_KEY — it cannot
-                // compute credentials for any other job since it never sees the master key.
-                // Null when master key is unavailable (degrades to legacy master-key-mount path).
-                DerivedKeySecretName = perJobKeySecretName
+                TraceParent = ctx.WorkItem.TraceParent
             };
             var job = JobSpecBuilder.Build(ctx.Template, buildCtx);
             await _kubeClient.CreateJobAsync(job, _options.Namespace, ct);
@@ -389,132 +389,74 @@ internal sealed class DispatchLifecycleService : IDisposable
         catch (Exception ex)
         {
             _log.Error(ex, "DispatchLifecycleService: failed to create K8s Job {JobName} for {LogPrefix}WorkItem {WorkItemId}", ctx.JobName, ctx.LogPrefix, ctx.Item.Id);
-            if (ctx.ClaimedPvc is not null)
-            {
-                ctx.WorkItem.ClaimedPvcName = null;
-                ctx.AvailablePvcs.Add(ctx.ClaimedPvc);
-                await db.SaveChangesAsync(ct);
-            }
-            try
-            {
-                await FailWorkItemAsync(ctx.Item.Id, $"K8s Job creation failed: {ex.Message}", ct);
-            }
-            catch (Exception failEx) when (failEx is not OperationCanceledException)
-            {
-                _log.Warning(failEx,
-                    "DispatchLifecycleService: FailWorkItemAsync threw for WorkItem {WorkItemId} after K8s Job creation failure — item remains Pending for reconciliation",
-                    ctx.Item.Id);
-            }
-            if (ctx.OnFailure is not null)
-                await ctx.OnFailure(ctx.Item.Id, $"K8s Job creation failed: {ex.Message}");
-            return false;
+            await HandleJobCreationFailureAsync(db, ctx, $"K8s Job creation failed: {ex.Message}", ct);
+            return (false, null);
         }
 
-        // Create the per-job API key Secret immediately after the Job so we can attach an
-        // OwnerReference. The Job must exist before the Secret to enable auto-GC on Job deletion.
-        // TODO(#3034): Race window — the Job is scheduled before the Secret exists. If the
-        // kubelet picks up the pod in this gap, the container fails with CreateContainerConfigError
-        // because AGENT_API_KEY is sourced via SecretKeyRef (not Optional=true). The container
-        // restart policy will not automatically retry env-var resolution after the Secret is created.
-        // Consider creating the Secret first (without OwnerReference), then creating the Job, then
-        // patching the OwnerReference — or mark the SecretKeyRef as Optional=true and let the
-        // agent's startup guard reject a missing key explicitly.
-        if (perJobKeySecretName is not null)
+        // The key Secret is created after the Job so that the Job owns it and Kubernetes deletes it
+        // with the Job. A pod that starts before the Secret exists waits in CreateContainerConfigError
+        // and the kubelet retries until the Secret appears.
+        string? jobUid = null;
+        try
         {
-            await CreatePerJobKeySecretAsync(ctx.JobName, perJobKeySecretName, ct);
+            jobUid = await GetJobUidAsync(ctx.JobName, ct);
+            if (string.IsNullOrEmpty(jobUid))
+                _log.Warning("DispatchLifecycleService: creating agent key Secret for Job {JobName} without OwnerReference — secret will not be auto-GC'd",
+                    ctx.JobName);
+            await AgentJobKeySecret.CreateForJobAsync(
+                _kubeClient, _options.Namespace, ctx.JobName, jobUid, _options.AgentApiKeyValue, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.Error(ex, "DispatchLifecycleService: failed to create the agent key Secret for Job {JobName} ({LogPrefix}WorkItem {WorkItemId}) — deleting the Job",
+                ctx.JobName, ctx.LogPrefix, ctx.Item.Id);
+            await TryDeleteJobAsync(ctx.JobName);
+            await HandleJobCreationFailureAsync(db, ctx, $"Agent key Secret creation failed: {ex.Message}", ct);
+            return (false, null);
         }
 
-        return true;
+        return (true, jobUid);
     }
 
     /// <summary>
-    /// Derives the per-job API key as HMAC-SHA256(masterKey, jobName), creates a K8s Secret
-    /// named <paramref name="secretName"/> containing it, and attaches an OwnerReference to
-    /// the K8s Job so the Secret is auto-deleted when the Job is garbage-collected.
-    /// Non-fatal: a failure is logged as a warning and the dispatch continues, but since the Job
-    /// spec already references the per-job Secret via SecretKeyRef (without Optional=true), a
-    /// missing Secret causes the pod to enter CreateContainerConfigError on start. There is no
-    /// fallback to the master-key-mount path for work-item pods dispatched with DerivedKeySecretName.
-    /// TODO(#3034): treat Secret-creation failure as a hard dispatch failure (return false from
-    /// CreateK8sJobAsync, release PVC, and call FailWorkItemAsync) so the item is re-queued
-    /// rather than silently blocked in CreateContainerConfigError.
+    /// Releases the claimed PVC, fails the WorkItem and invokes the caller's failure callback after
+    /// the Job or its agent key Secret could not be created.
     /// </summary>
-    private async Task CreatePerJobKeySecretAsync(string jobName, string secretName, CancellationToken ct)
+    private async Task HandleJobCreationFailureAsync(
+        PipelineDbContext db, K8sJobCreationContext ctx, string reason, CancellationToken ct)
+    {
+        if (ctx.ClaimedPvc is not null)
+        {
+            ctx.WorkItem.ClaimedPvcName = null;
+            ctx.AvailablePvcs.Add(ctx.ClaimedPvc);
+            await db.SaveChangesAsync(ct);
+        }
+        try
+        {
+            await FailWorkItemAsync(ctx.Item.Id, reason, ct);
+        }
+        catch (Exception failEx) when (failEx is not OperationCanceledException)
+        {
+            _log.Warning(failEx,
+                "DispatchLifecycleService: FailWorkItemAsync threw for WorkItem {WorkItemId} after K8s Job creation failure — item remains Pending for reconciliation",
+                ctx.Item.Id);
+        }
+        if (ctx.OnFailure is not null)
+            await ctx.OnFailure(ctx.Item.Id, reason);
+    }
+
+    /// <summary>Best-effort deletion of a Job whose agent key Secret could not be created.</summary>
+    private async Task TryDeleteJobAsync(string jobName)
     {
         try
         {
-            // Pre-compute HMAC-SHA256(masterKey, jobName) — this is the value the pod will use
-            // as its bearer token. The server-side AgentApiKeyAuthHandler validates by computing
-            // the same value from the master key + agentId query param.
-            var derivedKey = DeriveJobKey(_options.AgentApiKeyValue, jobName);
-
-            var jobUid = await GetJobUidAsync(jobName, ct);
-
-            List<V1OwnerReference>? ownerReferences = null;
-            if (!string.IsNullOrEmpty(jobUid))
-            {
-                ownerReferences =
-                [
-                    new V1OwnerReference
-                    {
-                        ApiVersion = "batch/v1",
-                        Kind = "Job",
-                        Name = jobName,
-                        Uid = jobUid
-                        // TODO(#3034): set BlockOwnerDeletion = true here to ensure the K8s GC
-                        // finalizer prevents Job deletion from completing before the Secret is
-                        // garbage-collected, preventing per-job Secrets from accumulating in the
-                        // namespace if the GC reconciler skips the finalizer check.
-                    }
-                ];
-            }
-            else
-            {
-                _log.Warning("DispatchLifecycleService: creating per-job key Secret {SecretName} for Job {JobName} without OwnerReference — secret will not be auto-GC'd",
-                    secretName, jobName);
-            }
-
-            var secret = new V1Secret
-            {
-                Metadata = new V1ObjectMeta
-                {
-                    Name = secretName,
-                    NamespaceProperty = _options.Namespace,
-                    OwnerReferences = ownerReferences
-                },
-                StringData = new Dictionary<string, string>
-                {
-                    ["agent-api-key"] = derivedKey
-                }
-            };
-
-            await _kubeClient.CreateSecretAsync(secret, _options.Namespace, ct);
-            _log.Debug("DispatchLifecycleService: created per-job key Secret {SecretName} for Job {JobName}", secretName, jobName);
-        }
-        catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
-        {
-            // Secret already exists — idempotent (e.g. retry after 409 Job conflict)
+            await _kubeClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
         }
         catch (Exception ex)
         {
-            // TODO(#3034): see XML doc above — this should fail the dispatch rather than continue.
-            // The pod will NOT fall back to the master-key path; it will fail to start with
-            // CreateContainerConfigError because the Job spec references the per-job Secret via
-            // SecretKeyRef and the Secret does not exist.
-            _log.Warning(ex, "DispatchLifecycleService: failed to create per-job key Secret {SecretName} for Job {JobName} — pod will fail to start (no master-key fallback for work-item pods)",
-                secretName, jobName);
+            _log.Warning(ex, "DispatchLifecycleService: failed to delete K8s Job {JobName} after its agent key Secret could not be created — the orphan sweep will remove it",
+                jobName);
         }
-    }
-
-    /// <summary>
-    /// Derives the per-job API key using HMAC-SHA256(masterKey, jobName).
-    /// Matches the derivation used by <c>AgentApiKeyAuthHandler</c> server-side validation.
-    /// </summary>
-    internal static string DeriveJobKey(string masterKey, string jobName)
-    {
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(masterKey));
-        var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(jobName));
-        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
     /// <summary>
@@ -523,6 +465,7 @@ internal sealed class DispatchLifecycleService : IDisposable
     /// </summary>
     private async Task CreateJobSecretIfNeededAsync(
         string jobName,
+        string? jobUid,
         Guid workItemId,
         Dictionary<string, string>? projectSecrets,
         string logPrefix,
@@ -533,7 +476,7 @@ internal sealed class DispatchLifecycleService : IDisposable
 
         try
         {
-            await CreateJobSecretAsync(jobName, workItemId, projectSecrets, ct);
+            await CreateJobSecretAsync(jobName, jobUid, workItemId, projectSecrets, ct);
         }
         catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
         {
@@ -604,11 +547,9 @@ internal sealed class DispatchLifecycleService : IDisposable
         => TestRetryDelayOverride ?? configured;
 
     private async Task CreateJobSecretAsync(
-        string jobName, Guid workItemId, Dictionary<string, string> secrets, CancellationToken ct)
+        string jobName, string? jobUid, Guid workItemId, Dictionary<string, string> secrets, CancellationToken ct)
     {
         var secretName = $"caa-secrets-{workItemId.ToString("N")[..8]}";
-
-        var jobUid = await GetJobUidAsync(jobName, ct);
 
         List<V1OwnerReference>? ownerReferences = null;
         if (!string.IsNullOrEmpty(jobUid))
@@ -667,7 +608,7 @@ internal sealed class DispatchLifecycleService : IDisposable
             try
             {
                 var job = await _kubeClient.ReadJobAsync(jobName, _options.Namespace, ct);
-                return job.Metadata?.Uid;
+                return job?.Metadata?.Uid;
             }
             catch (Exception ex)
             {
