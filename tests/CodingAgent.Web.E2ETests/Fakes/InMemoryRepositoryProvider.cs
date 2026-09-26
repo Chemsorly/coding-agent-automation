@@ -127,12 +127,54 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
 
     public Task AddPrLabelAsync(int prNumber, string label, CancellationToken ct)
     {
+        var idx = PullRequests.FindIndex(pr => pr.Number == prNumber);
+        if (idx >= 0)
+        {
+            var existing = PullRequests[idx];
+            var updatedLabels = existing.Labels.Append(label).Distinct().ToList();
+            PullRequests[idx] = new PullRequestSummary
+            {
+                Number = existing.Number,
+                Identifier = existing.Identifier,
+                Title = existing.Title,
+                Description = existing.Description,
+                Labels = updatedLabels,
+                BranchName = existing.BranchName,
+                TargetBranch = existing.TargetBranch,
+                Url = existing.Url,
+                IsDraft = existing.IsDraft,
+                Author = existing.Author,
+                CreatedAt = existing.CreatedAt,
+                HasAutoMerge = existing.HasAutoMerge,
+            };
+        }
         PrLabelChanges.Add(("Add", prNumber, label));
         return Task.CompletedTask;
     }
 
     public Task RemovePrLabelAsync(int prNumber, string label, CancellationToken ct)
     {
+        var idx = PullRequests.FindIndex(pr => pr.Number == prNumber);
+        if (idx >= 0)
+        {
+            var existing = PullRequests[idx];
+            var updatedLabels = existing.Labels.Where(l => l != label).ToList();
+            PullRequests[idx] = new PullRequestSummary
+            {
+                Number = existing.Number,
+                Identifier = existing.Identifier,
+                Title = existing.Title,
+                Description = existing.Description,
+                Labels = updatedLabels,
+                BranchName = existing.BranchName,
+                TargetBranch = existing.TargetBranch,
+                Url = existing.Url,
+                IsDraft = existing.IsDraft,
+                Author = existing.Author,
+                CreatedAt = existing.CreatedAt,
+                HasAutoMerge = existing.HasAutoMerge,
+            };
+        }
         PrLabelChanges.Add(("Remove", prNumber, label));
         return Task.CompletedTask;
     }
