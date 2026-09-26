@@ -40,7 +40,7 @@ Cockpit landing: loop status, stat strip, needs-attention preview, active runs, 
 - **Agents (N/M, offline count)** — `IPipelineApiAgentClient.GetAgentsAsync()` → `AgentEntry[]`.
 - **Runs 24h / Success / Tokens** — `IPipelineApiRunHistoryClient.GetRunHistoryAsync(page, pageSize, includeActive:true)` → `PagedResult<PipelineRunSummary>`, aggregated client-side.
 - **Recent activity** — same run-history call; render `RunType` + result + `TotalTokens` + `PullRequestUrl`.
-- **Reuse:** `AgentMonitoringPageService`, `ActiveRunsSection`, `JobQueueSection`, `RecentRunsSection`.
+- **Reuse:** none left — the AgentMonitoring pieces this screen started from (`AgentMonitoringPageService`, `ActiveRunsSection`, `JobQueueSection`, `RecentRunsSection`) were removed once `Overview.razor` replaced them.
 
 ### Work  ·  *restyle of the dispatch drawers as a full page*
 Issue/epic backlog with readiness, labels, epic expansion, dependency graph.
@@ -54,14 +54,14 @@ Issue/epic backlog with readiness, labels, epic expansion, dependency graph.
 
 ### Runs (list)  ·  *new — the index behind the Run Page*
 - **Data** — `IPipelineApiRunHistoryClient.GetRunHistoryAsync(page, pageSize, feedbackOnly, includeActive)` → `PagedResult<PipelineRunSummary>` (server-side paging). Filter tabs by status/`RunType`.
-- **Columns** — result (Completed/Failed/Cancelled or Running+step), `RunType`, duration (`StartedAtOffset`→`CompletedAtOffset`), `TotalTokens`, `PullRequestUrl`.
+- **Columns** — result (from `RunOutcomeDisplay`: Completed/Merged, Failed, Cancelled/Closed, Restarted, or Running+step), `RunType`, duration (`StartedAtOffset`→`CompletedAtOffset`), `TotalTokens`, `PullRequestUrl`.
 - **Consolidation rows** — consolidation runs are `PipelineRunType.Consolidation`; also queryable via `IConsolidationService.GetRunHistoryAsync` / `IPipelineApiConsolidationRunClient.LoadAllRunsAsync` → `ConsolidationRun[]`.
-- **Reuse:** `RecentRunsSection` (row rendering), `RunHistoryStats`.
+- **Reuse:** `RunOutcomeDisplay` for the result badge (shared with Overview, Insights and the Run page). `Runs.razor` renders its own rows; the old `RecentRunsSection` was removed.
 
 ### Run Page  ·  *new — deep-linkable run detail*
 - **Data** — `IPipelineApiRunHistoryClient.GetRunAsync(Guid runId)` → `PipelineRunSummary`.
 - **Fields (all real on the summary):** trace/step from `FinalStep`+`PipelineStep`/`StepOrder`; `PhaseBreakdown` (per-phase token/cost); `TotalTokens`, `TotalCost` (null for Kiro), `CacheRead/WriteTokens`; quality gates from `QualityGateReport`; review findings `CodeReviewCritical/Warning/SuggestionCount`, `CodeReviewAgentsRun`; `FailureReason`; `RetryCount`; `InitiatedBy`; `BrainRepoUsed`/`BrainUpdatesPushed`; `ModelName`; `AgentId`; PR/branch/issue links.
-- **Reuse:** `HistoryRunDetailModal` (same fields, currently a modal — promote to a page).
+- **Reuse:** `PipelineSidebar` for the step ladder and `RunOutcomeDisplay` for the result badge. `RunPage.razor` replaced the old `HistoryRunDetailModal`, which was then removed.
 - **Note:** quality gates are Build / Tests (+ external CI); there is **no** "Security" gate (security is a review-agent concern).
 
 ### Fleet  ·  *split out of Monitoring*
@@ -79,7 +79,7 @@ Four sections, each from a real source; every row links to the provider:
 - **Reuse:** none single; compose from run-history + work-item clients.
 
 ### Insights  ·  *new — trends*
-- **Run outcomes over time / success rate / cycle time / retry rate** — aggregate `IPipelineApiRunHistoryClient.GetRunHistoryAsync` over a window; outcomes are **Completed / Failed / Cancelled** only.
+- **Run outcomes over time / success rate / cycle time / retry rate** — aggregate `IPipelineApiRunHistoryClient.GetRunHistoryAsync` over a window. Outcomes come from `RunOutcomeDisplay` (shared with Runs, Overview and the Run page): **Succeeded** (Completed, PR merged) / **Failed** / **Cancelled** (incl. PR closed) / **Restarted** (conflict restart). The success rate leaves restarts out — the re-dispatched run carries the outcome.
 - **Which gate fails most** — Build / Tests / External CI, from `QualityGateReport` per failed run.
 - **Cost** — `PipelineRunSummary.TotalCost`; show coverage honestly ("OpenCode only — Kiro runs report tokens"). This matches `TotalCost` being nullable.
 
@@ -124,7 +124,7 @@ The brain is real (`ProviderKind.Brain`; brain repo synced pre/post run via `Syn
 
 1. **Shared shell** — nav + top-bar project switcher (`GetProjectsAsync`) + health footer + attention badge scaffold. Everything else mounts inside it.
 2. **Settings** — highest reuse (whole tree + `QualityGateConfigSection` already exist); validates the shell against real config clients.
-3. **Runs + Run Page** — one client (`IPipelineApiRunHistoryClient`), reuses `RecentRunsSection` + `HistoryRunDetailModal`.
+3. **Runs + Run Page** — one client (`IPipelineApiRunHistoryClient`); built fresh (the old `RecentRunsSection` and `HistoryRunDetailModal` they replaced were removed).
 4. **Pipelines** — re-shell `AgentCoding.razor` + `Consolidation.razor`.
 5. **Fleet, Overview, Work, Attention, Insights** — the aggregation/new screens, in that order.
 6. **Agent Chat** — re-shell `AgentChat.razor`.

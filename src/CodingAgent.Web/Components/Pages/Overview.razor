@@ -50,7 +50,7 @@
         <div class="cockpit-stat"><span class="cockpit-stat-l">Active</span><span class="cockpit-stat-v">@_activeCount</span></div>
         <div class="cockpit-stat"><span class="cockpit-stat-l">Queue</span><span class="cockpit-stat-v">@_queueCount</span></div>
         <div class="cockpit-stat"><span class="cockpit-stat-l">Agents</span><span class="cockpit-stat-v">@_agentsOnline</span></div>
-        <div class="cockpit-stat"><span class="cockpit-stat-l">Success · last 100</span><span class="cockpit-stat-v">@(_finishedCount > 0 ? $"{_successRate}%" : "—")</span></div>
+        <div class="cockpit-stat"><span class="cockpit-stat-l">Success · last 100</span><span class="cockpit-stat-v">@(_successRate is { } rate ? $"{rate}%" : "—")</span></div>
         @if (_anyRunHasTokens)
         {
             <div class="cockpit-stat"><span class="cockpit-stat-l">Tokens · recent</span><span class="cockpit-stat-v">@CostFormatter.FormatTokens(_tokensRecent)</span></div>
@@ -61,7 +61,7 @@
     {
         <div class="cockpit-card">
             <div class="cockpit-card-header"><h2>Needs attention</h2><a href="attention" style="font-size: 12.5px; font-weight: 600;">View all →</a></div>
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr);">
+            <div class="cockpit-kpi-3col">
                 <a href="attention" style="display: flex; align-items: center; gap: 11px; padding: 14px 18px; border-right: 1px solid var(--hairline); text-decoration: none; color: inherit;">
                     <span style="width: 34px; height: 34px; border-radius: 9px; background: var(--warning-bg); color: var(--warning); display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><Icon Name="alert-triangle" Size="17" /></span>
                     <div><div style="font-size: 18px; font-weight: 800;">@_attnNeedsRefinement</div><div style="font-size: 12px; color: var(--text-muted);">Needs refinement</div></div>
@@ -78,17 +78,27 @@
         </div>
     }
 
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start;">
+    <div class="cockpit-two-col">
         <!-- active runs -->
         <div class="cockpit-card">
-            <div class="cockpit-card-header"><h2>Active runs</h2><span style="font-size: 12px; color: var(--text-muted);">@_activeRuns.Count</span></div>
+            <div class="cockpit-card-header">
+                <h2>Active runs</h2>
+                @if (_activeRuns.Count > ActiveRunsPreview)
+                {
+                    <a href="runs" style="font-size: 12.5px; font-weight: 600;">All @_activeRuns.Count →</a>
+                }
+                else
+                {
+                    <span style="font-size: 12px; color: var(--text-muted);">@_activeRuns.Count</span>
+                }
+            </div>
             @if (_activeRuns.Count == 0)
             {
                 <div class="cockpit-empty" style="padding: 24px;">No runs in flight.</div>
             }
             else
             {
-                @foreach (var run in _activeRuns.Take(5))
+                @foreach (var run in _activeRuns.Take(ActiveRunsPreview))
                 {
                     <div class="cockpit-run-row" @onclick="() => OpenRun(run.RunId)">
                         <div style="min-width: 0;">
@@ -112,18 +122,8 @@
             {
                 @foreach (var run in _recentRuns.Take(6))
                 {
-                    var cls = run.FinalStep switch
-                    {
-                        PipelineStep.Completed => "step-completed",
-                        PipelineStep.Cancelled => "step-cancelled",
-                        _ => "step-failed"
-                    };
-                    var label = run.FinalStep switch
-                    {
-                        PipelineStep.Completed => "Completed",
-                        PipelineStep.Cancelled => "Cancelled",
-                        _ => "Failed"
-                    };
+                    var cls = RunOutcomeDisplay.BadgeClass(run.FinalStep);
+                    var label = RunOutcomeDisplay.Label(run.FinalStep);
                     <div class="cockpit-run-row" @onclick="() => OpenRun(run.RunId)">
                         <div style="min-width: 0;">
                             <div style="font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">#@run.IssueIdentifier @run.IssueTitle</div>
@@ -140,11 +140,12 @@
 @code {
     private readonly CancellationTokenSource _cts = new();
 
+    private const int ActiveRunsPreview = 5;
+
     private int _activeCount;
     private int _queueCount;
     private int _agentsOnline;
-    private int _finishedCount;
-    private int _successRate;
+    private int? _successRate;
     private long _tokensRecent;
     private bool _anyRunHasTokens;
     private int _attnNeedsRefinement, _attnFailed, _attnPlans;
@@ -200,14 +201,11 @@
             var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: true, projectId: State.SelectedProjectId, ct: _cts.Token);
             var items = runs.Items;
 
-            _activeRuns = items.Where(IsActive).ToList();
-            _recentRuns = items.Where(r => !IsActive(r)).ToList();
+            _activeRuns = items.Where(r => RunOutcomeDisplay.IsActive(r.FinalStep)).ToList();
+            _recentRuns = items.Where(r => !RunOutcomeDisplay.IsActive(r.FinalStep)).ToList();
             _activeCount = _activeRuns.Count;
 
-            var finished = _recentRuns;
-            _finishedCount = finished.Count;
-            var succeeded = finished.Count(r => r.FinalStep == PipelineStep.Completed);
-            _successRate = _finishedCount > 0 ? (int)Math.Round(100.0 * succeeded / _finishedCount) : 0;
+            _successRate = RunOutcomeDisplay.SuccessRate(_recentRuns);
             // TODO: [WARNING] _tokensRecent sums all fetched items including active (in-flight) runs, which
             // have partial token counts that will fluctuate each refresh cycle. Previously only completed
             // runs were summed. The label "Tokens · recent" may be misleading since active-run tokens are
@@ -224,9 +222,6 @@
         catch (OperationCanceledException) { return; }
         catch { }
     }
-
-    private static bool IsActive(PipelineRunSummary r)
-        => r.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled;
 
     // NavigationManager.NavigateTo with a bare relative path resolves against BaseUri (the app
     // root), not the current page URL — this is the correct Blazor Server behaviour.
