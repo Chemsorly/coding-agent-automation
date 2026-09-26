@@ -117,9 +117,10 @@ public class InsightsPageComponentTests : BunitContext
         cut.FindAll(".cockpit-stat-l").Select(l => l.TextContent.Trim())
             .Should().Contain($"Success rate · {windowLabel}");
         // One bar column per day; the runs started minutes ago, so "All" spans just today.
-        cut.FindAll("[title$='run(s)']").Should().HaveCount(expectedBuckets);
+        var columns = cut.FindAll("[title$='run(s)']");
+        columns.Should().HaveCount(expectedBuckets);
         // Month name is culture-dependent ("Sep", "Sept.", "Sep."), so only the shape is asserted.
-        cut.FindAll("[title$='run(s)']").Last().GetAttribute("title").Should().MatchRegex(@"^\D+ \d{1,2} UTC — 2 run\(s\)$");
+        columns[columns.Count - 1].GetAttribute("title").Should().MatchRegex(@"^\D+ \d{1,2} UTC — 2 run\(s\)$");
     }
 
     [Fact]
