@@ -48,8 +48,14 @@ public sealed class RunsPage
     {
         var row = RunRow(issueIdentifier).First;
         await row.WaitForAsync(new() { Timeout = 10_000 });
+        // InnerTextAsync returns the browser-rendered text, which may be uppercased by CSS
+        // text-transform on .step-badge. Normalize to title-case so callers can compare
+        // directly against RunOutcomeDisplay.Label() values without caring about CSS transforms.
         var text = await row.Locator(".step-badge").InnerTextAsync();
-        return text.Trim();
+        var trimmed = text.Trim();
+        return trimmed.Length == 0
+            ? trimmed
+            : char.ToUpperInvariant(trimmed[0]) + trimmed[1..].ToLowerInvariant();
     }
 
     /// <summary>
