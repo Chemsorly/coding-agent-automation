@@ -168,7 +168,12 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
     /// Acceptance criterion (issue #3026, Test B):
     /// When <c>IWorkDistributor.DistributeAsync</c> returns a permanent failure (e.g. no job
     /// template for the resolved agent selector — the 422 scenario), <c>TriggerAsync</c>
-    /// must return <c>null</c> and persist no <c>ConsolidationRun</c> row.
+    /// must return <c>null</c> and leave no net <c>ConsolidationRun</c> row in the store.
+    /// <para>
+    /// The persist-before-dispatch ordering means <c>SaveRunAsync</c> is called once (optimistic
+    /// persist) and <c>DeleteRunAsync</c> is called once on rollback — the net effect is no
+    /// persisted row, but the mock sequence is Save-then-Delete rather than never-saved.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task TriggerAsync_ConfigError_CreatesNoWorkItemAndSurfacesPermanentFailure()
@@ -190,7 +195,7 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
             new TemplateId(Template.Id),
             CancellationToken.None);
 
-        // Assert: TriggerAsync returns null (no run created)
+        // Assert: TriggerAsync returns null (no run visible to the caller)
         run.Should().BeNull(
             "a permanent dispatch failure must not create a ConsolidationRun");
 
@@ -207,11 +212,17 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
         // is cleared and re-trigger succeeds. Combining both in one method makes diagnosis harder if
         // either half fails for an unexpected reason. (review-findings-testqualityreviewer.md)
 
-        // Assert: NO run was saved to the store
+        // Assert: run was saved (optimistic persist) then deleted on rollback — net: no persisted row.
+        // Persist-before-dispatch: SaveRunAsync is called once before DistributeAsync, then
+        // DeleteRunAsync is called once in RollbackRunAsync when dispatch fails.
         _mockRunStore.Verify(
             s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "a permanent dispatch failure must record no ConsolidationRun row");
+            Times.Once,
+            "the run must be optimistically persisted before the dispatch attempt");
+        _mockRunStore.Verify(
+            s => s.DeleteRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "on dispatch failure the persisted run must be rolled back via DeleteRunAsync");
 
         // Assert: the dedup map is clear — re-triggering after fixing config must succeed
         // This is verified by a subsequent successful trigger returning a non-null run.
@@ -232,7 +243,7 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
     // ── Additional edge cases ─────────────────────────────────────────────────
 
     /// <summary>
-    /// Transient failure (non-permanent) also returns null and creates no run row.
+    /// Transient failure (non-permanent) also returns null and leaves no net run row.
     /// The caller must re-trigger — there is no background retry sweep.
     /// </summary>
     [Fact]
@@ -255,10 +266,16 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
 
         run.Should().BeNull("transient failure must not create a run");
 
+        // Persist-before-dispatch: SaveRunAsync called once (optimistic), then DeleteRunAsync
+        // once on rollback — net effect is no persisted row.
         _mockRunStore.Verify(
             s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "no run row must be persisted on transient failure");
+            Times.Once,
+            "run is optimistically persisted before dispatch");
+        _mockRunStore.Verify(
+            s => s.DeleteRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "run is rolled back via DeleteRunAsync when dispatch fails");
 
         // Verify the dedup key was NOT retained — a re-trigger can succeed immediately
         _mockWorkDistributor
