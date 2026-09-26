@@ -291,6 +291,13 @@ public sealed class FakeJobController : IAsyncDisposable
     }
 
     /// <summary>
+    /// Clears the claimed-work-item history. Called between tests so that index-based assertions
+    /// on <see cref="ClaimedWorkItemIds"/> (e.g. <c>[0]</c> is the first claim in <em>this</em>
+    /// test) are not polluted by claims from earlier tests in the shared fixture.
+    /// </summary>
+    internal void ClearClaimed() { lock (_claimedLock) { _claimedWorkItemIds.Clear(); } }
+
+    /// <summary>
     /// Picks an idle agent whose labels satisfy the selector. The real controller matches a
     /// selector to a job template and starts a pod; the harness has its pods already connected,
     /// so it matches against their labels instead. An empty selector matches any idle agent,

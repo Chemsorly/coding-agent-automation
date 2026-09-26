@@ -452,9 +452,13 @@ public sealed class MonitoringInteractionTests : E2ETestBase
         // Arrange: dispatch one issue without an agent.
         await SeedAndDispatchWithoutAgentAsync("Validation Template", "96");
 
-        // Resolve GUID so we can verify DB weight after the UI interaction.
+        // Resolve GUID and record the *initial* priority weight. Items dispatched manually via the
+        // UI get PriorityWeight = 100 (InitiatedByConstants.IsManual returns true), not 0. Checking
+        // against a hard-coded 0 would immediately fail because the weight is already 100 at rest.
+        // Capturing the baseline here makes the assertion below independent of dispatch mode.
         var pendingItems = await Fixture.WorkItems.GetPendingAsync(ct: CancellationToken.None);
         var item = pendingItems.First(p => p.IssueIdentifier == "96");
+        var initialWeight = item.PriorityWeight;
 
         // Act: navigate to /work and enter an out-of-range value.
         var work = new WorkPage(Page, BaseUrl);
@@ -467,26 +471,27 @@ public sealed class MonitoringInteractionTests : E2ETestBase
         await input.FillAsync("5000");
         await input.BlurAsync();
 
-        // Assert 1: wait for the DB to confirm the weight stays at 0 for a full stabilisation
-        // window. Polling over 3 seconds with 100 ms intervals: if the @onchange guard is working
-        // correctly no API call is made and the weight never changes. If the guard is broken and an
-        // API call eventually lands, the weight will become non-zero and this assertion will fail
-        // with a clear TimeoutException rather than a vacuous pass. A fixed Task.Delay cannot
-        // distinguish "guard suppressed the call" from "API call in-flight but not yet written".
-        var weightStayedAtZero = true;
+        // Assert 1: wait for the DB to confirm the weight stays at initialWeight for a full
+        // stabilisation window. Polling over 3 seconds with 100 ms intervals: if the @onchange
+        // guard is working correctly no API call is made and the weight never changes. If the guard
+        // is broken and an API call eventually lands, the weight will differ from initialWeight and
+        // this assertion will fail with a clear message rather than a vacuous pass. A fixed
+        // Task.Delay cannot distinguish "guard suppressed the call" from "API call in-flight but
+        // not yet written".
+        var weightStayedAtInitial = true;
         var stabilisationDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
         while (DateTime.UtcNow < stabilisationDeadline)
         {
             var items = await Fixture.WorkItems.GetPendingAsync(ct: CancellationToken.None);
             var current = items.FirstOrDefault(p => p.IssueIdentifier == "96");
-            if (current is not null && current.PriorityWeight != 0)
+            if (current is not null && current.PriorityWeight != initialWeight)
             {
-                weightStayedAtZero = false;
+                weightStayedAtInitial = false;
                 break;
             }
             await Task.Delay(100);
         }
-        Assert.True(weightStayedAtZero, "PriorityWeight changed from 0 — the @onchange guard did not reject the out-of-range value");
+        Assert.True(weightStayedAtInitial, $"PriorityWeight changed from {initialWeight} — the @onchange guard did not reject the out-of-range value");
 
         // Assert 2: no priority error text is visible on the page. Because we have already waited
         // 3 seconds above, any async error rendering would have completed. Use Playwright's
@@ -501,7 +506,8 @@ public sealed class MonitoringInteractionTests : E2ETestBase
             new() { Timeout = 3_000 });
 
         // Assert 3: confirm the DB weight directly with a fresh context (belt-and-suspenders check
-        // complementing the stabilisation poll above).
+        // complementing the stabilisation poll above). Compare against initialWeight, not a
+        // hard-coded 0, because manually-dispatched items start at 100 not 0.
         // TODO: Use the async factory overload for consistency with all other call sites:
         //   await using var db = await Fixture.DbContextFactory.CreateDbContextAsync();
         // The synchronous CreateDbContext() assigns to an await-using variable (IAsyncDisposable),
@@ -510,6 +516,6 @@ public sealed class MonitoringInteractionTests : E2ETestBase
         await using var db = Fixture.DbContextFactory.CreateDbContext();
         var entity = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == item.Id);
         Assert.NotNull(entity);
-        Assert.Equal(0, entity.PriorityWeight);
+        Assert.Equal(initialWeight, entity.PriorityWeight);
     }
 }
