@@ -44,6 +44,8 @@ public class ConsolidationPageComponentTests : BunitContext
         Services.AddSingleton<IConsolidationService>(_mockConsolidationService.Object);
         Services.AddSingleton(_mockConfigClient.Object);
         Services.AddSingleton(_badgeService);
+        // Required by Consolidation.razor after issue #3027 (cancel via PostStatus)
+        Services.AddSingleton(new Mock<IPipelineApiWorkItemClient>().Object);
 
         var mockConfigClientForProjects = _mockConfigClient;
         mockConfigClientForProjects.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))

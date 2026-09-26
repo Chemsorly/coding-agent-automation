@@ -101,4 +101,13 @@ public sealed class ConsolidationRun
     /// Null for runs created before this field was introduced.
     /// </summary>
     public string? TraceParent { get; set; }
+
+    /// <summary>
+    /// The ID of the WorkItem created by DistributeAsync for this run.
+    /// Populated in TriggerAsync after a successful dispatch (issue #3027).
+    /// Null for runs created before this field was introduced or for runs where dispatch failed.
+    /// Required by the Consolidation page to route cancel through PostStatus(Cancelled)
+    /// without going through the now-removed CancelQueuedRunAsync method.
+    /// </summary>
+    public string? WorkItemId { get; set; }
 }
