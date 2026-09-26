@@ -24,7 +24,7 @@
     <div class="cockpit-page-header">
         <div class="cockpit-page-titles">
             <h1>Attention</h1>
-            <span class="cockpit-page-sub">@(_loading ? "…" : $"{_sections.Sum(s => s.Rows.Count)}") item(s) that may need a human — acted on in the issue tracker</span>
+            <span class="cockpit-page-sub">@(_loading ? "… items" : AttentionItemsLabel(_sections.Sum(s => s.Rows.Count))) that may need a human — acted on in the issue tracker</span>
         </div>
         <RefreshBar OnRefresh="RefreshAsync" IsLoading="@_loading" StorageKey="autoRefresh.attention" />
     </div>
@@ -85,8 +85,11 @@
 
         <div class="cockpit-card">
             <div class="cockpit-card-header">
-                <h2>Blocked issues</h2>
-                <span style="font-size: 12px; color: var(--text-muted);">@(_blockedLoading ? "checking…" : _blockedIssues.Count.ToString())</span>
+                <span style="display: inline-flex; align-items: center; gap: 9px;">
+                    <span style="width: 26px; height: 26px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: var(--text-muted); background: var(--surface-alt);"><Icon Name="lock" Size="15" /></span>
+                    <h2>Blocked issues</h2>
+                </span>
+                <span style="font-size: 11.5px; color: var(--text-muted); font-weight: 600; background: var(--surface-alt); padding: 1px 8px; border-radius: 999px;">@(_blockedLoading ? "checking…" : _blockedIssues.Count.ToString())</span>
             </div>
             @if (_blockedLoading)
             {
@@ -119,6 +122,8 @@
 @code {
     private sealed record Section(string Icon, string Color, string Bg, string Title,
         List<PipelineRunSummary> Rows, Func<PipelineRunSummary, string> Subline);
+
+    private static string AttentionItemsLabel(int count) => count == 1 ? "1 item" : $"{count} items";
 
     private readonly CancellationTokenSource _cts = new();
     private bool _loading = true;
