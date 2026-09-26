@@ -346,13 +346,6 @@ select option { background: var(--surface); color: var(--text); }
 .health-error { color: var(--error); }
 .health-warn { color: var(--text-muted); }
 
-/* Run Stats Card */
-.run-stats-card { display: flex; align-items: center; gap: 0; padding: 8px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 12px; flex-wrap: wrap; }
-.run-stats-item { display: flex; flex-direction: column; align-items: center; padding: 0 14px; }
-.run-stats-value { font-size: 1.1rem; font-weight: 700; line-height: 1.2; }
-.run-stats-label { font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
-.run-stats-divider { width: 1px; height: 28px; background: var(--border); }
-
 /* Infrastructure Health Indicators */
 .infra-health-dot { display: inline-block; flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; }
 .infra-health-dot.dot-healthy { background: var(--success); box-shadow: 0 0 4px var(--success); }
