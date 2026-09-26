@@ -74,7 +74,7 @@ public sealed partial class AgentHub
             // Clear on the local object immediately (for in-memory tests and single-replica deployments)
             agent.OrphanRestoredAt = null;
             // Also propagate to distributed registry so the write is visible to other replicas
-            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "orphanRestoredAt", null);
+            _facade.UpdateAgentFieldFireAndForget(agent.AgentId, "orphanRestoredAt", null, _logger, "ReportStepTransition");
         }
 
         // Push step transition event to subscribed UI circuits (Req 5.2)

@@ -19,7 +19,7 @@ namespace CodingAgent.Scheduler.UnitTests;
 /// Placed in the <see cref="TimingTestCollection"/> (SchedulerTiming) collection so it serializes
 /// with the other PeriodicTimer-based tests in this assembly and does not starve them on CI.
 /// </summary>
-[Collection("SchedulerTiming")]
+[Collection("Metrics")]
 public sealed class FeedbackCommentRelayServiceTests
 {
     private readonly Mock<IPipelineApiFeedbackCommentOutboxClient> _outboxClient = new();

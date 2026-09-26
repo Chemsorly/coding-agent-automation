@@ -19,6 +19,13 @@ namespace CodingAgent.Scheduler.Services;
 ///   <c>AgentLabelOperations.SwapAsync</c> exhausting retries on the remove step. These are
 ///   resolved to a single label according to <see cref="AgentLabels.DualLabelResolutionPrecedence"/>.</item>
 /// </list>
+/// Each sweep runs four passes:
+/// <list type="number">
+///   <item>Pass 1 — queries <c>agent:in-progress</c> issues (orphan recovery + dual-label detection).</item>
+///   <item>Pass 2 — queries <c>agent:done</c> issues (dual-label detection for terminal combos).</item>
+///   <item>Pass 3 — queries <c>agent:error</c> issues (dual-label detection, e.g. <c>{agent:error, agent:next}</c>).</item>
+///   <item>Pass 4 — queries <c>agent:needs-refinement</c> issues (dual-label detection, e.g. <c>{agent:needs-refinement, agent:next}</c>).</item>
+/// </list>
 /// Runs an initial sweep after a 60-second grace period, then sweeps at a configurable
 /// interval (default 30 minutes).
 /// Updated in Spec 045 to use <see cref="IPipelineApiConfigClient"/> instead of direct
@@ -201,6 +208,15 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
             // both passes would call TrySwapToDualLabelResolutionAsync for the same issue,
             // producing two back-to-back swap calls (duplicate-add + not-found-remove on the
             // second call, with unpredictable behaviour depending on the provider).
+            // TODO: Cross-pass deduplication only covers Pass 1 → later passes. Passes 2, 3, and 4
+            // never write to this set, so a dual-label combination that spans two of those passes
+            // (e.g. {agent:done, agent:error} appearing in both Pass 2 and Pass 3, or
+            // {agent:error, agent:needs-refinement} in both Pass 3 and Pass 4) can be processed
+            // twice in the same sweep. The second SwapLabelAsync call is usually a no-op add
+            // followed by a not-found remove, but it generates an avoidable provider API call and
+            // a Warning log. Fix: rename to resolvedIdentifiers and have ScanProviderForDualLabelIssuesAsync
+            // write each resolved identifier into the shared set before returning, mirroring the
+            // pattern already used in ScanProviderAsync.
             var pass1ResolvedIdentifiers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             try
@@ -214,11 +230,29 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
             try
             {
-                recoveredCount += await ScanProviderForDualLabelIssuesAsync(providerConfigId, pass1ResolvedIdentifiers, sweepCt);
+                recoveredCount += await ScanProviderForDualLabelIssuesAsync(providerConfigId, pass1ResolvedIdentifiers, AgentLabels.Done, sweepCt);
             }
             catch (Exception ex)
             {
-                _logger.Warning(ex, "Dual-label recovery: failed to scan provider {ProviderId}", providerConfigId);
+                _logger.Warning(ex, "Dual-label recovery (pass 2/done): failed to scan provider {ProviderId}", providerConfigId);
+            }
+
+            try
+            {
+                recoveredCount += await ScanProviderForDualLabelIssuesAsync(providerConfigId, pass1ResolvedIdentifiers, AgentLabels.Error, sweepCt);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Dual-label recovery (pass 3/error): failed to scan provider {ProviderId}", providerConfigId);
+            }
+
+            try
+            {
+                recoveredCount += await ScanProviderForDualLabelIssuesAsync(providerConfigId, pass1ResolvedIdentifiers, AgentLabels.NeedsRefinement, sweepCt);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Dual-label recovery (pass 4/needs-refinement): failed to scan provider {ProviderId}", providerConfigId);
             }
         }
 
@@ -349,19 +383,24 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
             _logger, "OrphanedLabelRecovery.TrySwapToErrorAsync", ct);
     }
 
-    // ── Dual-label sweep (Pass 2) ─────────────────────────────────────────
+    // ── Dual-label sweep (Passes 2, 3, 4) ────────────────────────────────
 
     /// <summary>
-    /// Pass 2 of the dual-label sweep: queries issues with <c>agent:done</c> (terminal issues
-    /// that won't surface in the orphan pass) and resolves any that carry an additional
-    /// <c>agent:*</c> status label alongside it.
+    /// Queries open issues bearing <paramref name="primaryLabel"/> and resolves any that carry an
+    /// additional <c>agent:*</c> status label alongside it, according to
+    /// <see cref="AgentLabels.DualLabelResolutionPrecedence"/>.
+    /// <para>
+    /// Used by:
+    /// <list type="bullet">
+    ///   <item>Pass 2 — <c>agent:done</c> (terminal issues that won't surface in the orphan pass).</item>
+    ///   <item>Pass 3 — <c>agent:error</c> (e.g. <c>{agent:error, agent:next}</c>).</item>
+    ///   <item>Pass 4 — <c>agent:needs-refinement</c> (e.g. <c>{agent:needs-refinement, agent:next}</c>).</item>
+    /// </list>
+    /// </para>
+    /// Issues already resolved by Pass 1 in the same sweep are skipped via
+    /// <paramref name="pass1ResolvedIdentifiers"/> to prevent double-swapping.
     /// </summary>
-    // TODO: Pass 2 only queries agent:done issues. Dual-label combinations that include neither
-    // agent:in-progress nor agent:done (e.g. agent:error + agent:needs-refinement, agent:next + agent:error)
-    // will appear in neither Pass 1 nor Pass 2 and will never be detected by the sweep. These cases are
-    // uncommon (they require a swap where both add and remove target non-in-progress/done labels), but they
-    // are structurally possible. Consider adding additional targeted passes or a broader scan to cover them.
-    private async Task<int> ScanProviderForDualLabelIssuesAsync(string providerConfigId, HashSet<string> pass1ResolvedIdentifiers, CancellationToken ct)
+    private async Task<int> ScanProviderForDualLabelIssuesAsync(string providerConfigId, HashSet<string> pass1ResolvedIdentifiers, string primaryLabel, CancellationToken ct)
     {
         var allProviders = await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, ct);
         var providerConfig = allProviders.FirstOrDefault(p => p.Id == providerConfigId);
@@ -376,7 +415,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         var resolved = 0;
         var page = 1;
         const int pageSize = 100;
-        var labels = new[] { AgentLabels.Done };
+        var labels = new[] { primaryLabel };
 
         while (true)
         {

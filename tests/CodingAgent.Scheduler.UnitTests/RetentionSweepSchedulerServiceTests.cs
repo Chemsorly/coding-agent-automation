@@ -12,7 +12,7 @@ namespace CodingAgent.Scheduler.UnitTests;
 /// Tests for <see cref="RetentionSweepSchedulerService"/>.
 /// Uses a fast tick interval (1ms) so the service fires within the test window.
 /// </summary>
-[Collection("SchedulerTiming")]
+[Collection("Metrics")]
 public sealed class RetentionSweepSchedulerServiceTests
 {
     private readonly Mock<ISchedulerApiClient> _mockClient;

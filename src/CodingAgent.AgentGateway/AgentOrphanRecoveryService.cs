@@ -1,5 +1,6 @@
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Serilog.Events;
 using ILogger = Serilog.ILogger;
 
@@ -42,7 +43,7 @@ public sealed class AgentOrphanRecoveryService(
         var entry = _facade.GetByAgentId(agentId);
         if (entry is { ActiveJobId: null })
         {
-            DetectAndRestoreOrphans(agentId, entry);
+            await DetectAndRestoreOrphans(agentId, entry);
         }
         else if (entry is { ActiveJobId: not null })
         {
@@ -108,7 +109,7 @@ public sealed class AgentOrphanRecoveryService(
     {
         _logger.Information(
             "Agent {AgentId} reported active consolidation job {RunId} — skipping pipeline run restoration (handled by ReportConsolidationComplete)",
-            agentId, activeJob.RunId);
+            agentId, LogSanitizer.SanitizeForLog(activeJob.RunId));
 
         // Still mark agent as busy with this job so it's tracked correctly.
         // ActiveJobId write is under SyncRoot (release-then-reacquire pattern: TransitionStatus
@@ -184,7 +185,7 @@ public sealed class AgentOrphanRecoveryService(
 
         _logger.Information(
             "Restored active run {RunId} for agent {AgentId} (issue {IssueIdentifier}, step {Step}) — orchestrator state recovery",
-            activeJob.RunId, agentId, activeJob.IssueIdentifier, activeJob.CurrentStep);
+            LogSanitizer.SanitizeForLog(activeJob.RunId), agentId, LogSanitizer.SanitizeForLog(activeJob.IssueIdentifier), activeJob.CurrentStep);
 
         _changeNotifier.NotifyChange();
     }
@@ -308,22 +309,57 @@ public sealed class AgentOrphanRecoveryService(
             agentId, activeJob.RunId);
     }
 
-    private void DetectAndRestoreOrphans(AgentId agentId, AgentEntry entry)
+    private async Task DetectAndRestoreOrphans(AgentId agentId, AgentEntry entry)
     {
         var orphanedRuns = _facade.GetActiveRunsByAgent(agentId);
-        // TODO: [WARNING] No "genuinely completed run" guard here. RestoreRunFromAgentStateAsync
-        // explicitly checks run history and refuses to restore runs whose FinalStep is a non-Cancelled/
-        // non-Failed terminal state. DetectAndRestoreOrphans relies entirely on GetActiveRunsByAgent
-        // returning only active-set members. If a completed run lingers in the active set due to a
-        // RemoveRun lag or failure (the service logs these cases), that run is re-added with no TTL
-        // and re-SADD'd, re-activating a finished run. Consider adding a history check mirroring
-        // RestoreRunFromAgentStateAsync before calling AddRun.
         if (orphanedRuns.Count > 0)
         {
             // Restore the most recent orphaned run as the active job so the
             // disconnect grace period timer applies. If the agent truly lost the job,
             // ReconciliationService (JobController) will time out the run after the grace period.
             var mostRecent = orphanedRuns[^1];
+
+            // Guard: don't re-activate a run that is already in history as a non-Cancelled/
+            // non-Failed terminal state (e.g. Completed, PrMerged, PrClosed, ConflictRestart).
+            // Mirrors the history check in RestoreRunFromAgentStateAsync. Cancelled/Failed runs
+            // remain restorable — they may be legitimately re-dispatched.
+            // TODO [WARNING]: CancellationToken.None is passed because RecoverOrphanedStateAsync does not yet
+            // accept a CancellationToken. Add a token parameter to the public method and propagate it here
+            // so that hub connection teardown can abort this history storage call (tracked separately).
+            // TODO [WARNING]: GetRunHistoryAsync returns the full history and this performs an O(N) linear scan
+            // on every orphan-recovery call. Verify that GetRunHistoryAsync does not return cross-agent history;
+            // if run history is large, consider scoping the query by agent or run ID to avoid performance issues.
+            // TODO [WARNING]: Early return when inHistory==true skips processing of any other orphaned runs in
+            // the active set. If mostRecent is a completed run but older entries are legitimately restorable,
+            // they are silently ignored this cycle. Assess whether the active set can hold multiple orphans
+            // for one agent; if so, iterate over all entries rather than only inspecting orphanedRuns[^1].
+            IReadOnlyList<PipelineRunSummary> history;
+            try
+            {
+                history = await _facade.GetRunHistoryAsync(CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                // Fail-open: if history storage is unavailable, proceed with restoration rather
+                // than blocking agent registration. At worst, a completed run is briefly re-activated
+                // until ReconciliationService times it out. Failing closed here would leave the agent
+                // stuck in Idle with a legitimate orphaned run for the full reconciliation grace period.
+                _logger.Warning(ex,
+                    "Agent {AgentId} orphan guard: GetRunHistoryAsync faulted — proceeding with restoration (fail-open)",
+                    agentId);
+                history = [];
+            }
+            var inHistory = history.Any(r => r.RunId == mostRecent.RunId
+                && r.FinalStep.IsTerminal()
+                && r.FinalStep != PipelineStep.Cancelled
+                && r.FinalStep != PipelineStep.Failed);
+            if (inHistory)
+            {
+                _logger.Information(
+                    "Agent {AgentId} has orphaned run {RunId} in active set but it is already in history as a terminal non-retryable state — skipping restoration",
+                    agentId, mostRecent.RunId);
+                return;
+            }
             bool shouldTransition;
             lock (entry.SyncRoot)
             {
@@ -492,7 +528,7 @@ public sealed class AgentOrphanRecoveryService(
         {
             _logger.Warning(
                 "TryReconstructRunFromDbAsync: runId '{RunId}' is not a valid GUID — cannot query WorkItem",
-                runId);
+                LogSanitizer.SanitizeForLog(runId));
             return null;
         }
 
