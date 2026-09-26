@@ -489,10 +489,14 @@ public sealed class HousekeepingService : IHousekeepingService
                 // computing" (GitHub lazy mergeability), which resolves within seconds. Evicting
                 // Unknown early would prematurely free the slot mid-computation.
                 var lastTriggered = _lastTriggeredAt.GetValueOrDefault((repoProviderId, prNumber), DateTimeOffset.MinValue);
+                // Note: DateTimeOffset.MinValue is a safe defensive default — every inFlight.Add
+                // in SelectAndTriggerBranchUpdatesAsync is paired with a _lastTriggeredAt write,
+                // so this fallback is unreachable in production. If reached (e.g. via a future
+                // refactor), now - MinValue >> any cooldown → instant eviction of the orphaned entry.
                 var blockedCooldownExpired = status == PrMergeabilityStatus.Blocked
                                             && (now - lastTriggered) >= triggerCooldown;
 
-                if (status != PrMergeabilityStatus.Blocked && status != PrMergeabilityStatus.Unknown
+                if ((status != PrMergeabilityStatus.Blocked && status != PrMergeabilityStatus.Unknown)
                     || blockedCooldownExpired)
                 {
                     inFlight.Remove(prNumber);

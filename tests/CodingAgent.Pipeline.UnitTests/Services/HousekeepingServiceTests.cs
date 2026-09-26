@@ -315,6 +315,46 @@ public class HousekeepingServiceTests
             "Blocked in-flight PR whose cooldown expired must be evicted; PR #2 should acquire the freed slot");
     }
 
+    /// <summary>
+    /// Boundary guard: a <c>Blocked</c> in-flight entry must NOT be evicted when the elapsed
+    /// time since trigger is strictly less than <c>triggerCooldown</c>. Verifies the
+    /// timeout is inclusive (<c>&gt;=</c>) and that a 1-minute margin before the boundary
+    /// keeps the slot occupied.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_BlockedPr_BeforeCooldownExpiry_SlotKept()
+    {
+        // Arrange ── cycle 1 at T=0: trigger PR #1
+        var t0 = new DateTimeOffset(2026, 9, 26, 4, 24, 0, TimeSpan.Zero);
+        const int cooldownMinutes = 25;
+        var (svc, provider, issues, _) = Create();
+        svc.UtcNow = () => t0;
+        svc.MergeabilityReprobeDelay = TimeSpan.Zero;
+
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        await ExecAsync(svc, provider, issues, [MakePr(1)], triggerCooldownMinutes: cooldownMinutes);
+
+        // Arrange ── cycle 2 at T=cooldown-1min: PR #1 Blocked (CI failed), PR #2 Behind
+        svc.UtcNow = () => t0 + TimeSpan.FromMinutes(cooldownMinutes - 1);
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Blocked);
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(2, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+
+        // Act
+        await ExecAsync(svc, provider, issues, [MakePr(1), MakePr(2)], triggerCooldownMinutes: cooldownMinutes);
+
+        // Assert: cooldown not yet expired → Blocked slot must still be held → PR #2 not triggered
+        provider.Verify(
+            p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()),
+            Times.Never,
+            "Blocked in-flight PR within cooldown must still hold the slot; PR #2 must not be triggered");
+    }
+
     // ── Unknown → re-probed, slot kept when still Unknown ─────────────────────
 
     [Fact]
