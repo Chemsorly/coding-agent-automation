@@ -126,6 +126,28 @@ public sealed class ConsolidationPage
         return modal is not null;
     }
 
+    /// <summary>
+    /// Waits for the refactoring scan pre-flight modal to appear and returns true, or returns
+    /// false if it does not appear within the timeout. Use this instead of
+    /// <see cref="IsRefactoringModalVisibleAsync"/> immediately after a click, because Blazor
+    /// renders the modal asynchronously and <c>QuerySelectorAsync</c> can return null before the
+    /// DOM has updated.
+    /// </summary>
+    public async Task<bool> WaitForRefactoringModalAsync(int timeoutMs = 10_000)
+    {
+        try
+        {
+            await _page.WaitForSelectorAsync(
+                ".modal-overlay .modal-card h3#refactoring-modal-title",
+                new() { Timeout = timeoutMs, State = WaitForSelectorState.Visible });
+            return true;
+        }
+        catch (Microsoft.Playwright.PlaywrightException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>Clicks the Generate Suggestions button.</summary>
     public async Task ClickGenerateSuggestionsAsync()
     {

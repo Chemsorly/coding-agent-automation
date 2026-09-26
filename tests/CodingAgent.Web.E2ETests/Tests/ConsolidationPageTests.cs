@@ -275,8 +275,12 @@ public sealed class ConsolidationPageTests : E2ETestBase
             Summary = "Consolidated 3 files"
         });
 
-        // Wait for server-side state to reflect completion
-        var consolidationService = Fixture.Factory.Services.GetRequiredService<IConsolidationService>();
+        // Wait for server-side state to reflect completion.
+        // Resolve from the API host: HubConsolidationOperations.HandleConsolidationCompleteAsync
+        // updates the API host's IConsolidationService singleton (the hub lives there, not on the
+        // Blazor host). Polling Fixture.Factory.Services would read the Web host's separate
+        // IConsolidationService instance, which is never updated and causes a 25s timeout.
+        var consolidationService = Fixture.ApiServices.GetRequiredService<IConsolidationService>();
         await WaitUntilAsync(async () =>
             (await consolidationService.GetRunHistoryAsync(CancellationToken.None))
                 .Any(r => r.Status == ConsolidationRunStatus.Succeeded));
@@ -347,8 +351,9 @@ public sealed class ConsolidationPageTests : E2ETestBase
             ErrorMessage = "Brain provider unavailable"
         });
 
-        // Wait for server-side state to reflect failure
-        var consolidationService = Fixture.Factory.Services.GetRequiredService<IConsolidationService>();
+        // Wait for server-side state to reflect failure.
+        // Resolve from the API host: hub updates the API host's IConsolidationService.
+        var consolidationService = Fixture.ApiServices.GetRequiredService<IConsolidationService>();
         await WaitUntilAsync(async () =>
             (await consolidationService.GetRunHistoryAsync(CancellationToken.None))
                 .Any(r => r.Status == ConsolidationRunStatus.Failed));
@@ -389,7 +394,7 @@ public sealed class ConsolidationPageTests : E2ETestBase
 
         // Act: open modal then cancel
         await page.ClickRefactoringScanAsync("S3a Template");
-        Assert.True(await page.IsRefactoringModalVisibleAsync(), "Refactoring modal should be visible after clicking Refactoring Scan");
+        Assert.True(await page.WaitForRefactoringModalAsync(), "Refactoring modal should be visible after clicking Refactoring Scan");
         await page.CancelRefactoringModalAsync();
 
         // TODO: This Task.Delay is a fixed delay, which violates the acceptance criterion
@@ -436,7 +441,7 @@ public sealed class ConsolidationPageTests : E2ETestBase
 
         // Act: open modal, confirm to start scan
         await page.ClickRefactoringScanAsync("S3b Template");
-        Assert.True(await page.IsRefactoringModalVisibleAsync());
+        Assert.True(await page.WaitForRefactoringModalAsync());
         await page.ConfirmRefactoringModalAsync();
 
         // Wait for dispatch
@@ -455,8 +460,9 @@ public sealed class ConsolidationPageTests : E2ETestBase
             ]
         });
 
-        // Wait for server-side completion
-        var consolidationService = Fixture.Factory.Services.GetRequiredService<IConsolidationService>();
+        // Wait for server-side completion.
+        // Resolve from the API host: hub updates the API host's IConsolidationService.
+        var consolidationService = Fixture.ApiServices.GetRequiredService<IConsolidationService>();
         await WaitUntilAsync(async () =>
             (await consolidationService.GetRunHistoryAsync(CancellationToken.None))
                 .Any(r => r.Status == ConsolidationRunStatus.Succeeded));
@@ -473,9 +479,11 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // The Consolidation page does not render CreatedIssueInfo identifiers in the history row
         // (only run.Summary is shown, which is null for this result). The observable side-effect
         // of CreatedIssues is the badge increment: 2 issues → BadgeCount == 2.
+        // Resolve from the API host: HubConsolidationOperations increments the badge service
+        // registered in the API host's DI container, not the Web host's.
         // TODO(WARNING): If the UI is later updated to render created-issue links or counts in the
         // history row, replace the badge assertion below with a row-text assertion for "42"/"43".
-        var badgeService = Fixture.Factory.Services.GetRequiredService<ConsolidationBadgeService>();
+        var badgeService = Fixture.ApiServices.GetRequiredService<ConsolidationBadgeService>();
         Assert.Equal(2, badgeService.BadgeCount);
     }
 
@@ -534,8 +542,9 @@ public sealed class ConsolidationPageTests : E2ETestBase
             }
         });
 
-        // Wait for server-side harness suggestions to be persisted
-        var consolidationService = Fixture.Factory.Services.GetRequiredService<IConsolidationService>();
+        // Wait for server-side harness suggestions to be persisted.
+        // Resolve from the API host: hub updates the API host's IConsolidationService.
+        var consolidationService = Fixture.ApiServices.GetRequiredService<IConsolidationService>();
         await WaitUntilAsync(async () =>
             await consolidationService.GetHarnessSuggestionsAsync(CancellationToken.None) is not null);
 
