@@ -189,7 +189,7 @@ Every template belongs to exactly one project. There is no "unassigned" state.
 
 ### Moving Templates Between Projects
 
-Templates can be moved between projects via the **Agent Coding** page using the "Move to..." action in each template's context menu. When a template moves:
+Templates can be moved between projects with the "Move to…" action, available in two places: each template row on the **Pipelines** page, and the project's **Templates** tab (Settings → Projects → *project*). When a template moves:
 
 - It is removed from the source project's `TemplateIds` list
 - It is appended to the destination project's `TemplateIds` list
@@ -321,12 +321,14 @@ The project-level epic flow coexists with existing per-template decomposition:
 
 ## UI Management
 
-Projects are managed in the **Settings** page under the "Projects" group in the navigation tree. Each project has three tabs:
+Projects are managed in the **Settings** page under the "Projects" group in the navigation tree. Each project has five tabs:
 
 | Tab | Contents |
 |-----|----------|
 | **Overview** | Name, description, enabled toggle, EpicIssueProviderId dropdown |
-| **Templates** | Ordered list with add/remove/reorder controls |
-| **Settings** | Behavioral overrides with "Reset to global" / "Override" toggle per field |
+| **Templates** | Ordered list with add/remove/reorder controls and a "Move to…" action |
+| **Secrets** | Environment variables injected into every run of the project. Merged with repository-level secrets; the repository value wins on a key collision |
+| **Settings** | Behavioral overrides with an "Override" toggle per field; fields without an override show "Using global default: *value*" |
+| **MCP Servers** | Project MCP servers, merged with the agent profile's servers at dispatch time. A server with the same name overrides the profile's; others are added |
 
-The **Agent Coding** page groups templates by project with project name headers. Each template row has a "Move to..." action in its context menu. Projects with `EpicIssueProviderId` set show a 🧩 indicator.
+The **Pipelines** page groups templates by project with project name headers. Each template row has a "Move to…" action. Projects with `EpicIssueProviderId` set show a 🧩 indicator.

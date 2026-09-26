@@ -110,4 +110,4 @@ The pipeline applies `agent:*` labels to GitHub issues and PRs to communicate pi
 3. **Create a QGC** — In Settings → Label Routing → Quality Gate Configs, define the build/test commands for the stack
 4. **Create a Reviewer Config** (optional) — In Settings → Label Routing → Reviewer Configs, define stack-specific review agents
 5. **Configure the repository** — Set `requiredLabels` on the repository provider config (include both stack and version labels)
-6. **Create a Pipeline Job Template** — In Agent Coding → Pipeline Job Templates, link the issue provider, repo provider, and optional brain/CI providers
+6. **Create a Pipeline Job Template** — On the Pipelines page (Pipeline Job Templates section), link the issue provider, repo provider, and optional brain/CI providers
