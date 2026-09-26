@@ -862,6 +862,14 @@ public sealed class ConsolidationDispatcherTests
             .ReturnsAsync(new DistributionResult(false, null, "no template",
                 IsPermanentFailure: true));
 
+        // TODO [WARNING]: This Setup uses the 5-argument overload (including the optional
+        // 'totalTokens' long parameter). The production call in FailRunSafelyAsync omits
+        // that optional parameter (4-argument call). If Moq fails to match the Setup to the
+        // production call, ThrowsAsync is never triggered and UpdateRunAsync silently returns
+        // Task.CompletedTask — making the test pass vacuously (nothing was thrown, so nothing
+        // was swallowed, and the real exception-suppression contract is untested). Fix: use
+        // the 4-argument Setup without the optional parameter to match the actual production
+        // invocation surface.
         _consolidationService
             .Setup(s => s.UpdateRunAsync(
                 It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(),
