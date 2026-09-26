@@ -13,6 +13,7 @@ namespace CodingAgent.Infrastructure.UnitTests.GitHub;
 /// Tests validate credential checking and repository listing via HTTP-level interception.
 /// The GitHubAppAuthService token exchange is stubbed so no real GitHub credentials are needed.
 /// </summary>
+[Collection("GitHubTelemetry")]
 public class GitHubValidationServiceWireMockTests : WireMockTestBase
 {
     private const string ClientId = "Iv1.testclient123";

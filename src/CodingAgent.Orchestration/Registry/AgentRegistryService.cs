@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -48,7 +49,7 @@ public sealed class AgentRegistryService : IAgentRegistryService
             {
                 _logger.Information(
                     "Agent {AgentId} registered (labels=[{Labels}], connection={ConnectionId})",
-                    message.AgentId, string.Join(", ", message.Labels), connectionId);
+                    message.AgentId, LogSanitizer.SanitizeForLog(string.Join(", ", message.Labels)), connectionId);
 
                 return new AgentEntry
                 {

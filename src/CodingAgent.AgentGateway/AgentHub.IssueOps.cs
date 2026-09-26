@@ -70,14 +70,14 @@ public sealed partial class AgentHub
             // (agent:epic + agent:error) that re-queues the issue on every scheduler poll.
             _logger.Warning(
                 "RequestLabelChange for unknown run {JobId} — attempting DB fallback for label {Label}",
-                jobId.Value, newLabel);
+                jobId.Value, SanitizeForLog(newLabel));
             await RequestLabelChangeFallbackAsync(jobId.Value, newLabel);
             return;
         }
 
         if (!string.IsNullOrEmpty(newLabel) && !AgentLabels.All.Contains(newLabel))
         {
-            _logger.Warning("Agent requested invalid label '{Label}' for job {JobId}, ignoring", newLabel, jobId.Value);
+            _logger.Warning("Agent requested invalid label '{Label}' for job {JobId}, ignoring", SanitizeForLog(newLabel), jobId.Value);
             return;
         }
 
@@ -124,7 +124,7 @@ public sealed partial class AgentHub
         {
             _logger.Warning(
                 "RequestLabelChange fallback: invalid label '{Label}' for job {JobId}, ignoring",
-                newLabel, jobId);
+                SanitizeForLog(newLabel), jobId);
             return;
         }
 

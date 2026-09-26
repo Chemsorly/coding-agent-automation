@@ -24,11 +24,20 @@ public sealed class ButtonStateTests : E2ETestBase
     [Fact]
     public async Task BrowseIssues_DisabledWhenNoTemplateSelected()
     {
-        // Arrange: seed a template so the dropdown has options
+        // Arrange: seed TWO templates so the dropdown has options but auto-preselect does NOT fire
+        // (auto-preselect only applies when exactly one enabled template exists — part of issue #2947 fix)
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
             Id = "template-1",
-            Name = "Test Template",
+            Name = "Test Template A",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
+        {
+            Id = "template-2",
+            Name = "Test Template B",
             IssueProviderId = "issue-e2e",
             RepoProviderId = "repo-e2e",
             Enabled = true
@@ -404,11 +413,20 @@ public sealed class ButtonStateTests : E2ETestBase
     [Fact]
     public async Task BrowseIssues_ShowsTooltipWhenDisabled()
     {
-        // Arrange: seed a template so the dropdown has options
+        // Arrange: seed TWO templates so the dropdown has options but auto-preselect does NOT fire
+        // (auto-preselect only applies when exactly one enabled template exists — part of issue #2947 fix)
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
             Id = "template-1",
-            Name = "Test Template",
+            Name = "Test Template A",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
+        {
+            Id = "template-2",
+            Name = "Test Template B",
             IssueProviderId = "issue-e2e",
             RepoProviderId = "repo-e2e",
             Enabled = true

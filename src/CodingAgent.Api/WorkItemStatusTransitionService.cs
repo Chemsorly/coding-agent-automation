@@ -5,6 +5,7 @@ using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
 using Microsoft.EntityFrameworkCore;
 using ILogger = Serilog.ILogger;
@@ -248,17 +249,11 @@ public sealed class WorkItemStatusTransitionService
                 return AgentLabels.NeedsRefinement;
 
             // Non-null but not in the allowlist — log at Information so operators can diagnose
-            // unexpected values without flooding the warning channel.
-            // TODO: [WARNING] The raw finalLabel value from the agent-controlled HTTP payload is written
-            // directly into a Serilog structured log message. Serilog captures it as a structured property
-            // (mitigating classic format-string injection), but the raw string still flows into all
-            // configured sinks (file, Loki, etc.). A crafted FinalLabel containing newlines, ANSI escape
-            // sequences, or very long strings could pollute log output or cause log-storage issues.
-            // Consider truncating to a safe maximum length (e.g., 128 chars) and stripping control
-            // characters before logging. See review finding [WARNING] (SecurityReviewer).
+            // unexpected values without flooding the warning channel. The value comes from the
+            // agent-controlled HTTP payload, so escape CR/LF before logging it.
             _logger.Information(
                 "WorkItemStatusTransitionService: ignoring FinalLabel={FinalLabel} from Failed HTTP payload — only agent:needs-refinement is accepted; falling back to agent:error",
-                finalLabel);
+                LogSanitizer.SanitizeForLog(finalLabel));
             return null;
         }
         catch (JsonException ex)

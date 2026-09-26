@@ -11,6 +11,7 @@
 @inject IConsolidationService ConsolidationService
 @inject ConsolidationBadgeService BadgeService
 @inject IPipelineApiConfigClient ConfigClient
+@inject IPipelineApiWorkItemClient WorkItems
 
 <PageTitle>Consolidation - Coding Agent</PageTitle>
 
@@ -204,9 +205,9 @@
                                 @if (_anyRunCancellable)
                                 {
                                     <td>
-                                        @if (run.Status == ConsolidationRunStatus.Pending)
+                                        @if (run.Status == ConsolidationRunStatus.Pending && !string.IsNullOrEmpty(run.WorkItemId))
                                         {
-                                            <button class="btn-cancel-run" @onclick="() => CancelQueuedRun(run.RunId)">Cancel</button>
+                                            <button class="btn-cancel-run" @onclick="() => CancelQueuedRun(run)">Cancel</button>
                                         }
                                     </td>
                                 }
@@ -349,7 +350,8 @@
             // (e.g. a service that doesn't honour the non-null contract) must not NRE the render.
             _runHistory = await ConsolidationService.GetRunHistoryAsync(CancellationToken.None) ?? [];
             _anyRunCancellable = _runHistory.Any(r =>
-                r.Status == ConsolidationRunStatus.Pending);
+                r.Status == ConsolidationRunStatus.Pending &&
+                !string.IsNullOrEmpty(r.WorkItemId));
         }
         catch (Exception ex)
         {
@@ -491,20 +493,44 @@
                 || r.Status == ConsolidationRunStatus.Pending));
     }
 
-    private async Task CancelQueuedRun(string runId)
+    private async Task CancelQueuedRun(ConsolidationRun run)
     {
-        var cancelled = await ConsolidationService.CancelQueuedRunAsync(runId, CancellationToken.None);
-        if (cancelled)
+        // Route cancel through PostStatus(Cancelled) — the same pattern used by Work.razor (line 404).
+        // This cancels the WorkItem in the DB, preventing the Scheduler from dispatching it.
+        // CancelQueuedRunAsync was removed (issue #3027); WorkItem status is now authoritative.
+        if (!Guid.TryParse(run.WorkItemId, out var workItemId))
         {
+            // Older runs created before WorkItemId was introduced have no WorkItemId.
+            // Nothing to cancel via PostStatus; refresh state so the button disappears.
+            _statusMessage = "Cannot cancel: run has no associated WorkItem ID (created before this feature).";
+            _statusIsError = true;
+            await LoadDataAsync();
+            return;
+        }
+
+        try
+        {
+            await WorkItems.PostStatusAsync(workItemId, new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) }, CancellationToken.None);
             _statusMessage = "Queued run cancelled.";
             _statusIsError = false;
-            await LoadDataAsync();
+            // TODO [WARNING]: PostStatusAsync cancels the WorkItem in the DB but does not update the
+            // ConsolidationRun.Status to Cancelled. After LoadDataAsync() below re-fetches runs, the
+            // ConsolidationRun row still shows Pending and WorkItemId is still set, so _anyRunCancellable
+            // evaluates to true and the Cancel button reappears. A second click POSTs Cancelled→Cancelled,
+            // which the API rejects (400), triggering the catch block's "Cancel failed" message for a
+            // run that was successfully cancelled. Scenario: user clicks Cancel → success → LoadDataAsync
+            // refreshes → button reappears → second cancel shows spurious "Cancel failed" error.
+            // Fix options: (1) update run.Status locally before LoadDataAsync, or (2) wait for the
+            // ConsolidationRun completion path to write Cancelled status before showing the button.
+            // (review-findings-dotnetspecialist.md)
         }
-        // TODO: [WARNING] When cancelled is false (run was not found or already completed server-side),
-        // LoadDataAsync is not called, so _anyRunCancellable retains its previous value. If the UI shows
-        // a Cancel button for a run that is no longer cancellable due to a status race, the Actions column
-        // and button will remain visible after the failed attempt until the next background refresh.
-        // Fix: call LoadDataAsync() unconditionally, or at minimum refresh _anyRunCancellable here.
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to cancel WorkItem {WorkItemId} for consolidation run {RunId}", workItemId, run.RunId);
+            _statusMessage = "Cancel failed — check orchestrator logs.";
+            _statusIsError = true;
+        }
+        await LoadDataAsync();
     }
 
     // TODO(WARNING): This method is `async void`. If LoadDataAsync (or InvokeAsync itself) throws

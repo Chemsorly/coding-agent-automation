@@ -96,8 +96,10 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
         mockHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>());
 
         var mockWorkDistributor = new Mock<IWorkDistributor>();
-        mockWorkDistributor.Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-persist-edge", ErrorMessage: null));
+        mockWorkDistributor
+            .SetupSequence(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-persist-edge", ErrorMessage: null))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: null, ErrorMessage: null, Queued: true));
 
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(
             new LoggerConfiguration().CreateLogger(),
@@ -113,7 +115,7 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
         var second = await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "t1", CancellationToken.None);
 
         first.Should().NotBeNull();
-        second.Should().BeNull(); // rejected by concurrency guard
+        second.Should().BeNull("rejected by DB-layer dedup (WorkItemId=null = 409 duplicate)");
     }
 
     // ── GetLastSuccessfulHarnessRunTimestampAsync ────────────────────────

@@ -752,9 +752,12 @@ public sealed class ApiBackedServicesTests
     }
 
     [Fact]
-    public async Task HistoryService_AddRunToHistoryAsync_SkipsConsolidationRun()
+    public async Task HistoryService_AddRunToHistoryAsync_ConsolidationRun_IsNowPersisted()
     {
+        // Write guard removed: consolidation runs are now persisted to pipeline history.
         var client = new Mock<CodingAgent.Api.Client.IPipelineApiRunHistoryClient>();
+        client.Setup(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRunSummary>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
         var svc = CreateHistoryService(client.Object);
 
         var consolidationRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
@@ -773,7 +776,9 @@ public sealed class ApiBackedServicesTests
 
         await svc.AddRunToHistoryAsync(consolidationRun);
 
-        client.Verify(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRunSummary>(), It.IsAny<CancellationToken>()), Times.Never);
+        client.Verify(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRunSummary>(), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "consolidation run must now be forwarded to the history API (write guard removed)");
     }
 
     [Fact]

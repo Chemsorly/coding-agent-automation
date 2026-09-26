@@ -50,7 +50,7 @@ public sealed partial class AgentHub
         var issueConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
         var issueConfig = issueConfigs.TryGetProviderConfig(issueProviderConfigId);
         if (issueConfig is null)
-            throw new HubException($"Issue provider config '{issueProviderConfigId}' not found for cross-repo routing in job {jobId.Value}");
+            throw new HubException($"Issue provider config '{SanitizeForLog(issueProviderConfigId)}' not found for cross-repo routing in job {jobId.Value}");
 
         // Scope check: ensure the requested provider belongs to the run's project.
         // Fast path: the run's own provider is always in scope — no template lookup needed.

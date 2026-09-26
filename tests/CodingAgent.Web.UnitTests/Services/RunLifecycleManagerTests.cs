@@ -204,6 +204,24 @@ public sealed class RunLifecycleManagerTests
     }
 
     [Fact]
+    public async Task FailRunAsync_FailureReasonWithNewlines_LogsEscapedReason_KeepsRawReasonOnRun()
+    {
+        // The HTTP status path passes the agent-supplied WorkItemStatusRequest.ErrorMessage through as
+        // failureReason, so CR/LF must be escaped in the terminal log entry (CodeQL cs/log-forging).
+        // Escaping is a log-output concern only — the reason stored on the run stays verbatim.
+        const string reason = "boom\r\n[ERR] forged entry";
+        _runService.AddRun(CreateRun("run-fail-forged", PipelineRunType.Implementation));
+
+        var result = await _sut.FailRunAsync("run-fail-forged", reason, CancellationToken.None);
+
+        result!.FailureReason.Should().Be(reason);
+        // {Reason} is the fifth property value of the terminal log entry.
+        _mockLogger.Verify(l => l.Information(
+            It.Is<string>(t => t.StartsWith("RunLifecycleManager.FailRunAsync:", StringComparison.Ordinal)),
+            It.Is<object?[]>(a => a[4] as string == "boom\\r\\n[ERR] forged entry")), Times.Once);
+    }
+
+    [Fact]
     public async Task FailRunAsync_ReviewRun_SwapsLabelViaRepoProvider()
     {
         // Arrange
@@ -411,6 +429,67 @@ public sealed class RunLifecycleManagerTests
         _mockLabelService.Verify(l => l.SwapLabelAsync(
             It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
             It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task FailRunAsync_ConsolidationRun_SkipsLabelSwap()
+    {
+        // ProviderConfigId audit: FailRunAsync must not attempt a label swap for consolidation runs.
+        // This is a pre-existing production bug now fixed as part of issue #3024.
+        var consolidationRun = new PipelineRun
+        {
+            RunId = "run-consolidation-fail",
+            IssueIdentifier = "consol-identifier",
+            IssueTitle = "Consolidation",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "rp-1",
+            RunType = PipelineRunType.Implementation
+        };
+        _runService.AddRun(consolidationRun);
+
+        await _sut.FailRunAsync("run-consolidation-fail", "consolidation agent error", CancellationToken.None);
+
+        // No label swap — consolidation runs have no GitHub issue label
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never,
+            "FailRunAsync must not attempt a label swap for consolidation runs (no issue label exists)");
+
+        // History must still be written
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
+            It.Is<PipelineRun>(r => r.RunId == "run-consolidation-fail"), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "FailRunAsync must still write history for consolidation runs after guard removal");
+    }
+
+    [Fact]
+    public async Task CancelRunAsync_ConsolidationRun_SkipsLabelSwap()
+    {
+        // ProviderConfigId audit: CancelRunAsync must not attempt a label swap for consolidation runs.
+        var consolidationRun = new PipelineRun
+        {
+            RunId = "run-consolidation-cancel",
+            IssueIdentifier = "consol-identifier",
+            IssueTitle = "Consolidation",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "rp-1",
+            RunType = PipelineRunType.Implementation
+        };
+        _runService.AddRun(consolidationRun);
+
+        await _sut.CancelRunAsync("run-consolidation-cancel", CancellationToken.None);
+
+        // No label swap — consolidation runs have no GitHub issue label
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never,
+            "CancelRunAsync must not attempt a label swap for consolidation runs (no issue label exists)");
+
+        // History must still be written
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
+            It.Is<PipelineRun>(r => r.RunId == "run-consolidation-cancel"), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "CancelRunAsync must still write history for consolidation runs after guard removal");
     }
 
     [Fact]

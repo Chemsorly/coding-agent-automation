@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Text.Json;
 using CodingAgent.Orchestration.Redis;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Serilog;
 using StackExchange.Redis;
 using ILogger = Serilog.ILogger;
@@ -125,7 +126,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
 
             _logger.Information(
                 "Agent {AgentId} registered (labels=[{Labels}], connection={ConnectionId})",
-                agentId, string.Join(", ", message.Labels), connectionId);
+                agentId, LogSanitizer.SanitizeForLog(string.Join(", ", message.Labels)), connectionId);
         }
 
         // Fix B1 (issue #2873): if Redis returned null/empty for activeJobId but _localSnapshot
