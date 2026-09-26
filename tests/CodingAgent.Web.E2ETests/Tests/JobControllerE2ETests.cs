@@ -11,6 +11,17 @@ using Microsoft.Extensions.DependencyInjection;
 namespace CodingAgent.Web.E2ETests.Tests;
 
 /// <summary>
+/// Shared label arrays used across JobControllerE2ETests to avoid CA1861
+/// (constant array arguments should be 'static readonly' fields).
+/// </summary>
+file static class TestLabels
+{
+    public static readonly string[] Enhancement = ["enhancement"];
+    public static readonly string[] Jce2e = ["jc-e2e"];
+    public static readonly string[] EnhancementAndAgentNext = ["enhancement", "agent:next"];
+}
+
+/// <summary>
 /// E2E tests for the real JobController reconciliation loop hosted in-process.
 ///
 /// <para>
@@ -70,7 +81,7 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
             Identifier = issueIdentifier,
             Title = "Smoke test issue",
             Description = "## Requirements\nSmoke test\n\n## Acceptance Criteria\n- [ ] Done",
-            Labels = new[] { "enhancement" }
+            Labels = TestLabels.Enhancement
         });
 
         // Seed an AgentProfile so AssignmentEnricher can resolve the jc-e2e selector.
@@ -78,7 +89,7 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
         {
             Id = "profile-jc-e2e",
             DisplayName = "JobController E2E Profile",
-            MatchLabels = new[] { "jc-e2e" },
+            MatchLabels = TestLabels.Jce2e,
             AgentProviderConfigId = "agent-e2e",
             Enabled = true
         }, CancellationToken.None);
@@ -235,7 +246,7 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
 
         // Wait until the job is recorded (CreateJobAsync ran up to the gate)
         await WaitUntilAsync(
-            () => Fixture.K8sClient.CreatedJobs.Count >= 1,
+            () => !Fixture.K8sClient.CreatedJobs.IsEmpty,
             timeout: TimeSpan.FromSeconds(10));
 
         // TODO [WARNING]: Keys.First() is non-deterministic when CreatedJobs contains entries from
@@ -294,7 +305,7 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
 
         // Wait until the job is recorded
         await WaitUntilAsync(
-            () => Fixture.K8sClient.CreatedJobs.Count >= 1,
+            () => !Fixture.K8sClient.CreatedJobs.IsEmpty,
             timeout: TimeSpan.FromSeconds(10));
 
         // TODO [WARNING]: Keys.First() is non-deterministic when CreatedJobs contains entries from
@@ -352,7 +363,7 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
             Identifier = issueIdentifier,
             Title = "Test failure issue",
             Description = "## Requirements\nTrigger infrastructure failure\n\n## Acceptance Criteria\n- [ ] Done",
-            Labels = new[] { "enhancement", "agent:next" }
+            Labels = TestLabels.EnhancementAndAgentNext
         });
 
         // ── Arrange: insert WorkItem ──────────────────────────────────────────────────
