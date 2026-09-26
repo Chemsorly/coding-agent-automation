@@ -39,6 +39,18 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
     public List<V1Job> ExistingJobs { get; } = new();
 
     /// <summary>
+    /// When non-null, <see cref="CreateJobAsync"/> records the job and fires events, then awaits
+    /// this TCS before returning. This holds the dispatch caller inside <c>CreateJobAsync</c> so
+    /// the DB write of <c>Dispatched</c> has not yet happened — simulating the race window that
+    /// issue #2950 fixed.
+    ///
+    /// <para>
+    /// Must be set to <c>null</c> after each test (handled by <see cref="Reset"/>).
+    /// </para>
+    /// </summary>
+    public TaskCompletionSource? AfterCreateDelay { get; set; }
+
+    /// <summary>
     /// Raised synchronously inside <see cref="CreateJobAsync"/> immediately after the job is
     /// recorded in <see cref="ChatJobs"/>. Each subscriber receives the created <see cref="V1Job"/>.
     /// Used by <c>DispatchChatPodAndConnectAsync</c> to claim ownership of the specific job that
@@ -46,7 +58,16 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
     /// </summary>
     public event Action<V1Job>? ChatJobCreated;
 
-    public Task CreateJobAsync(V1Job job, string ns, CancellationToken ct = default)
+    /// <summary>
+    /// Raised synchronously inside <see cref="CreateJobAsync"/> for work-item jobs (those whose
+    /// name does NOT start with <c>"caa-chat-"</c>). Each subscriber receives the created
+    /// <see cref="V1Job"/>. Used by <c>JobControllerE2ETests</c> to bootstrap a
+    /// <see cref="CodingAgent.Web.E2ETests.Infrastructure.FakeAgentClient"/> reactively from the
+    /// exact job created by the dispatch call, without polling.
+    /// </summary>
+    public event Action<V1Job>? WorkItemJobCreated;
+
+    public async Task CreateJobAsync(V1Job job, string ns, CancellationToken ct = default)
     {
         if (CreateJobException is not null)
             throw CreateJobException;
@@ -62,6 +83,16 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
         }
 
         var jobName = job.Metadata?.Name ?? $"job-{Guid.NewGuid()}";
+
+        // Simulate what the Kubernetes API server does: stamp CreationTimestamp on the object.
+        // CleanupOrphansAsync uses this as the fallback anchor for brand-new jobs that have no
+        // StartTime yet (the #2950 fix). Without this stamp, a freshly-created job would appear
+        // as an orphan with no timestamp anchor and be deleted immediately.
+        // Tests that want to simulate the pre-fix behaviour can clear this explicitly:
+        //   Fixture.K8sClient.CreatedJobs[jobName].Metadata.CreationTimestamp = null;
+        if (job.Metadata is not null)
+            job.Metadata.CreationTimestamp ??= DateTime.UtcNow;
+
         CreatedJobs[jobName] = job;
 
         // Chat jobs are tracked separately for easy assertions
@@ -70,8 +101,17 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
             ChatJobs[jobName] = job;
             ChatJobCreated?.Invoke(job);
         }
+        else
+        {
+            // Work-item job — notify subscribers (e.g. JobControllerE2ETests agent bootstrap)
+            WorkItemJobCreated?.Invoke(job);
+        }
 
-        return Task.CompletedTask;
+        // If a delay gate is set, hold here until the test releases it.
+        // This lets the test call CleanupOrphansAsync while the WorkItem is still Pending
+        // (before DispatchLifecycleService commits the Dispatched status write).
+        if (AfterCreateDelay is not null)
+            await AfterCreateDelay.Task.WaitAsync(ct);
     }
 
     public Task DeleteJobAsync(string name, string ns, CancellationToken ct = default)
@@ -135,6 +175,9 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
         FailNextCreate = false;
         ChatJobs.Clear();
         ChatJobCreated = null;
+        // New fields — must be cleared to prevent inter-test leakage
+        WorkItemJobCreated = null;
+        AfterCreateDelay = null;
     }
 
     /// <summary>
@@ -163,6 +206,35 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
         job.Status.Conditions.Add(new k8s.Models.V1JobCondition
         {
             Type = success ? "Complete" : "Failed",
+            Status = "True",
+            LastTransitionTime = DateTime.UtcNow
+        });
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Simulates a work-item job reaching a <c>Failed</c> terminal state.
+    /// Sets the <c>Failed</c> condition so <see cref="CodingAgent.JobController.Reconciliation.ReconciliationLoop"/>
+    /// detects it during <c>ReconcileOnceAsync</c>.
+    /// </summary>
+    public Task SimulateWorkItemJobFailedAsync(string jobName)
+    {
+        if (!CreatedJobs.TryGetValue(jobName, out var job))
+            throw new InvalidOperationException($"Job '{jobName}' not found in CreatedJobs");
+
+        job.Status ??= new k8s.Models.V1JobStatus();
+        job.Status.Conditions ??= new List<k8s.Models.V1JobCondition>();
+
+        // Remove any existing Complete/Failed conditions first
+        var existing = job.Status.Conditions
+            .Where(c => c.Type == "Complete" || c.Type == "Failed")
+            .ToList();
+        foreach (var c in existing) job.Status.Conditions.Remove(c);
+
+        job.Status.Conditions.Add(new k8s.Models.V1JobCondition
+        {
+            Type = "Failed",
             Status = "True",
             LastTransitionTime = DateTime.UtcNow
         });

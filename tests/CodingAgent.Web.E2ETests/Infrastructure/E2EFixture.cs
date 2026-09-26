@@ -40,6 +40,7 @@ public sealed class E2EFixture : IAsyncLifetime
 
     private ApiE2EWebApplicationFactory? _apiFactory;
     private FakeJobController? _jobController;
+    private JobControllerE2EWebApplicationFactory? _realJobControllerFactory;
 
     /// <summary>Blazor Server app — UI navigation and page assertions.</summary>
     public string ServerAddress => Factory.ServerAddress;
@@ -127,6 +128,24 @@ public sealed class E2EFixture : IAsyncLifetime
     public FakeJobController JobController => _jobController
         ?? throw new InvalidOperationException("Job controller not started");
 
+    /// <summary>
+    /// The real <see cref="CodingAgent.JobController.Reconciliation.ReconciliationLoop"/> hosted
+    /// in-process against the API host, with <see cref="FakeKubernetesJobClient"/> and the
+    /// always-leader stub wired in. Tests call its methods directly (deterministically, not via
+    /// the polling loop) to exercise reconciliation paths that <see cref="FakeJobController"/>
+    /// never reaches.
+    /// </summary>
+    // TODO [WARNING]: The ReconciliationLoop singleton holds a process-lifetime
+    // HashSet<Guid> _reconciledTerminalIds that is only cleared by OnLeadershipAcquired(),
+    // which nothing in the harness ever calls (RemoveAll<IHostedService>() removes the only
+    // production caller, ReconciliationService). If two tests ever reconcile the same WorkItem
+    // GUID, the second ReconcileOnceAsync would silently skip it via the
+    // _reconciledTerminalIds.Contains guard. Fix: call loop.OnLeadershipAcquired() in
+    // ResetAllAsync (or expose a dedicated reset hook) so the cache is cleared between tests.
+    public CodingAgent.JobController.Reconciliation.ReconciliationLoop RealReconciliationLoop =>
+        _realJobControllerFactory?.ReconciliationLoop
+        ?? throw new InvalidOperationException("Real JobController factory not started");
+
     public Task InitializeAsync()
     {
         _apiFactory = new ApiE2EWebApplicationFactory(
@@ -151,6 +170,20 @@ public sealed class E2EFixture : IAsyncLifetime
             _apiFactory.AgentRegistry,
             Factory.ConfigStore,
             DbContextFactory);
+
+        // Build the real JobController in-process against the API host.
+        // Must be built after _apiFactory so ServerAddress is known.
+        _realJobControllerFactory = new JobControllerE2EWebApplicationFactory(
+            _apiFactory.ServerAddress,
+            Factory.FakeK8sClient,
+            ApiKey);
+        // Force the host to build and DI to resolve (triggers ConfigureWebHost overrides).
+        // TODO [WARNING]: CreateClient() to force EnsureServer() is fragile — if a future
+        // ConfigureWebHost change reintroduces a hosted service, the immediately-disposed client
+        // would race with service startup and silently discard async host-start exceptions. A more
+        // explicit alternative is: _ = _realJobControllerFactory.Services; (accessing Services
+        // also triggers EnsureServer without creating a disposable client).
+        using (var jcClient = _realJobControllerFactory.CreateClient()) { }
 
         return Task.CompletedTask;
     }
@@ -259,6 +292,8 @@ public sealed class E2EFixture : IAsyncLifetime
         await Factory.DisposeAsync();
         if (_apiFactory is not null)
             await _apiFactory.DisposeAsync();
+        if (_realJobControllerFactory is not null)
+            await _realJobControllerFactory.DisposeAsync();
 
         E2ETestDefaults.ClearDatabaseEnvironment();
     }
