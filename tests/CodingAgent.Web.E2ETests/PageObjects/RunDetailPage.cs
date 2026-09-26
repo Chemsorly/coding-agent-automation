@@ -24,7 +24,11 @@ public sealed class RunDetailPage
     {
         await _page.GotoAsync($"{_baseUrl}/runs/{runId}");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        await _page.WaitForTimeoutAsync(1500);
+        // Allow time for the Blazor Server circuit to connect via SignalR
+        // and for event handlers (@onclick) to be attached to DOM elements.
+        // 1500ms was insufficient in CI; 3000ms matches AgentCodingPage.NavigateAsync's
+        // proven delay on the same ARM runner profile.
+        await _page.WaitForTimeoutAsync(3000);
     }
 
     /// <summary>The whole-page text, for asserting the issue identifier / title is shown.</summary>
