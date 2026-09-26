@@ -277,13 +277,8 @@ public sealed class ConsolidationPageTests : E2ETestBase
 
         // Wait for server-side state to reflect completion
         var consolidationService = Fixture.Factory.Services.GetRequiredService<IConsolidationService>();
-        // TODO: WaitUntilAsync accepts a synchronous Func<bool>, so GetRunHistoryAsync must be
-        // unwrapped with .GetAwaiter().GetResult(). This blocks a thread-pool thread inside the
-        // polling loop and can cause thread-pool starvation under CI load. Fix by adding an async
-        // overload WaitUntilAsync(Func<Task<bool>>) to E2ETestBase and switching these callsites.
-        await WaitUntilAsync(() =>
-            consolidationService.GetRunHistoryAsync(CancellationToken.None)
-                .GetAwaiter().GetResult()
+        await WaitUntilAsync(async () =>
+            (await consolidationService.GetRunHistoryAsync(CancellationToken.None))
                 .Any(r => r.Status == ConsolidationRunStatus.Succeeded));
 
         // Reload page to trigger LoadDataAsync, then assert DOM
@@ -354,13 +349,8 @@ public sealed class ConsolidationPageTests : E2ETestBase
 
         // Wait for server-side state to reflect failure
         var consolidationService = Fixture.Factory.Services.GetRequiredService<IConsolidationService>();
-        // TODO: WaitUntilAsync accepts a synchronous Func<bool>, so GetRunHistoryAsync must be
-        // unwrapped with .GetAwaiter().GetResult(). This blocks a thread-pool thread inside the
-        // polling loop and can cause thread-pool starvation under CI load. Fix by adding an async
-        // overload WaitUntilAsync(Func<Task<bool>>) to E2ETestBase and switching these callsites.
-        await WaitUntilAsync(() =>
-            consolidationService.GetRunHistoryAsync(CancellationToken.None)
-                .GetAwaiter().GetResult()
+        await WaitUntilAsync(async () =>
+            (await consolidationService.GetRunHistoryAsync(CancellationToken.None))
                 .Any(r => r.Status == ConsolidationRunStatus.Failed));
 
         // Reload and assert
@@ -467,13 +457,8 @@ public sealed class ConsolidationPageTests : E2ETestBase
 
         // Wait for server-side completion
         var consolidationService = Fixture.Factory.Services.GetRequiredService<IConsolidationService>();
-        // TODO: WaitUntilAsync accepts a synchronous Func<bool>, so GetRunHistoryAsync must be
-        // unwrapped with .GetAwaiter().GetResult(). This blocks a thread-pool thread inside the
-        // polling loop and can cause thread-pool starvation under CI load. Fix by adding an async
-        // overload WaitUntilAsync(Func<Task<bool>>) to E2ETestBase and switching these callsites.
-        await WaitUntilAsync(() =>
-            consolidationService.GetRunHistoryAsync(CancellationToken.None)
-                .GetAwaiter().GetResult()
+        await WaitUntilAsync(async () =>
+            (await consolidationService.GetRunHistoryAsync(CancellationToken.None))
                 .Any(r => r.Status == ConsolidationRunStatus.Succeeded));
 
         // Reload and assert
@@ -551,13 +536,8 @@ public sealed class ConsolidationPageTests : E2ETestBase
 
         // Wait for server-side harness suggestions to be persisted
         var consolidationService = Fixture.Factory.Services.GetRequiredService<IConsolidationService>();
-        // TODO: WaitUntilAsync accepts a synchronous Func<bool>, so GetHarnessSuggestionsAsync must
-        // be unwrapped with .GetAwaiter().GetResult(). This blocks a thread-pool thread inside the
-        // polling loop and can cause thread-pool starvation under CI load. Fix by adding an async
-        // overload WaitUntilAsync(Func<Task<bool>>) to E2ETestBase and switching these callsites.
-        await WaitUntilAsync(() =>
-            consolidationService.GetHarnessSuggestionsAsync(CancellationToken.None)
-                .GetAwaiter().GetResult() is not null);
+        await WaitUntilAsync(async () =>
+            await consolidationService.GetHarnessSuggestionsAsync(CancellationToken.None) is not null);
 
         // Reload page to trigger LoadDataAsync
         await page.NavigateAsync();
@@ -665,18 +645,18 @@ public sealed class ConsolidationPageTests : E2ETestBase
         var page = new ConsolidationPage(Page, BaseUrl);
         await page.NavigateAsync();
 
-        // Act: two rapid clicks — the second will hit the DB unique index and be deduplicated
+        // Act: two rapid clicks — the second will hit the DB unique index and be deduplicated.
+        // The first click may disable the button before the second fires. Use Force=true on
+        // the second click to bypass Playwright's enabled-check and simulate the rapid
+        // double-click that the dedup path is designed to handle.
         await page.ClickBrainConsolidationAsync("S6 Template");
-        await page.ClickBrainConsolidationAsync("S6 Template");
+        await page.ClickBrainConsolidationForcedAsync("S6 Template");
 
-        // TODO: This Task.Delay violates the acceptance criterion ("Waits use WaitUntilAsync or
-        // Playwright waits, never fixed delays"). A deterministic alternative: use
-        // WaitUntilAsync(() => Fixture.WorkItems.GetPendingAsync(10).GetAwaiter().GetResult().Count > 0)
-        // to wait until at least one item exists, then assert Single. Additionally, consider using
-        // page.WaitForStatusMessageAsync() to wait for the Blazor UI to finish processing both
-        // clicks before querying the work item store.
-        // Wait for Blazor to process both clicks and for any DB writes to settle
-        await Task.Delay(500);
+        // Wait deterministically: poll until at least one WorkItem exists (replaces Task.Delay).
+        // Once the first item is visible, assert exactly one — the dedup must have collapsed
+        // any second insert attempt.
+        await WaitUntilAsync(async () =>
+            (await Fixture.WorkItems.GetPendingAsync(10)).Count > 0);
 
         // Assert: exactly one Pending WorkItem exists
         var pending = await Fixture.WorkItems.GetPendingAsync(10);

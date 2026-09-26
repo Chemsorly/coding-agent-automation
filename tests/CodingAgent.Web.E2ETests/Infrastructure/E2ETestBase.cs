@@ -35,7 +35,6 @@ public abstract class E2ETestBase : IAsyncLifetime
         // Fresh browser context per test (isolated cookies, storage)
         var browser = await Fixture.GetBrowserAsync();
         _context = await browser.NewContextAsync();
-        await StubExternalFontsAsync(_context);
         Page = await _context.NewPageAsync();
 
         // Guard: verify DI replacement worked
@@ -43,24 +42,6 @@ public abstract class E2ETestBase : IAsyncLifetime
         if (factory is not Fakes.FakeProviderFactory)
             throw new InvalidOperationException(
                 $"DI replacement failed: IProviderFactory resolved as {factory.GetType().Name} instead of FakeProviderFactory");
-    }
-
-    /// <summary>
-    /// Keeps page loads local to the test server. The Google Fonts stylesheet linked from
-    /// App.razor is the only external request on a page load, and it blocks the "load" event that
-    /// <c>GotoAsync</c> waits for, so a slow CDN from the CI runner can run navigation into
-    /// Playwright's 30s timeout (seen once for /agent-coding). An empty stylesheet leaves the
-    /// fallback fonts in place, so no font file is requested either.
-    /// </summary>
-    private static async Task StubExternalFontsAsync(IBrowserContext context)
-    {
-        await context.RouteAsync("https://fonts.googleapis.com/**", route => route.FulfillAsync(new RouteFulfillOptions
-        {
-            Status = 200,
-            ContentType = "text/css",
-            Body = string.Empty
-        }));
-        await context.RouteAsync("https://fonts.gstatic.com/**", route => route.AbortAsync());
     }
 
     public async Task DisposeAsync()
@@ -146,10 +127,13 @@ public abstract class E2ETestBase : IAsyncLifetime
     }
 
     /// <summary>
-    /// Async overload: polls an async condition until it returns true, or times out.
-    /// Use this when the condition itself performs async I/O (e.g. awaiting an API call or
-    /// <c>CreateDbContextAsync</c>). For synchronous predicates prefer the <c>Func&lt;bool&gt;</c>
-    /// overload to avoid the overhead of an async state machine per poll iteration.
+    /// Async overload of <see cref="WaitUntilAsync(Func{bool}, TimeSpan?, TimeSpan?)"/>.
+    /// Accepts an async condition so callers can await service calls directly inside the
+    /// predicate rather than blocking with <c>.GetAwaiter().GetResult()</c>. Calling a
+    /// synchronous blocking wait on an async method inside a thread-pool polling loop can
+    /// cause thread-pool starvation under sustained CI load (each polling iteration occupies
+    /// a thread-pool thread for the full async I/O duration). This overload eliminates that
+    /// risk by awaiting the condition task directly.
     /// </summary>
     protected static async Task WaitUntilAsync(
         Func<Task<bool>> condition,
