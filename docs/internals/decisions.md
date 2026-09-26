@@ -292,6 +292,8 @@ The practical impact is low: draft PRs are rare (require retry exhaustion), and 
 
 **Security invariant:** An agent pod's credential `HMAC(master, podA-name)` cannot be used to impersonate `podB` — or the operator, whose credential is the master key itself — because computing any other credential requires the master key, which is never distributed to pods.
 
+**Run restoration on re-registration (2026-09-26):** An agent that registers with an `ActiveJob` gets that run restored — and with it the run-scoped `[RequiresActiveJob]` hub methods (token refresh, labels, comments) — only when the work item is its own: `K8sJobName` or `AssignedAgentId` equals its agent ID, the ownership rule the work-item HTTP endpoints already apply. The restored run's issue, provider configs, project and run type come from the WorkItem row (`IWorkItemTransitionStore.GetWorkItemRunRecordAsync`); the rest — progress and descriptive fields such as the current step, title, start time and model, which no hub method derives credentials or targets from — comes from the agent's report. A claim that cannot be verified is logged and ignored, leaving the agent registered but idle. Hosts without a WorkItem store (in-memory and unit-test hosts) keep restoring from the report; the API host, which serves the agent hub, always has one.
+
 ---
 
 ### Telemetry philosophy: instrument every decision point for full run traceability

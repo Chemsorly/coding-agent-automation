@@ -485,6 +485,144 @@ public sealed class AgentOrphanRecoveryServiceTests
         _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
     }
 
+    // ── Verified claims: WorkItem store available (the API host) ─────────
+
+    /// <summary>
+    /// An agent reporting an active job that is not a work item at all (an invented run) gets
+    /// nothing restored — no run, no ActiveJobId, so no [RequiresActiveJob] access.
+    /// </summary>
+    [Fact]
+    public async Task VerifiedClaim_NoSuchWorkItem_IsIgnored()
+    {
+        const string agentId = "caa-aaaa1111";
+        const string runId = "run-invented";
+        var entry = CreateEntry(agentId);
+        WithWorkItemStore(runId, record: null);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
+
+        await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, CreateActiveJob(runId)), agentId);
+
+        _mockFacade.Verify(f => f.AddRun(It.IsAny<PipelineRun>()), Times.Never);
+        _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Never);
+        entry.ActiveJobId.Should().BeNull();
+    }
+
+    /// <summary>
+    /// An agent cannot take over a run whose work item belongs to another agent, even when it
+    /// knows the run ID.
+    /// </summary>
+    [Fact]
+    public async Task VerifiedClaim_WorkItemOfAnotherAgent_RunIsNotTakenOver()
+    {
+        const string agentId = "caa-bbbb2222";
+        const string owner = "caa-cccc3333";
+        const string runId = "run-of-another-agent";
+        var existingRun = new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#42",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = owner
+        };
+        var entry = CreateEntry(agentId);
+        WithWorkItemStore(runId, OwnedRecord(owner));
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns(existingRun);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
+
+        await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, CreateActiveJob(runId)), agentId);
+
+        existingRun.AgentId.Should().Be(owner, "the run's work item belongs to another agent");
+        entry.ActiveJobId.Should().BeNull();
+        _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Never);
+    }
+
+    /// <summary>
+    /// For the agent's own work item the run is restored, but its identity — issue and the provider
+    /// configs tokens are vended for — comes from the database, not from the agent's report.
+    /// </summary>
+    [Fact]
+    public async Task VerifiedClaim_OwnWorkItem_RestoresRunWithIdentityFromTheDatabase()
+    {
+        const string agentId = "caa-dddd4444";
+        const string runId = "run-own";
+        var entry = CreateEntry(agentId);
+        WithWorkItemStore(runId, OwnedRecord(agentId));
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
+        PipelineRun? restored = null;
+        _mockFacade.Setup(f => f.AddRun(It.IsAny<PipelineRun>())).Callback<PipelineRun>(r => restored = r);
+
+        var claim = CreateActiveJob(runId) with
+        {
+            IssueIdentifier = "org/other#9",
+            IssueProviderConfigId = "ip-other",
+            RepoProviderConfigId = "rp-other",
+            BrainProviderConfigId = "brain-other",
+            PipelineProviderConfigId = "pipe-other",
+            ProjectId = Guid.NewGuid().ToString()
+        };
+
+        await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, claim), agentId);
+
+        restored.Should().NotBeNull();
+        ((string)restored!.IssueIdentifier).Should().Be("org/repo#7");
+        restored.IssueProviderConfigId.Should().Be("ip-db");
+        restored.RepoProviderConfigId.Should().Be("rp-db");
+        restored.BrainProviderConfigId.Should().Be("brain-db");
+        restored.PipelineProviderConfigId.Should().Be("pipe-db");
+        restored.ProjectId.Should().Be("11111111-2222-3333-4444-555555555555");
+        restored.CurrentStep.Should().Be(PipelineStep.AnalyzingCode, "progress still comes from the agent");
+        entry.ActiveJobId.Should().Be(runId);
+    }
+
+    /// <summary>
+    /// Whether the claim is a consolidation run is decided by the work item's task type, not by the
+    /// agent's report.
+    /// </summary>
+    [Fact]
+    public async Task VerifiedClaim_ConsolidationWorkItem_IsTrackedWithoutAPipelineRun()
+    {
+        const string agentId = "caa-eeee5555";
+        const string runId = "run-consolidation";
+        var entry = CreateEntry(agentId);
+        WithWorkItemStore(runId, OwnedRecord(agentId, WorkItemTaskType.Consolidation));
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
+
+        // The agent claims an ordinary implementation run.
+        await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, CreateActiveJob(runId)), agentId);
+
+        _mockFacade.Verify(f => f.AddRun(It.IsAny<PipelineRun>()), Times.Never);
+        entry.ActiveJobId.Should().Be(runId);
+    }
+
+    private void WithWorkItemStore(string runId, WorkItemRunRecord? record)
+    {
+        _mockFacade.SetupGet(f => f.CanVerifyWorkItems).Returns(true);
+        _mockFacade.Setup(f => f.GetWorkItemRunRecordAsync(It.Is<JobId>(j => j.Value == runId), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(record);
+    }
+
+    private static WorkItemRunRecord OwnedRecord(string k8sJobName, WorkItemTaskType taskType = WorkItemTaskType.Implementation) => new()
+    {
+        TaskType = taskType,
+        K8sJobName = k8sJobName,
+        IssueIdentifier = "org/repo#7",
+        IssueProviderConfigId = "ip-db",
+        RepoProviderConfigId = "rp-db",
+        BrainProviderConfigId = "brain-db",
+        PipelineProviderConfigId = "pipe-db",
+        ProjectId = Guid.Parse("11111111-2222-3333-4444-555555555555")
+    };
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private static AgentEntry CreateEntry(string agentId) => new()

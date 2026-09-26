@@ -280,6 +280,26 @@ public sealed class AgentHubFacade : IAgentHubFacade
     }
 
     /// <inheritdoc />
+    public bool CanVerifyWorkItems => _transitionStore is not null;
+
+    /// <inheritdoc />
+    public async Task<WorkItemRunRecord?> GetWorkItemRunRecordAsync(JobId jobId, CancellationToken ct)
+    {
+        if (_transitionStore is null || !Guid.TryParse(jobId.Value, out var id))
+            return null;
+
+        try
+        {
+            return await _transitionStore.GetWorkItemRunRecordAsync(id, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to read WorkItem {WorkItemId} for orphan recovery", id);
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
     public Task UpdateAgentFieldAsync(AgentId agentId, string field, string? value)
         => _registry.UpdateAgentFieldAsync(agentId, field, value);
 

@@ -188,6 +188,20 @@ public interface IAgentHubFacade
         JobId jobId, CancellationToken ct);
 
     /// <summary>
+    /// True when a WorkItem store is configured — always the case in the API host, the process that
+    /// hosts the hub. Orphan recovery then checks an agent's reported active job against the store
+    /// before trusting it; hosts without a store (in-memory / test) keep the unverified behaviour.
+    /// </summary>
+    bool CanVerifyWorkItems { get; }
+
+    /// <summary>
+    /// Reads the server-side record of the work item with ID <paramref name="jobId"/>. Returns null
+    /// when the work item does not exist, the ID is not a work item ID, no store is configured, or
+    /// the read fails.
+    /// </summary>
+    Task<WorkItemRunRecord?> GetWorkItemRunRecordAsync(JobId jobId, CancellationToken ct);
+
+    /// <summary>
     /// Updates a single field on the agent's registry entry.
     /// Use instead of direct <see cref="AgentEntry"/> property mutation so writes are
     /// visible to all replicas under <c>DistributedAgentRegistryService</c>.
