@@ -201,6 +201,14 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
     [Fact]
     public async Task WhenFlattenedAgentsIsEmpty_IncrementsReviewSkippedCounter()
     {
+        // TODO: [WARNING] No test currently verifies that CodeReviewOrchestrator emits
+        // pipeline.step.duration and pipeline.step.count (with step_name="AcceptanceCriteriaCheck")
+        // after the meterFactory branch was removed. _stepDuration and _stepCount now unconditionally
+        // resolve to the static PipelineTelemetry instruments, which are NOT wired to _meterFactory,
+        // so a MetricCollector subscribed to _meterFactory would silently capture zero measurements.
+        // A future regression that drops the finally-block metric emission would go undetected.
+        // Add a test that enables AcceptanceCriteriaEnabled=true and verifies the static instruments
+        // are recorded (e.g. via a custom MeterListener or by checking observable state).
         var configs = new[]
         {
             new ReviewerConfiguration
