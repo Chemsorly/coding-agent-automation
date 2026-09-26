@@ -56,7 +56,7 @@ public sealed class PipelineRunOutcomeMetricsTests
     private static WorkItemTransitionService CreateTransitionService(DbContextOptions<PipelineDbContext> opts)
         => new(new TestDbContextFactory(opts), NullLogger<WorkItemTransitionService>.Instance);
 
-    private static IDbContextFactory<PipelineDbContext> CreateDbFactory(DbContextOptions<PipelineDbContext> opts)
+    private static TestDbContextFactory CreateDbFactory(DbContextOptions<PipelineDbContext> opts)
         => new TestDbContextFactory(opts);
 
     private static WorkItemStatusTransitionService CreateService(

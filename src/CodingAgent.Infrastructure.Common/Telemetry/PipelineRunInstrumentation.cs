@@ -93,7 +93,7 @@ public sealed partial class PipelineRunInstrumentation : IDisposable
     /// No-op. Retained for call-site compatibility.
     /// (Timing was previously used to gate metric recording; metrics are now emitted by the API.)
     /// </summary>
-    public void StopTiming() { }
+    public void StopTiming() { /* intentional no-op — see class-level remarks */ }
 
     /// <summary>
     /// Stops the activity.
