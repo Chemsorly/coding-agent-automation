@@ -41,7 +41,8 @@ public partial class QualityGateExecutor
             var report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
 
             report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: false, linkedCt);
-            if (run.CurrentStep is PipelineStep.Failed or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
+            if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart
+                    or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
 
             LogAndRecordReport(context, report, "quality gates");
 
@@ -84,7 +85,7 @@ public partial class QualityGateExecutor
             // another terminal value and then throws a non-OCE exception, FinalizeRunAsync will
             // still be re-entered. Consider extending the guard to cover all terminal states, or
             // replace the explicit list with a helper method like run.IsTerminal().
-            if (run.CurrentStep is PipelineStep.Failed or PipelineStep.Cancelled) return;
+            if (run.CurrentStep.IsTerminal()) return;
             _logger.Error(ex, "Pipeline {RunId} quality gate validation failed", run.RunId);
             run.FailureReason = $"Quality gate validation error: {ex.Message}";
             _logger.Information(
@@ -187,6 +188,13 @@ public partial class QualityGateExecutor
         callbacks.TransitionTo(PipelineStep.RunningQualityGates);
         var report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
         report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, linkedCt, skipCiIfNoChanges: true);
+        // TODO: [WARNING] ConflictRestart is missing from this guard — same bug class as #3045 (fixed in
+        // ProceedToQualityGatesAsync) but on the RunPostRetryCleanupAndFinalizeAsync post-cleanup path.
+        // If AppendExternalCiIfNeededAsync sets ConflictRestart here (conflicted PR detected on the final
+        // quality gate pass after cleanup), execution falls through to RunRetryLoopAsync, the fix agent
+        // is invoked, and run.RetryCount is incremented — wasting a retry slot on a branch GitHub cannot
+        // build. Fix: add PipelineStep.ConflictRestart to this guard, matching the pattern used on lines
+        // above (ProceedToQualityGatesAsync pre-retry guard) and below (post-RunRetryLoopAsync guard).
         if (run.CurrentStep is PipelineStep.Failed or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
 
         LogAndRecordReport(context, report, "final quality gates");
