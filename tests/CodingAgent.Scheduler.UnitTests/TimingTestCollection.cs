@@ -1,13 +1,4 @@
-using Xunit;
-
-namespace CodingAgent.Scheduler.UnitTests;
-
-/// <summary>
-/// Serializes all BackgroundService timing tests so they do not compete for thread-pool
-/// threads concurrently. PeriodicTimer with a 1ms interval is sensitive to thread
-/// starvation — running multiple services in parallel on a loaded CI host can cause the
-/// first WaitForNextTickAsync to fire after StopAsync cancels the token, making the test
-/// appear as if the API was never called.
-/// </summary>
-[CollectionDefinition("SchedulerTiming")]
-public class TimingTestCollection;
+// "SchedulerTiming" has been merged into the "Metrics" collection.
+// See MetricsTestCollection.cs for the combined [CollectionDefinition("Metrics")].
+// This file is intentionally empty — all [Collection("SchedulerTiming")] attributes
+// have been updated to [Collection("Metrics")].
