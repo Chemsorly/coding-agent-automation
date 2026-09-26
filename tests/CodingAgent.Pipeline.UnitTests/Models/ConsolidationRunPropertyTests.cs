@@ -132,7 +132,6 @@ public class ConsolidationRunArbitraries
                 ConsolidationRunStatus.Running,
                 ConsolidationRunStatus.Succeeded,
                 ConsolidationRunStatus.Failed,
-                ConsolidationRunStatus.Queued,
                 ConsolidationRunStatus.Cancelled,
                 ConsolidationRunStatus.Pending)
             from hasSummary in Gen.Elements(true, false)

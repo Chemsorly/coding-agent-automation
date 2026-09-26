@@ -179,4 +179,22 @@ public sealed class PipelineRunSummary
     /// Stored in the JSONB SummaryJson column; no DB migration needed.
     /// </summary>
     public string? PipelineProviderConfigId { get; init; }
+
+    /// <summary>
+    /// Consolidation run type (brain, refactoring, harness), or null for non-consolidation runs.
+    /// Stored in the JSONB SummaryJson column; no DB migration needed.
+    /// </summary>
+    public ConsolidationRunType? ConsolidationType { get; init; }
+
+    /// <summary>
+    /// Consolidation template ID, or null for global scope (harness suggestions) or non-consolidation runs.
+    /// Stored in the JSONB SummaryJson column; no DB migration needed.
+    /// </summary>
+    public string? ConsolidationTemplateId { get; init; }
+
+    /// <summary>
+    /// Human-readable result summary from the consolidation agent, or null if not yet available.
+    /// Stored in the JSONB SummaryJson column; no DB migration needed.
+    /// </summary>
+    public string? ConsolidationResultSummary { get; init; }
 }
