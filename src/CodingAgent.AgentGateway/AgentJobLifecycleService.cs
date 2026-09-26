@@ -45,7 +45,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         _logger = deps.Logger;
 
         _regularStrategy = new RegularJobCompletionStrategy(deps.Facade, deps.LifecycleManager, deps.ChangeNotifier, deps.Logger);
-        _consolidationStrategy = new ConsolidationJobCompletionStrategy(deps.Facade, deps.ChangeNotifier, deps.Logger);
+        _consolidationStrategy = new ConsolidationJobCompletionStrategy(deps.LifecycleManager, deps.ChangeNotifier, deps.Logger);
         _idleTransitioner = new AgentIdleTransitioner(deps.Facade, deps.Logger);
         // Strategies are instantiated with new rather than injected via DI. Follow-up work item:
         // register IJobCompletionStrategy implementations (keyed/named) in DI and inject them through

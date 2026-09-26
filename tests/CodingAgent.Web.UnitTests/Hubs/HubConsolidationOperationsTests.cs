@@ -26,6 +26,7 @@ public sealed class HubConsolidationOperationsTests
     private readonly Mock<IConsolidationService> _mockConsolidation = new();
     private readonly Mock<IChangeNotifier> _mockChangeNotifier = new();
     private readonly Mock<ILogger> _mockLogger = new();
+    private readonly Mock<IRunLifecycleManager> _mockLifecycleManager = new();
 
     // Real instances (sealed — cannot mock)
     private readonly ConsolidationBadgeService _badgeService = new();
@@ -44,6 +45,7 @@ public sealed class HubConsolidationOperationsTests
         _mockConsolidation.Object,
         _badgeService,
         _mockChangeNotifier.Object,
+        _mockLifecycleManager.Object,
         _mockLogger.Object);
 
     private static HarnessSuggestions MakeSuggestions(params string[] texts) => new()
@@ -87,6 +89,7 @@ public sealed class HubConsolidationOperationsTests
             _mockConsolidation.Object,
             _badgeService,
             _mockChangeNotifier.Object,
+            _mockLifecycleManager.Object,
             _mockLogger.Object);
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("modelFetchService");
@@ -100,6 +103,7 @@ public sealed class HubConsolidationOperationsTests
             null!,
             _badgeService,
             _mockChangeNotifier.Object,
+            _mockLifecycleManager.Object,
             _mockLogger.Object);
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("consolidationService");
@@ -113,6 +117,7 @@ public sealed class HubConsolidationOperationsTests
             _mockConsolidation.Object,
             null!,
             _mockChangeNotifier.Object,
+            _mockLifecycleManager.Object,
             _mockLogger.Object);
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("badgeService");
@@ -126,9 +131,24 @@ public sealed class HubConsolidationOperationsTests
             _mockConsolidation.Object,
             _badgeService,
             null!,
+            _mockLifecycleManager.Object,
             _mockLogger.Object);
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("changeNotifier");
+    }
+
+    [Fact]
+    public void Constructor_NullLifecycleManager_Throws()
+    {
+        var act = () => new HubConsolidationOperations(
+            CreateModelFetchService(),
+            _mockConsolidation.Object,
+            _badgeService,
+            _mockChangeNotifier.Object,
+            null!,
+            _mockLogger.Object);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("lifecycleManager");
     }
 
     [Fact]
@@ -139,6 +159,7 @@ public sealed class HubConsolidationOperationsTests
             _mockConsolidation.Object,
             _badgeService,
             _mockChangeNotifier.Object,
+            _mockLifecycleManager.Object,
             null!);
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
@@ -302,9 +323,9 @@ public sealed class HubConsolidationOperationsTests
         {
             JobId = "crun-tokens",
             Success = true,
-            ReviewTokenUsage     = new TokenUsage { InputTokens = 100, OutputTokens = 50,  ReasoningTokens = 10 }, // 160
-            RefinementTokenUsage = new TokenUsage { InputTokens = 200, OutputTokens = 80,  ReasoningTokens = 0  }, // 280
-            DiffSummaryTokenUsage= new TokenUsage { InputTokens = 30,  OutputTokens = 20,  ReasoningTokens = 5  }  // 55
+            ReviewTokenUsage = new TokenUsage { InputTokens = 100, OutputTokens = 50, ReasoningTokens = 10 }, // 160
+            RefinementTokenUsage = new TokenUsage { InputTokens = 200, OutputTokens = 80, ReasoningTokens = 0 }, // 280
+            DiffSummaryTokenUsage = new TokenUsage { InputTokens = 30, OutputTokens = 20, ReasoningTokens = 5 }  // 55
         };
         var sut = CreateSut();
 
@@ -329,7 +350,9 @@ public sealed class HubConsolidationOperationsTests
         {
             JobId = "crun-notok",
             Success = true,
-            ReviewTokenUsage = null, RefinementTokenUsage = null, DiffSummaryTokenUsage = null
+            ReviewTokenUsage = null,
+            RefinementTokenUsage = null,
+            DiffSummaryTokenUsage = null
         };
         var sut = CreateSut();
 
@@ -522,5 +545,65 @@ public sealed class HubConsolidationOperationsTests
         // 2 harness suggestions + 1 created issue = 3 total badge increments
         _badgeService.BadgeCount.Should().Be(3,
             "2 harness suggestions + 1 created issue = badge 3");
+    }
+
+    // ── HandleConsolidationCompleteAsync — lifecycle manager ──────────────
+
+    [Fact]
+    public async Task HandleConsolidationComplete_Success_CallsCompleteRunAsync()
+    {
+        _mockLifecycleManager
+            .Setup(l => l.CompleteRunAsync(new RunId("crun-lifecycle"), WorkItemStatus.Succeeded,
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync((PipelineRun?)null);
+
+        var result = new ConsolidationJobResult { JobId = "crun-lifecycle", Success = true };
+        var sut = CreateSut();
+
+        await sut.HandleConsolidationCompleteAsync(result, null);
+
+        _mockLifecycleManager.Verify(l => l.CompleteRunAsync(
+            new RunId("crun-lifecycle"), WorkItemStatus.Succeeded,
+            It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()), Times.Once,
+            "successful consolidation must call CompleteRunAsync to write pipeline run history");
+    }
+
+    [Fact]
+    public async Task HandleConsolidationComplete_Failure_CallsFailRunAsync()
+    {
+        _mockLifecycleManager
+            .Setup(l => l.FailRunAsync(new RunId("crun-lc-fail"), It.IsAny<string>(),
+                It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync((PipelineRun?)null);
+
+        var result = new ConsolidationJobResult
+        {
+            JobId = "crun-lc-fail",
+            Success = false,
+            ErrorMessage = "consolidation agent error"
+        };
+        var sut = CreateSut();
+
+        await sut.HandleConsolidationCompleteAsync(result, null);
+
+        _mockLifecycleManager.Verify(l => l.FailRunAsync(
+            new RunId("crun-lc-fail"), It.IsAny<string>(),
+            It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()), Times.Once,
+            "failed consolidation must call FailRunAsync to write pipeline run history");
+    }
+
+    [Fact]
+    public async Task HandleConsolidationComplete_LifecycleManagerThrows_DoesNotPropagate()
+    {
+        _mockLifecycleManager
+            .Setup(l => l.CompleteRunAsync(It.IsAny<RunId>(), It.IsAny<WorkItemStatus>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ThrowsAsync(new InvalidOperationException("lifecycle manager unavailable"));
+
+        var result = new ConsolidationJobResult { JobId = "crun-lc-throws", Success = true };
+        var sut = CreateSut();
+
+        var act = async () => await sut.HandleConsolidationCompleteAsync(result, null);
+        await act.Should().NotThrowAsync("lifecycle manager failure is caught and logged, not propagated");
     }
 }

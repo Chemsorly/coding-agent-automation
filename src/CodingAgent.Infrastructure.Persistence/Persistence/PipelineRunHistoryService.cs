@@ -111,14 +111,6 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     {
         ArgumentNullException.ThrowIfNull(run);
 
-        // Defense-in-depth: reject consolidation runs from being persisted to pipeline history.
-        // Consolidation has its own history on the Consolidation page.
-        if (run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
-        {
-            _logger.Debug("AddRunToHistory: skipping consolidation run {RunId}", run.RunId);
-            return Task.CompletedTask;
-        }
-
         // Defense-in-depth: ensure terminal CurrentStep before persisting to history.
         // Non-terminal steps indicate a mid-pipeline state that should never be the final persisted value.
         PipelineStep? finalStepOverride = null;
@@ -146,17 +138,6 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     public Task AddRunSummaryAsync(PipelineRunSummary summary, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(summary);
-
-        // Defense-in-depth: reject consolidation summaries from being written to file-backed history.
-        // Mirrors the guard in AddRunToHistoryAsync(PipelineRun). Uses the InitiatedBy prefix because
-        // PipelineRunSummary has no IssueProviderConfigId property.
-        // Note: LoadRunHistory already filters consolidation entries on reload, so this guard
-        // prevents the JSON file from being created on disk in the first place.
-        if (summary.InitiatedBy?.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal) == true)
-        {
-            _logger.Debug("AddRunSummaryAsync: skipping consolidation summary {RunId}", summary.RunId);
-            return Task.CompletedTask;
-        }
 
         lock (_lock)
         {
