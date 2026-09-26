@@ -20,6 +20,7 @@ namespace CodingAgent.Infrastructure.UnitTests;
 /// <item>ListPullRequestCommentsAsync</item>
 /// </list>
 /// </summary>
+[Collection("GitHubTelemetry")]
 public class GitHubRepositoryProviderPullRequestMethodsTests : WireMockTestBase
 {
     private const string Owner = "test-owner";

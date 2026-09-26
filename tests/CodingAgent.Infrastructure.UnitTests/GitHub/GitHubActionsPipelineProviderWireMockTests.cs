@@ -10,6 +10,7 @@ using System.Text.Json;
 
 namespace CodingAgent.Infrastructure.UnitTests;
 
+[Collection("GitHubTelemetry")]
 public class GitHubActionsPipelineProviderWireMockTests : WireMockTestBase
 {
     private const string Owner = "test-owner";
