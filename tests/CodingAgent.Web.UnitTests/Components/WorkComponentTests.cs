@@ -570,6 +570,12 @@ public class WorkComponentTests : BunitContext
         var cut = Render<Work>();
 
         // The issue number must be rendered as an anchor tag with the provider URL.
+        // TODO: [WARNING] The selector ".monitoring-table tbody a" matches ALL anchors inside the
+        // table body. If a future change adds other links in the row (e.g. a run link), the
+        // Should().Contain(...) assertion would still pass even if the specific issue-number anchor
+        // is missing, silently swallowing the regression. Use a more specific selector that targets
+        // only the issue-number cell, e.g. ".monitoring-table tbody td:first-child a".
+        // (TestQualityReviewer, issue #2947)
         var links = cut.FindAll(".monitoring-table tbody a");
         links.Should().Contain(a => a.GetAttribute("href") == issueUrl,
             "the issue number must be a link to the provider when IssueUrl is set");

@@ -254,5 +254,11 @@ public sealed class JobCompletionMapperTests
 
         run.PullRequestUrl.Should().Be(newPrUrl,
             "a non-null PullRequestUrl in the payload must overwrite the run's existing (null) URL");
+        // TODO: [WARNING] PullRequestNumber is guarded by string.IsNullOrEmpty in the same Apply()
+        // method, but neither test here asserts PullRequestNumber behaviour. A bug in that branch
+        // (e.g. the guard preventing a valid PullRequestNumber from being written, or failing to
+        // preserve an existing number when the payload sends null/empty) would not be caught.
+        // Add assertions for PullRequestNumber in both the null-preservation test and this update
+        // test to fully lock in the symmetric guard behaviour. (TestQualityReviewer, issue #2947)
     }
 }

@@ -8,6 +8,7 @@ using WireMock.ResponseBuilders;
 
 namespace CodingAgent.Infrastructure.UnitTests;
 
+[Collection("GitHubTelemetry")]
 public class GitHubIssueProviderWireMockTests : WireMockTestBase
 {
     private const string Owner = "test-owner";

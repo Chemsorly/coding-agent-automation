@@ -571,6 +571,14 @@ public class AgentCodingPageComponentTests : BunitContext
 
         // The select element should show the only enabled template as selected value.
         var dispatchSelect = component.Find("[data-testid='template-select']");
+        // TODO: [WARNING] GetAttribute("value") on a bUnit <select> reflects the static HTML
+        // attribute value from the initial render, not the Blazor-bound field value after
+        // an async OnAfterRenderAsync completes. The auto-preselect runs in OnAfterRenderAsync,
+        // so this assertion may pass because of an initial render value rather than confirming
+        // the auto-preselect path actually executed. A stronger assertion would check that the
+        // browse-issues button transitions from disabled to enabled, since that is the observable
+        // DOM effect of _manualDispatchTemplateId being set by auto-preselect.
+        // (TestQualityReviewer, issue #2947)
         Assert.Equal("t-1", dispatchSelect.GetAttribute("value"));
 
         // Browse buttons must be enabled (no disabled attribute).

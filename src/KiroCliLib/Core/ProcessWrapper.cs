@@ -45,6 +45,12 @@ public class ProcessWrapper : IProcessWrapper
         }
     }
     public int? ExitCode => _process?.HasExited == true ? _process.ExitCode : null;
+    // TODO: [WARNING] ProcessId retains a bare catch { return null; } — the same pattern that was
+    // narrowed to catch (InvalidOperationException) for IsRunning in this diff. Process.Id only
+    // throws InvalidOperationException (when the process was not started via Process.Start), so
+    // the bare catch unnecessarily swallows serious runtime faults (OutOfMemoryException etc.).
+    // Apply the same narrowing as IsRunning: replace the bare catch with
+    // catch (InvalidOperationException). (DotNetSpecialist, issue #2947)
     public int? ProcessId { get { try { return _process?.Id; } catch { return null; } } }
     public DateTime LastOutputTime => _lastOutputTime;
 
