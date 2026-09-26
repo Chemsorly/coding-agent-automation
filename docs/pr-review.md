@@ -35,7 +35,7 @@ The pipeline posts code review findings as native inline comments on specific fi
 
 ### Configuration
 
-Inline comments are enabled by default. Configure via the web UI under Settings → Quality Gates → Code Review → Inline Review Comments, or in pipeline config JSON:
+Inline comments are enabled by default. Configure via the web UI under Settings → Global Defaults → Review ("Enable Inline Review Comments", "Minimum Severity for Inline Posting", "Maximum Inline Comments per Review"), or in pipeline config JSON:
 
 ```json
 {
@@ -190,5 +190,5 @@ When no custom reviewers are configured, the system uses four built-in agents:
 - **SecurityReviewer** — Security vulnerabilities, injection risks, auth issues
 - **TestQualityReviewer** — Test coverage, test quality, assertion completeness
 
-Reset to defaults via Settings → Label Routing → Reviewer Configs → "Reset to Defaults".
+Reset to defaults via Settings → Label Routing → Reviewer Configs → "Reset collection to defaults" (asks for confirmation).
 

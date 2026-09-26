@@ -60,8 +60,8 @@ public sealed partial class AgentHub
         if (!isValid)
         {
             _logger.Warning("ReportChatResponse rejected — session {SessionId} not assigned to agent {AgentId}",
-                message.SessionId, agentId);
-            throw new HubException($"Session {message.SessionId} not assigned to agent {agentId}");
+                SanitizeForLog(message.SessionId), agentId);
+            throw new HubException($"Session {SanitizeForLog(message.SessionId)} not assigned to agent {agentId}");
         }
 
         // Broadcast to subscribed UI circuits
@@ -88,8 +88,8 @@ public sealed partial class AgentHub
         if (!isValid)
         {
             _logger.Warning("ReportChatCompleted rejected — session {SessionId} not assigned to agent {AgentId}",
-                message.SessionId, agentId);
-            throw new HubException($"Session {message.SessionId} not assigned to agent {agentId}");
+                SanitizeForLog(message.SessionId), agentId);
+            throw new HubException($"Session {SanitizeForLog(message.SessionId)} not assigned to agent {agentId}");
         }
 
         agent!.ActiveChatSessionId = null; // Also write to registry for cross-replica visibility

@@ -133,7 +133,7 @@ Each `PipelineRun` accumulates token and cost data beyond the simple totals expo
 | `Tokens` | Total tokens consumed during this phase |
 | `Cost` | Cost in USD for this phase, or `null` if unavailable |
 
-The breakdown is rendered in the active-run sidebar (collapsible "Cost Breakdown" table sorted by cost descending) and in the history run detail modal. It is `null` for runs recorded before this feature was introduced.
+The breakdown is rendered on the Run page (`/runs/{id}`), in the pipeline-progress sidebar, as a collapsible "Cost Breakdown" table sorted by cost descending, for live and finished runs. It is `null` for runs recorded before this feature was introduced.
 
 **API exposure:** `PhaseBreakdown` is included in the `GET /api/export/runs.json` export. Fields will be absent (`null`) for runs that pre-date the phase breakdown feature.
 

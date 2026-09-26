@@ -328,6 +328,67 @@ public class AgentApiKeyAuthHandlerTests
         result.Succeeded.Should().BeFalse();
     }
 
+    /// <summary>
+    /// Security invariant (issue #3034): a work-item pod that holds only its own pre-derived key
+    /// HMAC(master, podA-name) cannot impersonate podB by presenting HMAC(master, podB-name),
+    /// because computing that requires the master key which is no longer distributed to pods.
+    ///
+    /// This test verifies the server-side enforcement: even if an attacker somehow obtained
+    /// HMAC(master, podB-name) to attempt impersonation, presenting it with agentId=podC-name
+    /// (a third pod's name) is rejected.
+    ///
+    /// TODO: This test does not cover the primary threat model from the issue: pod A presents
+    /// HMAC(master, podA) with agentId=podB. The existing HandleAuthenticate_TokenDerivedFromWrongAgent_ReturnsFail
+    /// test (above) covers that exact scenario. Consider replacing or supplementing this test with
+    /// one that directly tests "HMAC(master, podA) presented with agentId=podB is rejected" to
+    /// more clearly document the primary impersonation vector.
+    /// </summary>
+    [Fact]
+    public async Task HandleAuthenticate_PreDerivedKeyFromDifferentPod_IsRejectedWhenPresentedForOtherPod()
+    {
+        var masterKey = "master-secret";
+        const string podA = "caa-aabbccdd";
+        const string podB = "caa-eeffgghh";
+
+        // Pod A's credential (what DispatchLifecycleService stores in the per-job Secret for pod A)
+        using var hmac = new System.Security.Cryptography.HMACSHA256(System.Text.Encoding.UTF8.GetBytes(masterKey));
+        var podAToken = Convert.ToHexString(
+            hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(podA))).ToLowerInvariant();
+
+        // Attacker: presents pod A's token but claims to be pod B
+        var handler = await CreateHandlerAsync(masterKey, queryToken: podAToken, authHeader: null, agentId: podB);
+
+        var result = await handler.AuthenticateAsync();
+
+        // Server rejects: HMAC(master, podB) ≠ HMAC(master, podA)
+        result.Succeeded.Should().BeFalse(
+            "HMAC(master, podA) cannot authenticate as podB; cross-pod impersonation is rejected");
+    }
+
+    /// <summary>
+    /// Security invariant (issue #3034): the work-item pod's pre-derived token authenticates
+    /// successfully when presented with the matching agentId. The server computes HMAC(master, agentId)
+    /// and compares — this is identical to the pre-derived value stored in the per-job Secret.
+    /// </summary>
+    [Fact]
+    public async Task HandleAuthenticate_PreDerivedKey_MatchesOwnPodId_Succeeds()
+    {
+        var masterKey = "master-secret";
+        const string podName = "caa-aabbccdd";
+
+        using var hmac = new System.Security.Cryptography.HMACSHA256(System.Text.Encoding.UTF8.GetBytes(masterKey));
+        var preDerivedToken = Convert.ToHexString(
+            hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(podName))).ToLowerInvariant();
+
+        // Pod presents its own pre-derived token with its own agentId
+        var handler = await CreateHandlerAsync(masterKey, queryToken: preDerivedToken, authHeader: null, agentId: podName);
+
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.Should().BeTrue(
+            "HMAC(master, podName) == HMAC(master, podName) — pod authenticates for its own identity");
+    }
+
     [Fact]
     public async Task HandleAuthenticate_NoAgentId_LegacyFallback_ReturnsSuccess()
     {
@@ -370,7 +431,43 @@ public class AgentApiKeyAuthHandlerTests
         key1.Should().NotBe(key2);
     }
 
+    // ── agentId validation (log forging, CWE-117) ───────────────────────
+
+    [Fact]
+    public async Task HandleAuthenticate_AgentIdWithControlCharacters_ReturnsFail()
+    {
+        // Anyone holding the master key can derive a valid token for any agentId, so a correct
+        // token must not let a CR/LF-bearing agentId through to the claims and log entries.
+        const string masterKey = "my-master-key";
+        const string agentId = "agent-1\r\n[ERR] forged entry";
+        var handler = await CreateHandlerAsync(masterKey, queryToken: DeriveToken(masterKey, agentId), authHeader: null, agentId: agentId);
+
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task HandleAuthenticate_RepeatedAgentIdParameter_ReturnsFail()
+    {
+        // Hub code reads the query value with StringValues.ToString(), which comma-joins repeated
+        // values — a second agentId would reach its logs although only the first was authenticated.
+        const string masterKey = "my-master-key";
+        var handler = await CreateHandlerAsync(masterKey, queryToken: DeriveToken(masterKey, "agent-1"), authHeader: null,
+            agentId: "agent-1", extraQuery: "agentId=forged");
+
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.Should().BeFalse();
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
+
+    private static string DeriveToken(string masterKey, string agentId)
+    {
+        using var hmac = new System.Security.Cryptography.HMACSHA256(System.Text.Encoding.UTF8.GetBytes(masterKey));
+        return Convert.ToHexString(hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(agentId))).ToLowerInvariant();
+    }
 
     private Task<AgentApiKeyAuthHandler> CreateHandlerAsync(
         string configuredApiKey,
@@ -382,7 +479,8 @@ public class AgentApiKeyAuthHandlerTests
         string configuredApiKey,
         string? queryToken,
         string? authHeader,
-        string? agentId)
+        string? agentId,
+        string? extraQuery = null)
     {
         var options = new AgentApiKeyAuthOptions { ApiKey = configuredApiKey };
         var optionsMonitor = new Mock<IOptionsMonitor<AgentApiKeyAuthOptions>>();
@@ -405,6 +503,8 @@ public class AgentApiKeyAuthHandlerTests
             queryParts.Add($"access_token={Uri.EscapeDataString(queryToken)}");
         if (agentId != null)
             queryParts.Add($"agentId={Uri.EscapeDataString(agentId)}");
+        if (extraQuery != null)
+            queryParts.Add(extraQuery);
         if (queryParts.Count > 0)
             context.Request.QueryString = new QueryString("?" + string.Join("&", queryParts));
         if (authHeader != null)

@@ -9,6 +9,14 @@ namespace CodingAgent.Infrastructure.UnitTests.GitHub;
 /// Tests for ExecuteWithResilienceAsync — verifies retry on transient errors,
 /// non-retryable exception passthrough, and rate limit backoff.
 /// </summary>
+/// <remarks>
+/// In [Collection("GitHubTelemetry")] to prevent cross-talk with GitHubRateLimitGaugeTests
+/// through the process-global GitHubTelemetry static volatile rate-limit fields.
+/// Even though this class's mock returns null for GetLastApiInfo() (making CaptureRateLimitInfo
+/// a no-op), parallel execution with a MeterListener-based test can cause spurious
+/// RecordObservableInstruments triggers that race on the static rate-limit fields.
+/// </remarks>
+[Collection("GitHubTelemetry")]
 public class GitHubProviderResilienceTests
 {
     private readonly Mock<IGitHubClient> _mockClient;

@@ -4,6 +4,7 @@ using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -98,10 +99,15 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         if (resolvedFinalLabel is not null && AgentLabels.All.Contains(resolvedFinalLabel))
             run.FinalLabel = resolvedFinalLabel;
 
-        // 5. Compute the target label — respect pipeline-determined FinalLabel, fall back to agent:error
-        var errorLabel = run.FinalLabel is not null && AgentLabels.All.Contains(run.FinalLabel)
-            ? run.FinalLabel
-            : AgentLabels.Error;
+        // 5. Compute the target label — skip for consolidation runs (they have no issue label),
+        //    respect pipeline-determined FinalLabel, fall back to agent:error.
+        string? errorLabel = null;
+        if (run.IssueProviderConfigId != ConsolidationConstants.ProviderConfigId)
+        {
+            errorLabel = run.FinalLabel is not null && AgentLabels.All.Contains(run.FinalLabel)
+                ? run.FinalLabel
+                : AgentLabels.Error;
+        }
 
         // 6. Shared terminal cleanup: history-persist → span-finalize → label-swap
         // TODO: [WARNING] The non-cancellation branch in RunTerminalCleanupAsync calls FinalizeOrchestratorSpan,
@@ -118,7 +124,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
         _logger.Information(
             "RunLifecycleManager.FailRunAsync: run {RunId} terminal (status=Failed, issue={IssueIdentifier}, step={Step}, highWater={HighWater}, reason={Reason}, agent={AgentId})",
-            runId, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, failureReason, run.AgentId ?? "none");
+            runId, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, LogSanitizer.SanitizeForLog(failureReason), run.AgentId ?? "none");
 
         return run;
     }
@@ -230,7 +236,11 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
         // 4. Shared terminal cleanup: history-persist → span-finalize → label-swap
         //    Uses isCancellation: true so the span receives pipeline.cancelled=true instead of SetStatus(Error).
-        await RunTerminalCleanupAsync(run, AgentLabels.Cancelled, WorkItemStatus.Cancelled, failureReason, isCancellation: true, ct);
+        //    Skip the label swap for consolidation runs (they have no issue label to swap).
+        var cancelLabel = run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId
+            ? null
+            : AgentLabels.Cancelled;
+        await RunTerminalCleanupAsync(run, cancelLabel, WorkItemStatus.Cancelled, failureReason, isCancellation: true, ct);
 
         // 5. Delete K8s Job to prevent pod retries consuming backoffLimit.
         if (_jobCleanup is not null)
