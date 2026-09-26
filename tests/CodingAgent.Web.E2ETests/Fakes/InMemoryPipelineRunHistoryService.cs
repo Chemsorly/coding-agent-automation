@@ -20,7 +20,11 @@ public sealed class InMemoryPipelineRunHistoryService : IPipelineRunHistoryServi
     // diverge from production behavior. Consider adding a contract test or aligning the filter logic.
     public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, CancellationToken ct = default)
     {
-        var items = _history.Skip((page - 1) * pageSize).Take(pageSize + 1).ToList();
+        // Mirror PostgresPipelineRunHistoryService: only terminal runs appear in history listings.
+        // AddRunToHistoryAsync in the real service forces non-terminal steps to Failed before storing,
+        // so active (non-terminal) runs are never returned by GetRunHistoryAsync in production.
+        var terminal = _history.Where(r => r.FinalStep.IsTerminal()).ToList();
+        var items = terminal.Skip((page - 1) * pageSize).Take(pageSize + 1).ToList();
         var hasMore = items.Count > pageSize;
         if (hasMore)
             items = items.Take(pageSize).ToList();
@@ -47,10 +51,12 @@ public sealed class InMemoryPipelineRunHistoryService : IPipelineRunHistoryServi
 
     public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, CancellationToken ct = default)
     {
-        var filtered = feedbackOnly
-            ? _history.Where(r => r.Feedback != null).ToList()
-            : _history.ToList();
-        var items = filtered.Skip((page - 1) * pageSize).Take(pageSize + 1).ToList();
+        // Mirror PostgresPipelineRunHistoryService: only terminal runs appear in history listings.
+        var filtered = _history.Where(r => r.FinalStep.IsTerminal());
+        if (feedbackOnly)
+            filtered = filtered.Where(r => r.Feedback != null);
+        var list = filtered.ToList();
+        var items = list.Skip((page - 1) * pageSize).Take(pageSize + 1).ToList();
         var hasMore = items.Count > pageSize;
         if (hasMore)
             items = items.Take(pageSize).ToList();
@@ -84,7 +90,8 @@ public sealed class InMemoryPipelineRunHistoryService : IPipelineRunHistoryServi
         int page, int pageSize, bool feedbackOnly, PipelineStep? finalStep,
         string? projectId, CancellationToken ct = default)
     {
-        IEnumerable<PipelineRunSummary> filtered = _history;
+        // Mirror PostgresPipelineRunHistoryService: only terminal runs appear in history listings.
+        IEnumerable<PipelineRunSummary> filtered = _history.Where(r => r.FinalStep.IsTerminal());
         if (feedbackOnly)
             filtered = filtered.Where(r => r.Feedback != null);
         if (finalStep is { } step)
