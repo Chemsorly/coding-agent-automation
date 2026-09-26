@@ -4,6 +4,7 @@ using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Orchestration.Health;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.SignalR;
@@ -192,14 +193,9 @@ public sealed class AgentAuthorizationFilter : IHubFilter
                 new KeyValuePair<string, object?>("reason", rejectionReason));
 
             if (isReconnectRace)
-                // TODO [WARNING]: `queryAgentId` is user-controlled input logged verbatim. Serilog
-                // structured logging protects against newline injection in text sinks, but JSON sinks
-                // or forwarding pipelines that parse the raw value may misinterpret crafted payloads.
-                // Consider adding a max-length and character-allowlist sanitization step here,
-                // consistent with the existing TODO at line ~148. (Security Review)
                 _logger.Debug(
                     "Hub method {Method} rejected — connection {ConnectionId} is reconnecting (agentId={AgentId}, likely reconnect-race window)",
-                    ctx.HubMethodName, ctx.Context.ConnectionId, queryAgentId);
+                    ctx.HubMethodName, ctx.Context.ConnectionId, LogSanitizer.SanitizeForLog(queryAgentId));
             else
                 _logger.Warning(
                     "Hub method {Method} rejected — connection {ConnectionId} is not a registered agent",

@@ -74,7 +74,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
             return base.OnConnectedAsync();
         }
 
-        _logger.Information("Agent connection established: agentId={AgentId}, connectionId={ConnectionId}", agentId, Context.ConnectionId);
+        _logger.Information("Agent connection established: agentId={AgentId}, connectionId={ConnectionId}", SanitizeForLog(agentId), Context.ConnectionId);
         return base.OnConnectedAsync();
     }
 
