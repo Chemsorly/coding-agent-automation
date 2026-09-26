@@ -46,6 +46,14 @@ public sealed class WorkPage
     public async Task WaitForInFlightAsync(string issueIdentifier, int timeoutMs = 15_000)
         => await InFlightRow(issueIdentifier).First.WaitForAsync(new() { Timeout = timeoutMs });
 
+    /// <summary>Returns the number of rows in the "In flight" card.</summary>
+    public async Task<int> GetInFlightCountAsync()
+        => await InFlightCard.Locator("tbody tr").CountAsync();
+
+    /// <summary>Returns the number of rows in the "Queue" card.</summary>
+    public async Task<int> GetQueuedCountAsync()
+        => await QueueCard.Locator("tbody tr").CountAsync();
+
     /// <summary>
     /// Cancels the in-flight run for the given issue. Clicks the initial "Cancel" button to open
     /// the confirmation dialog, then clicks "Yes" to confirm — matching the two-step confirmation

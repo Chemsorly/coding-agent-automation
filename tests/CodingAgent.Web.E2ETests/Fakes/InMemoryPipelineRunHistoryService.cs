@@ -63,6 +63,49 @@ public sealed class InMemoryPipelineRunHistoryService : IPipelineRunHistoryServi
         });
     }
 
+    /// <summary>
+    /// Full overload that respects the <paramref name="finalStep"/> and
+    /// <paramref name="projectId"/> filters, matching the DB-side exact-match semantics of
+    /// <c>PostgresPipelineRunHistoryService</c>. Without this override the default
+    /// interface implementation ignores both parameters and returns all runs, which makes
+    /// the Runs-page tab-membership assertions vacuous in the E2E harness.
+    /// </summary>
+    // TODO [WARNING]: This overload filters by r.FinalStep == step (exact match). If
+    // PostgresPipelineRunHistoryService maps a tab (e.g. "Completed") to multiple PipelineSteps
+    // (e.g. both Completed and PrMerged), the fake and the real service will disagree, making
+    // tab-membership assertions pass here while the real page misbehaves. Verify the production
+    // filter semantics and align this implementation accordingly.
+    // TODO [WARNING]: _history is iterated without synchronisation. If any other test in the
+    // same E2ECollection concurrently calls AddRunSummaryAsync while this method is running its
+    // LINQ chain, the enumeration will throw InvalidOperationException. If parallelism is ever
+    // enabled for this collection, take a snapshot (e.g. lock (_history) { list = _history.ToList(); })
+    // before filtering.
+    public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(
+        int page, int pageSize, bool feedbackOnly, PipelineStep? finalStep,
+        string? projectId, CancellationToken ct = default)
+    {
+        IEnumerable<PipelineRunSummary> filtered = _history;
+        if (feedbackOnly)
+            filtered = filtered.Where(r => r.Feedback != null);
+        if (finalStep is { } step)
+            filtered = filtered.Where(r => r.FinalStep == step);
+        if (!string.IsNullOrEmpty(projectId))
+            filtered = filtered.Where(r => r.ProjectId == projectId);
+
+        var list = filtered.ToList();
+        var items = list.Skip((page - 1) * pageSize).Take(pageSize + 1).ToList();
+        var hasMore = items.Count > pageSize;
+        if (hasMore)
+            items = items.Take(pageSize).ToList();
+        return Task.FromResult(new PagedResult<PipelineRunSummary>
+        {
+            Items = items.AsReadOnly(),
+            Page = page,
+            PageSize = pageSize,
+            HasMore = hasMore
+        });
+    }
+
     public void TryDeleteWorkspace(WorkspacePath? workspacePath, string runId, string workspaceBaseDirectory) { }
     public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null) { }
     public Task AddRunSummaryAsync(PipelineRunSummary summary, CancellationToken ct = default)
