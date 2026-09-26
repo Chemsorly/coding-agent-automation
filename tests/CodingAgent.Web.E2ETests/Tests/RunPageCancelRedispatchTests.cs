@@ -2,7 +2,6 @@ using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Web.E2ETests.Infrastructure;
 using CodingAgent.Web.E2ETests.PageObjects;
 using CodingAgent.Pipeline.Models;
-using CodingAgent.Web.Services;
 
 namespace CodingAgent.Web.E2ETests.Tests;
 
@@ -45,10 +44,10 @@ public sealed class RunPageCancelRedispatchTests : E2ETestBase
 
     /// <summary>
     /// Dispatches an issue via the AgentCodingPage UI, waits for the job assignment,
-    /// and returns the assignment message. The fake agent is accepted and moved to the
-    /// given pipeline step.
+    /// and returns the assignment message and the active run's RunId. The fake agent is
+    /// accepted and moved to the given pipeline step.
     /// </summary>
-    private async Task<(JobAssignmentMessage Assignment, PipelineRunSummary ActiveSummary)> DispatchAndReachStepAsync(
+    private async Task<(JobAssignmentMessage Assignment, string RunId)> DispatchAndReachStepAsync(
         FakeAgentClient fakeAgent,
         string issueIdentifier,
         PipelineStep step)
@@ -71,11 +70,12 @@ public sealed class RunPageCancelRedispatchTests : E2ETestBase
         await WaitUntilAsync(() => runService.GetActiveRuns()
             .Any(r => r.IssueIdentifier == issueIdentifier && r.CurrentStep == step));
 
-        // Retrieve the run summary (needed for RunId navigation).
-        var summary = await WaitForHistoryAsync(
-            r => r.IssueIdentifier == issueIdentifier && RunOutcomeDisplay.IsActive(r.FinalStep));
+        // Retrieve the RunId from the active run service (not from history — active runs are only
+        // written to history when they complete, so WaitForHistoryAsync would time out here).
+        var activeRun = runService.GetActiveRuns()
+            .First(r => r.IssueIdentifier == issueIdentifier && r.CurrentStep == step);
 
-        return (assignment, summary);
+        return (assignment, activeRun.RunId);
     }
 
     // ── Scenario 1: Cancel with full confirm ──────────────────────────────
@@ -96,11 +96,11 @@ public sealed class RunPageCancelRedispatchTests : E2ETestBase
         await using var fakeAgent = new FakeAgentClient("cancel-runpage-agent-1", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
-        var (_, summary) = await DispatchAndReachStepAsync(fakeAgent, "3091", PipelineStep.GeneratingCode);
+        var (_, runId) = await DispatchAndReachStepAsync(fakeAgent, "3091", PipelineStep.GeneratingCode);
 
         // Act: navigate to the run page and cancel with confirmation.
         var runPage = new RunDetailPage(Page, BaseUrl);
-        await runPage.NavigateAsync(summary.RunId);
+        await runPage.NavigateAsync(runId);
         await runPage.CancelAsync(confirm: true);
 
         // Assert 1: run reaches Cancelled terminal state in history.
@@ -149,11 +149,11 @@ public sealed class RunPageCancelRedispatchTests : E2ETestBase
         await using var fakeAgent = new FakeAgentClient("cancel-runpage-dismiss-agent", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
-        var (_, summary) = await DispatchAndReachStepAsync(fakeAgent, "3091f", PipelineStep.GeneratingCode);
+        var (_, runId) = await DispatchAndReachStepAsync(fakeAgent, "3091f", PipelineStep.GeneratingCode);
 
         // Act: navigate to the run page and dismiss the cancel dialog ("No").
         var runPage = new RunDetailPage(Page, BaseUrl);
-        await runPage.NavigateAsync(summary.RunId);
+        await runPage.NavigateAsync(runId);
         await runPage.CancelAsync(confirm: false);
 
         // Assert 1: the run is still active — no Cancelled entry appears in history.
@@ -196,11 +196,11 @@ public sealed class RunPageCancelRedispatchTests : E2ETestBase
         await using var fakeAgent = new FakeAgentClient("cancel-runpage-agent-2", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
-        var (_, summary) = await DispatchAndReachStepAsync(fakeAgent, "3091b", PipelineStep.GeneratingCode);
+        var (_, runId) = await DispatchAndReachStepAsync(fakeAgent, "3091b", PipelineStep.GeneratingCode);
 
         // Act: navigate to the run page, open the confirm dialog, then click "Yes, cancel" twice.
         var runPage = new RunDetailPage(Page, BaseUrl);
-        await runPage.NavigateAsync(summary.RunId);
+        await runPage.NavigateAsync(runId);
 
         // Open the confirm dialog.
         await runPage.CancelButton.WaitForAsync(new() { Timeout = 15_000 });
@@ -326,11 +326,11 @@ public sealed class RunPageCancelRedispatchTests : E2ETestBase
         await using var fakeAgent = new FakeAgentClient("redispatch-live-agent", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
-        var (_, summary) = await DispatchAndReachStepAsync(fakeAgent, "3091d", PipelineStep.GeneratingCode);
+        var (_, runId) = await DispatchAndReachStepAsync(fakeAgent, "3091d", PipelineStep.GeneratingCode);
 
         // Act: navigate to the live run's page.
         var runPage = new RunDetailPage(Page, BaseUrl);
-        await runPage.NavigateAsync(summary.RunId);
+        await runPage.NavigateAsync(runId);
 
         // Assert: the redispatch-card is absent from the DOM entirely.
         // CanRedispatch returns false for active runs, so the entire @if block is not rendered.
