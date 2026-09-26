@@ -414,6 +414,9 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
                 Status = WorkItemStatus.Running,
                 Payload = payloadJson,
                 AgentSelector = "kiro,dotnet",
+                // A dispatched pod's agent ID is its Job name — the hub only restores the
+                // reported active job for the work item's own pod.
+                K8sJobName = "caa-k8s-token-agent",
                 CreatedAt = DateTimeOffset.UtcNow,
                 DispatchedAt = DateTimeOffset.UtcNow,
                 TimeoutSeconds = 3600
@@ -650,22 +653,8 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         }, CancellationToken.None);
 
         var workItemId = Guid.NewGuid();
-        await using (var db = Fixture.DbContextFactory.CreateDbContext())
-        {
-            db.WorkItems.Add(new WorkItemEntity
-            {
-                Id = workItemId,
-                TaskType = WorkItemTaskType.Implementation,
-                IssueIdentifier = "k8s-multi-refresh-1400",
-                IssueProviderConfigId = "issue-e2e",
-                Status = WorkItemStatus.Running,
-                Payload = "{}",
-                AgentSelector = "kiro,dotnet",
-                CreatedAt = DateTimeOffset.UtcNow,
-                TimeoutSeconds = 3600
-            });
-            await db.SaveChangesAsync();
-        }
+        await SeedDispatchedWorkItemAsync(workItemId, "k8s-multi-refresh-1400",
+            k8sJobName: "caa-k8s-multi-refresh", repoProviderConfigId: "repo-k8s-multi-refresh");
 
         await using var agent = new FakeAgentClient("caa-k8s-multi-refresh", "kiro");
         await agent.ConnectWithActiveJobAsync(
@@ -715,22 +704,9 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         }, CancellationToken.None);
 
         var workItemId = Guid.NewGuid();
-        await using (var db = Fixture.DbContextFactory.CreateDbContext())
-        {
-            db.WorkItems.Add(new WorkItemEntity
-            {
-                Id = workItemId,
-                TaskType = WorkItemTaskType.Implementation,
-                IssueIdentifier = "k8s-brain-token-1401",
-                IssueProviderConfigId = "issue-e2e",
-                Status = WorkItemStatus.Running,
-                Payload = "{}",
-                AgentSelector = "kiro,dotnet",
-                CreatedAt = DateTimeOffset.UtcNow,
-                TimeoutSeconds = 3600
-            });
-            await db.SaveChangesAsync();
-        }
+        await SeedDispatchedWorkItemAsync(workItemId, "k8s-brain-token-1401",
+            k8sJobName: "caa-k8s-brain-agent", repoProviderConfigId: "repo-k8s-brain-test",
+            brainProviderConfigId: "brain-k8s-test");
 
         await using var agent = new FakeAgentClient("caa-k8s-brain-agent", "kiro");
         await agent.ConnectWithActiveJobAsync(
@@ -755,22 +731,8 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     {
         // Arrange: agent registers with one job but tries to refresh token for a different job
         var realJobId = Guid.NewGuid();
-        await using (var db = Fixture.DbContextFactory.CreateDbContext())
-        {
-            db.WorkItems.Add(new WorkItemEntity
-            {
-                Id = realJobId,
-                TaskType = WorkItemTaskType.Implementation,
-                IssueIdentifier = "k8s-wrong-job-1402",
-                IssueProviderConfigId = "issue-e2e",
-                Status = WorkItemStatus.Running,
-                Payload = "{}",
-                AgentSelector = "kiro,dotnet",
-                CreatedAt = DateTimeOffset.UtcNow,
-                TimeoutSeconds = 3600
-            });
-            await db.SaveChangesAsync();
-        }
+        await SeedDispatchedWorkItemAsync(realJobId, "k8s-wrong-job-1402",
+            k8sJobName: "caa-k8s-wrongjob", repoProviderConfigId: "repo-e2e");
 
         await using var agent = new FakeAgentClient("caa-k8s-wrongjob", "kiro");
         await agent.ConnectWithActiveJobAsync(
@@ -779,6 +741,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
             realJobId.ToString(),
             "k8s-wrong-job-1402",
             "repo-e2e");
+        Assert.Equal(realJobId.ToString(), Fixture.AgentRegistry.GetByAgentId("caa-k8s-wrongjob")?.ActiveJobId);
 
         // Act: try to refresh token for a DIFFERENT job ID
         var differentJobId = Guid.NewGuid().ToString();
@@ -812,6 +775,10 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
             RepoProviderConfigId = "repo-e2e",
             StartedAt = DateTime.UtcNow.AddHours(-1)
         });
+        // The pod's own work item — so the claim passes ownership and reaches the history check.
+        await SeedDispatchedWorkItemAsync(Guid.Parse(completedRunId), "completed-issue",
+            k8sJobName: "caa-k8s-stale-agent", repoProviderConfigId: "repo-e2e",
+            status: WorkItemStatus.Succeeded);
 
         // Act: agent registers with a RunId that's already in history (stale pod restart)
         await using var agent = new FakeAgentClient("caa-k8s-stale-agent", "kiro");
@@ -829,6 +796,66 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         // The RegisterAgent handler ignores ActiveJob when RunId is in history
         // Agent should not have ActiveJobId set (run not restored)
         Assert.Null(entry.ActiveJobId);
+    }
+
+    [Fact]
+    public async Task K8sMode_AgentReportsAnotherPodsWorkItem_RunNotRestored()
+    {
+        // Arrange: a running work item dispatched to a different pod
+        await Fixture.ConfigStore.SaveProviderConfigAsync(
+            RepoConfigWithStaticToken("repo-k8s-other-pod", "fake-other-pod-token"), CancellationToken.None);
+        var workItemId = Guid.NewGuid();
+        await SeedDispatchedWorkItemAsync(workItemId, "k8s-other-pod-1403",
+            k8sJobName: "caa-k8s-other-pod", repoProviderConfigId: "repo-k8s-other-pod");
+
+        // Act: this agent registers reporting that work item as its active job
+        await using var agent = new FakeAgentClient("caa-k8s-not-the-owner", "kiro");
+        await agent.ConnectWithActiveJobAsync(
+            AgentHubUrl,
+            E2EWebApplicationFactory.TestApiKey,
+            workItemId.ToString(),
+            "k8s-other-pod-1403",
+            "repo-k8s-other-pod");
+
+        // Assert: registered, but the report is not taken over — no run, no active job
+        var entry = Fixture.AgentRegistry.GetByAgentId("caa-k8s-not-the-owner");
+        Assert.NotNull(entry);
+        Assert.Null(entry.ActiveJobId);
+        Assert.NotEqual(AgentStatus.Busy, entry.Status);
+        Assert.Null(Fixture.RunService.GetRun(workItemId.ToString()));
+
+        // ...so the work item's run-scoped hub methods stay closed to it
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            agent.RequestTokenRefreshAsync(workItemId.ToString(), ProviderKind.Repository));
+    }
+
+    [Fact]
+    public async Task K8sMode_RestoredRun_TakesProviderConfigsFromTheWorkItem()
+    {
+        // Arrange: the work item's repo, and another repo the agent's report names instead
+        await Fixture.ConfigStore.SaveProviderConfigAsync(
+            RepoConfigWithStaticToken("repo-k8s-work-item-own", "fake-work-item-repo-token"), CancellationToken.None);
+        await Fixture.ConfigStore.SaveProviderConfigAsync(
+            RepoConfigWithStaticToken("repo-k8s-reported", "fake-reported-repo-token"), CancellationToken.None);
+        var workItemId = Guid.NewGuid();
+        await SeedDispatchedWorkItemAsync(workItemId, "k8s-restore-identity-1404",
+            k8sJobName: "caa-k8s-restore-identity", repoProviderConfigId: "repo-k8s-work-item-own");
+
+        // Act: the work item's own pod re-registers, reporting a different repo provider
+        await using var agent = new FakeAgentClient("caa-k8s-restore-identity", "kiro");
+        await agent.ConnectWithActiveJobAsync(
+            AgentHubUrl,
+            E2EWebApplicationFactory.TestApiKey,
+            workItemId.ToString(),
+            "k8s-restore-identity-1404",
+            "repo-k8s-reported");
+
+        // Assert: the run is restored with the work item's provider, and tokens are vended for it
+        var run = Fixture.RunService.GetRun(workItemId.ToString());
+        Assert.NotNull(run);
+        Assert.Equal("repo-k8s-work-item-own", run.RepoProviderConfigId);
+        var token = await agent.RequestTokenRefreshAsync(workItemId.ToString(), ProviderKind.Repository);
+        Assert.Equal("fake-work-item-repo-token", token.Token);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1155,4 +1182,68 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         var goneResponse = await httpClient.GetAsync($"/api/work-items/{workItemId}/assignment");
         Assert.Equal(System.Net.HttpStatusCode.Gone, goneResponse.StatusCode);
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Helpers
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Seeds a work item as the Job Controller leaves it once its K8s Job runs: <c>K8sJobName</c>
+    /// is the Job's name — the agent ID of the pod running it — and the payload carries the
+    /// provider configs of the run. Orphan recovery restores a run only from such a record.
+    /// </summary>
+    private async Task SeedDispatchedWorkItemAsync(
+        Guid workItemId,
+        string issueIdentifier,
+        string k8sJobName,
+        string repoProviderConfigId,
+        string? brainProviderConfigId = null,
+        WorkItemStatus status = WorkItemStatus.Running)
+    {
+        var payloadJson = System.Text.Json.JsonSerializer.Serialize(new JobDistributionRequest
+        {
+            IssueIdentifier = issueIdentifier,
+            IssueProviderConfigId = "issue-e2e",
+            RepoProviderConfigId = repoProviderConfigId,
+            BrainProviderConfigId = brainProviderConfigId,
+            AgentSelector = "kiro,dotnet",
+            TimeoutSeconds = 3600,
+            TaskType = WorkItemTaskType.Implementation,
+            ProjectId = Guid.Parse(WellKnownIds.DefaultProjectId),
+            InitiatedBy = "k8s-e2e-test"
+        }, PipelineJsonOptions.Default);
+
+        await using var db = Fixture.DbContextFactory.CreateDbContext();
+        db.WorkItems.Add(new WorkItemEntity
+        {
+            Id = workItemId,
+            TaskType = WorkItemTaskType.Implementation,
+            IssueIdentifier = issueIdentifier,
+            IssueProviderConfigId = "issue-e2e",
+            Status = status,
+            Payload = payloadJson,
+            AgentSelector = "kiro,dotnet",
+            K8sJobName = k8sJobName,
+            CreatedAt = DateTimeOffset.UtcNow,
+            DispatchedAt = DateTimeOffset.UtcNow,
+            TimeoutSeconds = 3600
+        });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// A repository provider with a static access token (the GitLab PAT path of token refresh,
+    /// so no GitHub App JWT is needed).
+    /// </summary>
+    private static ProviderConfig RepoConfigWithStaticToken(string id, string token) => new()
+    {
+        Id = id,
+        Kind = ProviderKind.Repository,
+        ProviderType = "GitLab",
+        DisplayName = id,
+        Settings = new Dictionary<string, string>
+        {
+            [ProviderSettingKeys.AccessToken] = token
+        }
+    };
 }

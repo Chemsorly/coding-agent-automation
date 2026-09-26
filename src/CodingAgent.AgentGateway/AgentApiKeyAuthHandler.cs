@@ -99,17 +99,9 @@ public sealed class AgentApiKeyAuthHandler : AuthenticationHandler<AgentApiKeyAu
             return Task.FromResult(AuthenticateResult.Fail("Invalid agentId"));
         }
 
-        string expectedKey;
-        if (!string.IsNullOrEmpty(agentId))
-        {
-            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(masterKey));
-            var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(agentId));
-            expectedKey = Convert.ToHexString(hash).ToLowerInvariant();
-        }
-        else
-        {
-            expectedKey = masterKey;
-        }
+        var expectedKey = string.IsNullOrEmpty(agentId)
+            ? masterKey
+            : AgentKeyDerivation.DeriveAgentKey(masterKey, agentId);
 
         // Constant-time comparison to prevent timing attacks.
         // Hash both values to a fixed-size digest before comparing. This prevents

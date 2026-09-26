@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgent.AgentGateway;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Orchestration.Registry;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
@@ -47,6 +48,7 @@ public class ChatJobDispatcherTests
             KiroPvcPool = ["pvc-0", "pvc-1"],
             OrchestratorUrl = "http://orchestrator:8080",
             AgentApiKeySecretName = "caa-secret",
+            AgentApiKeyValue = "test-master-key",
             AgentServiceAccountName = "caa-agent",
             ChatPodConnectTimeoutSeconds = connectTimeoutSeconds,
             ChatJobMaxDurationSeconds = chatSessionMaxDuration,
@@ -151,6 +153,62 @@ public class ChatJobDispatcherTests
         createdJob!.Metadata.Labels.Should().ContainKey("caa/chat-session-id");
         createdJob.Metadata.Labels.Should().ContainKey("caa/chat-selector");
         createdJob.Metadata.Labels["caa/chat-selector"].Should().Be(TestEncodedSelector);
+    }
+
+    // ─── 1b. DispatchChatPodAsync — per-Job agent key (Spec 043 Req 8a) ─────
+
+    /// <summary>
+    /// The chat pod receives only its own key: the Secret caa-key-{jobName} holding
+    /// HMAC-SHA256(master key, job name). It never gets the master key.
+    /// </summary>
+    [Fact]
+    public async Task DispatchChatPodAsync_CreatesTheJobsAgentKeySecret()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        string? jobName = null;
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                jobName = j.Metadata.Name;
+                RegisterChatAgent(registry, "agent-1", j.Metadata.Labels["caa/chat-session-id"]);
+            })
+            .Returns(Task.CompletedTask);
+        V1Secret? keySecret = null;
+        jobClientMock.Setup(c => c.CreateSecretAsync(It.IsAny<V1Secret>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Secret, string, CancellationToken>((s, _, _) => keySecret = s)
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        keySecret.Should().NotBeNull("the chat Job must get its own agent key Secret");
+        keySecret!.Metadata.Name.Should().Be($"caa-key-{jobName}");
+        keySecret.StringData["agent-api-key"].Should().Be(AgentKeyDerivation.DeriveAgentKey("test-master-key", jobName!));
+    }
+
+    /// <summary>
+    /// Without its key Secret the chat pod could never authenticate but would hold its claimed PVC
+    /// until the Job deadline, so the Job is deleted and the dispatch fails.
+    /// </summary>
+    [Fact]
+    public async Task DispatchChatPodAsync_KeySecretCannotBeCreated_DeletesJobAndThrows()
+    {
+        var jobClientMock = CreateJobClientMock();
+        string? jobName = null;
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) => jobName = j.Metadata.Name)
+            .Returns(Task.CompletedTask);
+        jobClientMock.Setup(c => c.CreateSecretAsync(It.IsAny<V1Secret>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("secrets are forbidden"));
+
+        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object);
+
+        var act = () => dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        jobClientMock.Verify(c => c.DeleteJobAsync(jobName!, TestNamespace, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ─── 2. DispatchChatPodAsync — --mode=chat in args ───────────────────────
@@ -815,6 +873,7 @@ public class ChatJobDispatcherTests
             KiroPvcPool = ["pvc-0"],
             OrchestratorUrl = "http://orchestrator:8080",
             AgentApiKeySecretName = "caa-secret",
+            AgentApiKeyValue = "test-master-key",
             AgentServiceAccountName = "caa-agent",
             ChatPodConnectTimeoutSeconds = 5,
             ChatJobMaxDurationSeconds = 7200,
@@ -877,6 +936,7 @@ public class ChatJobDispatcherTests
             KiroPvcPool = ["pvc-0"],
             OrchestratorUrl = "http://orchestrator:8080",
             AgentApiKeySecretName = "caa-secret",
+            AgentApiKeyValue = "test-master-key",
             AgentServiceAccountName = "caa-agent",
             ChatPodConnectTimeoutSeconds = 5,
             ChatJobMaxDurationSeconds = 7200,
@@ -1069,6 +1129,7 @@ public class ChatJobDispatcherTests
             KiroPvcPool = ["pvc-0"],
             OrchestratorUrl = "http://orchestrator:8080",
             AgentApiKeySecretName = "caa-secret",
+            AgentApiKeyValue = "test-master-key",
             AgentServiceAccountName = "caa-agent",
             ChatPodConnectTimeoutSeconds = 5,
             ChatJobMaxDurationSeconds = 7200,
@@ -1649,6 +1710,7 @@ public class ChatJobDispatcherTests
         KiroPvcPool = ["pvc-0"],
         OrchestratorUrl = "http://orchestrator:8080",
         AgentApiKeySecretName = "caa-secret",
+        AgentApiKeyValue = "test-master-key",
         AgentServiceAccountName = "caa-agent",
         ChatPodConnectTimeoutSeconds = 5,
         ChatJobMaxDurationSeconds = 7200,
@@ -1953,6 +2015,7 @@ public class ChatJobDispatcherTests
                 KiroPvcPool = ["pvc-0"],
                 OrchestratorUrl = "http://orchestrator:8080",
                 AgentApiKeySecretName = "caa-secret",
+                AgentApiKeyValue = "test-master-key",
                 AgentServiceAccountName = "caa-agent",
                 ChatPodConnectTimeoutSeconds = 5,
                 ChatJobMaxDurationSeconds = 7200,

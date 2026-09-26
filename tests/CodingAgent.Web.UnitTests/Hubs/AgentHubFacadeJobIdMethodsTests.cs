@@ -234,6 +234,77 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
         result.Value.BrainProviderConfigId.Should().BeNull();
     }
 
+    // ── GetWorkItemRunRecordAsync / CanVerifyWorkItems ────────────────────
+
+    [Fact]
+    public void CanVerifyWorkItems_WithStore_IsTrue_WithoutStore_IsFalse()
+    {
+        var mockLogger = new Mock<ILogger>();
+        var facadeWithout = new AgentHubFacade(new AgentHubFacadeDependencies(
+            new AgentRegistryService(mockLogger.Object), new OrchestratorRunService(mockLogger.Object),
+            Mock.Of<IPipelineRunHistoryService>(), Mock.Of<IConfigurationStore>(),
+            Mock.Of<IProviderFactory>(), NullLogger<AgentHubFacadeDependencies>.Instance));
+
+        _facade.CanVerifyWorkItems.Should().BeTrue();
+        facadeWithout.CanVerifyWorkItems.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetWorkItemRunRecordAsync_ReturnsOwnershipAndIdentityFromTheDatabase()
+    {
+        var id = Guid.NewGuid();
+        var projectId = Guid.NewGuid();
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = id,
+                IssueIdentifier = "org/repo#7",
+                IssueProviderConfigId = "ip-db",
+                Status = WorkItemStatus.Running,
+                AgentSelector = "dotnet",
+                TaskType = WorkItemTaskType.Review,
+                CreatedAt = DateTimeOffset.UtcNow,
+                TimeoutSeconds = 3600,
+                K8sJobName = "caa-aabbccdd",
+                AssignedAgentId = "caa-eeff0011",
+                ProjectId = projectId,
+                Payload = """{"repoProviderConfigId":"rp-db","brainProviderConfigId":"brain-db","pipelineProviderConfigId":"pipe-db"}"""
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var record = await _facade.GetWorkItemRunRecordAsync(id.ToString(), CancellationToken.None);
+
+        record.Should().NotBeNull();
+        record!.TaskType.Should().Be(WorkItemTaskType.Review);
+        record.IssueIdentifier.Should().Be("org/repo#7");
+        record.IssueProviderConfigId.Should().Be("ip-db");
+        record.RepoProviderConfigId.Should().Be("rp-db");
+        record.BrainProviderConfigId.Should().Be("brain-db");
+        record.PipelineProviderConfigId.Should().Be("pipe-db");
+        record.ProjectId.Should().Be(projectId);
+        record.IsOwnedBy("caa-aabbccdd").Should().BeTrue("the K8s Job's pod owns the work item");
+        record.IsOwnedBy("caa-eeff0011").Should().BeTrue("the assigned agent owns the work item");
+        record.IsOwnedBy("caa-11223344").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetWorkItemRunRecordAsync_ItemNotFound_ReturnsNull()
+    {
+        var record = await _facade.GetWorkItemRunRecordAsync(Guid.NewGuid().ToString(), CancellationToken.None);
+
+        record.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetWorkItemRunRecordAsync_NotAWorkItemId_ReturnsNull()
+    {
+        var record = await _facade.GetWorkItemRunRecordAsync("not-a-guid", CancellationToken.None);
+
+        record.Should().BeNull();
+    }
+
     // ── TouchLastProgressAsync ────────────────────────────────────────────
 
     [Fact]

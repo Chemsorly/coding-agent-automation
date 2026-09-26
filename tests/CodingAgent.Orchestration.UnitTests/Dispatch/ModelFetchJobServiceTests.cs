@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Orchestration.Health;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Moq;
@@ -42,7 +43,7 @@ public sealed class ModelFetchJobServiceTests
         var deps = new ModelFetchJobDependencies(
             KubeClient: _kubeClient.Object,
             TemplateStore: templateStore ?? JobTemplateStore.CreateEmpty(),
-            Options: options ?? new DispatchServiceOptions { Namespace = "test-ns" },
+            Options: options ?? new DispatchServiceOptions { Namespace = "test-ns", AgentApiKeyValue = "test-master-key" },
             ConfigStore: _configStore.Object,
             ModelFetchReceiver: _modelFetchReceiver.Object,
             PollTimeoutSecondsOverride: 1,
@@ -99,6 +100,7 @@ public sealed class ModelFetchJobServiceTests
         var options = new DispatchServiceOptions
         {
             Namespace = "test-ns",
+            AgentApiKeyValue = "test-master-key",
             KiroPvcPool = [] // empty — no PVCs configured
         };
         var service = CreateService(options: options, templateStore: templateStore);
@@ -208,6 +210,90 @@ public sealed class ModelFetchJobServiceTests
         models.Should().HaveCount(2);
         models[0].ModelId.Should().Be("gpt-4o");
         error.Should().BeNull("happy path must return null error");
+    }
+
+    // ── Agent key (Spec 043 Req 8a) ────────────────────────────────────────
+
+    /// <summary>
+    /// The fetch-models pod receives only its own key: the Secret caa-key-{jobName} holding
+    /// HMAC-SHA256(master key, job name). It never gets the master key.
+    /// </summary>
+    [Fact]
+    public async Task FetchModelsAsync_CreatesTheJobsAgentKeySecret()
+    {
+        SetupConfigStore();
+        var templateStore = BuildStoreWith(SampleTemplate);
+        string? jobName = null;
+        _kubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<k8s.Models.V1Job, string, CancellationToken>((j, _, _) => jobName = j.Metadata.Name)
+            .Returns(Task.CompletedTask);
+        k8s.Models.V1Secret? keySecret = null;
+        _kubeClient
+            .Setup(k => k.CreateSecretAsync(It.IsAny<k8s.Models.V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<k8s.Models.V1Secret, string, CancellationToken>((s, _, _) => keySecret = s)
+            .Returns(Task.CompletedTask);
+        _modelFetchReceiver
+            .Setup(r => r.WaitAndFetchAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(((IReadOnlyList<AgentModelInfo>)Array.Empty<AgentModelInfo>(), (string?)null));
+
+        var service = CreateService(templateStore: templateStore);
+
+        await service.FetchModelsAsync("opencode", CancellationToken.None);
+
+        keySecret.Should().NotBeNull("the fetch-models Job must get its own agent key Secret");
+        keySecret!.Metadata.Name.Should().Be($"caa-key-{jobName}");
+        keySecret.StringData["agent-api-key"].Should().Be(AgentKeyDerivation.DeriveAgentKey("test-master-key", jobName!));
+    }
+
+    /// <summary>
+    /// Without its key Secret the pod could never authenticate, so the Job is deleted instead of
+    /// waiting until its deadline, and the caller gets an error.
+    /// </summary>
+    [Fact]
+    public async Task FetchModelsAsync_KeySecretCannotBeCreated_DeletesJobAndReturnsError()
+    {
+        SetupConfigStore();
+        var templateStore = BuildStoreWith(SampleTemplate);
+        string? jobName = null;
+        _kubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<k8s.Models.V1Job, string, CancellationToken>((j, _, _) => jobName = j.Metadata.Name)
+            .Returns(Task.CompletedTask);
+        _kubeClient
+            .Setup(k => k.CreateSecretAsync(It.IsAny<k8s.Models.V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("secrets are forbidden"));
+        _kubeClient
+            .Setup(k => k.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var service = CreateService(templateStore: templateStore);
+
+        var (models, error) = await service.FetchModelsAsync("opencode", CancellationToken.None);
+
+        models.Should().BeEmpty();
+        error.Should().Contain("agent key");
+        _kubeClient.Verify(k => k.DeleteJobAsync(jobName!, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _modelFetchReceiver.Verify(
+            r => r.WaitAndFetchAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task FetchModelsAsync_NoMasterKey_ReturnsErrorWithoutCallingKube()
+    {
+        SetupConfigStore();
+        var service = CreateService(
+            options: new DispatchServiceOptions { Namespace = "test-ns" },
+            templateStore: BuildStoreWith(SampleTemplate));
+
+        var (models, error) = await service.FetchModelsAsync("opencode", CancellationToken.None);
+
+        models.Should().BeEmpty();
+        error.Should().Contain("AGENT_API_KEY");
+        _kubeClient.Verify(
+            k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     // ── 6. Job created, agent returns error from WaitAndFetch ─────────────

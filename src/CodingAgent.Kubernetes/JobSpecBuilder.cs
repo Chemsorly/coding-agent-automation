@@ -12,8 +12,6 @@ namespace CodingAgent.Kubernetes;
 /// </summary>
 public static class JobSpecBuilder
 {
-    private const string AgentApiKeyVolumeName = "agent-api-key";
-
     private static readonly JsonSerializerOptions K8sDeserializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -36,6 +34,12 @@ public static class JobSpecBuilder
         public required string JobName { get; set; }
         public required string? ClaimedPvc { get; init; }
         public required string OrchestratorUrl { get; init; }
+
+        /// <summary>
+        /// The chart's <c>agent-api-key</c> Secret. The pod reads only its <c>otel-headers</c> key
+        /// from it; the master key in the same Secret is never exposed to agent pods. The pod's own
+        /// API key comes from the per-Job Secret named by <see cref="AgentJobKeySecret.NameFor"/>.
+        /// </summary>
         public required string AgentApiKeySecretName { get; init; }
         public required string AgentServiceAccountName { get; init; }
         public required string Namespace { get; init; }
@@ -47,22 +51,6 @@ public static class JobSpecBuilder
         /// When non-null, injected as TRACEPARENT env var so the worker can restore the trace context.
         /// </summary>
         public string? TraceParent { get; init; }
-
-        /// <summary>
-        /// Name of the per-Job K8s Secret that holds the per-job agent API key (Spec 043 Req 8a).
-        /// When set, the Job container receives <c>AGENT_API_KEY</c> from this Secret instead of
-        /// mounting the master <c>agent-api-key</c> Secret. This prevents work-item agent pods
-        /// from holding the master key — they receive only <c>HMAC-SHA256(masterKey, jobName)</c>
-        /// which cannot be used to compute credentials for any other job.
-        ///
-        /// The value stored in this Secret is pre-computed by <c>DispatchLifecycleService</c>
-        /// before the K8s Job is created. <c>HubConnectionManager</c> and <c>WorkItemHttpClient</c>
-        /// use the key directly (no further derivation); the server-side <c>AgentApiKeyAuthHandler</c>
-        /// validates by computing <c>HMAC(masterKey, agentId)</c> and comparing with the presented token.
-        ///
-        /// Null for non-work-item jobs (model-fetch, consolidation) which are not yet migrated.
-        /// </summary>
-        public string? DerivedKeySecretName { get; init; }
     }
 
     /// <summary>
@@ -178,35 +166,22 @@ public static class JobSpecBuilder
             new() { Name = "ORCHESTRATOR_URL", Value = ctx.OrchestratorUrl },
         };
 
-        // Spec 043 Req 8a: vend derived key via per-Job Secret when available.
-        // Non-work-item jobs (model-fetch, consolidation) fall back to the file-based
-        // master key until they are migrated.
-        if (!string.IsNullOrEmpty(ctx.DerivedKeySecretName))
+        // Spec 043 Req 8a: every agent Job gets only its own key, HMAC-SHA256(master key, job name),
+        // from the per-Job Secret the dispatcher creates (AgentJobKeySecret). The master key is never
+        // mounted into an agent pod. The agent treats a key from the AGENT_API_KEY env var as already
+        // derived and uses it as-is, so it must arrive here and not via AGENT_API_KEY_FILE.
+        envVars.Add(new V1EnvVar
         {
-            // Derived key path: AGENT_API_KEY env var sourced from per-Job Secret.
-            // No AGENT_API_KEY_FILE — agent reads AGENT_API_KEY directly.
-            envVars.Add(new V1EnvVar
+            Name = AgentDefaults.EnvAgentApiKey,
+            ValueFrom = new V1EnvVarSource
             {
-                Name = "AGENT_API_KEY",
-                ValueFrom = new V1EnvVarSource
+                SecretKeyRef = new V1SecretKeySelector
                 {
-                    SecretKeyRef = new V1SecretKeySelector
-                    {
-                        Name = ctx.DerivedKeySecretName,
-                        Key = "agent-api-key"
-                    }
+                    Name = AgentJobKeySecret.NameFor(ctx.JobName),
+                    Key = AgentJobKeySecret.DataKey
                 }
-            });
-        }
-        else
-        {
-            // Legacy path: master Secret file mount (non-work-item jobs).
-            envVars.Add(new V1EnvVar
-            {
-                Name = "AGENT_API_KEY_FILE",
-                Value = "/var/run/secrets/agent-api-key/agent-api-key"
-            });
-        }
+            }
+        });
 
         envVars.Add(new V1EnvVar
         {
@@ -334,38 +309,15 @@ public static class JobSpecBuilder
     }
 
     /// <summary>
-    /// Builds the volume mounts and volumes for the agent container.
-    /// When <see cref="JobSpecBuilder.BuildContext.DerivedKeySecretName"/> is set (work-item mode),
-    /// the master <c>agent-api-key</c> Secret is NOT mounted — the derived key is vended via an
-    /// env var from the per-Job Secret instead. For legacy non-work-item jobs the master Secret
-    /// is still mounted via file.
+    /// Builds the volume mounts and volumes for the agent container. The master
+    /// <c>agent-api-key</c> Secret is never mounted; the pod's own key arrives as an env var from
+    /// its per-Job Secret (see <see cref="BuildEnvVars"/>).
     /// </summary>
     private static (List<V1VolumeMount> mounts, List<V1Volume> volumes) BuildVolumeMountsAndVolumes(
         bool isKiroAgent, BuildContext ctx)
     {
         var volumeMounts = new List<V1VolumeMount>();
         var volumes = new List<V1Volume>();
-
-        // Only mount the master secret for non-work-item jobs (legacy path).
-        // Work-item dispatch provides the derived key via DerivedKeySecretName (Spec 043 Req 8a).
-        if (string.IsNullOrEmpty(ctx.DerivedKeySecretName))
-        {
-            volumeMounts.Add(new V1VolumeMount
-            {
-                Name = AgentApiKeyVolumeName,
-                MountPath = "/var/run/secrets/agent-api-key",
-                ReadOnlyProperty = true
-            });
-            volumes.Add(new V1Volume
-            {
-                Name = AgentApiKeyVolumeName,
-                Secret = new V1SecretVolumeSource
-                {
-                    SecretName = ctx.AgentApiKeySecretName,
-                    Items = [new V1KeyToPath { Key = AgentApiKeyVolumeName, Path = AgentApiKeyVolumeName }]
-                }
-            });
-        }
 
         if (isKiroAgent && ctx.ClaimedPvc is not null)
         {

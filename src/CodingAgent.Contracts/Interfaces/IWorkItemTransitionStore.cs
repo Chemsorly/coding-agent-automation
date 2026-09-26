@@ -40,6 +40,14 @@ public interface IWorkItemTransitionStore
         Guid workItemId, CancellationToken ct);
 
     /// <summary>
+    /// Reads what orphan recovery needs to check that a re-registering agent owns a work item and
+    /// to rebuild its run from server-side state (see <see cref="CodingAgent.Pipeline.Models.WorkItemRunRecord"/>).
+    /// Returns null when the work item does not exist.
+    /// </summary>
+    Task<CodingAgent.Pipeline.Models.WorkItemRunRecord?> GetWorkItemRunRecordAsync(
+        Guid workItemId, CancellationToken ct);
+
+    /// <summary>
     /// Updates <c>WorkItemEntity.LastProgressAt</c> with throttling: only writes when the current
     /// DB value is null or older than the throttle interval (5 minutes). No-op when the work item
     /// does not exist. Callers wrap this to translate failures into telemetry.

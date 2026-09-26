@@ -416,6 +416,21 @@ public class AgentApiKeyAuthHandlerTests
         nameId.Should().Be("operator");
     }
 
+    /// <summary>
+    /// An agent pod holds only its own key (Spec 043 Req 8a). Presented without <c>?agentId</c> —
+    /// the operator path — it is not the master key, so it must not authenticate as the operator.
+    /// </summary>
+    [Fact]
+    public async Task HandleAuthenticate_AgentKeyWithoutAgentId_CannotAuthenticateAsOperator()
+    {
+        const string masterKey = "my-master-key";
+        var handler = await CreateHandlerAsync(masterKey, queryToken: DeriveToken(masterKey, "caa-aabbccdd"), authHeader: null);
+
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.Should().BeFalse();
+    }
+
     [Fact]
     public async Task HandleAuthenticate_DifferentAgents_ProduceDifferentKeys()
     {
