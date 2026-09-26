@@ -323,9 +323,9 @@ public sealed class HubConsolidationOperationsTests
         {
             JobId = "crun-tokens",
             Success = true,
-            ReviewTokenUsage     = new TokenUsage { InputTokens = 100, OutputTokens = 50,  ReasoningTokens = 10 }, // 160
-            RefinementTokenUsage = new TokenUsage { InputTokens = 200, OutputTokens = 80,  ReasoningTokens = 0  }, // 280
-            DiffSummaryTokenUsage= new TokenUsage { InputTokens = 30,  OutputTokens = 20,  ReasoningTokens = 5  }  // 55
+            ReviewTokenUsage = new TokenUsage { InputTokens = 100, OutputTokens = 50, ReasoningTokens = 10 }, // 160
+            RefinementTokenUsage = new TokenUsage { InputTokens = 200, OutputTokens = 80, ReasoningTokens = 0 }, // 280
+            DiffSummaryTokenUsage = new TokenUsage { InputTokens = 30, OutputTokens = 20, ReasoningTokens = 5 }  // 55
         };
         var sut = CreateSut();
 
@@ -350,7 +350,9 @@ public sealed class HubConsolidationOperationsTests
         {
             JobId = "crun-notok",
             Success = true,
-            ReviewTokenUsage = null, RefinementTokenUsage = null, DiffSummaryTokenUsage = null
+            ReviewTokenUsage = null,
+            RefinementTokenUsage = null,
+            DiffSummaryTokenUsage = null
         };
         var sut = CreateSut();
 
