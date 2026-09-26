@@ -100,6 +100,11 @@ public partial class AgentCoding : IDisposable
 
     // OnTemplateChanged is async void because Blazor change event handlers cannot return Task.
     // PersistLastTemplateAsync catches all known JS exceptions internally.
+    // TODO: [WARNING] TaskCanceledException / OperationCanceledException (e.g. circuit tear-down
+    // mid-await) are not caught inside PersistLastTemplateAsync. If either propagates out of the
+    // awaited call it escapes the async void and becomes an unobserved exception, potentially
+    // crashing the circuit. Add catch (OperationCanceledException) to PersistLastTemplateAsync
+    // (or here in the async void body) to close this gap. (DotNetSpecialist, issue #2947)
     private async void OnTemplateChanged(ChangeEventArgs e)
     {
         _manualDispatchTemplateId = e.Value?.ToString() ?? "";
@@ -120,6 +125,12 @@ public partial class AgentCoding : IDisposable
         // Runs after InitializeAsync so _templates is already populated.
         // JS interop throws on pre-render; RestoreLastTemplateAsync catches that silently.
         // On the subsequent interactive render the restore succeeds.
+        // TODO: [WARNING] There is no explicit StateHasChanged() after RestoreLastTemplateAsync
+        // completes here. Blazor schedules a re-render automatically after OnInitializedAsync
+        // finishes, so the dropdown reflects the restored value in practice — but this is an
+        // implicit dependency on the Blazor lifecycle. If the lifecycle ever changes (e.g. the
+        // restore is moved to a background Task), the UI may not update without an explicit call.
+        // (DotNetSpecialist, issue #2947)
         await RestoreLastTemplateAsync();
 
         // Auto-preselect when exactly one enabled template exists — avoids a required manual
@@ -173,6 +184,13 @@ public partial class AgentCoding : IDisposable
         catch (JSDisconnectedException) { /* circuit gone, skip */ }
         catch (JSException) { /* JS interop unavailable, skip */ }
         catch (ObjectDisposedException) { /* component disposed, skip */ }
+        // TODO: [WARNING] InvalidOperationException is a broad base class used throughout .NET and
+        // ASP.NET Core for many unrelated failure modes. Catching it silently here will also swallow
+        // unrelated InvalidOperationExceptions from JS.InvokeAsync or the _templates.Any() LINQ call,
+        // making those bugs invisible. The pre-render JS exception has a predictable message; prefer
+        // matching on that message, or restructure to call RestoreLastTemplateAsync only from
+        // OnAfterRenderAsync(firstRender: true) where JS interop is always safe — eliminating the
+        // need to suppress this exception class entirely. (DotNetSpecialist, issue #2947)
         // Suppresses the Blazor Server pre-render JS interop exception
         // ("JavaScript interop calls cannot be issued at this time").
         catch (InvalidOperationException) { /* pre-render pass, skip */ }
