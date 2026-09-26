@@ -85,7 +85,20 @@ public sealed class AgentApiKeyAuthHandler : AuthenticationHandler<AgentApiKeyAu
 
         // Derive expected key from agentId query parameter (HMAC path),
         // or use raw master key if agentId is absent (legacy fallback).
-        var agentId = Request.Query["agentId"].FirstOrDefault();
+        var agentIdValues = Request.Query["agentId"];
+        var agentId = agentIdValues.FirstOrDefault();
+
+        // agentId becomes the NameIdentifier claim, and hub code re-reads the raw query value with
+        // StringValues.ToString() (which comma-joins repeated values); both end up in log entries.
+        // Reject repeated values and control characters so every consumer sees exactly the single,
+        // printable value that was authenticated (log forging, CWE-117). Agent IDs are K8s job/pod
+        // names, so no legitimate agent is affected.
+        if (agentIdValues.Count > 1 || (agentId is not null && agentId.Any(char.IsControl)))
+        {
+            _serilogLogger.Warning("Agent API key authentication failed — malformed agentId query parameter from {RemoteIp}", Request.HttpContext.Connection.RemoteIpAddress);
+            return Task.FromResult(AuthenticateResult.Fail("Invalid agentId"));
+        }
+
         string expectedKey;
         if (!string.IsNullOrEmpty(agentId))
         {

@@ -431,6 +431,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
         _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan1, orphan2]);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         await _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId);
 
@@ -460,6 +461,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
         _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         await _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId);
 
@@ -576,6 +578,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
         _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
         // GetRun returns null — hash is absent (expired or not yet written). Under the fix,
         // GetRun returning null is the condition that triggers AddRun to re-materialize the hash.
         // If GetRun returned non-null, AddRun would be skipped (hash is live, no overwrite needed).
@@ -618,6 +621,7 @@ public sealed class AgentOrphanRecoveryServiceTests
         _facade.Setup(f => f.GetActiveRunsByAgent(agentId))
             .Returns([orphan])
             .Callback(() => { entry.ActiveJobId = "drain-assigned"; }); // simulate drain race
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         await _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId);
 
@@ -972,6 +976,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
         _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
         // GetRun returns non-null — hash exists in Redis (live run with advanced state)
         _facade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "run-orphan-exists"))).Returns(liveRun);
 
@@ -1030,6 +1035,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
         _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([staleSnapshot]);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
         // GetRun returns the live hash — hash exists with advanced currentStep
         _facade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "run-step-preserve"))).Returns(liveHash);
 
@@ -1238,6 +1244,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
         _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
         // GetRun returns null so AddRun is called; we simulate the disconnect inside AddRun.
         _facade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "run-orphan-concurrent")))
             .Returns((PipelineRun?)null);
@@ -1290,6 +1297,7 @@ public sealed class AgentOrphanRecoveryServiceTests
         _facade.Setup(f => f.GetActiveRunsByAgent(agentId))
             .Returns([orphan])
             .Callback(() => { entry.ActiveJobId = "drain-assigned"; }); // drain wins the race
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         await _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId);
 
@@ -1489,6 +1497,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
         _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
         // Both field writes fault — either continuation satisfies the TCS.
         _facade.Setup(f => f.UpdateAgentFieldAsync(agentId, It.IsAny<string>(), It.IsAny<string?>()))
             .Returns(Task.FromException(new InvalidOperationException("Redis down")));
@@ -1557,5 +1566,348 @@ public sealed class AgentOrphanRecoveryServiceTests
             Times.AtLeastOnce); // TODO [WARNING]: Only one UpdateAgentFieldFireAndForget call exists on this
                                 // code path; Times.Once would be stricter. See RestoreConsolidationTracking
                                 // test comment for rationale.
+    }
+
+    // ── DetectAndRestoreOrphans: terminal-state history guard (issue #3044) ────
+
+    [Fact]
+    public async Task DetectAndRestoreOrphans_CompletedRunInActiveSet_IsSkipped()
+    {
+        // AC1 + AC4: A completed run lingering in the active set must not be re-activated.
+        // The agent must remain in Idle state (TransitionStatus(Busy) never called).
+        // TODO [WARNING]: entry.OrphanRestoredAt.Should().BeNull() below is an implementation-detail
+        // assertion — it verifies the early-return by checking that OrphanRestoredAt (set inside
+        // lock) was never written. If OrphanRestoredAt is moved outside the lock in a future refactor,
+        // this assertion becomes a false negative or breaks for the wrong reason. The primary
+        // observable behavior is already captured by AddRun=Never, TransitionStatus=Never,
+        // and ActiveJobId=null.
+        var agentId = MakeAgentId();
+        var entry = MakeEntry();
+        var orphan = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-completed",
+            IssueIdentifier = "GH-42",
+            IssueTitle = "Completed orphan",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineRunSummary>
+            {
+                MakeSummary("run-completed", PipelineStep.Completed)
+            } as IReadOnlyList<PipelineRunSummary>);
+
+        await _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId);
+
+        _facade.Verify(f => f.AddRun(It.IsAny<PipelineRun>()), Times.Never,
+            "AddRun must not be called for a completed run");
+        _facade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never,
+            "TransitionStatus must not be called — agent must stay Idle");
+        entry.ActiveJobId.Should().BeNull("completed run must not set ActiveJobId");
+        entry.OrphanRestoredAt.Should().BeNull("completed run must not set OrphanRestoredAt (lock block was bypassed)");
+    }
+
+    [Fact]
+    public async Task DetectAndRestoreOrphans_PrMergedRunInActiveSet_IsSkipped()
+    {
+        // Guard must skip PrMerged (terminal non-retryable) just as it skips Completed.
+        var agentId = MakeAgentId();
+        var entry = MakeEntry();
+        var orphan = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-pr-merged",
+            IssueIdentifier = "GH-42",
+            IssueTitle = "PrMerged orphan",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineRunSummary>
+            {
+                MakeSummary("run-pr-merged", PipelineStep.PrMerged)
+            } as IReadOnlyList<PipelineRunSummary>);
+
+        await _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId);
+
+        _facade.Verify(f => f.AddRun(It.IsAny<PipelineRun>()), Times.Never,
+            "AddRun must not be called for a PrMerged run");
+        _facade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never,
+            "TransitionStatus must not be called — agent must stay Idle");
+        entry.ActiveJobId.Should().BeNull("PrMerged run must not set ActiveJobId");
+    }
+
+    [Fact]
+    public async Task DetectAndRestoreOrphans_PrClosedRunInActiveSet_IsSkipped()
+    {
+        // Guard must skip PrClosed (terminal non-retryable) just as it skips Completed.
+        var agentId = MakeAgentId();
+        var entry = MakeEntry();
+        var orphan = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-pr-closed",
+            IssueIdentifier = "GH-42",
+            IssueTitle = "PrClosed orphan",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineRunSummary>
+            {
+                MakeSummary("run-pr-closed", PipelineStep.PrClosed)
+            } as IReadOnlyList<PipelineRunSummary>);
+
+        await _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId);
+
+        _facade.Verify(f => f.AddRun(It.IsAny<PipelineRun>()), Times.Never,
+            "AddRun must not be called for a PrClosed run");
+        _facade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never,
+            "TransitionStatus must not be called — agent must stay Idle");
+        entry.ActiveJobId.Should().BeNull("PrClosed run must not set ActiveJobId");
+    }
+
+    [Fact]
+    public async Task DetectAndRestoreOrphans_ConflictRestartRunInActiveSet_IsSkipped()
+    {
+        // Guard must skip ConflictRestart (terminal non-retryable) just as it skips Completed.
+        // TODO [WARNING]: ConflictRestart semantics — IsTerminal() treats it as terminal; the guard
+        // therefore skips it as non-retryable. If ConflictRestart is ever reclassified as a
+        // retryable state (similar to Cancelled/Failed), the guard condition must be updated to
+        // include it in the restorable set, and this test must be updated accordingly.
+        var agentId = MakeAgentId();
+        var entry = MakeEntry();
+        var orphan = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-conflict-restart",
+            IssueIdentifier = "GH-42",
+            IssueTitle = "ConflictRestart orphan",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineRunSummary>
+            {
+                MakeSummary("run-conflict-restart", PipelineStep.ConflictRestart)
+            } as IReadOnlyList<PipelineRunSummary>);
+
+        await _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId);
+
+        _facade.Verify(f => f.AddRun(It.IsAny<PipelineRun>()), Times.Never,
+            "AddRun must not be called for a ConflictRestart run");
+        _facade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never,
+            "TransitionStatus must not be called — agent must stay Idle");
+        entry.ActiveJobId.Should().BeNull("ConflictRestart run must not set ActiveJobId");
+    }
+
+    [Fact]
+    public async Task DetectAndRestoreOrphans_GetRunHistoryAsyncThrows_FailsOpenAndRestoresRun()
+    {
+        // CRITICAL: if GetRunHistoryAsync faults (e.g. Redis/DB down), the guard must not
+        // propagate the exception and break agent registration. Instead it fails-open and
+        // proceeds with restoration (at worst, a completed run is briefly re-activated until
+        // ReconciliationService times it out — preferable to leaving the agent stuck in Idle).
+        var agentId = MakeAgentId();
+        var entry = MakeEntry();
+        var orphan = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-history-fault",
+            IssueIdentifier = "GH-42",
+            IssueTitle = "Orphan with history fault",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Redis unavailable"));
+        _facade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "run-history-fault"))).Returns((PipelineRun?)null);
+
+        // Must not throw — exception from GetRunHistoryAsync must be caught internally.
+        await _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId);
+
+        // Fail-open: restoration must proceed as if history is empty.
+        entry.ActiveJobId.Should().Be("run-history-fault",
+            "fail-open: run must be restored when history check faults");
+        _facade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once,
+            "TransitionStatus(Busy) must be called even when GetRunHistoryAsync throws");
+    }
+
+    [Fact]
+    public async Task DetectAndRestoreOrphans_FailedRunInActiveSet_IsRestored()
+    {
+        // AC2: A Failed run must still be restored — it may be retried.
+        // TODO [WARNING]: Does not verify entry.OrphanRestoredAt != null. For a Failed run the full
+        // lock block must execute (setting both ActiveJobId and OrphanRestoredAt). Without asserting
+        // OrphanRestoredAt, a partial execution path that sets ActiveJobId but skips OrphanRestoredAt
+        // would not be caught by this test.
+        var agentId = MakeAgentId();
+        var entry = MakeEntry();
+        var orphan = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-failed",
+            IssueIdentifier = "GH-42",
+            IssueTitle = "Failed orphan",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineRunSummary>
+            {
+                MakeSummary("run-failed", PipelineStep.Failed)
+            } as IReadOnlyList<PipelineRunSummary>);
+        _facade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "run-failed"))).Returns((PipelineRun?)null);
+
+        await _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId);
+
+        entry.ActiveJobId.Should().Be("run-failed", "Failed run must be restored as active job");
+        _facade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once,
+            "TransitionStatus(Busy) must be called for a Failed run");
+    }
+
+    [Fact]
+    public async Task DetectAndRestoreOrphans_CancelledRunInActiveSet_IsRestored()
+    {
+        // AC2: A Cancelled run must still be restored — it may be re-dispatched.
+        // TODO [WARNING]: Does not verify entry.OrphanRestoredAt != null. See the similar note on
+        // DetectAndRestoreOrphans_FailedRunInActiveSet_IsRestored above.
+        var agentId = MakeAgentId();
+        var entry = MakeEntry();
+        var orphan = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-cancelled",
+            IssueIdentifier = "GH-42",
+            IssueTitle = "Cancelled orphan",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineRunSummary>
+            {
+                MakeSummary("run-cancelled", PipelineStep.Cancelled)
+            } as IReadOnlyList<PipelineRunSummary>);
+        _facade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "run-cancelled"))).Returns((PipelineRun?)null);
+
+        await _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId);
+
+        entry.ActiveJobId.Should().Be("run-cancelled", "Cancelled run must be restored as active job");
+        _facade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once,
+            "TransitionStatus(Busy) must be called for a Cancelled run");
+    }
+
+    [Fact]
+    public async Task DetectAndRestoreOrphans_RunNotInHistory_IsRestored()
+    {
+        // The history guard is additive: when the run is not in history at all, restoration
+        // must proceed as before (guard does not affect the base case).
+        var agentId = MakeAgentId();
+        var entry = MakeEntry();
+        var orphan = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-in-flight",
+            IssueIdentifier = "GH-42",
+            IssueTitle = "In-flight orphan",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
+        // History is empty — run has not yet completed; must be restored
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _facade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "run-in-flight"))).Returns((PipelineRun?)null);
+
+        await _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId);
+
+        entry.ActiveJobId.Should().Be("run-in-flight");
+        _facade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
+    }
+
+    [Fact]
+    public async Task DetectAndRestoreOrphans_HistoryHasOtherRunsNotMatchingOrphan_IsRestored()
+    {
+        // History entries for different RunIds must not suppress restoration of this orphan.
+        // TODO [WARNING]: Does not cover the case where GetActiveRunsByAgent returns multiple runs
+        // and only orphanedRuns[^1] (mostRecent) is completed. Add a test with [run-old, run-completed]
+        // to verify the [^1] selection interacts correctly with the guard.
+        var agentId = MakeAgentId();
+        var entry = MakeEntry();
+        var orphan = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-orphan-x",
+            IssueIdentifier = "GH-42",
+            IssueTitle = "Orphan",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
+        // History has a different run as Completed — must not match this orphan
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineRunSummary>
+            {
+                MakeSummary("run-some-other-run", PipelineStep.Completed)
+            } as IReadOnlyList<PipelineRunSummary>);
+        _facade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "run-orphan-x"))).Returns((PipelineRun?)null);
+
+        await _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId);
+
+        entry.ActiveJobId.Should().Be("run-orphan-x",
+            "guard must not spuriously match history entries for different RunIds");
+        _facade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
     }
 }

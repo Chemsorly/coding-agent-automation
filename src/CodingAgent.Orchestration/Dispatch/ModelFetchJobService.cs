@@ -2,6 +2,7 @@ using CodingAgent.Pipeline;
 using CodingAgent.Orchestration.Health;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using k8s.Models;
 using Serilog;
 
@@ -158,7 +159,7 @@ public sealed class ModelFetchJobService
         }
 
         if (fetchError is not null)
-            Log.Warning("ModelFetchJobService: fetch failed — {Error}", fetchError);
+            Log.Warning("ModelFetchJobService: fetch failed — {Error}", LogSanitizer.SanitizeForLog(fetchError));
         else
             Log.Information("ModelFetchJobService: fetched {Count} model(s) via job {JobName}",
                 models.Count, jobName);
