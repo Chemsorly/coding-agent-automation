@@ -334,10 +334,6 @@
     private string? _redispatchError;
 
     // Cancel state — mirrors the re-dispatch confirm pattern
-    // TODO: [WARNING] No double-submit guard: if the sidebar's confirmation is re-opened and
-    // "Yes, cancel" is clicked a second time before the first PostStatusAsync completes, two
-    // parallel API calls can be issued. Work.razor prevents this with `if (!_cancelling.Add(id)) return`.
-    // Add an early-return guard here: `if (_cancelling) return;` before setting _cancelling = true.
     private bool _cancelling;
     // TODO: [WARNING] ex.Message from a caught Exception is rendered directly in the cancel-error-callout.
     // While Blazor HTML-encodes the value (no XSS risk), HttpRequestException messages can contain
@@ -562,6 +558,7 @@
     // "Cancel Run". The live OnRunCompleted event will flip the view to its terminal state.
     private async Task CancelRunAsync()
     {
+        if (_cancelling) return;
         if (!Guid.TryParse(RunId, out var id)) return;
         _cancelling = true;
         _cancelError = null;
