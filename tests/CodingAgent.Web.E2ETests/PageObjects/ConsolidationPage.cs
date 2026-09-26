@@ -88,6 +88,18 @@ public sealed class ConsolidationPage
             $".consolidation-card:has(.consolidation-card-title:has-text('{templateName}')) button:has-text('Brain Consolidation')");
     }
 
+    /// <summary>
+    /// Clicks the Brain Consolidation trigger button for a template, bypassing Playwright's
+    /// enabled/stable check (Force=true). Use for the second click in double-click dedup
+    /// tests where the button may have been disabled by the first click before this fires.
+    /// </summary>
+    public async Task ClickBrainConsolidationForcedAsync(string templateName)
+    {
+        await _page.ClickAsync(
+            $".consolidation-card:has(.consolidation-card-title:has-text('{templateName}')) button:has-text('Brain Consolidation')",
+            new PageClickOptions { Force = true });
+    }
+
     /// <summary>Clicks the Refactoring Scan trigger button for a template (opens the pre-flight modal).</summary>
     public async Task ClickRefactoringScanAsync(string templateName)
     {
@@ -224,5 +236,14 @@ public sealed class ConsolidationPage
             $".consolidation-card:has(.consolidation-card-title:has-text('{templateName}')) button:has-text('Refactoring Scan')");
         if (button is null) return false;
         return await button.IsDisabledAsync();
+    }
+
+    /// <summary>Clicks the Cancel button for a Pending run in the run history table by row index (0-based).</summary>
+    public async Task ClickCancelRunAsync(int rowIndex)
+    {
+        // The Cancel button uses class btn-cancel-run and is only rendered for Pending rows
+        // with a WorkItemId. Selector is scoped to the specific row by nth-child (1-based).
+        await _page.ClickAsync(
+            $".monitoring-table tbody tr:nth-child({rowIndex + 1}) button.btn-cancel-run");
     }
 }

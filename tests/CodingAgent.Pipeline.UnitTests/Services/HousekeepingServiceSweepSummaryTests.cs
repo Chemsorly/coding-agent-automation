@@ -348,6 +348,11 @@ public class HousekeepingServiceSweepSummaryMetricTests
                 if (tag.Key == "mergeability_status") status = tag.Value?.ToString() ?? "";
                 if (tag.Key == "repo_provider_id") repoId = tag.Value?.ToString() ?? "";
             }
+            // Filter to this class's own emissions only. HousekeepingServiceTests is not in
+            // [Collection("Metrics")] and runs concurrently, emitting pr_evaluated with
+            // repo_provider_id="rp-1". Without this guard, those emissions bleed into
+            // HaveCount assertions and produce spurious failures.
+            if (repoId != RepoId) return;
             measurements.Add((value, status, repoId));
         });
         listener.Start();

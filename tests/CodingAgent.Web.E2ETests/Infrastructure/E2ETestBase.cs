@@ -125,4 +125,32 @@ public abstract class E2ETestBase : IAsyncLifetime
         throw new TimeoutException(
             $"Condition not met within {effectiveTimeout.TotalSeconds}s");
     }
+
+    /// <summary>
+    /// Async overload of <see cref="WaitUntilAsync(Func{bool}, TimeSpan?, TimeSpan?)"/>.
+    /// Accepts an async condition so callers can await service calls directly inside the
+    /// predicate rather than blocking with <c>.GetAwaiter().GetResult()</c>. Calling a
+    /// synchronous blocking wait on an async method inside a thread-pool polling loop can
+    /// cause thread-pool starvation under sustained CI load (each polling iteration occupies
+    /// a thread-pool thread for the full async I/O duration). This overload eliminates that
+    /// risk by awaiting the condition task directly.
+    /// </summary>
+    protected static async Task WaitUntilAsync(
+        Func<Task<bool>> condition,
+        TimeSpan? timeout = null,
+        TimeSpan? pollInterval = null)
+    {
+        var effectiveTimeout = timeout ?? TimeSpan.FromSeconds(25);
+        var deadline = DateTime.UtcNow + effectiveTimeout;
+        var interval = pollInterval ?? TimeSpan.FromMilliseconds(50);
+
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await condition()) return;
+            await Task.Delay(interval);
+        }
+
+        throw new TimeoutException(
+            $"Condition not met within {effectiveTimeout.TotalSeconds}s");
+    }
 }
