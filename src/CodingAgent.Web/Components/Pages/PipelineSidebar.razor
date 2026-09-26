@@ -41,7 +41,7 @@
                  data-testid="phase-@phaseTestId"
                  data-phase-state="@phaseStateClass">
                 <div class="phase-header">
-                    <span class="phase-icon"><Icon Name="@GetPhaseIcon(phaseState)" /></span>
+                    <span class="phase-icon"><Icon Name="@GetPhaseIcon(phaseState)" Size="16" /></span>
                     <span class="phase-name">@phase.Name</span>
                     <span class="phase-counter">@GetPhaseCounter(phaseState, completedCount, visibleSteps.Count)</span>
                 </div>
@@ -61,7 +61,7 @@
                              data-step-state="@stepStateClass"
                              @onclick="() => ToggleStep(step, state)" @onclick:stopPropagation="true">
                             <div class="step-card-header" aria-expanded="@isExpanded.ToString().ToLower()">
-                                <span class="step-card-icon"><Icon Name="@GetStepIcon(state)" /></span>
+                                <span class="step-card-icon"><Icon Name="@GetStepIcon(state)" Size="16" /></span>
                                 <span class="step-card-name">@step.ToDisplayName()</span>
                             </div>
 
@@ -209,7 +209,7 @@
     };
 
     private enum StepState { Completed, Active, Pending, Failed, Cancelled, Revisited, Restarted }
-    private enum PhaseState { Completed, Active, Pending, Failed, Cancelled, Retry }
+    private enum PhaseState { Completed, Active, Pending, Failed, Cancelled, Retry, Restarted }
 
     private sealed record PhaseDefinition(string Name, string TestId, PipelineStep[] Steps);
 
@@ -323,6 +323,8 @@
         var flags = GetStepStateFlags(visibleSteps);
 
         if (flags.HasFailed) return PhaseState.Failed;
+        // A conflict restart is not a failure: the run was superseded by a re-dispatched one.
+        if (flags.HasRestarted) return PhaseState.Restarted;
         if (flags.HasCancelled) return PhaseState.Cancelled;
         if (flags.HasActive) return PhaseState.Active;
 
@@ -349,12 +351,13 @@
         return PhaseState.Active;
     }
 
-    private sealed record StepStateFlags(bool HasActive, bool HasFailed, bool HasCancelled, bool HasRevisited, bool AllCompleted, bool AllPending);
+    private sealed record StepStateFlags(bool HasActive, bool HasFailed, bool HasRestarted, bool HasCancelled, bool HasRevisited, bool AllCompleted, bool AllPending);
 
     private StepStateFlags GetStepStateFlags(List<PipelineStep> steps)
     {
         var hasActive = false;
         var hasFailed = false;
+        var hasRestarted = false;
         var hasCancelled = false;
         var hasRevisited = false;
         var allCompleted = true;
@@ -366,12 +369,13 @@
             if (state != StepState.Completed) allCompleted = false;
             if (state != StepState.Pending) allPending = false;
             if (state == StepState.Active) hasActive = true;
-            if (state is StepState.Failed or StepState.Restarted) hasFailed = true;
+            if (state == StepState.Failed) hasFailed = true;
+            if (state == StepState.Restarted) hasRestarted = true;
             if (state == StepState.Cancelled) hasCancelled = true;
             if (state == StepState.Revisited) hasRevisited = true;
         }
 
-        return new StepStateFlags(hasActive, hasFailed, hasCancelled, hasRevisited, allCompleted, allPending);
+        return new StepStateFlags(hasActive, hasFailed, hasRestarted, hasCancelled, hasRevisited, allCompleted, allPending);
     }
 
     private static string GetPhaseIcon(PhaseState state) => state switch
@@ -380,7 +384,7 @@
         PhaseState.Active => "play",
         PhaseState.Failed => "x-circle",
         PhaseState.Cancelled => "slash",
-        PhaseState.Retry => "refresh-cw",
+        PhaseState.Retry or PhaseState.Restarted => "refresh-cw",
         _ => "circle"
     };
 
@@ -390,6 +394,7 @@
         PhaseState.Active => "in progress",
         PhaseState.Failed => $"{completed}/{total} failed",
         PhaseState.Retry => "(retry)",
+        PhaseState.Restarted => $"{completed}/{total} · restarted",
         PhaseState.Cancelled => $"{completed}/{total} cancelled",
         _ => $"0/{total}"
     };
@@ -413,6 +418,7 @@
         PhaseState.Failed => "failed",
         PhaseState.Cancelled => "cancelled",
         PhaseState.Retry => "retry",
+        PhaseState.Restarted => "restart",
         _ => "pending"
     };
 

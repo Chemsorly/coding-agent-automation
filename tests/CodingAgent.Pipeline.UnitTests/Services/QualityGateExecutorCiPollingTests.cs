@@ -1,8 +1,12 @@
+using System.Diagnostics.Metrics;
 using AwesomeAssertions;
-using Moq;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Telemetry;
+using CodingAgent.Web.TestUtilities;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
+using Moq;
 
 namespace CodingAgent.Pipeline.UnitTests;
 
@@ -1338,4 +1342,186 @@ public class QualityGateExecutorCiNotStartedExhaustionTests
         result.ExternalCi.IsInfrastructureFailure.Should().BeTrue(
             "IsInfrastructureFailure must propagate to GateResult to allow RunRetryLoopAsync to short-circuit");
     }
+}
+
+/// <summary>
+/// Regression test for issue #3046: <c>_externalCiDuration</c> histogram must be recorded on
+/// all exit paths from <c>RunExternalCiPollAsync</c>, including when
+/// <c>PollAndHandleInfraRetryAsync</c> throws an unhandled provider exception.
+///
+/// Before the fix, the <c>_externalCiDuration.Record</c> call was placed after the await without
+/// a try/finally wrapper, so any exception from <c>PollAndHandleInfraRetryAsync</c> silently
+/// dropped the duration sample, biasing P99 downward.
+/// </summary>
+public class QualityGateExecutorExternalCiDurationTelemetryTests : IDisposable
+{
+    private readonly TestMeterFactory _meterFactory = new();
+    private readonly MetricCollector<double> _externalCiCollector;
+
+    private readonly Mock<IQualityGateValidator> _mockValidator = new();
+    private readonly Mock<IAgentProvider> _mockAgent = new();
+    private readonly Mock<IPipelineCallbacks> _mockCallbacks = new();
+    private readonly Mock<IAgentIssueOperations> _mockIssueOps = new();
+    private readonly Mock<IRepositoryProvider> _mockRepoProvider = new();
+    private readonly Mock<IPipelineProvider> _mockPipelineProvider = new();
+    private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
+    private readonly Mock<Serilog.ILogger> _mockLogger = new();
+    private readonly PipelineRun _run;
+    private readonly QualityGateExecutor _executor;
+
+    private static readonly QualityGateReport PassingLocalReport = new()
+    {
+        Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "ok" },
+        Tests = new GateResult { GateName = "Tests", Passed = true, Details = "ok" }
+    };
+
+    public QualityGateExecutorExternalCiDurationTelemetryTests()
+    {
+        _externalCiCollector = new MetricCollector<double>(
+            _meterFactory, PipelineTelemetry.SourceName, "quality_gate.external_ci.duration");
+
+        _run = new PipelineRun
+        {
+            RunId = "telemetry-ext-ci-duration-3046",
+            IssueIdentifier = "3046",
+            IssueTitle = "ExternalCiDuration exception-path telemetry test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            WorkspacePath = Path.Combine(Path.GetTempPath(), $"qg-extci-dur-{Guid.NewGuid():N}"),
+            BranchName = "feature/auto-3046-test"
+        };
+
+        _executor = new QualityGateExecutor(
+            _mockValidator.Object,
+            new PullRequestOrchestrator(_mockLogger.Object),
+            new CiLogWriter(_mockLogger.Object),
+            new FeedbackService(_mockLogger.Object),
+            _mockLogger.Object,
+            _mockHistoryService.Object,
+            _meterFactory);
+
+        SetupDefaultMocks();
+    }
+
+    public void Dispose()
+    {
+        _externalCiCollector.Dispose();
+        _meterFactory.Dispose();
+    }
+
+    /// <summary>
+    /// Regression test for issue #3046: when <c>PollAndHandleInfraRetryAsync</c> throws an
+    /// unhandled provider exception, <c>_externalCiDuration.Record</c> MUST still be called.
+    ///
+    /// Before the fix, the histogram received zero measurements on the exception path.
+    /// After the fix (wrapping the await in try/finally), it receives exactly one measurement.
+    ///
+    /// The exception propagates from <c>WaitForCompletionAsync</c> through
+    /// <c>PollAndHandleInfraRetryAsync</c> → <c>RunExternalCiPollAsync</c>, then is caught by
+    /// <c>AppendExternalCiIfNeededAsync</c>'s outer <c>catch (Exception ex)</c> block which
+    /// produces a <c>BuildCiErrorGateResult</c>. The test receives a normal (non-throwing)
+    /// return value from <c>AppendExternalCiIfNeededAsync</c>.
+    ///
+    /// <c>GetRunStatusAsync</c> must return Running so that
+    /// <c>PollCiWithNotStartedRetryAsync</c> (called inside <c>PollAndHandleInfraRetryAsync</c>)
+    /// proceeds past the not-started check and reaches <c>WaitForCompletionAsync</c>, which then
+    /// throws the provider exception we want to exercise.
+    /// </summary>
+    [Fact]
+    public async Task RunExternalCiPollAsync_WhenPollAndHandleThrows_StillRecordsExternalCiDuration()
+    {
+        // Arrange: CI appears to be running (so we reach WaitForCompletionAsync)
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Running,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Running }]
+            });
+
+        // WaitForCompletionAsync throws a provider exception — the unhandled exception path
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("provider communication error"));
+
+        // Act: AppendExternalCiIfNeededAsync absorbs the exception via catch (Exception ex)
+        var result = await _executor.AppendExternalCiIfNeededAsync(
+            BuildContext(), PassingLocalReport, allowEmptyCommit: false, CancellationToken.None);
+
+        // Assert: ExternalCi gate is set (confirms the exception path was taken, not a short-circuit)
+        result.ExternalCi.Should().NotBeNull(
+            "the exception path must produce a CI error gate result, not null");
+        result.ExternalCi!.Passed.Should().BeFalse(
+            "a provider exception must result in a failed CI gate");
+
+        // Assert: _externalCiDuration was recorded despite the exception (regression guard for #3046)
+        var measurements = _externalCiCollector.GetMeasurementSnapshot();
+        measurements.Should().HaveCount(1,
+            "quality_gate.external_ci.duration must be recorded exactly once even when " +
+            "PollAndHandleInfraRetryAsync throws (issue #3046: Record must be in a finally block)");
+        // TODO [WARNING]: This assertion is too weak — BeGreaterThanOrEqualTo(0) is always satisfied
+        // by Stopwatch.Elapsed.TotalSeconds (which is never negative). Even a zeroed or unused stopwatch
+        // would pass. Consider tightening to BeGreaterThan(0) once the async operations consistently
+        // produce a measurable elapsed time (the test involves async mocks, so sub-millisecond completion
+        // is possible in theory, but in practice some positive time will have elapsed).
+        measurements[0].Value.Should().BeGreaterThanOrEqualTo(0,
+            "recorded duration must be a non-negative elapsed time");
+    }
+
+    // TODO [WARNING]: Only the exception path through RunExternalCiPollAsync is tested here.
+    // The fix (wrapping the await in try/finally) affects both success and exception exit paths,
+    // but only the exception path is exercised by the test above. A complementary test verifying
+    // that _externalCiDuration is also recorded on the normal-return path would make coverage
+    // symmetric and guard against a regression where the finally is replaced by two separate
+    // Record calls (one in try, one in catch). The success path was presumably covered by
+    // pre-existing tests, but a dedicated test here would make the regression guard explicit.
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private void SetupDefaultMocks()
+    {
+        _mockRepoProvider.Setup(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
+        _mockRepoProvider.Setup(r => r.PushBranchAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("sha-3046-abc");
+
+        _mockCallbacks.Setup(c => c.CreateDraftPrIfNotExists(
+                It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRun>()))
+            .Returns(Task.CompletedTask);
+
+        _mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
+    }
+
+    private QualityGateContext BuildContext() => new()
+    {
+        Run = _run,
+        Config = new PipelineConfiguration
+        {
+            AgentTimeout = TimeSpan.FromMinutes(10),
+            MaxRetries = 0,
+            MaxInfrastructureRetries = 0,
+            ExternalCiTimeout = TimeSpan.FromMinutes(5),
+            CiNotStartedTimeout = TimeSpan.FromMilliseconds(50),
+            ExternalCiPollInterval = TimeSpan.FromMilliseconds(50),
+            StallPollInterval = TimeSpan.FromMilliseconds(50),
+            StallWarningInterval = TimeSpan.FromHours(1)
+        },
+        AgentProvider = _mockAgent.Object,
+        IssueOps = _mockIssueOps.Object,
+        Callbacks = _mockCallbacks.Object,
+        RepoProvider = _mockRepoProvider.Object,
+        PipelineProvider = _mockPipelineProvider.Object,
+        QualityGateConfigs = new List<QualityGateConfiguration>()
+    };
 }

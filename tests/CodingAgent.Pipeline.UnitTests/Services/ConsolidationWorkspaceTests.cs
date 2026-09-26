@@ -80,15 +80,23 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
         }
     }
 
-    private ConsolidationService CreateSut(ILogger? logger = null) => new(new ConsolidationServiceDependencies(
-        logger ?? new LoggerConfiguration().CreateLogger(),
-        _config,
-        _mockProjectStore.Object,
-        _mockRunHistory.Object,
-        new FileSystemConsolidationRunStore(_runsDir),
-        new InMemoryHarnessSuggestionStore(),
-        new Mock<IProviderConfigStore>().Object,
-        WorkspaceManager: _workspaceManager));
+    private ConsolidationService CreateSut(ILogger? logger = null)
+    {
+        var mockWorkDistributor = new Mock<IWorkDistributor>();
+        mockWorkDistributor.Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-workspace-test", ErrorMessage: null));
+
+        return new ConsolidationService(new ConsolidationServiceDependencies(
+            logger ?? new LoggerConfiguration().CreateLogger(),
+            _config,
+            _mockProjectStore.Object,
+            _mockRunHistory.Object,
+            new FileSystemConsolidationRunStore(_runsDir),
+            new InMemoryHarnessSuggestionStore(),
+            new Mock<IProviderConfigStore>().Object,
+            WorkspaceManager: _workspaceManager,
+            WorkDistributor: mockWorkDistributor.Object));
+    }
 
     // ── Workspace uses separate directory from pipeline ───────────────────
 

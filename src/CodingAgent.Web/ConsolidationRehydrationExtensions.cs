@@ -1,7 +1,6 @@
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
-using CodingAgent.Web.Services;
 
 namespace CodingAgent.Web;
 
@@ -11,14 +10,24 @@ namespace CodingAgent.Web;
 internal static class ConsolidationRehydrationExtensions
 {
     /// <summary>
-    /// Cleans up orphaned consolidation runs from previous sessions.
+    /// Cleans up orphaned consolidation runs from previous sessions and rehydrates
+    /// Pending run keys into the in-memory dedup tracker.
     /// </summary>
     /// <remarks>
-    /// Pending runs are now loop-owned: consolidation WorkItems are created as
-    /// <c>Pending</c> via <c>POST /api/work-items</c> and claimed by the
-    /// <c>WorkItemDispatchLoop</c>. Queued runs not yet dispatched before a pod restart
-    /// will be picked up by <see cref="Services.ConsolidationRetryBackgroundService"/>
-    /// on its first sweep (default 2-minute interval) — no startup rehydration needed.
+    /// Consolidation WorkItems are created as <c>Pending</c> synchronously by
+    /// <c>ConsolidationService.TriggerAsync</c> via <c>IWorkDistributor.DistributeAsync</c>.
+    /// The <c>WorkItemDispatchLoop</c> picks them up and dispatches them. There is no
+    /// startup retry sweep — if a trigger fails transiently, the caller must re-trigger.
+    /// <para>
+    /// This method performs two things:
+    /// <list type="number">
+    ///   <item>Marks any <c>Running</c> consolidation runs as <c>Failed</c> if no active agent
+    ///         is working on them (orphaned by pod restart).</item>
+    ///   <item>Adds <c>Pending</c> run keys back into the in-memory dedup tracker so that a
+    ///         duplicate trigger for the same (type, templateId) is rejected until the existing
+    ///         WorkItem is dispatched or fails.</item>
+    /// </list>
+    /// </para>
     /// <para>
     /// Must run after endpoint registration so that middleware is configured before
     /// background work begins.
@@ -28,14 +37,6 @@ internal static class ConsolidationRehydrationExtensions
     {
         ArgumentNullException.ThrowIfNull(app);
 
-        // Clean up orphaned consolidation runs from previous sessions.
-        // A run is only truly orphaned if no agent is currently working on it.
-        // Since agents connect to the API hub (not the orchestrator), a consolidation
-        // run with Status=Running may still have an active agent after an orchestrator
-        // restart. Query the API directly — IAgentRegistryService is backed by a polling
-        // snapshot that has NOT yet fired at startup time (AgentRegistrySyncService is a
-        // BackgroundService that starts after app.Run), so using GetAllAgents() would always
-        // return empty and the skip guard would never fire.
         var consolidationService = app.Services.GetRequiredService<IConsolidationService>();
         var apiAgentClient = app.Services.GetRequiredService<IPipelineApiAgentClient>();
         IReadOnlyList<AgentEntryDto> liveAgentDtos;

@@ -420,7 +420,7 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Templates")).Click();
 
         // Click remove button for Template One
-        cut.Find(".btn-danger").Click();
+        cut.Find(".btn-icon-danger").Click();
 
         // GetProjectsAsync must be called at least twice:
         // once on initial render, once after RemoveTemplate → LoadDataAsync

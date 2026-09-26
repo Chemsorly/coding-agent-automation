@@ -139,6 +139,11 @@ public static class PipelineRunHashExtensions
             J("resolvedQualityGateConfigIds", run.ResolvedQualityGateConfigIds),
             J("resolvedReviewerConfigIds",  run.ResolvedReviewerConfigIds),
             J("codeReviewAgentFindings",    run.CodeReviewAgentFindings),
+
+            // Consolidation result fields
+            JEnum("consolidationType",          run.ConsolidationType),
+            F("consolidationTemplateId",        run.ConsolidationTemplateId ?? ""),
+            F("consolidationResultSummary",     run.ConsolidationResultSummary ?? ""),
         ];
     }
 
@@ -278,6 +283,11 @@ public static class PipelineRunHashExtensions
         if (findingsDict is not null)
             foreach (var kv in findingsDict)
                 run.CodeReviewAgentFindings[kv.Key] = kv.Value;
+
+        // Consolidation result fields
+        run.ConsolidationType = JEnum<ConsolidationRunType>(d, "consolidationType");
+        run.ConsolidationTemplateId = NullIfEmpty(d.GetValueOrDefault("consolidationTemplateId"));
+        run.ConsolidationResultSummary = NullIfEmpty(d.GetValueOrDefault("consolidationResultSummary"));
 
         return run;
     }

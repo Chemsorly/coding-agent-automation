@@ -18,20 +18,15 @@ public enum ConsolidationRunStatus
     Running,
     Succeeded,
     Failed,
-    Queued,
     Cancelled,
     /// <summary>
     /// The work item has been successfully submitted to the unified dispatch queue as
-    /// <c>Pending</c> (i.e. <see cref="DistributionResult.Queued"/> was true on success).
-    /// The WorkItem already exists in the database — the Scheduler's
-    /// <c>WorkItemDispatchLoop</c> will pick it up and create the K8s Job when
-    /// capacity is available.
+    /// <c>Pending</c> via <c>POST /api/work-items</c>. The WorkItem already exists in the
+    /// database — the Scheduler's <c>WorkItemDispatchLoop</c> will pick it up and create
+    /// the K8s Job when capacity is available.
     /// <para>
-    /// This state is intentionally excluded from
-    /// <c>ConsolidationService.RehydrateQueuedRunsAsync</c> so the retry background
-    /// service does not re-dispatch it (which would produce an idempotent 409 each cycle).
-    /// The run will be transitioned to <c>Running</c> by the agent drain service when the
-    /// K8s Job starts.
+    /// This is the initial status of every newly triggered consolidation run. The run will
+    /// be transitioned to <c>Running</c> by the agent drain service when the K8s Job starts.
     /// </para>
     /// </summary>
     Pending
@@ -64,12 +59,6 @@ public sealed class ConsolidationRun
     /// <see cref="ConsolidationJobResult.DiffSummaryTokenUsage"/>.
     /// </summary>
     public long TotalTokens { get; set; }
-
-    /// <summary>
-    /// Required agent labels resolved at enqueue time. Persisted to enable restart rehydration
-    /// of queued runs without re-resolving provider configs.
-    /// </summary>
-    public IReadOnlyList<string>? QueuedRequiredLabels { get; set; }
 
     /// <summary>
     /// Project display name for the owning project (resolved from template → project at trigger time).
