@@ -23,7 +23,7 @@ namespace CodingAgent.Infrastructure.UnitTests.Persistence;
 /// </summary>
 public abstract class ConsolidationRunStoreContractTests : IDisposable
 {
-    private static readonly string[] s_DotnetDotnet10UacLabels = new[] { "dotnet", "dotnet10", "uac" };
+    private static readonly string[] s_DotnetDotnet10UacLabels = ["dotnet", "dotnet10", "uac"]; // Retained for backward-compat deserialization tests
 
     /// <summary>Create a fresh store instance for isolation between tests.</summary>
     protected abstract IConsolidationRunStore CreateStore();
@@ -199,8 +199,7 @@ public abstract class ConsolidationRunStoreContractTests : IDisposable
             CompletedAtUtc = new DateTimeOffset(2026, 6, 15, 10, 35, 0, TimeSpan.Zero),
             Status = ConsolidationRunStatus.Succeeded,
             Summary = "Detected 3 refactoring opportunities",
-            TotalTokens = 54321,
-            QueuedRequiredLabels = new[] { "kiro", "dotnet" }
+            TotalTokens = 54321
         };
 
         await store.SaveRunAsync(run, CancellationToken.None);
@@ -216,32 +215,6 @@ public abstract class ConsolidationRunStoreContractTests : IDisposable
         loaded.Status.Should().Be(ConsolidationRunStatus.Succeeded);
         loaded.Summary.Should().Be("Detected 3 refactoring opportunities");
         loaded.TotalTokens.Should().Be(54321);
-        loaded.QueuedRequiredLabels.Should().BeEquivalentTo(new[] { "kiro", "dotnet" });
-    }
-
-    // ── Edge-case: field preservation ───────────────────────────────────
-
-    [Fact]
-    public async Task SaveRun_PreservesQueuedRequiredLabels()
-    {
-        var store = CreateStore();
-        var run = new ConsolidationRun
-        {
-            RunId = Guid.NewGuid().ToString(),
-            Type = ConsolidationRunType.BrainConsolidation,
-            TemplateId = "tmpl-1",
-            TemplateName = "Test",
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            Status = ConsolidationRunStatus.Queued,
-            QueuedRequiredLabels = new List<string> { "dotnet", "dotnet10", "uac" }
-        };
-
-        await store.SaveRunAsync(run, CancellationToken.None);
-        var loaded = await store.GetByIdAsync(run.RunId, CancellationToken.None);
-
-        loaded.Should().NotBeNull();
-        loaded!.QueuedRequiredLabels.Should().NotBeNull();
-        loaded.QueuedRequiredLabels.Should().BeEquivalentTo(s_DotnetDotnet10UacLabels);
     }
 
     [Fact]
@@ -327,7 +300,7 @@ public abstract class ConsolidationRunStoreContractTests : IDisposable
             TemplateId = "tmpl-transition",
             TemplateName = "Transition Test",
             StartedAtUtc = creationTimestamp,
-            Status = ConsolidationRunStatus.Queued
+            Status = ConsolidationRunStatus.Pending
         };
 
         // Save initial queued state

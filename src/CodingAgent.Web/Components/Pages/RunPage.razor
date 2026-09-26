@@ -6,6 +6,7 @@
 @using CodingAgent.Pipeline.Models
 @using CodingAgent.Pipeline.Services
 @using CodingAgent.Web.Components.Shared
+@using CodingAgent.Web.Services
 @using Microsoft.AspNetCore.SignalR.Client
 @inject IPipelineApiRunHistoryClient RunHistory
 @inject IPipelineApiWorkItemClient WorkItems
@@ -38,26 +39,8 @@
     else
     {
         var run = _run;
-        var result = run.FinalStep switch
-        {
-            PipelineStep.Completed => "Completed",
-            PipelineStep.Failed => "Failed",
-            PipelineStep.Cancelled => "Cancelled",
-            PipelineStep.ConflictRestart => "Restarted",
-            PipelineStep.PrMerged => "Merged",
-            PipelineStep.PrClosed => "Closed",
-            _ => "Running"
-        };
-        var resultClass = run.FinalStep switch
-        {
-            PipelineStep.Completed => "step-completed",
-            PipelineStep.Cancelled => "step-cancelled",
-            PipelineStep.Failed => "step-failed",
-            PipelineStep.ConflictRestart => "step-restart",
-            PipelineStep.PrMerged => "step-completed",
-            PipelineStep.PrClosed => "step-cancelled",
-            _ => "step-running"
-        };
+        var result = RunOutcomeDisplay.Label(run.FinalStep);
+        var resultClass = RunOutcomeDisplay.BadgeClass(run.FinalStep);
 
         <div class="cockpit-page-header">
             <div class="cockpit-page-titles">
@@ -79,7 +62,7 @@
                         <span class="run-type-badge run-type-impl"><Icon Name="hammer" Size="14" /> Impl</span>
                     }
                     <span class="step-badge @resultClass">@result</span>
-                    @if (run.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled and not PipelineStep.ConflictRestart and not PipelineStep.PrMerged and not PipelineStep.PrClosed)
+                    @if (RunOutcomeDisplay.IsActive(run.FinalStep))
                     {
                         <span class="cockpit-page-sub">at @((_liveStep ?? run.FinalStep).ToDisplayName())</span>
                     }
@@ -264,8 +247,8 @@
                 <div class="cockpit-card-pad">
                     @if (_redispatchSuccess)
                     {
-                        <div class="agent-detail-confirm" style="background: var(--success-bg, #e6f4ea); border-color: var(--success-border, #81c784);">
-                            <span style="color: var(--success-text, #2e7d32);">✓ Re-dispatched successfully.</span>
+                        <div class="agent-detail-confirm" style="background: var(--success-bg); border-color: var(--success);">
+                            <span style="color: var(--success);">✓ Re-dispatched successfully.</span>
                             <a href="work" style="margin-left: 8px; font-size: 13px;">View work queue →</a>
                         </div>
                     }
@@ -286,7 +269,7 @@
                     {
                         @if (!_showRedispatchConfirm)
                         {
-                            <button class="btn-primary" data-testid="redispatch-btn"
+                            <button class="btn-trigger" data-testid="redispatch-btn"
                                     @onclick="() => _showRedispatchConfirm = true"
                                     disabled="@_redispatchInProgress">
                                 <Icon Name="refresh-cw" Size="14" /> Re-dispatch
@@ -301,7 +284,7 @@
                                     Clear them on the issue tracker if needed before re-dispatching.
                                 </p>
                                 <div class="confirm-buttons">
-                                    <button class="btn-danger" data-testid="redispatch-confirm-btn"
+                                    <button class="btn-save" data-testid="redispatch-confirm-btn"
                                             @onclick="RedispatchAsync"
                                             disabled="@_redispatchInProgress">
                                         @if (_redispatchInProgress) { <span>Dispatching…</span> } else { <span>Confirm re-dispatch</span> }
@@ -362,8 +345,7 @@
     // user-facing message and logging the full ex.Message server-side only.
     private string? _cancelError;
 
-    private static bool IsActive(PipelineRunSummary r)
-        => r.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled;
+    private static bool IsActive(PipelineRunSummary r) => RunOutcomeDisplay.IsActive(r.FinalStep);
 
     protected override async Task OnParametersSetAsync()
     {

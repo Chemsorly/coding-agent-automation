@@ -430,10 +430,10 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             .Returns(Task.CompletedTask)
             .Callback(() => swapCalled.TrySetResult());
 
-        // Track when the full sweep (both passes) has completed by counting
-        // GetProviderConfigsWithSecretsAsync calls. Pass 1 and Pass 2 each call it once,
-        // so the 2nd call signals that the entire sweep is done.
-        var bothPassesCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Track when the full sweep (all four passes) has completed by counting
+        // GetProviderConfigsWithSecretsAsync calls. Passes 1, 2, 3, and 4 each call it once,
+        // so the 4th call signals that the entire sweep is done.
+        var allPassesCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var providerConfigCallCount = 0;
         _mockConfigClient
             .Setup(s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
@@ -450,8 +450,8 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             })
             .Callback(() =>
             {
-                if (Interlocked.Increment(ref providerConfigCallCount) >= 2)
-                    bothPassesCompleted.TrySetResult();
+                if (Interlocked.Increment(ref providerConfigCallCount) >= 4)
+                    allPassesCompleted.TrySetResult();
             });
 
         // Act
@@ -463,24 +463,21 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             "SwapLabelAsync should have been called — if this timed out, the sweep either " +
             "never ran or the issue was incorrectly skipped by one of the defense checks");
 
-        // Wait for Pass 2 to finish before asserting the call count. Pass 1 fires SwapLabelAsync
-        // (the signal above), but Pass 2 runs afterward. Asserting immediately after Pass 1 is a
-        // race — the second GetProviderConfigsWithSecretsAsync call may not have occurred yet.
-        var bothCompleted = await Task.WhenAny(bothPassesCompleted.Task, Task.Delay(TimeSpan.FromSeconds(30)));
-        bothCompleted.Should().BeSameAs(bothPassesCompleted.Task,
-            "Both sweep passes should have completed within the timeout");
+        // Wait for all passes to finish before asserting the call count. Pass 1 fires SwapLabelAsync
+        // (the signal above), but Passes 2, 3, and 4 run afterward. Asserting immediately after Pass 1 is a
+        // race — the remaining GetProviderConfigsWithSecretsAsync calls may not have occurred yet.
+        var allCompleted = await Task.WhenAny(allPassesCompleted.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+        allCompleted.Should().BeSameAs(allPassesCompleted.Task,
+            "All four sweep passes should have completed within the timeout");
 
-        // Assert: provider config was loaded twice (once for Pass 1, once for Pass 2) but NOT
-        // four times (which would happen without deduplication of the two templates sharing provider-1).
-        // TODO: Times.Exactly(2) is tied to the current implementation detail of exactly 2 scan passes.
-        // If Pass 2 is removed or the two passes are merged into one, this assertion will become a
-        // false failure. If a third pass is added, deduplication means 3 calls (not 6), but this
-        // assertion will also fail, masking the real intent. Consider replacing with
-        // Times.LessThan(numberOfProviders * 3) or a more semantically meaningful bound that survives
-        // pass count changes while still catching the N-providers × passes deduplication regression.
+        // Assert: provider config was loaded four times (once per pass: Pass 1, 2, 3, 4) but NOT
+        // eight times (which would happen without deduplication of the two templates sharing provider-1).
+        // This assertion is tied to the current implementation detail of exactly 4 scan passes.
+        // If passes are added or removed, update this count to numberOfPasses * 1 (deduplication
+        // ensures each provider is scanned once per pass regardless of how many templates share it).
         _mockConfigClient.Verify(
             s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()),
-            Times.Exactly(2));
+            Times.Exactly(4));
 
         _cts.Cancel();
         await service.StopAsync(CancellationToken.None);

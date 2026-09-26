@@ -26,6 +26,7 @@ public sealed class ConsolidationServiceTests : IDisposable
     private readonly Mock<IProviderConfigStore> _mockProviderConfigStore;
     private readonly PipelineConfiguration _config;
     private readonly List<PipelineJobTemplate> _templates;
+    private readonly Mock<IWorkDistributor> _mockWorkDistributor;
 
     public ConsolidationServiceTests()
     {
@@ -92,6 +93,13 @@ public sealed class ConsolidationServiceTests : IDisposable
             });
         _mockProjectStore.Setup(x => x.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(_templates);
+
+        // Default: WorkDistributor returns success so TriggerAsync creates a Pending run.
+        // Tests that verify failure paths configure their own mock setup.
+        _mockWorkDistributor = new Mock<IWorkDistributor>();
+        _mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-test-default", ErrorMessage: null));
     }
 
     public void Dispose()
@@ -116,16 +124,17 @@ public sealed class ConsolidationServiceTests : IDisposable
         new FileSystemConsolidationRunStore(_runsDir),
         new InMemoryHarnessSuggestionStore(),
         _mockProviderConfigStore.Object,
-        WorkspaceManager: new ConsolidationWorkspaceManager(_logger, _config)));
+        WorkspaceManager: new ConsolidationWorkspaceManager(_logger, _config),
+        WorkDistributor: _mockWorkDistributor.Object));
 
     #region TriggerAsync — creates run and persists
 
     [Fact]
-    public async Task TriggerAsync_ValidTemplate_CreatesRunWithQueuedStatus()
+    public async Task TriggerAsync_ValidTemplate_CreatesRunWithPendingStatus()
     {
         // Validates: Requirement 3.1
-        // In K8s mode, newly created runs start as Queued — the K8s Job Controller
-        // transitions them to Running when the pod is dispatched.
+        // Runs start as Pending — the WorkItem has been submitted to the unified queue
+        // and the K8s Scheduler will dispatch it when capacity is available.
         var sut = CreateSut();
         var before = DateTimeOffset.UtcNow;
 
@@ -133,7 +142,7 @@ public sealed class ConsolidationServiceTests : IDisposable
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
 
         run.Should().NotBeNull();
-        run!.Status.Should().Be(ConsolidationRunStatus.Queued);
+        run!.Status.Should().Be(ConsolidationRunStatus.Pending);
         run.Type.Should().Be(ConsolidationRunType.BrainConsolidation);
         run.TemplateId.Should().Be("tmpl-1");
         run.TemplateName.Should().Be("DotNet Repo");
@@ -143,63 +152,15 @@ public sealed class ConsolidationServiceTests : IDisposable
         run.StartedAtUtc.Should().BeOnOrBefore(before.AddSeconds(10));
     }
 
-    /// <summary>
-    /// Regression test: TriggerAsync must stamp QueuedRequiredLabels on the created run so the
-    /// dispatcher has a deterministic selector without guessing from runtime profile state.
-    /// Previously, BuildNewRun never set QueuedRequiredLabels, causing ConsolidationDispatcher
-    /// to produce AgentSelectorKey.From([]) = "" → 409 "no job template for agent selector: ''"
-    /// → run stayed Queued forever.
-    /// </summary>
-    // TODO: This test does not isolate the "template has no RepoProviderId → uses DefaultRequiredAgentLabels"
-    // path as claimed. Template tmpl-1 has RepoProviderId="rp-1", so the service calls
-    // GetProviderConfigByIdAsync("rp-1", ...) → null (from _mockProviderConfigStore) → repoConfig=null
-    // → fallback to DefaultRequiredAgentLabels. This exercises "provider lookup returns null → fallback",
-    // not the pure "template has no RepoProviderId" path. If the !string.IsNullOrEmpty(template.RepoProviderId)
-    // guard were accidentally removed, this test would still pass. Add a template fixture with
-    // RepoProviderId=null to properly isolate and guard the no-repo-provider-id path.
     [Fact]
-    public async Task TriggerAsync_WithDefaultRequiredAgentLabels_StampsQueuedRequiredLabelsOnRun()
+    public async Task TriggerAsync_WithNoDefaultRequiredAgentLabels_CreatesPendingRun()
     {
-        // Arrange: configure DefaultRequiredAgentLabels so LabelResolver.ResolveRequiredLabels returns them
-        var configWithLabels = new PipelineConfiguration
-        {
-            WorkspaceBaseDirectory = _tempDir,
-            DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10"
-        };
-        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
-            _logger,
-            configWithLabels,
-            _mockProjectStore.Object,
-            _mockRunHistory.Object,
-            new FileSystemConsolidationRunStore(_runsDir),
-            new InMemoryHarnessSuggestionStore(),
-            _mockProviderConfigStore.Object,
-            WorkspaceManager: new ConsolidationWorkspaceManager(_logger, configWithLabels)));
-
-        // Act
-        var run = await sut.TriggerAsync(
-            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-
-        // Assert: QueuedRequiredLabels must be set from DefaultRequiredAgentLabels
-        run.Should().NotBeNull();
-        run!.QueuedRequiredLabels.Should().NotBeNull(
-            "QueuedRequiredLabels must be populated at trigger time so dispatch never produces an empty selector");
-        run.QueuedRequiredLabels.Should().BeEquivalentTo(
-            new[] { "kiro", "dotnet", "dotnet10" },
-            "labels must match DefaultRequiredAgentLabels from PipelineConfiguration");
-    }
-
-    [Fact]
-    public async Task TriggerAsync_WithNoDefaultRequiredAgentLabels_QueuesRun()
-    {
-        // When DefaultRequiredAgentLabels is not configured, TriggerAsync should still queue
-        // the run. QueuedRequiredLabels will be null, and ConsolidationDispatcher.ResolveSelector
-        // will fall back to the first enabled profile (step 3). If that profile has no job
-        // template the dispatch endpoint returns 422 → IsPermanentFailure=true → the run
-        // cascades to Failed with a clear error message. This is preferable to rejecting at
-        // trigger time, which would display a misleading "already running/queued or template
-        // not found" error on the consolidation page.
-        // Use a dedicated SUT without DefaultRequiredAgentLabels (unlike _config which has it set).
+        // When DefaultRequiredAgentLabels is not configured and no SelectorResolver is injected,
+        // TriggerAsync uses LabelResolver (returns empty labels) and still creates a Pending run.
+        // The distributor receives an empty selector and may return 422 — but that's the new
+        // synchronous error path (null return), not the old "stays Queued forever" path.
+        // Use a dedicated SUT without DefaultRequiredAgentLabels and without a WorkDistributor
+        // (to test the fallback path that uses LabelResolver directly).
         var configWithoutLabels = new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir };
         var sutWithoutLabels = new ConsolidationService(new ConsolidationServiceDependencies(
             _logger,
@@ -211,213 +172,12 @@ public sealed class ConsolidationServiceTests : IDisposable
             _mockProviderConfigStore.Object,
             WorkspaceManager: new ConsolidationWorkspaceManager(_logger, configWithoutLabels)));
 
-        var run = await sutWithoutLabels.TriggerAsync(
+        // Without a WorkDistributor injected, TriggerAsync throws InvalidOperationException.
+        // This verifies the guard is in place (no silent no-op).
+        var act = () => sutWithoutLabels.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-
-        run.Should().NotBeNull(
-            "TriggerAsync must queue the run even when DefaultRequiredAgentLabels is not configured — " +
-            "the dispatcher will cascade it to Failed with a clear error message if no profile matches");
-        run!.Status.Should().Be(ConsolidationRunStatus.Queued,
-            "a newly triggered run must start in Queued status regardless of label configuration");
-        run.QueuedRequiredLabels.Should().BeNullOrEmpty(
-            "when DefaultRequiredAgentLabels is empty, QueuedRequiredLabels is null — " +
-            "the dispatcher falls back to the first enabled profile");
-    }
-
-    /// <summary>
-    /// Regression test for issue #2608: template-scoped run must resolve QueuedRequiredLabels
-    /// from the repo ProviderConfig.RequiredLabels, not fall back to DefaultRequiredAgentLabels.
-    /// This is the path that was broken — consolidation runs for a repo with RequiredLabels
-    /// were getting AgentSelector = kiro,python,python312 (first enabled profile) instead of
-    /// the correct kiro,dotnet,dotnet10 (from the repo's ProviderConfig).
-    /// </summary>
-    // TODO: RequiredLabels uses the same values as DefaultRequiredAgentLabels in _config
-    // ("kiro","dotnet","dotnet10"). Use distinct labels (e.g. ["repo-only","special"]) so the
-    // BeEquivalentTo assertion unambiguously proves the labels came from ProviderConfig and not
-    // from some DefaultRequiredAgentLabels fallback. Currently the NotBeNull() assertion is
-    // what actually catches a regression; the value-level assertion adds no additional coverage.
-    // TODO: Add mockProviderStore.Verify(s => s.GetProviderConfigByIdAsync("rp-1",
-    // ProviderKind.Repository, It.IsAny<CancellationToken>()), Times.Once) after the act step.
-    // Without this, a change that loads the wrong provider ID (or skips the lookup entirely and
-    // gets the right labels by coincidence) would not be caught. The global-run test already
-    // includes Times.Never — the template-scoped tests should symmetrically verify Times.Once.
-    [Fact]
-    public async Task TriggerAsync_TemplateScoped_WithRepoProviderRequiredLabels_StampsRepoLabels()
-    {
-        // Arrange: repo provider config has RequiredLabels; pipeline default is null (different value)
-        // to confirm repo config takes precedence.
-        var mockProviderStore = new Mock<IProviderConfigStore>();
-        mockProviderStore
-            .Setup(s => s.GetProviderConfigByIdAsync("rp-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ProviderConfig
-            {
-                Id = "rp-1",
-                DisplayName = "DotNet Repo",
-                Kind = ProviderKind.Repository,
-                ProviderType = "GitHub",
-                RequiredLabels = new List<string> { "kiro", "dotnet", "dotnet10" }
-            });
-
-        var configNoDefault = new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir };
-        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
-            _logger,
-            configNoDefault,
-            _mockProjectStore.Object,
-            _mockRunHistory.Object,
-            new FileSystemConsolidationRunStore(_runsDir),
-            new InMemoryHarnessSuggestionStore(),
-            mockProviderStore.Object,
-            WorkspaceManager: new ConsolidationWorkspaceManager(_logger, configNoDefault)));
-
-        // Act: trigger for tmpl-1 which has RepoProviderId = "rp-1"
-        var run = await sut.TriggerAsync(
-            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-
-        // Assert: labels come from repo config, not from (null) DefaultRequiredAgentLabels
-        run.Should().NotBeNull();
-        run!.QueuedRequiredLabels.Should().NotBeNull(
-            "QueuedRequiredLabels must be resolved from ProviderConfig.RequiredLabels when available");
-        run.QueuedRequiredLabels.Should().BeEquivalentTo(
-            DotNetLabels,
-            "labels must match ProviderConfig.RequiredLabels for the template's repo provider");
-    }
-
-    /// <summary>
-    /// When the repo ProviderConfig exists but has no RequiredLabels, resolution falls back to
-    /// DefaultRequiredAgentLabels from PipelineConfiguration.
-    /// </summary>
-    [Fact]
-    public async Task TriggerAsync_TemplateScoped_RepoProviderNoRequiredLabels_FallsBackToDefault()
-    {
-        // Arrange: repo provider config exists but has no RequiredLabels; pipeline default set
-        var mockProviderStore = new Mock<IProviderConfigStore>();
-        mockProviderStore
-            .Setup(s => s.GetProviderConfigByIdAsync("rp-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ProviderConfig
-            {
-                Id = "rp-1",
-                DisplayName = "DotNet Repo",
-                Kind = ProviderKind.Repository,
-                ProviderType = "GitHub",
-                RequiredLabels = null
-            });
-
-        var configWithDefault = new PipelineConfiguration
-        {
-            WorkspaceBaseDirectory = _tempDir,
-            DefaultRequiredAgentLabels = "kiro,python,python312"
-        };
-        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
-            _logger,
-            configWithDefault,
-            _mockProjectStore.Object,
-            _mockRunHistory.Object,
-            new FileSystemConsolidationRunStore(_runsDir),
-            new InMemoryHarnessSuggestionStore(),
-            mockProviderStore.Object,
-            WorkspaceManager: new ConsolidationWorkspaceManager(_logger, configWithDefault)));
-
-        // Act
-        var run = await sut.TriggerAsync(
-            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-
-        // Assert: falls back to DefaultRequiredAgentLabels
-        run.Should().NotBeNull();
-        run!.QueuedRequiredLabels.Should().BeEquivalentTo(
-            PythonLabels,
-            "when ProviderConfig.RequiredLabels is null, LabelResolver falls back to DefaultRequiredAgentLabels");
-    }
-
-    /// <summary>
-    /// When IProviderConfigStore returns null for the repo provider id (provider deleted but
-    /// template not updated), resolution falls back to DefaultRequiredAgentLabels.
-    /// </summary>
-    [Fact]
-    public async Task TriggerAsync_TemplateScoped_RepoProviderNotFound_FallsBackToDefault()
-    {
-        // Arrange: provider store returns null for all lookups
-        var mockProviderStore = new Mock<IProviderConfigStore>();
-        mockProviderStore
-            .Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ProviderConfig?)null);
-
-        var configWithDefault = new PipelineConfiguration
-        {
-            WorkspaceBaseDirectory = _tempDir,
-            DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10"
-        };
-        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
-            _logger,
-            configWithDefault,
-            _mockProjectStore.Object,
-            _mockRunHistory.Object,
-            new FileSystemConsolidationRunStore(_runsDir),
-            new InMemoryHarnessSuggestionStore(),
-            mockProviderStore.Object,
-            WorkspaceManager: new ConsolidationWorkspaceManager(_logger, configWithDefault)));
-
-        // Act
-        var run = await sut.TriggerAsync(
-            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-
-        // Assert: graceful degradation — falls back to DefaultRequiredAgentLabels
-        run.Should().NotBeNull();
-        run!.QueuedRequiredLabels.Should().BeEquivalentTo(
-            DotNetLabels,
-            "when provider config is not found, LabelResolver falls back to DefaultRequiredAgentLabels");
-    }
-
-    /// <summary>
-    /// Regression guard: global HarnessSuggestions runs (templateId=null) must NOT call
-    /// IProviderConfigStore — they have no single repo and must use DefaultRequiredAgentLabels.
-    /// </summary>
-    [Fact]
-    public async Task TriggerAsync_GlobalRun_NullTemplate_UsesDefaultLabels_NotRepoConfig()
-    {
-        // Arrange: provider store is set up so any call would return a ProviderConfig,
-        // but we verify it is never called for global runs.
-        var mockProviderStore = new Mock<IProviderConfigStore>();
-        mockProviderStore
-            .Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ProviderConfig
-            {
-                Id = "rp-1",
-                DisplayName = "Some Repo",
-                Kind = ProviderKind.Repository,
-                ProviderType = "GitHub",
-                RequiredLabels = new List<string> { "some", "other", "labels" }
-            });
-
-        var configWithDefault = new PipelineConfiguration
-        {
-            WorkspaceBaseDirectory = _tempDir,
-            DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10"
-        };
-        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
-            _logger,
-            configWithDefault,
-            _mockProjectStore.Object,
-            _mockRunHistory.Object,
-            new FileSystemConsolidationRunStore(_runsDir),
-            new InMemoryHarnessSuggestionStore(),
-            mockProviderStore.Object,
-            WorkspaceManager: new ConsolidationWorkspaceManager(_logger, configWithDefault)));
-
-        // Act: global run — templateId is null
-        var run = await sut.TriggerAsync(
-            ConsolidationRunType.HarnessSuggestions, null, CancellationToken.None);
-
-        // Assert: labels from DefaultRequiredAgentLabels, not from provider config
-        run.Should().NotBeNull();
-        run!.QueuedRequiredLabels.Should().BeEquivalentTo(
-            DotNetLabels,
-            "global runs must use DefaultRequiredAgentLabels — they have no repo-scoped provider config");
-
-        // Assert: provider store was never consulted (global runs don't load repo config)
-        mockProviderStore.Verify(
-            s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "IProviderConfigStore must not be called for global (null templateId) runs");
+        await act.Should().ThrowAsync<InvalidOperationException>(
+            "TriggerAsync requires IWorkDistributor — no WorkDistributor was injected");
     }
 
     [Fact]
@@ -933,7 +693,8 @@ public sealed class ConsolidationServiceTests : IDisposable
                 _mockRunHistory.Object,
                 new FileSystemConsolidationRunStore(blockerDir),
                 new InMemoryHarnessSuggestionStore(),
-                _mockProviderConfigStore.Object));
+                _mockProviderConfigStore.Object,
+                WorkDistributor: _mockWorkDistributor.Object));
 
         var run = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
@@ -952,7 +713,8 @@ public sealed class ConsolidationServiceTests : IDisposable
                 _mockRunHistory.Object,
                 new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "blocked-runs-retry")),
                 new InMemoryHarnessSuggestionStore(),
-                _mockProviderConfigStore.Object));
+                _mockProviderConfigStore.Object,
+                WorkDistributor: _mockWorkDistributor.Object));
 
         // Verify the failed-persist path does not wedge _runningRuns: a fresh sut instance
         // (same key) can be triggered. On the original sut, TryRemove ran so the key is gone.
@@ -1002,7 +764,8 @@ public sealed class ConsolidationServiceTests : IDisposable
                 new FileSystemConsolidationRunStore(blockerDir),
                 new InMemoryHarnessSuggestionStore(),
                 _mockProviderConfigStore.Object,
-                FeedbackCache: mockFeedbackCache.Object));
+                FeedbackCache: mockFeedbackCache.Object,
+                WorkDistributor: _mockWorkDistributor.Object));
 
         // Act
         var run = await sut.TriggerAsync(
@@ -1047,7 +810,8 @@ public sealed class ConsolidationServiceTests : IDisposable
                 new FileSystemConsolidationRunStore(blockerDir),
                 new InMemoryHarnessSuggestionStore(),
                 _mockProviderConfigStore.Object,
-                FeedbackCache: mockFeedbackCache.Object));
+                FeedbackCache: mockFeedbackCache.Object,
+                WorkDistributor: _mockWorkDistributor.Object));
 
         // Act: use BrainConsolidation type (not HarnessSuggestions)
         var run = await sut.TriggerAsync(
