@@ -212,6 +212,9 @@ await app.RunAsync();
 /// </remarks>
 static void PreInitializeMetrics(IServiceProvider services)
 {
+    // Tag key constants — used multiple times across pre-initialization loops.
+    const string FailureReasonKey = "failure_reason";
+
     // run_type values
     string[] runTypes = ["implementation", "review", "decomposition", "decompositionanalysis", "consolidation"];
 
@@ -240,14 +243,14 @@ static void PreInitializeMetrics(IServiceProvider services)
             PipelineTelemetry.RunOutcomes.Add(0,
                 new KeyValuePair<string, object?>("run_type", runType),
                 new KeyValuePair<string, object?>("outcome", outcome),
-                new KeyValuePair<string, object?>("failure_reason", "none"));
+                new KeyValuePair<string, object?>(FailureReasonKey, "none"));
         }
 
         // timeout outcome
         PipelineTelemetry.RunOutcomes.Add(0,
             new KeyValuePair<string, object?>("run_type", runType),
             new KeyValuePair<string, object?>("outcome", "timeout"),
-            new KeyValuePair<string, object?>("failure_reason", "timeout"));
+            new KeyValuePair<string, object?>(FailureReasonKey, "timeout"));
 
         // failed outcome — one series per failure_reason
         foreach (var failureReason in failureReasons)
@@ -255,7 +258,7 @@ static void PreInitializeMetrics(IServiceProvider services)
             PipelineTelemetry.RunOutcomes.Add(0,
                 new KeyValuePair<string, object?>("run_type", runType),
                 new KeyValuePair<string, object?>("outcome", "failed"),
-                new KeyValuePair<string, object?>("failure_reason", failureReason));
+                new KeyValuePair<string, object?>(FailureReasonKey, failureReason));
         }
     }
 
@@ -265,13 +268,13 @@ static void PreInitializeMetrics(IServiceProvider services)
     {
         WorkDistributionTelemetry.WorkItemsTerminated.Add(0,
             new KeyValuePair<string, object?>("status", status),
-            new KeyValuePair<string, object?>("failure_reason", "none"));
+            new KeyValuePair<string, object?>(FailureReasonKey, "none"));
 
         foreach (var failureReason in failureReasons)
         {
             WorkDistributionTelemetry.WorkItemsTerminated.Add(0,
                 new KeyValuePair<string, object?>("status", status),
-                new KeyValuePair<string, object?>("failure_reason", failureReason));
+                new KeyValuePair<string, object?>(FailureReasonKey, failureReason));
         }
     }
 

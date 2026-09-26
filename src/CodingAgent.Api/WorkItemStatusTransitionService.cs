@@ -243,127 +243,14 @@ public sealed partial class WorkItemStatusTransitionService
     {
         try
         {
-            TimeSpan? duration = null;
-            string runTypeTag = "unknown";
-            string? projectId = null;
-            string? projectName = null;
+            var (duration, runTypeTag, _, projectName) =
+                await ResolveRunContextAsync(id, dbFactory, ct);
 
-            if (dbFactory is not null)
-            {
-                await using var db = await dbFactory.CreateDbContextAsync(ct);
-
-                // LEFT JOIN WorkItems → PipelineRuns to get run type and project context.
-                // PipelineRunEntity.WorkItemId is nullable — the join may yield null.
-                // ProjectId and ProjectName come from PipelineRunEntity (string?), NOT from
-                // WorkItemEntity.ProjectId (which is Guid? and lacks ProjectName).
-                // TODO: [WARNING] If a WorkItem has multiple PipelineRunEntity rows (e.g. a retry scenario
-                // where the agent creates a second PipelineRun for the same WorkItem), this query returns
-                // an arbitrary row because there is no ORDER BY. The resolved run_type and project context
-                // may come from an earlier run, not the most recent one. Fix by adding
-                // .OrderByDescending(pr => pr.CreatedAt) (or StartedAt) inside the DefaultIfEmpty projection
-                // before FirstOrDefaultAsync. Low risk today since retries typically reuse the same RunType,
-                // but could diverge for future retry-chain scenarios.
-                var row = await db.WorkItems.AsNoTracking()
-                    .Where(w => w.Id == id)
-                    .GroupJoin(
-                        db.PipelineRuns.AsNoTracking(),
-                        w => w.Id,
-                        pr => pr.WorkItemId,
-                        (w, runs) => new { w, runs })
-                    .SelectMany(
-                        x => x.runs.DefaultIfEmpty(),
-                        (x, pr) => new
-                        {
-                            x.w.DispatchedAt,
-                            x.w.CompletedAt,
-                            x.w.TaskType,
-                            RunType = pr != null ? pr.RunType : (PipelineRunType?)null,
-                            ProjectId = pr != null ? pr.ProjectId : null,
-                            ProjectName = pr != null ? pr.ProjectName : null
-                        })
-                    .FirstOrDefaultAsync(ct);
-
-                if (row is not null)
-                {
-                    // TODO: [WARNING] This reads row.CompletedAt from the DB. CompletedAt is set by
-                    // ApplyStatusMutation (synchronously, before the DB commit) and EmitTerminalStatusTelemetryAsync
-                    // runs after that commit, so the DB read will always see the committed value under
-                    // PostgreSQL's default READ COMMITTED isolation. This assumption holds for the current
-                    // architecture. If the isolation level changes or the telemetry task is moved to run
-                    // before the commit, this read may return null and the duration will be omitted silently.
-                    if (row.DispatchedAt is not null && row.CompletedAt is not null)
-                        duration = row.CompletedAt.Value - row.DispatchedAt.Value;
-
-                    projectId = row.ProjectId;
-                    projectName = row.ProjectName;
-
-                    // Safe fallback: use a local switch with null default rather than
-                    // ToDefaultRunType() which throws UnreachableException for unknown values.
-                    var resolvedRunType = row.RunType ?? row.TaskType switch
-                    {
-                        WorkItemTaskType.Implementation => (PipelineRunType?)PipelineRunType.Implementation,
-                        WorkItemTaskType.Review => PipelineRunType.Review,
-                        WorkItemTaskType.Decomposition => PipelineRunType.DecompositionAnalysis,
-                        WorkItemTaskType.Consolidation => PipelineRunType.Consolidation,
-                        _ => null
-                    };
-                    runTypeTag = resolvedRunType.HasValue
-                        ? resolvedRunType.Value.ToString().ToLowerInvariant()
-                        : "unknown";
-                }
-            }
-
-            // Prefer the typed FailureCategory from the payload; fall back to the string field.
-            // TODO: [WARNING] PipelineJsonOptions.Default is strict (PascalCase, case-sensitive). If agents
-            // serialize JobCompletionPayload in camelCase, the deserialization will silently produce a null
-            // payload — all payload-derived signals (PullRequestUrl, IsDraftPr, AnalysisRecommendation,
-            // FailureCategory) will be lost and outcome derivation falls back to status-based heuristics
-            // (e.g. 'succeeded' instead of 'pr_created'). The previous call site used PipelineJsonOptions.Lenient
-            // (case-insensitive) to handle camelCase. Switch to PipelineJsonOptions.Lenient here unless it
-            // has been confirmed that all agents exclusively use PascalCase serialization.
-            JobCompletionPayload? payload = null;
-            if (request.Result is not null)
-            {
-                try
-                {
-                    payload = JsonSerializer.Deserialize<JobCompletionPayload>(
-                        request.Result, PipelineJsonOptions.Default);
-                }
-                catch (JsonException)
-                {
-                    // TODO: [WARNING] JsonException is thrown when the JSON is syntactically invalid OR
-                    // when a required property (e.g. FinalStep, which is [required] on JobCompletionPayload)
-                    // is missing. A valid Result payload that omits FinalStep will reach this catch and be
-                    // discarded entirely, causing DeriveOutcome to fall back to status-based derivation and
-                    // potentially produce the wrong outcome (e.g. 'succeeded' instead of 'pr_created').
-                    // Fix: use relaxed deserialization (remove [required] from FinalStep for telemetry,
-                    // or deserialize with JsonIgnoreCondition.WhenWritingDefault) so partially-populated
-                    // payloads still contribute their non-null fields to outcome derivation.
-                    // Malformed payload — treat as absent; fall through to status-based derivation.
-                }
-            }
-
-            // Build typed failureReason from FailureCategory (payload) first, then string field.
-            // TODO: [WARNING] The payload?.FailureCategory path does not apply an Enum.IsDefined guard,
-            // unlike the string-field fallback path below. If an agent sends an out-of-range numeric value
-            // for FailureCategory (e.g. {"FailureCategory": 99}), JsonSerializer deserializes it to an
-            // undefined FailureReason enum instance. That undefined instance then reaches PascalToSnakeCaseTag
-            // via failureReason.Value.ToString(), producing a non-snake-case numeric string (e.g. "99") as the
-            // failure_reason metric tag — creating a high-cardinality uninitialized series and defeating the
-            // IsDefined guard on the string-field path. Fix: add
-            // `if (failureReason.HasValue && !Enum.IsDefined(typeof(FailureReason), failureReason.Value)) failureReason = null;`
-            // after this assignment.
-            FailureReason? failureReason = payload?.FailureCategory;
-            if (!failureReason.HasValue
-                && Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason)
-                && Enum.IsDefined(typeof(FailureReason), parsedReason))
-            {
-                failureReason = parsedReason;
-            }
+            var (payload, failureReason) = ResolvePayloadAndFailureReason(request);
 
             var (outcome, failureReasonTag) = DeriveOutcome(request.Status, payload, failureReason);
 
-            RecordRunOutcomeMetrics(runTypeTag, outcome, failureReasonTag, projectId, projectName, duration);
+            RecordRunOutcomeMetrics(runTypeTag, outcome, failureReasonTag, projectName, duration);
 
             WorkDistributionTelemetry.LogTerminalStatus(
                 id, request.Status, duration, request.AgentId,
@@ -374,6 +261,135 @@ public sealed partial class WorkItemStatusTransitionService
             Serilog.Log.ForContext("SourceContext", nameof(WorkItemStatusTransitionService))
                 .Warning(ex, "Failed to emit terminal status telemetry for WorkItem {Id}", id);
         }
+    }
+
+    /// <summary>
+    /// Queries the DB for the WorkItem's dispatch/completion timestamps, run type, and project context.
+    /// </summary>
+    private static async Task<(TimeSpan? Duration, string RunTypeTag, string? ProjectId, string? ProjectName)>
+        ResolveRunContextAsync(Guid id, IDbContextFactory<PipelineDbContext>? dbFactory, CancellationToken ct)
+    {
+        if (dbFactory is null)
+            return (null, "unknown", null, null);
+
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+
+        // LEFT JOIN WorkItems → PipelineRuns to get run type and project context.
+        // PipelineRunEntity.WorkItemId is nullable — the join may yield null.
+        // ProjectId and ProjectName come from PipelineRunEntity (string?), NOT from
+        // WorkItemEntity.ProjectId (which is Guid? and lacks ProjectName).
+        // TODO: [WARNING] If a WorkItem has multiple PipelineRunEntity rows (e.g. a retry scenario
+        // where the agent creates a second PipelineRun for the same WorkItem), this query returns
+        // an arbitrary row because there is no ORDER BY. The resolved run_type and project context
+        // may come from an earlier run, not the most recent one. Fix by adding
+        // .OrderByDescending(pr => pr.CreatedAt) (or StartedAt) inside the DefaultIfEmpty projection
+        // before FirstOrDefaultAsync. Low risk today since retries typically reuse the same RunType,
+        // but could diverge for future retry-chain scenarios.
+        var row = await db.WorkItems.AsNoTracking()
+            .Where(w => w.Id == id)
+            .GroupJoin(
+                db.PipelineRuns.AsNoTracking(),
+                w => w.Id,
+                pr => pr.WorkItemId,
+                (w, runs) => new { w, runs })
+            .SelectMany(
+                x => x.runs.DefaultIfEmpty(),
+                (x, pr) => new
+                {
+                    x.w.DispatchedAt,
+                    x.w.CompletedAt,
+                    x.w.TaskType,
+                    RunType = pr != null ? pr.RunType : (PipelineRunType?)null,
+                    ProjectId = pr != null ? pr.ProjectId : null,
+                    ProjectName = pr != null ? pr.ProjectName : null
+                })
+            .FirstOrDefaultAsync(ct);
+
+        if (row is null)
+            return (null, "unknown", null, null);
+
+        // TODO: [WARNING] This reads row.CompletedAt from the DB. CompletedAt is set by
+        // ApplyStatusMutation (synchronously, before the DB commit) and EmitTerminalStatusTelemetryAsync
+        // runs after that commit, so the DB read will always see the committed value under
+        // PostgreSQL's default READ COMMITTED isolation. This assumption holds for the current
+        // architecture. If the isolation level changes or the telemetry task is moved to run
+        // before the commit, this read may return null and the duration will be omitted silently.
+        TimeSpan? duration = (row.DispatchedAt is not null && row.CompletedAt is not null)
+            ? row.CompletedAt.Value - row.DispatchedAt.Value
+            : null;
+
+        // Safe fallback: use a local switch with null default rather than
+        // ToDefaultRunType() which throws UnreachableException for unknown values.
+        var resolvedRunType = row.RunType ?? row.TaskType switch
+        {
+            WorkItemTaskType.Implementation => (PipelineRunType?)PipelineRunType.Implementation,
+            WorkItemTaskType.Review => PipelineRunType.Review,
+            WorkItemTaskType.Decomposition => PipelineRunType.DecompositionAnalysis,
+            WorkItemTaskType.Consolidation => PipelineRunType.Consolidation,
+            _ => null
+        };
+        var runTypeTag = resolvedRunType.HasValue
+            ? resolvedRunType.Value.ToString().ToLowerInvariant()
+            : "unknown";
+
+        return (duration, runTypeTag, row.ProjectId, row.ProjectName);
+    }
+
+    /// <summary>
+    /// Deserializes the completion payload from the request result and resolves the failure reason.
+    /// </summary>
+    private static (JobCompletionPayload? Payload, FailureReason? FailureReason)
+        ResolvePayloadAndFailureReason(WorkItemStatusRequest request)
+    {
+        // Prefer the typed FailureCategory from the payload; fall back to the string field.
+        // TODO: [WARNING] PipelineJsonOptions.Default is strict (PascalCase, case-sensitive). If agents
+        // serialize JobCompletionPayload in camelCase, the deserialization will silently produce a null
+        // payload — all payload-derived signals (PullRequestUrl, IsDraftPr, AnalysisRecommendation,
+        // FailureCategory) will be lost and outcome derivation falls back to status-based heuristics
+        // (e.g. 'succeeded' instead of 'pr_created'). The previous call site used PipelineJsonOptions.Lenient
+        // (case-insensitive) to handle camelCase. Switch to PipelineJsonOptions.Lenient here unless it
+        // has been confirmed that all agents exclusively use PascalCase serialization.
+        JobCompletionPayload? payload = null;
+        if (request.Result is not null)
+        {
+            try
+            {
+                payload = JsonSerializer.Deserialize<JobCompletionPayload>(
+                    request.Result, PipelineJsonOptions.Default);
+            }
+            catch (JsonException)
+            {
+                // TODO: [WARNING] JsonException is thrown when the JSON is syntactically invalid OR
+                // when a required property (e.g. FinalStep, which is [required] on JobCompletionPayload)
+                // is missing. A valid Result payload that omits FinalStep will reach this catch and be
+                // discarded entirely, causing DeriveOutcome to fall back to status-based derivation and
+                // potentially produce the wrong outcome (e.g. 'succeeded' instead of 'pr_created').
+                // Fix: use relaxed deserialization (remove [required] from FinalStep for telemetry,
+                // or deserialize with JsonIgnoreCondition.WhenWritingDefault) so partially-populated
+                // payloads still contribute their non-null fields to outcome derivation.
+                // Malformed payload — treat as absent; fall through to status-based derivation.
+            }
+        }
+
+        // Build typed failureReason from FailureCategory (payload) first, then string field.
+        // TODO: [WARNING] The payload?.FailureCategory path does not apply an Enum.IsDefined guard,
+        // unlike the string-field fallback path below. If an agent sends an out-of-range numeric value
+        // for FailureCategory (e.g. {"FailureCategory": 99}), JsonSerializer deserializes it to an
+        // undefined FailureReason enum instance. That undefined instance then reaches PascalToSnakeCaseTag
+        // via failureReason.Value.ToString(), producing a non-snake-case numeric string (e.g. "99") as the
+        // failure_reason metric tag — creating a high-cardinality uninitialized series and defeating the
+        // IsDefined guard on the string-field path. Fix: add
+        // `if (failureReason.HasValue && !Enum.IsDefined<FailureReason>(failureReason.Value)) failureReason = null;`
+        // after this assignment.
+        FailureReason? failureReason = payload?.FailureCategory;
+        if (!failureReason.HasValue
+            && Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason)
+            && Enum.IsDefined<FailureReason>(parsedReason))
+        {
+            failureReason = parsedReason;
+        }
+
+        return (payload, failureReason);
     }
 
     /// <summary>
@@ -459,7 +475,6 @@ public sealed partial class WorkItemStatusTransitionService
         string runTypeTag,
         string outcome,
         string failureReasonTag,
-        string? projectId,
         string? projectName,
         TimeSpan? duration)
     {
