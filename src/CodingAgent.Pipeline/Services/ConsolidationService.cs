@@ -20,6 +20,13 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     private readonly IConsolidationFeedbackCache _feedbackCache;
     private readonly ConsolidationTemplateResolver _templateResolver;
     private readonly IProviderConfigStore _providerConfigStore;
+    // TODO [WARNING]: _projectStore is assigned but never read after the constructor.
+    // _templateResolver already holds its own reference to deps.ProjectStore (see constructor line).
+    // This dead field adds confusion and suggests a refactor was incompletely applied. Consider
+    // removing it once it is confirmed no future code path requires direct access. (review-findings-dotnetspecialist.md)
+    private readonly IProjectStore _projectStore;
+    private readonly IWorkDistributor? _workDistributor;
+    private readonly IConsolidationSelectorResolver? _selectorResolver;
 
     private readonly ConcurrentDictionary<(ConsolidationRunType, string?), ConsolidationRun> _runningRuns = new();
 
@@ -46,13 +53,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         ArgumentNullException.ThrowIfNull(deps.RunHistoryService);
         ArgumentNullException.ThrowIfNull(deps.RunStore);
         ArgumentNullException.ThrowIfNull(deps.HarnessSuggestionStore);
-        // TODO [WARNING]: ArgumentNullException.ThrowIfNull(deps.ProviderConfigStore) was removed
-        // from this constructor in the ProjectId fix. ProviderConfigStore is a non-optional positional
-        // record parameter and cannot be null via the primary constructor, but construction via
-        // object-initializer syntax could bypass this. Inconsistent with the guards present for all
-        // other required deps (Logger, Config, ProjectStore, RunHistoryService, RunStore,
-        // HarnessSuggestionStore). Consider restoring the guard for consistency and to surface
-        // a diagnostic ArgumentNullException rather than a NullReferenceException at call time.
 
         _logger = deps.Logger;
         _config = deps.Config;
@@ -62,6 +62,9 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         _feedbackCache = deps.FeedbackCache ?? new ConsolidationFeedbackCache(deps.Logger, deps.RunStore, deps.RunHistoryService);
         _templateResolver = new ConsolidationTemplateResolver(deps.ProjectStore);
         _providerConfigStore = deps.ProviderConfigStore;
+        _projectStore = deps.ProjectStore;
+        _workDistributor = deps.WorkDistributor;
+        _selectorResolver = deps.SelectorResolver;
     }
 
     /// <inheritdoc />
@@ -92,6 +95,21 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             _logger.Information("Marked orphaned consolidation run {RunId} ({Type}) as Failed", run.RunId, run.Type);
         }
 
+        // Re-add Pending runs to _runningRuns for dedup only — their WorkItem already
+        // exists in the DB and will be picked up by the Scheduler. Without this, a restart
+        // with a Pending run leaves the (type, templateId) key absent from _runningRuns,
+        // so TriggerAsync's TryAdd succeeds and creates a duplicate ConsolidationRun + WorkItem.
+        // Mirrors the Pending-run rehydration that was previously in RehydrateQueuedRunsAsync
+        // (issue #2619 fix). RehydrateQueuedRunsAsync is removed; startup cleanup is the
+        // single entry point for restoring in-memory dedup state.
+        foreach (var run in allRuns.Where(r => r.Status == ConsolidationRunStatus.Pending))
+        {
+            var key = (run.Type, run.TemplateId);
+            _runningRuns.TryAdd(key, run);
+            _logger.Information(
+                "Rehydrated pending consolidation run {RunId} ({Type}) into dedup tracker (not re-dispatched)",
+                run.RunId, run.Type);
+        }
     }
 
     /// <inheritdoc />
@@ -104,11 +122,14 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         var templateIdValue = templateId?.Value;
         var key = (type, templateIdValue);
 
-        // Resolve template name for display
+        // ── 1. Resolve template + project ────────────────────────────────────
         string? templateName;
         string? projectName = null;
         string? projectId = null;
         ProviderConfig? repoConfig = null;
+        string repoProviderId = "";
+        string? brainProviderId = null;
+
         if (templateId is not null)
         {
             var (template, resolvedProjectName, resolvedProjectId) = await _templateResolver.ResolveTemplateWithProjectAsync(templateIdValue!, ct);
@@ -120,53 +141,115 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             templateName = template.Name;
             projectName = resolvedProjectName;
             projectId = resolvedProjectId;
-            // Resolve repo ProviderConfig to allow LabelResolver to pick up repo-scoped
-            // RequiredLabels (e.g. required agent labels specific to this repository).
-            // TODO [WARNING]: This call is now unconditional for template-scoped runs. The prior
-            // code guarded it with !string.IsNullOrEmpty(template.RepoProviderId). While
-            // PipelineJobTemplate.RepoProviderId is declared as required string (non-nullable),
-            // a minimally constructed or deserialized template with an empty RepoProviderId would
-            // cause a provider store query with a nonsensical ID. Both store implementations
-            // (Postgres and API-backed) return null gracefully for an unmatched ID, so in practice
-            // this is safe — but the unconditional call is a behavioral change from the prior guarded
-            // path. Consider restoring the IsNullOrEmpty guard if defensive handling is preferred.
+
+            // Resolve repo ProviderConfig (for selector resolution).
             repoConfig = await _providerConfigStore.GetProviderConfigByIdAsync(
                 template.RepoProviderId, ProviderKind.Repository, ct);
+
+            // Resolve repoProviderId and brainProviderId for the JobDistributionRequest payload.
+            // AgentTokenRefreshService reads RepoProviderConfigId directly from WorkItems.Payload
+            // (JSONB) and will fail with HubException if it is empty for template-scoped runs.
+            repoProviderId = template.RepoProviderId ?? "";
+            brainProviderId = template.BrainProviderId;
         }
         else
         {
             templateName = "Global";
         }
 
-        // Note: when DefaultRequiredAgentLabels is empty, BuildNewRun sets QueuedRequiredLabels
-        // to null. ConsolidationDispatcher.ResolveSelector will fall back to the first enabled
-        // profile (step 3), which may have no job template. In that case the dispatch endpoint
-        // returns 422, KubernetesWorkDistributor maps this to IsPermanentFailure=true, and
-        // DispatchRunAsync cascades the run to Failed via FailRunSafelyAsync. This is the correct
-        // behavior: the run is queued (visible to the operator), attempted, and fails with a clear
-        // error message rather than being silently rejected at trigger time. The operator can then
-        // configure DefaultRequiredAgentLabels and re-trigger.
-        // Rejection at trigger time (returning null) would cause the UI to show "rejected — already
-        // running/queued or template not found", which is misleading for a config-gap scenario.
-        var run = BuildNewRun(type, templateIdValue, templateName, projectName, projectId, autoDispatch, repoConfig, _config);
+        // ── 2. Guard: WorkDistributor required ───────────────────────────────
+        if (_workDistributor is null)
+        {
+            // Should never happen in production (AddConsolidationServices always injects it).
+            // In tests that don't provide a distributor, this surfaces a clear diagnostic.
+            _logger.Error(
+                "ConsolidationService: IWorkDistributor is not configured — cannot dispatch run for {Type}/{TemplateId}",
+                type, templateIdValue ?? "Global");
+            throw new InvalidOperationException(
+                "ConsolidationService requires IWorkDistributor to be injected via ConsolidationServiceDependencies. " +
+                "Ensure AddConsolidationServices passes WorkDistributor.");
+        }
 
-        if (!_runningRuns.TryAdd(key, run))
+        // ── 3. Dedup guard — check BEFORE calling the distributor ─────────────
+        // This prevents duplicate WorkItems from being submitted to the API when the
+        // same (type, templateId) is triggered concurrently or while a run is active.
+        // We build a placeholder run for the dedup map; it will be replaced with the
+        // real run once dispatch succeeds.
+        var placeholder = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = type,
+            TemplateId = templateIdValue,
+            TemplateName = templateName,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            Status = ConsolidationRunStatus.Pending,
+            AutoDispatch = autoDispatch,
+            ProjectName = projectName,
+            ProjectId = projectId
+        };
+
+        if (!_runningRuns.TryAdd(key, placeholder))
         {
             // Attempt stale-entry eviction: in multi-process mode the API may have
-            // completed the run without notifying us. If so, evict and retry once.
-            var evicted = await TryEvictAndRetryAsync(key, run, type, templateId, ct);
+            // completed the run without notifying us.
+            var evicted = await TryEvictAndRetryAsync(key, placeholder, type, templateId, ct);
             if (!evicted)
             {
                 _logger.Warning(
-                    "Consolidation run rejected: {Type} for template {TemplateId} is already running or queued",
+                    "Consolidation run rejected: {Type} for template {TemplateId} is already running or pending",
                     type, templateId ?? "Global");
                 return null;
             }
         }
 
+        // ── 4. Resolve agent selector labels ─────────────────────────────────
+        IReadOnlyList<string>? selectorLabels;
+        if (_selectorResolver is not null)
+        {
+            selectorLabels = await _selectorResolver.ResolveAsync(repoConfig, _config, ct);
+            if (selectorLabels is null)
+            {
+                // Null = startup race (no profiles available yet). Treat as transient failure.
+                _logger.Warning(
+                    "ConsolidationService: no agent profiles available for {Type}/{TemplateId} — " +
+                    "re-trigger after profiles are loaded",
+                    type, templateIdValue ?? "Global");
+                // TODO [WARNING]: TryRemove(key, out _) removes unconditionally regardless of whether
+                // the current value is still the placeholder inserted by this call. If a concurrent
+                // TriggerAsync call raced between the placeholder TryAdd and this TryRemove and replaced
+                // the placeholder with its own value, the TryRemove would evict the legitimate newer entry,
+                // silently blocking the next trigger for the same (type, templateId). The same hazard
+                // applies to the DistributeAsync exception catch below. Consider using the
+                // TryRemove(key, specificValue) overload to only remove the placeholder this call owns.
+                // Low risk in practice given the single-orchestrator model, but worth fixing for
+                // correctness. (review-findings-securityreviewer.md, review-findings-correctness.md)
+                _runningRuns.TryRemove(key, out _); // Remove placeholder
+                return null;
+            }
+        }
+        else
+        {
+            // Fallback when no resolver is injected (tests, or legacy call sites).
+            // Use LabelResolver which reads from repoConfig + DefaultRequiredAgentLabels.
+            selectorLabels = LabelResolver.ResolveRequiredLabels(repoConfig, _config);
+        }
+
+        // ── 5. Build the ConsolidationRun and persist it BEFORE dispatch ─────
+        // Persist-before-dispatch restores the old safe ordering: if DistributeAsync fails,
+        // the run row already exists and can be rolled back cleanly. Reversing this (dispatch
+        // then persist) leaves an orphaned Pending WorkItem when PersistRunAsync throws —
+        // the Scheduler dispatches it, the agent starts, but no ConsolidationRun row exists.
+        // (DotNetSpecialist CRITICAL finding — dispatch-before-persist ordering)
+        var traceContext = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation");
+        var run = BuildNewRun(type, templateIdValue, templateName, projectName, projectId, autoDispatch, _config);
+        run.TraceParent = traceContext?.GetValueOrDefault("traceparent");
+        _runningRuns[key] = run; // Overwrite the placeholder with the real run.
+
+        // ── 6. Prepare feedback data (harness suggestions path) ───────────────
         if (type == ConsolidationRunType.HarnessSuggestions)
             await _feedbackCache.PrepareFeedbackDataAsync(run, ct);
 
+        // ── 7. Persist the run row FIRST ──────────────────────────────────────
         try
         {
             await PersistRunAsync(run, ct);
@@ -180,11 +263,96 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             return null;
         }
 
-        // SignalR agent-pool dispatch was removed (issue #2325). In K8s mode, consolidation
-        // runs are dispatched externally by the K8s Job Controller via IWorkDistributor /
-        // the WorkItem queue. ConsolidationService is responsible only for persisting the run
-        // and tracking it in _runningRuns; the Job Controller picks it up asynchronously.
-        _logger.Information("Consolidation run {RunId} created: {Type} for {TemplateName}", run.RunId, type, templateName);
+        // ── 8. Build and submit the JobDistributionRequest ───────────────────
+        // Dispatch runs after a successful persist so that any dispatch failure can be
+        // compensated: the persisted run row is deleted and the dedup key is cleared.
+        // TODO [WARNING]: IssueIdentifier is set to type.ToString() (e.g. "BrainConsolidation") rather
+        // than run.RunId (a GUID). Every triggered run of the same type therefore produces an identical
+        // IssueIdentifier value. If any downstream consumer uses IssueIdentifier as a dedup key or for
+        // run-to-WorkItem correlation (e.g. to drive TransitionToRunningAsync for the correct run),
+        // this will cause cross-run collisions. The old ConsolidationDispatcher used run.RunId here.
+        // Deterministic IssueIdentifier is deferred to sub-issue #5 — verify the drain/transition path
+        // does not rely on this linkage before merging. (review-findings-correctness.md,
+        // review-findings-dotnetspecialist.md, review-findings-securityreviewer.md)
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = type.ToString(),
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = repoProviderId,
+            BrainProviderConfigId = brainProviderId,
+            InitiatedBy = ConsolidationConstants.InitiatedBy,
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = AgentSelectorKey.From(selectorLabels),
+            TimeoutSeconds = (int)_config.AgentTimeout.TotalSeconds,
+            ConsolidationRunType = type,
+            ConsolidationTemplateId = templateIdValue,
+            // TODO [WARNING]: ConsolidationWorkspacePath is derived from a fresh Guid.NewGuid() rather
+            // than run.RunId, causing run.RunId and the workspace GUID to diverge. The old
+            // ConsolidationDispatcher used run.RunId here. CleanupWorkspaceIfSucceeded (called from
+            // UpdateRunAsync) computes the path as GetWorkspacePath(run.RunId), which will resolve to a
+            // different directory than what the agent actually used — so cleanup never deletes the real
+            // workspace directory, causing a leak on every successful run. Fix: use run.RunId here so
+            // the workspace path is consistent with what CleanupWorkspaceIfSucceeded targets.
+            // (review-findings-correctness.md, review-findings-dotnetspecialist.md)
+            ConsolidationWorkspacePath = _workspaceManager.GetWorkspacePath(Guid.NewGuid().ToString()),
+            AutoDispatch = autoDispatch,
+            ProjectId = !string.IsNullOrEmpty(projectId) && Guid.TryParse(projectId, out var pid)
+                ? pid
+                : (Guid?)null,
+            ProjectName = projectName,
+            // TraceContext captured before dispatch so the resulting WorkItem inherits
+            // the originating trace even when dispatched through the API asynchronously.
+            TraceContext = traceContext
+        };
+
+        DistributionResult result;
+        try
+        {
+            result = await _workDistributor.DistributeAsync(request, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex,
+                "ConsolidationService: unexpected error calling DistributeAsync for {Type}/{TemplateId} — rolling back persisted run",
+                type, templateIdValue ?? "Global");
+            // TODO [WARNING]: TryRemove(key, out _) removes unconditionally regardless of whether
+            // the current value is still the run inserted by this call. Consider using the
+            // TryRemove(key, specificValue) overload to only remove the value this call owns.
+            // Low risk in practice given the single-orchestrator model, but worth fixing for
+            // correctness. (review-findings-securityreviewer.md, review-findings-correctness.md)
+            await RollbackRunAsync(key, run.RunId);
+            return null;
+        }
+
+        if (!result.Success)
+        {
+            if (result.IsPermanentFailure)
+            {
+                // Permanent failure (e.g. no job template for the resolved selector).
+                // Increment the telemetry counter (was previously in ConsolidationDispatcher).
+                PipelineTelemetry.ConsolidationDispatchPermanentFailures.Add(1,
+                    new KeyValuePair<string, object?>("run.type", type.ToString()));
+                _logger.Error(
+                    "ConsolidationService: permanent dispatch failure for {Type}/{TemplateId}: {Error}. " +
+                    "No WorkItem created; rolling back persisted run. Re-trigger after fixing the agent configuration.",
+                    type, templateIdValue ?? "Global", result.ErrorMessage);
+            }
+            else
+            {
+                // Transient failure (capacity limit, PVC unavailable, etc.).
+                // In the synchronous path the caller must re-trigger — no retry sweep exists.
+                _logger.Warning(
+                    "ConsolidationService: transient dispatch failure for {Type}/{TemplateId}: {Error}. " +
+                    "Rolling back persisted run. Re-trigger to retry.",
+                    type, templateIdValue ?? "Global", result.ErrorMessage);
+            }
+            // Neither failure type leaves a run row — roll back the persisted run and clear dedup.
+            await RollbackRunAsync(key, run.RunId);
+            return null;
+        }
+
+        _logger.Information("Consolidation run {RunId} created: {Type} for {TemplateName} (WorkItem created as Pending)",
+            run.RunId, type, templateName);
         OnChange?.Invoke();
         return run;
     }
@@ -195,7 +363,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         // Always read from store — the store is the authoritative source.
         // In the multi-process architecture (Spec 041+), the API updates ConsolidationRun
         // status directly in the DB. An in-memory cache here would lag behind those updates
-        // and cause the monitoring page to show stale Queued status after dispatch.
+        // and cause the monitoring page to show stale Pending status after dispatch.
         var runs = await _runStore.LoadAllRunsAsync(ct);
         return runs.OrderByDescending(r => r.StartedAtUtc).ToList();
     }
@@ -248,8 +416,8 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
 
             await PersistRunAsync(run, ct);
 
-            if (status != ConsolidationRunStatus.Running && status != ConsolidationRunStatus.Queued
-                && status != ConsolidationRunStatus.Pending)
+            // Evict from in-progress tracker when no longer active.
+            if (status != ConsolidationRunStatus.Running && status != ConsolidationRunStatus.Pending)
             {
                 var key = (run.Type, run.TemplateId);
                 _runningRuns.TryRemove(key, out _);
@@ -274,7 +442,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         try
         {
             var run = await _runStore.GetByIdAsync(runId, ct);
-            if (run is null || (run.Status != ConsolidationRunStatus.Queued && run.Status != ConsolidationRunStatus.Pending))
+            if (run is null || run.Status != ConsolidationRunStatus.Pending)
                 return false;
 
             run.Status = ConsolidationRunStatus.Cancelled;
@@ -306,9 +474,8 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         try
         {
             var run = await _runStore.GetByIdAsync(runId, ct);
-            // Accept Queued (legacy synchronous dispatch) and Pending (unified dispatch path —
-            // the WorkItem was enqueued as Pending and the Scheduler is now starting the K8s Job).
-            if (run is null || (run.Status != ConsolidationRunStatus.Queued && run.Status != ConsolidationRunStatus.Pending))
+            // Accept only Pending (the WorkItem was enqueued and the Scheduler is now starting the K8s Job).
+            if (run is null || run.Status != ConsolidationRunStatus.Pending)
                 return;
 
             run.Status = ConsolidationRunStatus.Running;
@@ -318,50 +485,13 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             var key = (run.Type, run.TemplateId);
             _runningRuns.AddOrUpdate(key, run, (_, _) => run);
 
-            _logger.Information("Consolidation run {RunId} transitioned from Queued to Running (StartedAtUtc reset)", runId.Value);
+            _logger.Information("Consolidation run {RunId} transitioned from Pending to Running (StartedAtUtc reset)", runId.Value);
             OnChange?.Invoke();
         }
         catch (Exception ex)
         {
             _logger.Error(ex, "Failed to transition consolidation run {RunId} to Running", runId.Value);
         }
-    }
-
-    /// <inheritdoc />
-    public async Task<IReadOnlyList<ConsolidationRun>> RehydrateQueuedRunsAsync(CancellationToken ct)
-    {
-        var queuedRuns = new List<ConsolidationRun>();
-        var allRuns = await _runStore.LoadAllRunsAsync(ct);
-
-        // Only select runs with Queued status for dispatch. Pending runs already have a live
-        // WorkItem in the database — the Scheduler's WorkItemDispatchLoop will pick them up
-        // and create the K8s Job when capacity is available. Re-dispatching Pending runs would
-        // cause a recurring 409 loop (each POST /api/work-items returns Conflict, which is
-        // treated as idempotent Queued=true, which re-triggers this path indefinitely).
-        foreach (var run in allRuns.Where(r => r.Status == ConsolidationRunStatus.Queued))
-        {
-            var key = (run.Type, run.TemplateId);
-            _runningRuns.TryAdd(key, run);
-            queuedRuns.Add(run);
-            _logger.Information("Rehydrated queued consolidation run {RunId} ({Type}) for re-enqueuing", run.RunId, run.Type);
-        }
-
-        // Re-add Pending runs to _runningRuns for dedup only — do NOT add them to queuedRuns
-        // (which would re-dispatch them). Their WorkItem already exists in the DB; the Scheduler
-        // will pick it up. Without this, a restart with a Pending run leaves the (type, templateId)
-        // key absent from _runningRuns, so TriggerAsync's TryAdd succeeds and creates a duplicate
-        // ConsolidationRun + WorkItem. Mirrors how CleanupOrphanedRunsAsync handles Running runs
-        // with live agents (line 84). Fix for issue #2619.
-        foreach (var run in allRuns.Where(r => r.Status == ConsolidationRunStatus.Pending))
-        {
-            var key = (run.Type, run.TemplateId);
-            _runningRuns.TryAdd(key, run);
-            _logger.Information(
-                "Rehydrated pending consolidation run {RunId} ({Type}) into dedup tracker (not re-dispatched)",
-                run.RunId, run.Type);
-        }
-
-        return queuedRuns;
     }
 
     /// <inheritdoc />
@@ -393,7 +523,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     private async Task PersistRunAsync(ConsolidationRun run, CancellationToken ct)
     {
         await _runStore.SaveRunAsync(run, ct);
-
     }
 
     /// <inheritdoc />
@@ -402,7 +531,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         try
         {
             await _runStore.DeleteRunAsync(runId, ct);
-
         }
         catch (Exception ex)
         {
@@ -411,10 +539,9 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     }
 
     /// <summary>
-    /// Rolls back a run that failed to dispatch or persist by removing it from the in-memory
+    /// Rolls back a run that failed to persist by removing it from the in-memory
     /// concurrency tracker, deleting the persisted record, and clearing any cached feedback data.
-    /// Safe to call even when the run was never persisted (DeletePersistedRunAsync is a no-op
-    /// for non-existent records).
+    /// Safe to call even when the run was never persisted.
     /// </summary>
     private async Task RollbackRunAsync((ConsolidationRunType, string?) key, string runId)
     {
@@ -423,14 +550,13 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         _feedbackCache.ClearFeedbackDataForRun(runId);
     }
 
-    /// <summary>Deletes a persisted run (used when dispatch fails and the run must be rolled back).</summary>
+    /// <summary>Deletes a persisted run (used when persist fails and the run must be rolled back).</summary>
     internal async Task DeletePersistedRunAsync(string runId)
     {
         ArgumentNullException.ThrowIfNull(runId);
         try
         {
             await _runStore.DeleteRunAsync(runId, CancellationToken.None);
-
         }
         catch (Exception ex)
         {
@@ -450,7 +576,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         string? projectName,
         string? projectId,
         bool autoDispatch,
-        ProviderConfig? repoConfig,
         PipelineConfiguration config) => new()
         {
             RunId = Guid.NewGuid().ToString(),
@@ -458,26 +583,13 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             TemplateId = templateIdValue,
             TemplateName = templateName,
             StartedAtUtc = DateTimeOffset.UtcNow,
-            // New runs start as Queued — the K8s Job Controller transitions to Running on dispatch.
-            // In the old SignalR path, runs were created as Running because an agent was immediately
-            // assigned; in K8s mode the pod hasn't started yet so Queued is the correct initial state.
-            Status = ConsolidationRunStatus.Queued,
+            // New runs start as Pending — the WorkItem has been successfully submitted to the
+            // unified dispatch queue. The Scheduler's WorkItemDispatchLoop will create the K8s Job.
+            Status = ConsolidationRunStatus.Pending,
             AutoDispatch = autoDispatch,
             ProjectName = projectName,
             ProjectId = projectId,
-            // Resolve required agent labels at trigger time so the dispatcher has a deterministic
-            // selector without guessing from runtime profile state. Mirrors the label resolution
-            // used by the regular pipeline dispatch loop (LabelResolver.ResolveRequiredLabels).
-            // For template-scoped runs, repoConfig carries the repo's RequiredLabels (if any);
-            // for global runs, repoConfig is null and resolution falls back to
-            // DefaultRequiredAgentLabels → empty (any agent).
-            QueuedRequiredLabels = LabelResolver.ResolveRequiredLabels(repoConfig, config)
-                                    is { Count: > 0 } resolvedLabels ? resolvedLabels : null,
-            // Capture trace context at trigger time (inside the HTTP request span).
-            // Stored on the run so it survives restart/rehydration even when Activity.Current
-            // is null at drain time. CaptureTraceContext creates a short-lived Producer span
-            // to guarantee a valid traceparent even if no ambient span exists.
-            TraceParent = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation")?.GetValueOrDefault("traceparent")
+            // TraceParent is populated after BuildNewRun returns (set from the request TraceContext).
         };
 
     private async Task<bool> TryEvictAndRetryAsync(

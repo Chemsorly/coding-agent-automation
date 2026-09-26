@@ -41,6 +41,11 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
         var mockHistory = new Mock<IPipelineRunHistoryService>();
         mockHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>());
 
+        var mockWorkDistributor = new Mock<IWorkDistributor>();
+        mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-onchange-test", ErrorMessage: null));
+
         _sut = new ConsolidationService(new ConsolidationServiceDependencies(
             new LoggerConfiguration().CreateLogger(),
             new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir, DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10" },
@@ -51,7 +56,8 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
             new Mock<IProviderConfigStore>().Object,
             WorkspaceManager: new ConsolidationWorkspaceManager(
                 new LoggerConfiguration().CreateLogger(),
-                new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir })));
+                new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir }),
+            WorkDistributor: mockWorkDistributor.Object));
 
         _sut.OnChange += () => _onChangeLog.Add(DateTime.UtcNow.ToString("O"));
     }
@@ -88,7 +94,7 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
     public async Task CancelQueuedRunAsync_FiresOnChange()
     {
         var run = await _sut.TriggerAsync(ConsolidationRunType.RefactoringDetection, "t1", CancellationToken.None);
-        run!.Status = ConsolidationRunStatus.Queued;
+        run!.Status = ConsolidationRunStatus.Pending;
         var store = new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs"));
         await store.SaveRunAsync(run, CancellationToken.None);
         _onChangeLog.Clear();
@@ -102,7 +108,7 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
     public async Task TransitionToRunningAsync_FiresOnChange()
     {
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "t1", CancellationToken.None);
-        run!.Status = ConsolidationRunStatus.Queued;
+        run!.Status = ConsolidationRunStatus.Pending;
         var store = new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs"));
         await store.SaveRunAsync(run, CancellationToken.None);
         _onChangeLog.Clear();

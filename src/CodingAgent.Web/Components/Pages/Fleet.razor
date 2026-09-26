@@ -111,37 +111,41 @@
                                         }
                                     </td>
                                     <td class="fleet-work-cell" @onclick:stopPropagation="true">
-                                        @if (!string.IsNullOrEmpty(a.ActiveIssueUrl))
-                                        {
-                                            @* TODO: Validate that ActiveIssueUrl starts with https:// before rendering as href.
-                                               Blazor HTML-encodes attribute values but does NOT strip javascript: URI schemes,
-                                               so a malicious/corrupted record could produce a clickable XSS link. *@
-                                            <a href="@a.ActiveIssueUrl" target="_blank" rel="noopener noreferrer" class="runs-link" title="Open issue @a.ActiveIssueIdentifier">
-                                                <Icon Name="message-square" Size="13" /> #@a.ActiveIssueIdentifier
-                                                @if (!string.IsNullOrEmpty(a.ActiveIssueTitle))
-                                                {
-                                                    <span class="monitoring-muted"> — @Truncate(a.ActiveIssueTitle, 35)</span>
-                                                }
-                                            </a>
-                                        }
-                                        @if (!string.IsNullOrEmpty(a.ActiveRunId))
-                                        {
-                                            <a href="/runs/@a.ActiveRunId" class="runs-link" title="Open pipeline run">
-                                                <Icon Name="play-circle" Size="13" /> Run
-                                            </a>
-                                        }
-                                        @if (!string.IsNullOrEmpty(a.ActivePullRequestUrl))
-                                        {
-                                            @* TODO: Validate that ActivePullRequestUrl starts with https:// before rendering as href.
-                                               Same javascript: URI injection risk as ActiveIssueUrl above. *@
-                                            <a href="@a.ActivePullRequestUrl" target="_blank" rel="noopener noreferrer" class="runs-link runs-link-pr" title="Open pull request">
-                                                <Icon Name="git-pull-request" Size="13" /> PR
-                                            </a>
-                                        }
-                                        @if (string.IsNullOrEmpty(a.ActiveIssueUrl) && string.IsNullOrEmpty(a.ActiveRunId) && string.IsNullOrEmpty(a.ActivePullRequestUrl))
-                                        {
-                                            <span class="monitoring-mono monitoring-muted">—</span>
-                                        }
+                                        @* The flex row lives inside the cell: a flex <td> stops being a table cell, and its
+                                           overflow clip used to push the Run/PR chips out of view. Only the issue title shrinks. *@
+                                        <div class="fleet-work-links">
+                                            @if (!string.IsNullOrEmpty(a.ActiveIssueUrl))
+                                            {
+                                                @* TODO: Validate that ActiveIssueUrl starts with https:// before rendering as href.
+                                                   Blazor HTML-encodes attribute values but does NOT strip javascript: URI schemes,
+                                                   so a malicious/corrupted record could produce a clickable XSS link. *@
+                                                <a href="@a.ActiveIssueUrl" target="_blank" rel="noopener noreferrer" class="runs-link fleet-work-issue" title="Open issue @a.ActiveIssueIdentifier">
+                                                    <Icon Name="message-square" Size="13" /> #@a.ActiveIssueIdentifier
+                                                    @if (!string.IsNullOrEmpty(a.ActiveIssueTitle))
+                                                    {
+                                                        <span class="monitoring-muted fleet-work-title"> — @Truncate(a.ActiveIssueTitle, 35)</span>
+                                                    }
+                                                </a>
+                                            }
+                                            @if (!string.IsNullOrEmpty(a.ActiveRunId))
+                                            {
+                                                <a href="/runs/@a.ActiveRunId" class="runs-link" title="Open pipeline run">
+                                                    <Icon Name="play-circle" Size="13" /> Run
+                                                </a>
+                                            }
+                                            @if (!string.IsNullOrEmpty(a.ActivePullRequestUrl))
+                                            {
+                                                @* TODO: Validate that ActivePullRequestUrl starts with https:// before rendering as href.
+                                                   Same javascript: URI injection risk as ActiveIssueUrl above. *@
+                                                <a href="@a.ActivePullRequestUrl" target="_blank" rel="noopener noreferrer" class="runs-link runs-link-pr" title="Open pull request">
+                                                    <Icon Name="git-pull-request" Size="13" /> PR
+                                                </a>
+                                            }
+                                            @if (string.IsNullOrEmpty(a.ActiveIssueUrl) && string.IsNullOrEmpty(a.ActiveRunId) && string.IsNullOrEmpty(a.ActivePullRequestUrl))
+                                            {
+                                                <span class="monitoring-mono monitoring-muted">—</span>
+                                            }
+                                        </div>
                                     </td>
                                     <td title="@Abs(a.LastHeartbeatAt)">@Ago(a.LastHeartbeatAt)</td>
                                 </tr>
@@ -190,12 +194,7 @@
                                                         @* TODO: Validate that ActivePullRequestUrl starts with https:// before rendering as href.
                                                            Blazor HTML-encodes attribute values but does NOT strip javascript: URI schemes,
                                                            so a malicious/corrupted record could produce a clickable XSS link. *@
-                                                        @* TODO: [WARNING] The raw URL is used as both href and visible link text, which renders
-                                                           long GitHub PR URLs (e.g. https://github.com/org/repo/pull/12345) verbatim in the cell,
-                                                           causing overflow. The previous version used "View PR" as static text with the URL in
-                                                           a title attribute. Revert to "View PR" with title="@a.ActivePullRequestUrl" for better
-                                                           operator readability, and add the https:// prefix validation required by the TODO above. *@
-                                                        <div class="v"><a href="@a.ActivePullRequestUrl" target="_blank" rel="noopener noreferrer">@a.ActivePullRequestUrl</a></div>
+                                                        <div class="v"><a href="@a.ActivePullRequestUrl" target="_blank" rel="noopener noreferrer" title="@a.ActivePullRequestUrl">View PR</a></div>
                                                     </div>
                                                 }
                                                 @if (!string.IsNullOrEmpty(a.ActiveChatSessionId))
