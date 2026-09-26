@@ -83,6 +83,15 @@ public sealed class RunOutcomeCounterPreInitializationTests
     [Fact]
     public void PreInitialization_RunOutcomes_Produces75Series()
     {
+        // TODO: [WARNING] This test verifies only the arithmetic of statically defined test-local arrays,
+        // not anything emitted by the production pre-initialization code in Program.PreInitializeMetrics.
+        // A regression that changed Program.PreInitializeMetrics to cover only 60 series (e.g. missing a
+        // run_type) would not be detected because the count computed here is derived entirely from the
+        // same test-local constants (RunTypes, NonFailureOutcomes, FailureReasons), not from a MeterListener
+        // observing real Add(0) calls. To make this meaningful, the test should capture actual labels
+        // emitted by RunPreInitialization (or Program.PreInitializeMetrics) via a MeterListener and assert
+        // on the observed count.
+
         // 5 run_types × (7 non-failure outcomes + 1 timeout + 7 failed) = 5 × 15 = 75 series
         var expectedCount = 5 * (7 + 1 + 7);
         expectedCount.Should().Be(75);
@@ -105,6 +114,13 @@ public sealed class RunOutcomeCounterPreInitializationTests
     [Fact]
     public void PreInitialization_WorkItemsTerminated_Produces24Series()
     {
+        // TODO: [WARNING] Same limitation as PreInitialization_RunOutcomes_Produces75Series — this test
+        // verifies only the arithmetic of statically defined test-local arrays (TerminalStatuses,
+        // FailureReasons), not the actual Add(0) calls in Program.PreInitializeMetrics. A regression that
+        // reduced the pre-initialized series count (e.g. by removing a status from the loop) would not
+        // be caught. To be meaningful, capture observed labels via a MeterListener on
+        // WorkDistributionTelemetry.MeterName during RunPreInitialization and assert on the observed count.
+
         // 3 statuses × (1 none + 7 failure_reasons) = 3 × 8 = 24 series
         var allExpected = new List<(string Status, string FailureReason)>();
         foreach (var status in TerminalStatuses)
