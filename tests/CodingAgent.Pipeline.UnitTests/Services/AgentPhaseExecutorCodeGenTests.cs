@@ -169,6 +169,99 @@ public class AgentPhaseExecutorCodeGenTests
         _run.CodegenSessionId.Should().Be("session-abc");
     }
 
+    [Fact]
+    public async Task CodeGen_EnableNativeImagePartsTrue_ImagePathsPassedToAgent()
+    {
+        // Arrange: non-null DownloadedImages + EnableNativeImageParts = true → ImagePaths must be forwarded
+        var testImage = new DownloadedImage
+        {
+            LocalPath = "/tmp/img.png",
+            LocalFilename = "img.png",
+            Reference = new ImageReference
+            {
+                Url = "https://example.com/img.png",
+                AltText = "test",
+                SourceType = ImageSourceType.Body,
+                SourceIndex = 0
+            },
+            FileSizeBytes = 1024,
+            MimeType = "image/png"
+        };
+
+        AgentRequest? capturedRequest = null;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) => capturedRequest = req)
+            .ReturnsAsync(new AgentResult { ExitCode = ExitCodes.Success, OutputLines = Array.Empty<string>() });
+
+        var context = new AgentPhaseContext
+        {
+            Run = _run,
+            Config = _config with { EnableNativeImageParts = true },
+            AgentProvider = _mockAgent.Object,
+            IssueOps = _mockIssueOps.Object,
+            Callbacks = _mockCallbacks.Object,
+            OrchestratorCts = null,
+            Issue = new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "Test requirements", AcceptanceCriteria = new[] { "AC1", "AC2" } },
+            DownloadedImages = new[] { testImage }
+        };
+
+        // Act
+        await _executor.ExecuteCodeGenerationAsync(context, CancellationToken.None);
+
+        // Assert: flag true → images forwarded
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.ImagePaths.Should().NotBeNull();
+        capturedRequest.ImagePaths.Should().Contain("/tmp/img.png");
+    }
+
+    [Fact]
+    public async Task CodeGen_EnableNativeImagePartsFalse_ImagePathsIsNull()
+    {
+        // Arrange: non-null DownloadedImages + EnableNativeImageParts = false → ImagePaths must be null
+        var testImage = new DownloadedImage
+        {
+            LocalPath = "/tmp/img.png",
+            LocalFilename = "img.png",
+            Reference = new ImageReference
+            {
+                Url = "https://example.com/img.png",
+                AltText = "test",
+                SourceType = ImageSourceType.Body,
+                SourceIndex = 0
+            },
+            FileSizeBytes = 1024,
+            MimeType = "image/png"
+        };
+
+        AgentRequest? capturedRequest = null;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) => capturedRequest = req)
+            .ReturnsAsync(new AgentResult { ExitCode = ExitCodes.Success, OutputLines = Array.Empty<string>() });
+
+        var context = new AgentPhaseContext
+        {
+            Run = _run,
+            Config = _config with { EnableNativeImageParts = false },
+            AgentProvider = _mockAgent.Object,
+            IssueOps = _mockIssueOps.Object,
+            Callbacks = _mockCallbacks.Object,
+            OrchestratorCts = null,
+            Issue = new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "Test requirements", AcceptanceCriteria = new[] { "AC1", "AC2" } },
+            DownloadedImages = new[] { testImage }
+        };
+
+        // Act
+        await _executor.ExecuteCodeGenerationAsync(context, CancellationToken.None);
+
+        // Assert: flag false → ImagePaths suppressed, but context.DownloadedImages untouched
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.ImagePaths.Should().BeNull();
+        context.DownloadedImages.Should().NotBeNull("context.DownloadedImages must remain populated when EnableNativeImageParts = false");
+        context.DownloadedImages!.Should().Contain(testImage);
+    }
+
     private AgentPhaseContext BuildContext(CancellationTokenSource? orchestratorCts = null)
     {
         return new AgentPhaseContext
