@@ -348,6 +348,11 @@ public class HousekeepingServiceSweepSummaryMetricTests
                 if (tag.Key == "mergeability_status") status = tag.Value?.ToString() ?? "";
                 if (tag.Key == "repo_provider_id") repoId = tag.Value?.ToString() ?? "";
             }
+            // Filter to this test class's repo only: concurrent tests in other assemblies that
+            // also emit pipeline.housekeeping.pr_evaluated would otherwise bleed into this
+            // listener (the MeterListener is process-global and [Collection("Metrics")] only
+            // serialises within one assembly).
+            if (repoId != RepoId) return;
             measurements.Add((value, status, repoId));
         });
         listener.Start();

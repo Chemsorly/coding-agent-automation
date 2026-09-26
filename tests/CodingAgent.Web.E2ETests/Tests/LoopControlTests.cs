@@ -247,6 +247,7 @@ public sealed class LoopControlTests : E2ETestBase
         // confirming the status data flowed from the real Scheduler via HTTP.
         var statusSpan = Page.Locator("span.monitoring-muted:has-text('Polling template')");
         await statusSpan.WaitForAsync(new() { Timeout = 15_000 });
+        Assert.True(await statusSpan.IsVisibleAsync(), "Status span should be visible after loop started via Scheduler");
 
         // Cleanup: stop the loop and wait for Start Loop to return
         await Page.ClickAsync("button:has-text('Stop Loop')");
