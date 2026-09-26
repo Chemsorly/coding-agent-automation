@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace CodingAgent.Scheduler;
 
 /// <summary>
@@ -8,6 +10,7 @@ namespace CodingAgent.Scheduler;
 /// Web host uses. A test project that hosts both (the E2E harness runs the Scheduler and the
 /// Blazor app side by side) cannot name either one unambiguously, so it targets this marker instead.
 /// </summary>
+[ExcludeFromCodeCoverage]
 public sealed class SchedulerHostMarker
 {
     public SchedulerHostMarker() { }
