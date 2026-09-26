@@ -9,6 +9,10 @@ namespace CodingAgent.Pipeline.Interfaces;
 /// <c>ConsolidationDispatchService</c> to call it without introducing a circular
 /// dependency on the full <see cref="IConsolidationService"/>.
 /// </summary>
+// TODO [WARNING]: Stale XML documentation below. The _runningRuns in-memory dictionary was removed
+// in issue #3027. The summary and method doc still reference "_runningRuns" and "in-memory tracker",
+// which no longer exist. Update to reflect that TransitionToRunningAsync now updates only the
+// persistent store (and fires OnChange). (review-findings-dotnetspecialist.md)
 public interface IConsolidationRunTracker
 {
     /// <summary>
