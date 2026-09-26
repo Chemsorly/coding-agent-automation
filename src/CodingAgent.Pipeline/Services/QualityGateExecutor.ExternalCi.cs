@@ -124,21 +124,18 @@ public partial class QualityGateExecutor
 
         using var timeoutCts = new CancellationTokenSource(config.ExternalCiTimeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
-        var result = await _ciPollingCoordinator.PollAndHandleInfraRetryAsync(
-            context, commitSha, config, callbacks, linkedCts.Token);
-
-        // TODO [WARNING]: _externalCiDuration.Record is only reached when PollAndHandleInfraRetryAsync
-        // returns normally. If it throws (e.g. an unhandled provider exception), the duration is not
-        // recorded and the stopwatch runs until the using-block disposes the CTSes on stack unwind.
-        // The timeoutCts/linkedCts using declarations ensure disposal regardless, but the metric sample
-        // is silently dropped for error paths. To fix: move _externalCiDuration.Record into a finally
-        // block so it is emitted on both success and exception paths.
-        // TODO: Duration includes infrastructure retry wait times — consider recording per-attempt duration
-        _externalCiDuration.Record(
-            ciPollStopwatch.Elapsed.TotalSeconds,
-            PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
-
-        return result;
+        try
+        {
+            return await _ciPollingCoordinator.PollAndHandleInfraRetryAsync(
+                context, commitSha, config, callbacks, linkedCts.Token);
+        }
+        finally
+        {
+            // TODO: Duration includes infrastructure retry wait times — consider recording per-attempt duration
+            _externalCiDuration.Record(
+                ciPollStopwatch.Elapsed.TotalSeconds,
+                PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
+        }
     }
 
     /// <summary>

@@ -59,7 +59,7 @@ public class InsightsBucketerTests
         result.Should().HaveCount(1, "1h window must produce exactly 1 bucket");
         result[0].SlotStart.Should().Be(new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero),
             "the bucket SlotStart must be 1 hour before the truncated-to-hour now");
-        result[0].Completed.Should().Be(1, "the run at 14:30 must be counted in the [14:00,15:00) bucket");
+        result[0].Succeeded.Should().Be(1, "the run at 14:30 must be counted in the [14:00,15:00) bucket");
         result[0].Total.Should().Be(1);
     }
 
@@ -96,7 +96,7 @@ public class InsightsBucketerTests
 
         // run1 is in the [13:00, 14:00) bucket (index 4 of 6)
         var bucket13 = result.Single(b => b.SlotStart.Hour == 13);
-        bucket13.Completed.Should().Be(1);
+        bucket13.Succeeded.Should().Be(1);
 
         // run2 is in the [15:00, 16:00) bucket… but the window is [09:00, 15:00), so:
         // wait — now = 15:30, window end = now's hour = 15:00 truncated + 6 = last bucket is [14:00, 15:00)
@@ -230,9 +230,29 @@ public class InsightsBucketerTests
         var result = InsightsBucketer.BuildBuckets([completed, failed, cancelled], windowHours: 1, Now);
 
         result.Should().HaveCount(1);
-        result[0].Completed.Should().Be(1);
+        result[0].Succeeded.Should().Be(1);
         result[0].Failed.Should().Be(1);
         result[0].Cancelled.Should().Be(1);
+        result[0].Total.Should().Be(3);
+    }
+
+    /// <summary>
+    /// Terminal-like steps are classified like everywhere else in the UI: a merged PR counts as
+    /// succeeded, a closed PR as cancelled, and a conflict restart as restarted — none are dropped.
+    /// </summary>
+    [Fact]
+    public void BuildBuckets_TerminalLikeSteps_AreClassifiedNotDropped()
+    {
+        var merged = MakeRun(new DateTimeOffset(2026, 9, 23, 14, 5, 0, TimeSpan.Zero), PipelineStep.PrMerged);
+        var closed = MakeRun(new DateTimeOffset(2026, 9, 23, 14, 10, 0, TimeSpan.Zero), PipelineStep.PrClosed);
+        var restarted = MakeRun(new DateTimeOffset(2026, 9, 23, 14, 15, 0, TimeSpan.Zero), PipelineStep.ConflictRestart);
+
+        var result = InsightsBucketer.BuildBuckets([merged, closed, restarted], windowHours: 1, Now);
+
+        result.Should().HaveCount(1);
+        result[0].Succeeded.Should().Be(1);
+        result[0].Cancelled.Should().Be(1);
+        result[0].Restarted.Should().Be(1);
         result[0].Total.Should().Be(3);
     }
 }

@@ -100,9 +100,10 @@ public sealed class ConsolidationPageTests : E2ETestBase
     }
 
     [Fact]
-    public async Task ConsolidationPage_TriggerWithNoAgent_ShowsQueuedMessage()
+    public async Task ConsolidationPage_TriggerWithNoAgent_ShowsRejectedMessage()
     {
-        // Arrange: seed a template but do NOT connect any agent
+        // Arrange: seed a template but do NOT connect any agent (and no agent profiles configured
+        // in the E2E environment), so selector resolution returns null and the trigger is rejected.
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
             Id = "template-consol-2",
@@ -121,11 +122,14 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // Wait for status message
         await page.WaitForStatusMessageAsync();
 
-        // Assert: queued message shown (no agent → queued, not rejected)
+        // Assert: rejection message shown — the new synchronous dispatch path rejects when no
+        // agent selector can be resolved (no agent profiles configured). The old queued-state
+        // path would return "queued" even without an agent, but the new path requires selector
+        // resolution to succeed before creating the Pending WorkItem.
         var message = await page.GetStatusMessageAsync();
         Assert.NotNull(message);
-        Assert.Contains("queued", message, StringComparison.OrdinalIgnoreCase);
-        Assert.False(await page.IsStatusMessageErrorAsync());
+        Assert.Contains("rejected", message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(await page.IsStatusMessageErrorAsync());
     }
 
 
@@ -155,9 +159,10 @@ public sealed class ConsolidationPageTests : E2ETestBase
     }
 
     [Fact]
-    public async Task ConsolidationPage_TriggerWithNoAgent_ShowsQueued_ForBrainConsolidation()
+    public async Task ConsolidationPage_TriggerWithNoAgent_ShowsRejected_ForBrainConsolidation()
     {
-        // Arrange: seed a template but do NOT connect any agent
+        // Arrange: seed a template but do NOT connect any agent (and no agent profiles configured
+        // in the E2E environment), so selector resolution returns null and the trigger is rejected.
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
             Id = "template-consol-6",
@@ -173,13 +178,8 @@ public sealed class ConsolidationPageTests : E2ETestBase
         await page.NavigateAsync();
         await Page.WaitForSelectorAsync(".settings-section h2", new() { Timeout = 10_000 });
 
-        // Only click if button is enabled (not blocked by stale state)
+        // Only click if button is enabled (not blocked by stale state from a prior test)
         var isDisabled = await page.IsBrainButtonDisabledAsync("Failure Template");
-        // TODO(WARNING): This early-return silently passes the test when the button is disabled
-        // (e.g. due to stale state from a prior test's seeded template not being cleared). If the
-        // button is perpetually disabled in the test environment, this test always reports green
-        // and never exercises the "no agent → queued" path. Fix: add an Assert.False(isDisabled)
-        // before the return, or ensure test isolation clears provider state between runs.
         if (isDisabled)
             return;
 
@@ -188,11 +188,14 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // Wait for status message
         await page.WaitForStatusMessageAsync();
 
-        // Assert: queued message shown (no agents available → queued, not rejected)
+        // Assert: rejection message shown — the new synchronous dispatch path rejects when no
+        // agent selector can be resolved (no agent profiles configured). The old queued-state
+        // path would persist the run as Queued even without an agent, but the new path requires
+        // selector resolution to succeed before creating the Pending WorkItem.
         var message = await page.GetStatusMessageAsync();
         Assert.NotNull(message);
-        Assert.Contains("queued", message, StringComparison.OrdinalIgnoreCase);
-        Assert.False(await page.IsStatusMessageErrorAsync());
+        Assert.Contains("rejected", message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(await page.IsStatusMessageErrorAsync());
     }
 
     [Fact]

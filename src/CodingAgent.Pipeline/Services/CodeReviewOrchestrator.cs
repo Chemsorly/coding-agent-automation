@@ -19,38 +19,12 @@ internal class CodeReviewOrchestrator
     private readonly System.Diagnostics.Metrics.Histogram<double> _stepDuration;
     private readonly System.Diagnostics.Metrics.Counter<long> _stepCount;
 
-    internal CodeReviewOrchestrator(Serilog.ILogger logger, System.Diagnostics.Metrics.IMeterFactory? meterFactory = null)
+    internal CodeReviewOrchestrator(Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(logger);
         _logger = logger;
-
-        if (meterFactory is not null)
-        {
-            // TODO: [WARNING] Two issues with this branch:
-            // 1. The Meter created here is never disposed. IMeterFactory.Create returns an IDisposable
-            //    Meter, but CodeReviewOrchestrator is short-lived (instantiated per review loop call) so
-            //    the Meter leaks for the process lifetime. In practice the .NET SDK Meter holds no
-            //    unmanaged resources, but a long-running agent accumulates one undisposed Meter per
-            //    review iteration.
-            // 2. Creating a new Histogram<double> for "pipeline.step.duration" on a new Meter instance
-            //    produces a second instrument registration with the same name as PipelineTelemetry.StepDuration.
-            //    Depending on SDK/exporter version, this may cause duplicate metric series or one instrument
-            //    being silently shadowed. The else branch correctly uses the static instruments; consider
-            //    extending that pattern to the meterFactory branch as well (use PipelineTelemetry.StepDuration
-            //    / StepCount directly and remove the meterFactory branch, or store and dispose the Meter).
-            var meter = meterFactory.Create(new System.Diagnostics.Metrics.MeterOptions(PipelineTelemetry.SourceName));
-            _stepDuration = meter.CreateHistogram<double>("pipeline.step.duration", "s", "Duration of individual pipeline steps",
-                advice: new System.Diagnostics.Metrics.InstrumentAdvice<double>
-                {
-                    HistogramBucketBoundaries = [5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600]
-                });
-            _stepCount = meter.CreateCounter<long>("pipeline.step.count", "{step}", "Pipeline step execution count");
-        }
-        else
-        {
-            _stepDuration = PipelineTelemetry.StepDuration;
-            _stepCount = PipelineTelemetry.StepCount;
-        }
+        _stepDuration = PipelineTelemetry.StepDuration;
+        _stepCount = PipelineTelemetry.StepCount;
     }
 
     /// <summary>
@@ -632,7 +606,9 @@ internal class CodeReviewOrchestrator
                 WorkspacePath = run.WorkspacePath!,
                 Timeout = config.AgentTimeout,
                 UseResume = false,
-                ImagePaths = context.DownloadedImages?.Select(d => d.LocalPath).ToList()
+                ImagePaths = context.Config.EnableNativeImageParts
+                    ? context.DownloadedImages?.Select(d => d.LocalPath).ToList()
+                    : null
             },
             run, config, $"Code review agent '{agent.Name}'", context.Callbacks.NotifyChange, _logger, ct,
             line => context.Callbacks.EmitOutputLine($"[{agent.Name}] {line}"));

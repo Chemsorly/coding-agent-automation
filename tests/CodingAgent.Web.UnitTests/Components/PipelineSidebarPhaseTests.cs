@@ -75,6 +75,24 @@ public class PipelineSidebarPhaseTests : BunitContext
         Assert.Contains("phase-group-failed", phase.GetAttribute("class"));
     }
 
+    /// <summary>
+    /// A conflict restart is not a failure: the phase holding the restarted step is shown as restarted
+    /// (neutral), not "N/M failed" in red.
+    /// </summary>
+    [Fact]
+    public void PhaseState_ConflictRestart_ShowsRestartedNotFailed()
+    {
+        var run = CreateRun(PipelineStep.ConflictRestart, PipelineStep.FinalizingPullRequest);
+        run.CompletedAt = DateTime.UtcNow;
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run));
+
+        var phase = cut.Find("[data-testid='phase-finalization']");
+        Assert.Equal("restart", phase.GetAttribute("data-phase-state"));
+        Assert.Contains("restarted", phase.QuerySelector(".phase-counter")!.TextContent);
+        Assert.DoesNotContain(cut.FindAll(".phase-group"), g => g.GetAttribute("data-phase-state") == "failed");
+    }
+
     [Fact]
     public void PhaseState_RevisitedSteps_ShowsRetry()
     {

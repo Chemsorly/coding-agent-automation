@@ -151,20 +151,21 @@ public class DatabaseMaintenanceServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task CleanupStaleConsolidationRuns_QueuedRuns_NeverDeleted()
+    public async Task CleanupStaleConsolidationRuns_PendingRuns_NeverDeleted()
     {
-        // Arrange: queued run that started a long time ago
-        var queuedRun = new ConsolidationRun
+        // Arrange: pending run that started a long time ago — Pending runs must never be deleted
+        // (the WorkItem still exists in the queue and may be dispatched at any time).
+        var pendingRun = new ConsolidationRun
         {
-            RunId = "queued-run-1",
+            RunId = "pending-run-1",
             Type = ConsolidationRunType.HarnessSuggestions,
             StartedAtUtc = DateTimeOffset.UtcNow.AddDays(-200),
-            Status = ConsolidationRunStatus.Queued
+            Status = ConsolidationRunStatus.Pending
         };
 
         _mockConsolidationService
             .Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ConsolidationRun> { queuedRun });
+            .ReturnsAsync(new List<ConsolidationRun> { pendingRun });
 
         var service = CreateService();
 
