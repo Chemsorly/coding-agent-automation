@@ -17,7 +17,7 @@ namespace CodingAgent.Scheduler.UnitTests;
 /// Uses a fast tick interval (1ms) so the service fires within the test window.
 /// All tests are in the SchedulerTiming collection to serialize against other PeriodicTimer tests.
 /// </summary>
-[Collection("SchedulerTiming")]
+[Collection("Metrics")]
 public sealed class WorkItemDispatchLoopTests : IDisposable
 {
     private readonly Mock<IPipelineApiWorkItemClient> _mockClient;

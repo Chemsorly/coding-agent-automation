@@ -406,6 +406,15 @@ public sealed partial class PipelineRun
     /// <summary>Number of open issues downloaded for deduplication context during decomposition.</summary>
     public int OpenIssuesDownloaded { get; set; }
 
+    /// <summary>Consolidation run type (brain, refactoring, harness). Null for non-consolidation runs.</summary>
+    public ConsolidationRunType? ConsolidationType { get; set; }
+
+    /// <summary>Consolidation template ID, or null for global scope (harness suggestions).</summary>
+    public string? ConsolidationTemplateId { get; set; }
+
+    /// <summary>Human-readable result summary from the consolidation agent. Null until the run completes.</summary>
+    public string? ConsolidationResultSummary { get; set; }
+
     /// <summary>Creates a <see cref="PipelineRunSummary"/> from this run's current state.</summary>
     /// <param name="finalStepOverride">If non-null, used as <see cref="PipelineRunSummary.FinalStep"/> instead of <see cref="CurrentStep"/>.</param>
     // NOTE: [ARC-10] FinalStep = CurrentStep without terminal state guard — edge case if called before TransitionTo completes
@@ -461,7 +470,10 @@ public sealed partial class PipelineRun
         IssueProviderConfigId = IssueProviderConfigId,
         RepoProviderConfigId = RepoProviderConfigId,
         BrainProviderConfigId = BrainProviderConfigId,
-        PipelineProviderConfigId = PipelineProviderConfigId
+        PipelineProviderConfigId = PipelineProviderConfigId,
+        ConsolidationType = ConsolidationType,
+        ConsolidationTemplateId = ConsolidationTemplateId,
+        ConsolidationResultSummary = ConsolidationResultSummary
     };
     #pragma warning restore CS0618
 

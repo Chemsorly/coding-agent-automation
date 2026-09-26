@@ -105,6 +105,7 @@ public sealed class WorkItemDispatchLoop : BackgroundService
 
     internal async Task PollAndDispatchAsync(CancellationToken ct)
     {
+        WorkDistributionTelemetry.DispatcherPollCount.Add(1);
         IReadOnlyList<CodingAgent.Pipeline.Models.PendingWorkItemDto> pending;
         try
         {

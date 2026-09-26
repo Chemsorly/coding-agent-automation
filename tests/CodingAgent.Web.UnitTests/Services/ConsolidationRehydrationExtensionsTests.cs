@@ -11,9 +11,9 @@ namespace CodingAgent.Web.UnitTests.Services;
 /// <summary>
 /// Unit tests for <see cref="ConsolidationRehydrationExtensions.RunConsolidationStartupAsync"/>.
 ///
-/// After issue #2566, the startup dispatch-rehydration loop was removed. Pending runs are now
-/// poller-owned: ConsolidationRetryBackgroundService handles any queued runs after startup.
-/// RunConsolidationStartupAsync only performs orphan cleanup.
+/// <c>RunConsolidationStartupAsync</c> performs two tasks:
+/// 1. Marks any <c>Running</c> consolidation runs as <c>Failed</c> if no active agent is working on them.
+/// 2. Re-adds <c>Pending</c> run keys to the in-memory dedup tracker so duplicate triggers are blocked.
 ///
 /// Uses a raw <c>WebApplication.CreateBuilder()</c> host to avoid Program.cs fast-fail
 /// env-var checks. All services consumed by the extension method are registered as mocks.
@@ -126,21 +126,22 @@ public sealed class ConsolidationRehydrationExtensionsTests
             Times.Once);
     }
 
-    // ── No-dispatch guarantee (startup dispatch loop removed in #2566) ────
+    // ── No-dispatch guarantee ────────────────────────────────────────────
 
     [Fact]
-    public async Task RunConsolidationStartupAsync_DoesNotCallRehydrateQueuedRunsAsync()
+    public async Task RunConsolidationStartupAsync_OnlyCallsCleanupOrphanedRunsAsync()
     {
-        // The startup dispatch loop was removed in #2566 — queued runs are now owned by
-        // ConsolidationRetryBackgroundService, not startup rehydration.
+        // RunConsolidationStartupAsync only calls CleanupOrphanedRunsAsync —
+        // there is no retry dispatch loop (that machinery was removed with the Queued state).
         SetupDefaults();
         await using var app = BuildApp();
 
         await app.RunConsolidationStartupAsync();
 
+        // Cleanup was called
         _consolidationService.Verify(
-            s => s.RehydrateQueuedRunsAsync(It.IsAny<CancellationToken>()),
-            Times.Never,
-            "startup rehydration dispatch loop was removed in #2566");
+            s => s.CleanupOrphanedRunsAsync(
+                It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 }
