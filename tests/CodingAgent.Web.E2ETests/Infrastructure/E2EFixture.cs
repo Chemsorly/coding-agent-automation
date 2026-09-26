@@ -39,6 +39,7 @@ public sealed class E2EFixture : IAsyncLifetime
     public E2EWebApplicationFactory Factory { get; } = new();
 
     private ApiE2EWebApplicationFactory? _apiFactory;
+    private SchedulerE2EWebApplicationFactory? _schedulerFactory;
     private FakeJobController? _jobController;
 
     /// <summary>Blazor Server app — UI navigation and page assertions.</summary>
@@ -88,6 +89,18 @@ public sealed class E2EFixture : IAsyncLifetime
     /// </summary>
     public IServiceProvider ApiServices => _apiFactory?.Services
         ?? throw new InvalidOperationException("API host not started");
+
+    /// <summary>
+    /// The Scheduler host's service container.
+    ///
+    /// <para>
+    /// Use this to resolve <see cref="CodingAgent.Pipeline.Services.PipelineLoopService"/>,
+    /// <see cref="CodingAgent.Pipeline.Interfaces.IHousekeepingService"/>, and
+    /// <see cref="CodingAgent.Scheduler.Services.OrphanedLabelRecoveryService"/> for test hooks.
+    /// </para>
+    /// </summary>
+    public SchedulerE2EWebApplicationFactory SchedulerFactory => _schedulerFactory
+        ?? throw new InvalidOperationException("Scheduler host not started");
 
     /// <summary>
     /// Chat job dispatcher. Moved to the API host (Spec 044/045) so it polls the registry
@@ -140,7 +153,23 @@ public sealed class E2EFixture : IAsyncLifetime
         // CreateClient() forces the host to build and Kestrel to bind.
         using (var apiClient = _apiFactory.CreateClient()) { }
 
+        // Start the Scheduler host after the API host so PipelineApi__BaseUrl is known.
+        // The Scheduler's Program.cs fast-fails when PipelineApi__BaseUrl is empty.
+        _schedulerFactory = new SchedulerE2EWebApplicationFactory(
+            Factory.DbName,
+            Factory.ConfigStore,
+            Factory.HistoryService,
+            Factory.FakeProviders,
+            Factory.FakeK8sClient,
+            apiKey: E2EWebApplicationFactory.TestApiKey,
+            pipelineApiBaseUrl: _apiFactory.ServerAddress);
+
+        // Force bind so _schedulerFactory.ServerAddress is available for the Web host.
+        using (var schedulerClient = _schedulerFactory.CreateClient()) { }
+
+        // Point the Web host at both API and Scheduler before it builds.
         Factory.ApiBaseUrl = _apiFactory.ServerAddress;
+        Factory.SchedulerBaseUrl = _schedulerFactory.ServerAddress;
         using var appClient = Factory.CreateClient();
 
         // The work-item client is registered in the monolith by AddPipelineApiClient and points at
@@ -156,7 +185,7 @@ public sealed class E2EFixture : IAsyncLifetime
     }
 
     /// <summary>
-    /// Clears per-test state across <em>both</em> hosts and the fake job controller.
+    /// Clears per-test state across <em>all three</em> hosts and the fake job controller.
     ///
     /// Tests must call this rather than <c>Fixture.Factory.ResetAll()</c>, which only knows about
     /// the monolith. The agent registry and run state moved to the API host in Spec 044, so
@@ -166,6 +195,7 @@ public sealed class E2EFixture : IAsyncLifetime
     {
         Factory.ResetAll();
         _apiFactory?.ResetAll();
+        _schedulerFactory?.ResetAll();
         _jobController?.ForgetAllInFlight();
     }
 
@@ -173,20 +203,27 @@ public sealed class E2EFixture : IAsyncLifetime
     /// <see cref="ResetAll"/> plus a stopped pipeline loop.
     ///
     /// <para>
-    /// <c>PipelineLoopService</c> is a singleton that survives the test that started it, and
-    /// <see cref="ResetAll"/> cannot stop it on its own: <c>StopLoop</c> only <em>requests</em> a
-    /// stop and the loop finishes its current cycle first. A test that started the loop therefore
-    /// handed the next one a page showing "Loop stopping… (finishing current run)" and a Stop Loop
-    /// button where it expected Start Loop — which is what <c>LoopControlTests</c> kept failing on,
-    /// with no hint that the cause was the previous test.
+    /// <c>PipelineLoopService</c> is a singleton in the Scheduler host that survives the test
+    /// that started it, and <see cref="ResetAll"/> cannot stop it on its own: <c>StopLoop</c>
+    /// only <em>requests</em> a stop and the loop finishes its current cycle first. A test that
+    /// started the loop therefore handed the next one a page showing "Loop stopping…
+    /// (finishing current run)" and a Stop Loop button where it expected Start Loop.
     /// </para>
     /// </summary>
     public async Task ResetAllAsync()
     {
-        var loop = Factory.Services.GetRequiredService<PipelineLoopService>();
+        var loop = (_schedulerFactory ?? throw new InvalidOperationException("Scheduler host not started"))
+            .Services.GetRequiredService<PipelineLoopService>();
         loop.StopLoop();
 
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        // TODO [WARNING]: This busy-wait has no CancellationToken, so callers that hold an outer
+        // cancellation token (e.g. xUnit's test timeout) cannot interrupt early. If StopLoop()
+        // fails to drive IsLoopActive to false before the 10s deadline (e.g. the loop hangs in a
+        // long cycle under CI load), ResetAll() is still called with the loop still technically
+        // active, leaving a stale iteration in flight when the next test begins. The deadline
+        // expiry is silent — consider logging a warning here so test pollution is visible in CI
+        // output rather than manifesting as a confusing failure in the next test.
         while (loop.IsLoopActive && DateTime.UtcNow < deadline)
             await Task.Delay(25);
 
@@ -257,6 +294,8 @@ public sealed class E2EFixture : IAsyncLifetime
             await _jobController.DisposeAsync();
 
         await Factory.DisposeAsync();
+        if (_schedulerFactory is not null)
+            await _schedulerFactory.DisposeAsync();
         if (_apiFactory is not null)
             await _apiFactory.DisposeAsync();
 
