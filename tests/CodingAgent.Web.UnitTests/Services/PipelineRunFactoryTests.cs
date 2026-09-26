@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using CodingAgent.Orchestration;
 using CodingAgent.Pipeline.Models;
+using StackExchange.Redis;
 
 namespace CodingAgent.Web.UnitTests.Services;
 
@@ -321,4 +322,146 @@ public sealed class PipelineRunFactoryTests
         TimeoutSeconds = 1800,
         RunId = runId
     };
+
+    // ── CreateFromWorkItem — consolidation branch ─────────────────────────────
+
+    private static JobDistributionRequest CreateConsolidationRequest() => new()
+    {
+        IssueIdentifier = "consolidation#1",
+        IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+        RepoProviderConfigId = "rp-1",
+        InitiatedBy = InitiatedByConstants.ConsolidationManual,
+        TaskType = WorkItemTaskType.Consolidation,
+        AgentSelector = "consolidation",
+        TimeoutSeconds = 3600,
+        RunType = PipelineRunType.Consolidation
+    };
+
+    [Fact]
+    public void CreateFromWorkItem_ConsolidationTaskType_ReturnsNonNullRunWithConsolidationRunType()
+    {
+        // Arrange
+        var workItemId = Guid.NewGuid();
+        var request = CreateConsolidationRequest();
+
+        // Act
+        var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request);
+
+        // Assert
+        run.Should().NotBeNull();
+        run!.RunType.Should().Be(PipelineRunType.Consolidation);
+    }
+
+    [Fact]
+    public void CreateFromWorkItem_ConsolidationRunType_ReturnsNonNullRunWithConsolidationRunType()
+    {
+        // Arrange — trigger via RunType path (not TaskType)
+        var workItemId = Guid.NewGuid();
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "consolidation#2",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = InitiatedByConstants.ConsolidationManual,
+            TaskType = WorkItemTaskType.Implementation,   // TaskType is NOT consolidation here
+            AgentSelector = "consolidation",
+            TimeoutSeconds = 3600,
+            RunType = PipelineRunType.Consolidation        // RunType triggers the guard
+        };
+
+        // Act
+        var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request);
+
+        // Assert
+        run.Should().NotBeNull();
+        run!.RunType.Should().Be(PipelineRunType.Consolidation);
+    }
+
+    [Fact]
+    public void CreateFromWorkItem_ConsolidationRun_HasCorrectInitiatedByAndSentinelProviderConfigId()
+    {
+        // Arrange
+        var workItemId = Guid.NewGuid();
+        var request = CreateConsolidationRequest();
+
+        // Act
+        var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request)!;
+
+        // Assert
+        run.InitiatedBy.Should().Be(InitiatedByConstants.ConsolidationManual);
+        // IssueProviderConfigId MUST be the sentinel — AgentJobLifecycleService routes to
+        // ConsolidationJobCompletionStrategy based on this value, NOT on RunType.
+        run.IssueProviderConfigId.Should().Be(ConsolidationConstants.ProviderConfigId);
+    }
+
+    [Fact]
+    public void CreateFromWorkItem_ConsolidationRun_UsesWorkItemIdAsRunId()
+    {
+        // Arrange
+        var workItemId = Guid.NewGuid();
+        var request = CreateConsolidationRequest();
+
+        // Act
+        var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request)!;
+
+        // Assert
+        run.RunId.Should().Be(workItemId.ToString());
+    }
+
+    [Fact]
+    public void ConsolidationRun_ThreeResultFields_RoundTripThroughSummaryAndRedisHash()
+    {
+        // Arrange
+        var workItemId = Guid.NewGuid();
+        var request = CreateConsolidationRequest();
+        var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request)!;
+
+        // Set the three result fields
+        run.ConsolidationType = ConsolidationRunType.RefactoringDetection;
+        run.ConsolidationTemplateId = "template-abc";
+        run.ConsolidationResultSummary = "Created 3 refactoring issues.";
+
+        // Act — SummaryJson round-trip
+        var summary = run.ToSummary();
+
+        // Assert — SummaryJson
+        summary.ConsolidationType.Should().Be(ConsolidationRunType.RefactoringDetection);
+        summary.ConsolidationTemplateId.Should().Be("template-abc");
+        summary.ConsolidationResultSummary.Should().Be("Created 3 refactoring issues.");
+
+        // Act — Redis hash round-trip
+        var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
+
+        // Assert — Redis hash
+        restored.ConsolidationType.Should().Be(ConsolidationRunType.RefactoringDetection,
+            "ConsolidationType must survive the Redis hash round-trip");
+        restored.ConsolidationTemplateId.Should().Be("template-abc",
+            "ConsolidationTemplateId must survive the Redis hash round-trip");
+        restored.ConsolidationResultSummary.Should().Be("Created 3 refactoring issues.",
+            "ConsolidationResultSummary must survive the Redis hash round-trip");
+    }
+
+    [Fact]
+    public void ConsolidationRun_NullResultFields_RoundTripAsNullThroughSummaryAndRedisHash()
+    {
+        // Arrange — verify null fields survive as null (not empty string or default)
+        var workItemId = Guid.NewGuid();
+        var request = CreateConsolidationRequest();
+        var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request)!;
+        // Leave ConsolidationType, ConsolidationTemplateId, ConsolidationResultSummary at null
+
+        // Act
+        var summary = run.ToSummary();
+        var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
+
+        // Assert — SummaryJson
+        summary.ConsolidationType.Should().BeNull();
+        summary.ConsolidationTemplateId.Should().BeNull();
+        summary.ConsolidationResultSummary.Should().BeNull();
+
+        // Assert — Redis hash
+        restored.ConsolidationType.Should().BeNull();
+        restored.ConsolidationTemplateId.Should().BeNull();
+        restored.ConsolidationResultSummary.Should().BeNull();
+    }
 }

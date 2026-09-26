@@ -632,7 +632,9 @@ internal class CodeReviewOrchestrator
                 WorkspacePath = run.WorkspacePath!,
                 Timeout = config.AgentTimeout,
                 UseResume = false,
-                ImagePaths = context.DownloadedImages?.Select(d => d.LocalPath).ToList()
+                ImagePaths = context.Config.EnableNativeImageParts
+                    ? context.DownloadedImages?.Select(d => d.LocalPath).ToList()
+                    : null
             },
             run, config, $"Code review agent '{agent.Name}'", context.Callbacks.NotifyChange, _logger, ct,
             line => context.Callbacks.EmitOutputLine($"[{agent.Name}] {line}"));
