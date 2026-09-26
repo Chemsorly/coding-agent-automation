@@ -91,9 +91,15 @@ public class HousekeepingServiceSweepSummaryLogTests
     private static PullRequestSummary MakePr(int number)
         => new()
         {
-            Number = number, Identifier = number.ToString(), Title = $"PR #{number}",
-            Description = string.Empty, Labels = [], BranchName = $"feature/auto-{number}-x",
-            TargetBranch = "main", Url = $"https://example.com/pr/{number}", IsDraft = false
+            Number = number,
+            Identifier = number.ToString(),
+            Title = $"PR #{number}",
+            Description = string.Empty,
+            Labels = [],
+            BranchName = $"feature/auto-{number}-x",
+            TargetBranch = "main",
+            Url = $"https://example.com/pr/{number}",
+            IsDraft = false
         };
 
     private LogEvent? SweepLog(CapturingSink sink)
@@ -317,9 +323,15 @@ public class HousekeepingServiceSweepSummaryMetricTests
     private static PullRequestSummary MakePr(int number)
         => new()
         {
-            Number = number, Identifier = number.ToString(), Title = $"PR #{number}",
-            Description = string.Empty, Labels = [], BranchName = $"feature/auto-{number}-x",
-            TargetBranch = "main", Url = $"https://example.com/pr/{number}", IsDraft = false
+            Number = number,
+            Identifier = number.ToString(),
+            Title = $"PR #{number}",
+            Description = string.Empty,
+            Labels = [],
+            BranchName = $"feature/auto-{number}-x",
+            TargetBranch = "main",
+            Url = $"https://example.com/pr/{number}",
+            IsDraft = false
         };
 
     /// <summary>
