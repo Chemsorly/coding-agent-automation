@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Infrastructure.Persistence.Services;
@@ -7,7 +8,6 @@ using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
 using Microsoft.EntityFrameworkCore;
-using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Api;
 
@@ -48,18 +48,16 @@ public enum StatusTransitionOutcome
 /// and the architecture boundary enforced by <c>Orchestration_ShouldNot_ReferenceInfrastructurePersistenceAssembly</c>
 /// prohibits that dependency from the Orchestration assembly.
 /// </summary>
-public sealed class WorkItemStatusTransitionService
+public sealed partial class WorkItemStatusTransitionService
 {
     private readonly WorkItemTransitionService _transitionService;
     private readonly IRunLifecycleManager _runLifecycleManager;
     private readonly IDbContextFactory<PipelineDbContext>? _dbFactory;
-    private readonly ILogger _logger;
 
     public WorkItemStatusTransitionService(
         WorkItemTransitionService transitionService,
         IRunLifecycleManager runLifecycleManager,
-        IDbContextFactory<PipelineDbContext>? dbFactory = null,
-        ILogger? logger = null)
+        IDbContextFactory<PipelineDbContext>? dbFactory = null)
     {
         ArgumentNullException.ThrowIfNull(transitionService);
         ArgumentNullException.ThrowIfNull(runLifecycleManager);
@@ -67,16 +65,6 @@ public sealed class WorkItemStatusTransitionService
         _transitionService = transitionService;
         _runLifecycleManager = runLifecycleManager;
         _dbFactory = dbFactory;
-        // TODO: [WARNING] Serilog.Log.Logger is the global static logger. If this constructor runs before
-        // Serilog's bootstrap configuration is applied (e.g., in test setup without a configured static
-        // logger), Log.Logger resolves to SilentLogger and ForContext<>() returns a no-op logger.
-        // ResolveFailedFinalLabel's diagnostic log lines (disallowed-label Information and JsonException
-        // catch) would emit nothing, making label-parsing issues invisible at debug time. This is a
-        // pre-existing pattern in this codebase; the ILogger? optional parameter makes the silent-logger
-        // path the default in integration tests that don't inject a logger. Consider requiring a non-null
-        // ILogger in the constructor or using a NullLogger fallback that is explicitly documented.
-        // See review finding [WARNING] (DotNetSpecialist).
-        _logger = logger ?? Serilog.Log.Logger.ForContext<WorkItemStatusTransitionService>();
     }
 
     /// <summary>
@@ -158,13 +146,11 @@ public sealed class WorkItemStatusTransitionService
             {
                 var failureReason = request.ErrorMessage ?? request.FailureReason ?? "Infrastructure failure";
 
-                // Parse the pipeline's intended terminal label from the HTTP payload.
-                // The agent serializes the full JobCompletionPayload into request.Result; we read
-                // FinalLabel from it so the HTTP path can honour agent:needs-refinement outcomes
-                // without depending on the SignalR ReportJobCompleted path (which is replica-dependent).
-                // Allowlist: only agent:needs-refinement is accepted. Any success label, re-queue label,
-                // active-state label, or unknown value falls back to agent:error (null resolvedFinalLabel).
-                var resolvedFinalLabel = ResolveFailedFinalLabel(request.Result);
+                // Resolve the FinalLabel from the payload, allowing only agent:needs-refinement
+                // on the HTTP Failed path. All other values (including agent:error, agent:wont-do,
+                // any disallowed label, or absent payload) fall back to null — which causes
+                // RunLifecycleManager to use its default agent:error label.
+                string? resolvedFinalLabel = ResolveAllowedFinalLabelFromPayload(request.Result);
 
                 await _runLifecycleManager.FailRunWithLabelAsync(
                     new RunId(id.ToString()),
@@ -205,69 +191,6 @@ public sealed class WorkItemStatusTransitionService
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Parses <paramref name="resultJson"/> (the serialized <see cref="JobCompletionPayload"/>
-    /// from the agent's HTTP POST body) and returns <see cref="AgentLabels.NeedsRefinement"/> when
-    /// the payload's <c>FinalLabel</c> is exactly that value.
-    ///
-    /// Returns <c>null</c> for every other case:
-    /// <list type="bullet">
-    ///   <item><paramref name="resultJson"/> is null or empty</item>
-    ///   <item>JSON is malformed or does not contain <c>FinalLabel</c></item>
-    ///   <item><c>FinalLabel</c> is any other label — including success labels
-    ///   (<c>agent:done</c>, <c>agent:next</c>, <c>agent:epic-review</c>, <c>agent:wont-do</c>),
-    ///   re-queue labels (<c>agent:cancelled</c>), active-state labels, or unknown values</item>
-    /// </list>
-    ///
-    /// The narrow allowlist prevents a <c>Failed</c> HTTP transition from ending with a success or
-    /// re-queue label, which would bypass quality gates and confuse <see cref="IssueReworkService"/>.
-    /// </summary>
-    private string? ResolveFailedFinalLabel(string? resultJson)
-    {
-        if (string.IsNullOrEmpty(resultJson))
-            return null;
-
-        try
-        {
-            // TODO: [WARNING] PipelineJsonOptions.Lenient uses PropertyNameCaseInsensitive=true, which
-            // handles camelCase/PascalCase mismatches between agent serialization and server-side C# property
-            // names. Verify that FinalLabel is serialized by the agent with a casing that Lenient can match;
-            // a mismatch would silently return a null FinalLabel and fall through to agent:error without any
-            // log entry, making the failure indistinguishable from the intentional null-result branch.
-            // The existing tests serialize via PipelineJsonOptions.Default (PascalCase) — that roundtrip is
-            // covered, but camelCase serialization from the agent is not explicitly tested here.
-            // See review finding [WARNING] (SecurityReviewer, DotNetSpecialist).
-            var payload = JsonSerializer.Deserialize<JobCompletionPayload>(resultJson, PipelineJsonOptions.Lenient);
-            var finalLabel = payload?.FinalLabel;
-
-            if (finalLabel is null)
-                return null;
-
-            if (finalLabel == AgentLabels.NeedsRefinement)
-                return AgentLabels.NeedsRefinement;
-
-            // Non-null but not in the allowlist — log at Information so operators can diagnose
-            // unexpected values without flooding the warning channel.
-            // TODO: [WARNING] The raw finalLabel value from the agent-controlled HTTP payload is written
-            // directly into a Serilog structured log message. Serilog captures it as a structured property
-            // (mitigating classic format-string injection), but the raw string still flows into all
-            // configured sinks (file, Loki, etc.). A crafted FinalLabel containing newlines, ANSI escape
-            // sequences, or very long strings could pollute log output or cause log-storage issues.
-            // Consider truncating to a safe maximum length (e.g., 128 chars) and stripping control
-            // characters before logging. See review finding [WARNING] (SecurityReviewer).
-            _logger.Information(
-                "WorkItemStatusTransitionService: ignoring FinalLabel={FinalLabel} from Failed HTTP payload — only agent:needs-refinement is accepted; falling back to agent:error",
-                finalLabel);
-            return null;
-        }
-        catch (JsonException ex)
-        {
-            _logger.Information(ex,
-                "WorkItemStatusTransitionService: could not parse FinalLabel from Failed HTTP payload (malformed JSON) — falling back to agent:error");
-            return null;
-        }
-    }
 
     private static void ApplyStatusMutation(WorkItemEntity entity, WorkItemStatusRequest request)
     {
@@ -310,30 +233,24 @@ public sealed class WorkItemStatusTransitionService
         Guid id,
         WorkItemStatusRequest request,
         IDbContextFactory<PipelineDbContext>? dbFactory,
+        // TODO: [WARNING] The production call site fires this method as Task.Run with CancellationToken.None
+        // (fire-and-forget). The ct parameter is only meaningful on the awaitTelemetry=true integration-test
+        // path. If a test passes a cancellable token and cancels it mid-flight during a slow DB read, the
+        // telemetry emission will be silently dropped and the test will see a missing metric without a clear
+        // error. Consider documenting that ct should always be CancellationToken.None on the fire-and-forget
+        // production path, or assert/log when ct can be cancelled to make the discrepancy observable.
         CancellationToken ct = default)
     {
         try
         {
-            TimeSpan? duration = null;
-            if (dbFactory is not null)
-            {
-                await using var db = await dbFactory.CreateDbContextAsync(ct);
-                var item = await db.WorkItems.AsNoTracking()
-                    .Where(w => w.Id == id)
-                    .Select(w => new { w.DispatchedAt, w.CompletedAt })
-                    .FirstOrDefaultAsync(ct);
-                if (item?.DispatchedAt is not null && item.CompletedAt is not null)
-                    duration = item.CompletedAt.Value - item.DispatchedAt.Value;
-            }
+            var (duration, runTypeTag, _, projectName) =
+                await ResolveRunContextAsync(id, dbFactory, ct);
 
-            // Enum.TryParse succeeds for numeric string inputs (e.g. "99") even when they don't
-            // correspond to a named FailureReason member, yielding an undefined enum instance that
-            // would become a high-cardinality metric tag. The IsDefined guard rejects such values
-            // so only named members reach the telemetry dimension. (Issue #2341)
-            FailureReason? failureReason = Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason)
-                && Enum.IsDefined(typeof(FailureReason), parsedReason)
-                ? parsedReason
-                : (FailureReason?)null;
+            var (payload, failureReason) = ResolvePayloadAndFailureReason(request);
+
+            var (outcome, failureReasonTag) = DeriveOutcome(request.Status, payload, failureReason);
+
+            RecordRunOutcomeMetrics(runTypeTag, outcome, failureReasonTag, projectName, duration);
 
             WorkDistributionTelemetry.LogTerminalStatus(
                 id, request.Status, duration, request.AgentId,
@@ -345,4 +262,282 @@ public sealed class WorkItemStatusTransitionService
                 .Warning(ex, "Failed to emit terminal status telemetry for WorkItem {Id}", id);
         }
     }
+
+    /// <summary>
+    /// Queries the DB for the WorkItem's dispatch/completion timestamps, run type, and project context.
+    /// </summary>
+    private static async Task<(TimeSpan? Duration, string RunTypeTag, string? ProjectId, string? ProjectName)>
+        ResolveRunContextAsync(Guid id, IDbContextFactory<PipelineDbContext>? dbFactory, CancellationToken ct)
+    {
+        if (dbFactory is null)
+            return (null, "unknown", null, null);
+
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+
+        // LEFT JOIN WorkItems → PipelineRuns to get run type and project context.
+        // PipelineRunEntity.WorkItemId is nullable — the join may yield null.
+        // ProjectId and ProjectName come from PipelineRunEntity (string?), NOT from
+        // WorkItemEntity.ProjectId (which is Guid? and lacks ProjectName).
+        // TODO: [WARNING] If a WorkItem has multiple PipelineRunEntity rows (e.g. a retry scenario
+        // where the agent creates a second PipelineRun for the same WorkItem), this query returns
+        // an arbitrary row because there is no ORDER BY. The resolved run_type and project context
+        // may come from an earlier run, not the most recent one. Fix by adding
+        // .OrderByDescending(pr => pr.CreatedAt) (or StartedAt) inside the DefaultIfEmpty projection
+        // before FirstOrDefaultAsync. Low risk today since retries typically reuse the same RunType,
+        // but could diverge for future retry-chain scenarios.
+        var row = await db.WorkItems.AsNoTracking()
+            .Where(w => w.Id == id)
+            .GroupJoin(
+                db.PipelineRuns.AsNoTracking(),
+                w => w.Id,
+                pr => pr.WorkItemId,
+                (w, runs) => new { w, runs })
+            .SelectMany(
+                x => x.runs.DefaultIfEmpty(),
+                (x, pr) => new
+                {
+                    x.w.DispatchedAt,
+                    x.w.CompletedAt,
+                    x.w.TaskType,
+                    RunType = pr != null ? pr.RunType : (PipelineRunType?)null,
+                    ProjectId = pr != null ? pr.ProjectId : null,
+                    ProjectName = pr != null ? pr.ProjectName : null
+                })
+            .FirstOrDefaultAsync(ct);
+
+        if (row is null)
+            return (null, "unknown", null, null);
+
+        // TODO: [WARNING] This reads row.CompletedAt from the DB. CompletedAt is set by
+        // ApplyStatusMutation (synchronously, before the DB commit) and EmitTerminalStatusTelemetryAsync
+        // runs after that commit, so the DB read will always see the committed value under
+        // PostgreSQL's default READ COMMITTED isolation. This assumption holds for the current
+        // architecture. If the isolation level changes or the telemetry task is moved to run
+        // before the commit, this read may return null and the duration will be omitted silently.
+        TimeSpan? duration = (row.DispatchedAt is not null && row.CompletedAt is not null)
+            ? row.CompletedAt.Value - row.DispatchedAt.Value
+            : null;
+
+        // Safe fallback: use a local switch with null default rather than
+        // ToDefaultRunType() which throws UnreachableException for unknown values.
+        var resolvedRunType = row.RunType ?? row.TaskType switch
+        {
+            WorkItemTaskType.Implementation => (PipelineRunType?)PipelineRunType.Implementation,
+            WorkItemTaskType.Review => PipelineRunType.Review,
+            WorkItemTaskType.Decomposition => PipelineRunType.DecompositionAnalysis,
+            WorkItemTaskType.Consolidation => PipelineRunType.Consolidation,
+            _ => null
+        };
+        var runTypeTag = resolvedRunType.HasValue
+            ? resolvedRunType.Value.ToString().ToLowerInvariant()
+            : "unknown";
+
+        return (duration, runTypeTag, row.ProjectId, row.ProjectName);
+    }
+
+    /// <summary>
+    /// Deserializes the completion payload from the request result and resolves the failure reason.
+    /// </summary>
+    private static (JobCompletionPayload? Payload, FailureReason? FailureReason)
+        ResolvePayloadAndFailureReason(WorkItemStatusRequest request)
+    {
+        // Prefer the typed FailureCategory from the payload; fall back to the string field.
+        // TODO: [WARNING] PipelineJsonOptions.Default is strict (PascalCase, case-sensitive). If agents
+        // serialize JobCompletionPayload in camelCase, the deserialization will silently produce a null
+        // payload — all payload-derived signals (PullRequestUrl, IsDraftPr, AnalysisRecommendation,
+        // FailureCategory) will be lost and outcome derivation falls back to status-based heuristics
+        // (e.g. 'succeeded' instead of 'pr_created'). The previous call site used PipelineJsonOptions.Lenient
+        // (case-insensitive) to handle camelCase. Switch to PipelineJsonOptions.Lenient here unless it
+        // has been confirmed that all agents exclusively use PascalCase serialization.
+        JobCompletionPayload? payload = null;
+        if (request.Result is not null)
+        {
+            try
+            {
+                payload = JsonSerializer.Deserialize<JobCompletionPayload>(
+                    request.Result, PipelineJsonOptions.Default);
+            }
+            catch (JsonException)
+            {
+                // TODO: [WARNING] JsonException is thrown when the JSON is syntactically invalid OR
+                // when a required property (e.g. FinalStep, which is [required] on JobCompletionPayload)
+                // is missing. A valid Result payload that omits FinalStep will reach this catch and be
+                // discarded entirely, causing DeriveOutcome to fall back to status-based derivation and
+                // potentially produce the wrong outcome (e.g. 'succeeded' instead of 'pr_created').
+                // Fix: use relaxed deserialization (remove [required] from FinalStep for telemetry,
+                // or deserialize with JsonIgnoreCondition.WhenWritingDefault) so partially-populated
+                // payloads still contribute their non-null fields to outcome derivation.
+                // Malformed payload — treat as absent; fall through to status-based derivation.
+            }
+        }
+
+        // Build typed failureReason from FailureCategory (payload) first, then string field.
+        // TODO: [WARNING] The payload?.FailureCategory path does not apply an Enum.IsDefined guard,
+        // unlike the string-field fallback path below. If an agent sends an out-of-range numeric value
+        // for FailureCategory (e.g. {"FailureCategory": 99}), JsonSerializer deserializes it to an
+        // undefined FailureReason enum instance. That undefined instance then reaches PascalToSnakeCaseTag
+        // via failureReason.Value.ToString(), producing a non-snake-case numeric string (e.g. "99") as the
+        // failure_reason metric tag — creating a high-cardinality uninitialized series and defeating the
+        // IsDefined guard on the string-field path. Fix: add
+        // `if (failureReason.HasValue && !Enum.IsDefined<FailureReason>(failureReason.Value)) failureReason = null;`
+        // after this assignment.
+        FailureReason? failureReason = payload?.FailureCategory;
+        if (!failureReason.HasValue
+            && Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason)
+            && Enum.IsDefined<FailureReason>(parsedReason))
+        {
+            failureReason = parsedReason;
+        }
+
+        return (payload, failureReason);
+    }
+
+    /// <summary>
+    /// Derives the outcome label and failure_reason tag from the request and completion payload.
+    /// Ordering is critical: AnalysisRecommendation checks come before status/failure-reason checks
+    /// because wont_do and needs_refinement both carry FailureReason.GateRejected in the request —
+    /// the outcome must be identified first so failure_reason can be forced to "none" for those paths.
+    /// </summary>
+    private static (string Outcome, string FailureReasonTag) DeriveOutcome(
+        WorkItemStatus status,
+        JobCompletionPayload? payload,
+        FailureReason? failureReason)
+    {
+        // 1. Cancelled — no payload content relevant.
+        if (status == WorkItemStatus.Cancelled)
+            return ("cancelled", "none");
+
+        // 2. ConflictRestart — agent signals via FinalStep.
+        // TODO: [WARNING] Priority 2 (ConflictRestart) comes before priorities 3–4 (AnalysisRecommendation).
+        // A payload with FinalStep=ConflictRestart AND AnalysisRecommendation=WontDo/NotReady would produce
+        // outcome='conflict_restart' (not 'wont_do'/'needs_refinement'). This combination should never occur
+        // in practice. If issue #2956 introduces new FinalStep values that overlap with analysis gate outcomes,
+        // review this ordering to ensure the intended outcome is produced. The pre-initialization does not
+        // include a (run_type, "conflict_restart", non-"none" failure_reason) series; an invalid combo would
+        // create an uninitialized series and partially defeat the pre-init goal.
+        if (payload?.FinalStep == PipelineStep.ConflictRestart)
+            return ("conflict_restart", "none");
+
+        // 3. WontDo gate — arrives as Succeeded + FailureReason.GateRejected; use AnalysisRecommendation.
+        if (payload?.AnalysisRecommendation == AnalysisGateResult.WontDo)
+            return ("wont_do", "none");
+
+        // 4. NeedsRefinement gate — arrives as Failed + FailureReason.GateRejected; use AnalysisRecommendation.
+        if (payload?.AnalysisRecommendation == AnalysisGateResult.NotReady)
+            return ("needs_refinement", "none");
+
+        // 5. PR created (non-draft).
+        if (!string.IsNullOrEmpty(payload?.PullRequestUrl) && !payload.IsDraftPr)
+            return ("pr_created", "none");
+
+        // 6. Draft PR.
+        // TODO: [WARNING] This check does not verify that PullRequestUrl is non-empty before
+        // emitting 'draft_pr'. A payload where IsDraftPr=true but PullRequestUrl is null/empty
+        // (e.g. a pre-PR step that sets IsDraftPr=true by accident) will produce outcome='draft_pr'
+        // rather than falling through to 'succeeded' or 'failed'. Fix: guard with
+        // !string.IsNullOrEmpty(payload?.PullRequestUrl), mirroring priority 5.
+        if (payload?.IsDraftPr == true)
+            return ("draft_pr", "none");
+
+        // 7. Timeout failure.
+        if (failureReason == FailureReason.Timeout)
+            return ("timeout", "timeout");
+
+        // 8. Any other Succeeded run (review, decomposition, consolidation).
+        if (status == WorkItemStatus.Succeeded)
+            return ("succeeded", "none");
+
+        // 9. Fallthrough — failed with a specific reason.
+        var tag = failureReason.HasValue
+            ? PascalToSnakeCaseTag(failureReason.Value.ToString())
+            : "none";
+        return ("failed", tag);
+    }
+
+    /// <summary>
+    /// Records pipeline.run.outcomes (counter) and pipeline.run.duration (histogram) for a
+    /// single terminal transition.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Tag set for pipeline.run.outcomes:</strong> <c>run_type</c>, <c>outcome</c>,
+    /// <c>failure_reason</c>, and <c>pipeline.project_name</c> (Requirement 1).
+    /// The pre-initialization in <c>Program.PreInitializeMetrics</c> emits only the 3-tag combination
+    /// (without <c>pipeline.project_name</c>) per Requirement 7, which says to leave
+    /// <c>pipeline.project_name</c> out of pre-initialization because it has unbounded cardinality.
+    /// This means pre-initialized series (3 tags) and live series (4 tags) have different Prometheus
+    /// label fingerprints; the first real event for a new project name will still show as 0 in
+    /// <c>increase()</c> until a second event arrives, but the pre-init goal is met for the closed
+    /// tag dimensions (<c>run_type</c>, <c>outcome</c>, <c>failure_reason</c>).
+    /// </para>
+    /// </remarks>
+    private static void RecordRunOutcomeMetrics(
+        string runTypeTag,
+        string outcome,
+        string failureReasonTag,
+        string? projectName,
+        TimeSpan? duration)
+    {
+        // 4-tag label set per Requirement 1: run_type, outcome, failure_reason, pipeline.project_name.
+        // pipeline.project_name is excluded from pre-initialization (unbounded cardinality) per Req 7.
+        PipelineTelemetry.RunOutcomes.Add(1,
+            new KeyValuePair<string, object?>("run_type", runTypeTag),
+            new KeyValuePair<string, object?>("outcome", outcome),
+            new KeyValuePair<string, object?>("failure_reason", failureReasonTag),
+            new KeyValuePair<string, object?>("pipeline.project_name", projectName ?? "unknown"));
+
+        if (duration.HasValue && duration.Value.TotalSeconds >= 0)
+        {
+            PipelineTelemetry.RunDuration.Record(duration.Value.TotalSeconds,
+                new KeyValuePair<string, object?>("run_type", runTypeTag),
+                new KeyValuePair<string, object?>("outcome", outcome));
+        }
+    }
+
+    /// <summary>
+    /// Tries to deserialize <paramref name="resultJson"/> as a <see cref="JobCompletionPayload"/>
+    /// and returns the <c>FinalLabel</c> field if and only if it is
+    /// <see cref="AgentLabels.NeedsRefinement"/>. Returns <c>null</c> in all other cases:
+    /// absent or malformed payload, or any other label value.
+    /// </summary>
+    /// <remarks>
+    /// Only <see cref="AgentLabels.NeedsRefinement"/> is a valid override label on the HTTP
+    /// <c>Failed</c> path. All other values fall back to the <c>agent:error</c> default that
+    /// <see cref="IRunLifecycleManager.FailRunWithLabelAsync"/> applies when
+    /// <c>resolvedFinalLabel</c> is null.
+    /// </remarks>
+    private static string? ResolveAllowedFinalLabelFromPayload(string? resultJson)
+    {
+        if (string.IsNullOrEmpty(resultJson))
+            return null;
+
+        try
+        {
+            var payload = JsonSerializer.Deserialize<JobCompletionPayload>(
+                resultJson, PipelineJsonOptions.Default);
+            return payload?.FinalLabel == AgentLabels.NeedsRefinement
+                ? AgentLabels.NeedsRefinement
+                : null;
+        }
+        catch (JsonException)
+        {
+            // TODO: [WARNING] This catch is silent — ILogger was removed from WorkItemStatusTransitionService
+            // in issue #2967 (the constructor no longer accepts it). A malformed or camelCase Result JSON from
+            // an agent is swallowed here with no log output, making agent serialization regressions invisible
+            // to operators. Consider injecting ILogger<WorkItemStatusTransitionService> (Microsoft.Extensions.Logging,
+            // not Serilog static) and logging at Warning level here (include WorkItem ID, not raw JSON content).
+            // Malformed payload — treat as absent; caller uses null (agent:error fallback).
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Converts a PascalCase enum member name to snake_case lowercase.
+    /// E.g. <c>QualityGateExhausted</c> → <c>"quality_gate_exhausted"</c>.
+    /// </summary>
+    private static string PascalToSnakeCaseTag(string pascalCase) =>
+        PascalCaseBoundaryRegex().Replace(pascalCase, "_$1").ToLowerInvariant();
+
+    [System.Text.RegularExpressions.GeneratedRegex("(?<=[a-z0-9])([A-Z])", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex PascalCaseBoundaryRegex();
 }

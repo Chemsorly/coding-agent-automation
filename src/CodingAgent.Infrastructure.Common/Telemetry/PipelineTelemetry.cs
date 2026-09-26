@@ -24,26 +24,36 @@ public static class PipelineTelemetry
     private const string UnitSync = "{sync}";
     private const string UnitRetry = "{retry}";
     private const string UnitJob = "{job}";
+    private const string UnitRun = "{run}";
     private const string UnitEvent = "{event}";
     private const string UnitReprobe = "{reprobe}";
 
     public static readonly ActivitySource ActivitySource = new(SourceName);
     public static readonly Meter Meter = new(SourceName);
 
-    public static readonly Counter<long> JobsDispatched = Meter.CreateCounter<long>("pipeline.jobs.dispatched");
-    public static readonly Counter<long> JobsCompleted = Meter.CreateCounter<long>("pipeline.jobs.completed");
-    public static readonly Counter<long> JobsFailed = Meter.CreateCounter<long>("pipeline.jobs.failed");
-    public static readonly Histogram<double> JobDuration = Meter.CreateHistogram<double>(
-        "pipeline.jobs.duration", "s", "Duration of pipeline jobs in seconds",
+    /// <summary>
+    /// Counter: terminal pipeline run outcomes, recorded once per transition in the API.
+    /// Tags: run_type, outcome (closed set), failure_reason, pipeline.project_name.
+    /// Pre-initialized at process start for the 3 closed-tag dimensions (run_type × outcome × failure_reason)
+    /// so that <c>increase()</c> is visible from the first event after a deploy for those dimensions.
+    /// <c>pipeline.project_name</c> is excluded from pre-initialization (unbounded cardinality) per Requirement 7.
+    /// </summary>
+    public static readonly Counter<long> RunOutcomes = Meter.CreateCounter<long>(
+        "pipeline.run.outcomes", UnitRun, "Terminal pipeline run outcome counts");
+
+    /// <summary>
+    /// Histogram: total pipeline run duration (Dispatched → terminal), in seconds.
+    /// Buckets sized for human-scale job durations (1 min → 12 h).
+    /// </summary>
+    public static readonly Histogram<double> RunDuration = Meter.CreateHistogram<double>(
+        "pipeline.run.duration", "s", "Total duration of pipeline runs from dispatch to terminal status",
         advice: new InstrumentAdvice<double>
         {
-            HistogramBucketBoundaries = [30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600]
+            HistogramBucketBoundaries = [60, 300, 600, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 21600, 28800, 43200]
         });
 
     public static readonly Counter<long> SubIssuesCreated = Meter.CreateCounter<long>("pipeline.decomposition.sub_issues.created");
     public static readonly Counter<long> SubIssuesFailed = Meter.CreateCounter<long>("pipeline.decomposition.sub_issues.failed");
-    public static readonly Histogram<double> DecompositionDuration = Meter.CreateHistogram<double>(
-        "pipeline.decomposition.duration", "s", "Duration of decomposition phases in seconds");
 
     public static readonly Histogram<double> StepDuration = Meter.CreateHistogram<double>(
         "pipeline.step.duration", "s", "Duration of individual pipeline steps",
@@ -104,27 +114,6 @@ public static class PipelineTelemetry
             HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600]
         });
 
-    // Linked issue resolution metrics (dispatch path)
-    public static readonly Counter<long> DispatchLinkedIssuesResolved = Meter.CreateCounter<long>(
-        "pipeline.dispatch.linked_issues.resolved", "{issue}",
-        "Linked issues resolved per dispatch, tagged by source (closing_keyword | issue_url)");
-
-    public static readonly Counter<long> DispatchLinkedIssueFetchFailed = Meter.CreateCounter<long>(
-        "pipeline.dispatch.linked_issues.fetch_failed", "{failure}",
-        "Non-fatal issue fetch failures during linked issue resolution");
-
-    /// <summary>
-    /// Closed-set <c>source</c> tag values for <see cref="DispatchLinkedIssuesResolved"/>.
-    /// Using a closed constant set prevents unbounded label cardinality.
-    /// </summary>
-    public static class LinkedIssueSource
-    {
-        /// <summary>Issue number was found via a closing keyword (e.g. <c>Closes #N</c>, <c>Fixes #N</c>).</summary>
-        public const string ClosingKeyword = "closing_keyword";
-        /// <summary>Issue number was found via a full GitHub issue URL (<c>https://github.com/owner/repo/issues/N</c>).</summary>
-        public const string IssueUrl = "issue_url";
-    }
-
     public static readonly Counter<long> ConsolidationJobsExpired = Meter.CreateCounter<long>(
         "consolidation.jobs.expired", UnitJob, "Consolidation jobs expired from queue");
 
@@ -170,6 +159,34 @@ public static class PipelineTelemetry
     public static readonly Counter<long> LoopCircuitBreakerTrips = Meter.CreateCounter<long>(
         "pipeline.loop.circuit_breaker_trips", "{trip}", "Circuit breaker trip events");
 
+    // Dispatch linked-issue metrics
+    /// <summary>
+    /// Counter: failures fetching a linked issue context during dispatch enrichment (non-fatal).
+    /// Each increment corresponds to one issue reference that could not be resolved.
+    /// </summary>
+    public static readonly Counter<long> DispatchLinkedIssueFetchFailed = Meter.CreateCounter<long>(
+        "pipeline.dispatch.linked_issue_fetch_failed", UnitFailure,
+        "Failed attempts to fetch linked issue context during dispatch enrichment (non-fatal)");
+
+    /// <summary>
+    /// Counter: linked issues successfully resolved during dispatch enrichment.
+    /// Tags: source (closing_keyword | issue_url).
+    /// </summary>
+    public static readonly Counter<long> DispatchLinkedIssuesResolved = Meter.CreateCounter<long>(
+        "pipeline.dispatch.linked_issues_resolved", "{issue}",
+        "Linked issues successfully resolved during dispatch enrichment, by source");
+
+    /// <summary>
+    /// Closed-set tag values for <c>pipeline.dispatch.linked_issues_resolved</c> source tag.
+    /// </summary>
+    public static class LinkedIssueSource
+    {
+        /// <summary>Issue reference resolved via closing keyword syntax (e.g. "Closes #123").</summary>
+        public const string ClosingKeyword = "closing_keyword";
+        /// <summary>Issue reference resolved via direct URL in issue body.</summary>
+        public const string IssueUrl = "issue_url";
+    }
+
     // Housekeeping metrics
     public static readonly Counter<long> HousekeepingTriggered = Meter.CreateCounter<long>(
         "pipeline.housekeeping.triggered", UnitUpdate, "Server-side branch updates triggered");
@@ -177,28 +194,8 @@ public static class PipelineTelemetry
         "pipeline.housekeeping.succeeded", UnitUpdate, "Server-side branch updates completed successfully");
     public static readonly Counter<long> HousekeepingFailed = Meter.CreateCounter<long>(
         "pipeline.housekeeping.failed", UnitUpdate, "Server-side branch updates that threw an exception");
-    /// <summary>
-    /// PRs that were evaluated as candidates but skipped for a policy reason, tagged by
-    /// <c>skip_reason</c>. Only policy-driven skips are counted here; content filters
-    /// (draft, not-behind) and system-fault paths (active_runs_unavailable) are excluded:
-    /// draft and not-behind are already captured by <see cref="HousekeepingPrEvaluated"/>,
-    /// and active_runs_unavailable is covered by the Step 4 Warning log.
-    /// The concurrency-limit break path is a separate counter: <see cref="HousekeepingSlotExhausted"/>.
-    /// </summary>
     public static readonly Counter<long> HousekeepingSkipped = Meter.CreateCounter<long>(
-        "pipeline.housekeeping.skipped", UnitUpdate,
-        "PRs skipped for policy reasons during candidate selection, tagged by skip_reason (active_run | in_flight | cooldown)");
-
-    /// <summary>
-    /// Fires once per housekeeping cycle where the concurrency slot limit was reached before
-    /// all sorted candidates were evaluated. One increment = one cycle where throughput was
-    /// constrained by the configured <c>effectiveConcurrencyLimit</c>.
-    /// Distinct from <see cref="HousekeepingSkipped"/>: PRs not reached by the loop were never
-    /// evaluated as candidates — they are capacity-starved, not policy-skipped.
-    /// </summary>
-    public static readonly Counter<long> HousekeepingSlotExhausted = Meter.CreateCounter<long>(
-        "pipeline.housekeeping.slot_exhausted", UnitUpdate,
-        "Cycles where the concurrency slot limit was hit before all candidates were evaluated (one increment per cycle, not per PR)");
+        "pipeline.housekeeping.skipped", UnitUpdate, "PRs skipped during candidate selection (not behind, null, draft, active rework, in-flight)");
     public static readonly Counter<long> HousekeepingEvicted = Meter.CreateCounter<long>(
         "pipeline.housekeeping.evicted", UnitUpdate, "In-flight entries removed (CI resolved or PR merged/label removed)");
     public static readonly Counter<long> HousekeepingConflictReworkTriggered = Meter.CreateCounter<long>(
@@ -209,39 +206,55 @@ public static class PipelineTelemetry
         "Stale agent branches deleted (no open PR, inactive issue label)");
 
     /// <summary>
-    /// Counts agent:done PRs evaluated per housekeeping sweep, tagged by their resolved
-    /// <c>mergeability_status</c> (behind | up_to_date | conflicted | blocked | unknown).
-    /// Emitted once per distinct status value that appears in a sweep's mergeability map,
-    /// using the aggregate count for that status (one <c>Add(N)</c> per status, not one per PR).
-    /// Only emitted when the agent:done PR list is non-empty.
-    /// Pair with the sweep Debug log line for per-sweep snapshots; use rate/sum queries
-    /// for timeline analysis of GitHub mergeability-state distribution over time.
-    /// </summary>
-    public static readonly Counter<long> HousekeepingPrEvaluated = Meter.CreateCounter<long>(
-        "pipeline.housekeeping.pr_evaluated", UnitUpdate,
-        "Agent:done PRs evaluated per housekeeping sweep, tagged by mergeability_status (behind | up_to_date | conflicted | blocked | unknown)");
-
-    /// <summary>
-    /// Counts agent PRs that left the <c>agent:done</c> list (merged or closed without merge).
-    /// Emitted once per PR via <c>HousekeepingService.RecordPrOutcomesAsync</c>.
-    /// Tagged by <c>outcome</c>: <c>merged</c> or <c>closed_unmerged</c>.
+    /// Counter: PRs that have been closed (merged or closed-without-merge) during a housekeeping cycle.
+    /// Tags: outcome (merged | closed_unmerged).
+    /// Pre-initialized at startup via <c>GitHubTelemetry.PreInitialize()</c>.
     /// </summary>
     public static readonly Counter<long> PullRequestsClosed = Meter.CreateCounter<long>(
-        "pipeline.pull_requests.closed", "{pull_request}",
-        "Agent PRs that were merged or closed. Emitted once per PR by the housekeeping service.");
+        "pipeline.pull_requests.closed", "{pr}",
+        "Pull requests closed (merged or closed without merge) during housekeeping cycles");
 
     /// <summary>
-    /// Histogram of time from PR creation to merge, in seconds.
-    /// Only emitted for <c>outcome=merged</c> PRs where <c>PullRequestSummary.CreatedAt</c> is set.
-    /// Uses <c>UtcNow</c> as a proxy for merge time (approximation error ≈ poll interval).
-    /// Buckets: 1h, 4h, 12h, 24h, 48h, 1 week.
+    /// Histogram: time from PR creation to merge, in seconds.
+    /// Only recorded when outcome is "merged" and createdAt is available from the PR creation cache.
     /// </summary>
     public static readonly Histogram<double> PullRequestTimeToMerge = Meter.CreateHistogram<double>(
-        "pipeline.pull_requests.time_to_merge", "s", "Time from PR creation to merge in seconds",
+        "pipeline.pull_requests.time_to_merge", "s",
+        "Time from pull request creation to merge",
         advice: new InstrumentAdvice<double>
         {
-            HistogramBucketBoundaries = [3600, 14400, 43200, 86400, 172800, 604800]
+            HistogramBucketBoundaries = [300, 600, 1800, 3600, 7200, 14400, 28800, 43200, 86400, 172800, 345600, 604800]
         });
+
+    /// <summary>
+    /// Counter: housekeeping slot-exhaustion events (in-flight limit reached for a repo).
+    /// Tags: repo_provider_id.
+    /// </summary>
+    public static readonly Counter<long> HousekeepingSlotExhausted = Meter.CreateCounter<long>(
+        "pipeline.housekeeping.slot_exhausted", "{exhaustion}",
+        "Housekeeping cycles where the in-flight slot limit was reached for a repository");
+
+    /// <summary>
+    /// Counter: individual PRs evaluated for mergeability status in a housekeeping cycle.
+    /// Tags: repo_provider_id, mergeability_status (behind | up_to_date | conflicted | blocked | unknown).
+    /// </summary>
+    public static readonly Counter<long> HousekeepingPrEvaluated = Meter.CreateCounter<long>(
+        "pipeline.housekeeping.pr_evaluated", "{pr}",
+        "Pull requests evaluated per mergeability status during housekeeping cycles");
+
+    /// <summary>
+    /// Closed-set tag values for <c>pipeline.housekeeping.skipped</c>.
+    /// Using constants prevents cardinality blowup on the skip_reason tag.
+    /// </summary>
+    public static class HousekeepingSkipReasons
+    {
+        /// <summary>PR skipped because its branch has an active pipeline run.</summary>
+        public const string ActiveRun = "active_run";
+        /// <summary>PR skipped because a housekeeping update for it is already in-flight.</summary>
+        public const string InFlight = "in_flight";
+        /// <summary>PR skipped because it was triggered too recently (cooldown window).</summary>
+        public const string Cooldown = "cooldown";
+    }
 
     /// <summary>
     /// Counts re-probe batches fired for PRs whose first mergeability probe returned
@@ -263,21 +276,6 @@ public static class PipelineTelemetry
     public static readonly Counter<long> HousekeepingReprobeResolved = Meter.CreateCounter<long>(
         "pipeline.housekeeping.reprobe_resolved", UnitReprobe,
         "PRs that resolved to a non-Unknown mergeability state on re-probe (tagged by resolved_state)");
-
-    /// <summary>
-    /// Closed-set <c>skip_reason</c> tag values for <see cref="HousekeepingSkipped"/>.
-    /// Only policy-driven reasons are represented — content filters (draft, not-behind)
-    /// and system faults (active_runs_unavailable) are deliberately excluded.
-    /// </summary>
-    public static class HousekeepingSkipReasons
-    {
-        /// <summary>PR's branch is currently occupied by an active agent run.</summary>
-        public const string ActiveRun = "active_run";
-        /// <summary>PR already occupies a concurrency slot from a previous trigger (in-flight CI).</summary>
-        public const string InFlight = "in_flight";
-        /// <summary>PR was triggered too recently and is within the trigger cooldown window.</summary>
-        public const string Cooldown = "cooldown";
-    }
 
     // Label swap metrics
     // TODO: The unit string "{exhaustion}" is inconsistent with the "{item}", "{retry}", "{failure}", "{event}"

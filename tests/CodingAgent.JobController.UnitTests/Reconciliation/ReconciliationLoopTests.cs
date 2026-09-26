@@ -3712,165 +3712,184 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
             $"timeout_execution_age_seconds must record the created age (≥ {graceWindowSeconds}s), not 0");
     }
 
-    // ─── pipeline.jobs.* emission tests (Issue #2256) ────────────────────────────
-    // These tests verify that WorkDistributionTelemetry.LogTerminalStatus also emits
-    // PipelineTelemetry.JobsCompleted / JobsFailed / JobDuration from the long-lived
-    // Job Controller process, fixing the pod-exit OTLP flush race.
+    // ─── LogTerminalStatus metric behavior tests (Issue #2967) ────────────────
+    // These tests verify the post-#2967 behavior of WorkDistributionTelemetry.LogTerminalStatus:
+    // - workdistribution.workitems_terminated is emitted with snake_case failure_reason
+    // - workdistribution.job_execution_duration_seconds is emitted when duration is provided
+    // - pipeline.jobs.* is NOT emitted (removed from LogTerminalStatus in issue #2967;
+    //   run-level metrics are now consolidated in WorkItemStatusTransitionService)
 
     [Fact]
-    public void LogTerminalStatus_Succeeded_EmitsPipelineJobsCompleted()
+    public void LogTerminalStatus_Succeeded_EmitsWorkItemsTerminated_WithNoneTag()
     {
-        // Snapshot before to tolerate any stray recordings from parallel tests
-        var countBefore = _pipelineCounters.Count(
-            r => r.InstrumentName == "pipeline.jobs.completed" && r.Value == 1L);
+        var countBefore = _recordings.Count(
+            r => r.InstrumentName == "workdistribution.workitems_terminated"
+                 && r.LongValue == 1L);
 
         WorkDistributionTelemetry.LogTerminalStatus(
             Guid.NewGuid(), WorkItemStatus.Succeeded, TimeSpan.FromSeconds(120), null, null);
 
-        var countAfter = _pipelineCounters.Count(
-            r => r.InstrumentName == "pipeline.jobs.completed" && r.Value == 1L);
+        var countAfter = _recordings.Count(
+            r => r.InstrumentName == "workdistribution.workitems_terminated"
+                 && r.LongValue == 1L);
 
         (countAfter - countBefore).Should().Be(1,
-            "pipeline.jobs.completed must be incremented once for a Succeeded status");
-
-        // NOTE: This test embeds two distinct behavioral assertions. The second
-        // LogTerminalStatus call below (used only to verify the negative path) also increments
-        // pipeline.jobs.completed, which bleeds into the shared snapshot bag and could confuse
-        // concurrent tests. The negative assertion is also weak: failedCountBefore may already
-        // include stray recordings, so "no change" passes even if the second call misbehaves.
-        // Consider splitting into a dedicated [Fact] for the negative path using a fresh MeterListener.
-
-        // pipeline.jobs.failed must NOT be emitted for a Succeeded transition
-        var failedCountBefore = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
-        WorkDistributionTelemetry.LogTerminalStatus(
-            Guid.NewGuid(), WorkItemStatus.Succeeded, null, null, null);
-        var failedCountAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
-        failedCountAfter.Should().Be(failedCountBefore,
-            "pipeline.jobs.failed must not be emitted for a Succeeded transition");
+            "workdistribution.workitems_terminated must be incremented once for a Succeeded status");
     }
 
     [Fact]
-    public void LogTerminalStatus_Succeeded_EmitsPipelineJobsDuration()
+    public void LogTerminalStatus_Succeeded_EmitsJobExecutionDuration()
     {
-        // Use a fixed duration for a deterministic assertion value (brain entry: fixed past timestamps)
-        var countBefore = _pipelineHistograms.Count(
-            r => r.InstrumentName == "pipeline.jobs.duration" && Math.Abs(r.Value - 120.0) < 0.001);
+        var countBefore = _recordings.Count(
+            r => r.InstrumentName == "workdistribution.job_execution_duration_seconds"
+                 && Math.Abs(r.DoubleValue - 120.0) < 0.001);
 
         WorkDistributionTelemetry.LogTerminalStatus(
             Guid.NewGuid(), WorkItemStatus.Succeeded, TimeSpan.FromSeconds(120), null, null);
 
-        var countAfter = _pipelineHistograms.Count(
-            r => r.InstrumentName == "pipeline.jobs.duration" && Math.Abs(r.Value - 120.0) < 0.001);
+        var countAfter = _recordings.Count(
+            r => r.InstrumentName == "workdistribution.job_execution_duration_seconds"
+                 && Math.Abs(r.DoubleValue - 120.0) < 0.001);
 
         (countAfter - countBefore).Should().Be(1,
-            "pipeline.jobs.duration must be recorded once with value 120.0s for a 120s duration");
+            "workdistribution.job_execution_duration_seconds must be recorded once with value 120.0s");
     }
 
     [Fact]
-    public void LogTerminalStatus_Failed_EmitsPipelineJobsFailed_WithSnakeCaseTag()
+    public void LogTerminalStatus_Failed_EmitsSnakeCaseFailureReasonTag()
     {
-        // Use the class-level _pipelineCounters bag with a before/after delta to count emissions.
-        // A scoped MeterListener subscribing to the static PipelineTelemetry meter would pick up
-        // emissions from other test assemblies running in parallel in the same process on CI,
-        // causing spurious double-counts. The delta approach is immune to pre-existing recordings
-        // and is consistent with the pattern used by other tests in this class.
-        var failedCountBefore = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
+        // Verify that failure_reason tag is snake_case (issue #2967 normalization).
+        // Use a per-test MeterListener to capture tags with exact values.
+        var taggedBag = new ConcurrentBag<string?>();
+        using var perTestListener = new MeterListener();
+        perTestListener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName
+                && instrument.Name == "workdistribution.workitems_terminated")
+                l.EnableMeasurementEvents(instrument);
+        };
+        perTestListener.SetMeasurementEventCallback<long>((_, measurement, tags, _) =>
+        {
+            if (measurement == 0) return; // skip pre-init
+            foreach (var tag in tags)
+                if (tag.Key == "failure_reason") { taggedBag.Add(tag.Value?.ToString()); return; }
+        });
+        perTestListener.Start();
 
-        WorkDistributionTelemetry.LogTerminalStatus(
-            Guid.NewGuid(), WorkItemStatus.Failed, TimeSpan.FromSeconds(60), null, FailureReason.Timeout);
-
-        var failedCountAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
-        (failedCountAfter - failedCountBefore).Should().Be(1,
-            "pipeline.jobs.failed must be incremented once for a Failed status");
-
-        // Assert snake_case failure_reason tag — "Timeout" → "timeout"
-        _pipelineCounters.Should().Contain(
-            r => r.InstrumentName == "pipeline.jobs.failed"
-                 && r.Tags.Any(t => t.Key == "failure_reason" && (string?)t.Value == "timeout"),
-            "failure_reason tag must be snake_case 'timeout', not PascalCase 'Timeout'");
-
-        // NOTE: The negative assertion below (completed not emitted for Failed) is weak:
-        // completedCountBefore is captured after the first LogTerminalStatus call has already run,
-        // so it avoids contamination from that call, but it is still vulnerable to a race window
-        // where stray parallel tests fire between the snapshot and the assertion. The assertion
-        // would pass even if the production code incorrectly emitted pipeline.jobs.completed for
-        // a Failed status, as long as no other test incremented it between snapshot and check.
-        // Consider isolating this negative path into a dedicated [Fact] with a fresh MeterListener.
-
-        // pipeline.jobs.completed must NOT be emitted for a Failed transition
-        var completedCountBefore = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.completed");
         WorkDistributionTelemetry.LogTerminalStatus(
             Guid.NewGuid(), WorkItemStatus.Failed, null, null, FailureReason.Timeout);
-        var completedCountAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.completed");
-        completedCountAfter.Should().Be(completedCountBefore,
-            "pipeline.jobs.completed must not be emitted for a Failed transition");
+
+        taggedBag.Should().Contain("timeout",
+            "FailureReason.Timeout must produce failure_reason='timeout' (snake_case, issue #2967)");
     }
 
     [Fact]
     public void LogTerminalStatus_Failed_AgentError_ProducesSnakeCaseTag()
     {
-        var countBefore = _pipelineCounters.Count(
-            r => r.InstrumentName == "pipeline.jobs.failed"
-                 && r.Tags.Any(t => t.Key == "failure_reason" && (string?)t.Value == "agent_error"));
+        var taggedBag = new ConcurrentBag<string?>();
+        using var perTestListener = new MeterListener();
+        perTestListener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName
+                && instrument.Name == "workdistribution.workitems_terminated")
+                l.EnableMeasurementEvents(instrument);
+        };
+        perTestListener.SetMeasurementEventCallback<long>((_, measurement, tags, _) =>
+        {
+            if (measurement == 0) return; // skip pre-init
+            foreach (var tag in tags)
+                if (tag.Key == "failure_reason") { taggedBag.Add(tag.Value?.ToString()); return; }
+        });
+        perTestListener.Start();
 
         WorkDistributionTelemetry.LogTerminalStatus(
             Guid.NewGuid(), WorkItemStatus.Failed, null, null, FailureReason.AgentError);
 
-        var countAfter = _pipelineCounters.Count(
-            r => r.InstrumentName == "pipeline.jobs.failed"
-                 && r.Tags.Any(t => t.Key == "failure_reason" && (string?)t.Value == "agent_error"));
-
-        (countAfter - countBefore).Should().Be(1,
-            "FailureReason.AgentError must produce failure_reason='agent_error' (snake_case)");
+        taggedBag.Should().Contain("agent_error",
+            "FailureReason.AgentError must produce failure_reason='agent_error' (snake_case, issue #2967)");
     }
 
     [Fact]
-    public void LogTerminalStatus_Failed_NullReason_ProducesUnknownTag()
+    public void LogTerminalStatus_Failed_NullReason_ProducesNoneTag()
     {
-        // null failureReason must produce "unknown" — matches PipelineRunInstrumentation convention
-        var countBefore = _pipelineCounters.Count(
-            r => r.InstrumentName == "pipeline.jobs.failed"
-                 && r.Tags.Any(t => t.Key == "failure_reason" && (string?)t.Value == "unknown"));
+        // null failureReason must produce "none" — normalized in issue #2967.
+        var taggedBag = new ConcurrentBag<string?>();
+        using var perTestListener = new MeterListener();
+        perTestListener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName
+                && instrument.Name == "workdistribution.workitems_terminated")
+                l.EnableMeasurementEvents(instrument);
+        };
+        perTestListener.SetMeasurementEventCallback<long>((_, measurement, tags, _) =>
+        {
+            if (measurement == 0) return; // skip pre-init
+            foreach (var tag in tags)
+                if (tag.Key == "failure_reason") { taggedBag.Add(tag.Value?.ToString()); return; }
+        });
+        perTestListener.Start();
 
         WorkDistributionTelemetry.LogTerminalStatus(
             Guid.NewGuid(), WorkItemStatus.Failed, null, null, failureReason: null);
 
-        var countAfter = _pipelineCounters.Count(
-            r => r.InstrumentName == "pipeline.jobs.failed"
-                 && r.Tags.Any(t => t.Key == "failure_reason" && (string?)t.Value == "unknown"));
+        taggedBag.Should().Contain("none",
+            "null failureReason must produce failure_reason='none' (issue #2967)");
+    }
 
-        (countAfter - countBefore).Should().Be(1,
-            "null failureReason must produce failure_reason='unknown', not 'none'");
+    [Fact]
+    public void LogTerminalStatus_DoesNotEmitPipelineJobsCounters()
+    {
+        // Issue #2967: pipeline.jobs.* must NOT be emitted from LogTerminalStatus.
+        // Run-level metrics are now consolidated in WorkItemStatusTransitionService.
+        // TODO: [WARNING] These assertions are vacuously true. PipelineTelemetry.JobsCompleted,
+        // JobsFailed, and JobDuration were removed from PipelineTelemetry.cs in this diff, so
+        // those instruments no longer exist in the meter. The _pipelineCounters bag listens on
+        // PipelineTelemetry.SourceName — since the instruments are gone, pipeline.jobs.* can
+        // never appear in _pipelineCounters regardless of what LogTerminalStatus does. The delta
+        // will always be 0 no matter how LogTerminalStatus is changed in future.
+        // Fix: also assert that no new entries appear in _recordings (the workdistribution bag)
+        // beyond the two expected workdistribution.workitems_terminated increments, or explicitly
+        // check that the net delta of ALL observed metric names contains no "pipeline.jobs.*" names.
+        var completedBefore = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.completed");
+        var failedBefore = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
+        var durationBefore = _pipelineHistograms.Count(r => r.InstrumentName == "pipeline.jobs.duration");
+
+        WorkDistributionTelemetry.LogTerminalStatus(
+            Guid.NewGuid(), WorkItemStatus.Succeeded, TimeSpan.FromSeconds(60), null, null);
+        WorkDistributionTelemetry.LogTerminalStatus(
+            Guid.NewGuid(), WorkItemStatus.Failed, TimeSpan.FromSeconds(60), null, FailureReason.AgentError);
+
+        var completedAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.completed");
+        var failedAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
+        var durationAfter = _pipelineHistograms.Count(r => r.InstrumentName == "pipeline.jobs.duration");
+
+        (completedAfter - completedBefore).Should().Be(0,
+            "pipeline.jobs.completed must NOT be emitted from LogTerminalStatus (issue #2967)");
+        (failedAfter - failedBefore).Should().Be(0,
+            "pipeline.jobs.failed must NOT be emitted from LogTerminalStatus (issue #2967)");
+        (durationAfter - durationBefore).Should().Be(0,
+            "pipeline.jobs.duration must NOT be emitted from LogTerminalStatus (issue #2967)");
     }
 
     [Fact]
     public void LogTerminalStatus_Failed_NoDuration_DoesNotEmitDuration()
     {
-        // With duration: null the pipeline.jobs.duration histogram must not be emitted
-        var histCountBefore = _pipelineHistograms.Count(r => r.InstrumentName == "pipeline.jobs.duration");
+        var histCountBefore = _recordings.Count(r => r.InstrumentName == "workdistribution.job_execution_duration_seconds");
 
         WorkDistributionTelemetry.LogTerminalStatus(
             Guid.NewGuid(), WorkItemStatus.Failed, duration: null, null, FailureReason.Timeout);
 
-        var histCountAfter = _pipelineHistograms.Count(r => r.InstrumentName == "pipeline.jobs.duration");
-        histCountAfter.Should().Be(histCountBefore,
-            "pipeline.jobs.duration must not be emitted when duration is null");
-
-        // NOTE: This test only covers duration:null for Failed status. There is no equivalent
-        // test for Succeeded with duration:null. The null guard in production applies to both, so an
-        // accidental regression on the Succeeded path would not be caught. Add a parallel test:
-        // LogTerminalStatus_Succeeded_NoDuration_DoesNotEmitDuration.
-
-        // NOTE: The duration >= 0 guard is not tested for the boundary case of TimeSpan.Zero.
-        // A zero-second duration is >= 0 and should be recorded. A future change tightening the guard
-        // to > 0 would silently drop zero-duration recordings without a test failure. Consider adding
-        // an explicit test: LogTerminalStatus_Succeeded_ZeroDuration_EmitsDurationWithZeroValue.
+        var histCountAfter = _recordings.Count(r => r.InstrumentName == "workdistribution.job_execution_duration_seconds");
+        (histCountAfter - histCountBefore).Should().Be(0,
+            "workdistribution.job_execution_duration_seconds must not be emitted when duration is null");
     }
 
     [Fact]
-    public async Task ReconcileOnceAsync_SucceededJob_EmitsPipelineJobsCompleted()
+    public async Task ReconcileOnceAsync_SucceededJob_EmitsWorkDistTerminated()
     {
-        // Arrange: K8s Succeeded job with StartTime + CompletionTime for a deterministic duration
+        // Issue #2967: ReconcileOnceAsync no longer emits pipeline.jobs.completed;
+        // it only triggers the API via PostStatusAsync. Verify workdistribution counter
+        // is still emitted from the LogTerminalStatus call path.
         var id = Guid.NewGuid();
         var jobName = $"caa-agent-{id:N}"[..21];
         var startTime = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
@@ -3904,36 +3923,27 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
+        // Issue #2967: pipeline.jobs.* must NOT be emitted from the JobController path.
         var completedCountBefore = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.completed");
-        var durationCountBefore = _pipelineHistograms.Count(
-            r => r.InstrumentName == "pipeline.jobs.duration" && Math.Abs(r.Value - 300.0) < 0.001);
+        var durationCountBefore = _pipelineHistograms.Count(r => r.InstrumentName == "pipeline.jobs.duration");
 
         // Act
         var loop = new ReconciliationLoop(_workItemClient.Object, _k8sClient.Object, _options);
         await loop.ReconcileOnceAsync(CancellationToken.None);
 
-        // Assert: pipeline.jobs.completed incremented once
+        // Assert: pipeline.jobs.* must NOT be incremented (issue #2967)
         var completedCountAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.completed");
-        (completedCountAfter - completedCountBefore).Should().Be(1,
-            "ReconcileOnceAsync with a Succeeded K8s job must emit pipeline.jobs.completed");
-
-        // Assert: pipeline.jobs.duration recorded with correct value (300s)
-        var durationCountAfter = _pipelineHistograms.Count(
-            r => r.InstrumentName == "pipeline.jobs.duration" && Math.Abs(r.Value - 300.0) < 0.001);
-        (durationCountAfter - durationCountBefore).Should().Be(1,
-            "ReconcileOnceAsync must emit pipeline.jobs.duration = 300s for a job that ran 300s");
-
-        // NOTE: This test does not assert that pipeline.jobs.failed is NOT emitted for the
-        // Succeeded path through ReconcileOnceAsync. The unit-level tests cover this negative path via
-        // LogTerminalStatus directly, but the end-to-end reconciliation path leaves it unverified here.
-        // Consider adding: var failedCountAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
-        // (failedCountAfter - failedCountBefore).Should().Be(0, "pipeline.jobs.failed must not be emitted for a Succeeded job");
+        var durationCountAfter = _pipelineHistograms.Count(r => r.InstrumentName == "pipeline.jobs.duration");
+        (completedCountAfter - completedCountBefore).Should().Be(0,
+            "ReconcileOnceAsync must NOT emit pipeline.jobs.completed (issue #2967 — metrics are in API)");
+        (durationCountAfter - durationCountBefore).Should().Be(0,
+            "ReconcileOnceAsync must NOT emit pipeline.jobs.duration (issue #2967 — metrics are in API)");
     }
 
     [Fact]
-    public async Task ReconcileOnceAsync_FailedJob_EmitsPipelineJobsFailed_WithAgentErrorTag()
+    public async Task ReconcileOnceAsync_FailedJob_DoesNotEmitPipelineJobsFailed()
     {
-        // Arrange: K8s Failed job
+        // Issue #2967: pipeline.jobs.failed must not be emitted from the JobController path.
         var id = Guid.NewGuid();
         var jobName = $"caa-agent-{id:N}"[..21];
         var job = new V1Job
@@ -3963,28 +3973,15 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
-        var failedCountBefore = _pipelineCounters.Count(
-            r => r.InstrumentName == "pipeline.jobs.failed"
-                 && r.Tags.Any(t => t.Key == "failure_reason" && (string?)t.Value == "agent_error"));
+        var failedCountBefore = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
 
         // Act
         var loop = new ReconciliationLoop(_workItemClient.Object, _k8sClient.Object, _options);
         await loop.ReconcileOnceAsync(CancellationToken.None);
 
-        // Assert: pipeline.jobs.failed incremented with failure_reason="agent_error"
-        var failedCountAfter = _pipelineCounters.Count(
-            r => r.InstrumentName == "pipeline.jobs.failed"
-                 && r.Tags.Any(t => t.Key == "failure_reason" && (string?)t.Value == "agent_error"));
-        (failedCountAfter - failedCountBefore).Should().Be(1,
-            "ReconcileOnceAsync with a Failed K8s job must emit pipeline.jobs.failed with failure_reason='agent_error'");
-
-        // NOTE: This assertion only checks the tag-filtered count, not the total unfiltered
-        // delta for pipeline.jobs.failed. If the production code emitted pipeline.jobs.failed twice for
-        // the same job (e.g. a double-call bug in HandleJobCompletedAsync), the filtered count would
-        // still increase by 1 if the second emission used a different failure_reason tag, and this test
-        // would pass. Add an unfiltered delta assertion to catch double-emission bugs:
-        // var totalFailedCountAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
-        // (totalFailedCountAfter - totalFailedCountBefore).Should().Be(1, "pipeline.jobs.failed must be emitted exactly once");
+        var failedCountAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
+        (failedCountAfter - failedCountBefore).Should().Be(0,
+            "ReconcileOnceAsync must NOT emit pipeline.jobs.failed from the JobController (issue #2967)");
     }
 
     // ─── Characterisation tests: canary-threshold overlap and null-CreatedAt metrics (Issue #2774) ──

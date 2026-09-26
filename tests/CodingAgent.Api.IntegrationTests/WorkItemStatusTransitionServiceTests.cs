@@ -563,6 +563,243 @@ public sealed class WorkItemStatusTransitionServiceTests
         lifecycleManager.VerifyNoOtherCalls();
     }
 
+    // ── pipeline.run.outcomes tests (Issue #2967) ──────────────────────────────
+
+    [Fact]
+    public async Task TransitionAsync_Succeeded_RecordsPipelineRunOutcome()
+    {
+        // AC: A terminal transition increments pipeline_run_outcomes_total exactly once.
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
+        var dbFactory = CreateDbFactory(opts);
+
+        var outcomeRecordings = new System.Collections.Concurrent.ConcurrentBag<(string Outcome, string FailureReason)>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.outcomes")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, measurement, tags, _) =>
+        {
+            if (measurement == 0) return; // skip pre-init
+            string outcome = "", failureReason = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "outcome") outcome = tag.Value?.ToString() ?? "";
+                else if (tag.Key == "failure_reason") failureReason = tag.Value?.ToString() ?? "";
+            }
+            outcomeRecordings.Add((outcome, failureReason));
+        });
+        listener.Start();
+
+        var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
+        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager, dbFactory);
+        var outcome = await svc.TransitionAsync(item.Id,
+            new WorkItemStatusRequest { Status = WorkItemStatus.Succeeded },
+            CancellationToken.None, awaitTelemetry: true);
+
+        outcome.Should().Be(StatusTransitionOutcome.Transitioned);
+        outcomeRecordings.Should().Contain(r => r.Outcome == "succeeded" && r.FailureReason == "none",
+            "pipeline.run.outcomes must record outcome='succeeded' with failure_reason='none'");
+    }
+
+    [Fact]
+    public async Task TransitionAsync_Failed_WithTimeout_RecordsPipelineRunOutcomeTimeout()
+    {
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
+        var dbFactory = CreateDbFactory(opts);
+
+        var outcomeRecordings = new System.Collections.Concurrent.ConcurrentBag<(string Outcome, string FailureReason)>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.outcomes")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, measurement, tags, _) =>
+        {
+            if (measurement == 0) return;
+            string outcome = "", failureReason = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "outcome") outcome = tag.Value?.ToString() ?? "";
+                else if (tag.Key == "failure_reason") failureReason = tag.Value?.ToString() ?? "";
+            }
+            outcomeRecordings.Add((outcome, failureReason));
+        });
+        listener.Start();
+
+        var lifecycleManager = new Mock<IRunLifecycleManager>();
+        lifecycleManager
+            .Setup(m => m.FailRunAsync(It.IsAny<RunId>(), It.IsAny<string>(),
+                It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync((PipelineRun?)null);
+
+        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager.Object, dbFactory);
+        var outcome = await svc.TransitionAsync(item.Id,
+            new WorkItemStatusRequest { Status = WorkItemStatus.Failed, FailureReason = "Timeout" },
+            CancellationToken.None, awaitTelemetry: true);
+
+        outcome.Should().Be(StatusTransitionOutcome.Transitioned);
+        outcomeRecordings.Should().Contain(r => r.Outcome == "timeout" && r.FailureReason == "timeout",
+            "pipeline.run.outcomes must record outcome='timeout' with failure_reason='timeout'");
+    }
+
+    [Fact]
+    public async Task TransitionAsync_WontDo_RecordsFailureReasonNone()
+    {
+        // AC: wont_do arrives as Succeeded + GateRejected in request — failure_reason must be 'none'.
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
+        var dbFactory = CreateDbFactory(opts);
+
+        var outcomeRecordings = new System.Collections.Concurrent.ConcurrentBag<(string Outcome, string FailureReason)>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.outcomes")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, measurement, tags, _) =>
+        {
+            if (measurement == 0) return;
+            string outcome = "", failureReason = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "outcome") outcome = tag.Value?.ToString() ?? "";
+                else if (tag.Key == "failure_reason") failureReason = tag.Value?.ToString() ?? "";
+            }
+            outcomeRecordings.Add((outcome, failureReason));
+        });
+        listener.Start();
+
+        var payload = new CodingAgent.Pipeline.Models.JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            AnalysisRecommendation = AnalysisGateResult.WontDo,
+            FailureCategory = FailureReason.GateRejected,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+        var payloadJson = System.Text.Json.JsonSerializer.Serialize(payload, CodingAgent.Pipeline.PipelineJsonOptions.Default);
+
+        var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
+        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager, dbFactory);
+        await svc.TransitionAsync(item.Id,
+            new WorkItemStatusRequest
+            {
+                Status = WorkItemStatus.Succeeded,
+                FailureReason = "GateRejected",
+                Result = payloadJson
+            },
+            CancellationToken.None, awaitTelemetry: true);
+
+        outcomeRecordings.Should().Contain(r => r.Outcome == "wont_do" && r.FailureReason == "none",
+            "wont_do must produce failure_reason='none' even though request carries GateRejected");
+        outcomeRecordings.Should().NotContain(r => r.Outcome == "wont_do" && r.FailureReason == "gate_rejected",
+            "failure_reason must NOT be 'gate_rejected' for wont_do outcome");
+    }
+
+    [Fact]
+    public async Task TransitionAsync_NeedsRefinement_RecordsFailureReasonNone()
+    {
+        // AC: needs_refinement arrives as Failed + GateRejected — failure_reason must be 'none'.
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
+        var dbFactory = CreateDbFactory(opts);
+
+        var outcomeRecordings = new System.Collections.Concurrent.ConcurrentBag<(string Outcome, string FailureReason)>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.outcomes")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, measurement, tags, _) =>
+        {
+            if (measurement == 0) return;
+            string outcome = "", failureReason = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "outcome") outcome = tag.Value?.ToString() ?? "";
+                else if (tag.Key == "failure_reason") failureReason = tag.Value?.ToString() ?? "";
+            }
+            outcomeRecordings.Add((outcome, failureReason));
+        });
+        listener.Start();
+
+        var payload = new CodingAgent.Pipeline.Models.JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Failed,
+            AnalysisRecommendation = AnalysisGateResult.NotReady,
+            FailureCategory = FailureReason.GateRejected,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+        var payloadJson = System.Text.Json.JsonSerializer.Serialize(payload, CodingAgent.Pipeline.PipelineJsonOptions.Default);
+
+        var lifecycleManager = new Mock<IRunLifecycleManager>();
+        lifecycleManager
+            .Setup(m => m.FailRunAsync(It.IsAny<RunId>(), It.IsAny<string>(),
+                It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync((PipelineRun?)null);
+        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager.Object, dbFactory);
+        await svc.TransitionAsync(item.Id,
+            new WorkItemStatusRequest
+            {
+                Status = WorkItemStatus.Failed,
+                FailureReason = "GateRejected",
+                Result = payloadJson
+            },
+            CancellationToken.None, awaitTelemetry: true);
+
+        outcomeRecordings.Should().Contain(r => r.Outcome == "needs_refinement" && r.FailureReason == "none",
+            "needs_refinement must produce failure_reason='none' even though request carries GateRejected");
+    }
+
+    [Fact]
+    public async Task TransitionAsync_AlreadyAtTarget_DoesNotRecordPipelineRunOutcome()
+    {
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Cancelled,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-5));
+        var dbFactory = CreateDbFactory(opts);
+
+        var count = 0;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.outcomes")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, measurement, _, _) =>
+        {
+            if (measurement > 0) Interlocked.Increment(ref count);
+        });
+        listener.Start();
+
+        var lifecycleManager = new Mock<IRunLifecycleManager>(MockBehavior.Strict);
+        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager.Object, dbFactory);
+        var outcome = await svc.TransitionAsync(item.Id,
+            new WorkItemStatusRequest { Status = WorkItemStatus.Failed },
+            CancellationToken.None, awaitTelemetry: true);
+
+        outcome.Should().Be(StatusTransitionOutcome.AlreadyAtTarget);
+        count.Should().Be(0,
+            "pipeline.run.outcomes must NOT be recorded for an AlreadyAtTarget no-op");
+        // TODO: [WARNING] This test does not verify that workdistribution.workitems_terminated is also
+        // NOT emitted for AlreadyAtTarget no-op transitions. The acceptance criterion "increments exactly
+        // once" applies to both counters. If the production code were changed to emit
+        // workdistribution.workitems_terminated for no-ops, this test would not catch it. Add a
+        // MeterListener for WorkDistributionTelemetry.MeterName and assert that WorkItemsTerminated
+        // does not increment during this test.
+    }
+
     // ── Test Infrastructure ────────────────────────────────────────────────────
 
     private sealed class TestPipelineDbContext : PipelineDbContext
