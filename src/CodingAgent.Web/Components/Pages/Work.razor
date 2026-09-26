@@ -94,7 +94,7 @@
             else
             {
                 <div class="monitoring-table-wrap">
-                    <table class="monitoring-table">
+                    <table class="monitoring-table work-table">
                         <thead><tr><th>Issue</th><th>Status</th><th>Step</th><th>Agent selector</th><th>Initiated by</th><th>Dispatched</th><th></th></tr></thead>
                         <tbody>
                             @foreach (var a in _active)
@@ -178,7 +178,7 @@
                     <div style="color: var(--error); padding: 8px 16px; font-size: 13px;">@_priorityError</div>
                 }
                 <div class="monitoring-table-wrap">
-                    <table class="monitoring-table">
+                    <table class="monitoring-table work-table">
                         <thead><tr><th>Issue</th><th>Type</th><th>Project</th><th>Initiated by</th><th>Retries</th><th>Age</th><th>Priority</th><th></th></tr></thead>
                         <tbody>
                             @foreach (var p in _pending)

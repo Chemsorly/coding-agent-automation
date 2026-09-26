@@ -590,11 +590,11 @@ Both providers give the stall monitor actionable signal via `AgentHealthStatus` 
 
 **Decision:** `QualityGateExecutor.ProceedToQualityGatesAsync` `catch (Exception ex)` handler does not call `run.MarkCompleted()` before `AddRunToHistoryAsync`. This leaves `CompletedAt = null` on exception-terminated runs, producing ghost `PipelineRun` rows that accumulate permanently because retention sweeps gate on `CompletedAt IS NOT NULL`. `DatabaseMaintenanceService.ReconcileOrphanedPipelineRunsAsync` is the compensating sweep; its code comment explicitly names "the separate terminal gap in QualityGateExecutor.RetryLoop." The fix is a single `run.MarkCompleted()` call before `TransitionTo(PipelineStep.Failed)`, matching the `OperationCanceledException` handler directly above.
 
-**Status:** Currently broken — #2851 tracks the one-line fix.
+**Status:** Fixed (PR #2858, merged 2026-09-22) — both catch arms in `ProceedToQualityGatesAsync` delegate to the shared private `FinalizeRunAsync` helper, which calls `run.MarkCompleted()` as its first statement before `swapLabel`, `TransitionTo`, and `AddRunToHistoryAsync`. The structural approach makes the ordering invariant impossible to violate independently across the two arms. `ReconcileOrphanedPipelineRunsAsync` remains as a safety net for any historical ghost rows; no new accumulation occurs.
 
 **Context:** Same root cause as #2778 (ConflictRestart missing `MarkCompleted`, fixed in #2789). The OCE handler in the same method was already correct; only the general `Exception` handler was missed.
 
-**Reassess when:** Never once #2851 is fixed. Pattern going forward: every `catch` block that calls `AddRunToHistoryAsync` on a terminal step MUST also call `run.MarkCompleted()` first.
+**Reassess when:** N/A — #2851 is fixed. Pattern going forward: every `catch` block that calls `AddRunToHistoryAsync` on a terminal step MUST also call `run.MarkCompleted()` first.
 
 ---
 

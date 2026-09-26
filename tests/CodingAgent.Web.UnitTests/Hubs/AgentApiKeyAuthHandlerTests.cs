@@ -431,7 +431,43 @@ public class AgentApiKeyAuthHandlerTests
         key1.Should().NotBe(key2);
     }
 
+    // ── agentId validation (log forging, CWE-117) ───────────────────────
+
+    [Fact]
+    public async Task HandleAuthenticate_AgentIdWithControlCharacters_ReturnsFail()
+    {
+        // Anyone holding the master key can derive a valid token for any agentId, so a correct
+        // token must not let a CR/LF-bearing agentId through to the claims and log entries.
+        const string masterKey = "my-master-key";
+        const string agentId = "agent-1\r\n[ERR] forged entry";
+        var handler = await CreateHandlerAsync(masterKey, queryToken: DeriveToken(masterKey, agentId), authHeader: null, agentId: agentId);
+
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task HandleAuthenticate_RepeatedAgentIdParameter_ReturnsFail()
+    {
+        // Hub code reads the query value with StringValues.ToString(), which comma-joins repeated
+        // values — a second agentId would reach its logs although only the first was authenticated.
+        const string masterKey = "my-master-key";
+        var handler = await CreateHandlerAsync(masterKey, queryToken: DeriveToken(masterKey, "agent-1"), authHeader: null,
+            agentId: "agent-1", extraQuery: "agentId=forged");
+
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.Should().BeFalse();
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
+
+    private static string DeriveToken(string masterKey, string agentId)
+    {
+        using var hmac = new System.Security.Cryptography.HMACSHA256(System.Text.Encoding.UTF8.GetBytes(masterKey));
+        return Convert.ToHexString(hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(agentId))).ToLowerInvariant();
+    }
 
     private Task<AgentApiKeyAuthHandler> CreateHandlerAsync(
         string configuredApiKey,
@@ -443,7 +479,8 @@ public class AgentApiKeyAuthHandlerTests
         string configuredApiKey,
         string? queryToken,
         string? authHeader,
-        string? agentId)
+        string? agentId,
+        string? extraQuery = null)
     {
         var options = new AgentApiKeyAuthOptions { ApiKey = configuredApiKey };
         var optionsMonitor = new Mock<IOptionsMonitor<AgentApiKeyAuthOptions>>();
@@ -466,6 +503,8 @@ public class AgentApiKeyAuthHandlerTests
             queryParts.Add($"access_token={Uri.EscapeDataString(queryToken)}");
         if (agentId != null)
             queryParts.Add($"agentId={Uri.EscapeDataString(agentId)}");
+        if (extraQuery != null)
+            queryParts.Add(extraQuery);
         if (queryParts.Count > 0)
             context.Request.QueryString = new QueryString("?" + string.Join("&", queryParts));
         if (authHeader != null)
