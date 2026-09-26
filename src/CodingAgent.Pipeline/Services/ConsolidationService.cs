@@ -396,7 +396,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     {
         if (!Guid.TryParse(runId.Value, out _))
         {
-            _logger.Warning("Invalid runId format: {RunId}", runId.Value);
+            _logger.Warning("Invalid runId format: {RunId}", LogSanitizer.SanitizeForLog(runId.Value));
             return;
         }
 
@@ -426,7 +426,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             await PersistRunAsync(run, ct);
 
             _workspaceManager.CleanupWorkspaceIfSucceeded(runId, status);
-            _logger.Information("Consolidation run {RunId} updated: {Status} — {Summary}", runId.Value, status, summary ?? "(no summary)");
+            _logger.Information("Consolidation run {RunId} updated: {Status} — {Summary}", runId.Value, status, LogSanitizer.SanitizeForLog(summary ?? "(no summary)"));
             OnChange?.Invoke();
         }
         catch (Exception ex)
