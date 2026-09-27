@@ -140,6 +140,16 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         // read would make tests depend on wall-clock timing.
         Environment.SetEnvironmentVariable("PipelineLoop__ConfigCacheTtlSeconds", "0");
 
+        // Fix Blazor asset resolution for nested URL paths (e.g. /runs/{id}).
+        // App.razor uses <base href="@basePath"> where basePath defaults to "./" when
+        // WebUI:BasePath is unset. With "./" as base href, the script reference
+        // <script src="_framework/blazor.web.js"> resolves relative to the current URL:
+        //   - /agent-coding → /_framework/blazor.web.js  ✓ (one segment, resolves to root)
+        //   - /runs/{id}    → /runs/_framework/blazor.web.js  ✗ (404 — circuit never starts)
+        // Setting base path to "/" makes the script always resolve to /_framework/blazor.web.js,
+        // regardless of URL depth, so the interactive circuit establishes for all pages.
+        Environment.SetEnvironmentVariable("WebUI__BasePath", "/");
+
         E2ETestDefaults.ApplyDispatchEnvironment();
 
         E2ETestDefaults.ResetSerilogBootstrapLogger();

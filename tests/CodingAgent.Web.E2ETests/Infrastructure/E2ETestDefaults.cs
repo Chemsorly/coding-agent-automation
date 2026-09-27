@@ -92,7 +92,8 @@ internal static class E2ETestDefaults
                      "WorkDistribution__Dispatch__ChatJobMaxDurationSeconds",
                      "WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds",
                      "WorkDistribution__Dispatch__ChatTerminationGracePeriodSeconds",
-                     "WorkDistribution__Dispatch__ChatIdleTimeoutSeconds"
+                     "WorkDistribution__Dispatch__ChatIdleTimeoutSeconds",
+                     "WebUI__BasePath"
                  })
         {
             Environment.SetEnvironmentVariable(key, null);
