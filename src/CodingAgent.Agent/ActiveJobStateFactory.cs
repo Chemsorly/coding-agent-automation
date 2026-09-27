@@ -50,7 +50,8 @@ public static class ActiveJobStateFactory
             StartedAt = startedAt,
             RunType = assignment.RunType,
             RepositoryName = ResolveRepositoryName(assignment),
-            ModelName = ResolveModelName(assignment)
+            ModelName = ResolveModelName(assignment),
+            IssueUrl = assignment.IssueDetail?.Url
         };
     }
 
