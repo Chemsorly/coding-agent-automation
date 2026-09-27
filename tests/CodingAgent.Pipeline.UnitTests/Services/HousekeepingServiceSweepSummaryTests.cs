@@ -91,9 +91,15 @@ public class HousekeepingServiceSweepSummaryLogTests
     private static PullRequestSummary MakePr(int number)
         => new()
         {
-            Number = number, Identifier = number.ToString(), Title = $"PR #{number}",
-            Description = string.Empty, Labels = [], BranchName = $"feature/auto-{number}-x",
-            TargetBranch = "main", Url = $"https://example.com/pr/{number}", IsDraft = false
+            Number = number,
+            Identifier = number.ToString(),
+            Title = $"PR #{number}",
+            Description = string.Empty,
+            Labels = [],
+            BranchName = $"feature/auto-{number}-x",
+            TargetBranch = "main",
+            Url = $"https://example.com/pr/{number}",
+            IsDraft = false
         };
 
     private LogEvent? SweepLog(CapturingSink sink)
@@ -317,13 +323,19 @@ public class HousekeepingServiceSweepSummaryMetricTests
     private static PullRequestSummary MakePr(int number)
         => new()
         {
-            Number = number, Identifier = number.ToString(), Title = $"PR #{number}",
-            Description = string.Empty, Labels = [], BranchName = $"feature/auto-{number}-x",
-            TargetBranch = "main", Url = $"https://example.com/pr/{number}", IsDraft = false
+            Number = number,
+            Identifier = number.ToString(),
+            Title = $"PR #{number}",
+            Description = string.Empty,
+            Labels = [],
+            BranchName = $"feature/auto-{number}-x",
+            TargetBranch = "main",
+            Url = $"https://example.com/pr/{number}",
+            IsDraft = false
         };
 
     /// <summary>
-    /// Sets up a <see cref="MeterListener"/> that captures all
+    /// Sets up a <see cref="MeterListener"/> that captures this class's
     /// <c>pipeline.housekeeping.pr_evaluated</c> measurements into a list.
     /// Returns a disposable listener and the live measurement list.
     /// </summary>
@@ -348,6 +360,11 @@ public class HousekeepingServiceSweepSummaryMetricTests
                 if (tag.Key == "mergeability_status") status = tag.Value?.ToString() ?? "";
                 if (tag.Key == "repo_provider_id") repoId = tag.Value?.ToString() ?? "";
             }
+            // Keep only this class's repo: the MeterListener sees every emission on the
+            // process-global meter, and [Collection("Metrics")] serialises only the classes that
+            // opt in. Before HousekeepingServiceTests joined, a stray {2, behind, rp-1} from it
+            // failed Metric_MixedStatuses_OneEmissionPerDistinctStatus.
+            if (repoId != RepoId) return;
             measurements.Add((value, status, repoId));
         });
         listener.Start();

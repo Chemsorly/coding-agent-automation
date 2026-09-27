@@ -101,8 +101,8 @@ public class AgentStallMonitorParallelKillTests
             return Task.CompletedTask;
         });
 
-        // Start monitoring
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5)); // safety timeout
+        // Start monitoring. The safety timeout must outlast the KillAsync wait below.
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var monitorTask = AgentStallMonitor.ExecuteWithMonitoringAsync(
             _mockAgent.Object,
             new AgentRequest { Prompt = "review prompt", WorkspacePath = "/ws", Timeout = TimeSpan.FromHours(2) },
@@ -111,8 +111,11 @@ public class AgentStallMonitorParallelKillTests
         // Wait for the agent call to start
         await agentCallStarted.Task;
 
-        // Wait for KillAsync to be called by the stall monitor
-        var killCalledInTime = await Task.WhenAny(killCalled.Task, Task.Delay(TimeSpan.FromSeconds(3)));
+        // Wait for KillAsync to be called by the stall monitor. Kill is due after the first 30ms
+        // poll, but every hop of the monitor loop needs a thread-pool thread: under a loaded
+        // CI runner (SonarQube's coverage run) a 3s budget ran out. The wait ends as soon as
+        // KillAsync fires, so the long bound only costs time when the test fails.
+        var killCalledInTime = await Task.WhenAny(killCalled.Task, Task.Delay(TimeSpan.FromSeconds(30)));
         killCalledInTime.Should().Be(killCalled.Task,
             "the stall monitor should call KillAsync after silence exceeds the kill timeout");
 
