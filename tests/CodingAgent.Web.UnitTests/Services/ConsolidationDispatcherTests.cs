@@ -1329,6 +1329,14 @@ public sealed class ConsolidationDispatcherTests
         // Run must NOT be cascaded to Failed — the high-priority profile succeeded.
         // Before the fix this assertion fails: UpdateRunAsync(Failed) was called once because
         // the low-priority (list-first) profile caused a 422 permanent failure.
+        // TODO [WARNING]: This Verify uses the 5-argument overload (including optional totalTokens long).
+        // The production call in FailRunSafelyAsync is a 4-argument call (omits the optional parameter).
+        // For a Times.Never assertion the false-negative risk is in the dangerous direction: if a
+        // production 4-argument UpdateRunAsync(Failed) call is ever accidentally fired on this path,
+        // Moq may not match it against the 5-arg expression (if the optional parameter is removed or
+        // reordered), causing Times.Never to pass even though UpdateRunAsync was actually invoked —
+        // silently missing a regression. Use the 4-argument form to match the actual production call
+        // surface. (review-findings-dotnetspecialist.md WARNING finding #2 / review-findings-correctness.md)
         _consolidationService.Verify(
             s => s.UpdateRunAsync(
                 It.IsAny<RunId>(), ConsolidationRunStatus.Failed,
