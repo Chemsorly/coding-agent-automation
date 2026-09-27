@@ -1812,6 +1812,148 @@ public class PullRequestFinalizationServiceTests
     }
 
     [Fact]
+    public async Task RunPostPrSequenceAsync_WhenNotDraft_SetsPrMarkedReadyAtAfterMarkReady()
+    {
+        // Regression test for issue #3114: PrMarkedReadyAt must be set to a timestamp recorded
+        // after UpdatePullRequestAsync(markReady: true) completes. This property is consumed by
+        // HandlePostPrCiAsync as the precise notBefore anchor for post-PR CI polling, which
+        // closes the window where a push-event CI run starting between the fallback anchor and
+        // the actual mark-ready call could be wrongly accepted as the post-PR CI result.
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        var agentProvider = new Mock<IAgentProvider>();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+        var historyService = new Mock<IPipelineRunHistoryService>();
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+
+        var beforeMarkReady = DateTime.UtcNow;
+        DateTime? markReadyCallTime = null;
+
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
+        historyService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyList<PipelineRunSummary>)[]);
+
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), (bool?)true, It.IsAny<CancellationToken>()))
+            .Callback<int, string, bool?, CancellationToken>((_, _, _, _) => markReadyCallTime = DateTime.UtcNow)
+            .Returns(Task.CompletedTask);
+        // PR description call (null markReady) — must succeed so description path completes normally
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), (bool?)null, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await _sut.RunPostPrSequenceAsync(
+            new PostPrSequenceRequest
+            {
+                Run = run,
+                IsDraft = false,
+                AgentProvider = agentProvider.Object,
+                RepoProvider = repoProvider.Object,
+                Config = config,
+                BrainSync = null,
+                BrainProvider = null,
+                FeedbackService = feedbackService,
+                HistoryService = historyService.Object,
+                EmitOutputLine = _ => { },
+                TransitionCallback = _ => Task.CompletedTask
+            },
+            CancellationToken.None);
+
+        // PrMarkedReadyAt must be set (non-null) after the sequence completes
+        run.PrMarkedReadyAt.Should().NotBeNull(
+            "PrMarkedReadyAt must be set after UpdatePullRequestAsync(markReady:true) succeeds");
+
+        // TODO [WARNING] (Correctness, TestQualityReviewer): assert markReadyCallTime is non-null
+        // here (before accessing .Value) to get a clear failure message if UpdatePullRequestAsync
+        // (markReady:true) is never invoked. Currently, if the mark-ready path is skipped,
+        // markReadyCallTime remains null and the null-forgiving operator !.Value below throws
+        // InvalidOperationException, obscuring the actual regression.
+        // Suggested fix: markReadyCallTime.Should().NotBeNull("mark-ready callback must have been invoked");
+
+        // PrMarkedReadyAt must be after or equal to the time the mark-ready call was made
+        run.PrMarkedReadyAt!.Value.Should().BeOnOrAfter(markReadyCallTime!.Value,
+            "PrMarkedReadyAt must reflect the time the mark-ready API call completed");
+
+        // PrMarkedReadyAt must be after the timestamp captured before the whole sequence ran
+        run.PrMarkedReadyAt.Value.Should().BeOnOrAfter(beforeMarkReady,
+            "PrMarkedReadyAt must not be earlier than when the mark-ready call was made");
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_WhenDraft_DoesNotSetPrMarkedReadyAt()
+    {
+        // For draft PRs, mark-ready is never called, so PrMarkedReadyAt must remain null.
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        var agentProvider = new Mock<IAgentProvider>();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+
+        await _sut.RunPostPrSequenceAsync(
+            new PostPrSequenceRequest
+            {
+                Run = run,
+                IsDraft = true,
+                AgentProvider = agentProvider.Object,
+                RepoProvider = repoProvider.Object,
+                Config = new PipelineConfiguration(),
+                BrainSync = null,
+                BrainProvider = null,
+                FeedbackService = feedbackService,
+                HistoryService = null,
+                EmitOutputLine = _ => { },
+                TransitionCallback = _ => Task.CompletedTask
+            },
+            CancellationToken.None);
+
+        run.PrMarkedReadyAt.Should().BeNull(
+            "PrMarkedReadyAt must not be set for draft PRs (mark-ready is never called)");
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_WhenMarkReadyFails_DoesNotSetPrMarkedReadyAt()
+    {
+        // When UpdatePullRequestAsync(markReady: true) throws (non-OCE), the error is swallowed
+        // and PrMarkedReadyAt must remain null (mark-ready was not actually confirmed).
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        var agentProvider = new Mock<IAgentProvider>();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+        var historyService = new Mock<IPipelineRunHistoryService>();
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
+        historyService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyList<PipelineRunSummary>)[]);
+
+        // Mark-ready throws — PrMarkedReadyAt must NOT be set
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), (bool?)true, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("GitHub API error"));
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), (bool?)null, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await _sut.RunPostPrSequenceAsync(
+            new PostPrSequenceRequest
+            {
+                Run = run,
+                IsDraft = false,
+                AgentProvider = agentProvider.Object,
+                RepoProvider = repoProvider.Object,
+                Config = config,
+                BrainSync = null,
+                BrainProvider = null,
+                FeedbackService = feedbackService,
+                HistoryService = historyService.Object,
+                EmitOutputLine = _ => { },
+                TransitionCallback = _ => Task.CompletedTask
+            },
+            CancellationToken.None);
+
+        run.PrMarkedReadyAt.Should().BeNull(
+            "PrMarkedReadyAt must not be set when the mark-ready API call throws");
+    }
+
+    [Fact]
     public async Task PullRequestOrchestrator_CreatePullRequestAsync_ReworkBranch_NonDraft_PassesNullMarkReady()
     {
         // Verifies that UpdatePullRequestAsync is called with markReady=null (not true) for the
