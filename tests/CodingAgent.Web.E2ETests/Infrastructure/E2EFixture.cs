@@ -200,6 +200,7 @@ public sealed class E2EFixture : IAsyncLifetime
         Factory.ResetAll();
         _apiFactory?.ResetAll();
         _jobController?.ForgetAllInFlight();
+        _jobController?.ClearClaimed();
     }
 
     /// <summary>
