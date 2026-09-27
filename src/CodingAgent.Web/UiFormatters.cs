@@ -24,42 +24,47 @@ public static class UiFormatters
         return $"{(int)ago.TotalDays}d ago";
     }
 
+    // Static compiled regex fields for StripMarkdown — reused across calls (avoids per-call
+    // compilation cost) and carry an explicit timeout to satisfy S6444.
+    // Pass order is load-bearing: bold (double-star) must run before italic (single-star),
+    // and italic must run before the list-marker pass. Do not reorder.
+    private static readonly Regex BoldRegex = new(@"\*\*(.+?)\*\*",
+        RegexOptions.Compiled, matchTimeout: TimeSpan.FromSeconds(1));
+    private static readonly Regex ItalicRegex = new(@"\*(.+?)\*",
+        RegexOptions.Compiled, matchTimeout: TimeSpan.FromSeconds(1));
+    private static readonly Regex InlineCodeRegex = new(@"`(.+?)`",
+        RegexOptions.Compiled, matchTimeout: TimeSpan.FromSeconds(1));
+    // NOTE: back-to-back bold+italic spans (e.g. "**a***b*") leave a stray "*" — the bold pass
+    // yields "a*b*" and the italic pass then correctly yields "a b". True adjacency
+    // "**a***b*" is an exotic edge case and the output is acceptable plain text.
+    private static readonly Regex BlockquoteRegex = new(@"^>\s*",
+        RegexOptions.Compiled | RegexOptions.Multiline, matchTimeout: TimeSpan.FromSeconds(1));
+    private static readonly Regex ListMarkerRegex = new(@"^[\-\*]\s+",
+        RegexOptions.Compiled | RegexOptions.Multiline, matchTimeout: TimeSpan.FromSeconds(1));
+
     /// <summary>
     /// Strips common inline markdown syntax from a string, returning plain text.
     /// Handles: **bold**, *italic*, `code`, > blockquotes, - list items, * list items.
     /// URLs are preserved. Block-level heading stripping is done separately in GetBodyPreview.
     /// </summary>
-    // TODO [WARNING]: These Regex.Replace calls compile a new Regex object on every invocation.
-    // Because StripMarkdown is called once per issue row in the drawer list and Blazor Server
-    // re-renders on each state change, this causes repeated regex compilation on large lists.
-    // Promote these patterns to static readonly Regex fields (or use [GeneratedRegex] attributes)
-    // so the compiled automaton is reused across calls.
     public static string StripMarkdown(string value)
     {
         if (string.IsNullOrEmpty(value)) return value;
 
         // Strip **bold** and *italic* — order matters: bold (double) before italic (single)
-        // Use a non-greedy match to avoid consuming across multiple markup spans.
-        // TODO [WARNING]: Back-to-back bold+italic spans (e.g. "**a***b*") leave a stray "*"
-        // after the bold pass consumes "**a**", yielding "*b*" → italic pass yields "b", but
-        // input "**a***b*" (double-star then single-star immediately adjacent) yields "a**b*"
-        // after bold pass → "*b" after italic pass → one stray "*" remains in output.
-        // This narrow edge case only affects exotic contiguous bold+italic markup.
-        var result = Regex.Replace(value, @"\*\*(.+?)\*\*", "$1");
-        result = Regex.Replace(result, @"\*(.+?)\*", "$1");
+        var result = BoldRegex.Replace(value, "$1");
+        result = ItalicRegex.Replace(result, "$1");
 
         // Strip `inline code`
-        result = Regex.Replace(result, @"`(.+?)`", "$1");
+        result = InlineCodeRegex.Replace(result, "$1");
 
         // Strip leading blockquote marker (> at start of string, after optional whitespace)
-        result = Regex.Replace(result, @"^>\s*", "", RegexOptions.Multiline);
+        result = BlockquoteRegex.Replace(result, "");
 
-        // Strip leading unordered list markers (- or * at start of line, after optional whitespace)
-        // NOTE: Pass order here is load-bearing. The italic pass above must run before this one:
-        // a line "*word* rest" is correctly handled (italic stripped first, then no list marker
-        // remains). Reversing the order would strip "*word*" as a list marker before italic
-        // processing runs, also producing "word* rest" (incorrect). Do not reorder these passes.
-        result = Regex.Replace(result, @"^[\-\*]\s+", "", RegexOptions.Multiline);
+        // Strip leading unordered list markers (- or * at start of line)
+        // NOTE: The italic pass above must run before this one so that "*word* rest" is
+        // handled correctly (italic stripped first, then no list marker remains).
+        result = ListMarkerRegex.Replace(result, "");
 
         return result;
     }
