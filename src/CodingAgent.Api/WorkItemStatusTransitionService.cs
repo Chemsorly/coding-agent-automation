@@ -192,6 +192,11 @@ public sealed partial class WorkItemStatusTransitionService
 
     // ── Private helpers ───────────────────────────────────────────────────────────────────
 
+    // S1192: shared literal for the fallback run_type / project_name tag value.
+    // "unknown" appears in ResolveRunContextAsync (2× early-exit returns + 1× fallback assignment)
+    // and in RecordRunOutcomeMetrics (project_name fallback) — 4 uses across this class.
+    private const string UnknownTag = "unknown";
+
     private static void ApplyStatusMutation(WorkItemEntity entity, WorkItemStatusRequest request)
     {
         if (request.AgentId is not null)
@@ -270,7 +275,7 @@ public sealed partial class WorkItemStatusTransitionService
         ResolveRunContextAsync(Guid id, IDbContextFactory<PipelineDbContext>? dbFactory, CancellationToken ct)
     {
         if (dbFactory is null)
-            return (null, "unknown", null, null);
+            return (null, UnknownTag, null, null);
 
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
@@ -306,7 +311,7 @@ public sealed partial class WorkItemStatusTransitionService
             .FirstOrDefaultAsync(ct);
 
         if (row is null)
-            return (null, "unknown", null, null);
+            return (null, UnknownTag, null, null);
 
         // TODO: [WARNING] This reads row.CompletedAt from the DB. CompletedAt is set by
         // ApplyStatusMutation (synchronously, before the DB commit) and EmitTerminalStatusTelemetryAsync
@@ -330,7 +335,7 @@ public sealed partial class WorkItemStatusTransitionService
         };
         var runTypeTag = resolvedRunType.HasValue
             ? resolvedRunType.Value.ToString().ToLowerInvariant()
-            : "unknown";
+            : UnknownTag;
 
         return (duration, runTypeTag, row.ProjectId, row.ProjectName);
     }
@@ -372,16 +377,12 @@ public sealed partial class WorkItemStatusTransitionService
         }
 
         // Build typed failureReason from FailureCategory (payload) first, then string field.
-        // TODO: [WARNING] The payload?.FailureCategory path does not apply an Enum.IsDefined guard,
-        // unlike the string-field fallback path below. If an agent sends an out-of-range numeric value
-        // for FailureCategory (e.g. {"FailureCategory": 99}), JsonSerializer deserializes it to an
-        // undefined FailureReason enum instance. That undefined instance then reaches PascalToSnakeCaseTag
-        // via failureReason.Value.ToString(), producing a non-snake-case numeric string (e.g. "99") as the
-        // failure_reason metric tag — creating a high-cardinality uninitialized series and defeating the
-        // IsDefined guard on the string-field path. Fix: add
-        // `if (failureReason.HasValue && !Enum.IsDefined<FailureReason>(failureReason.Value)) failureReason = null;`
-        // after this assignment.
+        // Apply an IsDefined guard on the payload path to reject out-of-range numeric values
+        // (e.g. {"FailureCategory": 99}) that JsonSerializer would otherwise deserialize to an
+        // undefined enum instance, producing a non-snake-case numeric failure_reason tag.
         FailureReason? failureReason = payload?.FailureCategory;
+        if (failureReason.HasValue && !Enum.IsDefined<FailureReason>(failureReason.Value))
+            failureReason = null;
         if (!failureReason.HasValue
             && Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason)
             && Enum.IsDefined<FailureReason>(parsedReason))
@@ -484,7 +485,7 @@ public sealed partial class WorkItemStatusTransitionService
             new KeyValuePair<string, object?>("run_type", runTypeTag),
             new KeyValuePair<string, object?>("outcome", outcome),
             new KeyValuePair<string, object?>("failure_reason", failureReasonTag),
-            new KeyValuePair<string, object?>("pipeline.project_name", projectName ?? "unknown"));
+            new KeyValuePair<string, object?>("pipeline.project_name", projectName ?? UnknownTag));
 
         if (duration.HasValue && duration.Value.TotalSeconds >= 0)
         {

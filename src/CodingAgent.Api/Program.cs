@@ -253,6 +253,16 @@ static void PreInitializeMetrics(IServiceProvider services)
             new KeyValuePair<string, object?>(FailureReasonKey, "timeout"));
 
         // failed outcome — one series per failure_reason
+        // TODO: [WARNING] (run_type, "failed", "none") is NOT pre-initialized here. DeriveOutcome
+        // priority 9 returns failure_reason="none" when failureReason is null — which happens when
+        // a request carries Status=Failed with no parseable request.FailureReason and no payload
+        // FailureCategory (e.g. an agent or external caller POSTs {"status":"Failed"} with no other
+        // fields). The first such event after a deploy is therefore invisible to increase() until a
+        // second event of the identical series arrives — the "first-series zero" problem this code
+        // exists to eliminate. Fix: add (run_type, "failed", "none") to each runType loop iteration
+        // (5 additional series, total 80, still well under the ~100 limit). Alternatively, change
+        // DeriveOutcome priority 9 to coerce null failureReason to FailureReason.AgentError so it
+        // maps onto the already-pre-initialized (run_type, "failed", "agent_error") series.
         foreach (var failureReason in failureReasons)
         {
             PipelineTelemetry.RunOutcomes.Add(0,

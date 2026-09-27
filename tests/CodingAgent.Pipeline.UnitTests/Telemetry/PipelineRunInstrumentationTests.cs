@@ -121,8 +121,8 @@ public class PipelineRunInstrumentationTests
         // StopTiming is a no-op for compatibility — should not throw.
         var act = () =>
         {
-            instrumentation.StopTiming();
-            instrumentation.StopTiming(); // idempotent
+            PipelineRunInstrumentation.StopTiming();
+            PipelineRunInstrumentation.StopTiming(); // idempotent
         };
         act.Should().NotThrow();
     }

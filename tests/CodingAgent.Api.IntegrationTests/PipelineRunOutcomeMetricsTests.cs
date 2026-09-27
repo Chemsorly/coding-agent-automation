@@ -431,6 +431,36 @@ public sealed class PipelineRunOutcomeMetricsTests
             $"TaskType.{taskType} must produce run_type='{expectedRunType}' when no PipelineRunEntity exists");
     }
 
+    [Fact]
+    public async Task Outcome_Failed_WhenPayloadHasOutOfRangeFailureCategory_FallsBackToStringField()
+    {
+        // Guard: out-of-range FailureCategory enum values are discarded (IsDefined guard)
+        // and the string-field path is used instead. This prevents non-snake-case numeric
+        // tags (e.g. "99") from appearing in the failure_reason label.
+        var opts = CreateDbOptions();
+        var item = await SeedRunningItemAsync(opts);
+        var svc = CreateService(opts);
+        var (listener, bag) = SetupOutcomesListener();
+        using var _ = listener;
+
+        // Serialize a payload with an out-of-range FailureCategory (99) by writing raw JSON.
+        // JsonSerializer would reject an unrecognized enum value on deserialization, but the
+        // IsDefined guard in ResolvePayloadAndFailureReason catches it before it reaches the tag.
+        const string rawPayload = """{"FinalStep":"Completed","FailureCategory":99}""";
+
+        await svc.TransitionAsync(item.Id,
+            new WorkItemStatusRequest
+            {
+                Status = WorkItemStatus.Failed,
+                FailureReason = "AgentError",   // valid string-field fallback
+                Result = rawPayload
+            },
+            CancellationToken.None, awaitTelemetry: true);
+
+        bag.Should().ContainSingle(r => r.Outcome == "failed" && r.FailureReason == "agent_error",
+            "out-of-range FailureCategory must be discarded; valid string-field AgentError must be used as fallback");
+    }
+
     // ── Exactly-once counting: AlreadyAtTarget does not record ───────────────
 
     [Fact]
