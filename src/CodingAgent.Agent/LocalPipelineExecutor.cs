@@ -45,6 +45,10 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     private readonly PipelineExecutionContextBuilder _contextBuilder;
     private readonly Serilog.ILogger _logger;
 
+    // When non-null, substitutes for AgentProviderFactory in ExecuteAsync.
+    // Set only in E2E tests via LocalPipelineExecutorDependencies.ProviderFactoryOverride.
+    private readonly IProviderFactory? _providerFactoryOverride;
+
     public LocalPipelineExecutor(LocalPipelineExecutorDependencies deps)
     {
         ArgumentNullException.ThrowIfNull(deps);
@@ -66,6 +70,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 deps.QualityGateValidator, reporterFactory, feedbackService, _agentId, deps.Logger,
                 deps.BrainUpdateService, deps.HistoryService, finalization));
         _logger = deps.Logger;
+        _providerFactoryOverride = deps.ProviderFactoryOverride;
     }
 
     /// <summary>
@@ -123,7 +128,11 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         // as done in LocalConsolidationExecutor. Not a defect since Dispose() is idempotent, but
         // the alias introduces maintenance risk around ownership. (.NET Specialist Review)
         using var issueOpsDisposable = issueOps; // ensure _tokenCacheLock is disposed after the job completes
-        var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config, issueOps);
+        // When a ProviderFactoryOverride is injected (E2E tests only) use it in place of the
+        // real AgentProviderFactory so ScriptedAgentProvider and InMemoryRepositoryProvider are
+        // exercised through the same code path the production stack uses.
+        var providerFactory = _providerFactoryOverride
+            ?? (IProviderFactory)new AgentProviderFactory(_orchestrator, _httpClientFactory, config, issueOps);
 
         IRepositoryProvider? repoProvider = null;
         IAgentProvider? agentProvider = null;

@@ -64,6 +64,9 @@
          via JobControllerE2EWebApplicationFactory and driven deterministically in E2E tests. -->
     <ProjectReference Include="..\..\src\CodingAgent.JobController\CodingAgent.JobController.csproj" />
     <ProjectReference Include="..\CodingAgent.Web.TestUtilities\CodingAgent.Web.TestUtilities.csproj" />
+    <!-- RealAgentWorkerSmokeTests: runs WorkItemAgentService in-process against the E2E API host.
+         Requires InternalsVisibleTo("CodingAgent.Web.E2ETests") in CodingAgent.Agent.csproj. -->
+    <ProjectReference Include="..\..\src\CodingAgent.Agent\CodingAgent.Agent.csproj" />
   </ItemGroup>
 
 </Project>

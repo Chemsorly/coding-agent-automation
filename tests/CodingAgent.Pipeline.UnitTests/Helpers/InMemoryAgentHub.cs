@@ -4,6 +4,7 @@ using System.Net;
 using System.Reflection;
 using CodingAgent.Agent;
 using CodingAgent.AgentGateway;
+using MessagePack;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -67,6 +68,23 @@ internal sealed class InMemoryAgentHub : IConnectionFactory, IAsyncDisposable
     public async Task<HubConnection> ConnectAsync()
     {
         var builder = new HubConnectionBuilder().AddAgentHubProtocol();
+        builder.Services.AddSingleton<IConnectionFactory>(this);
+        builder.Services.AddSingleton<EndPoint>(new UriEndPoint(new Uri($"http://in-memory{HubRoutes.Agent}")));
+        var connection = builder.Build();
+        await connection.StartAsync();
+        return connection;
+    }
+
+    /// <summary>
+    /// Opens a started connection using <paramref name="serializerOptions"/> instead of
+    /// <see cref="AgentHubMessagePack.SerializerOptions"/>.  Use in negative contract tests to
+    /// prove that a broken serialiser (e.g. one missing <c>IssueIdentifierFormatter</c>) causes a
+    /// hub binding failure rather than silently succeeding.
+    /// </summary>
+    public async Task<HubConnection> ConnectWithOptionsAsync(MessagePackSerializerOptions serializerOptions)
+    {
+        var builder = new HubConnectionBuilder()
+            .AddMessagePackProtocol(options => options.SerializerOptions = serializerOptions);
         builder.Services.AddSingleton<IConnectionFactory>(this);
         builder.Services.AddSingleton<EndPoint>(new UriEndPoint(new Uri($"http://in-memory{HubRoutes.Agent}")));
         var connection = builder.Build();

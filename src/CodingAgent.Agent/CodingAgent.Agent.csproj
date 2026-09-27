@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="CodingAgent.Agent.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgent.Web.E2ETests" />
   </ItemGroup>
 
   <ItemGroup>

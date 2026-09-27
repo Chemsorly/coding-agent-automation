@@ -1292,8 +1292,12 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         await svc.StartLoopAsync();
 
-        // Poll until at least 2 calls have been made
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        // Poll until at least 2 calls have been made.
+        // Use a 15-second deadline: each SnapshotCycleConfigAsync round-trip makes several
+        // sequential mock-store calls, and under full parallel test suite load (~10 000 concurrent
+        // tests) the loop thread can be CPU-starved, making two full cycles take several seconds.
+        // 15 s matches the deadline used by the analogous circuit-breaker cooldown tests in this file.
+        var deadline = DateTime.UtcNow.AddSeconds(15);
         while (callCount < 2 && DateTime.UtcNow < deadline)
             await Task.Delay(50);
 

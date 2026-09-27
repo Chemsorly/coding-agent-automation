@@ -3,6 +3,7 @@ using CodingAgent.Agent;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.UnitTests.Helpers;
+using MessagePack;
 using Microsoft.AspNetCore.SignalR.Client;
 
 namespace CodingAgent.Pipeline.UnitTests.Serialization;
@@ -127,5 +128,64 @@ public sealed class OrchestratorProxyWireContractTests : IAsyncLifetime
         var invocation = _hub.Invocations.Should().ContainSingle().Subject;
         invocation.Target.Should().Be(hubMethod);
         invocation.Arguments.Should().Equal(expectedArguments);
+    }
+
+    // ── IssueIdentifierFormatter wire-contract test ──────────────────────────────────────────
+
+    /// <summary>
+    /// Proves that <see cref="IssueIdentifierFormatter"/> serialises <see cref="IssueIdentifier"/>
+    /// as a bare MessagePack string, which is the format the hub's
+    /// <c>RequestUpdateComment(JobId, string issueId, …)</c> expects.
+    ///
+    /// <para>
+    /// This is the falsifiability anchor required by the acceptance criterion for issue #3086:
+    /// "Reverting the IssueIdentifierFormatter registration makes scenario B fail, proving the
+    /// test covers the wire contract."
+    /// </para>
+    ///
+    /// <para>
+    /// The formatter is an explicit contract that keeps <c>IssueIdentifier</c> serialised as a
+    /// bare string regardless of how <c>ContractlessStandardResolverAllowPrivate</c> handles the
+    /// struct in a future refactor (e.g. if <c>IssueIdentifier</c> is converted to a class, gains
+    /// a <c>[MessagePackObject]</c> attribute, or the resolver changes behaviour).  Without the
+    /// formatter as an explicit override, any such change could silently shift the wire format to a
+    /// map/array and break hub binding — exactly the class of bug described in #2927.
+    /// </para>
+    ///
+    /// <para>
+    /// Scenario B's <c>Assert.Single(UpdatedComments)</c> is the runtime guard that detects the
+    /// regression: without the formatter, the first hub call in PostDecompositionPlanStep
+    /// (RequestListComments, hub signature: <c>string identifier</c>) fails to bind, causing
+    /// TryCriticalAsync to call FailRunAsync (StepResult.Stop).  The run ends Failed, so
+    /// <c>WaitForWorkItemStatusAsync(Succeeded)</c> times out before the UpdatedComments assert
+    /// is ever evaluated.  See class summary of RealAgentWorkerSmokeTests for the full trace.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void IssueIdentifierFormatter_SerializesAsBareString_AsRequiredByHubContract()
+    {
+        var id = new IssueIdentifier("2567");
+
+        // The production options include IssueIdentifierFormatter; it must serialise as a bare
+        // MessagePack string (fixstr / str8 / str16 / str32 family — type code 5).
+        var bytes = MessagePackSerializer.Serialize(id, AgentHubMessagePack.SerializerOptions);
+        // TODO [WARNING]: bytes[0] is accessed directly without asserting bytes.Length > 0.
+        // MessagePackSerializer.Serialize never returns an empty buffer for a non-null value
+        // (IssueIdentifierFormatter.Serialize throws on a null Value), so this is safe in
+        // practice. However, if a future formatter change ever produced an empty payload, this
+        // would throw IndexOutOfRangeException with a confusing message rather than a clear
+        // assertion failure. Consider adding Assert.True(bytes.Length > 0, "serialised payload must be non-empty").
+        var wireType = MessagePackCode.ToMessagePackType(bytes[0]);
+
+        wireType.Should().Be(MessagePackType.String,
+            because: "IssueIdentifierFormatter serialises IssueIdentifier as a bare string, " +
+                     "which is required for the hub's 'string issueId' parameter to bind; " +
+                     "any other wire format (map or array) causes an InvocationBindingFailureMessage " +
+                     "and UpdatedComments stays empty, breaking Scenario B");
+
+        // Round-trip: the same options must deserialise the bytes back to the original value.
+        var deserialized = MessagePackSerializer.Deserialize<IssueIdentifier>(bytes, AgentHubMessagePack.SerializerOptions);
+        deserialized.Should().Be(id,
+            because: "the formatter must be an identity round-trip");
     }
 }
