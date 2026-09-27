@@ -35,6 +35,7 @@ public abstract class E2ETestBase : IAsyncLifetime
         // Fresh browser context per test (isolated cookies, storage)
         var browser = await Fixture.GetBrowserAsync();
         _context = await browser.NewContextAsync();
+        await StubExternalFontsAsync(_context);
         Page = await _context.NewPageAsync();
 
         // Guard: verify DI replacement worked
@@ -42,6 +43,24 @@ public abstract class E2ETestBase : IAsyncLifetime
         if (factory is not Fakes.FakeProviderFactory)
             throw new InvalidOperationException(
                 $"DI replacement failed: IProviderFactory resolved as {factory.GetType().Name} instead of FakeProviderFactory");
+    }
+
+    /// <summary>
+    /// Keeps page loads local to the test server. The Google Fonts stylesheet linked from
+    /// App.razor is the only external request on a page load, and it blocks the "load" event that
+    /// <c>GotoAsync</c> waits for, so a slow CDN from the CI runner can run navigation into
+    /// Playwright's 30s timeout (seen once for /agent-coding). An empty stylesheet leaves the
+    /// fallback fonts in place, so no font file is requested either.
+    /// </summary>
+    private static async Task StubExternalFontsAsync(IBrowserContext context)
+    {
+        await context.RouteAsync("https://fonts.googleapis.com/**", route => route.FulfillAsync(new RouteFulfillOptions
+        {
+            Status = 200,
+            ContentType = "text/css",
+            Body = string.Empty
+        }));
+        await context.RouteAsync("https://fonts.gstatic.com/**", route => route.AbortAsync());
     }
 
     public async Task DisposeAsync()
