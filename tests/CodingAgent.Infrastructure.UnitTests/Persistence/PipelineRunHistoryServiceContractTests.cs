@@ -160,8 +160,18 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
     {
         // Issue #3024: consolidation exclusion guards were removed from all history service
         // implementations. Consolidation runs must be accepted (no silent drop, no exception).
-        // Persistence visibility varies by implementation (file-backed: visible in GetRunHistoryAsync;
-        // Postgres: written to DB but read-time-filtered). The contract here is: must not throw.
+        // Issue #3025: the read-time consolidation filter was narrowed to ghost-only rows in
+        // both the Postgres and file-backed implementations. Consolidation runs with valid JSON
+        // (RunType = Consolidation) are now returned by GetRunHistoryAsync in both implementations.
+        // The contract here is: must not throw.
+        // TODO(#3025): This test creates the run via PipelineRun.CreateImplementation which sets
+        // RunType = Implementation (not Consolidation). Combined with IssueProviderConfigId =
+        // ConsolidationConstants.ProviderConfigId and InitiatedBy prefix, IsConsolidationGhost
+        // returns true for this row on the Postgres path, so it is silently dropped from
+        // GetRunHistoryAsync. The comment above stating "Consolidation runs with valid JSON are
+        // now returned" does not apply here — this is a ghost row, not a real consolidation run.
+        // Consider adding a separate test that creates a summary with RunType = Consolidation and
+        // asserts it IS retrievable from GetRunHistoryAsync to properly validate the contract.
         var service = CreateService();
 
         var consolidationRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
@@ -186,6 +196,13 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
     {
         // Issue #3024: consolidation exclusion guards were removed. AddRunSummaryAsync must
         // accept consolidation-prefixed summaries without throwing.
+        // TODO(#3025): This summary does not set RunType = PipelineRunType.Consolidation, so
+        // IsConsolidationGhost returns true for it (InitiatedBy prefix present + RunType defaults
+        // to Implementation). On the Postgres path the row would be silently filtered from
+        // GetRunHistoryAsync. The test only asserts NotThrowAsync, which is still correct, but it
+        // does not validate that a *real* consolidation summary (RunType = Consolidation) is
+        // retrievable after being written. Consider adding RunType = PipelineRunType.Consolidation
+        // and a retrieval assertion to turn this into a meaningful contract test.
         var service = CreateService();
 
         var summary = new PipelineRunSummary

@@ -350,8 +350,10 @@ public class PipelineRunHistoryServiceTests : IDisposable
     // ── Consolidation filtering tests ───────────────────────────────────
 
     [Fact]
-    public async Task GetRunHistory_ExcludesConsolidationRuns_LoadedFromDisk()
+    public async Task GetRunHistory_ReturnsConsolidationRuns_LoadedFromDisk()
     {
+        // Issue #3025: the LoadRunHistory filter that excluded consolidation runs has been removed.
+        // Consolidation summaries written to disk must now be loaded and returned alongside normal runs.
         var runsDir = Path.Combine(Path.GetTempPath(), $"test-runs-consol-filter-{Guid.NewGuid()}");
         Directory.CreateDirectory(runsDir);
         try
@@ -367,15 +369,16 @@ public class PipelineRunHistoryServiceTests : IDisposable
                 InitiatedBy = "manual"
             };
 
-            // Write a consolidation ghost entry
+            // Write a real consolidation run (post-#3024 — has RunType set, not a ghost)
             var consolSummary = new PipelineRunSummary
             {
                 RunId = Guid.NewGuid().ToString(),
                 IssueIdentifier = Guid.NewGuid().ToString(),
-                IssueTitle = Guid.NewGuid().ToString(),
+                IssueTitle = "Consolidation run",
                 FinalStep = PipelineStep.Completed,
                 StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-3),
-                InitiatedBy = ConsolidationConstants.InitiatedBy
+                InitiatedBy = ConsolidationConstants.InitiatedBy,
+                RunType = PipelineRunType.Consolidation
             };
 
             File.WriteAllText(
@@ -388,8 +391,11 @@ public class PipelineRunHistoryServiceTests : IDisposable
             var historyService = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
             var history = await historyService.GetRunHistoryAsync();
 
-            history.Should().HaveCount(1);
-            history[0].IssueIdentifier.Should().Be((IssueIdentifier)"org/repo#1");
+            // Both runs must be returned — the LoadRunHistory filter is removed in #3025
+            history.Should().HaveCount(2,
+                "consolidation runs must now be loaded from disk (LoadRunHistory exclusion filter removed in #3025)");
+            history.Should().Contain(r => r.RunId == normalSummary.RunId, "normal run must still be returned");
+            history.Should().Contain(r => r.RunId == consolSummary.RunId, "consolidation run must now be returned");
         }
         finally
         {
