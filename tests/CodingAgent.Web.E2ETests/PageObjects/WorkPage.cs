@@ -46,6 +46,14 @@ public sealed class WorkPage
     public async Task WaitForInFlightAsync(string issueIdentifier, int timeoutMs = 15_000)
         => await InFlightRow(issueIdentifier).First.WaitForAsync(new() { Timeout = timeoutMs });
 
+    /// <summary>Returns the number of rows in the "In flight" card.</summary>
+    public async Task<int> GetInFlightCountAsync()
+        => await InFlightCard.Locator("tbody tr").CountAsync();
+
+    /// <summary>Returns the number of rows in the "Queue" card.</summary>
+    public async Task<int> GetQueuedCountAsync()
+        => await QueueCard.Locator("tbody tr").CountAsync();
+
     /// <summary>
     /// Waits until the issue appears in the "Queue" card. Required before asserting queue
     /// presence — <see cref="NavigateAsync"/> uses a 2-second fixed sleep which is not a
