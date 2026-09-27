@@ -60,6 +60,9 @@
     <!-- The harness also runs the Scheduler in-process (Spec 047 / issue #3085): the real
          PipelineLoopService lives in Scheduler, and loop control tests go through real HTTP. -->
     <ProjectReference Include="..\..\src\CodingAgent.Scheduler\CodingAgent.Scheduler.csproj" />
+    <!-- The harness also runs the JobController in-process: the real ReconciliationLoop is hosted
+         via JobControllerE2EWebApplicationFactory and driven deterministically in E2E tests. -->
+    <ProjectReference Include="..\..\src\CodingAgent.JobController\CodingAgent.JobController.csproj" />
     <ProjectReference Include="..\CodingAgent.Web.TestUtilities\CodingAgent.Web.TestUtilities.csproj" />
   </ItemGroup>
 

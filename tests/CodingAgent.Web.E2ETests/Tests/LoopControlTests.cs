@@ -66,12 +66,12 @@ public sealed class LoopControlTests : E2ETestBase
         var stopCount = await stopBtn.CountAsync();
         Assert.True(stopCount > 0, "Stop Loop button should appear after starting the loop");
 
-        // TODO [WARNING]: The statusSpan CountAsync below is called immediately after WaitForAsync
-        // for the Stop Loop button. The status span may render 1-2 poll cycles later (rendering
-        // is not atomic), so CountAsync can return 0 even though the span eventually appears.
-        // Replace with a WaitForAsync on statusSpan before asserting CountAsync > 0.
-        // Assert: loop status indicator is visible (inline status span shows cycle/processed info)
+        // Assert: loop status indicator is visible (inline status span shows cycle/processed info).
+        // WaitForAsync is required here: the status span is populated from the next /loop/status
+        // poll response (up to 1s after IsLoopActive becomes true), so it can lag the Stop Loop
+        // button by one poll cycle. CountAsync() alone would return 0 during that window.
         var statusSpan = Page.Locator("span.monitoring-muted:has-text('Processed:')");
+        await statusSpan.WaitForAsync(new() { Timeout = 5_000 });
         var statusSpanCount = await statusSpan.CountAsync();
         Assert.True(statusSpanCount > 0, "Loop status indicator should be visible when loop is active");
 
@@ -85,6 +85,13 @@ public sealed class LoopControlTests : E2ETestBase
         // Assert: Start Loop button returns
         var startCount = await startBtnAfter.CountAsync();
         Assert.True(startCount > 0, "Start Loop button should return after stopping the loop");
+        // TODO [WARNING]: This test does not call Fixture.ResetAllAsync() after stopping the loop
+        // via the UI. The UI click fires over HTTP; by the time the assertion completes,
+        // PipelineLoopService.IsLoopActive may still be true while the Scheduler finishes its
+        // current cycle. If a subsequent test runs before the cycle drains it will find a "Stop
+        // Loop" button where "Start Loop" is expected. Add a try/finally wrapping the test body
+        // (like the smoke test) that calls await Fixture.ResetAllAsync() to guarantee the loop
+        // is fully stopped and IsLoopActive is false before the next test begins.
     }
 
     [Fact]
@@ -134,6 +141,12 @@ public sealed class LoopControlTests : E2ETestBase
         var stopBtn = Page.Locator("button:has-text('Stop Loop')");
         if (await stopBtn.CountAsync() > 0)
             await stopBtn.First.ClickAsync();
+        // TODO [WARNING]: This cleanup fires a UI click over real HTTP but does not await
+        // Fixture.ResetAllAsync(). The click only requests a stop; PipelineLoopService.IsLoopActive
+        // may still be true when the test method returns if the Scheduler is mid-cycle. The next
+        // test can find a "Stop Loop" button where "Start Loop" is expected and fail spuriously.
+        // Wrap the test body in try/finally and call await Fixture.ResetAllAsync() in the finally
+        // block (as the smoke test does) to guarantee IsLoopActive is false before continuing.
     }
 
     [Fact]
@@ -187,6 +200,11 @@ public sealed class LoopControlTests : E2ETestBase
         var stopBtn = Page.Locator("button:has-text('Stop Loop')");
         if (await stopBtn.CountAsync() > 0)
             await stopBtn.First.ClickAsync();
+        // TODO [WARNING]: Same isolation hazard as Loop_RemoveButton_HiddenDuringActiveLoop: this
+        // cleanup fires-and-forgets over real HTTP without awaiting Fixture.ResetAllAsync(). The
+        // Scheduler loop may still be active when the next test begins, leaving a stale cycle in
+        // flight. Wrap the test body in try/finally and call await Fixture.ResetAllAsync() in the
+        // finally block to guarantee IsLoopActive is false before the next test starts.
     }
 
     /// <summary>
@@ -224,33 +242,45 @@ public sealed class LoopControlTests : E2ETestBase
 
         // Act: start loop via UI button — goes through real HttpSchedulerApiClient →
         //      Scheduler POST /loop/start → PipelineLoopService.StartLoopAsync().
-        // TODO [WARNING]: This test does not wrap the loop start/stop in a try/finally block.
-        // If WaitForAsync for "Stop Loop" or "Polling template" times out, the test throws before
-        // reaching the "Stop Loop" click at the end, leaving the loop running in the Scheduler
-        // host. The next test that calls ResetAll() (not ResetAllAsync()) will not wait for the
-        // loop to stop — causing test pollution exactly as documented in the ResetAllAsync XML
-        // comment. Wrap the act/assert section in try/finally { await Fixture.ResetAllAsync(); }.
+        // The try/finally guarantees ResetAllAsync() runs even if a WaitForAsync times out,
+        // preventing the running loop from leaking into the next test ("Stop Loop where Start
+        // Loop was expected" pollution documented in E2EFixture.ResetAllAsync).
         await Page.ClickAsync("button:has-text('Start Loop')");
 
-        // LoopStatusPollingService in the Web host polls GET /loop/status on the Scheduler every
-        // 1 second (SchedulerApi__StatusPollIntervalSeconds=1 set in E2EWebApplicationFactory).
-        // The Stop Loop button appears once IsLoopActive=true propagates through the polling cycle.
-        // TODO [WARNING]: This uses a 15s timeout vs the 5s used by the other LoopControlTests.
-        // In a failure scenario both WaitForAsync calls below can expire sequentially (30s total)
-        // before the test reports failure, consuming a significant portion of the 15-minute budget.
-        // The discrepancy also documents that the old 5s timeouts in the other tests are now
-        // under-budgeted for the real HTTP path — see TODO comments on those tests.
-        await Page.Locator("button:has-text('Stop Loop')").First.WaitForAsync(new() { Timeout = 15_000 });
+        try
+        {
+            // LoopStatusPollingService in the Web host polls GET /loop/status on the Scheduler every
+            // 1 second (SchedulerApi__StatusPollIntervalSeconds=1 set in E2EWebApplicationFactory).
+            // The Stop Loop button appears once IsLoopActive=true propagates through the polling cycle.
+            // TODO [WARNING]: This uses a 15s timeout vs the 5s used by the other LoopControlTests.
+            // In a failure scenario both WaitForAsync calls below can expire sequentially (30s total)
+            // before the test reports failure, consuming a significant portion of the 15-minute budget.
+            // The discrepancy also documents that the old 5s timeouts in the other tests are now
+            // under-budgeted for the real HTTP path — see TODO comments on those tests.
+            await Page.Locator("button:has-text('Stop Loop')").First.WaitForAsync(new() { Timeout = 15_000 });
 
-        // Assert: the "Polling template N of M · Processed: P · Failed: F" status span appears.
-        // This span is only rendered when LoopService.IsLoopActive is true (AgentCoding.razor ~L122),
-        // confirming the status data flowed from the real Scheduler via HTTP.
-        var statusSpan = Page.Locator("span.monitoring-muted:has-text('Polling template')");
-        await statusSpan.WaitForAsync(new() { Timeout = 15_000 });
-        Assert.True(await statusSpan.IsVisibleAsync(), "Status span should be visible after loop started via Scheduler");
-
-        // Cleanup: stop the loop and wait for Start Loop to return
-        await Page.ClickAsync("button:has-text('Stop Loop')");
-        await Page.Locator("button:has-text('Start Loop')").First.WaitForAsync(new() { Timeout = 15_000 });
+            // Assert: the "Polling template N of M · Processed: P · Failed: F" status span appears.
+            // This span is only rendered when LoopService.IsLoopActive is true (AgentCoding.razor ~L122),
+            // confirming the status data flowed from the real Scheduler via HTTP.
+            var statusSpan = Page.Locator("span.monitoring-muted:has-text('Polling template')");
+            await statusSpan.WaitForAsync(new() { Timeout = 15_000 });
+            Assert.True(await statusSpan.IsVisibleAsync(), "Status span should be visible after loop started via Scheduler");
+            // TODO [WARNING]: This assertion verifies the span is visible, but the selector
+            // 'has-text("Polling template")' would also match a hard-coded static string baked into
+            // the Blazor component with no data from the Scheduler. A stronger assertion would
+            // extract the span's text content and verify it contains a dynamic value — e.g. a
+            // template name ("Scheduler Smoke Template") or a numeric index — proving the status
+            // data actually came from the Scheduler's /loop/status response rather than a static
+            // placeholder. Consider: var text = await statusSpan.InnerTextAsync();
+            // Assert.Contains("Scheduler Smoke Template", text);
+        }
+        finally
+        {
+            // Stop the loop and wait for Start Loop to return before allowing the next test to run.
+            // ResetAllAsync() stops the loop via PipelineLoopService.StopLoop() and busy-waits up
+            // to 10s for IsLoopActive to become false, preventing the "Stop Loop where Start Loop
+            // was expected" pollution in subsequent tests.
+            await Fixture.ResetAllAsync();
+        }
     }
 }

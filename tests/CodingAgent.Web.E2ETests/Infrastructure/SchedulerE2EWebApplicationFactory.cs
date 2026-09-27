@@ -84,6 +84,14 @@ public sealed class SchedulerE2EWebApplicationFactory : WebApplicationFactory<Sc
         _fakeK8sClient = fakeK8sClient;
         _apiKey = apiKey;
         _pipelineApiBaseUrl = pipelineApiBaseUrl;
+        // TODO [WARNING]: UseKestrel(0) is a WebApplicationFactory<T> extension that stores the
+        // port-zero intent for application in IWebHostBuilder during host construction. This is an
+        // established pattern (shared with ApiE2EWebApplicationFactory) that works correctly today.
+        // If the extension method is ever renamed or its wiring into ConfigureWebHost changes, the
+        // Scheduler host would bind to a fixed default port instead of an ephemeral one, causing
+        // port conflicts when multiple SchedulerE2EWebApplicationFactory instances coexist (e.g.
+        // in a future parallel test run). Verify the pattern remains consistent with
+        // ApiE2EWebApplicationFactory when updating WebApplicationFactory infrastructure.
         UseKestrel(0);
     }
 
