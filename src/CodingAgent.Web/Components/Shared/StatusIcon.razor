@@ -1,0 +1,10 @@
+@* Enabled / disabled marker for the Settings lists: one size, coloured by state, with a text alternative. *@
+<span class="status-icon @(Enabled ? "is-on" : "is-off")" role="img" aria-label="@Label" title="@Label">
+    <Icon Name="@(Enabled ? "check-circle" : "x-circle")" Size="16" />
+</span>
+
+@code {
+    [Parameter] public bool Enabled { get; set; }
+
+    private string Label => Enabled ? "Enabled" : "Disabled";
+}

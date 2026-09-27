@@ -21,15 +21,8 @@
 
 <PageTitle>Settings - Coding Agent</PageTitle>
 
-<div class="settings-page">
-    @* TODO [WARNING]: Settings.razor intentionally keeps "settings-page" as the root element (not
-       "cockpit-page") because the inner settings-layout requires a sidebar tree nav that is
-       incompatible with the cockpit-page column-gap layout. As a result the cockpit-page-header
-       padding is duplicated inline (22px 28px) rather than being driven by the shared cockpit.css
-       rule. A future change to the canonical cockpit-page-header padding in cockpit.css will NOT
-       propagate here automatically. Consider extracting the header padding into a CSS variable or
-       a shared modifier class so the value stays in sync. *@
-    <div class="cockpit-page-header" style="padding: 22px 28px; border-bottom: 1px solid var(--border); background: var(--surface);">
+<div class="cockpit-page settings-page">
+    <div class="cockpit-page-header">
         <div class="cockpit-page-titles">
             <h1>Settings</h1>
             <span class="cockpit-page-sub">Providers, templates, and agent configuration</span>
@@ -37,7 +30,7 @@
     </div>
 
     <div class="settings-layout">
-        <SettingsTreeNav @ref="_treeNav" />
+        <SettingsTreeNav @ref="_treeNav" SelectedNode="@_selectedNode" />
 
         <div class="settings-content">
             <InlineStatus Message="@_statusMessage" IsError="@_isError" OnDismissed="ClearStatus" />
@@ -227,25 +220,27 @@
 
     protected override async Task OnInitializedAsync()
     {
-        if (!string.IsNullOrEmpty(SectionFromQuery) && IsKnownSection(SectionFromQuery))
-            _selectedNode = SectionFromQuery;
+        // Select before the first await so a deep link never flashes the default section.
+        SelectNodeFromQuery();
         await LoadAllData();
     }
 
     protected override Task OnParametersSetAsync()
     {
-        // Pick up section changes from URL navigation (Back/Forward, NavLink clicks).
+        // Pick up section changes from URL navigation (Back/Forward, tree and sidebar links).
         // OnInitializedAsync does not re-run for in-app navigation — this override does.
-        // TODO [WARNING]: OnParametersSetAsync fires on every parameter change, including immediately
-        // after OnInitializedAsync on the initial render, so it may set _selectedNode a second time
-        // redundantly. If any future code path inside LoadAllData (or a lifecycle callback) modifies
-        // _selectedNode, this override will silently overwrite that value. To avoid this, consider
-        // tracking whether _selectedNode has already been initialised from the query string and
-        // skipping the assignment on the first-render pass.
-        if (!string.IsNullOrEmpty(SectionFromQuery) && IsKnownSection(SectionFromQuery))
-            _selectedNode = SectionFromQuery;
+        SelectNodeFromQuery();
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// The URL is the only source of the selected section: a missing or unknown section means the
+    /// default one, so the sidebar's plain /settings link returns to it instead of keeping the last section.
+    /// </summary>
+    private void SelectNodeFromQuery() =>
+        _selectedNode = !string.IsNullOrEmpty(SectionFromQuery) && IsKnownSection(SectionFromQuery)
+            ? SectionFromQuery
+            : SettingsNodes.ProvidersIssue;
 
     private async Task LoadAllData()
     {
@@ -356,11 +351,6 @@
             await InvokeAsync(StateHasChanged);
         }
         catch (OperationCanceledException) { }
-    }
-
-    private void SelectNode(string nodeId)
-    {
-        _selectedNode = nodeId;
     }
 
     private async Task NavigateToProjectDetail(string projectId)

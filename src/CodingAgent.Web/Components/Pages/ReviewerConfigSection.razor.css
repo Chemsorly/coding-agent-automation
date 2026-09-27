@@ -47,3 +47,11 @@
     align-items: center;
     gap: 8px;
 }
+
+/* One reviewer agent inside the reviewer config form. */
+.reviewer-agent-card {
+    margin-bottom: 8px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
