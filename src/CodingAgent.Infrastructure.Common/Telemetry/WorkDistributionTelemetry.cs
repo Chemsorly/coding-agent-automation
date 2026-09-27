@@ -273,29 +273,22 @@ public static class WorkDistributionTelemetry
     }
 
     /// <summary>
-    /// Emits a structured Information-level log for terminal work item transitions.
-    /// Satisfies Requirement 10.3: workItemId, status, duration, agentId, failureReason.
-    /// Also emits <see cref="PipelineTelemetry.JobsCompleted"/>, <see cref="PipelineTelemetry.JobsFailed"/>,
-    /// and <see cref="PipelineTelemetry.JobDuration"/> from the long-lived Job Controller process to avoid
-    /// the pod-exit OTLP flush race that affects the agent-side recordings of the same instruments.
+    /// Emits a structured Information-level log for terminal work item transitions and records
+    /// <see cref="WorkItemsTerminated"/> and <see cref="JobExecutionDuration"/>.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>Double-counting:</strong> <see cref="PipelineRunInstrumentation.Dispose"/> also records
-    /// these same <c>pipeline.jobs.*</c> instruments from the ephemeral agent pod with richer tags
-    /// (<c>run_type</c>, <c>pipeline.project_id</c>, <c>pipeline.project_name</c>). When both the
-    /// agent-pod flush and this Job Controller recording succeed for the same job,
-    /// <c>pipeline_jobs_completed_total</c> / <c>pipeline_jobs_failed_total</c> will increment by 2 in
-    /// Prometheus. This is intentional: the metrics are now "at-least-once" reliable. The agent-pod
-    /// recording provides higher-fidelity tags and still works when the pod exits cleanly.
-    /// Use <c>workdistribution_workitems_terminated_total</c> for exact job counts.
+    /// <strong>Recording point:</strong> run-level metrics (<c>pipeline.run.outcomes</c>,
+    /// <c>pipeline.run.duration</c>) are recorded once per terminal transition in
+    /// <c>WorkItemStatusTransitionService.EmitTerminalStatusTelemetryAsync</c> in the long-lived
+    /// API process — not here and not in agent pods. This avoids the first-series-zero problem
+    /// that affects ephemeral pods and the double-counting that occurred when the Job Controller
+    /// also recorded metrics after POSTing status to the API. See issue #2967.
     /// </para>
     /// <para>
-    /// <strong>Tag conventions:</strong> the Job Controller-side series carry <c>status</c> and (for
-    /// failures) <c>failure_reason</c> tags only — no <c>run_type</c> or project tags.
-    /// <c>failure_reason</c> values are snake_case (e.g. <c>"agent_error"</c>, <c>"timeout"</c>) to
-    /// match the agent-pod series on the same metric family. The emitter is further distinguishable
-    /// by <c>service.name=coding-agent-jobcontroller</c> vs the agent pod's <c>service.name</c>.
+    /// <strong>Tag conventions:</strong> <c>failure_reason</c> values are snake_case
+    /// (e.g. <c>"agent_error"</c>, <c>"timeout"</c>). This changed from PascalCase in issue #2967.
+    /// Grafana queries filtering on <c>failure_reason</c> must be updated accordingly.
     /// </para>
     /// </remarks>
     public static void LogTerminalStatus(
@@ -313,9 +306,15 @@ public static class WorkDistributionTelemetry
             agentId ?? "unknown",
             failureReason?.ToString() ?? "none");
 
+        // Normalize failure_reason to snake_case so that pre-initialized series labels match.
+        // Breaking change from issue #2967: was PascalCase (e.g. "Timeout"), now snake_case ("timeout").
+        var failureReasonTag = failureReason.HasValue
+            ? PascalToSnakeCase(failureReason.Value.ToString())
+            : "none";
+
         WorkItemsTerminated.Add(1,
             new KeyValuePair<string, object?>("status", status.ToString()),
-            new KeyValuePair<string, object?>("failure_reason", failureReason?.ToString() ?? "none"));
+            new KeyValuePair<string, object?>("failure_reason", failureReasonTag));
 
         // Record job execution duration (Dispatched → terminal)
         if (duration.HasValue && duration.Value.TotalSeconds >= 0)
@@ -323,41 +322,6 @@ public static class WorkDistributionTelemetry
             JobExecutionDuration.Record(duration.Value.TotalSeconds,
                 new KeyValuePair<string, object?>("status", status.ToString()));
         }
-
-        // Emit pipeline.jobs.* from the long-lived Job Controller to make these metrics reliable.
-        // See XML doc above for double-counting and tag-convention notes.
-        var statusTag = new KeyValuePair<string, object?>("status", status.ToString());
-        if (status == WorkItemStatus.Succeeded)
-        {
-            // NOTE: statusTag adds a "status" label to pipeline_jobs_completed_total that the
-            // agent-pod emitter (PipelineRunInstrumentation.Dispose) does NOT include. This creates two
-            // structurally incompatible label sets on the same metric family: the Job Controller series
-            // has {status="Succeeded"} while the agent-pod series has no status label. A bare
-            // increase(pipeline_jobs_completed_total[24h]) sums both correctly, but any Prometheus query
-            // filtering on {status="Succeeded"} will silently exclude agent-pod recordings.
-            // See observability.md — "Reliable sources by use case" for query guidance.
-            PipelineTelemetry.JobsCompleted.Add(1, statusTag);
-        }
-        else
-        {
-            // NOTE: WorkItemStatus.Cancelled is a real terminal status that reaches this else branch
-            // (via WorkItemEndpoints.EmitTerminalStatusTelemetryAsync), causing it to increment
-            // pipeline_jobs_failed_total with status="Cancelled", failure_reason="unknown". This
-            // inflates the failure counter and diverges from the agent-side PipelineRunInstrumentation
-            // which emits nothing for cancellations. Use workdistribution_workitems_terminated_total
-            // (which tags status accurately) for exact counts by status.
-            // snake_case failure_reason matches PipelineRunInstrumentation.Dispose() convention so
-            // that label-filtered Prometheus queries work uniformly across both emitters.
-            var failureReasonSnake = failureReason.HasValue
-                ? PascalToSnakeCase(failureReason.Value.ToString())
-                : "unknown";
-            PipelineTelemetry.JobsFailed.Add(1,
-                statusTag,
-                new KeyValuePair<string, object?>("failure_reason", failureReasonSnake));
-        }
-
-        if (duration.HasValue && duration.Value.TotalSeconds >= 0)
-            PipelineTelemetry.JobDuration.Record(duration.Value.TotalSeconds, statusTag);
     }
 
     // Converts a PascalCase string to snake_case lowercase.
