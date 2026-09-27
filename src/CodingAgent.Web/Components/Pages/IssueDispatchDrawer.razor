@@ -127,7 +127,7 @@
                     @if (SelectedItem.CreatedAt.HasValue)
                     {
                         <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0 0 8px;">
-                            Created: @SelectedItem.CreatedAt.Value.ToLocalTime().ToString("g")
+                            Created: @SelectedItem.CreatedAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
                         </p>
                     }
                     @if (selectedBlocked)
@@ -182,7 +182,7 @@
 
     /// <summary>
     /// Extracts a plain-text preview from the issue body, stripping markdown headings and trimming.
-    /// Returns text up to the first ## heading or the first line of content.
+    /// Returns text up to the first ## heading or the first line of content, with inline markdown stripped.
     /// </summary>
     private static string GetBodyPreview(string body)
     {
@@ -194,8 +194,14 @@
             if (string.IsNullOrEmpty(trimmed)) continue;
             if (trimmed.StartsWith("##")) continue;
             // Strip leading # (title heading)
+            // TODO [WARNING]: Lines starting with a single "#" have the "#" stripped but are still
+            // returned as the preview. For issues whose body begins with "# Title\nDetails...", this
+            // returns the title text as the preview, which duplicates the issue title already shown
+            // in drawer-issue-title. Consider also skipping single-"#" heading lines (like "##" lines
+            // are skipped) so the first non-heading content line is used as the preview instead.
             if (trimmed.StartsWith('#')) trimmed = trimmed.TrimStart('#').Trim();
-            return trimmed;
+            // Strip inline markdown syntax (bold, italic, code, blockquotes, list markers)
+            return UiFormatters.StripMarkdown(trimmed);
         }
         return string.Empty;
     }
