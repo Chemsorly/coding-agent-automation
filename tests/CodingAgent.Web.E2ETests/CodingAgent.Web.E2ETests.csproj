@@ -57,6 +57,10 @@
     <!-- The harness runs the Pipeline API alongside the Blazor app: the API is the sole host of
          /hubs/agent and /api/work-items/* from Spec 044 onward, so fake agents connect there. -->
     <ProjectReference Include="..\..\src\CodingAgent.Api\CodingAgent.Api.csproj" />
+    <!-- The harness hosts the real JobController in-process for ReconciliationLoop E2E coverage.
+         Uses the fully-qualified CodingAgent.JobController.Program to avoid ambiguity with the
+         three Program classes in scope (Web, Api, JobController). -->
+    <ProjectReference Include="..\..\src\CodingAgent.JobController\CodingAgent.JobController.csproj" />
     <ProjectReference Include="..\CodingAgent.Web.TestUtilities\CodingAgent.Web.TestUtilities.csproj" />
   </ItemGroup>
 
