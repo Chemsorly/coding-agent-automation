@@ -573,6 +573,10 @@
 
 /* Lists inside section cards: wrap every cell except the actions column. */
 .cockpit .settings-section .monitoring-table td:not(:last-child) { white-space: normal; overflow-wrap: anywhere; }
+/* Consolidation run history: the summary cell takes all spare width (width: 100%; max-width: 0), so the short
+   columns keep their text on one line — with the wrap rule above they were squeezed to a few characters and
+   split mid-word ("Succe|eded"). */
+.cockpit .settings-section .monitoring-table.consolidation-history-table td:not(.consolidation-summary-cell) { white-space: nowrap; }
 /* Settings page lists (profiles, quality gates, reviewers) wrap at word boundaries instead — anywhere split
    names and label chips mid-word once a column got narrow. Chips wrap as whole chips; headers wrap and cells
    are a little tighter, so the lists fit the content column at 1280px. */
