@@ -101,7 +101,7 @@ stateDiagram-v2
         Agent gets error feedback and fixes before re-check
     end note
     note left of CreatingPullRequest
-        Draft PR leaves issue as agent:in-progress. Normal PR swaps to agent:done.
+        Normal PR swaps to agent:done.
         agent:error is applied both when retries are exhausted (draft PR path)
         and when an unexpected exception escapes the pipeline boundary.
     end note
