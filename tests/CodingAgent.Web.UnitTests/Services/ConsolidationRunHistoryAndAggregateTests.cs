@@ -19,15 +19,21 @@ public sealed class ConsolidationRunHistoryAndAggregateTests : IDisposable
     {
         if (!Directory.Exists(_tempDir))
             return;
-        try
+
+        // Retry loop: the file-backed PipelineRunHistoryService has async writes that may still be
+        // in flight when Dispose() runs on a loaded CI runner, causing an IOException if the
+        // directory isn't fully drained before deletion. Three short retries are sufficient.
+        for (var i = 0; i < 3; i++)
         {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-            // Ignore: async file handles from PipelineRunHistoryService may still be open
-            // when Dispose runs synchronously. Temp directory cleanup failure is not a
-            // correctness issue.
+            try
+            {
+                Directory.Delete(_tempDir, recursive: true);
+                return;
+            }
+            catch (IOException) when (i < 2)
+            {
+                Thread.Sleep(100);
+            }
         }
     }
 
