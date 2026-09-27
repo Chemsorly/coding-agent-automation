@@ -323,10 +323,16 @@ public class HousekeepingServiceSweepSummaryMetricTests
         };
 
     /// <summary>
-    /// Sets up a <see cref="MeterListener"/> that captures all
+    /// Sets up a <see cref="MeterListener"/> that captures this class's
     /// <c>pipeline.housekeeping.pr_evaluated</c> measurements into a list.
     /// Returns a disposable listener and the live measurement list.
     /// </summary>
+    /// <remarks>
+    /// The listener sees every emission on the process-global meter, so it keeps only measurements
+    /// tagged with this class's <see cref="RepoId"/>. [Collection("Metrics")] alone protects only
+    /// against classes that opt in: before HousekeepingServiceTests joined, a stray
+    /// {2, behind, rp-1} from it failed Metric_MixedStatuses_OneEmissionPerDistinctStatus.
+    /// </remarks>
     private static (MeterListener Listener, List<(long Value, string Status, string RepoId)> Measurements)
         CreateListener()
     {
@@ -348,6 +354,7 @@ public class HousekeepingServiceSweepSummaryMetricTests
                 if (tag.Key == "mergeability_status") status = tag.Value?.ToString() ?? "";
                 if (tag.Key == "repo_provider_id") repoId = tag.Value?.ToString() ?? "";
             }
+            if (repoId != RepoId) return;
             measurements.Add((value, status, repoId));
         });
         listener.Start();
