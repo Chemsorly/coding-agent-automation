@@ -352,6 +352,13 @@ public class AgentCodingPageService
         => _issueDrawerService.IsIssueActive(issueIdentifier, issueProviderConfigId);
 
     /// <summary>
+    /// Returns the WorkItemStatus of the issue's current work item, or null if not active.
+    /// <see cref="WorkItemStatus.Pending"/> = Queued; <see cref="WorkItemStatus.Running"/> = Running/Dispatched.
+    /// </summary>
+    public WorkItemStatus? GetIssueWorkItemStatus(IssueIdentifier issueIdentifier, string issueProviderConfigId)
+        => _issueDrawerService.GetIssueWorkItemStatus(issueIdentifier, issueProviderConfigId);
+
+    /// <summary>
     /// Checks if an issue is currently distributed (Pending, Dispatched, or Running).
     /// Used by drawer components to show processing status.
     /// </summary>

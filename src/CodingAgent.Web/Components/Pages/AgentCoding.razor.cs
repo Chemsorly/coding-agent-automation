@@ -675,11 +675,12 @@ public partial class AgentCoding : IDisposable
     private PipelineProject? GetParentProject(TemplateId templateId) => PageService.GetParentProject(templateId);
 
     /// <summary>
-    /// Synchronous check against the preloaded active issues set.
-    /// Used by drawer component <c>IsBeingProcessed</c> parameter (Func&lt;string, bool&gt;).
+    /// Synchronous check against the preloaded active issues map.
+    /// Used by drawer component <c>GetProcessingStatus</c> parameter (Func&lt;string, WorkItemStatus?&gt;).
+    /// Returns Pending (Queued), Running (Running/Dispatched), or null (not active).
     /// </summary>
-    private bool IsIssueActive(string issueIdentifier, string issueProviderConfigId)
-        => PageService.IsIssueActive(issueIdentifier, issueProviderConfigId);
+    private WorkItemStatus? IsIssueActive(string issueIdentifier, string issueProviderConfigId)
+        => PageService.GetIssueWorkItemStatus(issueIdentifier, issueProviderConfigId);
 
     private async Task ClearRecentlyToggledAfterDelay(string templateId)
     {

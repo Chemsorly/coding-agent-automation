@@ -26,7 +26,7 @@ public class DrawerInertTests : BunitContext
             .Add(c => c.IsDispatching, false)
             .Add(c => c.HasMore, false)
             .Add(c => c.Page, 1)
-            .Add(c => c.IsBeingProcessed, _ => false));
+            .Add(c => c.GetProcessingStatus, _ => null));
 
         var aside = cut.Find("aside.dispatch-drawer");
         Assert.NotNull(aside.GetAttribute("inert"));
@@ -43,7 +43,7 @@ public class DrawerInertTests : BunitContext
             .Add(c => c.IsDispatching, false)
             .Add(c => c.HasMore, false)
             .Add(c => c.Page, 1)
-            .Add(c => c.IsBeingProcessed, _ => false));
+            .Add(c => c.GetProcessingStatus, _ => null));
 
         var aside = cut.Find("aside.dispatch-drawer");
         Assert.Null(aside.GetAttribute("inert"));
@@ -61,7 +61,7 @@ public class DrawerInertTests : BunitContext
             .Add(c => c.IsDispatching, false)
             .Add(c => c.HasMore, false)
             .Add(c => c.Page, 1)
-            .Add(c => c.IsBeingProcessed, _ => false));
+            .Add(c => c.GetProcessingStatus, _ => null));
 
         Assert.NotNull(cut.Find("aside.dispatch-drawer").GetAttribute("inert"));
 
@@ -74,7 +74,7 @@ public class DrawerInertTests : BunitContext
             .Add(c => c.IsDispatching, false)
             .Add(c => c.HasMore, false)
             .Add(c => c.Page, 1)
-            .Add(c => c.IsBeingProcessed, _ => false));
+            .Add(c => c.GetProcessingStatus, _ => null));
 
         Assert.Null(cut.Find("aside.dispatch-drawer").GetAttribute("inert"));
     }
@@ -92,7 +92,7 @@ public class DrawerInertTests : BunitContext
             .Add(c => c.IsDispatching, false)
             .Add(c => c.HasMore, false)
             .Add(c => c.Page, 1)
-            .Add(c => c.IsBeingProcessed, _ => false));
+            .Add(c => c.GetProcessingStatus, _ => null));
 
         var aside = cut.Find("aside.dispatch-drawer");
         Assert.NotNull(aside.GetAttribute("inert"));
@@ -109,7 +109,7 @@ public class DrawerInertTests : BunitContext
             .Add(c => c.IsDispatching, false)
             .Add(c => c.HasMore, false)
             .Add(c => c.Page, 1)
-            .Add(c => c.IsBeingProcessed, _ => false));
+            .Add(c => c.GetProcessingStatus, _ => null));
 
         var aside = cut.Find("aside.dispatch-drawer");
         Assert.Null(aside.GetAttribute("inert"));
@@ -133,7 +133,7 @@ public class DrawerInertTests : BunitContext
             .Add(c => c.IsDispatching, false)
             .Add(c => c.HasMore, false)
             .Add(c => c.Page, 1)
-            .Add(c => c.IsBeingProcessed, _ => false));
+            .Add(c => c.GetProcessingStatus, _ => null));
 
         var aside = cut.Find("aside.dispatch-drawer");
         Assert.NotNull(aside.GetAttribute("inert"));
@@ -150,7 +150,7 @@ public class DrawerInertTests : BunitContext
             .Add(c => c.IsDispatching, false)
             .Add(c => c.HasMore, false)
             .Add(c => c.Page, 1)
-            .Add(c => c.IsBeingProcessed, _ => false));
+            .Add(c => c.GetProcessingStatus, _ => null));
 
         var aside = cut.Find("aside.dispatch-drawer");
         Assert.Null(aside.GetAttribute("inert"));

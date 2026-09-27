@@ -14,7 +14,12 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
     [Parameter, EditorRequired] public bool IsLoading { get; set; }
     [Parameter, EditorRequired] public bool IsDispatching { get; set; }
     // TODO: EditorRequired with a default initializer may generate a compiler warning. Consider removing the default or the attribute.
-    [Parameter, EditorRequired] public Func<string, bool> IsBeingProcessed { get; set; } = _ => false;
+    /// <summary>
+    /// Returns the WorkItemStatus for the given issue identifier, or null if no active work item exists.
+    /// <see cref="WorkItemStatus.Pending"/> = Queued; <see cref="WorkItemStatus.Running"/> or
+    /// <see cref="WorkItemStatus.Dispatched"/> = Running.
+    /// </summary>
+    [Parameter, EditorRequired] public Func<string, WorkItemStatus?> GetProcessingStatus { get; set; } = _ => null;
     [Parameter] public EventCallback OnClose { get; set; }
     [Parameter] public EventCallback<TItem> OnDispatch { get; set; }
     [Parameter] public RenderFragment? HeaderPrefix { get; set; }

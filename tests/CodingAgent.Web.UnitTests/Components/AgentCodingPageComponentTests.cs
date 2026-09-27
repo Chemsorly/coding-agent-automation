@@ -137,6 +137,14 @@ public class AgentCodingPageComponentTests : BunitContext
         Services.AddSingleton<IDependencyChecker>(new DependencyChecker(mockLogger.Object));
         Services.AddSingleton<IDispatchOrchestrationService>(new Mock<IDispatchOrchestrationService>().Object);
 
+        // IssueDrawerService now requires IPipelineApiWorkItemClient for status-aware active-issue tracking.
+        var mockApiWorkItemClient = new Mock<IPipelineApiWorkItemClient>();
+        mockApiWorkItemClient.Setup(c => c.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<(string, string)>());
+        mockApiWorkItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PendingWorkItemDto>());
+        Services.AddSingleton<IPipelineApiWorkItemClient>(mockApiWorkItemClient.Object);
+
         Services.AddScoped<IIssueDrawerService, IssueDrawerService>();
         Services.AddScoped<IPrReviewDrawerService, PrReviewDrawerService>();
         Services.AddScoped<IEpicDrawerService, EpicDrawerService>();
@@ -1459,15 +1467,15 @@ public class AgentCodingPageComponentTests : BunitContext
     {
         var component = Render<AgentCoding>();
 
-        bool result = false;
+        WorkItemStatus? result = WorkItemStatus.Running; // set to non-null to prove the method returns null
         await component.InvokeAsync(() =>
         {
             var method = typeof(AgentCoding).GetMethod("IsIssueActive",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            result = (bool)method!.Invoke(component.Instance, ["99", "ip-1"])!;
+            result = (WorkItemStatus?)method!.Invoke(component.Instance, ["99", "ip-1"]);
         });
 
-        Assert.False(result);
+        Assert.Null(result);
     }
 
     [Fact]

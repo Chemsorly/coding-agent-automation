@@ -5,6 +5,8 @@ using Serilog;
 
 namespace CodingAgent.Web.Services;
 
+
+
 /// <summary>
 /// Computes the "blocked issues" shown on the Attention screen: open provider issues that cannot be
 /// dispatched yet because they depend on issues that are still open. Reuses the same issue-provider +
@@ -15,6 +17,37 @@ public sealed class BlockedIssuesService
 {
     /// <summary>Issues fetched per page per provider. Providers enforce a maximum of 100.</summary>
     private const int PageSize = 50;
+
+    /// <summary>
+    /// Labels that prevent an issue from being shown as "Ready" in the provider backlog and dispatch
+    /// drawer. Uses OrdinalIgnoreCase because GitHub label names are case-insensitive in practice and
+    /// the web layer normalises comparisons case-insensitively.
+    /// <para>
+    /// Includes all <see cref="AgentLabels.DispatchIneligibleLabels"/>, plus <see cref="AgentLabels.InProgress"/>
+    /// (running issues must not show Ready — a second WorkItem is blocked by the DB unique index, not
+    /// this label set), plus <see cref="AgentLabels.Next"/> (already queued for dispatch),
+    /// plus the epic workflow labels (<see cref="AgentLabels.Epic"/>, <see cref="AgentLabels.EpicApproved"/>,
+    /// <see cref="AgentLabels.EpicReview"/>), plus the non-agent <c>backlog</c> parking label.
+    /// </para>
+    /// </summary>
+    internal static readonly IReadOnlySet<string> NotReadyLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        // DispatchIneligibleLabels: Done, Error, NeedsRefinement, WontDo, Cancelled
+        AgentLabels.Done,
+        AgentLabels.Error,
+        AgentLabels.NeedsRefinement,
+        AgentLabels.WontDo,
+        AgentLabels.Cancelled,
+        // Active/in-flight states that are also not "Ready"
+        AgentLabels.InProgress,
+        AgentLabels.Next,
+        // Epic workflow labels — active or awaiting human action
+        AgentLabels.Epic,
+        AgentLabels.EpicApproved,
+        AgentLabels.EpicReview,
+        // Non-agent parking label — not in AgentLabels by design (user/project convention)
+        "backlog",
+    };
 
     /// <summary>
     /// Maximum issues fetched across all pages for a single provider. Caps dependency-checker cost:
@@ -132,8 +165,11 @@ public sealed class BlockedIssuesService
                         // at the top of this inner loop.
                         var check = await _dependencyChecker.CheckAsync(
                             issue.Identifier, issue.Description ?? string.Empty, provider, stateCache, ct);
-                        backlog.Add(new BacklogIssue(issue.Identifier, issue.Title, issue.Url, check.IsReady, check.BlockedBy, issue.Labels, issue.LabelColors));
-                        providerFetched++;
+                        // Override IsReady=false when the issue carries a lifecycle label that precludes
+                        // dispatch readiness, regardless of what the dependency checker returned.
+                        var isReady = check.IsReady
+                            && (issue.Labels is null || !issue.Labels.Any(l => NotReadyLabels.Contains(l)));
+                        backlog.Add(new BacklogIssue(issue.Identifier, issue.Title, issue.Url, isReady, check.BlockedBy, issue.Labels, issue.LabelColors));                        providerFetched++;
                     }
 
                     if (!pageResult.HasMore || providerFetched >= MaxIssuesPerProvider)

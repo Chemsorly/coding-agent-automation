@@ -62,7 +62,8 @@
                     @{ var idx = 0; }
                     @foreach (var pr in FilteredItems)
                     {
-                        var isProcessing = IsBeingProcessed(pr.Identifier);
+                        var processingStatus = GetProcessingStatus(pr.Identifier);
+                        var isProcessing = processingStatus.HasValue;
                         var currentIdx = idx;
                         <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(SelectedItem?.Identifier == pr.Identifier ? "drawer-issue-selected" : "") @GetHighlightClass(currentIdx)"
                              @onclick="() => SelectItem(pr)"
@@ -74,11 +75,13 @@
                                 {
                                     <span class="badge-default" style="background: var(--text-muted); color: white;">DRAFT</span>
                                 }
-                                @if (isProcessing)
+                                @if (processingStatus == WorkItemStatus.Running || processingStatus == WorkItemStatus.Dispatched)
                                 {
-                                    @* "Queued", not "DISPATCHED": the work item is written and a pod
-                                       is started for it afterwards, so at this point nothing is
-                                       running yet. Matches IssueDispatchDrawer. *@
+                                    <span class="badge-default" style="background: var(--accent-fill); color: white;">Running</span>
+                                }
+                                else if (processingStatus == WorkItemStatus.Pending)
+                                {
+                                    @* "Queued" = work item is Pending; not yet dispatched to a pod. *@
                                     <span class="badge-default" style="background: var(--accent-fill); color: white;">Queued</span>
                                 }
                             </div>

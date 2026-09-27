@@ -59,7 +59,7 @@ public class AgentCodingPageServiceTests
 
         _mockIssueDrawerService.Setup(s => s.DrawerState).Returns(_issueDrawerState);
         _mockIssueDrawerService.Setup(s => s.DrawerReadiness).Returns(new Dictionary<string, DependencyCheckResult>());
-        _mockIssueDrawerService.Setup(s => s.ActiveIssues).Returns(new HashSet<(IssueIdentifier, ProviderConfigId)>());
+        _mockIssueDrawerService.Setup(s => s.ActiveIssues).Returns(new Dictionary<(IssueIdentifier, ProviderConfigId), WorkItemStatus>());
         _mockPrReviewDrawerService.Setup(s => s.DrawerState).Returns(_prDrawerState);
         _mockEpicDrawerService.Setup(s => s.DrawerState).Returns(_epicDrawerState);
 
