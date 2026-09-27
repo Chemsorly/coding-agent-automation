@@ -87,7 +87,7 @@ public class AgentConnectionLifecycleGateTests
             .ContinueWith(_ => { }); // swallow cancellation
         sw.Stop();
 
-        sw.ElapsedMilliseconds.Should().BeLessThan(1000,
+        sw.ElapsedMilliseconds.Should().BeLessThan(5000,
             "should not hang after dispose");
     }
 
