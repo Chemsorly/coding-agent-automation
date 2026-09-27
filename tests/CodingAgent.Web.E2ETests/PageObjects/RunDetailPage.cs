@@ -41,4 +41,12 @@ public sealed class RunDetailPage
         await CancelButton.WaitForAsync(new() { Timeout = 15_000 });
         await CancelButton.ClickAsync();
     }
+
+    /// <summary>
+    /// Returns true if the Run page shows an "Issue #&lt;issueIdentifier&gt;" chip linking to the issue.
+    /// Uses the <c>cockpit-link-chip</c> anchor rendered by RunPage.razor when <c>run.IssueUrl</c>
+    /// is non-null (added for issue #3095 coverage).
+    /// </summary>
+    public async Task<bool> HasIssueLinkAsync(string issueIdentifier) =>
+        await _page.Locator($"a.cockpit-link-chip:has-text('Issue #{issueIdentifier}')").IsVisibleAsync();
 }
