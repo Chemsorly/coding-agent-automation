@@ -10,7 +10,6 @@ namespace CodingAgent.Web.UnitTests.Services;
 /// Unit tests for <see cref="ConsolidationDispatcher.DispatchRunAsync"/>.
 /// Tests the dispatcher in isolation — all dependencies are mocked.
 /// </summary>
-[Collection("Metrics")]
 public sealed class ConsolidationDispatcherTests
 {
     private readonly Mock<IWorkDistributor> _workDistributor = new();
@@ -692,6 +691,12 @@ public sealed class ConsolidationDispatcherTests
             "Startup race (no profiles, no default labels) must skip dispatch entirely");
 
         // UpdateRunAsync must NOT be called — run stays Queued
+        // TODO [WARNING]: This Verify uses the 5-argument overload (including optional totalTokens).
+        // The production code never calls UpdateRunAsync on the skip-dispatch path, so Times.Never
+        // is correct. However, if the optional parameter is removed or reordered, the 5-arg
+        // expression will silently stop matching any 4-arg production call — making this a false
+        // negative. Consider using the 4-argument Verify to match the actual production invocation
+        // surface and be robust to future signature changes. (review-findings-dotnetspecialist.md WARNING)
         _consolidationService.Verify(
             s => s.UpdateRunAsync(
                 It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(),
@@ -776,7 +781,7 @@ public sealed class ConsolidationDispatcherTests
         _consolidationService
             .Setup(s => s.UpdateRunAsync(
                 It.IsAny<RunId>(), ConsolidationRunStatus.Failed,
-                It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()))
+                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var runId = Guid.NewGuid().ToString();
@@ -792,20 +797,13 @@ public sealed class ConsolidationDispatcherTests
         await sut.DispatchRunAsync(run, CancellationToken.None);
 
         // Must cascade to Failed — permanent dispatch failures must not leave runs Queued forever.
-        // TODO [WARNING]: The Moq Setup and Verify below use a 5-argument overload (including the
-        // optional 'totalTokens' long parameter). The production call in FailRunSafelyAsync omits
-        // that optional parameter (4-argument call, default applied by compiler). Moq expands
-        // default args so this currently matches, but if the signature changes (parameter removed
-        // or reordered) the Verify will silently stop matching the production call — producing a
-        // false negative. Fix: use a 4-argument Setup/Verify without the optional parameter to
-        // match the actual production invocation surface. (review-findings.md TestQualityReviewer warning)
+        // 4-argument Verify matches the actual production call in FailRunSafelyAsync (omits optional totalTokens).
         _consolidationService.Verify(
             s => s.UpdateRunAsync(
                 It.Is<RunId>(r => r.Value == runId),
                 ConsolidationRunStatus.Failed,
                 It.IsAny<string?>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<long>()),
+                It.IsAny<CancellationToken>()),
             Times.Once,
             "Permanent dispatch failure (IsPermanentFailure=true) must cascade run to Failed");
     }
@@ -862,14 +860,12 @@ public sealed class ConsolidationDispatcherTests
             .ReturnsAsync(new DistributionResult(false, null, "no template",
                 IsPermanentFailure: true));
 
-        // TODO [WARNING]: This Setup uses the 5-argument overload (including the optional
-        // 'totalTokens' long parameter). The production call in FailRunSafelyAsync omits
-        // that optional parameter (4-argument call). If Moq fails to match the Setup to the
-        // production call, ThrowsAsync is never triggered and UpdateRunAsync silently returns
-        // Task.CompletedTask — making the test pass vacuously (nothing was thrown, so nothing
-        // was swallowed, and the real exception-suppression contract is untested). Fix: use
-        // the 4-argument Setup without the optional parameter to match the actual production
-        // invocation surface.
+        // TODO [WARNING]: This Setup uses the 5-argument overload (including optional totalTokens long).
+        // The production call in FailRunSafelyAsync omits the optional parameter (4-argument call).
+        // Moq currently expands compiler defaults and matches, but if the optional parameter is
+        // removed or reordered, the Setup will silently stop intercepting the production call —
+        // the thrown exception will not be injected and the test will no longer verify the swallow
+        // behavior it is intended to guard. (review-findings-dotnetspecialist.md WARNING line ~838)
         _consolidationService
             .Setup(s => s.UpdateRunAsync(
                 It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(),
@@ -914,7 +910,7 @@ public sealed class ConsolidationDispatcherTests
         _consolidationService
             .Setup(s => s.UpdateRunAsync(
                 It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(),
-                It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()))
+                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var runId = Guid.NewGuid().ToString();
@@ -930,13 +926,14 @@ public sealed class ConsolidationDispatcherTests
         await sut.DispatchRunAsync(run, CancellationToken.None);
 
         // Must transition to Pending — not stay Queued, not cascade to Failed.
+        // 4-argument Setup/Verify matches the actual production call in TransitionToPendingSafelyAsync
+        // (omits optional totalTokens), so Moq is guaranteed to intercept and verify the real call.
         _consolidationService.Verify(
             s => s.UpdateRunAsync(
                 It.Is<RunId>(r => r.Value == runId),
                 ConsolidationRunStatus.Pending,
                 It.IsAny<string?>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<long>()),
+                It.IsAny<CancellationToken>()),
             Times.Once,
             "Unified-path success (Queued=true) must transition ConsolidationRun to Pending " +
             "so the retry sweep does not re-dispatch it");
@@ -966,6 +963,12 @@ public sealed class ConsolidationDispatcherTests
         await sut.DispatchRunAsync(run, CancellationToken.None);
 
         // Legacy synchronous path: no state update — the agent transitions the run.
+        // TODO [WARNING]: This Verify uses the 5-argument overload (including optional totalTokens).
+        // For a Times.Never assertion the false-negative risk runs in the dangerous direction:
+        // if a production 4-argument call is ever fired accidentally on this path, Moq may not
+        // match it against the 5-arg expression (if the optional parameter is removed or reordered),
+        // causing Times.Never to pass even though UpdateRunAsync was actually invoked — silently
+        // missing a regression. (review-findings-dotnetspecialist.md WARNING line ~907)
         _consolidationService.Verify(
             s => s.UpdateRunAsync(
                 It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(),
@@ -986,6 +989,12 @@ public sealed class ConsolidationDispatcherTests
             .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(true, "wi-1", null, Queued: true));
 
+        // TODO [WARNING]: This Setup uses the 5-argument overload (including optional totalTokens long).
+        // The production call in TransitionToPendingSafelyAsync omits the optional parameter (4-argument
+        // call). Moq currently expands compiler defaults and matches, but if the optional parameter is
+        // removed or reordered, the Setup will silently stop intercepting the production call — the
+        // thrown exception will not be injected and the test will no longer verify the swallow it guards.
+        // (review-findings-dotnetspecialist.md WARNING line ~931)
         _consolidationService
             .Setup(s => s.UpdateRunAsync(
                 It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(),
@@ -1057,6 +1066,12 @@ public sealed class ConsolidationDispatcherTests
             "to prevent empty-selector 422 from permanently cascading the run to Failed");
 
         // UpdateRunAsync must also NOT be called — run stays Queued
+        // TODO [WARNING]: This Verify uses the 5-argument overload (including optional totalTokens).
+        // For a Times.Never assertion the false-negative risk is significant: if a production
+        // 4-argument call fires accidentally on this path, Moq may not match the 5-arg expression
+        // (if the optional parameter is removed or reordered), causing Times.Never to pass even
+        // though UpdateRunAsync was invoked — silently missing a regression.
+        // (review-findings-dotnetspecialist.md WARNING line ~960)
         _consolidationService.Verify(
             s => s.UpdateRunAsync(
                 It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(),
@@ -1066,22 +1081,22 @@ public sealed class ConsolidationDispatcherTests
     }
 
     /// <summary>
-    /// Regression test for issue #2536: when QueuedRequiredLabels is null AND multiple enabled
-    /// profiles exist (including some with no job template), the dispatcher must NOT call
-    /// ResolveByRequiredLabels with empty labels (which would pick an arbitrary profile via
-    /// Superset matching). Instead, it must fall back to the first enabled profile explicitly,
-    /// which is the expected deterministic behaviour when no required labels are configured.
+    /// Regression test for issues #2536 and #3036: when QueuedRequiredLabels is null AND
+    /// multiple enabled profiles exist, the dispatcher must select the highest-Priority enabled
+    /// profile (post-#3036 fix) — not an arbitrary list-order profile (post-#2536 regression)
+    /// and not the profile that would have been chosen via Superset-with-empty-labels (pre-#2536
+    /// original bug).
+    ///
+    /// Three-phase history for this fixture (profileA Priority=0 inserted first; profileB Priority=10 second):
+    ///   Pre-#2536 (broken):          empty labels → ResolveByRequiredLabels → Superset tiebreak → profileB (Priority=10)
+    ///   Post-#2536, pre-#3036 (broken): FirstOrDefault with no sort → list-order → profileA (first in list)
+    ///   Post-#3036 fix:              OrderByDescending(Priority).FirstOrDefault → profileB (Priority=10)
+    ///
+    /// Regression guard: reverting to unsorted FirstOrDefault would pick profileA, failing this test.
     /// </summary>
     [Fact]
     public async Task DispatchRunAsync_NullRequiredLabels_MultipleProfiles_NoDefault_UsesFirstEnabledProfile()
     {
-        // Multiple enabled profiles — with the old bug, empty required labels would be passed
-        // to ResolveByRequiredLabels, which matches ALL enabled profiles via Superset, and the
-        // tiebreak (count desc, priority desc, Id asc) would pick the profile with the HIGHEST
-        // priority. profileB has Priority=10 > profileA's Priority=0, so the old code would
-        // pick profileB. The fix uses FirstOrDefault() in list order, which picks profileA
-        // (first in list). The two paths now produce DIFFERENT results, making this test an
-        // effective regression guard (CRITICAL fix — review-findings.md TestQualityReviewer, line 553).
         _configStore
             .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration()); // no DefaultRequiredAgentLabels
@@ -1091,8 +1106,8 @@ public sealed class ConsolidationDispatcherTests
             Id = "aaa-python",
             DisplayName = "Python",
             Enabled = true,
-            Priority = 0,                                  // lower priority
-            MatchLabels = ["kiro", "python", "python312"], // no job template for this
+            Priority = 0,                                  // lower priority — list-first
+            MatchLabels = ["kiro", "python", "python312"],
             AgentProviderConfigId = "provider-1"
         };
         var profileB = new AgentProfile
@@ -1100,15 +1115,10 @@ public sealed class ConsolidationDispatcherTests
             Id = "bbb-dotnet",
             DisplayName = "Dotnet",
             Enabled = true,
-            Priority = 10,                                 // higher priority — old Superset tiebreak picks this
-            MatchLabels = ["kiro", "dotnet", "dotnet10"],  // has a job template
+            Priority = 10,                                 // higher priority — list-second
+            MatchLabels = ["kiro", "dotnet", "dotnet10"],
             AgentProviderConfigId = "provider-1"
         };
-        // Old buggy path: ResolveByRequiredLabels(profiles, []) via Superset matches both profiles;
-        // tiebreak (count desc=tie, priority desc) picks profileB (Priority=10 wins over 0).
-        // New path: profiles.FirstOrDefault(p => p.Enabled) picks profileA (first in list).
-        // The assertion on profileA.MatchLabels will FAIL if the code reverts to the old path,
-        // proving this is a genuine regression guard.
         _profileStore
             .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { profileA, profileB });
@@ -1129,16 +1139,210 @@ public sealed class ConsolidationDispatcherTests
             Type = ConsolidationRunType.BrainConsolidation,
             Status = ConsolidationRunStatus.Queued,
             StartedAtUtc = DateTimeOffset.UtcNow,
-            QueuedRequiredLabels = null // old run with no baked labels
+            QueuedRequiredLabels = null
         };
 
         var sut = CreateSut();
         await sut.DispatchRunAsync(run, CancellationToken.None);
 
-        // Must use the first enabled profile in list order (profileA) — not the highest-priority
-        // profile that the old Superset-with-empty-labels path would have selected (profileB).
+        // profileB (Priority=10) must be selected — not profileA (Priority=0, list-first).
+        // Any regression to unsorted FirstOrDefault would pick profileA, failing this assertion.
         Assert.NotNull(captured);
-        Assert.Equal(AgentSelectorKey.From(profileA.MatchLabels), captured!.AgentSelector);
+        Assert.Equal(AgentSelectorKey.From(profileB.MatchLabels), captured!.AgentSelector);
+    }
+
+    // ── Repro tests: priority ordering in last-resort fallback (issue #3036) ──
+
+    // TODO [WARNING]: The tiebreak half of the branch-3 fix — ThenBy(p => p.Id, StringComparer.Ordinal) —
+    // is not exercised by any test in this class. All fixtures use profiles with strictly different
+    // Priority values (0 vs 10, or 5 vs 10), so the ThenBy(Id) clause is never reached. A regression
+    // that silently dropped ThenBy (e.g., reverting to OrderByDescending(Priority).FirstOrDefault) would
+    // not be caught. Add a test with two profiles sharing the same Priority but different Ids (e.g.,
+    // "aaa-profile" Priority=10 and "zzz-profile" Priority=10) and assert that the lexicographically-first
+    // Id wins. (review-findings-testqualityreviewer.md WARNING line ~1075)
+
+    // TODO [WARNING]: Repro_ConsolidationDispatcher_PriorityOrderInLastResortFallback and
+    // Repro_ConsolidationDispatcher_TemplateNotFoundDoesNotPermanentlyFail exercise the same code path
+    // and both assert the same observable (captured.AgentSelector == profileHigh.MatchLabels). They share
+    // identical profile shapes, run fixtures, and DistributeAsync mock behaviour. The second test adds a
+    // Times.Never verification on UpdateRunAsync(Failed), but that assertion is not a meaningful independent
+    // guard because DistributeAsync succeeds unconditionally regardless of selector. Consider consolidating
+    // or making the second test genuinely distinct by using a selector-conditional DistributeAsync mock that
+    // returns IsPermanentFailure=true for profileLow's selector and success for profileHigh's selector.
+    // (review-findings-testqualityreviewer.md WARNING line ~1130)
+
+    /// <summary>
+    /// Reproduction test for issue #3036 (acceptance criterion A).
+    /// When both QueuedRequiredLabels and DefaultRequiredAgentLabels are unset, branch 3 of
+    /// ResolveSelector must select the highest-Priority enabled profile, not the list-first one.
+    /// Before the fix, profiles.FirstOrDefault(p => p.Enabled) picked by DB insertion order;
+    /// profileLow (Priority=5) was inserted first and was incorrectly selected.
+    /// After the fix, profiles are sorted descending by Priority → profileHigh (Priority=10) wins.
+    /// </summary>
+    [Fact]
+    public async Task Repro_ConsolidationDispatcher_PriorityOrderInLastResortFallback()
+    {
+        _configStore
+            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration()); // no DefaultRequiredAgentLabels
+
+        var profileLow = new AgentProfile
+        {
+            Id = "low-priority-profile",
+            DisplayName = "Low Priority",
+            Enabled = true,
+            Priority = 5,                    // lower priority — inserted first in list
+            MatchLabels = ["label-low"],
+            AgentProviderConfigId = "provider-1"
+        };
+        var profileHigh = new AgentProfile
+        {
+            Id = "high-priority-profile",
+            DisplayName = "High Priority",
+            Enabled = true,
+            Priority = 10,                   // higher priority — inserted second in list
+            MatchLabels = ["label-high"],
+            AgentProviderConfigId = "provider-1"
+        };
+        _profileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { profileLow, profileHigh }); // low-priority first
+
+        _workspaceManager
+            .Setup(m => m.GetWorkspacePath(It.IsAny<RunId>()))
+            .Returns("/workspaces/test");
+
+        JobDistributionRequest? captured = null;
+        _workDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDistributionRequest, CancellationToken>((r, _) => captured = r)
+            .ReturnsAsync(new DistributionResult(true, "wi-1", null));
+
+        var run = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.BrainConsolidation,
+            Status = ConsolidationRunStatus.Queued,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            QueuedRequiredLabels = null
+        };
+
+        var sut = CreateSut();
+        await sut.DispatchRunAsync(run, CancellationToken.None);
+
+        // profileHigh (Priority=10) must win over profileLow (Priority=5, list-first).
+        // Before the fix this assertion fails: selected = "label-low"; expected = "label-high".
+        Assert.NotNull(captured);
+        Assert.Equal(AgentSelectorKey.From(profileHigh.MatchLabels), captured!.AgentSelector);
+    }
+
+    /// <summary>
+    /// Reproduction test for issue #3036 (acceptance criterion B).
+    /// A run must not be permanently failed when the highest-Priority profile has a valid
+    /// job template, even if a lower-priority profile (list-first) does not.
+    ///
+    /// Before the fix: branch 3 picked profileLow (list-first, Priority=5). Its selector
+    /// had no matching job template → DistributeAsync returned IsPermanentFailure=true →
+    /// FailRunSafelyAsync cascaded the run to Failed. The higher-priority profile with a
+    /// valid template was never tried.
+    ///
+    /// After the fix: branch 3 picks profileHigh (Priority=10). DistributeAsync succeeds.
+    /// UpdateRunAsync(Failed) is never called.
+    /// </summary>
+    [Fact]
+    public async Task Repro_ConsolidationDispatcher_TemplateNotFoundDoesNotPermanentlyFail()
+    {
+        _configStore
+            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration()); // no DefaultRequiredAgentLabels
+
+        var profileLow = new AgentProfile
+        {
+            Id = "low-priority-profile",
+            DisplayName = "Low Priority",
+            Enabled = true,
+            Priority = 5,                    // lower priority — list-first; no job template
+            MatchLabels = ["label-low"],
+            AgentProviderConfigId = "provider-1"
+        };
+        var profileHigh = new AgentProfile
+        {
+            Id = "high-priority-profile",
+            DisplayName = "High Priority",
+            Enabled = true,
+            Priority = 10,                   // higher priority — list-second; has a job template
+            MatchLabels = ["label-high"],
+            AgentProviderConfigId = "provider-1"
+        };
+        _profileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { profileLow, profileHigh }); // low-priority first
+
+        _workspaceManager
+            .Setup(m => m.GetWorkspacePath(It.IsAny<RunId>()))
+            .Returns("/workspaces/test");
+
+        // After the fix, ResolveSelector returns profileHigh's labels before DistributeAsync
+        // is called — DistributeAsync is only ever invoked with the high-priority selector.
+        // The mock returns success unconditionally; no conditional routing by selector is needed.
+        // TODO [WARNING]: Because DistributeAsync always succeeds here regardless of selector,
+        // the Times.Never assertion on UpdateRunAsync(Failed) cannot distinguish "high-priority
+        // profile selected (correct)" from "low-priority profile selected but dispatch still
+        // succeeded (wrong selection, test still passes)". The AgentSelector assertion above is
+        // the actual regression guard; the Times.Never check is a secondary safety net that
+        // only catches failures once DistributeAsync is made selector-conditional.
+        // (review-findings-testqualityreviewer.md WARNING line ~1248)
+        JobDistributionRequest? captured = null;
+        _workDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDistributionRequest, CancellationToken>((r, _) => captured = r)
+            .ReturnsAsync(new DistributionResult(true, "wi-1", null));
+
+        // TODO [WARNING]: This Setup uses a broad unconditional matcher (any status) and returns
+        // Task.CompletedTask. If MockBehavior is Loose (the default), unintended UpdateRunAsync
+        // calls with non-Failed statuses would be silently absorbed rather than surfaced.
+        // Consider narrowing to specific statuses or switching to MockBehavior.Strict if
+        // unexpected calls should fail loudly. (review-findings-dotnetspecialist.md WARNING line ~1209)
+        _consolidationService
+            .Setup(s => s.UpdateRunAsync(
+                It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(),
+                It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()))
+            .Returns(Task.CompletedTask);
+
+        var runId = Guid.NewGuid().ToString();
+        var run = new ConsolidationRun
+        {
+            RunId = runId,
+            Type = ConsolidationRunType.BrainConsolidation,
+            Status = ConsolidationRunStatus.Queued,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            QueuedRequiredLabels = null
+        };
+
+        var sut = CreateSut();
+        await sut.DispatchRunAsync(run, CancellationToken.None);
+
+        // The high-priority profile was selected — dispatch succeeded with its selector.
+        Assert.NotNull(captured);
+        Assert.Equal(AgentSelectorKey.From(profileHigh.MatchLabels), captured!.AgentSelector);
+
+        // Run must NOT be cascaded to Failed — the high-priority profile succeeded.
+        // Before the fix this assertion fails: UpdateRunAsync(Failed) was called once because
+        // the low-priority (list-first) profile caused a 422 permanent failure.
+        // TODO [WARNING]: This Verify uses the 5-argument overload (including optional totalTokens long).
+        // The production call in FailRunSafelyAsync is a 4-argument call (omits the optional parameter).
+        // For a Times.Never assertion the false-negative risk is in the dangerous direction: if a
+        // production 4-argument UpdateRunAsync(Failed) call is ever accidentally fired on this path,
+        // Moq may not match it against the 5-arg expression (if the optional parameter is removed or
+        // reordered), causing Times.Never to pass even though UpdateRunAsync was actually invoked —
+        // silently missing a regression. Use the 4-argument form to match the actual production call
+        // surface. (review-findings-dotnetspecialist.md WARNING finding #2 / review-findings-correctness.md)
+        _consolidationService.Verify(
+            s => s.UpdateRunAsync(
+                It.IsAny<RunId>(), ConsolidationRunStatus.Failed,
+                It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()),
+            Times.Never,
+            "Run must not cascade to Failed when the high-priority profile has a valid template");
     }
 
     // ── ProjectId and ProjectName forwarding ──────────────────────────────────
