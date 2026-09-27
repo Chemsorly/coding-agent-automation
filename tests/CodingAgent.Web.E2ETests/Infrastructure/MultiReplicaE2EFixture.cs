@@ -3,6 +3,7 @@ using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.TestUtilities;
 using InMemoryConfigurationStore = CodingAgent.Web.E2ETests.Fakes.InMemoryConfigurationStore;
 using Microsoft.Extensions.DependencyInjection;
@@ -157,6 +158,50 @@ public sealed class MultiReplicaE2EFixture : IAsyncLifetime
         _historyService.Reset();
         _fakeProviders.Reset();
         _fakeK8sClient.Reset();
+    }
+
+    /// <summary>
+    /// Completes a job using the production two-channel path, with explicit control over
+    /// which replica receives each channel. This is the multi-replica equivalent of
+    /// <see cref="FakeAgentClient.CompleteLikeProductionAsync"/>.
+    ///
+    /// <para>
+    /// In production, a K8s pod may connect its SignalR hub to one replica while an independent
+    /// HTTP POST (or a job-controller timeout) is handled by a different replica. This method
+    /// allows tests to reproduce that topology.
+    /// </para>
+    ///
+    /// <list type="bullet">
+    ///   <item>
+    ///     The <paramref name="agent"/> must already be connected (via
+    ///     <see cref="FakeAgentClient.ConnectAsync"/>) to the hub replica — this determines which
+    ///     replica handles <c>ReportJobCompleted</c>.
+    ///   </item>
+    ///   <item>
+    ///     <paramref name="httpReplica"/> selects which replica's API receives the HTTP POST.
+    ///     Pass <see cref="ReplicaSelector.Replica1"/> to target
+    ///     <see cref="AgentHubUrl1"/> and <see cref="ReplicaSelector.Replica2"/> to target
+    ///     <see cref="AgentHubUrl2"/>. Passing the same replica as the hub connection
+    ///     simulates single-replica (same-node) completion.
+    ///   </item>
+    /// </list>
+    /// </summary>
+    /// <param name="agent">The fake agent; must be connected before calling this method.</param>
+    /// <param name="jobId">The job / work-item ID.</param>
+    /// <param name="payload">The completion payload.</param>
+    /// <param name="httpReplica">Which replica should receive the HTTP POST.</param>
+    /// <param name="order">Controls the sequencing of the HTTP and hub calls.</param>
+    /// <param name="ct">Cancellation token.</param>
+    public Task CompleteLikeProductionCrossReplicaAsync(
+        FakeAgentClient agent,
+        string jobId,
+        JobCompletionPayload payload,
+        ReplicaSelector httpReplica,
+        CompletionOrder order = CompletionOrder.HttpThenHub,
+        CancellationToken ct = default)
+    {
+        var httpAddress = httpReplica == ReplicaSelector.Replica1 ? AgentHubUrl1 : AgentHubUrl2;
+        return agent.CompleteLikeProductionAsync(jobId, payload, httpAddress, order, ct);
     }
 
     public async Task DisposeAsync()
