@@ -7,6 +7,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="CodingAgent.Web.UnitTests" />
     <InternalsVisibleTo Include="CodingAgent.Scheduler.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgent.Web.E2ETests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\CodingAgent.Pipeline\CodingAgent.Pipeline.csproj" />

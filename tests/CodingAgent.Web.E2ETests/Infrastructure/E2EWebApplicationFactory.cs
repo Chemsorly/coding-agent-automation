@@ -19,7 +19,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
-using Moq;
 
 namespace CodingAgent.Web.E2ETests.Infrastructure;
 
@@ -52,6 +51,13 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
     /// <see cref="E2ETestDefaults.UnreachableApiBaseUrl"/>.
     /// </summary>
     public string? ApiBaseUrl { get; set; }
+
+    /// <summary>
+    /// Base URL of the Scheduler host, set by the fixture before this host builds. Left null
+    /// when the Blazor app runs alone, in which case an unroutable address is used instead — see
+    /// <see cref="E2ETestDefaults.UnreachableSchedulerBaseUrl"/>.
+    /// </summary>
+    public string? SchedulerBaseUrl { get; set; }
 
     // Shared fake instances — accessible by tests for seeding and assertions
     public Fakes.InMemoryConfigurationStore ConfigStore { get; } = new();
@@ -136,6 +142,20 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         Environment.SetEnvironmentVariable(
             "PipelineApi__BaseUrl", ApiBaseUrl ?? E2ETestDefaults.UnreachableApiBaseUrl);
 
+        // Issue #3085: point the Web host's ISchedulerApiClient at the real Scheduler host.
+        // Reduce the status poll interval to 1s so loop state propagates to the UI quickly
+        // and LoopControlTests (5s timeout) have sufficient headroom above the poll cycle.
+        // TODO [WARNING]: These are process-global environment variable writes shared with
+        // SchedulerE2EWebApplicationFactory.ConfigureWebHost and ApiE2EWebApplicationFactory.
+        // In a parallel test runner or if factories are constructed out of order, these writes
+        // can race with reads in other factories. The current deterministic start order in
+        // E2EFixture.InitializeAsync (API → Scheduler → Web) is safe, but this is an implicit
+        // ordering dependency. Prefer builder.UseSetting() / builder.ConfigureAppConfiguration()
+        // to scope configuration to the factory rather than the process.
+        Environment.SetEnvironmentVariable(
+            "SchedulerApi__BaseUrl", SchedulerBaseUrl ?? E2ETestDefaults.UnreachableSchedulerBaseUrl);
+        Environment.SetEnvironmentVariable("SchedulerApi__StatusPollIntervalSeconds", "1");
+
         // No config caching: the harness seeds through the store between assertions and a stale
         // read would make tests depend on wall-clock timing.
         Environment.SetEnvironmentVariable("PipelineLoop__ConfigCacheTtlSeconds", "0");
@@ -201,55 +221,12 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             // Replace singleton services with resettable subclasses
             ReplaceWithResettableServices(services);
 
-            // PipelineLoopService stays hosted in the E2E WebUI factory so FakeSchedulerApiClient
-            // can delegate StartLoop/StopLoop/ResumeLoop to it in-process.
-            //
-            // Spec 047: PipelineLoopService was removed from production WebUI DI (it now lives in
-            // CodingAgent.Scheduler). It is re-added here — E2E-factory-only — to preserve
-            // the "loop must stay hosted" invariant that was documented in the original comment:
-            //
-            // Unhosting it looks safe — it is the polling loop, and no test wants polling it did
-            // not ask for — but it polls nothing until StartLoopAsync signals it: ExecuteAsync
-            // parks on an activation signal from startup. What unhosting actually removed was the
-            // *stop* half. IsLoopActive is cleared in CleanupAsync, which only runs at the end of
-            // ExecuteAsync's cycle, so with no ExecuteAsync a loop started from the UI went active
-            // and stayed active forever — StopLoop set "⏹ Loop stopping… (finishing current run)"
-            // and nothing ever finished it. Every later test then found the Agent Coding page
-            // offering Stop Loop where it expected Start Loop, and which tests failed depended on
-            // whether some earlier test had happened to call StartAsync on the singleton itself.
-
-            // Register PipelineLoopServiceDependencies + PipelineLoopService (E2E-factory-only)
-            services.AddSingleton<PipelineLoopServiceDependencies>(sp => new PipelineLoopServiceDependencies
-            {
-                Orchestration = sp.GetRequiredService<IDispatchRunCreator>(),
-                ProviderFactory = sp.GetRequiredService<IProviderFactory>(),
-                PipelineConfigStore = sp.GetRequiredService<IPipelineConfigStore>(),
-                ProviderConfigStore = sp.GetRequiredService<IProviderConfigStore>(),
-                ProjectStore = sp.GetRequiredService<IProjectStore>(),
-                Logger = Serilog.Log.Logger,
-                WorkDistributor = sp.GetService<IWorkDistributor>(),
-                DispatchOrchestration = sp.GetService<IDispatchOrchestrationService>(),
-                DependencyChecker = sp.GetService<IDependencyChecker>(),
-                HousekeepingService = sp.GetService<IHousekeepingService>(),
-                LeaderElection = null // runs unconditionally in E2E
-            });
-            services.AddSingleton<PipelineLoopService>();
-            services.AddSingleton<IPipelineLoopService>(sp => sp.GetRequiredService<PipelineLoopService>());
-            services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopService>());
-
-            // FakeSchedulerApiClient delegates loop controls to the local PipelineLoopService.
-            // Components now inject ILoopStatusService and ISchedulerApiClient instead of
-            // IPipelineLoopService. The fake bridges both to the in-process singleton.
-            services.RemoveAll<ISchedulerApiClient>();
-            services.AddSingleton<ISchedulerApiClient>(sp =>
-                new FakeSchedulerApiClient(
-                    sp.GetRequiredService<PipelineLoopService>(),
-                    ApiConfigClient)); // pass config client so StartLoopAsync persists ClosedLoopAutoStart
-
-            // FakeLoopStatusService: exposes the local PipelineLoopService via ILoopStatusService.
-            services.RemoveAll<ILoopStatusService>();
-            services.AddSingleton<ILoopStatusService>(sp =>
-                new FakeLoopStatusService(sp.GetRequiredService<PipelineLoopService>()));
+            // Issue #3085: PipelineLoopService now lives in SchedulerE2EWebApplicationFactory.
+            // The Web host talks to the Scheduler over real HTTP via HttpSchedulerApiClient
+            // (driven by SchedulerApi__BaseUrl set above), and ILoopStatusService is the
+            // production LoopStatusPollingService polling /loop/status on the Scheduler.
+            // No in-process loop registration, FakeSchedulerApiClient, or FakeLoopStatusService
+            // is needed here.
 
             // Reduce shutdown timeout for faster test teardown
             services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
