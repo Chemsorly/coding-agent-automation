@@ -491,6 +491,32 @@ public sealed class AgentOrphanRecoveryServiceTests
         _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
     }
 
+    // ── Restored issue URL: reported by the agent, rendered by the UI as a link ─────────
+
+    [Theory]
+    [InlineData("https://github.com/org/repo/issues/42", "https://github.com/org/repo/issues/42")]
+    [InlineData("http://gitlab.internal/group/repo/-/issues/42", "http://gitlab.internal/group/repo/-/issues/42")]
+    [InlineData("javascript:alert(1)", null)]
+    [InlineData("issues/42", null)]
+    public async Task ActiveJob_RunNotInMemory_RestoresOnlyAnHttpIssueUrl(string reportedUrl, string? expectedUrl)
+    {
+        const string agentId = "agent-1";
+        const string runId = "run-issue-url";
+        var entry = CreateEntry(agentId);
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
+        PipelineRun? restored = null;
+        _mockFacade.Setup(f => f.AddRun(It.IsAny<PipelineRun>())).Callback<PipelineRun>(r => restored = r);
+
+        var activeJob = CreateActiveJob(runId) with { IssueUrl = reportedUrl };
+        await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, activeJob), agentId);
+
+        restored.Should().NotBeNull();
+        restored!.IssueUrl.Should().Be(expectedUrl);
+    }
+
     // ── Verified claims: WorkItem store available (the API host) ─────────
 
     /// <summary>

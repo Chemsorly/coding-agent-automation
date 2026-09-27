@@ -253,6 +253,7 @@ public sealed class AgentOrphanRecoveryService(
                 RunId = activeJob.RunId,
                 IssueIdentifier = identity.IssueIdentifier,
                 IssueTitle = activeJob.IssueTitle,
+                IssueUrl = HttpUrlOrNull(activeJob.IssueUrl),
                 IssueProviderConfigId = identity.IssueProviderConfigId,
                 RepoProviderConfigId = identity.RepoProviderConfigId,
                 RunType = PipelineRunType.Review,
@@ -263,12 +264,22 @@ public sealed class AgentOrphanRecoveryService(
                 BrainProviderConfigId = identity.BrainProviderConfigId,
                 ReviewPrBranchName = string.Empty,
                 ReviewPrTargetBranch = string.Empty
+                // NOTE: ActiveJobState carries no ReviewPrUrl, ReviewPrBranchName, or ReviewPrTargetBranch.
+                // On re-registration, a restored review run will be missing:
+                //   - ReviewPrUrl: used by RunPage.razor to render the "PR under review" chip.
+                //   - ReviewPrBranchName / ReviewPrTargetBranch: used for git operations during the pipeline.
+                // These cannot be recovered from ActiveJobState alone without fetching the original
+                // WorkItem payload or adding more MessagePack keys (out of scope for issue #3095).
+                // Impact: the "PR under review" chip will not render on the Run page for a restored review run.
+                // TODO: open a follow-up issue to track this gap (issue #3095 is being closed by this fix;
+                // this limitation needs its own tracking ticket so it is not lost).
             }),
             PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(new PipelineRunCreationParams
             {
                 RunId = activeJob.RunId,
                 IssueIdentifier = identity.IssueIdentifier,
                 IssueTitle = activeJob.IssueTitle,
+                IssueUrl = HttpUrlOrNull(activeJob.IssueUrl),
                 IssueProviderConfigId = identity.IssueProviderConfigId,
                 RepoProviderConfigId = identity.RepoProviderConfigId,
                 RunType = identity.RunType,
@@ -283,6 +294,7 @@ public sealed class AgentOrphanRecoveryService(
                 RunId = activeJob.RunId,
                 IssueIdentifier = identity.IssueIdentifier,
                 IssueTitle = activeJob.IssueTitle,
+                IssueUrl = HttpUrlOrNull(activeJob.IssueUrl),
                 IssueProviderConfigId = identity.IssueProviderConfigId,
                 RepoProviderConfigId = identity.RepoProviderConfigId,
                 StartedAt = activeJob.StartedAt,
@@ -293,6 +305,16 @@ public sealed class AgentOrphanRecoveryService(
             })
         };
     }
+
+    /// <summary>
+    /// The reported issue URL, if it is an absolute http(s) URL. The work item does not record the
+    /// URL, so it comes from the agent — and the UI renders it as a link.
+    /// </summary>
+    private static string? HttpUrlOrNull(string? url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp)
+            ? url
+            : null;
 
     /// <summary>
     /// The identity a restored run is built from: the verified work item's when the WorkItem store
