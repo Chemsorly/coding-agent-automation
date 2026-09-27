@@ -23,12 +23,16 @@ public sealed class RunDetailPage
     public async Task NavigateAsync(string runId)
     {
         await _page.GotoAsync($"{_baseUrl}/runs/{runId}");
-        await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        // Do not use a fixed WaitForTimeoutAsync here — the Blazor Server circuit establishment
-        // time varies from ~500ms to >3s depending on CI runner load, making any fixed delay
-        // either too short (flaky) or wasteful on fast machines.
-        // CancelAsync and RedispatchAsync use click-retry loops to handle the prerender race
-        // where the cancel/redispatch buttons are visible in SSR but @onclick isn't wired yet.
+        // Wait for h1 to appear (indicates the run data has loaded — h1 is only rendered
+        // when _loading=false and _run!=null in RunPage.razor).
+        // After blazor.web.js activates the interactive circuit, OnParametersSetAsync re-runs
+        // briefly setting _loading=true (h1 disappears) then _loading=false (h1 reappears).
+        // WaitForSelectorAsync retries automatically and resolves on the final stable appearance.
+        await _page.WaitForSelectorAsync("h1", new() { Timeout = 20_000 });
+        // Wait for network idle: ensures OnParametersSetAsync HTTP calls (GetRunAsync,
+        // GetPipelineConfigAsync) have completed and the page is in its final loaded state,
+        // not the transient _loading=true re-render triggered by interactive circuit activation.
+        await _page.WaitForLoadStateAsync(LoadState.NetworkIdle, new() { Timeout = 10_000 });
     }
 
     /// <summary>The whole-page text, for asserting the issue identifier / title is shown.</summary>
