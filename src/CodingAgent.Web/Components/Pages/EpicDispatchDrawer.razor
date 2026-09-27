@@ -78,7 +78,7 @@
                                 }
                                 else
                                 {
-                                    <span class="badge-default" style="background: #7057ff; color: white; font-size: 0.7rem;"><Icon Name="search" Size="12" /> Analysis</span>
+                                    <span class="badge-default badge-epic"><Icon Name="search" Size="12" /> Analysis</span>
                                 }
                                 @if (isProcessing)
                                 {
@@ -126,18 +126,17 @@
                         }
                         else
                         {
-                            <span style="color: #7057ff;"><Icon Name="search" Size="14" /> Phase 1: Analysis (DecompositionAnalysis)</span>
+                            <span class="phase-epic"><Icon Name="search" Size="14" /> Phase 1: Analysis (DecompositionAnalysis)</span>
                         }
                     </div>
                     @if (SelectedItem.CreatedAt.HasValue)
                     {
                         <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0 0 8px;">
-                            Created: @SelectedItem.CreatedAt.Value.ToLocalTime().ToString("g")
+                            Created: @SelectedItem.CreatedAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
                         </p>
                     }
                     <button class="btn-save" @onclick="DispatchSelected" disabled="@IsDispatching"
-                            data-testid="dispatch-epic-btn"
-                            style="background: #7057ff;">
+                            data-testid="dispatch-epic-btn">
                         @(IsDispatching ? "Dispatching..." : $"Start Decomposition on #{SelectedItem.Identifier}")
                     </button>
                 </div>
