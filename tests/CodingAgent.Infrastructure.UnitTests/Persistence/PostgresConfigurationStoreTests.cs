@@ -463,6 +463,151 @@ public class PostgresConfigurationStoreTests : IDisposable
         loaded.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task DeleteProjectAsync_WithTemplatesInTemplateIds_MovesTemplatesToDefault()
+    {
+        // Arrange: Default project + source project with a template
+        var defaultId = WellKnownIds.DefaultProjectId;
+        var projectId = Guid.NewGuid().ToString();
+
+        await _store.SaveProjectAsync(new PipelineProject
+        {
+            Id = defaultId, Name = "Default", Enabled = true
+        }, CancellationToken.None);
+        await _store.SaveProjectAsync(new PipelineProject
+        {
+            Id = projectId, Name = "Source", Enabled = true
+        }, CancellationToken.None);
+
+        var template = new PipelineJobTemplate
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = "T1",
+            IssueProviderId = "ip",
+            RepoProviderId = "rp"
+        };
+        await _store.SaveTemplateAsync(projectId, template, CancellationToken.None);
+
+        // Act: delete the project
+        await _store.DeleteProjectAsync(projectId, CancellationToken.None);
+
+        // Assert: project is gone
+        var projects = await CreateFreshStore().LoadProjectsAsync(CancellationToken.None);
+        projects.Should().NotContain(p => p.Id == projectId);
+
+        // Assert: template FK moved to Default
+        var templateGuid = Guid.Parse(template.Id);
+        var defaultGuid = Guid.Parse(defaultId);
+        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            var templateEntity = await db.PipelineJobTemplates.FindAsync(templateGuid);
+            templateEntity.Should().NotBeNull();
+            templateEntity!.ProjectId.Should().Be(defaultGuid, "template FK must be moved to Default on project delete");
+        }
+
+        // Assert: template appears in Default via store API
+        var fromDefault = await CreateFreshStore().LoadTemplatesForProjectAsync(defaultId, CancellationToken.None);
+        fromDefault.Should().ContainSingle(t => t.Id == template.Id);
+    }
+
+    [Fact]
+    public async Task DeleteProjectAsync_WithFkOnlyOrphans_MovesOrphansToDefault()
+    {
+        // Arrange: a template whose FK points to the project but is NOT in TemplateIds
+        var defaultId = WellKnownIds.DefaultProjectId;
+        var projectGuid = Guid.NewGuid();
+        var projectId = projectGuid.ToString();
+        var defaultGuid = Guid.Parse(defaultId);
+        var templateGuid = Guid.NewGuid();
+        var templateIdStr = templateGuid.ToString();
+
+        // Seed directly via DB to create FK-only orphan (FK set but not in TemplateIds)
+        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.Projects.Add(new ProjectEntity { Id = defaultGuid, Name = "Default", TemplateIds = [] });
+            db.Projects.Add(new ProjectEntity { Id = projectGuid, Name = "Source", TemplateIds = [] }); // no TemplateIds entry
+            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
+            {
+                Id = templateGuid,
+                ProjectId = projectGuid, // FK points here but TemplateIds is empty
+                Name = "FkOrphan"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Act
+        await _store.DeleteProjectAsync(projectId, CancellationToken.None);
+
+        // Assert: FK-only orphan moved to Default
+        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            var templateEntity = await db.PipelineJobTemplates.FindAsync(templateGuid);
+            templateEntity.Should().NotBeNull();
+            templateEntity!.ProjectId.Should().Be(defaultGuid, "FK-only orphan must be reparented to Default");
+
+            var defaultProject = await db.Projects.FindAsync(defaultGuid);
+            defaultProject!.TemplateIds.Should().Contain(templateIdStr,
+                "FK-only orphan ID must be added to Default's TemplateIds");
+        }
+    }
+
+    [Fact]
+    public async Task DeleteProjectAsync_DefaultProjectTemplateIds_Deduped_WhenTemplateAlreadyInDefault()
+    {
+        // Arrange: a template already listed in Default's TemplateIds and with FK pointing to project being deleted
+        var defaultId = WellKnownIds.DefaultProjectId;
+        var projectGuid = Guid.NewGuid();
+        var projectId = projectGuid.ToString();
+        var defaultGuid = Guid.Parse(defaultId);
+        var templateGuid = Guid.NewGuid();
+        var templateIdStr = templateGuid.ToString();
+
+        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.Projects.Add(new ProjectEntity
+            {
+                Id = defaultGuid, Name = "Default",
+                TemplateIds = [templateIdStr] // already listed
+            });
+            db.Projects.Add(new ProjectEntity
+            {
+                Id = projectGuid, Name = "Source",
+                TemplateIds = [templateIdStr]
+            });
+            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
+            {
+                Id = templateGuid, ProjectId = projectGuid,
+                Name = "T1"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Act
+        await _store.DeleteProjectAsync(projectId, CancellationToken.None);
+
+        // Assert: template ID appears exactly once in Default's TemplateIds (no duplicate)
+        var defaultProject = await CreateFreshStore().GetProjectByIdAsync(defaultId, CancellationToken.None);
+        defaultProject!.TemplateIds.Count(id => id == templateIdStr).Should().Be(1,
+            "dedup logic must prevent adding a template ID that is already in Default's TemplateIds");
+    }
+
+    [Fact]
+    public async Task DeleteProjectAsync_NonExistentId_DoesNotThrow()
+    {
+        var nonExistentId = Guid.NewGuid().ToString();
+        // Should return silently without throwing
+        await _store.Invoking(s => s.DeleteProjectAsync(nonExistentId, CancellationToken.None))
+            .Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task DeleteProjectAsync_DefaultProjectId_ThrowsInvalidOperationException()
+    {
+        await _store.Invoking(s =>
+                s.DeleteProjectAsync(WellKnownIds.DefaultProjectId, CancellationToken.None))
+            .Should().ThrowAsync<InvalidOperationException>();
+    }
+
     // ── Template CRUD ──────────────────────────────────────────────────
 
     [Fact]
