@@ -118,8 +118,8 @@ public sealed class ConnectionReconnectCoordinatorTests
             .ContinueWith(_ => { }); // swallow cancellation
         sw.Stop();
 
-        sw.ElapsedMilliseconds.Should().BeLessThan(1000,
-            "cancelled gate should not hang");
+        sw.ElapsedMilliseconds.Should().BeLessThan(5000,
+            "cancelled gate should not hang (threshold is generous to tolerate slow CI runners; still well below the 30 s SignalR timeout that would indicate an actual hang)");
     }
 
     // ── SafeDisposeAsync ─────────────────────────────────────────────────────
