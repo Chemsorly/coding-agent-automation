@@ -272,7 +272,10 @@
                                 </select>
                                 <button class="btn-icon" disabled="@(index == 0)" @onclick="() => MoveTemplateUp(index)" title="Move up">▲</button>
                                 <button class="btn-icon" disabled="@(index == _project.TemplateIds.Count - 1)" @onclick="() => MoveTemplateDown(index)" title="Move down">▼</button>
-                                <button class="btn-icon btn-icon-danger" @onclick="() => RemoveTemplate(index)" title="Remove">✕</button>
+                                @if (_project.Id != WellKnownIds.DefaultProjectId)
+                                {
+                                    <button class="btn-icon btn-icon-danger" @onclick="() => RemoveTemplate(index)" title="Remove from project (moves to Default)">✕</button>
+                                }
                             </div>
                         </div>
                     }
@@ -531,18 +534,23 @@
 
     private async Task RemoveTemplate(int index)
     {
-        var newIds = _project.TemplateIds.ToList();
-        newIds.RemoveAt(index);
-        _project = _project with { TemplateIds = newIds };
+        var templateId = _project.TemplateIds[index];
 
-        await SaveProjectAsync();
-        // TODO: SaveProjectAsync swallows exceptions silently (existing behaviour). If the save fails,
-        // _project has already been mutated in memory (TemplateIds updated above) but the persisted record
-        // still contains the removed template. LoadDataAsync then reloads from the store, so _project
-        // reverts to the pre-removal state and the template reappears in the list with no error shown.
-        // Fix: check whether SaveProjectAsync reported an error (e.g., return a bool/Result) before
-        // calling LoadDataAsync, and surface the failure to the user if the save did not succeed.
-        await LoadDataAsync();
+        try
+        {
+            await ConfigClient.MoveTemplateAsync(_project.Id, WellKnownIds.DefaultProjectId, templateId, _cts.Token);
+            await LoadDataAsync();
+            await OnProjectSaved.InvokeAsync();
+            await OnShowStatus.InvokeAsync(("Template moved to Default project.", false));
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to remove template: {ex.Message}", true));
+        }
     }
 
     private async Task MoveTemplateUp(int index)

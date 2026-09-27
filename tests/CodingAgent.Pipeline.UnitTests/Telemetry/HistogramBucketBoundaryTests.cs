@@ -10,11 +10,11 @@ public class HistogramBucketBoundaryTests
     // TODO: Add assertion that bucket boundaries are monotonically increasing (strictly ascending)
     // to catch misordering bugs that would silently break quantile calculations.
     [Fact]
-    public void JobDuration_HasExpectedBucketBoundaries()
+    public void RunDuration_HasExpectedBucketBoundaries()
     {
-        var boundaries = PipelineTelemetry.JobDuration.Advice?.HistogramBucketBoundaries;
-        boundaries.Should().NotBeNull();
-        boundaries.Should().Equal(30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600);
+        var boundaries = PipelineTelemetry.RunDuration.Advice?.HistogramBucketBoundaries;
+        boundaries.Should().NotBeNull("RunDuration must have explicit InstrumentAdvice boundaries (issue #2967)");
+        boundaries.Should().Equal(60, 300, 600, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 21600, 28800, 43200);
     }
 
     [Fact]
@@ -58,7 +58,10 @@ public class HistogramBucketBoundaryTests
     {
         var boundaries = WorkDistributionTelemetry.JobExecutionDuration.Advice?.HistogramBucketBoundaries;
         boundaries.Should().NotBeNull("JobExecutionDuration must have explicit InstrumentAdvice boundaries");
-        // Aligned with PipelineTelemetry.JobDuration — same job lifecycle, same cardinality requirements
+        // Covers the full range of job execution durations (30s → 6h). Note: the bucket set
+        // previously matched PipelineTelemetry.JobDuration, which was removed in issue #2967;
+        // the replacement is PipelineTelemetry.RunDuration with different buckets. These
+        // workdistribution buckets are intentionally kept at the original values.
         boundaries.Should().Equal(30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600);
     }
 

@@ -179,8 +179,11 @@ public class ProcessWrapper : IProcessWrapper
     public void Kill()
     {
         if (_process == null) return;
+        // _process.HasExited can throw InvalidOperationException when the OS process handle
+        // has already been released (e.g. after WaitForExit() completes). Treat that as
+        // "already gone" and bail out just like the HasExited==true case.
         try { if (_process.HasExited) return; }
-        catch (InvalidOperationException) { return; } // process exited between null check and HasExited
+        catch (InvalidOperationException) { return; }
         try
         {
             if (_useWsl)

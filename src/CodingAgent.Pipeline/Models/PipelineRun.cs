@@ -276,6 +276,16 @@ public sealed partial class PipelineRun
     /// <summary>Brain update validation result from BrainUpdateService.</summary>
     public BrainValidationResult? BrainValidation { get; set; }
 
+    /// <summary>
+    /// UTC timestamp recorded immediately after the PR was successfully promoted to ready-for-review
+    /// (after <c>UpdatePullRequestAsync(markReady: true)</c> completes without error).
+    /// Used by <see cref="CodingAgent.Pipeline.Services.CiPollingCoordinator.WaitForPostPrCiAsync"/>
+    /// as the <c>notBefore</c> anchor to filter out push-event CI runs that completed before mark-ready,
+    /// ensuring the post-PR CI check targets only the pull_request-event CI triggered by mark-ready.
+    /// Null when the mark-ready call was skipped (draft PRs, invalid PR number, or API error).
+    /// </summary>
+    public DateTime? PrMarkedReadyAt { get; set; }
+
     /// <summary>Linked agent PR detected during rework mode, or null for new-issue runs.</summary>
     public LinkedPullRequest? LinkedPullRequest { get; set; }
 

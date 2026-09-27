@@ -183,11 +183,12 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     // ── Async internals ─────────────────────────────────────────────────
 
     /// <summary>
-    /// Shared paged-scan loop. Fetches batches using <paramref name="fetchBatch"/>, deserializes
-    /// them, applies <paramref name="include"/> as an additional filter beyond the consolidation
-    /// ghost-entry guard, and accumulates until <c>pageSize + 1</c> valid items are collected or
-    /// the table is exhausted. Both paged history methods (plain and feedback-only) share this
-    /// pattern — extracted in T22 (arch-audit 2026-08-22).
+    /// Shared paged-scan loop. Fetches batches using <paramref name="fetchBatch"/>, filters out
+    /// legacy consolidation ghost rows (see <see cref="IsConsolidationGhost"/>), deserializes
+    /// the remaining entries, applies <paramref name="include"/> as an additional predicate, and
+    /// accumulates until <c>pageSize + 1</c> valid items are collected or the table is exhausted.
+    /// Both paged history methods (plain and feedback-only) share this pattern — extracted in
+    /// T22 (arch-audit 2026-08-22).
     /// </summary>
     private async Task<PagedResult<PipelineRunSummary>> ScanPagedAsync(
         PipelineDbContext db,
@@ -212,7 +213,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
 
             var batch = entities
                 .Select(DeserializeSummary)
-                .Where(s => s is not null && s.InitiatedBy?.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal) != true)
+                .Where(s => s is not null && !IsConsolidationGhost(s!))
                 .Where(s => include is null || include(s!))
                 .Select(s => s!)
                 .ToList();
@@ -277,12 +278,14 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             .Take(MaxHistorySize)
             .ToListAsync(ct).ConfigureAwait(false);
 
-        // The read-time filter uses InitiatedBy (from SummaryJson). DeserializeSummary sets InitiatedBy
-        // from entity.IssueProviderConfigId in the column-fallback path, so this filter is correct
-        // even when SummaryJson is null or corrupt — consolidation ghost entries are excluded in both paths.
+        // The ghost-only filter excludes legacy consolidation ghost rows (IssueProviderConfigId =
+        // consolidation sentinel AND SummaryJson is null or corrupt). Real consolidation runs
+        // (post-#3024) have a valid SummaryJson with RunType = PipelineRunType.Consolidation and
+        // are returned normally. This replaces the former InitiatedBy prefix filter which
+        // incorrectly excluded real consolidation runs as well as ghosts.
         return entities
             .Select(DeserializeSummary)
-            .Where(s => s is not null && s.InitiatedBy?.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal) != true)
+            .Where(s => s is not null && !IsConsolidationGhost(s!))
             .Select(s => s!)
             .ToList();
     }
@@ -464,6 +467,24 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             RunType = entity.RunType
         };
     }
+
+    /// <summary>
+    /// Returns true for legacy consolidation ghost rows that must remain hidden from history.
+    /// A ghost is a row whose <see cref="PipelineRunSummary.InitiatedBy"/> starts with the
+    /// consolidation prefix (either from the SummaryJson or reconstructed by the fallback path)
+    /// but whose <see cref="PipelineRunSummary.RunType"/> is not
+    /// <see cref="PipelineRunType.Consolidation"/>. This catches:
+    /// <list type="bullet">
+    ///   <item>Null-SummaryJson ghosts — fallback reconstructs InitiatedBy from the sentinel IssueProviderConfigId,
+    ///     RunType defaults to Implementation.</item>
+    ///   <item>Corrupt-SummaryJson ghosts — JSON deserialization fails, fallback runs, same result.</item>
+    /// </list>
+    /// Real consolidation runs (post-#3024) have a valid SummaryJson that deserializes with
+    /// <see cref="PipelineRunType.Consolidation"/>, so they pass this filter and are returned.
+    /// </summary>
+    private static bool IsConsolidationGhost(PipelineRunSummary summary)
+        => summary.InitiatedBy?.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal) == true
+           && summary.RunType != PipelineRunType.Consolidation;
 
     /// <summary>
     /// Detects PK violation exceptions from Npgsql (SQLSTATE 23505) or generic message-based
